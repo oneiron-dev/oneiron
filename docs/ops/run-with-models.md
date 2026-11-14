@@ -1815,7 +1815,7 @@ model = "house:qwen3.8-27b"
 recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
 max_response_bytes = 67108864                  # one answer body (the default, 64 MiB)
 person_threshold = 0.9                         # the PersonThreshold row's start value
-think_threshold = 0.8                          # the ThinkThreshold row's start value
+think_threshold = 0.277                        # the ThinkThreshold row's start value (the default)
 ```
 
 The recipe is yours, not the server's (`format = 3`): it names the plain
@@ -1899,7 +1899,12 @@ reading is recorded on every receipt and routes nothing.
 
 `think_threshold` starts the ThinkThreshold row: a paired "does this need
 more thinking?" reading (Q2) at or above it lets the call step up a rung
-while its clock allows (`ReasoningCause::PairedHigh`). The house read
+while its clock allows (`ReasoningCause::PairedHigh`). It starts at 0.277,
+the p90 of the house read's Q2 over 1,000 BoolQ reads (FIX 22229), so about
+one read in ten steps up to the Big rung until the Coach tunes the row. Each
+read weighed against the row logs its route (direct, stepped up or step
+unfinished), its Q2 reading and the host's step-up rate so far, under the
+`oneiron::decision::think_route` log target. The house read
 measures Q2 jointly with each question's labels. A generated read (a
 caller's own model, `DecisionLadder::run_pack_generated`) asks the ladder's
 paired question, the recipe's `paired` wording, beside each of its questions
