@@ -4,8 +4,11 @@
 //! sheet, removes the password and passkey wraps and retires every escrow
 //! recipient but the world kit's, in one write; while it holds, the add
 //! doors refuse those kinds, a presented capsule opens nothing on the live
-//! vault nor on a checkpoint sealed under the preset, and a host-managed or
-//! supervisor-delivered key cannot enter it.
+//! vault nor on a checkpoint sealed under the preset, no key an escrow
+//! recipient opened from an earlier checkpoint opens one sealed under it,
+//! and a host-managed or supervisor-delivered key cannot enter it. The owner
+//! API, whose answer alone carries the sheet, enters it only while this
+//! install's device wrap stays.
 //!
 //! A fresh device is a host with no vault: it opens a sealed checkpoint's
 //! carried key header ([`CheckpointKey::unlock`]), or reopens the vault with
@@ -340,6 +343,112 @@ fn a_checkpoint_sealed_under_nobody_but_me_refuses_an_earlier_capsule() {
         )
         .map(|_| ()),
         "a key the earlier capsule opened, restoring a checkpoint sealed under the preset",
+    );
+}
+
+/// A key a carried escrow wrap opened from an earlier checkpoint stops at a
+/// checkpoint sealed under the preset, as a capsule-opened key does: the
+/// preset retired that recipient (review of #7766, round 2).
+#[test]
+fn a_key_an_earlier_escrow_wrap_opened_stops_at_a_checkpoint_sealed_under_nobody_but_me() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    let recipient = escrow_recipient(&[9u8; 32]).expect("escrow recipient");
+    vault
+        .add_vault_key_escrow_as(&owner_proof, "host", recipient.public_key())
+        .expect("a host escrow on the standard preset");
+    let before = directory.path().join("before");
+    vault
+        .snapshot_checkpoint(&before, 100)
+        .expect("seal a checkpoint on the standard preset");
+
+    vault
+        .set_recovery_preset_as(&owner_proof, RecoveryPreset::NobodyButMe, |_| Ok(()))
+        .expect("the owner enters \"Nobody but me\"");
+    let after = directory.path().join("after");
+    vault
+        .snapshot_checkpoint(&after, 101)
+        .expect("seal a checkpoint under the preset");
+
+    let host = VaultKeyUnlock::Escrow {
+        label: "host",
+        secret: &recipient,
+    };
+    assert!(
+        CheckpointKey::unlock(&after, &host).is_err(),
+        "the checkpoint sealed under the preset carries no host wrap"
+    );
+    let signer = vault
+        .checkpoint_signer()
+        .expect("the vault's checkpoint signer");
+    let earlier_key = CheckpointKey::unlock(&before, &host)
+        .expect("the host's carried wrap opens the earlier checkpoint")
+        .trusting(vec![signer]);
+    refused_by_preset(
+        Vault::restore_checkpoint(
+            &after,
+            &earlier_key,
+            &directory.path().join("restored"),
+            VaultConfig::device(),
+            RestoreReason::Restore,
+            200,
+        )
+        .map(|_| ()),
+        "a key the host's earlier wrap opened, restoring a checkpoint sealed under the preset",
+    );
+}
+
+/// The owner API's answer alone carries the sheet, so it enters the preset
+/// only while this install's device wrap stays: after a lost answer and a
+/// restart, that wrap reopens the key (review of #7766, round 2).
+#[test]
+fn the_answered_preset_change_needs_this_installs_device_wrap() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    vault
+        .set_vault_key_password(b"correct horse battery staple", None)
+        .expect("a vault password on the standard preset");
+    let device = wrap_ids(&vault)
+        .into_iter()
+        .find(|id| id.starts_with("device:"))
+        .expect("this install's device wrap");
+    vault
+        .remove_vault_key_wrap_as(&owner_proof, &device)
+        .expect("the owner removes the device wrap; the password stays");
+    let ids = wrap_ids(&vault);
+
+    refused_by_preset(
+        vault.set_recovery_preset_answered_as(&owner_proof, RecoveryPreset::NobodyButMe),
+        "an answered change with no device wrap of this install",
+    );
+    assert_eq!(
+        vault.recovery_preset().expect("preset"),
+        RecoveryPreset::Standard
+    );
+    assert_eq!(wrap_ids(&vault), ids, "a refused change changes no wrap");
+
+    vault
+        .add_vault_key_device()
+        .expect("the owner adds this install's device wrap again");
+    let device = wrap_ids(&vault)
+        .into_iter()
+        .find(|id| id.starts_with("device:"))
+        .expect("this install's device wrap");
+    let change = vault
+        .set_recovery_preset_answered_as(&owner_proof, RecoveryPreset::NobodyButMe)
+        .expect("with this install's device wrap, the answered change enters the preset");
+    assert!(change.sheet.is_some(), "the answer carries the sheet");
+    assert_eq!(
+        vault.recovery_preset().expect("preset"),
+        RecoveryPreset::NobodyButMe
+    );
+    let after = wrap_ids(&vault);
+    assert!(after.contains(&device), "the device wrap stays: {after:?}");
+    assert!(
+        !after.iter().any(|id| id == "password"),
+        "the password goes: {after:?}"
     );
 }
 
