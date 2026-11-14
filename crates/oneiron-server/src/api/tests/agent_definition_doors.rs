@@ -1,9 +1,8 @@
 //! A `core:write` credential below owner grade turns no agent definition back
 //! on: over `POST /v1/core/batch` or the `remember` verb it may not re-enable,
 //! re-approve or reactivate a stored definition, nor bring a deleted one back
-//! on. Turning a definition off stays open to it; the owner's own credential
-//! turns it back on (a full-scope slip someone else holds commits below
-//! owner: OWNER-GRADE-IS-NOT-OWNERSHIP).
+//! on. Turning a definition off stays open to it; an owner-grade credential
+//! turns it back on.
 use super::*;
 use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
@@ -213,13 +212,7 @@ async fn below_owner_grade_no_core_put_turns_an_agent_definition_back_on() {
     let (id, _) = revoked_definition(&server, &writer).await;
     let restored = next(&running_definition(), "1.0.3", |_| {});
     assert_eq!(
-        batch(
-            &server,
-            &super::owner_routes::owner_recipe(&server),
-            &id,
-            &restored
-        )
-        .await,
+        batch(&server, &owner_bearer(), &id, &restored).await,
         StatusCode::OK
     );
     assert_eq!(stored(&server, &id), Some(restored));

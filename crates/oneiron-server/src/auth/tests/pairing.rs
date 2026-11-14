@@ -40,15 +40,13 @@ fn principal(fixture: &Fixture, org: oneiron::EntityId) -> PairingPrincipal {
         comm: None,
     }
 }
-/// The vault owner's own full slip. A link mints a slip, so only the owner
-/// makes one: a full-scope slip someone else holds is refused
-/// (OWNER-GRADE-IS-NOT-OWNERSHIP).
+/// A full slip the host holds itself, cut from no parent: like the root, it
+/// acts as the vault's live owner, whom the root binds. A link mints a slip,
+/// so only the owner makes one; a full-scope slip someone else holds is
+/// refused (OWNER-GRADE-IS-NOT-OWNERSHIP).
 fn owner_slip(fixture: &Fixture) -> CapabilitySlip {
-    let owner = fixture.vault.ensure_embedded_owner_actor().unwrap();
-    fixture.mint(|claims| {
-        claims.holder_ref = owner.to_hex();
-        claims.actor_class = Some("human".into());
-    })
+    fixture.vault.ensure_embedded_owner_actor().unwrap();
+    fixture.mint(|claims| claims.holder_ref = "host".into())
 }
 fn org_scope() -> Scope {
     let mut scope = Scope::top();

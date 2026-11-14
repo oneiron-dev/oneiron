@@ -272,15 +272,13 @@ async fn the_owner_takes_no_facet_limit() {
     let vault = facets();
     let mut work = Scope::top();
     work.facets = ScopeAxis::Some(BTreeSet::from([ScopeId(vault.work.facet)]));
-    // The owner makes each link: a link mints a slip, so a full-scope slip
-    // someone else holds makes none (OWNER-GRADE-IS-NOT-OWNERSHIP).
     let link = |holder: oneiron::EntityId, class: &str| {
         route_json(
             vault.server.clone(),
             core_request_with_authz(
                 "POST",
                 "/v1/core/pairing/links",
-                super::owner_routes::owner_recipe(&vault.server),
+                owner_bearer(),
                 Some(&json!({
                     "scope": work, "lifetime_secs": 600,
                     "principal": { "holder_ref": holder.to_hex(), "actor_class": class },
