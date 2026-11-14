@@ -52,11 +52,13 @@ pub struct MailReplyDraftRequest {
     /// these together name at most 50 recipients; more is refused, not cut.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cc: Vec<String>,
-    /// Files the reply carries, in their order, from a Google mailbox only:
-    /// each one exact version of an artifact the caller reads, sent as the
-    /// caller's own copy of it. Every recipient must be cleared to see every
-    /// file; one who is not refuses the whole draft, never dropped. The
-    /// whole message, files included, is at most Gmail's 35 MiB.
+    /// Files the reply carries, in their order, from a Google or a Microsoft
+    /// 365 mailbox only, not an IMAP one: each one exact version of an
+    /// artifact the caller reads, sent as the caller's own copy of it. Every
+    /// recipient must be cleared to see every file; one who is not refuses
+    /// the whole draft, never dropped. The whole message, files included, is
+    /// at most Gmail's 35 MiB, or for Microsoft 365 at most 4,000,000 bytes
+    /// as Graph's one sendMail body carries it in base64 (3,000,000 octets).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<MailReplyAttachment>,
     /// The caller's key for this draft: the same key with the same body,
@@ -92,7 +94,8 @@ pub struct MailReplyDraftView {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<MailReplyAttachmentView>,
     /// The length in octets of the exact message a reply with files sends,
-    /// as Gmail receives it before its own transport encoding.
+    /// as its provider receives it before its own transport encoding
+    /// (Gmail's base64url, Graph's base64).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub message_octets: Option<u64>,
     /// BLAKE3 of that exact message, 64 lower-hex.
