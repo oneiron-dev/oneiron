@@ -351,13 +351,8 @@ pub enum ArtifactAskUnits {
     },
 }
 
-/// One file of a folder ask and the result row its answer fills.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct FolderItemInput {
-    pub artifact_ref: String,
-    pub row: u32,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::verbs::FolderItemInput;
 
 /// What an ask did: a staged proposal or paid answers still needing staging,
 /// the units left unanswered with their receipts, and those it refused.
@@ -1208,6 +1203,33 @@ impl Memory<'_> {
     /// until one of the owner's nodes can run them, each saying why it waits.
     pub fn artifacts_waits(&self, input: &ArtifactRefRequest) -> MemoryResult<Vec<OrganWaitView>> {
         Ok(self.vault().organ_waits(&entity(&input.artifact_ref)?)?)
+    }
+
+    /// What a host runs an organ edit of an artifact under
+    /// (`vault.artifacts.image.edit`, L4-15): the artifact, read through this
+    /// handle's own lane as an artifact ask reads its target (FIX 1533), and
+    /// the actor its proposal is made by. The proposal's `run_ref` is checked
+    /// as its landing checks it, before any organ runs.
+    ///
+    /// # Errors
+    ///
+    /// A malformed `artifact_ref`; an artifact the lane does not read, as
+    /// absent; a `run_ref` that is empty, past the run-ref bound, or holds a
+    /// secret.
+    pub fn artifacts_edit_admission(
+        &self,
+        artifact_ref: &str,
+        run_ref: &str,
+    ) -> MemoryResult<(EntityId, WriteActor)> {
+        let artifact = entity(artifact_ref)?;
+        if run_ref.trim().is_empty() || run_ref.len() > super::BLOB_ARTIFACT_RUN_REF_MAX_BYTES {
+            return Err(
+                invalid("run_ref must be non-empty and within the run-ref length bound").into(),
+            );
+        }
+        crate::batch::secret_scan::scan_metadata_field(run_ref)?;
+        self.require_credential_reads(&[artifact])?;
+        Ok((artifact, self.artifact_actor()))
     }
 
     /// `vault.artifacts.release_wait`: lets one held organ call go, by its

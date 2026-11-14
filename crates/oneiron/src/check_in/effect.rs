@@ -41,6 +41,7 @@ use super::waits::refuse;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::federation::FederationGrantRole;
 
 /// One act a door runs for a person, as check-in judges it.
 pub(crate) struct DoorAct<'a> {
@@ -242,6 +243,88 @@ pub fn record_erase_effect_digest(record: &EntityId, also_same_bytes: bool) -> [
     hasher.update(record.as_bytes());
     hasher.update(&[u8::from(also_same_bytes)]);
     *hasher.finalize().as_bytes()
+}
+
+/// The digest of `from` handing their ownership of shared vault `vault_id`
+/// to `to`, keeping `from_keeps` or leaving when it is `None`: the effect an
+/// asker's `vault.check_in.open` names for `vault.shared.propose_transfer`,
+/// and the one the start of `from`'s `transfer_ownership` act spends (2k1;
+/// P25-SHAPE Q1 = A). Only `from` applies it: the act moves the starter's
+/// own ownership. BLAKE3, key derived from `oneiron check_in ownership
+/// transfer v1`, over the vault id as eight big-endian bytes, the 16 id
+/// bytes of `from` and of `to`, and the kept role.
+#[must_use]
+pub fn ownership_transfer_effect_digest(
+    vault_id: u64,
+    from: &EntityId,
+    to: &EntityId,
+    from_keeps: Option<FederationGrantRole>,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in ownership transfer v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(from.as_bytes());
+    hasher.update(to.as_bytes());
+    update_kept_role(&mut hasher, from_keeps);
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of making `owner` an Owner of shared vault `vault_id`: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.shared.propose_add_owner`, and the one an Owner's start of the
+/// `add_owner` act spends (2k1; P25-SHAPE Q1 = A). BLAKE3, key derived from
+/// `oneiron check_in owner add v1`, over the vault id as eight big-endian
+/// bytes and the 16 id bytes of `owner`.
+#[must_use]
+pub fn owner_add_effect_digest(vault_id: u64, owner: &EntityId) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in owner add v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(owner.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
+/// The digest of removing Owner `target` of shared vault `vault_id`, with
+/// its `successor`, the role `target_keeps` and the export-first answer: the
+/// effect an asker's `vault.check_in.open` names for
+/// `vault.shared.propose_remove_owner`, and the one an Owner's start of the
+/// `remove_owner` act spends (2k1; P25-SHAPE Q1 = A). BLAKE3, key derived
+/// from `oneiron check_in owner remove v1`, over the vault id as eight
+/// big-endian bytes, the 16 id bytes of `target`, one byte 1 and the
+/// successor's 16 id bytes or one byte 0, the kept role, and one byte, 1
+/// when the target exports first.
+#[must_use]
+pub fn owner_remove_effect_digest(
+    vault_id: u64,
+    target: &EntityId,
+    successor: Option<&EntityId>,
+    target_keeps: Option<FederationGrantRole>,
+    export_first: bool,
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new_derive_key("oneiron check_in owner remove v1");
+    hasher.update(&vault_id.to_be_bytes());
+    hasher.update(target.as_bytes());
+    match successor {
+        Some(successor) => hasher.update(&[1]).update(successor.as_bytes()),
+        None => hasher.update(&[0]),
+    };
+    update_kept_role(&mut hasher, target_keeps);
+    hasher.update(&[u8::from(export_first)]);
+    *hasher.finalize().as_bytes()
+}
+
+/// One byte 0 for no kept role; else one byte 1, the role name's length as
+/// one byte and its bytes.
+fn update_kept_role(hasher: &mut blake3::Hasher, role: Option<FederationGrantRole>) {
+    match role {
+        Some(role) => {
+            let name = role.as_str().as_bytes();
+            hasher
+                .update(&[1, u8::try_from(name.len()).unwrap_or(u8::MAX)])
+                .update(name);
+        }
+        None => {
+            hasher.update(&[0]);
+        }
+    }
 }
 
 /// The decision of an Owner's own act on a catastrophe row: the Owner acts

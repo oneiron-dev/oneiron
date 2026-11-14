@@ -153,9 +153,8 @@ pub(super) fn observe_definition_bytes(
             b"optional_memory.families",
             AGENT_REF_KEY_MAX_BYTES,
             longest(
-                profile
-                    .and_then(|profile| profile.optional_memory.as_ref())
-                    .into_iter()
+                def.optional_memory
+                    .iter()
                     .flat_map(|optional| optional.families.keys())
                     .map(String::len),
             ),

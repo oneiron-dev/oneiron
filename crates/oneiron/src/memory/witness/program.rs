@@ -84,11 +84,14 @@ pub(super) enum WitnessTarget<'a, 'v> {
 }
 
 /// What an imported transcript turn carries that a witnessed one does not: the
-/// source it came from, when it was imported, when each message occurred, and
-/// the body its conversation is minted with. The source's speaker wrote these
-/// words, so the landing stamps no `AuthoredBy` edge and no PERSON byline. Its
-/// rows are learned at the import time and occurred when the source says, so
-/// the Dreamer sees them as new evidence about the past.
+/// source it came from, when it was imported, when each message occurred, the
+/// body its conversation is minted with, and whom the source names as each
+/// message's speaker. The source's speaker wrote these words, so the landing
+/// stamps no PERSON byline and no writer's `AuthoredBy` edge; a MESSAGE whose
+/// source names a live PERSON takes one `AuthoredBy` edge to that PERSON,
+/// which says only who the source says spoke (FIX 15412). Its rows are learned
+/// at the import time and occurred when the source says, so the Dreamer sees
+/// them as new evidence about the past.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ImportedTurnStamp {
     pub(crate) source: &'static str,
@@ -103,6 +106,9 @@ pub(crate) struct ImportedTurnStamp {
     /// hold none, and land no row that names it. `source` stays import
     /// provenance only.
     pub(crate) source_audience: Option<SourceAudienceBirth>,
+    /// Whom the source names as each message's speaker, resolved in the
+    /// landing's writer before admission.
+    pub(crate) attribution: super::SourceAttribution,
 }
 
 /// Who holds the door, and which turn-id capability they carry.
@@ -220,6 +226,11 @@ pub(super) struct WitnessAdmission<'p> {
     /// Per message, in plan order: an exact retry of a stored row, which
     /// stages nothing.
     pub(super) message_exists: Vec<bool>,
+    /// Per message, in plan order: the one `AuthoredBy` target the row is
+    /// admitted with, which a new row is staged with once. The bound actor
+    /// for a native user or companion row, none for a system or counterparty
+    /// one, and for an import the PERSON its source names, or none.
+    pub(super) authors: Vec<Option<EntityId>>,
 }
 
 /// The writer's lane a reply's typed assertions are read through in the
