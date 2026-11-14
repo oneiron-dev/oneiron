@@ -126,17 +126,8 @@ struct Pack<'a> {
 }
 
 pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
-    let plan: PackPlan = serde_json::from_slice(&std::fs::read(plan_path)?)?;
-    let folder = plan_path.parent().unwrap_or(Path::new("."));
-    let manifest = Manifest::parse(&std::fs::read_to_string(folder.join(&plan.manifest))?)?;
-    plan.validate_servers()?;
-    let repo = folder.join(&plan.repo_dir);
-    if !git_ok(&repo, &["rev-parse", "--git-dir"])? {
-        return Err(invalid(format!(
-            "run plan repo_dir {} is not a Git repository",
-            repo.display()
-        )));
-    }
+    let (plan, folder) = read_plan(plan_path)?;
+    let (manifest, repo) = plan.open(&folder)?;
     let out = folder.join(&plan.out);
     if folder_has_entries(&out)? {
         return Err(invalid(format!(
@@ -170,7 +161,33 @@ pub(in super::super) fn write_pack(plan_path: &Path) -> BeamResult<PackIndex> {
     Ok(index)
 }
 
+/// The run plan's manifest and repository, as the grader reads them.
+pub(super) fn plan_manifest(plan_path: &Path) -> BeamResult<(Manifest, PathBuf)> {
+    let (plan, folder) = read_plan(plan_path)?;
+    plan.open(&folder)
+}
+
+fn read_plan(plan_path: &Path) -> BeamResult<(PackPlan, PathBuf)> {
+    let plan: PackPlan = serde_json::from_slice(&std::fs::read(plan_path)?)?;
+    let folder = plan_path.parent().unwrap_or(Path::new(".")).to_path_buf();
+    Ok((plan, folder))
+}
+
 impl PackPlan {
+    /// Reads the manifest, checks the MCP pieces and finds the repository.
+    fn open(&self, folder: &Path) -> BeamResult<(Manifest, PathBuf)> {
+        let manifest = Manifest::parse(&std::fs::read_to_string(folder.join(&self.manifest))?)?;
+        self.validate_servers()?;
+        let repo = folder.join(&self.repo_dir);
+        if !git_ok(&repo, &["rev-parse", "--git-dir"])? {
+            return Err(invalid(format!(
+                "run plan repo_dir {} is not a Git repository",
+                repo.display()
+            )));
+        }
+        Ok((manifest, repo))
+    }
+
     fn validate_servers(&self) -> BeamResult<()> {
         let servers = [
             (
@@ -555,7 +572,7 @@ impl Pack<'_> {
             script,
             "git -C \"$root\" init -q\ngit -C \"$root\" add -A -f\ngit -C \"$root\" -c user.name=code-bench \
              -c user.email=code-bench@example.invalid -c commit.gpgsign=false commit -q -m {}\n",
-            sh_quote(&format!("code-bench world: {} at {}", task.id, task.base)),
+            sh_quote(&world_subject(task)),
         );
         if !writers.is_empty() {
             script.push_str("git -C \"$root\" branch integration\n");
@@ -568,6 +585,11 @@ impl Pack<'_> {
         }
         script
     }
+}
+
+/// The subject of a world's one root commit; the grader finds the world by it.
+pub(super) fn world_subject(task: &Task) -> String {
+    format!("code-bench world: {} at {}", task.id, task.base)
 }
 
 fn state(component: &str, reason: String) -> NotReadyState {
@@ -608,7 +630,7 @@ fn verbs_gap(repo: &Path, engine_commit: &str, verbs: &[&str]) -> BeamResult<Opt
     Ok(None)
 }
 
-fn git_ok(repo: &Path, args: &[&str]) -> BeamResult<bool> {
+pub(super) fn git_ok(repo: &Path, args: &[&str]) -> BeamResult<bool> {
     Ok(Command::new("git")
         .arg("-C")
         .arg(repo)
