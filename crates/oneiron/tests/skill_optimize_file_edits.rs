@@ -39,6 +39,12 @@ const LIMITS: &str = "{\"max_steps\": 4}\n";
 const MARKER: &str = "check result";
 const EDITED_GUIDE: &str = "Step one: read the task.\nStep two: check result before you report.\n";
 const EDITED_BODY: &str = "Follow references/guide.md step by step, then report.\n";
+/// A rule skill's text naming a dial of its `policy.json` at 4.
+const POLICY_DESC: &str =
+    "Follow the guide and report; stop a loop after health.loop.repeats at 4 rounds.";
+/// The `policy.json` beside [`POLICY_DESC`], holding 5 for that dial, as a
+/// draft that replaced the file leaves it.
+const POLICY: &str = "{\"health.loop.repeats\": 5}\n";
 
 fn at(now: u64) -> TimeRange {
     TimeRange {
@@ -47,22 +53,39 @@ fn at(now: u64) -> TimeRange {
     }
 }
 
-fn skill_md() -> String {
-    format!("---\nname: {SKILL_ID}\ndescription: {DESC}\nversion: 1\n---\n{BODY}")
+fn skill_md(desc: &str) -> String {
+    format!("---\nname: {SKILL_ID}\ndescription: {desc}\nversion: 1\n---\n{BODY}")
 }
 
 fn tree() -> Vec<HubFile> {
     vec![
-        HubFile::new("SKILL.md", skill_md().into_bytes()),
+        HubFile::new("SKILL.md", skill_md(DESC).into_bytes()),
         HubFile::new("references/guide.md", GUIDE),
         HubFile::new("scripts/run.sh", SCRIPT),
         HubFile::new("data/limits.json", LIMITS),
     ]
 }
 
+/// The tree above as a rule skill described as [`POLICY_DESC`], with
+/// [`POLICY`] beside it.
+fn policy_tree() -> Vec<HubFile> {
+    let mut files = tree();
+    files[0] = HubFile::new("SKILL.md", skill_md(POLICY_DESC).into_bytes());
+    files.push(HubFile::new("policy.json", POLICY));
+    files
+}
+
 /// A vault holding one active, Standard, human-authored skill with the
 /// four-file tree above, and a held-out reserve of its outcomes.
 fn fixture() -> (tempfile::TempDir, Vault, EntityId, SkillRecord) {
+    fixture_with(DESC, tree())
+}
+
+/// [`fixture`] for a skill described as `desc` with the tree `files`.
+fn fixture_with(
+    desc: &str,
+    files: Vec<HubFile>,
+) -> (tempfile::TempDir, Vault, EntityId, SkillRecord) {
     let temp = tempfile::tempdir().expect("vault directory");
     let vault = Vault::open(temp.path(), VaultConfig::default()).expect("vault");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -76,7 +99,7 @@ fn fixture() -> (tempfile::TempDir, Vault, EntityId, SkillRecord) {
         .expect("authenticated owner");
     let mut record = SkillRecord::new(
         SKILL_ID,
-        DESC,
+        desc,
         "1",
         ClaimApprovalStatus::Approved,
         SkillLifecycle::Candidate,
@@ -92,11 +115,15 @@ fn fixture() -> (tempfile::TempDir, Vault, EntityId, SkillRecord) {
     )
     .with_governance_tier(SkillGovernanceTier::Standard);
     record.content_hash = Some(
-        HubPackage::new(record.clone(), tree(), SkillCapabilitySurface::default())
-            .content_hash()
-            .expect("tree hash"),
+        HubPackage::new(
+            record.clone(),
+            files.clone(),
+            SkillCapabilitySurface::default(),
+        )
+        .content_hash()
+        .expect("tree hash"),
     );
-    let skill = land_active_skill_with_files(&vault, &record, tree()).expect("active skill");
+    let skill = land_active_skill_with_files(&vault, &record, files).expect("active skill");
     reserve(&vault, &skill);
     let stored = vault.get_skill_record(&skill).unwrap().expect("stored");
     (temp, vault, skill, stored)
@@ -422,4 +449,55 @@ fn an_instructions_only_edit_keeps_every_file_but_the_description() {
     assert_eq!(file(&package, "data/limits.json"), LIMITS.as_bytes());
     let (_, body) = split_skill_md(file(&package, "SKILL.md"));
     assert_eq!(body, BODY);
+}
+
+/// A draft re-derives a rule skill's `policy.json` only for a dial its text
+/// moves (FIX 10878): a dial the text names as its parent named it keeps the
+/// file's value, so a draft that keeps the text, or rewords it around the
+/// same number, never undoes a `policy.json` an earlier draft replaced.
+#[test]
+fn a_draft_moves_only_the_policy_dial_its_text_moves() {
+    let drafted_policy = |desc: &str, files: &[(&str, &str)]| -> Vec<u8> {
+        let (_temp, vault, skill, _) = fixture_with(POLICY_DESC, policy_tree());
+        let now = vault.now_recorded_at();
+        let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
+        let proposal = draft_on_skill(
+            &vault,
+            &skill,
+            attempt,
+            &FixedAuthor::editing(desc, files),
+            now,
+        )
+        .expect("drafted")
+        .proposal
+        .expect("the draft lands a proposal");
+        let package = served_skill_package(&vault, &proposal)
+            .unwrap()
+            .expect("the proposal has a package");
+        file(&package, "policy.json").to_vec()
+    };
+
+    assert_eq!(
+        drafted_policy(POLICY_DESC, &[("SKILL.md", EDITED_BODY)]),
+        POLICY.as_bytes(),
+        "a file edit that keeps the text keeps the dial the file holds"
+    );
+    assert_eq!(
+        drafted_policy(
+            "Follow the guide, check each step, then report; stop a loop after health.loop.repeats at 4 rounds.",
+            &[],
+        ),
+        POLICY.as_bytes(),
+        "a text reworded around the same number moves no dial"
+    );
+    let moved: serde_json::Value = serde_json::from_slice(&drafted_policy(
+        "Follow the guide and report; stop a loop after health.loop.repeats at 6 rounds.",
+        &[],
+    ))
+    .expect("policy.json is JSON");
+    assert_eq!(
+        moved["health.loop.repeats"].as_f64(),
+        Some(6.0),
+        "a text that moves the number moves the dial: {moved}"
+    );
 }

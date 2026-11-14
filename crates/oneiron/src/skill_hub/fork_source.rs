@@ -163,8 +163,10 @@ impl Vault {
     /// `files` names (census L9-02); companion scripts/capabilities stay
     /// byte-exact, so a callable never silently loses its executable file.
     /// A rule skill's `policy.json` is re-derived from the improved text: a
-    /// dial the text names with a number takes it (FIX 10878), unless the
-    /// draft replaces the file itself.
+    /// dial whose number the text moves takes it (FIX 10878), unless the
+    /// draft replaces the file itself. A dial the text names as its parent
+    /// named it keeps the file's value, so a later draft never undoes a file
+    /// an earlier draft replaced.
     pub(crate) fn optimized_skill_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -230,7 +232,8 @@ impl Vault {
             .files
             .iter_mut()
             .find(|file| file.path == REVIEWER_POLICY_FILE)
-            && let Some(derived) = rederived_rule_policy(&policy.content, &proposed.desc)
+            && let Some(derived) =
+                rederived_rule_policy(&policy.content, &parent.desc, &proposed.desc)
         {
             policy.content = derived;
         }
@@ -277,11 +280,13 @@ fn replace_drafted_file(
 
 /// A rule skill's `policy.json` re-derived from its improved rule `text`
 /// (FIX 10878): each key of the file the text names with a number right
-/// after it (`key: 4`, `key = 0.5`, `` `key` at 4 ``) takes that number,
-/// and every other key keeps its value. `None` when the file is not one
-/// JSON object or the text moves no key, so an unmoved file stays
-/// byte-exact.
-fn rederived_rule_policy(policy: &[u8], text: &str) -> Option<Vec<u8>> {
+/// after it (`key: 4`, `key = 0.5`, `` `key` at 4 ``) takes that number
+/// when `was`, the parent's text, named no number or another one for it,
+/// and every other key keeps its value: a dial the draft did not move keeps
+/// what the file holds, even where an earlier draft replaced the file.
+/// `None` when the file is not one JSON object or the text moves no key, so
+/// an unmoved file stays byte-exact.
+fn rederived_rule_policy(policy: &[u8], was: &str, text: &str) -> Option<Vec<u8>> {
     let Ok(serde_json::Value::Object(mut entries)) =
         serde_json::from_slice::<serde_json::Value>(policy)
     else {
@@ -292,6 +297,9 @@ fn rederived_rule_policy(policy: &[u8], text: &str) -> Option<Vec<u8>> {
         let Some(number) = named_number(text, key) else {
             continue;
         };
+        if named_number(was, key).is_some_and(|named| named.as_f64() == number.as_f64()) {
+            continue;
+        }
         if value.as_f64() != number.as_f64() {
             *value = serde_json::Value::Number(number);
             moved = true;
