@@ -40,6 +40,9 @@ The incident runbooks do not replace counsel review for jurisdiction-specific ca
   room's access token, and its connection pressure check (`GET /v1/relay/{vault}/pressure`).
 - [Connect Claude Code or Codex](connect-an-agent.md) — `oneiron token agent` mints a scoped,
   revocable agent credential; `oneiron mcp` serves MCP on stdio to the agent.
+- [Connect ChatGPT (developer mode)](connect-chatgpt.md) — a custom MCP plugin in ChatGPT on
+  the web that signs in through the vault's OAuth server once you allow it in your inbox, and the
+  MCP tool annotations it reads.
 - [The built-in web connector](web-connector.md) — `connector.web.search` and `fetch`: the
   deploy's `TAVILY_API_KEY`, the owner's provider switch, result shapes and usage rows.
 - [Clipboard storage and Mac intake](clipboard.md) — owner-bound ordinary text capture,
