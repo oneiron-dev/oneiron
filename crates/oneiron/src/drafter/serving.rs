@@ -61,37 +61,8 @@ pub trait DrafterServingRuntime: Send + Sync {
     fn served(&self) -> Vec<DrafterServedView>;
 }
 
-/// Why a target's binding is not what serves it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DrafterUnservedReason {
-    /// No host that serves the vault's bindings is attached here.
-    NoServingHost,
-    /// No managed worker of this process serves the target's pins with a
-    /// draft.
-    NoServingWorker,
-    /// The worker that serves the target is shared: this process serves
-    /// several vaults, or it calls a worker another process launches for
-    /// every vault. Its draft is never rewritten.
-    UnsupportedSharedWorker,
-    /// The worker is the operator's external endpoint, never restarted by
-    /// the engine.
-    UnsupportedExternalWorker,
-    /// The worker's runtime loads no vault drafter in this release.
-    UnsupportedRuntime,
-    /// The vault is locked: no private drafter serves while it is.
-    VaultLocked,
-    /// The bound version may not serve now: not qualified, its artifact key
-    /// gone, the policy off, or an excluded world in its ancestry.
-    VersionNotServable,
-    /// The version's sealed load set did not open or did not verify.
-    LoadSetUnverified,
-    /// The new worker incarnation did not qualify with the expected draft
-    /// identity; stock serves until the binding moves again.
-    WorkerRejected,
-    /// The binding moved while it was applied; the newer one applies next.
-    Superseded,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::drafter::serving::DrafterUnservedReason;
 
 /// What one target's worker serves now, as the host's worker proved it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
