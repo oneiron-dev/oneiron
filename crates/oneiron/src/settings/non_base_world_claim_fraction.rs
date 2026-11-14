@@ -13,6 +13,12 @@
 //! as every dial read is (untangle 6.6f; S66F-READ = C).
 
 use crate::authority::ActSurface;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::memory::{Memory, MemoryResult};
@@ -106,6 +112,26 @@ impl Vault {
             Ok(setting)
         })
     }
+}
+
+/// Lands one archived claim-fraction envelope: [`NonBaseWorldClaimFraction::validate`], then an
+/// absent-key exact-bytes install, never recording an act.
+pub(super) fn land_archived_non_base_world_claim_fraction_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&FRACTION, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&FRACTION, vault, txn, permit, &key, row)
 }
 
 /// The fraction for a holder of any `engine.controls` class, checked at this

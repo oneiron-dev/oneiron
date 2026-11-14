@@ -46,7 +46,8 @@ pub use dependent_walk::{
     DependentWalkPolicy, DependentWalkProgress,
 };
 pub(crate) use dependent_walk::{
-    DependentWalkDoor, any_pending_walk, withdraw_before_rewrite_in_txn,
+    DependentWalkDoor, any_pending_walk, land_archived_ports_rows_in_txn,
+    withdraw_before_rewrite_in_txn,
 };
 mod compaction_home_revisions;
 mod dependency_registration;

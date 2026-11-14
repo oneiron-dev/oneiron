@@ -4,6 +4,12 @@
 pub use oneiron_store::settings::backup::*;
 
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -42,4 +48,24 @@ impl Vault {
             POLICY.put(&self.store, txn, &(), &policy)
         })
     }
+}
+
+/// Lands one archived backup-policy envelope: the writer's [`BackupPolicy::problem`] rules, then an
+/// absent-key exact-bytes install.
+pub(super) fn land_archived_backup_policy_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.problem().is_some() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
 }

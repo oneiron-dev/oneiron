@@ -23,6 +23,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::authority::ActSurface;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryResult};
@@ -242,4 +248,34 @@ pub fn set_undo_send_embedded(
         Some(ActSurface::ThisInstall),
         &input,
     )?)
+}
+
+/// Lands one archived undo-send envelope: [`UndoSendSetting::normalized`] must accept the value
+/// unchanged, then an absent-key install of the exact source bytes.
+pub(super) fn land_archived_undo_send_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&UNDO_SEND, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    // The writer stores `normalized` output, so a value it re-spells or
+    // reorders is not a faithful stored row and stays retained.
+    let normalized = match value.normalized() {
+        Ok(normalized) => normalized,
+        Err(_) => {
+            return Ok(ArchivedSideRowOutcome::HeldBack(
+                RetainedSideHeldBackReason::InvalidValue,
+            ));
+        }
+    };
+    if normalized != value {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&UNDO_SEND, vault, txn, permit, &key, row)
 }

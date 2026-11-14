@@ -9,6 +9,7 @@
 //! vault-bound parts (durable steps, seats, manifests, routing, defaults, the RSI
 //! ledger, role defaults) live in this module.
 
+pub(crate) mod archive_restore;
 mod autocheck;
 mod budget;
 mod defaults;

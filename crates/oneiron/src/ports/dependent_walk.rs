@@ -699,6 +699,47 @@ impl Vault {
     }
 }
 
+/// Lands one archived PORTS_DEPENDENT_WALK_POLICY row live: a positive batch validates, then
+/// installs through the archive seam without starting or resuming a walk.
+fn land_archived_dependent_walk_policy_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    row: &crate::batch::export::ArchiveRetainedSideRow,
+) -> crate::Result<crate::batch::export::archive_side_install::ArchivedSideRowOutcome> {
+    use crate::batch::export::RetainedSideHeldBackReason;
+    use crate::batch::export::archive_side_install::{
+        ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+    };
+    let (key, value) = match decode_archived_row(&POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.validate().is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&POLICY, vault, txn, permit, &key, row)
+}
+
+/// Lands archived PORTS_DEPENDENT_WALK_POLICY rows live, one outcome per input row in input
+/// order.
+pub(crate) fn land_archived_ports_rows_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &crate::batch::export::OwnerArchiveRestorePermit,
+    rows: &[crate::batch::export::ArchiveRetainedSideRow],
+) -> crate::Result<Vec<crate::batch::export::archive_side_install::ArchivedSideRowOutcome>> {
+    let mut outcomes = Vec::with_capacity(rows.len());
+    for row in rows {
+        outcomes.push(land_archived_dependent_walk_policy_row_in_txn(
+            vault, txn, permit, row,
+        )?);
+    }
+    Ok(outcomes)
+}
+
 mod mark;
 // FIX [LIBTEST-QUARANTINE-PORTS-DEPENDENT-WALK-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
 #[cfg(any())]

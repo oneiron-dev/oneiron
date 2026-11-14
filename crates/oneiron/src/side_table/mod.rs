@@ -520,6 +520,25 @@ impl<K: SideKey, V, C: SideCodec<V>> SideTable<K, V, C> {
         self.put_raw(dbs, txn, &self.key_bytes(key), &bytes)
     }
 
+    /// Stores canonical archive bytes under the owner restore permit, without side-row admission.
+    pub(crate) fn put_archived_as_stored_in_txn(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &mut heed::RwTxn<'_>,
+        _permit: &crate::batch::export::OwnerArchiveRestorePermit,
+        key: &K,
+        source_value: &[u8],
+    ) -> Result<()> {
+        let value = C::decode(source_value)
+            .map_err(|_| self.decl.row_error(SideTableRowProblem::Undecodable))?;
+        let encoded =
+            C::encode(&value).map_err(|_| self.decl.row_error(SideTableRowProblem::Unencodable))?;
+        if encoded != source_value {
+            return Err(self.decl.row_error(SideTableRowProblem::Undecodable));
+        }
+        self.write_raw(dbs, txn, &self.key_bytes(key), source_value)
+    }
+
     /// [`Self::put`], returning the bytes the row holds now, as the side-row wall stored them,
     /// for a writer that keeps its own copy of what it wrote.
     pub(crate) fn put_as_stored(

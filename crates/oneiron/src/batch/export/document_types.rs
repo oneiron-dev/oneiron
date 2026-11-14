@@ -74,8 +74,42 @@ pub struct ArchiveSideTableOmission {
     pub rows: u64,
 }
 
-/// One retained source table's import counts: the inert copies kept.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// One reason that source rows stayed inert rather than being installed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetainedSideHeldBackReason {
+    /// The source key or value is not its table's canonical encoding.
+    InvalidEncoding,
+    /// The source value does not satisfy its owning writer's checks.
+    InvalidValue,
+    /// A required live record is absent or tombstoned.
+    MissingLiveEntity,
+    /// A referenced live record has the wrong entity kind.
+    WrongEntityKind,
+    /// A required local authority binding does not match.
+    LocalAuthorityMismatch,
+    /// A required companion row is absent.
+    MissingCompanion,
+    /// A required companion row is inconsistent.
+    InconsistentCompanion,
+    /// An operational reference has no portable local binding.
+    NonPortableReference,
+    /// The existing archive credential predicate withholds the source bytes.
+    Credential,
+}
+
+/// The number of source rows held back for one reason.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetainedSideHeldBackCount {
+    /// The validation reason shared by these rows.
+    pub reason: RetainedSideHeldBackReason,
+    /// The number of rows held back.
+    pub rows: usize,
+}
+
+/// One retained source table's inert-copy and owner live-install counts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RetainedSideTableCount {
     /// The declared retained source table's name.
     pub source_table: String,
@@ -83,16 +117,40 @@ pub struct RetainedSideTableCount {
     pub inserted_rows: usize,
     /// The retained copies already stored equal.
     pub unchanged_rows: usize,
+    /// The source rows installed into absent live keys.
+    #[serde(default)]
+    pub installed_rows: usize,
+    /// The source rows already stored byte-identically in live tables.
+    #[serde(default)]
+    pub unchanged_live_rows: usize,
+    /// The source rows retained because different destination rows stayed live.
+    #[serde(default)]
+    pub kept_live_rows: usize,
+    /// The source rows retained after validation, sorted by reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held_back: Vec<RetainedSideHeldBackCount>,
 }
 
-/// The retained side rows one import kept: the inert copies, by table, and the manifest's
-/// table omissions. Counts inert rows, never grants activated or policies installed.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+/// The inert-copy and owner live-install totals, per-table counts, and manifest omissions.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct RetainedSideImportSummary {
     /// The retained copies newly stored.
     pub inserted_rows: usize,
     /// The retained copies already stored equal.
     pub unchanged_rows: usize,
+    /// The source rows installed into absent live keys.
+    #[serde(default)]
+    pub installed_rows: usize,
+    /// The source rows already stored byte-identically in live tables.
+    #[serde(default)]
+    pub unchanged_live_rows: usize,
+    /// The source rows retained because different destination rows stayed live.
+    #[serde(default)]
+    pub kept_live_rows: usize,
+    /// The source rows retained after validation, sorted by reason.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held_back: Vec<RetainedSideHeldBackCount>,
     /// The per-table counts, sorted by source table name.
     pub tables: Vec<RetainedSideTableCount>,
     /// The manifest's table omissions.

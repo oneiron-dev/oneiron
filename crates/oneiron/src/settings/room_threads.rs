@@ -7,6 +7,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{ArchiveRetainedSideRow, OwnerArchiveRestorePermit};
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
@@ -98,4 +102,42 @@ impl Vault {
             Ok(settings)
         })
     }
+}
+
+/// Lands one archived admin-delete envelope: an absent-key exact-bytes install, leaving the walk-in
+/// key alone.
+pub(super) fn land_archived_room_threads_admin_delete_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    land_room_thread_admin_flag_row_in_txn(&ADMIN_DELETE, vault, txn, permit, row)
+}
+
+/// Lands one archived admin walk-in envelope: an absent-key exact-bytes install, leaving the delete
+/// key alone.
+pub(super) fn land_archived_room_threads_admin_walk_in_row_in_txn(
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    land_room_thread_admin_flag_row_in_txn(&ADMIN_WALK_IN, vault, txn, permit, row)
+}
+
+/// Lands one archived admin-switch envelope through `table`: the writer takes any bool, so decoding
+/// plus an absent-key exact-bytes install is the whole check.
+fn land_room_thread_admin_flag_row_in_txn(
+    table: &SideTable<(), bool, Named>,
+    vault: &crate::Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, _) = match decode_archived_row(table, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    install_archived_row(table, vault, txn, permit, &key, row)
 }
