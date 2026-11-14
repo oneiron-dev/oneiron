@@ -8,8 +8,11 @@ request's pins, and returns two fixed load sets whose weights file records the S
 the rows it read, so a test can tell that the actual staged corpus reached it. Its probe
 logits are fixed, the same on both sides, unless the plan's settings name an
 `export_logit_skew`: that is added to the last export logit while the receipt still states
-a largest difference of 0, so a test can tell which difference the engine keeps. Any
-failed check writes a refused receipt.
+a largest difference of 0, so a test can tell which difference the engine keeps. A
+`receipt_delay_seconds` setting makes it sleep that long before it writes its receipt, so a
+test can let the receipt land after the host's first poll. The receipt appears whole: it is
+written beside its final name and renamed into place. Any failed check writes a refused
+receipt.
 
 Run as the host runs a worker: `<python> -I role_trainer_worker.py --request <job json>
 --output <new dir>`.
@@ -18,8 +21,10 @@ Run as the host runs a worker: `<python> -I role_trainer_worker.py --request <jo
 import argparse
 import hashlib
 import json
+import os
 import struct
 import sys
+import time
 from pathlib import Path
 
 JOB_FORMAT = "oneiron.training-pack.role-job/1"
@@ -231,6 +236,14 @@ def train(request_bytes: bytes, out: Path) -> dict:
     }
 
 
+def receipt_delay(request_bytes: bytes) -> float:
+    """The job's `receipt_delay_seconds` setting: 0 when it names none or is no job."""
+    try:
+        return float(json.loads(request_bytes)["settings"].get("receipt_delay_seconds", 0.0))
+    except (KeyError, ValueError, TypeError, AttributeError):
+        return 0.0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--request", required=True)
@@ -243,7 +256,10 @@ def main() -> int:
         receipt = train(request_bytes, out)
     except (Refused, KeyError, ValueError, OSError) as error:
         receipt = {"format": RECEIPT_FORMAT, "status": "refused", "reason": str(error)}
-    (out / "receipt.json").write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    time.sleep(receipt_delay(request_bytes))
+    staged = out / ".receipt.json.partial"
+    staged.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+    os.replace(staged, out / "receipt.json")
     return 0 if receipt["status"] == "trained" else 1
 
 

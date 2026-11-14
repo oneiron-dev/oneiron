@@ -6,6 +6,9 @@
 //!   held out, and the run returns inside the bound with its checks passed,
 //!   bound to nothing, and, as this role trainer names no scorer, waits on
 //!   the host for an evaluator (`role_training_evaluate` scores one);
+//! - a run whose waiter is lost (a host restart) and whose receipt lands
+//!   after the execute's first step still returns inside the bound: the
+//!   execute polls the trainer again while it waits;
 //! - an agent executes only with a Grant listing the verb;
 //! - a role run on a question connector, or on a recipe the role trainer does
 //!   not list, holds with `training.no_connector` and answers at once;
@@ -210,6 +213,53 @@ fn owner_executes_an_authorized_role_run_on_the_role_trainer_that_reads_the_stag
                 .as_ref()
                 .map(|r| &r.connector_receipt),
             Some(&result.connector_receipt)
+        );
+        fixture.finish().await;
+    });
+}
+
+/// A run whose waiter is lost, as after a host restart, moves only when a
+/// step recovers its trainer's receipt. The receipt lands after the
+/// execute's first step, so only an execute that polls the trainer again
+/// while it waits returns the run inside the bound; the waiter that rejoins
+/// later records nothing new.
+#[test]
+fn execute_recovers_a_run_whose_waiter_is_lost_when_its_receipt_lands_inside_the_bound() {
+    run_on_engine_stack("role-execute-lost-waiter", || async {
+        let fixture = Fixture::new().await;
+        let mut seeded = seed_role_run(&fixture.vault);
+        seeded.draft["plan"]["settings"]["receipt_delay_seconds"] = json!(2);
+        let (run, spec) = prepare(&fixture, &seeded.draft, ROLE_TRAINER).await;
+        let (status, handoff) = fixture.authorize(&run, &spec).await;
+        assert_eq!(status, StatusCode::OK, "owner authorize: {handoff}");
+        let waiter = fixture.dispatch_with_lost_waiter(&run).await;
+        let job = role_jobs_root(fixture.dir.path()).join(format!("{run}-{spec}"));
+        assert_eq!(stored(&fixture, &run).state, TrainingState::Running);
+        assert!(
+            !job.join("output/receipt.json").exists(),
+            "the receipt lands after the execute's first step"
+        );
+
+        let (status, read) = fixture
+            .as_owner(EXECUTE_VERB, json!({"run": run, "wait_ms": WAIT_MS}))
+            .await;
+        assert_eq!(status, StatusCode::OK, "owner execute: {read}");
+        assert_eq!(read["state"], "returned", "{read}\n{}", job_evidence(&job));
+        assert_eq!(read["hold"]["code"], "training.no_evaluator", "{read}");
+        assert!(read["waited_ms"].as_u64() < Some(WAIT_MS), "{read}");
+        let recovered = stored(&fixture, &run)
+            .result
+            .expect("the recovered result")
+            .connector_receipt;
+
+        tokio::task::spawn_blocking(move || waiter.rejoin())
+            .await
+            .expect("the waiter rejoins");
+        let record = stored(&fixture, &run);
+        assert_eq!(record.state, TrainingState::Returned);
+        assert_eq!(
+            record.result.map(|result| result.connector_receipt),
+            Some(recovered)
         );
         fixture.finish().await;
     });

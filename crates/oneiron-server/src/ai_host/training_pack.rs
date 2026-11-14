@@ -166,7 +166,7 @@ pub(crate) fn trainer_binding(server: &SyncServer, name: &str) -> Option<PaidCon
 /// question-head worker, for a question run on its recipe, or the role
 /// trainer, for a role run on a recipe its connector lists. Anything else
 /// gets none before any dispatch, so neither trainer is sent the other's run.
-fn training_connector(
+pub(crate) fn training_connector(
     server: &SyncServer,
     run: &TrainingRun,
 ) -> Option<Box<dyn TrainingConnector + Send + Sync>> {
