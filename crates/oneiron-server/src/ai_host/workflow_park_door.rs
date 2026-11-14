@@ -4,21 +4,23 @@
 //! turned into the step's fault as the host turns it and settled through the
 //! pump's failure ladder (`step_failure::settle`); and the next try of the
 //! leaf, claimed the same way, with the invocation its `self.use` call
-//! builds from its checkpoint. Compiled only under
-//! `--cfg oneiron_test_support`; never API.
+//! builds from its checkpoint. For [WORKFLOW-PARK-RESUMED-CALL-RETRY]: a
+//! try's park saved as the step saves it (the checkpoint with its wait and
+//! the leaf's Hook pause), and the pump's resume of that pause once its ask
+//! is answered. Compiled only under `--cfg oneiron_test_support`; never API.
 
 use std::collections::BTreeMap;
 
 use oneiron::agent_dispatch::{
     AgentDispatcher, WorkflowToolCursor, WorkflowToolProgress, WorkflowToolTranscript,
-    agent_dispatch_run_actor,
+    WorkflowToolWait, agent_dispatch_run_actor,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
 use oneiron::failure_ladder::FailureLadderOutcome;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{
-    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, Error, LlmMessage,
-    LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
+    BudgetExhaustionPolicy, CallClass, CallEnvelope, CallPurpose, ContentPart, EntityId, Error,
+    LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
     TierPrecedence, Vault, WriteActor,
 };
 
@@ -63,6 +65,9 @@ pub struct StepTry {
     pub use_ordinal: u64,
     /// The cursor's checkpoint parks on a wait.
     pub waits: bool,
+    /// The invocation of the call this try resumes: its checkpoint's wait,
+    /// whose park's hold was released before the claim.
+    pub resumes: Option<InvocationId>,
     /// The leaf's failures the ladder counts (`workflow_tool_failure_count`).
     pub failures: usize,
     /// The invocation the try's next `self.use` call builds, as the step
@@ -124,6 +129,10 @@ pub fn claim_step(
                     actor,
                     use_ordinal: saved.cursor.use_ordinal,
                     waits: saved.wait.is_some(),
+                    resumes: saved
+                        .wait
+                        .as_ref()
+                        .map(|wait| InvocationId(wait.invocation)),
                     failures: dispatcher.workflow_tool_failure_count(leased)?,
                     next_use: self_use_invocation(
                         leased.id,
@@ -179,6 +188,46 @@ pub fn fail_park(
         reason: retry.map(|cause| cause.stable_reason()),
         state,
     })
+}
+
+/// The step `held` parks its next `self.use` call on `ask`, as the step
+/// saves a park: the call's ordinal in the cursor, the wait on the call's
+/// invocation, and the leaf held on that invocation's hook, in one writer.
+///
+/// # Errors
+///
+/// Storage, or the checkpoint writer's refusal.
+pub fn park_step(vault: &Vault, held: &StepTry, ask: EntityId, now: u64) -> oneiron::Result<()> {
+    let dispatcher = AgentDispatcher::new(vault);
+    let leased = AttemptQueue::new(vault)
+        .get(held.leaf)?
+        .ok_or_else(|| Error::InvalidConfig("the held leaf is missing".to_owned()))?;
+    let mut progress = dispatcher
+        .workflow_tool_checkpoint(&leased)?
+        .ok_or_else(|| Error::InvalidConfig("the held try saved no checkpoint".to_owned()))?
+        .progress;
+    progress.cursor.use_ordinal = progress
+        .cursor
+        .use_ordinal
+        .checked_add(1)
+        .ok_or(Error::ArithmeticOverflow("workflow tool ordinal"))?;
+    progress.wait = Some(WorkflowToolWait {
+        invocation: held.next_use.0,
+        ask,
+    });
+    dispatcher.park_workflow_tool(&leased, &transcript()?, progress, now)
+}
+
+/// The pump's pass over `root`'s hook pause: once the pause's ask is
+/// answered, the leaf is released to its next claim.
+///
+/// # Errors
+///
+/// Storage, or a checkpoint refusal.
+pub fn resume_step(vault: &Vault, root: AttemptId, now: u64) -> oneiron::Result<()> {
+    AgentDispatcher::new(vault)
+        .resume_workflow_tool(root, now)
+        .map(|_| ())
 }
 
 /// The cursor a step saves after `answered_uses` answered `self.use` calls
