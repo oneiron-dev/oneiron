@@ -364,9 +364,16 @@ pub(super) fn fold_authority_log_once(
     };
     let causal_floors =
         super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
+    // Root appointments are judged before any entry folds: only the pinned
+    // anchor's, each over its own ancestry (`root_appointment_judge`).
+    let appointments = super::root_appointment_judge::judge_appointments(&by_hash, context.pin);
+    if let Some(anchor) = appointments.burned {
+        issues.push(AuthorityFoldIssue::AnchorBurned { anchor });
+    }
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
         entry_ancestors: Some(&entry_ancestors),
+        appointments: Some(&appointments.verdicts),
         ..context
     };
 
