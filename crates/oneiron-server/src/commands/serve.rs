@@ -68,6 +68,12 @@ pub(super) async fn serve_anchored(
         dimensions = config.dimensions,
         "starting oneiron sync server"
     );
+    // Every request this process serves gets the same OpenAPI document; it is
+    // assembled beside the start-up, so the first GET /api/openapi.json finds
+    // it built (FIX [SLOW-FACADE-CALLS-COORDINATION-08]: 2.05 s in the dev build).
+    if let Err(error) = crate::api::spawn_openapi_document_precompute() {
+        tracing::warn!(%error, "the OpenAPI document is assembled on its first request instead");
+    }
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;
     // systemd or launchd may have bound the socket and hold the secrets;
     // otherwise this binds `addr` itself. Read once, at process entry.
@@ -394,6 +400,10 @@ pub(crate) async fn build_server(
         // The `[policy]` section's owner-plane wording and settings (FIX
         // 5042); an embedding host may set its own after this.
         .with_owner_policy_config(config.policy.owner_policy_config());
+    // The image organ the host names by its program (L4-15); organs run
+    // on unix hosts only.
+    #[cfg(unix)]
+    sync_server.install_image_organ_from_env();
     // Its browser readiness starts from the `[browser]` section and its
     // runtime binding, with no supervisor's runtime fact (FIX 7670).
     sync_server

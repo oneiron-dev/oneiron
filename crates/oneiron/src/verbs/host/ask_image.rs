@@ -5,25 +5,8 @@
 //! handle has no seat and refuses it.
 use serde::{Deserialize, Serialize};
 
-/// `ai.ask_image`'s input. The pixels are read, and the pull recorded,
-/// through the caller's own lane before any model is called; the call runs
-/// on the caller's budget line, as a chat turn does.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AskImageRequest {
-    /// The view handle the image was served with (`<asset>@<hash>`).
-    pub handle: String,
-    /// What to ask about its pixels.
-    pub question: String,
-    /// A region to ask about, in the image's own pixels; the whole image
-    /// when absent.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub region: Option<crate::memory::PixelRegion>,
-    /// The answer contract to ask under; a text answer when absent. The
-    /// Local-vision slot answers a Box or a Point, over the whole image.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub contract: Option<crate::llm::decision::AnswerContract>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::host::ask_image::AskImageRequest;
 
 /// `ai.ask_image`'s answer: the vision model's text for a text question, or
 /// the located answer and its decisions under a Box or Point contract, and

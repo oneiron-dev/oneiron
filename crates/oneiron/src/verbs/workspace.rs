@@ -62,11 +62,8 @@ pub struct WorkspaceMemberOnboardRequest {
     pub occurred_at: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct WorkspaceRosterRequest {
-    pub workspace_ref: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::workspace::WorkspaceRosterRequest;
 
 pub fn establish_workspace_as(
     vault: &Vault,

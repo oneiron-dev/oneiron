@@ -8,7 +8,6 @@
 use super::{Memory, MemoryError, MemoryResult};
 use crate::claim::ClaimReadStatus;
 use crate::genui::ShapePlanCard;
-use crate::inbox::InboxBulkVerb;
 use crate::vault_shape::{ShapeApplyItem, ShapePlan, ShapePlanRequest, shape_item_ref_parts};
 use serde::{Deserialize, Serialize};
 
@@ -26,14 +25,10 @@ pub struct ShapePlanCardView {
     pub generated_ui: serde_json::Value,
 }
 
-/// `vault.shape.items.receipt`'s request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ShapeItemReceiptRequest {
-    /// A landed item's `vault_shape:<frontier>#<seq>` reference, as its run
-    /// row's result carries it.
-    pub reference: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::shape_card_doors::{
+    ShapeGroupResolveRequest, ShapeItemReceiptRequest,
+};
 
 /// One shape item as its receipt reference names it: the journal entry,
 /// with the run rows it stands on.
@@ -49,16 +44,6 @@ pub struct ShapeItemReceipt {
     pub attempt_id: Option<String>,
     /// The item and where it stands.
     pub item: ShapeApplyItem,
-}
-
-/// `vault.shape.groups.resolve`'s request: the owner's answer to one
-/// apply's inbox group.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ShapeGroupResolveRequest {
-    /// The apply's run-tree root, hex, as `vault.shape.groups` lists it.
-    pub group_key: String,
-    pub verb: InboxBulkVerb,
 }
 
 impl Memory<'_> {

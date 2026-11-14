@@ -5,9 +5,15 @@ run` (with and without --no-run) from a fixture workspace, logs each call with
 its CARGO_BUILD_JOBS, and writes the JUnit nextest would write. It fails to
 compile the test targets named in STUB_FAIL_TESTS, and cannot list the tests of
 a run that selects a target named in STUB_LIST_ERROR_TESTS (exit 104, no JUnit).
+A `--lib` build fails at the lib test of the first workspace package named in
+STUB_FAIL_LIBS that it does not exclude, and stops there, as a cargo build at
+one job stops at its first failed unit.
 A budget verdict run (its filter starts with the budget set's first row) gives
 the timed cases of STUB_BUDGET_CASES, or cannot list its tests when
-STUB_LIST_ERROR_BUDGET is set.
+STUB_LIST_ERROR_BUDGET is set. A build that names `--bin` (the bench
+selection) builds the stub bench bin STUB_BENCH_BIN as target/debug/<bin>,
+unless STUB_BENCH_NO_BIN is set; the bench verdict run gives one case per test
+target and bin.
 
 Run: python3 -m unittest discover -s scripts/nightly -p 'test_*.py' -v
 """
@@ -22,6 +28,7 @@ import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+
 
 HERE = Path(__file__).resolve().parent
 
@@ -48,12 +55,19 @@ STUB_CARGO = textwrap.dedent(
         sys.exit(0)
     assert args[:2] == ["nextest", "run"], args
     tests = [args[i + 1] for i, arg in enumerate(args) if arg == "--test"]
+    bins = [args[i + 1] for i, arg in enumerate(args) if arg == "--bin"]
     deps = target / "debug" / "deps"
     deps.mkdir(parents=True, exist_ok=True)
     if "--no-run" in args:
         if any(t in os.environ.get("STUB_SETUP_ERROR_TESTS", "").split(",") for t in tests):
             print("error: the stub's setup error (no unit named)")
             sys.exit(96)
+        excluded = [args[i + 1] for i, arg in enumerate(args) if arg == "--exclude"]
+        members = {p["name"] for p in json.loads(Path(os.environ["STUB_METADATA"]).read_text())["packages"]}
+        for package in os.environ.get("STUB_FAIL_LIBS", "").split(","):
+            if "--lib" in args and package in members and package not in excluded:
+                print(f"error: could not compile `{package}` (lib test) due to 1 previous error")
+                sys.exit(101)
         broken = [t for t in tests if t in os.environ.get("STUB_FAIL_TESTS", "").split(",")]
         for t in broken:
             print(f'error: could not compile `oneiron` (test "{t}") due to 1 previous error')
@@ -61,6 +75,11 @@ STUB_CARGO = textwrap.dedent(
             sys.exit(101)
         for t in tests:
             (deps / f"{t}-0123456789abcdef").write_text("test binary")
+        for b in bins:
+            (deps / f"{b.replace('-', '_')}-0123456789abcdef").write_text("bin test binary")
+            if not os.environ.get("STUB_BENCH_NO_BIN"):
+                (target / "debug" / b).write_text(Path(os.environ["STUB_BENCH_BIN"]).read_text())
+                (target / "debug" / b).chmod(0o755)
         if "--lib" in args:
             door = target / "debug" / "oneiron-testkit-pending-door"
             door.write_text(
@@ -82,6 +101,9 @@ STUB_CARGO = textwrap.dedent(
     if profile == "nightly" and expression.startswith("(kind(lib)"):
         if "--lib" in args:
             cases.append(("oneiron", "tests::a_row_is_kept", 0.5))
+    elif profile == "nightly" and expression.startswith("package(=oneiron-bench)"):
+        cases += [(f"oneiron-bench::{t}", "a_bench_case", 0.5) for t in tests]
+        cases += [(f"oneiron-bench::bin/{b}", "swarm::tests::a_window", 0.1) for b in bins]
     elif profile == "nightly" and expression.startswith("((package("):
         if os.environ.get("STUB_LIST_ERROR_BUDGET"):
             print("error: creating test list failed (stub)", file=sys.stderr)
@@ -97,6 +119,38 @@ STUB_CARGO = textwrap.dedent(
         for binary, name, seconds in cases
     )
     junit.write_text(f'<?xml version="1.0"?><testsuites name="nextest-run">{body}</testsuites>')
+    """
+)
+
+# The bench bin's stand-in: answers each bench job with the report test_nightly_bench.reports() gives it (perf prints
+# its summary first), exits 1 with the floor refusal for `perf run`, and exits 3 for a job named in STUB_BENCH_FAIL.
+STUB_BENCH_BIN = textwrap.dedent(
+    """\
+    #!/usr/bin/env python3
+    import json, os, sys
+    from pathlib import Path
+
+    args = sys.argv[1:]
+    reports = json.loads(Path(os.environ["STUB_BENCH_REPORTS"]).read_text())
+    if args[:2] == ["perf", "smoke"]:
+        job = "perf-smoke-child-override" if os.environ.get("ONEIRON_BENCH_PERF_CHILD") else "perf-smoke"
+    elif args[:2] == ["perf", "run"]:
+        job = "perf-full-refusal"
+    else:
+        job = {"smoke": "beam-smoke", "infra": "beam-infra", "run": "beam-contract"}[args[1]]
+    if job in os.environ.get("STUB_BENCH_FAIL", "").split(","):
+        sys.exit(3)
+    report = reports[job]
+    if job == "perf-full-refusal":
+        sys.stderr.write(report["stderr"])
+        sys.exit(1)
+    if job == "beam-infra":
+        report["measurement_receipt"] = json.loads(Path(args[2]).read_text())["measurement_receipt"]
+    if job == "beam-contract":
+        assert Path(args[2]).with_suffix(".jsonl").is_file(), "the manifest's JSONL sits beside it"
+    if job.startswith("perf"):
+        print("== oneiron perf bench (ONE-1579) ==")
+    print(json.dumps(report, indent=2))
     """
 )
 
@@ -141,8 +195,9 @@ class RunNightlyTest(unittest.TestCase):
         base = Path(tmp.name)
         self.repo = base / "repo"
         (self.repo / "scripts/nightly").mkdir(parents=True)
-        for name in ("run_nightly.sh", "nightly_report.py"):
-            shutil.copy(HERE / name, self.repo / "scripts/nightly" / name)
+        for script in HERE.iterdir():  # the nightly's scripts, without the tests
+            if script.suffix in (".sh", ".py") and not script.name.startswith("test_"):
+                shutil.copy(script, self.repo / "scripts/nightly" / script.name)
         (self.repo / "crates/core/src").mkdir(parents=True)
         (self.repo / "crates/core/Cargo.toml").write_text('[package]\nname = "oneiron"\n')
         (self.repo / "crates/core/src/lib.rs").write_text(LIB_RS)
@@ -387,6 +442,174 @@ class RunNightlyTest(unittest.TestCase):
         text = (self.out / "summary.txt").read_text()
         self.assertIn("unselected: tests-01 oneiron test beta (did not compile)", text)
         self.assertNotIn("dropped:", text)
+
+    def add_lib_packages(self, *names: str, tested: bool = True) -> None:
+        """Workspace packages with a lib target alone; `tested=False` marks the lib `test = false`."""
+        path = self.target.parent / "metadata.json"
+        metadata = json.loads(path.read_text())
+        for name in names:
+            metadata["workspace_members"].append(f"{name} 0.1.0")
+            lib = {"name": name.replace("-", "_"), "kind": ["lib" if tested else "cdylib"], "test": tested}
+            metadata["packages"].append({"id": f"{name} 0.1.0", "name": name, "targets": [lib]})
+        path.write_text(json.dumps(metadata))
+
+    def test_broken_lib_tests_take_one_round_each_and_the_night_goes_on_to_the_shards(self) -> None:
+        broken = ("oneiron-driver", "oneiron-seal", "oneiron-store", "oneiron-sync")
+        self.add_lib_packages(*broken)
+        result = self.run_nightly(STUB_FAIL_LIBS=",".join(broken))
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(
+            [
+                line.split(" seconds=")[0]
+                for line in result.stdout.splitlines()
+                if line.startswith("## NIGHTLY build-libs ")
+            ],
+            [f"## NIGHTLY build-libs rc={rc} round={n}" for n, rc in ((1, 101), (2, 101), (3, 101), (4, 101), (5, 0))],
+        )
+        self.assertNotIn("stop reason=build-dropped", result.stdout)
+        self.assertIn(" RED build=partial cycle=1 shards_run=1/1 next=alpha ", self.summary_line(result))
+        text = (self.out / "summary.txt").read_text()
+        for package in broken:
+            self.assertIn(f"unselected: libs {package} lib-test (did not compile)", text)
+        self.assertNotIn("dropped:", text)
+
+    def test_the_build_rounds_stop_at_nightly_build_rounds_and_the_dropped_libs_stop_the_night(self) -> None:
+        broken = ("oneiron-driver", "oneiron-seal", "oneiron-store", "oneiron-sync")
+        self.add_lib_packages(*broken)
+        result = self.run_nightly(STUB_FAIL_LIBS=",".join(broken), NIGHTLY_BUILD_ROUNDS="2")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY stop reason=build-dropped next=libs", result.stdout)
+        self.assertEqual(len(self.builds()), 2)
+        self.assertIn("dropped: libs (the build failed in 2 rounds)", (self.out / "summary.txt").read_text())
+
+    def test_a_build_that_fails_past_the_deadline_is_dropped_without_another_round(self) -> None:
+        self.add_lib_packages("oneiron-driver", "oneiron-seal")
+        result = self.run_nightly("--deadline-epoch", "1", STUB_FAIL_LIBS="oneiron-driver,oneiron-seal")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(len(self.builds()), 1)
+        self.assertIn(
+            "dropped: libs (the build failed in round 1, at the deadline)", (self.out / "summary.txt").read_text()
+        )
+
+    def test_a_round_count_that_is_not_a_positive_number_stops_the_job_before_any_build(self) -> None:
+        for value in ("0", "three"):
+            result = self.run_nightly(NIGHTLY_BUILD_ROUNDS=value)
+            self.assertEqual(result.returncode, 2, value + result.stdout + result.stderr)
+            self.assertIn(f"NIGHTLY_BUILD_ROUNDS={value} is not a positive number", result.stderr)
+        self.assertFalse(self.calls.exists(), "no cargo call")
+
+    def test_a_package_with_no_tested_target_is_left_out_of_every_build_and_the_night_stays_green(self) -> None:
+        self.add_lib_packages("oneiron-py", tested=False)
+        result = self.run_nightly("--shard-files", "2", STUB_FAIL_LIBS="oneiron-py")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn(" GREEN build=ok cycle=1 shards_run=2/2 ", self.summary_line(result))
+        builds = self.builds()
+        self.assertEqual(len(builds), 3, "libs once, then two shards")
+        for line in builds:
+            self.assertIn(" --exclude oneiron-py ", line + " ")
+        self.assertIn(
+            "not tested by design: oneiron-py (no lib, bin or test target sets test = true)",
+            (self.out / "summary.txt").read_text(),
+        )
+
+    def use_bench_workspace(self) -> None:
+        """oneiron-bench joins the fixture workspace: a bin, two integration tests, the fixtures its jobs read."""
+        metadata = json.loads(json.dumps(METADATA))
+        metadata["workspace_members"].append("oneiron-bench 0.1.0")
+        metadata["packages"].append(
+            {
+                "id": "oneiron-bench 0.1.0",
+                "name": "oneiron-bench",
+                "targets": [
+                    target("oneiron-bench", "bin"),
+                    target("cleanup_retrieval", "test"),
+                    target("materializer_mutex_contracts", "test"),
+                    {"name": "materializer_mutex", "kind": ["bench"], "test": False},
+                ],
+            }
+        )
+        base = self.target.parent
+        (base / "metadata.json").write_text(json.dumps(metadata))
+        fixtures = self.repo / "crates/oneiron-bench/fixtures"
+        fixtures.mkdir(parents=True)
+        (fixtures / "perf_smoke.plan.json").write_text(
+            json.dumps({"mode": "synthetic_smoke", "sessions": {"curve": [1, 4]}})
+        )
+        for name in ("beam_128k_contract.run.json", "beam_128k_contract.run.jsonl"):
+            (fixtures / name).write_text("{}\n")
+        (base / "bench-bin").write_text(STUB_BENCH_BIN)
+        import test_nightly_bench  # noqa: PLC0415 (its report fixtures; the other runner tests need no bench module)
+
+        (base / "bench-reports.json").write_text(json.dumps(test_nightly_bench.reports()))
+        self.env.update(STUB_BENCH_BIN=str(base / "bench-bin"), STUB_BENCH_REPORTS=str(base / "bench-reports.json"))
+
+    def test_the_bench_runs_every_night_after_the_libs_then_its_jobs_and_its_binaries_are_deleted(self) -> None:
+        self.use_bench_workspace()
+        cursor = self.out.parent / "cursor.json"
+        result = self.run_nightly("--shard-files", "2", "--max-shards", "1", "--cursor", str(cursor))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(
+            [line.split(" --all-features ")[1] for line in self.builds()],
+            [
+                "--workspace --exclude oneiron-bench --lib --bins --test pending_door",
+                "--workspace --bin oneiron-bench --test cleanup_retrieval --test materializer_mutex_contracts",
+                "--workspace --exclude oneiron-bench --test alpha --test beta",
+            ],
+        )
+        self.assertEqual(self.runs("nightly")[2], "package(=oneiron-bench) & not (none() | none())")
+        jobs = [
+            line.split(" seconds=")[0] for line in result.stdout.splitlines() if line.startswith("## NIGHTLY bench-")
+        ]
+        self.assertEqual(
+            jobs,
+            [
+                "## NIGHTLY bench-perf-smoke rc=0 expected=0",
+                "## NIGHTLY bench-perf-smoke-child-override rc=0 expected=0",
+                "## NIGHTLY bench-perf-full-refusal rc=1 expected=1",
+                "## NIGHTLY bench-beam-smoke rc=0 expected=0",
+                "## NIGHTLY bench-beam-infra rc=0 expected=0",
+                "## NIGHTLY bench-beam-contract rc=0 expected=0",
+            ],
+        )
+        self.assertIn("## NIGHTLY measure after=bench minutes=0 ", result.stdout)
+        self.assertIn("## NIGHTLY stop reason=max-shards next=tests-02", result.stdout)
+        line = self.summary_line(result)
+        self.assertIn(" GREEN build=ok cycle=1 shards_run=1/2 next=kit passed=6 failed=0 ", line)
+        self.assertTrue(line.endswith(" bench_jobs=6/6 bench_promises=6/6"), line)
+        self.assertEqual(json.loads(cursor.read_text()), {"next": "kit", "cycle": 1}, "the bench is no shard")
+        left = sorted(path.name for path in (self.target / "debug/deps").iterdir())
+        self.assertEqual(left, ["pending_door-0123456789abcdef"], "the bench's test binaries and its bin are deleted")
+        self.assertFalse((self.target / "debug/oneiron-bench").exists())
+        self.assertTrue((self.out / "bench-row.json").is_file())
+
+    def test_a_deadline_already_passed_still_runs_the_bench_and_its_jobs(self) -> None:
+        self.use_bench_workspace()
+        result = self.run_nightly("--shard-files", "2", "--deadline-epoch", "1")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY bench-beam-contract rc=0 expected=0 ", result.stdout)
+        self.assertIn("## NIGHTLY stop reason=deadline next=tests-01", result.stdout)
+        self.assertIn(" shards_run=0/2 next=alpha passed=4 ", self.summary_line(result))
+
+    def test_a_bench_job_that_fails_makes_the_night_red_and_the_other_jobs_and_shards_still_run(self) -> None:
+        self.use_bench_workspace()
+        result = self.run_nightly("--shard-files", "2", STUB_BENCH_FAIL="beam-smoke")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY bench-beam-smoke rc=3 expected=0 ", result.stdout)
+        self.assertIn("## NIGHTLY bench-beam-contract rc=0 expected=0 ", result.stdout)
+        line = self.summary_line(result)
+        self.assertIn(" RED build=ok cycle=1 shards_run=2/2 ", line)
+        self.assertTrue(line.endswith(" bench_jobs=5/6 bench_promises=6/6"), line)
+        self.assertIn(
+            "the bench job beam-smoke did not run as expected (exit 3, expected 0)",
+            json.loads((self.out / "summary.json").read_text())["reasons"],
+        )
+
+    def test_a_bench_bin_that_was_not_built_runs_no_job_and_makes_the_night_red(self) -> None:
+        self.use_bench_workspace()
+        result = self.run_nightly(STUB_BENCH_NO_BIN="1")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY bench-jobs rc=not-run (", result.stdout)
+        self.assertTrue(self.summary_line(result).endswith(" bench_jobs=0/6 bench_promises=0/0"))
 
     def test_a_host_without_cargo_nextest_cannot_start_the_night(self) -> None:
         result = self.run_nightly(STUB_NO_NEXTEST="1")

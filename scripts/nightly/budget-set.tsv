@@ -4,4 +4,6 @@ ready-parent-budget-10001	oneiron	lib	oneiron	=	conversation_dag::tests::replay:
 sync-convergence-props	oneiron	test	it_sync	^	sync_convergence_props::	crates/oneiron/tests/it_sync/sync_convergence_props.rs	nightly override: 30 min
 canary-dreamer-pass	oneiron-testkit	test	canary	=	a_dreamer_pass_sends_the_model_no_agents_diary_and_leaks_no_canary	crates/oneiron-testkit/tests/canary.rs	nightly override: 30 min
 stemma-reader-bounded-time	oneiron-docedit	test	stemma_reader	~	_parses_in_bounded_time	crates/oneiron-docedit/tests/stemma_reader.rs	each asserts under 5 s
-hnsw-recall-at-10	oneiron-bench	test	cleanup_retrieval	=	hnsw_recall_at_10_vs_bruteforce_meets_quality_floor	crates/oneiron-bench/tests/cleanup_retrieval.rs	nightly override: 30 min; oneiron-bench runs from PR 10b2
+hnsw-recall-at-10	oneiron-bench	test	cleanup_retrieval	=	hnsw_recall_at_10_vs_bruteforce_meets_quality_floor	crates/oneiron-bench/tests/cleanup_retrieval.rs	nightly override: 30 min; runs in the bench selection
+bench-perf-smoke-p99	oneiron-bench	job	perf-smoke	~	.p99	crates/oneiron-bench/src/perf/cells.rs	report only: the p99 of every measured *_ms percentile set of `oneiron-bench perf smoke`
+bench-beam-smoke-query-p99	oneiron-bench	job	beam-smoke	=	query_time.p99	crates/oneiron-bench/src/beam/report_model.rs	report only: the p99 of the beam smoke's pack query times (queryTimeUs)

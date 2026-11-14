@@ -67,6 +67,8 @@ pub(crate) const KEY_MODELS: &str = AGENT_DEF_BODY_KEYS[27];
 
 pub(crate) const KEY_COMPACTION_MODEL: &str = AGENT_DEF_BODY_KEYS[28];
 
+pub(crate) const KEY_OPTIONAL_MEMORY: &str = AGENT_DEF_BODY_KEYS[29];
+
 pub(crate) const KEY_MODEL_REF: &str = AGENT_MODEL_KEYS[0];
 
 pub(crate) const KEY_MODEL_WHEN: &str = AGENT_MODEL_KEYS[1];
@@ -84,8 +86,6 @@ pub(crate) const KEY_PROFILE_HOT_STEPS: &str = MEMORY_PROFILE_KEYS[4];
 pub(crate) const KEY_PROFILE_OUTPUT_DECAY: &str = MEMORY_PROFILE_KEYS[5];
 
 pub(crate) const KEY_PROFILE_VERBATIM_PINS: &str = MEMORY_PROFILE_KEYS[6];
-
-pub(crate) const KEY_PROFILE_OPTIONAL_MEMORY: &str = MEMORY_PROFILE_KEYS[7];
 
 pub(crate) const KEY_SPLIT_CLAIMS: &str = CONTEXT_BUDGET_SPLIT_KEYS[0];
 

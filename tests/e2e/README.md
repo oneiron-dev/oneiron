@@ -74,8 +74,14 @@ Slots must match `fixtures/suite-plan.json`: one normally, two for heavy,
 multi-peer, browser or organ files. All helpers and subprocesses count inside
 that file's budget. A flow defaults to 30 seconds. Pass `200_000` as the last
 `suite.test` argument for the actual 180-second wake case. Do not change engine
-defaults to accelerate it. The optional profile runs only its six pinned IDs;
-other IDs are not registered for that run and do not count as default coverage.
+defaults to accelerate it. A case whose flow needs more than the 30-second PR budget
+is a **nightly budget case**: `suite.nightly(test, ID, name, body, deadlineMs)`.
+Without `E2E_NIGHTLY=1` it reports BLOCKED "nightly budget case" and its body never
+runs; the nightly E2E stage (`scripts/nightly/nightly_e2e.py`) sets `E2E_NIGHTLY=1`
+on the runner, which passes it to each case process, and the case runs as
+`suite.test` with its own deadline (at most the runner's 600-second cap). The
+optional profile runs only its six pinned IDs; other IDs are not registered for
+that run and do not count as default coverage.
 
 **G01 is binding:** if a designed verb has no current typed HTTP and SDK call,
 register `suite.todo(test, ID, "waits on <door or verb>")`. Preserve canon's typed

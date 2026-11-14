@@ -24,18 +24,16 @@ use crate::agent_def::{AgentModel, list_admits, listed_entry, no_listed_model};
 use crate::authority::WorldModelRoutes;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{
-    EntityId, Vault,
-    error::{Error, Result},
-};
+use crate::{EntityId, Vault, error::Result};
 
 /// One revision-pinned model description. Key: string (model id).
 const DESCRIPTIONS: SideTable<String, ModelDescription, LegacyJson> =
     SideTable::new(&side_table::LLM_MODEL_DESCRIPTION);
 
-fn invalid(reason: impl Into<String>) -> Error {
-    Error::InvalidConfig(reason.into())
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::llm::seat::DescriptionSource;
+#[doc(hidden)]
+use oneiron_verb_wire::llm::seat::invalid;
 
 /// Whether the worlds' order pre-admits a seat model at a locality (FIX
 /// 11768): [`WorldModelRoutes::Inherit`] admits all; an ordered list admits
@@ -80,15 +78,6 @@ fn served_admits(
     locality: ModelLocality,
 ) -> bool {
     served.is_none_or(|set| set.get(model).is_some_and(|at| *at == locality))
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum DescriptionSource {
-    Owner,
-    Measured,
-    Benchmarks,
-    Vendor,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

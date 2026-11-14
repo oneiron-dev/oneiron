@@ -827,3 +827,5 @@ fn an_answer_of_the_longest_floats_fits_the_room_it_took() {
         "every float in its longest form"
     );
 }
+
+pub(crate) mod accounts;

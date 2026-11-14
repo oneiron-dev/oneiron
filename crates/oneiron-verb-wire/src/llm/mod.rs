@@ -1,3 +1,4 @@
+pub use crate::llm::budget::rsi_doors;
 pub use crate::llm::step::public as model_step;
 pub use crate::research_budget::RsiBudgetConfig;
 pub use crate::research_budget::RsiBudgetError;
@@ -266,5 +267,13 @@ pub use oneiron_store::model_step_record::StepProgression;
 pub use oneiron_store::model_step_record::TrapRef;
 
 pub mod budget;
+pub mod catalog_doors;
 pub mod decision;
+pub mod manifest;
+pub mod model_pack;
+pub mod model_stream;
+pub mod model_trials;
+pub mod registry;
+pub mod run_admission;
+pub mod seat;
 pub mod step;

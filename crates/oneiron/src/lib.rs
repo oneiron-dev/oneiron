@@ -10,6 +10,10 @@
     )
 )]
 
+// `oneiron-records` is still empty (lib split R1-R3). Until its first record type is re-exported here, this keeps
+// the dependency in use for Cargo's `unused_dependencies` lint (Rust 1.100). R1 drops it.
+use oneiron_records as _;
+
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
 pub use oneiron_store::config;
@@ -459,8 +463,8 @@ pub use crate::deletion::{
 pub use crate::delivery_window::DeliveryWindowApnsInterruptionLevel;
 pub use crate::disclosure::{DisclosureAssembly, DisclosureContext};
 pub use crate::dreamer_consolidation::{
-    ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, plan_partitions,
-    read_watermark, scan_dirty_turns,
+    ConsolidationDecisions, ConsolidationExecutor, ConsolidationSink, ExtractionPrompt,
+    plan_partitions, read_watermark, scan_dirty_turns,
 };
 pub use crate::dreamer_prefilter::{
     NoveltyWindow, PrefilterConfig, PrefilterScreen, PrefilterTurnVerdict, PrefilterVerdict,

@@ -54,6 +54,7 @@ impl Memory<'_> {
             assertions,
             person_author,
             None,
+            None,
             thread.as_ref(),
         )
     }
