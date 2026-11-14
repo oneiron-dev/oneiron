@@ -335,11 +335,23 @@ impl<'r, 'v: 'r> ReadOnlyRetrievalLoop<'r, 'v> {
                     .collect();
                 let reads: Vec<_> = selected.iter().map(point_read).collect();
                 let read = self.reader.retrieval_loop_read(&reads, &requested)?;
+                // Every reader but the owner reads each evidence body as the
+                // typed Nulled rule releases it (ruling EXPORTDOORS Q4 = A);
+                // a withheld body is read as a row with none.
+                let reads_stored = self.reader.reads_stored_bodies()?;
                 let mut retained = HashSet::new();
                 for (handle, row) in selected.into_iter().zip(read.value) {
                     let Some(row) = row else { continue };
-                    let Some(body) = row.body else { continue };
-                    let mut input = body.as_slice();
+                    let Some(stored) = row.body else { continue };
+                    let Some(body) = crate::batch::export::released_body_for(
+                        reads_stored,
+                        row.entity_type,
+                        &stored,
+                    )?
+                    else {
+                        continue;
+                    };
+                    let mut input = &*body;
                     let value = rmpv::decode::read_value(&mut input)
                         .map_err(|_| Error::CorruptedIndex("retrieval evidence body"))?;
                     if !input.is_empty() {
