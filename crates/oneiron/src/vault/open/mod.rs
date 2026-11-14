@@ -822,6 +822,13 @@ impl Vault {
         self.privacy.host_readable()
     }
 
+    /// Who supplies this vault's data key, as the opener validated it: what
+    /// the recovery preset reads before "Nobody but me" is entered.
+    #[must_use]
+    pub(crate) fn data_key_custody(&self) -> &crate::config::VaultDataKeyCustody {
+        &self.privacy.data_key_custody
+    }
+
     /// This vault's content-free diagnostic counters.
     ///
     /// The counters belong to the vault, not to the process, so a delta read
