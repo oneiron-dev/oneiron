@@ -179,6 +179,13 @@ struct CommProjectorIndex {
     /// commit since is this pass's own, so n same-slot events re-read the
     /// slot once rather than n times (F06 H228).
     peer_boundaries: RefCell<HashMap<PartyThreadKey, Option<(u64, bool)>>>,
+    /// Thread-member claim ids per party, each with the thread reference its
+    /// value names, as one walk of the party's claims read them inside an
+    /// event's transaction. Kept while every commit since is this pass's
+    /// own, plus the claims this pass's joins mint, so a join or leave
+    /// re-reads only its own slot's claims rather than every claim about the
+    /// party (ARCH-0057 membership-history scans).
+    thread_member_claims: RefCell<HashMap<EntityId, BTreeMap<EntityId, String>>>,
 }
 
 impl CommProjectorIndex {
@@ -303,11 +310,13 @@ impl CommProjectorIndex {
 
     /// Runs first inside each event's write transaction. A commit this pass
     /// cannot account for (a peer pass, a replay, any other writer) may have
-    /// flipped a candidate, so the cached peer boundaries are dropped.
+    /// flipped a candidate or written, retracted or re-keyed a member claim,
+    /// so the cached peer boundaries and member claims are dropped.
     fn begin_event_txn(&self, vault: &Vault) {
         let committed = vault.store.env.info().last_txn_id;
         if self.accounted_txn.get() != Some(committed) {
             self.peer_boundaries.borrow_mut().clear();
+            self.thread_member_claims.borrow_mut().clear();
         }
         self.accounted_txn.set(Some(committed));
     }
@@ -383,6 +392,39 @@ impl CommProjectorIndex {
         Ok(latest)
     }
 
+    /// The cached thread-member claim ids about `party_ref` whose thread
+    /// folds into the `canonical` slot under `aliases`, in claim-id order;
+    /// `None` when no walk of the party's claims is cached.
+    fn thread_member_claim_ids(
+        &self,
+        party_ref: EntityId,
+        aliases: &BTreeMap<String, String>,
+        canonical: &str,
+    ) -> Option<Vec<EntityId>> {
+        let thread_member_claims = self.thread_member_claims.borrow();
+        let claims = thread_member_claims.get(&party_ref)?;
+        Some(
+            claims
+                .iter()
+                .filter(|(_, thread_ref)| canonical_member_ref(aliases, thread_ref) == canonical)
+                .map(|(id, _)| *id)
+                .collect(),
+        )
+    }
+
+    /// Caches one walk of `party_ref`'s thread-member claims, as
+    /// `(claim id, thread reference)` pairs, read in the current event's
+    /// transaction before it wrote anything.
+    fn note_thread_member_claims(
+        &self,
+        party_ref: EntityId,
+        claims: impl IntoIterator<Item = (EntityId, String)>,
+    ) {
+        self.thread_member_claims
+            .borrow_mut()
+            .insert(party_ref, claims.into_iter().collect());
+    }
+
     /// Folds in the effects of one event whose transaction HAS COMMITTED.
     /// Applying a delta before the commit would let a rolled-back event poison
     /// every later lookup in the pass.
@@ -404,6 +446,11 @@ impl CommProjectorIndex {
         if let Some((key, occurred_at)) = delta.projected_thread_transition {
             self.note_thread_transition(key, occurred_at);
         }
+        if let Some((party_ref, thread_ref, claim_id)) = delta.minted_thread_member_claim
+            && let Some(claims) = self.thread_member_claims.get_mut().get_mut(&party_ref)
+        {
+            claims.insert(claim_id, thread_ref);
+        }
     }
 }
 
@@ -413,6 +460,10 @@ impl CommProjectorIndex {
 struct ProjectorIndexDelta {
     consumed_gate_ids: Vec<(PartyChannelKey, EntityId)>,
     projected_thread_transition: Option<(PartyThreadKey, (u64, bool))>,
+    /// The thread-member claim a join minted, as `(party, the thread
+    /// reference its value names, claim id)`: the index's cached walk of
+    /// that party's claims gains it.
+    minted_thread_member_claim: Option<(EntityId, String, EntityId)>,
     /// The heads the rule minted, superseded or retracted. The index reads
     /// none of them; an in-write projection reports them to its writer.
     heads: Vec<EntityId>,
