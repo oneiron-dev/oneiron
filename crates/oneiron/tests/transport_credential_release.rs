@@ -885,3 +885,240 @@ fn member_peer_window_withholds_machine_signed_claim_with_credential() -> Result
     assert_unchanged(&fixture.vault, &[&machine, &claim])?;
     Ok(())
 }
+
+fn witness_message_with_signature(
+    vault: &Vault,
+    conversation: EntityId,
+    signature: &str,
+) -> Result<StoredRow> {
+    let actor = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let receipt = vault
+        .memory(actor, EdgeActorClass::Human)
+        .witness(&oneiron::WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: None,
+            thread_audience: None,
+            messages: vec![oneiron::WitnessMessage {
+                id: None,
+                author: oneiron::WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: "hello".to_owned(),
+                parts: Some(vec![oneiron::ContentPart::Text {
+                    text: "hello".to_owned(),
+                    signature: Some(signature.to_owned()),
+                }]),
+                metadata: None,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            }],
+            occurred_at: LEARNED_AT,
+            assertions: oneiron::memory::WitnessAssertions::default(),
+        })
+        .expect("the public witness door accepts the canonical signed text part");
+    let id = EntityId::from_hex(&receipt.messages[0].id)?;
+    let row = read_stored_row(vault, id)?;
+    let body: serde_json::Value =
+        rmp_serde::from_slice(&row.body).expect("canonical witness MESSAGE map");
+    assert_eq!(body["parts"][0]["kind"], "text");
+    assert_eq!(body["parts"][0]["signature"], signature);
+    Ok(row)
+}
+
+#[test]
+fn member_peer_window_withholds_message_with_credential_signature() -> Result<()> {
+    let fixture = member_fixture()?;
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let conversation = EntityId::now();
+    let control_message = witness_message_with_signature(
+        &fixture.vault,
+        conversation,
+        "provider-signature-reference",
+    )?;
+    let credential_message =
+        witness_message_with_signature(&fixture.vault, conversation, &credential)?;
+    assert!(
+        credential_message
+            .body
+            .windows(credential.len())
+            .any(|part| part == credential.as_bytes()),
+        "scan-Off stores the original signature credential before export"
+    );
+    let mut control_body: serde_json::Value =
+        rmp_serde::from_slice(&control_message.body).expect("control MESSAGE");
+    control_body["parts"][0]["signature"] = serde_json::Value::String(credential.clone());
+    let credential_body: serde_json::Value =
+        rmp_serde::from_slice(&credential_message.body).expect("credential MESSAGE");
+    assert_eq!(control_body, credential_body, "only the signature differs");
+    let key = WindowKey::new(WINDOW);
+    let window = fixture.manager.open_window(&key)?;
+    assert_exact(&window.doc, &control_message);
+    assert_exact(&window.doc, &credential_message);
+    let member = filtered_window_doc_for_peer(
+        &fixture.vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+        PeerMachine::Unknown,
+    )?;
+    // CONTROL: a signed MESSAGE crosses byte-exact, including its signature.
+    assert_exact(&member, &control_message);
+    let entities = member.get_map("entities");
+    assert!(
+        entities.get(&credential_message.id.to_hex()).is_none(),
+        "a MESSAGE with a credential signature stays home whole"
+    );
+    entities.for_each(|_, value| {
+        let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+            panic!("entity values must be binary metadata plus body");
+        };
+        assert!(
+            !bytes
+                .windows(credential.len())
+                .any(|part| part == credential.as_bytes()),
+            "no member entity may carry the original credential bytes"
+        );
+    });
+    assert_unchanged(&fixture.vault, &[&control_message, &credential_message])?;
+    Ok(())
+}
+
+#[test]
+fn member_peer_window_withholds_note_with_credential_proposal() -> Result<()> {
+    let fixture = member_fixture()?;
+    let vault = &fixture.vault;
+    let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let control_text = "Move the standup to Tuesday.";
+    let credential_text = format!("Rotate the token {credential} before Tuesday.");
+    let control_note = vault
+        .create_note("research", "The weekly review covers the schedule.", actor)
+        .expect("control NOTE");
+    let credential_note = vault
+        .create_note("research", "The weekly review covers the agenda.", actor)
+        .expect("credential NOTE");
+    let control_fork = vault
+        .fork_note(
+            control_note,
+            &oneiron::note::NoteProgramEdit::Rewrite {
+                text: control_text.to_owned(),
+            },
+            actor,
+        )
+        .expect("undecided control fork");
+    let credential_fork = vault
+        .fork_note(
+            credential_note,
+            &oneiron::note::NoteProgramEdit::Rewrite {
+                text: credential_text.clone(),
+            },
+            actor,
+        )
+        .expect("undecided credential fork");
+    let carrier_key = |note: EntityId, fork: EntityId| {
+        format!("note_proposal_doc:v1:{}:{}", note.to_hex(), fork.to_hex())
+    };
+    let control_carrier = carrier_key(control_note, control_fork);
+    let credential_carrier = carrier_key(credential_note, credential_fork);
+    let control_stored = read_stored_row(vault, control_note)?;
+    let credential_stored = read_stored_row(vault, credential_note)?;
+    let control_month = WindowKey::from_timestamp(vault.get_learned_at(&control_note)?);
+    let credential_month = WindowKey::from_timestamp(vault.get_learned_at(&credential_note)?);
+    let months = std::collections::BTreeSet::from([
+        control_month.as_str().to_owned(),
+        credential_month.as_str().to_owned(),
+    ]);
+    let mut member_docs = Vec::new();
+    for month in months {
+        let key = WindowKey::new(month);
+        let window = fixture.manager.open_window(&key)?;
+        if key == credential_month {
+            let bytes = map_get_bytes(&window.doc.get_map("documents"), &credential_carrier)
+                .expect("the opened window mirrors the stored credential proposal");
+            let stored: String = rmp_serde::from_slice(&bytes).expect("stored proposal text");
+            assert_eq!(stored, credential_text);
+            assert!(
+                bytes
+                    .windows(credential.len())
+                    .any(|part| part == credential.as_bytes()),
+                "scan-Off stores the original proposal credential before export"
+            );
+        }
+        let member = filtered_window_doc_for_peer(
+            vault,
+            &window.doc,
+            &key,
+            FederationGrantScope::vault(SHARED),
+            &fixture.selector,
+            PeerMachine::Unknown,
+        )?;
+        member_docs.push((key, member));
+    }
+    let member_of = |month: &WindowKey| {
+        member_docs
+            .iter()
+            .find(|(key, _)| key == month)
+            .map(|(_, doc)| doc)
+            .expect("member export of the NOTE month")
+    };
+    // CONTROL: the clean NOTE and its undecided proposal carrier cross.
+    let control_doc = member_of(&control_month);
+    assert_exact(control_doc, &control_stored);
+    let control_bytes = map_get_bytes(&control_doc.get_map("documents"), &control_carrier)
+        .expect("the clean proposal carrier crosses to the member peer");
+    let control_carried: String =
+        rmp_serde::from_slice(&control_bytes).expect("decode clean proposal text");
+    assert_eq!(control_carried, control_text);
+
+    let credential_doc = member_of(&credential_month);
+    assert!(
+        credential_doc
+            .get_map("entities")
+            .get(&credential_note.to_hex())
+            .is_none(),
+        "a NOTE with a credential proposal stays home whole"
+    );
+    assert!(
+        credential_doc
+            .get_map("documents")
+            .get(&credential_carrier)
+            .is_none(),
+        "the credential proposal document stays home"
+    );
+    assert!(
+        credential_doc
+            .get_map("note_forks")
+            .get(&credential_fork.to_hex())
+            .is_none(),
+        "the credential NOTE fork stays home"
+    );
+    let credential_documents = format!("note_proposal_doc:v1:{}:", credential_note.to_hex());
+    for (_, doc) in &member_docs {
+        doc.get_map("documents").for_each(|key, _| {
+            assert!(
+                !key.starts_with(&credential_documents),
+                "no document carrier of the withheld NOTE may cross"
+            );
+        });
+        doc.get_map("note_proposals").for_each(|_, _| {
+            panic!("bare undecided forks have no proposal bundles");
+        });
+        for map in ["entities", "documents", "note_forks", "note_proposals"] {
+            doc.get_map(map).for_each(|_, value| {
+                let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+                    panic!("{map} values must be binary carriers");
+                };
+                assert!(
+                    !bytes
+                        .windows(credential.len())
+                        .any(|part| part == credential.as_bytes()),
+                    "no member {map} carrier may hold the credential bytes"
+                );
+            });
+        }
+    }
+    assert_unchanged(vault, &[&control_stored, &credential_stored])?;
+    Ok(())
+}
