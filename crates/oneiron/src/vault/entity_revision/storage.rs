@@ -469,11 +469,66 @@ fn raw_for_revision(
     }
 }
 
+/// Text fields published from a live revision by the idle pass or a room.
+/// Claims keep their value index text, not generic string leaves; a claim
+/// that is not surfaceable must not publish.
+pub(crate) fn publication_text_fields(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+    live: RevisionRef,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<Option<Vec<(String, String)>>> {
+    let fields = if entity_type == crate::registry::ENTITY_TYPE_CLAIM {
+        let claim = crate::write_envelope::claim_body::decode_claim_body(body, true)?;
+        if !crate::claim::claim_surfaceable(&claim) {
+            return Ok(None);
+        }
+        let text = crate::store::claim_lineage::claim_value_index_text(&claim.value);
+        if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![("val".to_owned(), text)]
+        }
+    } else {
+        revision_text_fields(store, txn, id, live, body)?
+    };
+    Ok(Some(fields))
+}
+
+/// Reads fields only for a room row whose live revision still needs to
+/// publish. Births and metadata-only restages need no replacement index.
+pub(crate) fn room_restage_text_fields(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<Option<Vec<(String, String)>>> {
+    let Some(current) = state(store, txn, id)? else {
+        return Ok(None);
+    };
+    if current.live == current.indexed {
+        return Ok(None);
+    }
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
+        .ok_or(Error::CorruptedIndex("revision without entity"))?;
+    let live = raw_for_revision(store, txn, id, &raw, None)?;
+    publication_text_fields(
+        store,
+        txn,
+        id,
+        current.live,
+        live[0],
+        &live[ENTITY_METADATA_HEADER_LEN..],
+    )
+}
+
 /// Publishes the revision a room holds pending for `id`. A room indexes what
-/// it stages at once and runs no idle pass, so once it indexes a row it put,
-/// the row's indexed revision is its live one; base keeps its deferred
-/// interval. True when the body is not the one indexed before, so an index
-/// of the row that the room did not restage describes another body.
+/// it stages at once and runs no idle pass: a Put-only restage derives its
+/// text from the live body before publication, while explicit text or vector
+/// writes publish through their own apply. Base keeps its deferred interval.
+/// True when the body is not the one indexed before, so an index of the row
+/// that the room did not restage describes another body.
 pub(crate) fn publish_room_revision(
     store: &impl ManifestDbs,
     txn: &mut RwTxn<'_>,

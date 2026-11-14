@@ -112,3 +112,203 @@ fn a_session_pipeline_run_stages_its_telemetry_row_in_the_room() -> Result<()> {
     session.close()?;
     Ok(())
 }
+
+fn person_name_body(name: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
+    )
+    .expect("encode person name");
+    body
+}
+
+fn put_indexed_person(vault: &Vault, id: EntityId, name: &str) -> Result<()> {
+    vault
+        .batch()
+        .put(
+            &id,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            &person_name_body(name),
+        )
+        .text(&id, &[("name", name)])
+        .commit()
+}
+
+fn restage_room_person(
+    session: &crate::off_record::OffRecordSession<'_>,
+    id: EntityId,
+    name: &str,
+) -> Result<()> {
+    use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+
+    let route = session.write_route()?;
+    let conversation = session.overlay_conversation_shell()?;
+    let occurred = TimeRange { start: 2, end: 2 };
+    let entry = JournalEntry {
+        scope: JournalScope::new(conversation, id),
+        role: JournalRole::TurnOwnedArtifact,
+        occurred,
+        learned_at: 2,
+        source_run: None,
+        op: crate::batch::BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_PERSON,
+            occurred,
+            learned_at: 2,
+            row_version: None,
+            data: person_name_body(name),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        },
+    };
+    session.overlay_write_routed(&route, |wtxn, apply| apply(wtxn, entry))
+}
+
+#[test]
+fn a_room_put_only_restage_publishes_its_revision_at_once() -> Result<()> {
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x9B);
+    put_indexed_person(&vault, id, "Owen Marsh")?;
+    let old_codes = crate::batch::generate_phonetic_codes("Owen Marsh");
+    let new_codes = crate::batch::generate_phonetic_codes("Yuki Tanaka");
+    let old_refs: Vec<_> = old_codes.iter().map(String::as_str).collect();
+    let new_refs: Vec<_> = new_codes.iter().map(String::as_str).collect();
+    assert!(
+        vault
+            .query()
+            .search_phonetic(&old_refs)
+            .run()?
+            .iter()
+            .any(|row| row.id == id),
+        "base holds the old name codes"
+    );
+    assert!(
+        vault
+            .query()
+            .search_text("Marsh", 10)
+            .run()?
+            .iter()
+            .any(|row| row.id == id),
+        "base holds the old name text"
+    );
+
+    let session = vault.off_record_session_vault().enter(
+        "sess-put-only-restage",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    restage_room_person(&session, id, "Yuki Tanaka")?;
+    {
+        let view = session.read_view()?;
+        let rtxn = vault.store.env.read_txn()?;
+        let record = crate::ports::EntityStoreRead::port_entity_record(&view, &rtxn, &id)?
+            .expect("room holds the restaged person");
+        let body = rmpv::decode::read_value(&mut std::io::Cursor::new(record.body))
+            .expect("decode room person");
+        let name = body
+            .as_map()
+            .expect("person body is a map")
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("name"))
+            .and_then(|(_, value)| value.as_str());
+        assert_eq!(name, Some("Yuki Tanaka"));
+        drop(rtxn);
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_phonetic(&old_refs)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the old name codes stop answering as soon as the Put lands"
+        );
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_phonetic(&new_refs)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the new name codes answer without a Text apply"
+        );
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("Marsh", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the old name text stops answering"
+        );
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_text("Tanaka", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the live body's name text answers at once"
+        );
+    }
+    session.close()?;
+    Ok(())
+}
+
+#[test]
+fn a_room_restage_with_its_text_keeps_the_text_it_sent() -> Result<()> {
+    use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+
+    let (_dir, vault) = open_test_vault();
+    let id = entity_id(0x9C);
+    put_indexed_person(&vault, id, "Owen Marsh")?;
+    let session = vault.off_record_session_vault().enter(
+        "sess-restage-with-text",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    restage_room_person(&session, id, "Yuki Tanaka")?;
+    let route = session.write_route()?;
+    let entry = JournalEntry {
+        scope: JournalScope::new(session.overlay_conversation_shell()?, id),
+        role: JournalRole::TurnOwnedArtifact,
+        occurred: TimeRange { start: 2, end: 2 },
+        learned_at: 2,
+        source_run: None,
+        op: crate::batch::BatchOp::Text {
+            id,
+            fields: vec![("name".to_owned(), "Yuki Tanaka".to_owned())],
+        },
+    };
+    session.overlay_write_routed(&route, |wtxn, apply| apply(wtxn, entry))?;
+    {
+        let view = session.read_view()?;
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_text("Tanaka", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the following Text apply keeps its own name postings"
+        );
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("Marsh", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == id),
+            "the following Text apply removes the old name postings"
+        );
+    }
+    session.close()?;
+    Ok(())
+}
