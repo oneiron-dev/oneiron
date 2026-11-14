@@ -14,7 +14,7 @@
 //! An onboarding that reserved her slot before its workspace was
 //! established is refused when it establishes it, if her companion runs it
 //! by then (review round 1 of #7656). That case stops an onboarding after
-//! its first step through `oneiron::test_doors::member_slot_reservation`,
+//! its first step through `oneiron::test_doors::roster_slot_reservation`,
 //! so it runs only under `--cfg oneiron_test_support`; the other cases use
 //! doors on main: `RUSTFLAGS="--cfg oneiron_test_support" cargo test -p
 //! oneiron --all-features --test companion_split`.
@@ -366,7 +366,7 @@ fn a_co_owner_who_brings_the_house_of_her_workspace_is_refused() -> Result<()> {
 #[cfg(oneiron_test_support)]
 #[test]
 fn a_reserved_slot_in_an_unestablished_workspace_still_keeps_the_split() -> Result<()> {
-    use oneiron::test_doors::member_slot_reservation::reserve_member_slot;
+    use oneiron::test_doors::roster_slot_reservation::reserve_member_slot;
     let fx = fixture()?;
     let member = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
     let born = fx.birth("garden.companion.b")?;
