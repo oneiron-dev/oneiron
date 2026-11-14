@@ -49,8 +49,11 @@ pub(crate) async fn run_current_board(
         .lock()
         .await
         .acknowledged_residence(&(actor.entity_ref(), connection.0.clone()));
+    // A pumped run's code run is its attempt, so the run's pad lives under
+    // the attempt's id (OF-548).
+    let run = attempt.and_then(|attempt| oneiron::EntityId::from_bytes(*attempt.as_bytes()).ok());
     let (mut sections, omissions, hooks) = run_board_sections(
-        server, actor, &read, &packs, &pins, room, session, &layout, &resident, &mut rows,
+        server, actor, &read, &packs, &pins, room, session, run, &layout, &resident, &mut rows,
     )?;
     rows.extend(crate::device_local::changed_line_rows(&changes));
     rows.extend(crate::device_local::changed_line_rows(&board));
@@ -375,7 +378,8 @@ pub(super) fn run_lane_reads(
 
 /// [`mcp_board_sections`] for a pumped run's agent: VERBS, WORLDS, the
 /// MEMORIES the policy manifest and its hook `pins` reach, TASKS with its
-/// people and children, the SCRATCHPAD of the run's bound `session`, PACKS
+/// people and children, the SCRATCHPAD of the run's bound `session` (the
+/// pad durable code run `run` writes there, when the board names one), PACKS
 /// and the packs' own sections. `pins` tag the TASKS rows they name and pin
 /// their other rows into MEMORIES, as on a connector's board. MEMORIES
 /// joins the shared pins the agent sees of `room`, the room the run works
@@ -389,6 +393,7 @@ pub(super) fn run_board_sections(
     pins: &[oneiron::context_board::HookPin],
     room: Option<oneiron::EntityId>,
     session: Option<&str>,
+    run: Option<oneiron::EntityId>,
     layout: &oneiron::context_board::BoardLayout,
     resident: &std::collections::BTreeSet<oneiron::EntityId>,
     served: &mut Vec<oneiron::EntityId>,
@@ -536,7 +541,7 @@ pub(super) fn run_board_sections(
         hooks.receipt = Some(memories.receipt);
     }
     sections.push(tasks_section);
-    sections.extend(run_scratchpad_section(server, actor, session, served));
+    sections.extend(run_scratchpad_section(server, actor, session, run, served));
     sections.push(
         oneiron::context_board::BoardSection::new(
             "PACKS".to_owned(),
@@ -573,13 +578,16 @@ pub(super) fn run_board_sections(
 
 /// SCRATCHPAD (FIX 2340): the live pad of `session`, the session the run's
 /// host origin binds, read as the run's agent itself on this device, as the
-/// MCP and HTTP boards serve an agent's. No bound session, an actor that is
-/// not an agent, or a session with no live pad renders none: no pad is made
-/// and no session is picked in its place.
+/// MCP and HTTP boards serve an agent's. When the board names durable code
+/// run `run`, the pad is the one that run writes on `session`, where the
+/// run's own scratchpad verbs land (OF-548). No bound session, an actor that
+/// is not an agent, or a session with no live pad renders none: no pad is
+/// made and no session is picked in its place.
 fn run_scratchpad_section(
     server: &SyncServer,
     actor: oneiron::WriteActor,
     session: Option<&str>,
+    run: Option<oneiron::EntityId>,
     served: &mut Vec<oneiron::EntityId>,
 ) -> Option<oneiron::context_board::BoardSection> {
     let session = session?;
@@ -590,7 +598,11 @@ fn run_scratchpad_section(
         .vault
         .memory(actor.entity_ref(), actor.actor_class())
         .at(oneiron::claim::CallerLocality::OnDevice);
-    match memory.scratchpad_board_section(session) {
+    let board = match run {
+        Some(run) => memory.scratchpad_board_section_in_run(session, run),
+        None => memory.scratchpad_board_section(session),
+    };
+    match board {
         Ok(Some(board)) => {
             served.push(board.pad);
             Some(board.section)
