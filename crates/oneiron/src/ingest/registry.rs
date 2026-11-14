@@ -266,7 +266,7 @@ const fn provider_config(
         default_admission: ClaimApprovalStatus::Proposed,
     }
 }
-static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 24] = [
+static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 25] = [
     IngestSourceRegistration::new(
         IngestSourceConfig {
             source_id: super::AG_UI_SOURCE_ID,
@@ -478,6 +478,29 @@ static INGEST_SOURCE_ENTRIES: [IngestSourceRegistration; 24] = [
         &super::exports::ExportSource {
             source_id: "hook-transcript",
             layout: super::exports::ExportLayout::HookTranscript,
+        },
+    ),
+    IngestSourceRegistration::new(
+        IngestSourceConfig {
+            source_id: "slack",
+            label: "slack",
+            format: IngestSourceFormat::NativeExport,
+            adapter_skill: Some(IngestAdapterSkillRef {
+                skill_id: "builtin.ingest.slack",
+                version: "1",
+            }),
+            writes_claims: false,
+            trust_ceiling: IngestTrustCeiling {
+                claim_source: ClaimSource::Imported,
+                max_auto_sensitivity: None,
+                receipted: false,
+                warned: false,
+            },
+            default_admission: ClaimApprovalStatus::Proposed,
+        },
+        &super::exports::ExportSource {
+            source_id: "slack",
+            layout: super::exports::ExportLayout::SlackWorkspace,
         },
     ),
     IngestSourceRegistration::new(

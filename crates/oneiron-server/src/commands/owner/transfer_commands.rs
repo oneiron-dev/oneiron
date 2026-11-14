@@ -265,6 +265,7 @@ pub fn import(command: ImportCommand) -> anyhow::Result<()> {
         ImportCommand::HookTranscript(args) => {
             return super::history_import::import_history(HistorySource::HookTranscript, *args);
         }
+        ImportCommand::Slack(args) => return super::history_import::slack::import_slack(*args),
         ImportCommand::Notes(args) => return super::history_import::notes::import_notes(*args),
         ImportCommand::Archive(args) => return import_archive(*args),
         ImportCommand::Folder(command) => {

@@ -45,9 +45,10 @@ pub use owner_args::{
     BackupArgs, DoctorArgs, ExportArgs, HandoffAlarmAckArgs, HandoffAlarmsCommand,
     ImportArchiveArgs, ImportBatchArgs, ImportCommand, ImportDecisionArgs, ImportFolderAttachArgs,
     ImportFolderCommand, ImportFolderListArgs, ImportFolderPathArgs, ImportFolderRescanArgs,
-    ImportNotesArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs, RecoverWindowArgs,
-    RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass, SecretRegisterArgs,
-    SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand, ServeOnlyArgs, WhoamiArgs,
+    ImportNotesArgs, ImportSlackArgs, ImportSourceArgs, MaintainArgs, RecoverClockArgs,
+    RecoverWindowArgs, RestoreArgs, RunArgs, RunDecisionArgs, RunsCommand, SecretClass,
+    SecretRegisterArgs, SecretRotateArgs, SecretScanArgs, SecretScanSwitch, SecretsCommand,
+    ServeOnlyArgs, WhoamiArgs,
 };
 pub use owner_args::{
     EmbeddingKind, EmbeddingSpaceArgs, EmbeddingSpaceBindArgs, EmbeddingSpaceCandidateArgs,

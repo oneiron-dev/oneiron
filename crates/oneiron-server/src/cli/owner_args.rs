@@ -727,6 +727,11 @@ pub enum ImportCommand {
     /// `events.jsonl`) or a Cursor agent transcript. One file, under a folder
     /// listed in `[import] hook_transcript_roots`.
     HookTranscript(Box<ImportSourceArgs>),
+    /// A Slack workspace export: the zip, or the unzipped folder. Each
+    /// conversation reads to the members Slack shares it with whom
+    /// `--members` maps to a vault person, and to you; every other member
+    /// is kept as a contact, by name, who reads nothing.
+    Slack(Box<ImportSlackArgs>),
     /// A folder of linked markdown notes (an Obsidian vault, an agent's
     /// memory folder): writes the batch of new notes and links to `--out` and
     /// prints the digest that approves or declines it.
@@ -841,6 +846,28 @@ pub struct ImportSourceArgs {
     /// export and nothing else.
     #[arg(long, conflicts_with_all = ["dry_run", "queue"])]
     pub hosted: bool,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+#[derive(Args, Clone, Debug)]
+pub struct ImportSlackArgs {
+    /// The export: its zip, or the unzipped folder holding `users.json`.
+    /// Only this path is read: symbolic links under it are not followed.
+    pub path: PathBuf,
+
+    /// The member map: a JSON object from Slack member id to `"owner"` (your
+    /// own member), a vault person's id in hex, or `null` (a contact). A
+    /// member it leaves out is a contact. `{}` imports a workspace no one in
+    /// the vault was in, which then reads to you alone.
+    #[arg(long)]
+    pub members: PathBuf,
+
+    /// The workspace's name, as the report shows it: by default the export's
+    /// file or folder name, up to " Slack export".
+    #[arg(long)]
+    pub workspace: Option<String>,
 
     #[command(flatten)]
     pub serve: ServeArgs,

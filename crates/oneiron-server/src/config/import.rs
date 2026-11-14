@@ -75,7 +75,10 @@ impl ImportConfig {
         let (set, default) = match source {
             HistorySource::ClaudeCode => (&self.claude_code_root, "~/.claude/projects"),
             HistorySource::Codex => (&self.codex_root, "~/.codex/sessions"),
-            HistorySource::Chatgpt | HistorySource::Claude | HistorySource::HookTranscript => {
+            HistorySource::Chatgpt
+            | HistorySource::Claude
+            | HistorySource::HookTranscript
+            | HistorySource::Slack => {
                 return None;
             }
         };

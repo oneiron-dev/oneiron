@@ -16,7 +16,7 @@
 
 use std::collections::BTreeSet;
 
-use super::{HistorySharing, HistorySource};
+use super::{HistorySharing, HistorySharingCounts, HistorySource};
 use crate::error::Result;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_PERSON;
@@ -33,7 +33,8 @@ fn key(source: HistorySource, container: &str) -> String {
 
 /// The source policy `sharing`'s container reads under, written in `txn` the
 /// first time and its readers set again on each later import: every member
-/// the owner mapped to a PERSON, and the importer `actor`'s own PERSON.
+/// the owner mapped to a PERSON, and the importer `actor`'s own PERSON. The
+/// counts say how many PERSONs read it and how many members are contacts.
 ///
 /// # Errors
 ///
@@ -46,7 +47,7 @@ pub(super) fn container_policy_in_txn(
     sharing: &HistorySharing,
     actor: EntityId,
     at: u64,
-) -> MemoryResult<EntityId> {
+) -> MemoryResult<(EntityId, HistorySharingCounts)> {
     let mut readers = BTreeSet::new();
     for person in sharing
         .members
@@ -63,15 +64,25 @@ pub(super) fn container_policy_in_txn(
     readers.insert(importer_person_in(vault, txn, actor)?.ok_or_else(|| {
         MemoryError::bad_request("a shared conversation is imported by a person who reads it")
     })?);
+    let contacts: BTreeSet<&str> = sharing
+        .members
+        .iter()
+        .filter(|member| member.person.is_none() && !member.importer)
+        .map(|member| member.provider_id.as_str())
+        .collect();
+    let counts = HistorySharingCounts {
+        readers: u32::try_from(readers.len()).unwrap_or(u32::MAX),
+        unmapped: u32::try_from(contacts.len()).unwrap_or(u32::MAX),
+    };
     let key = key(source, &sharing.container);
     if let Some(policy) = POLICIES.get(&vault.store, txn, &key)? {
         source_audience::set_source_readers_in_txn(vault, txn, &policy, readers, actor, at)?;
-        return Ok(policy);
+        return Ok((policy, counts));
     }
     let policy =
         source_audience::create_source_policy_in_txn(vault, txn, readers, false, actor, at)?;
     POLICIES.put(&vault.store, txn, &key, &policy)?;
-    Ok(policy)
+    Ok((policy, counts))
 }
 
 /// The thread policy the conversation `native_id` lands under, below its
@@ -97,7 +108,7 @@ pub(super) fn conversation_thread_in_txn(
 }
 
 /// Whether `id` is a live PERSON in `txn`.
-fn live_person_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
+pub(super) fn live_person_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<bool> {
     Ok(
         crate::vault::live_entity_row_in_txn(&vault.store, txn, id)?.live_type()
             == Some(ENTITY_TYPE_PERSON),

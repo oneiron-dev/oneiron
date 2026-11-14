@@ -81,7 +81,7 @@ impl LedgerRow {
             return Ok(false);
         }
         let mut texts = vec![hash(message, false)];
-        if message.said_by == Some(UNKNOWN_SPEAKER) {
+        if message.said_by.as_deref() == Some(UNKNOWN_SPEAKER) {
             texts.push(hash(message, true));
         }
         for native_id in std::iter::once(&message.native_id).chain(&message.alias) {
@@ -139,7 +139,7 @@ fn key(source: HistorySource, native_id: &str) -> String {
 /// the source left the speaker unknown ([`UNKNOWN_SPEAKER`]). Words of an
 /// unknown speaker hash apart from the same words with the speaker known.
 pub(super) fn content_hash(message: &HistoryMessage) -> String {
-    hash(message, message.said_by == Some(UNKNOWN_SPEAKER))
+    hash(message, message.said_by.as_deref() == Some(UNKNOWN_SPEAKER))
 }
 
 /// Whether `landed`, the [`content_hash`]es of what landed of one message,
@@ -150,7 +150,7 @@ pub(super) fn content_hash(message: &HistoryMessage) -> String {
 /// revision the Dreamer reads.
 pub(super) fn holds(landed: &[String], message: &HistoryMessage) -> bool {
     let held = |unknown| landed.contains(&hash(message, unknown));
-    held(false) || (message.said_by == Some(UNKNOWN_SPEAKER) && held(true))
+    held(false) || (message.said_by.as_deref() == Some(UNKNOWN_SPEAKER) && held(true))
 }
 
 fn hash(message: &HistoryMessage, unknown_speaker: bool) -> String {

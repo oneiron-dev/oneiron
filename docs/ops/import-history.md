@@ -13,6 +13,7 @@ read the same config as `serve` (`--config`, `--vault-path`, `ONEIRON_*`).
 | `claude-code` | `~/.claude/projects`, one project's folder in it, or one session `.jsonl`. Given `~/.claude`, only `projects/` is read. |
 | `codex` | `~/.codex/sessions`, any year, month or day folder in it, or one rollout `.jsonl`. Given `~/.codex`, only `sessions/` is read. |
 | `hook-transcript` | One GitHub Copilot or Cursor session `.jsonl` a hook handed over, under a folder in `hook_transcript_roots` (below). Never a folder. |
+| `slack` | A Slack workspace export zip, or the unzipped folder holding `users.json`, with `--members <map.json>` (below). |
 
 ```bash
 oneiron import claude-code ~/.claude/projects --dry-run   # counts only; writes nothing
@@ -99,6 +100,41 @@ queued import logs the pass's count as `unreadable` on `queued import
 landed`. A file with no Copilot or Cursor record at all is refused, with its
 line count, and nothing lands. Re-reading a grown log lands only what is new,
 as for every source; hand it over again at each stop.
+
+## A Slack workspace export: who reads what
+
+A Slack export keeps Slack's own sharing (ARCH-0027 #import-audience). Each
+channel, private channel, group DM and DM lands as one conversation that reads
+to you and to the members Slack shares it with whom your member map gives a
+vault person. A public channel's members are the whole workspace, so it reads
+to every person you matched in that workspace.
+
+```bash
+oneiron import slack "Example Slack export Nov 1 2026.zip" --members members.json
+```
+
+`--members` is required. It maps each Slack member id (as `users.json` lists
+it) to `"owner"` (your own account in the workspace: its words land as yours),
+a vault person's id in hex, or `null`. A member the map leaves out, or maps to
+`null`, is a contact: its name and its words are kept, it reads nothing, and no
+person is made for it. `{}` imports a workspace no one in the vault was in: it
+reads to you alone. A map naming a member the workspace does not list, or
+naming `"owner"` twice, is refused before anything is written.
+
+```json
+{ "U012AB3CD": "owner", "U045EF6GH": "3f2a…", "U078IJ9KL": null }
+```
+
+The run ends with one line on the members, for example `Example: 0 of 7
+matched, kept as contacts, owner-only`. The JSON report adds a `workspace`
+object (`name`, `members`, `matched`, `contacts`, `owner_only`) and, on each
+conversation, `sharing` with the count of persons that read it (`readers`) and
+of contacts (`unmapped`). A later import of the same workspace with a longer
+map gives the newly mapped members their conversations, and one that maps a
+member to `null` takes their read away. `--workspace <name>` names the
+workspace in the report; by default it is the export's file or folder name up
+to " Slack export". The generic ingest registry refuses a Slack export: only
+this command keeps its sharing.
 
 ## Generic ingest registry projection
 
