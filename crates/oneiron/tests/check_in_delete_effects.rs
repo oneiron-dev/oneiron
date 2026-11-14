@@ -290,6 +290,17 @@ impl Org {
             .expect("shell read")
     }
 
+    /// Whether archived `note` is gone: an archive confirm hard-deletes the
+    /// record, where the cleanup's archive kept its body. A merely archived
+    /// record already reads as a deleted shell, so [`Self::deleted`] cannot
+    /// tell the two apart.
+    fn purged(&self, note: &str) -> bool {
+        self.vault
+            .get_raw(&EntityId::from_hex(note).expect("note id"))
+            .expect("raw read")
+            .is_none()
+    }
+
     /// The Owner approves pending check-in `id` over the effect it waits on,
     /// through `vault.check_in.answer`.
     fn owner_approves(&self, id: &str) {
@@ -530,12 +541,12 @@ fn the_owners_archive_confirm_goes_on_their_own_proof_and_records_it() {
         MEMORY_CODE_BAD_REQUEST,
         "an Owner's item names no check-in"
     );
-    assert!(!org.deleted(&note), "the refused item deletes nothing");
+    assert!(!org.purged(&note), "the refused item deletes nothing");
 
     let batch = org.confirm(org.owner, &[(&note, None)]);
     let receipt = archive_receipt(&batch, &note);
     assert!(receipt.existed);
-    assert!(org.deleted(&note), "the archived NOTE is deleted");
+    assert!(org.purged(&note), "the archived NOTE is deleted");
     assert_eq!(receipt.role, "owner");
     assert_eq!(
         receipt.check_in,
@@ -557,7 +568,7 @@ fn a_deputy_an_admin_and_a_member_confirm_archived_notes_at_once_and_record_why(
         let batch = org.confirm(person, &[(&note, None)]);
         let receipt = archive_receipt(&batch, &note);
         assert!(receipt.existed, "the {role}'s archived NOTE existed");
-        assert!(org.deleted(&note), "the {role}'s confirm applied");
+        assert!(org.purged(&note), "the {role}'s confirm applied");
         assert_eq!(receipt.role, admitted, "the {role} is admitted by role");
         assert_eq!(
             receipt.check_in,
@@ -583,7 +594,7 @@ fn a_stewards_confirm_of_its_own_archived_note_goes_at_once_as_own_item() {
     let batch = org.confirm(org.member, &[(&note, None)]);
     let receipt = archive_receipt(&batch, &note);
     assert!(receipt.existed);
-    assert!(org.deleted(&note), "the Steward's own confirm applied");
+    assert!(org.purged(&note), "the Steward's own confirm applied");
     assert_eq!(
         receipt.check_in,
         Some(decision("steward", Some("full-access"), "own_item", None)),
@@ -604,7 +615,7 @@ fn each_archived_note_a_steward_confirms_waits_on_its_own_check_in() {
         "each record waits on its own check-in"
     );
     assert!(
-        !org.deleted(&first) && !org.deleted(&second),
+        !org.purged(&first) && !org.purged(&second),
         "a waiting confirm deletes nothing"
     );
     let repeat = org.confirm(org.steward, &[(&first, None), (&second, None)]);
@@ -616,7 +627,7 @@ fn each_archived_note_a_steward_confirms_waits_on_its_own_check_in() {
     assert_eq!(archive_pending_id(&repeat, &second), second_ask);
     let early = org.confirm(org.steward, &[(&first, Some(&first_ask))]);
     archive_refusal(&early, &first);
-    assert!(!org.deleted(&first), "an unanswered check-in runs nothing");
+    assert!(!org.purged(&first), "an unanswered check-in runs nothing");
 
     org.owner_approves(&first_ask);
     assert!(
@@ -633,7 +644,7 @@ fn each_archived_note_a_steward_confirms_waits_on_its_own_check_in() {
     );
     let receipt = archive_receipt(&batch, &first);
     assert!(receipt.existed);
-    assert!(org.deleted(&first), "the approved record is deleted");
+    assert!(org.purged(&first), "the approved record is deleted");
     assert!(org.spent(&first_ask), "its delete spent its check-in");
     assert_eq!(
         receipt.check_in,
@@ -647,7 +658,7 @@ fn each_archived_note_a_steward_confirms_waits_on_its_own_check_in() {
     );
     archive_refusal(&batch, &second);
     assert!(
-        !org.deleted(&second),
+        !org.purged(&second),
         "the approval covers the record it was asked for only"
     );
     let again = org.confirm(org.steward, &[(&second, None)]);
