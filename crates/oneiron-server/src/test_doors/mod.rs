@@ -13,6 +13,7 @@ pub mod lfs_install_line;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
+pub mod mcp_carrier_release;
 pub mod mcp_surface;
 pub mod media_job_spend;
 pub mod native_board;

@@ -31,13 +31,18 @@
 //! may read the TASK and was not offered it yet, so a wake outlives a restart
 //! and reaches a connection that attaches later. It settles a staged wake once
 //! its TASK no longer owes it.
+//!
+//! The review pass also takes the child ends the settle writes staged
+//! (`oneiron::context_board::ChildDone`, census L2-38): each AGENT child's try
+//! that ended done, failed or abandoned rides its spawner's next tool result as
+//! a `children:<attempt id>` CARRIER line, naming the child and its end.
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::attempt_queue::AttemptQueue;
 use oneiron::context_board::{
-    CommittedTaskBoardState, PendingDiaryReview, PendingRoomWake, PendingTaskWake,
+    ChildDone, CommittedTaskBoardState, PendingDiaryReview, PendingRoomWake, PendingTaskWake,
     StreamConnectionId,
 };
 use tokio::sync::broadcast::error::{RecvError, TryRecvError};
@@ -154,6 +159,7 @@ impl SyncServer {
         loop {
             self.publish_pending_reviews().await;
             self.publish_staged_room_wakes().await;
+            self.publish_children_done().await;
             tokio::select! {
                 commit = commits.recv() => match commit {
                     Ok(()) | Err(RecvError::Lagged(_)) => {}
@@ -237,6 +243,34 @@ impl SyncServer {
                 tracing::warn!(
                     panicked = error.is_panic(),
                     "board publisher room wake settle did not finish"
+                );
+            }
+        }
+    }
+
+    /// One pass over the child ends the settle writes staged (census L2-38):
+    /// each is taken, and sent to its spawner's connections that subscribe to
+    /// their children. A connection with no keyframe yet takes nothing; the
+    /// board's refresh stays the floor.
+    async fn publish_children_done(&self) {
+        let vault = Arc::clone(self.vault());
+        let taken = tokio::task::spawn_blocking(move || ChildDone::take_all(&vault)).await;
+        match taken {
+            Ok(Ok(done)) if done.is_empty() => {}
+            Ok(Ok(done)) => {
+                self.mcp_registry
+                    .lock()
+                    .await
+                    .streams_mut()
+                    .publish_children_done(done);
+            }
+            Ok(Err(error)) => {
+                tracing::warn!(kind = ?error.kind(), "board publisher could not take staged child ends; it takes them at the next commit");
+            }
+            Err(error) => {
+                tracing::warn!(
+                    panicked = error.is_panic(),
+                    "board publisher child end take did not finish"
                 );
             }
         }
