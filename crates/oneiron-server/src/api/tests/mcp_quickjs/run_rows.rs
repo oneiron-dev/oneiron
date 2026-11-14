@@ -113,15 +113,18 @@ async fn quickjs_run_rows_need_the_connectors_binding() {
     )
     .await;
     assert!(body.get("error").is_none(), "{body}");
+    // The claim step's whole outcome leads the message (its error and code
+    // when it fails): a failure line is cut.
+    let put_claim = row_outcome(&body, "self.memory.put_claim");
     assert_eq!(
         (
             mode.vault.get_claim(&claim).unwrap().is_some(),
             row_outcome(&body, "self.memory.search")["kind"].clone(),
-            row_outcome(&body, "self.memory.put_claim")["kind"].clone(),
+            put_claim["kind"].clone(),
             step_outcomes(&body).len(),
         ),
         (true, json!("memory_search"), json!("memory_write"), 2),
-        "{body}"
+        "put_claim {put_claim} | {body}"
     );
 }
 

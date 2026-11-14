@@ -960,31 +960,53 @@ async fn quickjs_a_propose_only_slip_runs_code_whose_rows_write_are_refused() {
         "fixture check: the proposer's live ceiling is `proposed`"
     );
 
-    for path in ["/mcp", MCP_TOOL_FIRST_PATH] {
-        let args = mcp_merge_args(
-            mcp_endpoint_envelope(proposer, "write_memory"),
-            json!({"run_ref": "quickjs-propose-only", "task": "state a favorite drink"}),
-        );
-        let body = mcp_refusal(
-            &mode.server,
-            mcp_endpoint_call_request(path, label, "proposer", "execute_code", args),
-        )
-        .await;
-        assert_eq!(
-            body["error"]["data"]["error_code"], "code_run_failed",
-            "{path}: {body}"
-        );
-        // The slip holds no Write: the connector's gate refuses the run's
-        // claim write with its proof error, and the guest's step reports it
-        // (the a90ddad52eed run). The writer below runs the same program.
-        let refusal = r#"step failure: {"denied":"mcp_auth_required","reasonCodes":[]}"#;
-        assert!(
-            body["error"]["message"]
-                .as_str()
-                .is_some_and(|message| message.ends_with(refusal)),
-            "{path}: the run's claim write is refused: {body}"
-        );
-    }
+    let args = mcp_merge_args(
+        mcp_endpoint_envelope(proposer, "write_memory"),
+        json!({"run_ref": "quickjs-propose-only", "task": "state a favorite drink"}),
+    );
+    let body = mcp_refusal(
+        &mode.server,
+        mcp_endpoint_call_request("/mcp", label, "proposer", "execute_code", args.clone()),
+    )
+    .await;
+    assert_eq!(
+        body["error"]["data"]["error_code"], "code_run_failed",
+        "/mcp: {body}"
+    );
+    // The slip holds no Write: the connector's gate refuses the run's claim
+    // write with its proof error, and the guest's step reports it (the
+    // a90ddad52eed run). The writer below runs the same program.
+    let refusal = r#"step failure: {"denied":"mcp_auth_required","reasonCodes":[]}"#;
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .is_some_and(|message| message.ends_with(refusal)),
+        "/mcp: the run's claim write is refused: {body}"
+    );
+    // On the tool-first endpoint `execute_code` is the generated verb row
+    // (scripts/sdk/verbs/execute_code.json: foreign code in the isolated
+    // tier, no host writes), whose input sits under `arguments`. A durable
+    // run's envelope is refused at decode, before anything runs (the
+    // 6bb2488ab0ec run).
+    let body = mcp_refusal(
+        &mode.server,
+        mcp_endpoint_call_request(MCP_TOOL_FIRST_PATH, label, "proposer", "execute_code", args),
+    )
+    .await;
+    assert_eq!(
+        (
+            body["error"]["data"]["error_code"].clone(),
+            body["error"]["message"].clone()
+        ),
+        (
+            json!("tool_args_invalid"),
+            json!(
+                "execute_code arguments could not be decoded: unknown field `run_ref`, expected \
+                 one of `schema_version`, `actor`, `consent`, `arguments`, `page`, `cache`"
+            )
+        ),
+        "{MCP_TOOL_FIRST_PATH}: {body}"
+    );
     assert!(mode.vault.get_claim(&claim).unwrap().is_none());
     // So `/mcp` tells it, and a read-only slip, that they may run code: the
     // session admits a live credential that reads, and only a write inside
