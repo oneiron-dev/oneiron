@@ -75,6 +75,7 @@ mod step;
 mod step_failure;
 mod stewardship;
 mod sync_wake;
+mod task_brief;
 #[cfg(test)]
 pub(crate) mod test_support;
 #[cfg(test)]
@@ -105,6 +106,7 @@ pub use status::{
     AiHealth, AiStatus, CompactionState, CompactionStatus, IdleReason, UnservedNote,
     UnservedReason, WorkState, WorkStatus,
 };
+pub(crate) use task_brief::HostTaskBriefModel;
 pub(crate) use weave_lens::{
     WeaveLensCaller, render_live_weave_lens, render_live_weave_lens_for_run,
     render_live_weave_lens_listing,
