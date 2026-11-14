@@ -9,7 +9,9 @@
 //! install accepts it; a one-bin or malformed answer falls to clusters on an
 //! on-device embedder, or ends "none", never a forged descriptor. A
 //! non-controller cannot queue, and a re-proposal of an unbunched archive is
-//! refused when it is asked.
+//! refused when it is asked. The recipe reads a file-plane ASSET sample's body,
+//! never its manifest, and a sample's marked key masked (#7966 and #7967 review
+//! round 1); a proposal serves only while its caller reads every sample.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_axes_job`.
 #![cfg(oneiron_test_support)]
 
@@ -29,7 +31,8 @@ use oneiron::dreamer_runner::{
     AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
 use oneiron::embed::{Embedder, EmbedderLocality, PendingEmbeddingInput, PendingEmbeddingPayload};
-use oneiron::memory::Memory;
+use oneiron::memory::{MEMORY_CODE_NOT_FOUND, Memory};
+use oneiron::registry::ENTITY_TYPE_ASSET;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::write_root_goal;
@@ -37,7 +40,7 @@ use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{
     research_archive_install, research_archive_proposal, research_archive_propose_axes,
 };
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -580,4 +583,155 @@ fn a_reproposal_of_an_unbunched_archive_is_refused_when_asked() {
     let refused = propose(&owner_memory(&f), first_request(&f, &campaign))
         .expect_err("the root's archive is installed");
     assert!(refused.contains("immutable"), "{refused}");
+}
+
+/// A sample over 8 MiB is kept on the file plane, its revision stored as a
+/// manifest: the recipe reads the body file, never the manifest (#7966 and
+/// #7967 review round 1).
+#[test]
+fn a_file_plane_asset_sample_reads_as_its_body() {
+    let f = fixture();
+    let root = bound_root(&f, "axes-file-plane", "axes-file-plane");
+    let task = task(&f, "answer the customer's request");
+    let over_inline = |line: &str| line.repeat(8 * 1024 * 1024 / line.len() + 2);
+    // The body instance pool starts dry and fills once a put first wants an
+    // instance: the first large put stays in its row, the next is filed.
+    let prime = over_inline("a priming line for the body instance pool ");
+    f.vault
+        .put_entity(
+            &EntityId::now(),
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            prime.as_bytes(),
+        )
+        .expect("the priming asset");
+    let body = over_inline("a formal short file plane body line ");
+    let asset = EntityId::now();
+    f.vault
+        .put_entity(
+            &asset,
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            body.as_bytes(),
+        )
+        .expect("the large asset");
+    let revision = f
+        .vault
+        .pin_entity_revision(&asset)
+        .expect("the asset's revision");
+    let campaign = Campaign {
+        root,
+        task,
+        samples: vec![
+            ArchiveOutputRef {
+                entity: asset,
+                revision: revision.to_hex(),
+            },
+            artifact(&f, "axes-file-plane-b.txt", "a formal, long answer"),
+            artifact(&f, "axes-file-plane-c.txt", "a casual, short answer"),
+            artifact(&f, "axes-file-plane-d.txt", "a casual, long answer"),
+        ],
+    };
+    let request = propose(&owner_memory(&f), first_request(&f, &campaign))
+        .expect("the owner queues the request");
+    let host = ScriptedHost::new(Some(TWO_AXES), None);
+    let state = run_job(&f, &host);
+    assert!(
+        matches!(state, CampaignArchiveProposalState::Proposed { .. }),
+        "the Coach proposed: {state:?}"
+    );
+    assert_eq!(proposal_state(&f, request), state, "the state reads back");
+    let briefs = host.briefs.borrow();
+    assert_eq!(briefs.len(), 1, "the recipe ran once");
+    let text = &briefs[0]
+        .samples
+        .iter()
+        .find(|sample| sample.output.entity == asset)
+        .expect("the asset sample is in the brief")
+        .text;
+    assert!(
+        !text.contains("oneiron.asset-file.v1"),
+        "the recipe never reads a manifest: {text:?}"
+    );
+    assert_eq!(
+        text.as_str(),
+        &body[..4096],
+        "the recipe reads the body file, clipped"
+    );
+}
+
+/// A key the write door marked in a sample reaches the recipe masked; the
+/// rest of the sample's words stay (#7967 review round 1).
+#[test]
+fn a_marked_key_never_reaches_the_coach() {
+    let f = fixture();
+    let root = bound_root(&f, "axes-keyed", "axes-keyed");
+    let task = task(&f, "answer the customer's request");
+    // A bare provider token, joined at run time so no key literal sits in the
+    // source. No `=` or `:`: the masked copy reads clean to the release scan.
+    let token = ["gh", "p_", "0123456789abcdefghijklmnopqrstuvwxyz"].concat();
+    let before = "a formal short answer with deploy token ";
+    let after = " inside and more words";
+    let keyed = artifact(&f, "axes-keyed-a.txt", &format!("{before}{token}{after}"));
+    let campaign = Campaign {
+        root,
+        task,
+        samples: vec![
+            keyed.clone(),
+            artifact(&f, "axes-keyed-b.txt", "a formal, long answer"),
+            artifact(&f, "axes-keyed-c.txt", "a casual, short answer"),
+            artifact(&f, "axes-keyed-d.txt", "a casual, long answer"),
+        ],
+    };
+    propose(&owner_memory(&f), first_request(&f, &campaign)).expect("the owner queues the request");
+    let host = ScriptedHost::new(Some(TWO_AXES), None);
+    let state = run_job(&f, &host);
+    assert!(
+        matches!(state, CampaignArchiveProposalState::Proposed { .. }),
+        "the Coach proposed: {state:?}"
+    );
+    let briefs = host.briefs.borrow();
+    assert_eq!(briefs.len(), 1, "the recipe ran once");
+    let text = &briefs[0]
+        .samples
+        .iter()
+        .find(|sample| sample.output == keyed)
+        .expect("the keyed sample is in the brief")
+        .text;
+    assert!(!text.contains(&token), "the brief lacks the key: {text:?}");
+    assert!(
+        text.starts_with(before) && text.ends_with(after),
+        "the brief keeps the sample's other words: {text:?}"
+    );
+}
+
+/// The axes are drawn from the samples' words: once a sample no longer reads
+/// for the caller, its request's answer is withheld (#7966 review round 1).
+#[test]
+fn a_proposal_serves_only_while_its_caller_reads_every_sample() {
+    let f = fixture();
+    let campaign = campaign(&f, "axes-withdrawn");
+    let request = propose(&owner_memory(&f), first_request(&f, &campaign))
+        .expect("the owner queues the request");
+    let host = ScriptedHost::new(Some(TWO_AXES), None);
+    let state = run_job(&f, &host);
+    assert!(
+        matches!(state, CampaignArchiveProposalState::Proposed { .. }),
+        "the Coach proposed: {state:?}"
+    );
+    assert_eq!(proposal_state(&f, request), state, "the state serves");
+    assert!(
+        f.vault
+            .delete_entity(&campaign.samples[0].entity)
+            .expect("the owner deletes a sample"),
+        "the sample existed"
+    );
+    let refused = research_archive_proposal(
+        &owner_memory(&f),
+        CampaignArchiveProposalRequest { request },
+    )
+    .expect_err("the answer is withheld once a sample no longer reads");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
 }
