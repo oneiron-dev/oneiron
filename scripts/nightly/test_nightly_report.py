@@ -802,8 +802,8 @@ class BudgetSummaryTest(unittest.TestCase):
             (out / "budget-baseline-proposal.tsv").read_text().splitlines(),
             [
                 "host\ttest\tseconds\tnights\tfirst\tlast",
-                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.000\t5\t2026-11-10\t2026-11-14",
-                "nelly\toneiron::alpha props::a_merge_converges\t11.000\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.0\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron::alpha props::a_merge_converges\t11.0\t5\t2026-11-10\t2026-11-14",
             ],
         )
         samples = json.loads((out / "budget-samples.json").read_text())
@@ -835,10 +835,28 @@ class BudgetSummaryTest(unittest.TestCase):
         self.assertEqual(
             (out / "budget-baseline-proposal.tsv").read_text().splitlines()[1:],
             [
-                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.000\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.0\t5\t2026-11-10\t2026-11-14",
                 "nelly\toneiron::alpha props::a_merge_converges\t20.000\t5\t2026-10-01\t2026-10-05",
             ],
             "the proposal is the whole file: the committed rows and the new one",
+        )
+
+    def test_a_sub_millisecond_baseline_round_trips_through_the_proposal_and_stays_in_its_band(self) -> None:
+        # review 7885 P1: a bench p99 of 0.0001 s was proposed as 0.000, so the committed row read over band
+        for day in range(10, 15):
+            _, _, out = self.night(f"2026-11-{day}", 0.0001)
+        proposal = out / "budget-baseline-proposal.tsv"
+        self.assertIn(
+            "nelly\toneiron::alpha props::a_merge_converges\t0.0001\t5\t2026-11-10\t2026-11-14",
+            proposal.read_text().splitlines(),
+        )
+        committed = write(self.base / "budget-baseline.tsv", proposal.read_text())
+        code, line, out = self.night("2026-11-15", 0.0001, committed=str(committed))
+        self.assertEqual(code, 0, line)
+        self.assertIn(" budget_in=2 budget_out=0 budget_pending=0 ", line)
+        self.assertIn(
+            "budget oneiron::alpha props::a_merge_converges: 0.0001 s, baseline 0.0001 s (committed), in band (+0%)",
+            (out / "summary.txt").read_text(),
         )
 
     def test_each_budget_row_without_a_result_says_why_and_a_failed_budget_test_gives_no_sample(self) -> None:

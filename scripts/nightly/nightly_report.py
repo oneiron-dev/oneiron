@@ -785,7 +785,8 @@ def budget_report(
                     {
                         "host": host,
                         "test": test,
-                        "seconds": f"{entry['baseline']:.3f}",
+                        # round trip, not .3f: a bench p99 of 0.0001 s must not commit as a baseline of 0
+                        "seconds": repr(float(entry["baseline"])),
                         "nights": str(BUDGET_BASELINE_NIGHTS),
                         "first": first[0]["date"],
                         "last": first[-1]["date"],
