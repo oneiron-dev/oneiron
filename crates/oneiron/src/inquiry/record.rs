@@ -24,6 +24,25 @@ use serde::{Deserialize, Serialize};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
+/// The most bytes an inquiry's question holds.
+pub const MAX_INQUIRY_QUESTION_BYTES: usize = 4 * 1024;
+/// The most bytes an inquiry's one-line purpose holds.
+pub const MAX_INQUIRY_PURPOSE_BYTES: usize = 512;
+/// The most bytes the asker's one-line role holds.
+pub const MAX_INQUIRY_ROLE_BYTES: usize = 128;
+/// The most bytes an inquiry's wire body holds: the member host's route
+/// takes no larger body.
+pub const MAX_INQUIRY_WIRE_BYTES: usize = 32 * 1024;
+
+// The field caps keep every valid inquiry's wire body under the route's
+// limit: JSON writes a control byte as `\u00XX`, six bytes, and the other
+// fields (ids, the asking vault, the keep, the expiry, the keys) take well
+// under 1 KiB.
+const _: () = assert!(
+    6 * (MAX_INQUIRY_QUESTION_BYTES + MAX_INQUIRY_PURPOSE_BYTES + MAX_INQUIRY_ROLE_BYTES) + 1024
+        <= MAX_INQUIRY_WIRE_BYTES
+);
+
 /// What the company keeps of an answer: the company setting `inquiry_keep`.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
