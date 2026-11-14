@@ -233,7 +233,13 @@ impl SyncClient {
             let mut previous = after.clone();
             for key in &reply.windows {
                 let window = WindowKey::try_new(key).ok_or(IndexFetchFault::Remote(refused()))?;
-                if previous.as_ref().is_some_and(|prior| prior >= key) {
+                // Each window listed is of a month asked, as the home's
+                // catalogue filters its own (Astra PR 2 F4).
+                if previous.as_ref().is_some_and(|prior| prior >= key)
+                    || key
+                        .get(..7)
+                        .is_none_or(|month| !months.iter().any(|asked| asked == month))
+                {
                     return Err(IndexFetchFault::Remote(refused()));
                 }
                 previous = Some(key.clone());

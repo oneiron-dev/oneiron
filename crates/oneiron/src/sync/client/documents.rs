@@ -184,7 +184,11 @@ impl SyncClient {
             }
         }
         // FIX 2458: on the owner lane a typed body goes back to the home too.
-        let owner_lane = federated.is_none() && self.config.note_session.is_some();
+        // A member lane holds no owner document lane (MEMBER-SYNC D4, Astra
+        // PR 2 F1): its typed bodies go only as the journal's frames, under
+        // its selector, and an owner REQUEST is no request it answers.
+        let owner_lane =
+            federated.is_none() && self.config.note_session.is_some() && !self.config.member_lane;
         match frame.kind {
             // A peer's acknowledgment clears no journal row: the rows stay
             // until the home covers them (FIX 4748).
