@@ -5,9 +5,10 @@
 //! transaction that reserves the member's slot, and associated with her
 //! work facet later, at the companion step. Both writers run the same
 //! check in their own transaction, so no binding stands for a companion
-//! her member never brought. The reserve also keeps a member's companion
-//! from running an org she belongs to, unless she is the sole owner
-//! (COMPANION-LEADER, #companion-split).
+//! her member never brought. The reserve, and again the step that
+//! establishes the workspace, keep a member's companion from running an org
+//! she belongs to, unless she is the sole owner (COMPANION-LEADER,
+//! #companion-split).
 
 use super::*;
 use crate::error::GateError;
@@ -70,14 +71,16 @@ const COMPANION_SPLIT_REFUSAL: &str = "one agent is not both a person's companio
 ///
 /// A person's companion is the PERSON [`COMPANION_PRINCIPAL`] names her for.
 /// Her company's companion is the house of a workspace she belongs to, known
-/// by its own model PERSON anchor. The check reads after this reserve's own
-/// two rows, so it judges the roster as it would stand: the house of the
-/// workspace she joins, and the house of each stored workspace she is
-/// already in. Those two rows are written only here and a preset never
-/// changes its house, so no other write can make a split stand. The vault's
-/// one live owner joining is the sole owner's own act, on purpose, and
-/// passes.
-fn require_companion_split_in_txn(
+/// by its own model PERSON anchor. The reserve runs it after its own two
+/// rows, so it judges the roster as it would stand: the house of the
+/// workspace she joins, and the house of each published workspace she has
+/// a slot in. A slot whose workspace is not published yet hides its house
+/// from that scan, so the step that publishes it (`establish_workspace`)
+/// runs the check again, after the publish: a companion bound in between is
+/// refused there, and one bound later sees the preset. A preset never
+/// changes its house. The vault's one live owner joining is the sole
+/// owner's own act, on purpose, and passes.
+pub(super) fn require_companion_split_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     intent: &MemberOnboardingIntent,
