@@ -19,6 +19,7 @@ pub mod claim_source_recheck;
 pub mod claim_transition;
 pub mod claim_value_redaction;
 pub mod coach;
+pub mod coach_retrieval_review;
 pub mod code_mode_capture;
 pub mod code_reply_healer;
 pub mod code_run_answer;
