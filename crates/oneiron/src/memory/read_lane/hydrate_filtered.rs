@@ -23,8 +23,14 @@ impl Memory<'_> {
                 None => self.read_target(reference, ReadMode::Live),
             })
             .collect::<MemoryResult<Vec<_>>>()?;
-        let ScopedReadResult { value, mut receipt } =
-            lane.read_named_projected(&point_reads(&targets), None, |txn, value| {
+        lane.persist_grant_clock()?;
+        let snapshot = self.lane_snapshot()?;
+        let known = snapshot.known();
+        let ScopedReadResult { value, mut receipt } = lane.read_named_projected_in_txn(
+            snapshot.txn(),
+            &point_reads(&targets),
+            None,
+            |txn, value| {
                 let mut slots = value.into_iter();
                 let mut projections: Vec<(NamedView, Option<EntityId>)> =
                     Vec::with_capacity(targets.len());
@@ -44,7 +50,10 @@ impl Memory<'_> {
                                     }
                                 }
                             }
-                            (Ok(self.slot_view_in(&lane, txn, row, mode, false)?), None)
+                            (
+                                Ok(self.slot_view_in(&lane, txn, known, row, mode, false)?),
+                                None,
+                            )
                         }
                         Some((_, Some(Err(refusal)))) => (Err(refusal), None),
                         _ => (Ok(None), None),
@@ -52,7 +61,8 @@ impl Memory<'_> {
                     projections.push(projection);
                 }
                 Ok::<_, MemoryError>(projections)
-            })?;
+            },
+        )?;
         let mut shown = Vec::with_capacity(value.len());
         let mut shown_targets = Vec::with_capacity(value.len());
         let mut withheld = Vec::new();

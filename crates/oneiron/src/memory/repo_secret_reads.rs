@@ -14,14 +14,17 @@
 //! its bytes inline: its id is derived from their BLAKE3, which is the hash
 //! a repo mark keeps. Every other row reads as it always has. A repo file
 //! no mark covers reads masked all the same where a value custody knows now
-//! reads in it (FIX 8966): the read takes one known-value pass of its own,
-//! outside any write transaction, before the lift sweep reaches the row.
+//! reads in it (FIX 8966): the read takes one known-value pass, in the very
+//! snapshot it reads the row in, before the lift sweep reaches the row. The
+//! store has no NOTLS, so a pass that opened a second snapshot on the
+//! reading thread would fail `MDB_BAD_RSLOT` (FIX
+//! REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT).
 
 use std::borrow::Cow;
 
 use heed::RoTxn;
 
-use super::{Memory, MemoryResult};
+use super::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::Vault;
 use crate::code_document::CodeDocumentFrontier;
 use crate::codebase::snapshot_asset_entity_id;
@@ -35,7 +38,7 @@ use crate::origin::secret_projection::{
     sourced_opaque_in_txn,
 };
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::store::known_value_index::KnownValues;
+use crate::store::known_value_index::{KnownSnapshot, KnownValues};
 
 mod reveal;
 
@@ -79,15 +82,15 @@ pub(crate) fn repo_asset_body_in_txn(
     )
 }
 
-/// [`repo_asset_body_in_txn`] in `txn`, a read-only snapshot no write
-/// transaction holds, with one known-value pass of its own when the row is
-/// a repo snapshot ASSET (FIX 8966); no pass is taken for any other row.
+/// [`repo_asset_body_in_txn`] in the known-value pass's own snapshot (FIX
+/// 8966), for a reader that holds none: the thread holds that one read
+/// transaction. No snapshot is opened for a row that is no repo snapshot
+/// ASSET.
 ///
 /// # Errors
 /// As [`repo_asset_body_in_txn`], or the pass's own.
-pub(crate) fn repo_asset_body_known_in_txn(
+pub(crate) fn repo_asset_body(
     vault: &Vault,
-    txn: &RoTxn<'_>,
     id: &EntityId,
     entity_type: u8,
     body: &[u8],
@@ -95,26 +98,47 @@ pub(crate) fn repo_asset_body_known_in_txn(
     if !is_repo_snapshot_asset(id, entity_type, body)? {
         return Ok(None);
     }
-    vault
-        .with_known_values(|known| repo_asset_body_in_txn(vault, txn, id, entity_type, body, known))
+    vault.with_known_snapshot(|known, txn| {
+        repo_asset_body_in_txn(vault, txn, id, entity_type, body, known)
+    })
 }
 
-/// [`repo_asset_body_in_txn`] in its own snapshot, for a reader that holds
-/// none; no snapshot is opened for a row that is no ASSET.
-///
-/// # Errors
-/// As [`repo_asset_body_in_txn`].
-pub(crate) fn repo_asset_body(
-    vault: &Vault,
-    id: &EntityId,
-    entity_type: u8,
-    body: &[u8],
-) -> Result<Option<Vec<u8>>> {
-    if entity_type != ENTITY_TYPE_ASSET {
-        return Ok(None);
+/// The known-value pass a lane snapshot took for its reader (FIX 8966).
+#[derive(Clone, Copy)]
+pub(crate) enum KnownPass<'k> {
+    /// No pass: the handle read stored repo bytes when the snapshot opened.
+    NotTaken,
+    /// The snapshot is the pass's own; `None` when custody knows no value.
+    Taken(Option<&'k KnownValues>),
+}
+
+/// One read snapshot of a Memory lane: the known-value pass's own when the
+/// handle reads repo bytes masked as it opens, else a plain one (FIX
+/// REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT). Each entity view read in it
+/// takes its pass from here, so the thread holds one read transaction.
+pub(crate) enum LaneSnapshot<'v> {
+    /// A snapshot for a reader of stored repo bytes.
+    Plain(RoTxn<'v>),
+    /// The known-value pass's snapshot and matcher.
+    Known(Box<KnownSnapshot<'v>>),
+}
+
+impl<'v> LaneSnapshot<'v> {
+    /// The snapshot the lane reads in.
+    pub(crate) fn txn(&self) -> &RoTxn<'v> {
+        match self {
+            Self::Plain(txn) => txn,
+            Self::Known(snapshot) => snapshot.txn(),
+        }
     }
-    let txn = vault.store.env.read_txn()?;
-    repo_asset_body_known_in_txn(vault, &txn, id, entity_type, body)
+
+    /// The pass this snapshot took.
+    pub(crate) fn known(&self) -> KnownPass<'_> {
+        match self {
+            Self::Plain(_) => KnownPass::NotTaken,
+            Self::Known(snapshot) => KnownPass::Taken(snapshot.known()),
+        }
+    }
 }
 
 /// `body`, a hydrated row's, as a masked reader reads it: a repo ASSET's
@@ -348,14 +372,35 @@ impl Memory<'_> {
         })
     }
 
+    /// Opens one read snapshot for this handle's lane reads: the known-value
+    /// pass's own when the handle reads repo bytes masked, judged before the
+    /// snapshot opens. Prepare the lane (grant time, body pins) first, as
+    /// its own reads do.
+    ///
+    /// # Errors
+    /// The mask check's, the snapshot's or the pass's own.
+    pub(crate) fn lane_snapshot(&self) -> MemoryResult<LaneSnapshot<'_>> {
+        if self.repo_reads_masked()? {
+            return Ok(LaneSnapshot::Known(Box::new(self.vault.known_snapshot()?)));
+        }
+        Ok(LaneSnapshot::Plain(
+            self.vault.store.env.read_txn().map_err(Error::from)?,
+        ))
+    }
+
     /// The body the read lane decodes for the admitted row `id`, in `txn`:
     /// a repo ASSET's projection for a masked reader, else `body` as read.
+    /// `known` is the pass `txn`'s snapshot took. A repo snapshot ASSET a
+    /// masked reader meets in a snapshot that took none (the handle's sight
+    /// changed after the snapshot was chosen) is refused, never read with
+    /// its marks alone.
     pub(super) fn repo_lane_body_in_txn(
         &self,
         txn: &RoTxn<'_>,
         id: &EntityId,
         entity_type: u8,
         body: Vec<u8>,
+        known: KnownPass<'_>,
     ) -> MemoryResult<Vec<u8>> {
         if entity_type != ENTITY_TYPE_ASSET
             || !(self.repo_tool_recipient.masked()
@@ -364,6 +409,22 @@ impl Memory<'_> {
         {
             return Ok(body);
         }
-        Ok(repo_asset_body_known_in_txn(self.vault, txn, id, entity_type, &body)?.unwrap_or(body))
+        let KnownPass::Taken(known) = known else {
+            if is_repo_snapshot_asset(id, entity_type, &body)? {
+                return Err(repo_known_pass_missing());
+            }
+            return Ok(body);
+        };
+        Ok(repo_asset_body_in_txn(self.vault, txn, id, entity_type, &body, known)?.unwrap_or(body))
     }
+}
+
+/// The refusal of a repo snapshot ASSET a masked reader met in a snapshot
+/// that took no known-value pass.
+fn repo_known_pass_missing() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "a repo file read masked needs its known-value pass in the read's own snapshot; this snapshot was opened for a reader of stored bytes",
+        &["Read the row again."],
+    )
 }

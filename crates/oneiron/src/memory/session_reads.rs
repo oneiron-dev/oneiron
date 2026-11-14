@@ -219,11 +219,14 @@ impl<'s> SessionReadContext<'s> {
             .iter()
             .map(|(id, mode)| PointRead::id(*id).at(*mode))
             .collect();
-        let read = lane.read_projected(&reads, None, |txn, rows| {
+        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let snapshot = memory.lane_snapshot()?;
+        let known = snapshot.known();
+        let read = lane.read_projected_in_txn(snapshot.txn(), &reads, None, |txn, rows| {
             let (Some((id, mode)), Some(row)) = (target, rows.into_iter().next().flatten()) else {
                 return Ok::<_, MemoryError>((None, None));
             };
-            let view = memory.entity_view_of_in_txn(&lane, txn, row, mode)?;
+            let view = memory.entity_view_of_in_txn(&lane, txn, known, row, mode)?;
             let live = crate::vault::entity_revision::revision_for_mode_in_txn(
                 &lane.store_read(),
                 txn,
