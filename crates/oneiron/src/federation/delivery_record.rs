@@ -59,7 +59,9 @@ pub(crate) fn delivery_key(pact: &[u8; 32], epoch: u64, record: EntityId) -> Str
 /// digest is of the row as `txn` holds it now. The world is not registered to
 /// the pact: a pact's registered worlds read stale once it ends, and the
 /// company keeps a copied answer after the member leaves (federation.md
-/// #leaving).
+/// #leaving). The retained-copy check reads this ledger row instead, so a
+/// retained courtesy ask under `pact` still keeps the copy out of shared
+/// reads (BIZ-LEGAL-0004 B2).
 ///
 /// # Errors
 ///
@@ -92,6 +94,24 @@ pub(crate) fn record_engine_delivery_in_txn(
         &delivery_key(pact, epoch, record),
         &place,
     )
+}
+
+/// Whether the ledger names `pact` delivering `record`, at any consent epoch,
+/// as `txn` reads it. It reads each of the pact's ledger rows: with no sync,
+/// the ledger holds only this engine's own landings.
+#[cfg(not(feature = "sync"))]
+pub(crate) fn pact_delivered_record_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    pact: &[u8; 32],
+    record: EntityId,
+) -> Result<bool> {
+    let prefix = format!("{}:", crate::entity_id::bytes_to_hex_lower(pact));
+    let record = record.to_hex();
+    Ok(DELIVERED
+        .scan_keys(store, txn, prefix.as_bytes())?
+        .iter()
+        .any(|key| key.rsplit_once(':').is_some_and(|(_, id)| id == record)))
 }
 
 /// Current delivery-value codec. Keys still carry pact, consent epoch and id.
