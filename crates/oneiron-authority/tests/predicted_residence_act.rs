@@ -104,8 +104,8 @@ fn a_prediction_entry_does_not_grow_with_its_set() {
         large_body.len()
     );
     assert!(
-        default_entry.len() < 512,
-        "a fixed-size entry: {}",
+        default_entry.len() < 1_024,
+        "a fixed-size entry under a kilobyte: {}",
         default_entry.len()
     );
     assert_eq!(

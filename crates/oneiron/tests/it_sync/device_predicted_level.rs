@@ -9,8 +9,9 @@
 #![cfg(oneiron_test_support)]
 
 use oneiron::authority::{
-    HostSlipIssuer, RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, RESIDENCE_PREDICTED_WINDOWS_DEFAULT,
-    ResidenceAct, ResidenceResultStatus,
+    ActSurface, HostSlipIssuer, MachineOwnership, MachineRole,
+    RESIDENCE_PREDICTED_DOCUMENTS_DEFAULT, RESIDENCE_PREDICTED_WINDOWS_DEFAULT, ResidenceAct,
+    ResidenceResultStatus,
 };
 use oneiron::sync::SyncResidenceMode;
 use oneiron::sync::connection::{ConnectionConfig, SyncConnection};
@@ -48,6 +49,25 @@ fn local_machine(vault: &Vault) -> EntityId {
         .expect("the install's machine")
         .expect("a minted machine")
         .id
+}
+
+/// A device whose owner answered its machine as a work or school machine:
+/// its proof stands here, so it takes the owner's residence directives (FIX
+/// 8888), and it is still never "mine".
+fn answered_device() -> Device {
+    let device = Device::open();
+    let machine = local_machine(&device.vault);
+    device
+        .vault
+        .set_machine_role(
+            &device.owner,
+            ActSurface::ThisInstall,
+            machine,
+            MachineRole::Owned(MachineOwnership::WorkSchool),
+            None,
+        )
+        .expect("the owner answers the device's machine");
+    device
 }
 
 /// Issues `act` as the owner's residence directive to this device's own
@@ -88,7 +108,7 @@ fn mode_request(machine: EntityId, mode: &str, budget: Option<(u32, u32)>) -> Re
 
 #[test]
 fn a_sync_predicted_directive_carries_the_owner_budget() {
-    let device = Device::open();
+    let device = answered_device();
     let machine = local_machine(&device.vault);
 
     let unset = mode_request(machine, "predicted", None);
@@ -147,7 +167,7 @@ fn a_machine_applies_the_predicted_level_as_opened_plus_prediction() {
     run_async(
         "a_machine_applies_the_predicted_level_as_opened_plus_prediction",
         || async {
-            let device = Device::open();
+            let device = answered_device();
             let directive = issue(
                 &device,
                 ResidenceAct::SyncPredicted {
@@ -187,7 +207,7 @@ fn a_machine_applies_the_predicted_level_as_opened_plus_prediction() {
 #[test]
 fn a_mode_switch_clears_the_predicted_flag() {
     run_async("a_mode_switch_clears_the_predicted_flag", || async {
-        let device = Device::open();
+        let device = answered_device();
         let connection = SyncConnection::new(device.manager(), ConnectionConfig::default())
             .expect("the device's connection");
         let predicted = |device: &Device| {
