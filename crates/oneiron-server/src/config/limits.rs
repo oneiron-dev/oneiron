@@ -475,6 +475,7 @@ impl LimitsConfig {
             context_edge_hops,
             context_neighbors,
             context_selected_edges,
+            actor_exposed_records,
         } = over;
         set(&mut self.max_connections, max_connections);
         set(
@@ -794,6 +795,7 @@ impl LimitsConfig {
             (EngineLimit::ContextEdgeHops, context_edge_hops),
             (EngineLimit::ContextNeighbors, context_neighbors),
             (EngineLimit::ContextSelectedEdges, context_selected_edges),
+            (EngineLimit::ActorExposedRecords, actor_exposed_records),
         ] {
             if let Some(bound) = bound {
                 self.engine.set(row, bound);

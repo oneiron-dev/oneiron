@@ -218,6 +218,7 @@ impl Store {
             machine_history_runtime: crate::claim::MachineHistoryRuntime::default(),
             machine_write_signers: Mutex::new(std::collections::HashMap::new()),
             pending_scan_checks: crate::store::PendingScanChecks::default(),
+            pending_read_exposure: crate::claim::PendingReadExposure::default(),
             limit_watch: crate::limit_ask::LimitWatch::new(config.limits.clone()),
             deadline_jobs: crate::store::DeadlineJobs::default(),
             tombstone_scope_probes: crate::deletion::TombstoneScopeProbes::default(),

@@ -292,6 +292,11 @@ pub fn pull_code_memory(
     // place that enforces it should be visible here rather than inferred from
     // the sweep.
     permitted_notes.truncate(request.limit);
+    scoped_read.charge_served(
+        permitted_notes
+            .iter()
+            .map(|(_, _, _, value)| value.payload.entity_id()),
+    );
 
     let notes = permitted_notes
         .into_iter()
@@ -347,6 +352,11 @@ pub fn pull_code_memory(
     // the receipt all answer from THIS snapshot; nothing may reopen a newer one.
     let read_receipt = scoped_read.read_receipt_in(&rtxn, None, withheld)?;
     drop(rtxn);
+    scoped_read.charge_served(
+        always_on_contracts
+            .iter()
+            .map(|contract| contract.data.payload.entity_id()),
+    );
     Ok(CodeMemoryPullResult {
         notes,
         always_on_contracts,

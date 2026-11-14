@@ -87,6 +87,7 @@ pub mod payment_credential;
 pub mod peer_author_redaction;
 pub mod provenance_body_checkpoint;
 pub mod re_root_stale_sweep;
+pub mod read_exposure;
 pub mod repo_base_manifest;
 pub mod repo_secret_marks;
 pub mod research_continuation;

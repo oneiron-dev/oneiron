@@ -202,6 +202,7 @@ impl ScopedRead<'_> {
         let (filter, policy) = self.resolve_retrieval_filter_in(&txn, None)?;
         self.redact_sieve_decisions_in(&txn, &policy, &filter, &mut report.value);
         self.project_card_moves_in(&txn, &policy, &filter, &mut report.value);
+        self.charge_served(report.value.source_rows());
         Ok(report)
     }
 

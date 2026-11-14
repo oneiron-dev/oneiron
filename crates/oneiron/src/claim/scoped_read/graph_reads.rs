@@ -86,6 +86,7 @@ impl ScopedRead<'_> {
                 break;
             }
         }
+        self.charge_served(kept.iter().map(|(id, _, _)| *id));
         Ok(Some(kept))
     }
 
@@ -185,6 +186,7 @@ impl ScopedRead<'_> {
         timeline.records = kept;
         let mut receipt = self.receipt_for(None, &policy, &filter, 0);
         receipt.restrict_with(&self.receipt_for(None, &fresh_policy, &fresh_filter, 0));
+        self.charge_served(timeline.records.iter().map(|record| record.id));
         Ok(ScopedReadResult {
             value: timeline,
             receipt,
@@ -246,6 +248,12 @@ impl ScopedRead<'_> {
                 raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
             )));
         }
+        self.charge_served(
+            records
+                .iter()
+                .zip(&value)
+                .filter_map(|(record, part)| part.as_ref().map(|_| record.id)),
+        );
         Ok(ScopedReadResult {
             value,
             receipt: self.receipt_for(requested, &policy, &filter, suppressed),
@@ -392,6 +400,7 @@ impl ScopedRead<'_> {
         let before = parts
             .pop()
             .ok_or(Error::CorruptedIndex("supersession before parts"))?;
+        self.charge_served([*old, *new]);
         Ok(ScopedReadResult {
             value: Some((before, after)),
             receipt: receipt(0),

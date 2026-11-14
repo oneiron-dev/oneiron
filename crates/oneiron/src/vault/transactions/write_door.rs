@@ -95,6 +95,8 @@ impl Vault {
         // write is about to, holding nothing more: no answer exists yet to
         // carry a permit another write waits on.
         self.keep_waiting_scan_checks();
+        // So are the records served to external readers since then (L8-65).
+        self.keep_waiting_read_exposure();
         // One logical write in the single writer's group commit: the closure
         // runs in a transaction of its own, and `Ok` comes back only once the
         // shared commit is durable.

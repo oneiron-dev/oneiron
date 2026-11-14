@@ -204,4 +204,5 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) context_edge_hops: Option<u64>,
     pub(in crate::config) context_neighbors: Option<u64>,
     pub(in crate::config) context_selected_edges: Option<u64>,
+    pub(in crate::config) actor_exposed_records: Option<u64>,
 }

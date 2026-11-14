@@ -147,10 +147,16 @@ pub use scoped_read::*;
 // On its own line so no other change to the re-export list below collides
 // with it (FIX 11766).
 pub(crate) use scoped_read::CompanionProfileSourceJudgement;
+#[cfg(oneiron_test_support)]
+pub(crate) use scoped_read::exposed_records_in;
 pub(crate) use scoped_read::{
     Admitted, ClaimReadStatusExt, SearchPlan, claim_access_axes,
     erase_weave_decision_labels_in_txn, invalidate_weave_digest_source_in_txn,
     saved_weave_loop_reason_decisions_in_txn, scrub_saved_weave_loop_reasons_in_txn,
+};
+pub(crate) use scoped_read::{
+    PendingReadExposure, erase_read_exposure_reader_in_txn,
+    erase_read_exposure_record_reader_in_txn, erase_read_exposure_records_in_txn,
 };
 pub use source_trust::*;
 pub(crate) use supersession_provenance::{ConflictMarker, conflict_marker, write_coaching};

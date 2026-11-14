@@ -112,7 +112,8 @@ impl ScopedRead<'_> {
     ) -> Result<Vec<Option<EntityParts>>> {
         let (filter, policy) = self.resolve_retrieval_filter_in(txn, None)?;
         let authority = self.held_for(None);
-        ids.iter()
+        let parts = ids
+            .iter()
             .map(|id| {
                 let Some(revision) =
                     self.entity_raw_with_mode_held_in(txn, &policy, &filter, id, mode, &authority)?
@@ -127,7 +128,13 @@ impl ScopedRead<'_> {
                     revision.raw[ENTITY_METADATA_HEADER_LEN..].to_vec(),
                 )))
             })
-            .collect()
+            .collect::<Result<Vec<_>>>()?;
+        self.charge_served(
+            ids.iter()
+                .zip(&parts)
+                .filter_map(|(id, part)| part.as_ref().map(|_| *id)),
+        );
+        Ok(parts)
     }
 }
 
@@ -419,6 +426,7 @@ impl ScopedRead<'_> {
             value.push(row);
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);
+        self.charge_served(value.iter().flatten().map(|row| row.id));
         Ok(ScopedReadResult {
             value: project(txn, value)?,
             receipt,
@@ -469,6 +477,7 @@ impl ScopedRead<'_> {
                 suppressed += withheld;
                 rows.push(row);
             }
+            self.charge_served(rows.iter().flatten().map(|row| row.id));
             project(&txn, frame_index * frame_size, rows, &mut state)?;
         }
         let receipt = self.receipt_for(requested, &policy, &filter, suppressed);

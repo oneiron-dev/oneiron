@@ -307,6 +307,9 @@ pub struct StoreCore {
     /// Scan checks raised since the vault's last write, which keeps them
     /// ([`crate::scan_check`]).
     pub(crate) pending_scan_checks: crate::store::PendingScanChecks,
+    /// Records served to external readers since the vault's last write,
+    /// which keeps them ([`crate::claim::PendingReadExposure`], L8-65).
+    pub(crate) pending_read_exposure: crate::claim::PendingReadExposure,
     /// The engine's `[limits]` rows on this vault: what they are set to,
     /// fixed at open, and the port a crossing asks through
     /// ([`crate::Vault::set_limit_ask`]).

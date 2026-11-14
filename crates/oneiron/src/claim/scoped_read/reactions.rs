@@ -38,6 +38,7 @@ impl ScopedRead<'_> {
         let rtxn = self.grant_read_txn()?;
         let admission = self.reaction_admission_in(&rtxn, None)?;
         let value = self.reaction_lines_in(&rtxn, &admission, record, counted, &mut Vec::new())?;
+        self.charge_served(counted.iter().copied());
         Ok(ScopedReadResult {
             value,
             receipt: admission.receipt,
