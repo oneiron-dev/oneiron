@@ -246,8 +246,9 @@ fn enqueue_detection_in_txn(
 /// as its latest source instead of queuing another. The witness passes no
 /// `message` or `author` for a turn that is not a person's own words on
 /// record. A project's home room is a project already: there only a thread
-/// asks, toward its conversion. A conversation showing an unanswered card
-/// asks nothing more.
+/// asks, toward its conversion, and never the goal-intake interview's
+/// thread, which holds the project's own goal. A conversation showing an
+/// unanswered card asks nothing more.
 pub(crate) fn stage_project_detection_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -263,11 +264,15 @@ pub(crate) fn stage_project_detection_in_txn(
     let thread = if ROOM_PROJECT.contains(&vault.store, txn, &conversation)? {
         match rooms::TURNS.get(&vault.store, txn, &turn)? {
             // A reply's card converts its whole thread: record the root.
-            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => Some(
-                rooms::room_thread_turns_in_txn(vault, txn, conversation, turn)?
+            Some(row) if row.thread_of.is_some() && row.converted_project.is_none() => {
+                let root = rooms::room_thread_turns_in_txn(vault, txn, conversation, turn)?
                     .and_then(|selection| selection.root)
-                    .ok_or_else(invalid)?,
-            ),
+                    .ok_or_else(invalid)?;
+                if vault.is_goal_interview_thread_in_txn(txn, root)? {
+                    return Ok(());
+                }
+                Some(root)
+            }
             _ => return Ok(()),
         }
     } else {

@@ -8,7 +8,9 @@
 //! run is dispatched. Holding that TASK is what lets the leader claim and
 //! answer the thread's turns; who may speak is unchanged (ARCH-0006a). Each
 //! later turn of the thread that wakes the TASK's holder dispatches the
-//! leader's next intake run in the write that stages the wake. The context
+//! leader's next intake run in the write that stages the wake. The thread
+//! holds the project's own goal, so no turn of it asks the house mind's
+//! project question that other threads of the room ask. The context
 //! names the last run that loaded the goal-intake skill, and the owner's
 //! confirmation that commits the goal settles the TASK and ends the
 //! interview.
@@ -202,6 +204,16 @@ impl Vault {
         project: EntityId,
     ) -> Result<Option<EntityId>> {
         Ok(interview_in_txn(&self.store, txn, project)?.map(|row| row.thread))
+    }
+
+    /// Whether `thread` is the root of a goal-intake interview, open or
+    /// ended, read in `txn`.
+    pub(crate) fn is_goal_interview_thread_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        thread: EntityId,
+    ) -> Result<bool> {
+        THREADS.contains(&self.store, txn, &thread)
     }
 
     /// Records `attempt`, an intake run of `project` that just loaded the

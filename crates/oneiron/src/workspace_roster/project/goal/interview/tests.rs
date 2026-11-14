@@ -451,6 +451,53 @@ fn the_owners_answer_dispatches_the_leaders_draft_run_once() -> Result<()> {
     Ok(())
 }
 
+/// The conversations the house mind's queued project questions ask about,
+/// each leased as its worker leases it.
+fn project_questions(vault: &Vault) -> Result<Vec<EntityId>> {
+    let mut asked = Vec::new();
+    while let Some(claimed) = crate::workspace_roster::claim_project_detection(
+        vault,
+        "worker",
+        vault.store.clock.now_recorded_at(),
+    )? {
+        asked.push(claimed.conversation);
+    }
+    Ok(asked)
+}
+
+#[test]
+fn the_owners_words_in_the_interview_ask_no_project_question() -> Result<()> {
+    let s = opened_interview()?;
+    assert!(matches!(s.claim(s.thread, 5), RoomClaimOutcome::Claimed(_)));
+    let question = reply(
+        &s.vault,
+        s.room,
+        s.agent,
+        AGENT,
+        "What is the goal?",
+        s.thread,
+        6,
+    );
+    let json = serde_json::to_string(&transcript_record()).unwrap();
+    let _answer = reply(&s.vault, s.room, s.human, HUMAN, &json, question, 7);
+    // The interview's thread holds the project's own goal: the owner's
+    // answer there is no project of its own to convert.
+    assert_eq!(project_questions(&s.vault)?, Vec::<EntityId>::new());
+    // Another thread of the home room still asks, toward its conversion.
+    let thread_of = serde_json::json!({ "room_thread_of": s.header.to_hex() });
+    say(
+        &s.vault,
+        s.room,
+        s.human,
+        HUMAN,
+        "Plan the launch event",
+        Some(thread_of),
+        8,
+    );
+    assert_eq!(project_questions(&s.vault)?, vec![s.room]);
+    Ok(())
+}
+
 #[test]
 fn the_context_names_the_attempt_that_loaded_the_skill() -> Result<()> {
     let s = opened_interview()?;
