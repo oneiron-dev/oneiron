@@ -45,7 +45,7 @@ use super::CHAT_ROLE;
 use super::live_lease::{self, LiveLease};
 use super::payer_funding::{PayerFault, attempt_grant_funding, requires_payer, scope_run_funding};
 use super::step_failure::StepRetryCause;
-use crate::models::{ModelCallBinding, ModelRuntime};
+use crate::models::{ModelCallBinding, ModelRuntime, RoleCall};
 use crate::server::SyncServer;
 
 mod response_capture;
@@ -535,6 +535,39 @@ impl StepRunner {
         self.generate_in(runtime, vault, input, false, false, None, None, None)
     }
 
+    /// Admits `request` for a step of the run `attempt` belongs to, on the
+    /// chat role's route; or, for a run its owner chose to continue on a free
+    /// local model when it was held at its spend cap (ARCH-0026 depletion
+    /// ladder; RUNBUDGET-KNOB), on that model alone, on its free route read
+    /// now. A local model no longer served so holds the run again, as a spent
+    /// meter does, and the owner is asked again.
+    fn admit_step_call(
+        &self,
+        vault: &Vault,
+        attempt: AttemptId,
+        request: LlmRequest,
+    ) -> Result<RoleCall, StepFault> {
+        let Some(model) = AgentDispatcher::new(vault).run_local_route(attempt)? else {
+            return self
+                .models
+                .admit_role(vault, CHAT_ROLE, request)
+                .map_err(|refusal| {
+                    Error::InvalidConfig(format!("workflow step refused: {refusal}")).into()
+                });
+        };
+        self.models
+            .admit_free_local(vault, CHAT_ROLE, request, &model)
+            .map_err(|refusal| StepFault {
+                retry: None,
+                exhausted: true,
+                payer: None,
+                hook_wait: false,
+                error: Error::InvalidConfig(format!(
+                    "workflow step's free local route refused: {refusal}"
+                )),
+            })
+    }
+
     /// [`Self::generate`] for a step that knows whether it must read its
     /// payer (`payer_required`): a room-bound step's root scope must name
     /// its payer (OF-531), and so must a member's bound run's (FIX 5316).
@@ -612,12 +645,7 @@ impl StepRunner {
         {
             // The body already holds the admitted request. Resolve current
             // route admission, never reconstruct or resample its tool tail.
-            let call = self
-                .models
-                .admit_role(vault, CHAT_ROLE, saved.transcript.request.clone())
-                .map_err(|refusal| {
-                    Error::InvalidConfig(format!("workflow step refused: {refusal}"))
-                })?;
+            let call = self.admit_step_call(vault, attempt.id, saved.transcript.request.clone())?;
             let mut request = call.request;
             request.envelope.host_keyless = call.ladder.all_keyless_own_server();
             request.envelope.host_paid = !call.ladder.all_free_work();
@@ -723,12 +751,7 @@ impl StepRunner {
             };
             // A route the vault narrowed past what this server serves ends the
             // step here, before any call leaves.
-            let call = self
-                .models
-                .admit_role(vault, CHAT_ROLE, request)
-                .map_err(|refusal| {
-                    Error::InvalidConfig(format!("workflow step refused: {refusal}"))
-                })?;
+            let call = self.admit_step_call(vault, attempt.id, request)?;
             let mut request = call.request;
             // FIX 10592: beside the door-stamped locality, the request carries
             // whether its ladder may only serve free keyless own-server work, so

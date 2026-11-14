@@ -168,6 +168,7 @@ fn budget_and_fanout_overrides_lose_an_erased_actor() {
             None,
             "spend cap",
             now + 2,
+            None,
         )
         .expect("the budget hold is admitted");
     resume(&queue, row.id, &operator.to_hex(), now + 3);

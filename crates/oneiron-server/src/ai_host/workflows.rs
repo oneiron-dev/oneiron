@@ -43,8 +43,8 @@ use std::time::Duration;
 
 use oneiron::Vault;
 use oneiron::agent_dispatch::{
-    AgentDispatcher, BudgetHoldLease, ProjectDetection, ProjectDetectionRun, SpendSignal,
-    WorkflowProgress,
+    AgentDispatcher, BudgetHoldLease, BudgetHoldState, ProjectDetection, ProjectDetectionRun,
+    SpendSignal, WorkflowProgress,
 };
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptResumePoint, AttemptState};
 use oneiron::failure_ladder::FailureLadderOutcome;
@@ -297,11 +297,14 @@ fn pump_once(
                     // any model call: paused with its checkpoint, the steps
                     // already done keep their saved results, and the owner is
                     // owed a notice. A hold is not a failure and not retried.
+                    // A run its owner continued on a free local model spends
+                    // nothing more, and runs past its cap.
                     let continuation = dispatcher.workflow_tool_checkpoint(&step.attempt)?;
                     let answer_ready = continuation
                         .as_ref()
                         .is_some_and(|saved| saved.transcript.answer.is_some());
                     if !answer_ready
+                        && dispatcher.run_local_route(step.attempt.id)?.is_none()
                         && let Some(scope) = dispatcher.spend_scope_for_attempt(step.attempt.id)?
                     {
                         let read = dispatcher.spend_read(&scope)?;
@@ -315,6 +318,7 @@ fn pump_once(
                             now,
                         )?;
                         if matches!(read.signal, Some(SpendSignal::AtCap { .. })) {
+                            let local = runner.models.free_local_model(vault, super::CHAT_ROLE);
                             let hold = dispatcher.hold_for_budget(
                                 *root,
                                 BudgetHoldLease {
@@ -329,6 +333,7 @@ fn pump_once(
                                 None,
                                 &reason,
                                 now,
+                                local.as_ref(),
                             )?;
                             held = Some(hold);
                             return Err(oneiron::Error::InvalidConfig(format!(
@@ -384,6 +389,7 @@ fn pump_once(
                         // call it could not pay for.
                         Err(fault) if fault.exhausted => {
                             let now = now_secs();
+                            let local = runner.models.free_local_model(vault, super::CHAT_ROLE);
                             held = Some(dispatcher.hold_for_budget(
                                 *root,
                                 BudgetHoldLease {
@@ -398,6 +404,7 @@ fn pump_once(
                                 None,
                                 "workflow step budget ran out during its model call",
                                 now,
+                                local.as_ref(),
                             )?);
                             Err(fault.error)
                         }
@@ -461,9 +468,13 @@ fn pump_once(
             // The held leaf waits paused; its workflow waits with it until
             // the owner resumes the hold. The notice rides the hold, and
             // goes to the owners now.
-            if held.is_some() {
+            // The owner's standing answer may have resumed it on a free local
+            // model in the hold's own write: then it owes no notice, and the
+            // pump looks at it again.
+            if let Some(hold) = &held {
                 tracing::info!(?root, "a workflow is held at its spend cap");
                 recheck |= deliver_hold_notice(&dispatcher, *root, now_secs());
+                recheck |= hold.state == BudgetHoldState::Resumed;
                 break;
             }
             // The parked step's workflow waits with it; the owners' ask is

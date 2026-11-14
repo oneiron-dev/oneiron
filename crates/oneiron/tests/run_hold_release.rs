@@ -78,6 +78,7 @@ fn budget_held_row(
             None,
             "spend cap",
             now + 2,
+            None,
         )
         .expect("the budget hold is admitted");
     assert_eq!(

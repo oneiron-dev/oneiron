@@ -189,6 +189,11 @@ impl AgentDispatcher<'_> {
     /// run's hold gathers its saved results and owes the owner a notice, in
     /// one transaction. Never `Cancelled`, never a TASK terminal report.
     ///
+    /// `local_model` is the free local chat model the host names for the
+    /// run's calls now, if any: the owner's ask then offers to continue the
+    /// run on it, and his `continue_on_local` knob resumes the run on it in
+    /// this same write (the hold then reads Resumed).
+    ///
     /// # Errors
     ///
     /// A stale lease, an attempt that is not running, or storage errors.
@@ -199,6 +204,7 @@ impl AgentDispatcher<'_> {
         plan: Option<TeamPlan>,
         reason: &str,
         now: u64,
+        local_model: Option<&crate::llm::ModelId>,
     ) -> Result<PartialResultHold> {
         if reason.trim().is_empty() {
             return Err(invalid("a budget hold names its reason"));
@@ -272,7 +278,18 @@ impl AgentDispatcher<'_> {
         }
         PLAN_HOLD.put(&self.vault.store, &mut wtxn, &root, &hold)?;
         if newly_held {
-            super::run_budget_ask::queue_run_budget_ask_in_txn(self.vault, &mut wtxn, root)?;
+            let asked = super::run_budget_ask::queue_run_budget_ask_in_txn(
+                self.vault,
+                &mut wtxn,
+                root,
+                local_model,
+                now,
+            )?;
+            if asked == super::run_budget_ask::HeldRunAsk::ContinuedOnLocal {
+                hold = PLAN_HOLD
+                    .get(&self.vault.store, &wtxn, &root)?
+                    .unwrap_or(hold);
+            }
         }
         wtxn.commit()?;
         self.vault.store.notify_attempt_observers();
