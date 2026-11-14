@@ -1,11 +1,13 @@
 //! Phonetic candidate retrieval over canonical and session snapshots.
 use super::RetrievalIndexRead;
+use super::phonetic_sound::{SoundScan, is_sound_key, sound_match_score};
 use super::query::{PHONETIC_IDS_PER_CHECKPOINT, phonetic_checkpoint};
 use crate::EntityId;
 use crate::Vault;
 use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::Error;
 use crate::error::Result;
+use crate::pipeline::RetrievalParams;
 use crate::retrieval_depth::RetrievalDeadline;
 use crate::store::ManifestDbs;
 use oneiron_retrieval::pipeline::ScoredEntity;
@@ -20,6 +22,7 @@ impl<T: ManifestDbs> RetrievalIndexRead for T {
         &self,
         rtxn: &heed::RoTxn<'_>,
         codes: &[String],
+        params: &RetrievalParams,
         deadline: Option<&RetrievalDeadline>,
     ) -> Result<Vec<ScoredEntity>> {
         let mut unique = codes.to_vec();
@@ -28,9 +31,9 @@ impl<T: ManifestDbs> RetrievalIndexRead for T {
 
         let mut accumulators = HashMap::<EntityId, Accumulator>::new();
 
-        for code in unique {
+        for code in unique.iter().filter(|code| !is_sound_key(code)) {
             phonetic_checkpoint(deadline)?;
-            let key = crate::batch::phonetic_posting_key(&code);
+            let key = crate::batch::phonetic_posting_key(code);
             let Some(posting) = self.phonetic_index().get(rtxn, &key)? else {
                 continue;
             };
@@ -49,6 +52,32 @@ impl<T: ManifestDbs> RetrievalIndexRead for T {
                     .map_err(|_| Error::CorruptedIndex("phonetic posting"))?;
                 let entry = accumulators.entry(id).or_default();
                 entry.score += 1.0;
+                entry.matches += 1;
+            }
+        }
+        if let Some(mut scan) = SoundScan::new(&unique, params) {
+            // Every entity's forward row holds its codes, its sound keys
+            // among them: canonical and session rows alike.
+            for (index, row) in self.phonetic_forward().iter(rtxn)?.enumerate() {
+                if index.is_multiple_of(PHONETIC_IDS_PER_CHECKPOINT) {
+                    phonetic_checkpoint(deadline)?;
+                }
+                let (key, value) = row?;
+                let id = <[u8; ENTITY_ID_LEN]>::try_from(key.as_ref())
+                    .ok()
+                    .and_then(|bytes| EntityId::from_bytes(bytes).ok())
+                    .ok_or(Error::CorruptedIndex("phonetic forward row"))?;
+                for code in value.split(|byte| *byte == 0) {
+                    if let Ok(code) = std::str::from_utf8(code)
+                        && is_sound_key(code)
+                    {
+                        scan.offer(id, code);
+                    }
+                }
+            }
+            for (id, distance) in scan.finish() {
+                let entry = accumulators.entry(id).or_default();
+                entry.score += sound_match_score(distance);
                 entry.matches += 1;
             }
         }
@@ -75,9 +104,10 @@ impl RetrievalIndexRead for Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         codes: &[String],
+        params: &RetrievalParams,
         deadline: Option<&RetrievalDeadline>,
     ) -> Result<Vec<ScoredEntity>> {
         self.store
-            .port_retrieval_phonetic_search_with_deadline(txn, codes, deadline)
+            .port_retrieval_phonetic_search_with_deadline(txn, codes, params, deadline)
     }
 }

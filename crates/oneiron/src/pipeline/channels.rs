@@ -96,10 +96,11 @@ pub(super) fn execute_phonetic(
     store: &StoreRead<'_>,
     rtxn: &RoTxn<'_>,
     codes: &[String],
+    params: &RetrievalParams,
     deadline: Option<&RetrievalDeadline>,
 ) -> Result<Vec<ScoredEntity>> {
     crate::ports::RetrievalIndexRead::port_retrieval_phonetic_search_with_deadline(
-        store, rtxn, codes, deadline,
+        store, rtxn, codes, params, deadline,
     )
 }
 

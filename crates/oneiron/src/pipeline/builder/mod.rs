@@ -463,6 +463,20 @@ impl<'a> PipelineBuilder<'a> {
         self
     }
 
+    /// Searches the phonetic channel by names as heard or typed: each
+    /// mention becomes the codes a write posts for a name
+    /// ([`generate_phonetic_codes`](crate::batch::generate_phonetic_codes)),
+    /// its sound keys among them (CROSS-ARCH-0013 `#flow`: the key is
+    /// computed per mention), so a caller with no grapheme-to-phoneme of its
+    /// own reaches the sound match. They join any codes already set.
+    pub fn search_phonetic_mentions(mut self, mentions: &[&str]) -> Self {
+        let codes = self.phonetic_search.get_or_insert_with(Vec::new);
+        for mention in mentions {
+            codes.extend(crate::batch::generate_phonetic_codes(mention));
+        }
+        self
+    }
+
     pub fn search_temporal(mut self, anchor_start: u64, anchor_end: u64, limit: usize) -> Self {
         let (anchor_start, anchor_end) = normalize_range(anchor_start, anchor_end);
         let width = anchor_end.saturating_sub(anchor_start);

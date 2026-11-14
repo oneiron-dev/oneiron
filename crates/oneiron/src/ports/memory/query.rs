@@ -408,13 +408,16 @@ impl RetrievalIndexRead for Memory {
         &self,
         txn: &Snapshot,
         codes: &[String],
+        params: &crate::pipeline::RetrievalParams,
         deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
     ) -> Result<Vec<ScoredEntity>> {
+        use crate::ports::phonetic_sound::{SoundScan, is_sound_key, sound_match_score};
         use crate::ports::query::{PHONETIC_IDS_PER_CHECKPOINT, phonetic_checkpoint};
-        let mut counts = BTreeMap::<EntityId, usize>::new();
+        // Per entity: its summed score and its number of matches.
+        let mut matches = BTreeMap::<EntityId, (f32, usize)>::new();
         let mut distinct_codes = BTreeSet::new();
         for code in codes {
-            if !distinct_codes.insert(code) {
+            if is_sound_key(code) || !distinct_codes.insert(code) {
                 continue;
             }
             phonetic_checkpoint(deadline)?;
@@ -423,16 +426,34 @@ impl RetrievalIndexRead for Memory {
                     if index > 0 && index.is_multiple_of(PHONETIC_IDS_PER_CHECKPOINT) {
                         phonetic_checkpoint(deadline)?;
                     }
-                    *counts.entry(*id).or_default() += 1;
+                    let entry = matches.entry(*id).or_default();
+                    entry.0 += 1.0;
+                    entry.1 += 1;
                 }
             }
         }
+        if let Some(mut scan) = SoundScan::new(codes, params) {
+            let stored = txn.phonetic.iter().filter(|(code, _)| is_sound_key(code));
+            for (index, (code, ids)) in stored.enumerate() {
+                if index.is_multiple_of(PHONETIC_IDS_PER_CHECKPOINT) {
+                    phonetic_checkpoint(deadline)?;
+                }
+                for id in ids {
+                    scan.offer(*id, code);
+                }
+            }
+            for (id, distance) in scan.finish() {
+                let entry = matches.entry(id).or_default();
+                entry.0 += sound_match_score(distance);
+                entry.1 += 1;
+            }
+        }
         phonetic_checkpoint(deadline)?;
-        let mut rows: Vec<_> = counts
+        let mut rows: Vec<_> = matches
             .into_iter()
-            .map(|(id, count)| ScoredEntity {
+            .map(|(id, (score, count))| ScoredEntity {
                 id,
-                score: count as f32 * if count >= 2 { 1.2 } else { 1.0 },
+                score: score * if count >= 2 { 1.2 } else { 1.0 },
             })
             .collect();
         crate::fusion::sort_scored_entities_desc(&mut rows);

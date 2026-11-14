@@ -678,6 +678,9 @@ impl Memory<'_> {
             if !execution.phonetic_codes.is_empty() {
                 builder = builder.search_phonetic(execution.phonetic_codes);
             }
+            if !execution.phonetic_mentions.is_empty() {
+                builder = builder.search_phonetic_mentions(execution.phonetic_mentions);
+            }
             if effective.requires_rerank()
                 && let Some(reranker) = execution.reranker
             {

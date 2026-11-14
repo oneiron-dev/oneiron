@@ -28,6 +28,7 @@ mod maintenance;
 pub(crate) use maintenance::*;
 mod lmdb_phonetic;
 mod lmdb_query;
+mod phonetic_sound;
 pub(crate) use lmdb_query::checkpoint;
 mod lmdb_retrieval_inventory;
 mod lmdb_staging;
