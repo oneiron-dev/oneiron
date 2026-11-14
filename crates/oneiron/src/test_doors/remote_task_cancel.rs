@@ -8,14 +8,22 @@ use serde_json::json;
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::connector_key::ScopedCapabilityProvenance;
+use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::outbound_consent::tool_call::{MutationIntent, ToolCallDescriptor, prepare_tool_call};
 use crate::outbound_consent::{DataClass, ScopedMcpCallContext};
 use crate::outbound_intent_ledger::{
-    BudgetChargeMarker, BudgetClass, IntentLedgerRecord, IntentState, OutboundCallRequest,
-    OutboundToolDescriptor, RemoteTaskHandle, RemoteTaskPoll, defer_record, force_sync,
-    insert_pending_in_txn, read_intent_record_in_txn,
+    BudgetChargeMarker, BudgetClass, IntentLedgerRecord, IntentState, OutboundAuthorizationBinding,
+    OutboundCallRequest, OutboundToolDescriptor, RemoteTaskHandle, RemoteTaskPoll, defer_record,
+    force_sync, insert_pending_in_txn, read_intent_record_in_txn,
 };
+
+/// The grant id the fixture send's capability provenance names.
+pub const FIXTURE_GRANT: [u8; 16] = [0x29; 16];
+
+/// The fixture send's authorization binding.
+const FIXTURE_BINDING: [u8; 32] = [0x29; 32];
 
 /// What the remote task send is: its try, the connector and tool it called
 /// at the endpoint its grant admitted, the task id the connector answered,
@@ -36,9 +44,20 @@ pub struct DeferredConnectorSend<'a> {
 /// it to Deferred with its task's handle, as the connector's task answer
 /// does: a polled task gets its first poll. The send's intent id.
 ///
+/// An endpoint-bound send carries the capability provenance and the
+/// authorization binding its scoped admission minted (the ledger refuses
+/// one without them). Here they name a grant [`FIXTURE_GRANT`] the vault
+/// does not hold, so the poll's grant check refuses its `tasks/get`, while
+/// the owner's stop, which goes out whether or not the grant still admits
+/// the send, is sent.
+///
 /// # Errors
 /// A call that does not freeze; ledger and storage faults.
 pub fn defer_connector_send(vault: &Vault, send: DeferredConnectorSend<'_>) -> Result<[u8; 32]> {
+    let grant = EntityId::from_bytes(FIXTURE_GRANT)?;
+    let capability = ScopedCapabilityProvenance::mint(send.server, &grant).ok_or_else(|| {
+        crate::Error::InvalidConfig("the fixture's server is no canonical scoped server".into())
+    })?;
     let schema = json!({ "type": "object" });
     let prepared = prepare_tool_call(
         ScopedMcpCallContext {
@@ -66,7 +85,9 @@ pub fn defer_connector_send(vault: &Vault, send: DeferredConnectorSend<'_>) -> R
         prepared.frozen_bytes().to_vec(),
         send.now_ms,
     )
-    .with_resolved_endpoint(send.endpoint);
+    .with_authorization_binding(OutboundAuthorizationBinding::new(FIXTURE_BINDING))
+    .with_resolved_endpoint(send.endpoint)
+    .with_capability_provenance(capability);
     let marker = BudgetChargeMarker {
         key_ref: None,
         budget_class: BudgetClass::Operation,

@@ -395,7 +395,10 @@ impl Vault {
     /// Records a poll that found row `intent`'s task still running, as
     /// `status`: its next poll waits the longer of the provider's hint
     /// (`poll_after_ms`) and a backoff that starts at the host's pass and
-    /// doubles with each poll up to fifteen minutes.
+    /// doubles with each poll up to fifteen minutes. A stop the owner asked
+    /// for after this poll's pass read the row (`stop_seen` false while the
+    /// row's stop is Requested) keeps its due-now poll, so the next pass
+    /// sends it (L8-29).
     ///
     /// # Errors
     /// Storage faults.
@@ -405,6 +408,7 @@ impl Vault {
         poll_after_ms: Option<u64>,
         status: &str,
         now_ms: u64,
+        stop_seen: bool,
     ) -> IntentLedgerResult<()> {
         let mut status = status.to_owned();
         if status.len() > MAX_STATUS_BYTES || !status.bytes().all(|byte| byte.is_ascii_graphic()) {
@@ -415,11 +419,15 @@ impl Vault {
                 return Ok(());
             };
             state.polls = state.polls.saturating_add(1);
-            let backoff = MIN_REMOTE_TASK_POLL_MS
-                .saturating_mul(1_u64 << state.polls.min(5))
-                .min(MAX_REMOTE_TASK_POLL_MS);
-            let after = backoff.max(poll_after_ms.unwrap_or(0));
-            state.next_poll_ms = now_ms.saturating_add(after);
+            let stop_asked_since =
+                !stop_seen && state.cancel == Some(RemoteTaskCancelPhase::Requested);
+            if !stop_asked_since {
+                let backoff = MIN_REMOTE_TASK_POLL_MS
+                    .saturating_mul(1_u64 << state.polls.min(5))
+                    .min(MAX_REMOTE_TASK_POLL_MS);
+                let after = backoff.max(poll_after_ms.unwrap_or(0));
+                state.next_poll_ms = now_ms.saturating_add(after);
+            }
             state.last_status = Some(status);
             POLLS.put(&self.store, txn, intent, &state)
         })?;

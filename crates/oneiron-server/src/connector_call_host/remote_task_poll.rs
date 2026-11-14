@@ -173,7 +173,13 @@ fn poll_due_remote_tasks(server: &SyncServer) {
             Ok(Polled::Running {
                 status,
                 poll_after_ms,
-            }) => vault.remote_task_polled(&task.intent, poll_after_ms, status, now_ms()),
+            }) => vault.remote_task_polled(
+                &task.intent,
+                poll_after_ms,
+                status,
+                now_ms(),
+                task.cancel_requested,
+            ),
             Ok(Polled::Ended(end, mut live)) => {
                 vault.settle_polled_remote_task(&task.intent, end).map(|_| {
                     // The ledger holds the end: the task's session ends. Its
@@ -190,7 +196,13 @@ fn poll_due_remote_tasks(server: &SyncServer) {
             Ok(Polled::Gone) => Ok(()),
             Err(reason) => {
                 tracing::info!(%intent, reason, "remote task not polled; it waits for the next pass");
-                vault.remote_task_polled(&task.intent, None, reason, now_ms())
+                vault.remote_task_polled(
+                    &task.intent,
+                    None,
+                    reason,
+                    now_ms(),
+                    task.cancel_requested,
+                )
             }
         };
         if let Err(error) = recorded {
@@ -408,7 +420,8 @@ impl ServedConnectorCallHost {
     /// unsent stop stays Sending. None is ever sent again. Its answer is not
     /// read: a stop undoes nothing already done, and only the end a poll
     /// reads settles the send. The session the poll goes on in; `None` when
-    /// the row is no longer this task's Deferred send.
+    /// the row is no longer this task's Deferred send; `Err` when an issuer
+    /// hold stood after the claim, so the pass sends nothing more.
     fn cancel_remote_task(
         &self,
         live: LiveSession,
@@ -419,9 +432,16 @@ impl ServedConnectorCallHost {
             .claim_remote_task_cancel(&task.intent, &task.task_id)
         {
             Ok(true) => {}
-            // Claimed before, or the row moved since the pass read it: the
-            // poll that follows reads where it stands.
-            Ok(false) => return Ok(Some(live)),
+            // Claimed before, and the task still runs: the poll goes on. A
+            // row no longer this task's Deferred send (settled or erased
+            // since the pass read it) sends nothing more.
+            Ok(false) => {
+                let still_due = self
+                    .vault
+                    .remote_task_still_due(&task.intent, &task.task_id)
+                    .map_err(|_| "row_unread")?;
+                return Ok(still_due.then_some(live));
+            }
             Err(_) => return Err("cancel_unclaimed"),
         }
         if issuer_held(&self.vault, task) {
@@ -433,7 +453,9 @@ impl ServedConnectorCallHost {
             if let Err(error) = self.vault.record_remote_task_cancel_uncertain(&task.intent) {
                 tracing::warn!(%error, "a remote task stop's outcome not recorded");
             }
-            return Ok(Some(live));
+            // The hold stands: this pass presents the credential no more,
+            // so no tasks/get goes out either (FIX 12166).
+            return Err("issuer_held");
         }
         let request = json!({
             "jsonrpc": "2.0",
