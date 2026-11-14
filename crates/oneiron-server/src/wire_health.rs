@@ -347,7 +347,7 @@ fn ask_to(vault: &Vault, check: &HealthCheck) -> Result<Option<AskTo>> {
 }
 
 /// Asks one held check on the ladder and binds the decision to its unit.
-fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
+pub(crate) fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<()> {
     let vault = server.vault();
     let host = server.decision_host();
     let wording = host.wire_health_wording().unwrap_or(WORDING).to_owned();
@@ -452,9 +452,7 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
 /// One pass: fold every new crossing in, ask each held check, and look for
 /// the owner's answers. A check that fails stays as it was for the next pass.
 pub(crate) fn sweep(server: &SyncServer) -> Result<()> {
-    for crossing in unread(server)? {
-        fold(server.vault(), crossing)?;
-    }
+    fold_unread(server)?;
     let open: Vec<HealthCheck> = checks(server.vault())?
         .into_iter()
         .filter(HealthCheck::open)
@@ -476,6 +474,14 @@ pub(crate) fn sweep(server: &SyncServer) -> Result<()> {
         if let Err(error) = asked {
             tracing::warn!(%error, %subject, "wire health check stays held for the next pass");
         }
+    }
+    Ok(())
+}
+
+/// Folds every crossing kept since the last pass into its check.
+pub(crate) fn fold_unread(server: &SyncServer) -> Result<()> {
+    for crossing in unread(server)? {
+        fold(server.vault(), crossing)?;
     }
     Ok(())
 }
