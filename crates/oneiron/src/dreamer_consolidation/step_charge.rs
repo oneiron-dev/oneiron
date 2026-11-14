@@ -303,7 +303,7 @@ impl StepChargeTally {
     pub fn drain_into(&mut self, units: &mut u64, bindings: &mut Vec<StepEffectBinding>) {
         *units = units.saturating_add(self.units);
         self.units = 0;
-        bindings.extend(self.step_bindings.drain(..));
+        bindings.append(&mut self.step_bindings);
     }
 
     /// Returns every spent generation accounted so far, in order. It serves test
