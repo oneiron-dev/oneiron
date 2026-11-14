@@ -16,7 +16,8 @@ pub const PREDICATE_WORLD_ACCESS_ALLOWED_SET: &str = "core.world_access.allowed_
 /// The active default may be written by the agent itself, which is why the
 /// resolver REJECTS a default that exceeds the owner's ALLOWED-SET rather than
 /// clamping it: an agent must never reach a wider read through its own
-/// default. Consumed only when the turn supplies no explicit selection.
+/// default. The owner may write one too (`vault.agents.worlds.set`); the
+/// newest wins. Consumed only when the turn supplies no explicit selection.
 pub const PREDICATE_WORLD_ACCESS_DEFAULT_SUBSET: &str = "core.world_access.default_subset";
 
 /// Whether `predicate` names one of the two world-access tiers. Both are local
