@@ -1,0 +1,17 @@
+{
+  "name": "vault.coach.training_runs.prepare",
+  "description": "The owner prepares one role training run with no Train offer: export the consented corpus into a sealed-cohort split and pin the spec on a trainer connector this host names; nothing runs until the owner authorizes it.",
+  "input": "crate::task_verb::sdk::RoleTrainingPrepareRequest",
+  "output": "crate::task_verb::sdk::RoleTrainingPrepared",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.coach.training_runs.prepare\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
