@@ -191,6 +191,9 @@ pub enum DrafterEventKind {
         generation: u64,
         draft_digest: Option<String>,
     },
+    /// An owner archive restore moved a binding to stock under the restored
+    /// policy, at the restored policy's revision.
+    ArchiveRestore { policy_revision: u64 },
 }
 
 /// One content-free drafter event, kept for the owner's history and the

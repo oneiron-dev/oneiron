@@ -13,6 +13,12 @@ use super::read::{ProjectReader, ProjectVerdict};
 use super::revision::{ProjectRevision, ProjectRevisionHash, RevisionOrigin};
 use super::validity::FoldCx;
 use super::*;
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 
 pub const DEFAULT_PROJECT_HISTORY_MAX_REVISIONS: u64 = 10_000;
@@ -434,4 +440,52 @@ pub(super) fn counted_set(cx: &FoldCx<'_, '_, '_>) -> Result<BTreeSet<ProjectRev
         }
     }
     Ok(counted)
+}
+
+/// Lands one archived `PROJECT_HISTORY_POLICY` envelope in `txn`: canonical decode and the
+/// credential predicate, then positive budgets install and anything else is held back. No
+/// project is refolded and no freeze is touched; the next read folds against a new budget on
+/// its own.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_project_history_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&PROJECT_HISTORY_POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.max_revisions == 0 || value.cycle_worlds_max == 0 {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&PROJECT_HISTORY_POLICY, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `PROJECT_HISTORY_POLICY` envelopes in input order, one
+    /// outcome per row: an absent policy installs, an identical policy is unchanged, and a
+    /// different policy stays live. No project is refolded.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_project_history_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_project_history_policy_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
 }

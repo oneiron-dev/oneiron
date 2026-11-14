@@ -20,6 +20,12 @@
 //! [`REVIEW_POLICY_UNREADABLE`] until an owner sets or clears it; a store
 //! failure stays a failure.
 
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::error::{Error, Result};
 use crate::repo_mutation::proposal::RepoProposalReview;
 use crate::side_table::{self, Named, SideTable};
@@ -255,4 +261,51 @@ pub(crate) fn erase_review_policy_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     vault.erase_review_policy_actor_in_txn(wtxn, actor)
+}
+
+/// Lands one archived `MERGE_QUEUE_REVIEW_POLICY` envelope in `txn`: canonical decode and the
+/// credential predicate, then the catalog triages exactly as the public setter validates it.
+/// The stored setter and time are preserved byte for byte; no queue notification runs here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+fn land_archived_merge_queue_review_policy_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&MERGE_QUEUE_REVIEW_POLICY, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if crate::critic::triage_critiques(&value.catalog, &[], &[]).is_err() {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&MERGE_QUEUE_REVIEW_POLICY, vault, txn, permit, &key, row)
+}
+
+impl Vault {
+    /// Lands the owner's archived `MERGE_QUEUE_REVIEW_POLICY` envelopes in input order, one
+    /// outcome per row: an absent policy installs, an identical policy is unchanged, and a
+    /// different policy stays live. The caller wakes the queue's drain after commit.
+    ///
+    /// # Errors
+    /// Storage faults; validation stays in the returned outcomes.
+    pub(crate) fn land_archived_merge_queue_rows_in_txn(
+        vault: &Vault,
+        txn: &mut heed::RwTxn<'_>,
+        permit: &OwnerArchiveRestorePermit,
+        rows: &[ArchiveRetainedSideRow],
+    ) -> Result<Vec<ArchivedSideRowOutcome>> {
+        let mut outcomes = Vec::with_capacity(rows.len());
+        for row in rows {
+            outcomes.push(land_archived_merge_queue_review_policy_row_in_txn(
+                vault, txn, permit, row,
+            )?);
+        }
+        Ok(outcomes)
+    }
 }
