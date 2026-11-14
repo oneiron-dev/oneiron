@@ -169,17 +169,29 @@ impl NapiVault {
     /// `deviceClass` is what kind of machine this install is, as the host
     /// declares it (FIX 3833): `"computer"`, the default, or `"phone"`. It is
     /// set before the vault opens, so the install enrols as it.
+    ///
+    /// `embeddingModel` is the id, `org/name@revision`, of the model that
+    /// computes this vault's vectors (census L9-28); a malformed id refuses
+    /// the open. Without one, every vector put is refused ("embedding model
+    /// is required before writing vectors"). The vault records the first
+    /// model an open names: a later open naming another model is refused,
+    /// and so is one naming none once the vault holds vectors.
     #[napi(constructor)]
     pub fn new(
         path: String,
         dimensions: Option<u32>,
         dict_search_paths: Option<Vec<String>>,
         device_class: Option<String>,
+        embedding_model: Option<String>,
     ) -> napi::Result<Self> {
+        if let Some(model) = embedding_model.as_deref() {
+            oneiron::store::validate_embedding_model_id(model).map_err(to_napi_err)?;
+        }
         crate::facade::before_vault_open();
         let mut config = VaultConfig::device();
         config.machine_device_class =
             host_device_class(device_class.as_deref()).map_err(napi::Error::from_reason)?;
+        config.embedding_model = embedding_model;
         if let Some(dims) = dimensions {
             config.dimensions = dims as usize;
         }
@@ -218,7 +230,8 @@ impl NapiVault {
     /// unused. A secret that cannot profile the install refuses the open
     /// with the engine's reason; a secret that is not the vault's settled
     /// root, over a profile that already stands, opens and says so in
-    /// `wrongHostRoot`. `deviceClass` is `new`'s (FIX 3833).
+    /// `wrongHostRoot`. `deviceClass` is `new`'s (FIX 3833), and so is
+    /// `embeddingModel` (census L9-28).
     #[napi(factory)]
     pub fn open_with_host_root(
         path: String,
@@ -226,11 +239,18 @@ impl NapiVault {
         dict_search_paths: Option<Vec<String>>,
         options: HostRootOpenOptions,
         device_class: Option<String>,
+        embedding_model: Option<String>,
     ) -> napi::Result<Self> {
         let request = options
             .before_open(&path)
             .map_err(napi::Error::from_reason)?;
-        let mut opened = Self::new(path, dimensions, dict_search_paths, device_class)?;
+        let mut opened = Self::new(
+            path,
+            dimensions,
+            dict_search_paths,
+            device_class,
+            embedding_model,
+        )?;
         opened.wrong_host_root = request.profile(&opened.vault).map_err(to_napi_err)?;
         Ok(opened)
     }

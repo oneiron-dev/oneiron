@@ -655,6 +655,10 @@ enum OneironStatus oneiron_subtree_entry_array_free(struct OneironSubtreeEntryAr
  * other value is `InvalidArg`. It is set before the vault opens, so the
  * install enrols as it, and it is never read off the operating system.
  *
+ * This open names no embedding model, so every vector put on the vault is
+ * refused `EngineError` (the engine's "embedding model is required before
+ * writing vectors"); `oneiron_vault_open_with_embedding_model` names one.
+ *
  * # Safety
  *
  * `path_ptr` covers `path_len` readable bytes. A non-null
@@ -668,6 +672,33 @@ enum OneironStatus oneiron_vault_open(const uint8_t *path_ptr,
                                       size_t dict_search_paths_len,
                                       uint8_t device_class,
                                       struct OneironVault **out_vault);
+
+/**
+ * `oneiron_vault_open`, naming the embedding model that computes this
+ * vault's vectors (census L9-28), so the host's vector puts are stored.
+ *
+ * `embedding_model_ptr` and `embedding_model_len` are the model's UTF-8 id,
+ * `org/name@revision`, each part of ASCII letters, digits, `.`, `_` and `-`;
+ * any other id, an empty one included, is `InvalidArg` (bytes that are not
+ * UTF-8 are `Utf8`) and opens nothing. A null pointer with length 0 names
+ * none, and the open is `oneiron_vault_open`'s. The vault records the first
+ * model an open names: a later open naming another model is `EngineError`,
+ * and so is an open naming none once the vault holds vectors.
+ *
+ * # Safety
+ *
+ * As `oneiron_vault_open`, and a non-null `embedding_model_ptr` covers
+ * `embedding_model_len` readable bytes, borrowed for this call only.
+ */
+enum OneironStatus oneiron_vault_open_with_embedding_model(const uint8_t *path_ptr,
+                                                           size_t path_len,
+                                                           size_t dimensions,
+                                                           const struct OneironByteSlice *dict_search_paths,
+                                                           size_t dict_search_paths_len,
+                                                           uint8_t device_class,
+                                                           const uint8_t *embedding_model_ptr,
+                                                           size_t embedding_model_len,
+                                                           struct OneironVault **out_vault);
 
 /**
  * Open a NEW handle over `vault`'s same open vault whose writes run as one
@@ -876,6 +907,9 @@ enum OneironStatus oneiron_vault_entity_exists(struct OneironVault *vault,
  * root, as before. It is reported, never refused. It is 0 otherwise,
  * with no secret too, and left 0 on any failure.
  *
+ * This open names no embedding model, as `oneiron_vault_open` names none;
+ * `oneiron_vault_open_with_host_root_and_embedding_model` names one.
+ *
  * # Safety
  *
  * As `oneiron_vault_open`, and a non-null `host_root_secret_ptr` covers
@@ -893,6 +927,33 @@ enum OneironStatus oneiron_vault_open_with_host_root(const uint8_t *path_ptr,
                                                      uint8_t initialize_root,
                                                      struct OneironVault **out_vault,
                                                      uint8_t *out_wrong_host_root);
+
+/**
+ * `oneiron_vault_open_with_host_root`, naming the vault's embedding model
+ * as `oneiron_vault_open_with_embedding_model` does (census L9-28):
+ * `embedding_model_ptr` and `embedding_model_len` are its UTF-8 id,
+ * `org/name@revision`, or a null pointer with length 0 for none. A malformed
+ * id is `InvalidArg` and opens nothing.
+ *
+ * # Safety
+ *
+ * As `oneiron_vault_open_with_host_root`, and a non-null
+ * `embedding_model_ptr` covers `embedding_model_len` readable bytes,
+ * borrowed for this call only.
+ */
+enum OneironStatus oneiron_vault_open_with_host_root_and_embedding_model(const uint8_t *path_ptr,
+                                                                         size_t path_len,
+                                                                         size_t dimensions,
+                                                                         const struct OneironByteSlice *dict_search_paths,
+                                                                         size_t dict_search_paths_len,
+                                                                         uint8_t device_class,
+                                                                         const uint8_t *embedding_model_ptr,
+                                                                         size_t embedding_model_len,
+                                                                         const uint8_t *host_root_secret_ptr,
+                                                                         size_t host_root_secret_len,
+                                                                         uint8_t initialize_root,
+                                                                         struct OneironVault **out_vault,
+                                                                         uint8_t *out_wrong_host_root);
 
 /**
  * Store a directed edge between two entities. A bound handle stores it as

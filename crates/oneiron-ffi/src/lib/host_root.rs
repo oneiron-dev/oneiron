@@ -1,12 +1,14 @@
 //! `oneiron_vault_open_with_host_root`: the raw open that profiles this
 //! install from the vault's host root secret (FIX 4730), beside the plain
-//! `oneiron_vault_open`, which stays as it was.
+//! `oneiron_vault_open`, which stays as it was, and its twin
+//! `oneiron_vault_open_with_host_root_and_embedding_model`, which also names
+//! the vault's embedding model (census L9-28).
 
 use std::{path::Path, ptr, sync::Arc};
 
 use oneiron::Vault;
 
-use super::entity::device_open_config;
+use super::entity::{device_open_config, host_embedding_model};
 use super::guard::{ffi_guard, with_optional_slice, write_out};
 use super::parse::engine;
 use super::types::{OneironByteSlice, OneironStatus, OneironVault};
@@ -34,6 +36,9 @@ const HOST_ROOT_OPEN: &str = "oneiron_vault_open_with_host_root";
 /// root, as before. It is reported, never refused. It is 0 otherwise,
 /// with no secret too, and left 0 on any failure.
 ///
+/// This open names no embedding model, as `oneiron_vault_open` names none;
+/// `oneiron_vault_open_with_host_root_and_embedding_model` names one.
+///
 /// # Safety
 ///
 /// As `oneiron_vault_open`, and a non-null `host_root_secret_ptr` covers
@@ -57,6 +62,58 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
     out_vault: *mut *mut OneironVault,
     out_wrong_host_root: *mut u8,
 ) -> OneironStatus {
+    // SAFETY: the caller keeps this function's contract, and a null model
+    // pointer with length 0 is read as no model.
+    unsafe {
+        oneiron_vault_open_with_host_root_and_embedding_model(
+            path_ptr,
+            path_len,
+            dimensions,
+            dict_search_paths,
+            dict_search_paths_len,
+            device_class,
+            ptr::null(),
+            0,
+            host_root_secret_ptr,
+            host_root_secret_len,
+            initialize_root,
+            out_vault,
+            out_wrong_host_root,
+        )
+    }
+}
+
+/// `oneiron_vault_open_with_host_root`, naming the vault's embedding model
+/// as `oneiron_vault_open_with_embedding_model` does (census L9-28):
+/// `embedding_model_ptr` and `embedding_model_len` are its UTF-8 id,
+/// `org/name@revision`, or a null pointer with length 0 for none. A malformed
+/// id is `InvalidArg` and opens nothing.
+///
+/// # Safety
+///
+/// As `oneiron_vault_open_with_host_root`, and a non-null
+/// `embedding_model_ptr` covers `embedding_model_len` readable bytes,
+/// borrowed for this call only.
+#[unsafe(no_mangle)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the model-naming open's arguments, then the secret, its flag and its fact"
+)]
+pub unsafe extern "C" fn oneiron_vault_open_with_host_root_and_embedding_model(
+    path_ptr: *const u8,
+    path_len: usize,
+    dimensions: usize,
+    dict_search_paths: *const OneironByteSlice,
+    dict_search_paths_len: usize,
+    device_class: u8,
+    embedding_model_ptr: *const u8,
+    embedding_model_len: usize,
+    host_root_secret_ptr: *const u8,
+    host_root_secret_len: usize,
+    initialize_root: u8,
+    out_vault: *mut *mut OneironVault,
+    out_wrong_host_root: *mut u8,
+) -> OneironStatus {
     ffi_guard(|| {
         let result = write_out(out_vault, ptr::null_mut())
             .and_then(|()| write_out(out_wrong_host_root, 0))
@@ -68,7 +125,9 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
                         }
                         (flag, _) => flag == 1,
                     };
-                    let (path, config) = device_open_config(
+                    let embedding_model =
+                        host_embedding_model(embedding_model_ptr, embedding_model_len)?;
+                    let (path, mut config) = device_open_config(
                         path_ptr,
                         path_len,
                         dimensions,
@@ -76,6 +135,7 @@ pub unsafe extern "C" fn oneiron_vault_open_with_host_root(
                         dict_search_paths_len,
                         device_class,
                     )?;
+                    config.embedding_model = embedding_model;
                     let may_root =
                         Vault::host_root_open_may_root(Path::new(&path), initialize_root);
                     let dimensions = config.dimensions;
