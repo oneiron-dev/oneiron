@@ -527,7 +527,8 @@ fn open_hold_secret(
 ) -> Result<HybridSecretKey> {
     let seed = open_seed(store_key, vault_id, hold, sealed)?;
     let failed = || io::Error::new(io::ErrorKind::InvalidData, "legal hold key does not open");
-    HybridSecretKey::from_seed(&seed, HOLD_SECRET_LABEL).map_err(|_| failed())
+    let secret = HybridSecretKey::from_seed(&seed, HOLD_SECRET_LABEL).map_err(|_| failed())?;
+    Ok(secret)
 }
 
 /// Opens the hold's 32-byte seed from its sealed `hold.key` bytes, under
