@@ -106,10 +106,8 @@ pub(super) fn training_run_executor_admits(
 }
 
 /// Takes the run's next step on this host, then drives it up to `wait_ms`:
-/// it waits while the run moves on its own, polls the trainer again for a
-/// training run this call did not dispatch (its waiter may be lost), and
-/// scores a run that returns inside the bound, then answers where the run
-/// stands. The bound ends only
+/// it waits while the run moves on its own and scores a run that returns
+/// inside the bound, then answers where the run stands. The bound ends only
 /// this call: the run's trainer keeps running, and a later execute or the
 /// Coach's queue takes the run on from where it stands. Each step carries
 /// the caller to the writers it starts; a step whose writer refused the
@@ -132,10 +130,6 @@ fn execute(
         })
     };
     let mut dispatched = take_step(&before)? == TrainingStep::Dispatched;
-    // A run this call did not hand to a trainer thread may have lost its
-    // waiter (a host restart): only a recovery step then records its
-    // trainer's receipt, so each turn polls for it again.
-    let recovers = !dispatched;
     let mut scored = before.state == TrainingState::Returned;
     loop {
         let run = training_run_read_for_execute(memory, &input.run)?.ok_or_else(|| {
@@ -162,11 +156,6 @@ fn execute(
                 scored = true;
                 take_step(&run)?;
                 continue;
-            }
-            TrainingRunProgress::Running {
-                phase: TrainingRunPhase::Training,
-            } if recovers => {
-                take_step(&run)?;
             }
             TrainingRunProgress::Running { .. } => {}
             TrainingRunProgress::Outstanding { .. } | TrainingRunProgress::Done => {
