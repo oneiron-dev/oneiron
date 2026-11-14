@@ -111973,7 +111973,7 @@
       "enum": 2,
       "fn": 12,
       "mod": 1,
-      "re-export": 8,
+      "re-export": 9,
       "struct": 8,
       "type": 1
      }
@@ -111985,7 +111985,7 @@
      "path": "src/linux.rs",
      "purpose": "Linux UAPI used on both sides of the seccomp listener",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 19,
       "fn": 3
      }
     },
@@ -112003,6 +112003,22 @@
       "enum": 2,
       "fn": 3,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "RunnerFence",
+      "RunnerFenceMechanism",
+      "RunnerFenceOutcome"
+     ],
+     "path": "src/runner_fence.rs",
+     "purpose": "The runner fence (canon `#runner-fence`): every runner the daemon starts on the host (a BYO seat's CLI, a…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 2
      }
     },
     {
@@ -112148,6 +112164,14 @@
      "surface": {
       "crate-vis": 13
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/runner_fence.rs",
+     "purpose": "The runner fence (canon `#runner-fence`, row L8-27): a runner the daemon starts cannot read or write the…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -112200,6 +112224,13 @@
      "layout": "file",
      "purpose": "Bounded host/guest network transport over the no-NIC VM's private vsock"
     },
+    "runner_fence": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "file",
+     "purpose": "The runner fence (canon `#runner-fence`): every runner the daemon starts on the host (a BYO seat's CLI, a…"
+    },
     "socket_lifetime": {
      "files": 1,
      "impl_vault": false,
@@ -112231,8 +112262,8 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 33,
-   "test_files": 0
+   "source_files": 34,
+   "test_files": 1
   },
   "oneiron-contracts": {
    "files": [
