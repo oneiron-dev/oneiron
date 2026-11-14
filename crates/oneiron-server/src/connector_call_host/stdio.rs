@@ -11,6 +11,10 @@
 //! A changed command, environment, working directory or pinned revision
 //! starts a new child.
 //!
+//! A writer thread owns the child's input, so no write waits past its
+//! request's bound: writing a request and reading its answer share one
+//! bound, and every wait ends within [`STOP_CHECK`] once the server stops.
+//!
 //! The child starts with only `HOME`, `LOGNAME`, `PATH`, `SHELL`, `TERM` and
 //! `USER` of this process's environment (the MCP SDKs' default for a stdio
 //! server), its own `TMPDIR`, and the section's `env`. Nothing is presented
@@ -31,7 +35,7 @@ use std::io::{self, BufRead, Write as _};
 use std::path::Path;
 use std::process::{Child, ChildStdin, ChildStdout, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, sync_channel};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::thread;
 
@@ -63,6 +67,9 @@ const STOP_GRACE: Duration = Duration::from_secs(2);
 /// How often a stopping child is checked for its exit.
 const STOP_POLL: Duration = Duration::from_millis(20);
 
+/// How often a wait on a child checks whether its server is stopping.
+const STOP_CHECK: Duration = Duration::from_millis(100);
+
 /// A connector whose child started this many times within
 /// [`RESTART_WINDOW`] is not started again until the window has passed.
 const STARTS_PER_WINDOW: usize = 5;
@@ -79,9 +86,20 @@ enum Frame {
 enum NoAnswer {
     /// The child's output ended: it exited or closed it.
     Ended,
+    /// No answer came within the bound, or the server began to stop.
     TimedOut,
     /// A line too long to read came where the answer was awaited.
     Unreadable,
+}
+
+/// Why a line was not written to the child's input.
+enum Unwritten {
+    /// It did not go: the input is closed, or the bound had passed or the
+    /// server was stopping before it was handed to the writer.
+    NotSent,
+    /// It may still go: the writer had it and had not written all of it
+    /// when the bound passed or the server began to stop.
+    Pending,
 }
 
 /// What starts one stdio connector child.
@@ -96,6 +114,9 @@ pub struct StdioStart<'a> {
     pub requested_revision: &'a str,
     /// Whether the revision the child answers with is one this client takes.
     pub accepts_revision: &'a dyn Fn(&str) -> bool,
+    /// Set once the server stops: every wait on the child then ends within
+    /// [`STOP_CHECK`]. `None` waits out each bound.
+    pub stop: Option<&'a Arc<AtomicBool>>,
 }
 
 /// One running stdio connector child, its MCP session initialized.
@@ -103,7 +124,11 @@ pub struct StdioStart<'a> {
 /// kills and reaps it.
 pub struct StdioChild {
     process: Child,
-    stdin: Option<ChildStdin>,
+    /// Lines for the writer thread, which owns the child's input and closes
+    /// it once this is dropped; `None` once the input counts as closed.
+    lines: Option<SyncSender<Zeroizing<Vec<u8>>>>,
+    /// The writer's word on each line: written, or the input is closed.
+    written: Receiver<bool>,
     frames: Receiver<Frame>,
     /// The endpoint the child was started for: its connector's command,
     /// environment and working directory.
@@ -114,6 +139,8 @@ pub struct StdioChild {
     session_manifest: Option<SessionManifest>,
     /// The child's `TMPDIR`, removed once it is stopped.
     scratch: Option<tempfile::TempDir>,
+    /// See [`StdioStart::stop`].
+    stop: Option<Arc<AtomicBool>>,
 }
 
 impl StdioChild {
@@ -161,11 +188,14 @@ impl StdioChild {
         let stdout = process.stdout.take();
         let stderr = process.stderr.take();
         let stdin = process.stdin.take();
-        let (sender, frames) = std::sync::mpsc::sync_channel(READ_AHEAD_LINES);
+        let (sender, frames) = sync_channel(READ_AHEAD_LINES);
+        let (lines, queued) = sync_channel(1);
+        let (wrote, written) = sync_channel(1);
         // From here on, dropping the child stops the process.
         let mut child = Self {
             process,
-            stdin,
+            lines: Some(lines),
+            written,
             frames,
             identity: start.connector.installed_endpoint(start.name),
             revision: String::new(),
@@ -174,8 +204,17 @@ impl StdioChild {
                 runner_session_manifest(&outcome, STDIO_RUNNER_BACKEND, program, args)
             }),
             scratch,
+            stop: start.stop.map(Arc::clone),
         };
+        let stdin = stdin.ok_or("the connector's input is not writable")?;
         let stdout = stdout.ok_or("the connector's output is not readable")?;
+        // The writer ends once no line can come or one does not go; it is
+        // not joined.
+        let writer = thread::Builder::new()
+            .name("connector-stdio-in".to_owned())
+            .spawn(move || write_lines(stdin, &queued, &wrote))
+            .map_err(|_| "the connector's input writer did not start")?;
+        drop(writer);
         let name = start.name.to_owned();
         // Each reader ends when the child's stream does; neither is joined.
         let reader = thread::Builder::new()
@@ -206,7 +245,8 @@ impl StdioChild {
             "capabilities": {},
             "clientInfo": { "name": "oneiron", "version": env!("CARGO_PKG_VERSION") },
         });
-        let result = self.request("initialize", params, HANDSHAKE_TIMEOUT)?;
+        let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
+        let result = self.request_until("initialize", params, deadline)?;
         let revision = result
             .get("protocolVersion")
             .and_then(Value::as_str)
@@ -216,8 +256,11 @@ impl StdioChild {
         }
         self.revision = revision.to_owned();
         zeroize_json(result);
-        self.write(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }))
-            .map_err(|()| "the connector's input is closed")
+        self.write(
+            &json!({ "jsonrpc": "2.0", "method": "notifications/initialized" }),
+            deadline,
+        )
+        .map_err(|_| "the connector did not take its initialized notification")
     }
 
     /// The revision the child's `initialize` agreed.
@@ -237,19 +280,30 @@ impl StdioChild {
     /// it.
     ///
     /// # Errors
-    /// The child's input is closed, it did not answer within `timeout`, or
-    /// it answered with an error.
+    /// The child did not take the request or did not answer it within
+    /// `timeout` (or the server began to stop), or it answered with an
+    /// error.
     pub fn request(
         &mut self,
         method: &str,
         params: Value,
         timeout: Duration,
     ) -> Result<Value, &'static str> {
+        self.request_until(method, params, Instant::now() + timeout)
+    }
+
+    /// [`Self::request`], written and answered before `deadline`.
+    fn request_until(
+        &mut self,
+        method: &str,
+        params: Value,
+        deadline: Instant,
+    ) -> Result<Value, &'static str> {
         let id = self
-            .send(method, params)
-            .map_err(|()| "the connector's input is closed")?;
+            .send(method, params, deadline)
+            .map_err(|_| "the connector did not take the request")?;
         let (mut message, mut bytes) = self
-            .answer(id, Instant::now() + timeout)
+            .answer(id, deadline)
             .map_err(|_| "the connector did not answer")?;
         bytes.zeroize();
         let result = message
@@ -260,16 +314,18 @@ impl StdioChild {
         result
     }
 
-    /// `tools/call` of `tool` with `arguments`, and the child's answer
+    /// `tools/call` of `tool` with `arguments`, written and answered
     /// within [`CALL_TIMEOUT`].
     fn call_tool(&mut self, tool: &str, arguments: Value) -> StdioDelivery {
-        let Ok(id) = self.send(
-            "tools/call",
-            json!({ "name": tool, "arguments": arguments }),
-        ) else {
-            return StdioDelivery::NotSent;
+        let deadline = Instant::now() + CALL_TIMEOUT;
+        let request = json!({ "name": tool, "arguments": arguments });
+        let id = match self.send("tools/call", request, deadline) {
+            Ok(id) => id,
+            Err(Unwritten::NotSent) => return StdioDelivery::NotSent,
+            // The whole request may still reach the child.
+            Err(Unwritten::Pending) => return StdioDelivery::NoAnswer,
         };
-        match self.answer(id, Instant::now() + CALL_TIMEOUT) {
+        match self.answer(id, deadline) {
             Ok((message, body)) => StdioDelivery::Answered { message, body },
             Err(NoAnswer::Ended | NoAnswer::TimedOut | NoAnswer::Unreadable) => {
                 StdioDelivery::NoAnswer
@@ -277,24 +333,61 @@ impl StdioChild {
         }
     }
 
-    /// Writes one request and returns its id. An error means it did not go:
-    /// the child's input is closed, so it has exited or is exiting.
-    fn send(&mut self, method: &str, params: Value) -> Result<u64, ()> {
+    /// Writes one request before `deadline` and returns its id.
+    fn send(&mut self, method: &str, params: Value, deadline: Instant) -> Result<u64, Unwritten> {
         let id = self.next_id;
         self.next_id += 1;
-        self.write(&json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params }))?;
+        let request = json!({ "jsonrpc": "2.0", "id": id, "method": method, "params": params });
+        self.write(&request, deadline)?;
         Ok(id)
     }
 
-    /// One message, as one line on the child's input.
-    fn write(&mut self, message: &Value) -> Result<(), ()> {
-        let stdin = self.stdin.as_mut().ok_or(())?;
-        let mut line = Zeroizing::new(serde_json::to_vec(message).map_err(|_| ())?);
+    /// One message, as one line on the child's input, written before
+    /// `deadline`. A line that was not written all closes the input: no
+    /// line is written after it.
+    fn write(&mut self, message: &Value, deadline: Instant) -> Result<(), Unwritten> {
+        if self.wait_slice(deadline).is_none() {
+            return Err(Unwritten::NotSent);
+        }
+        let lines = self.lines.as_ref().ok_or(Unwritten::NotSent)?;
+        let mut line = Zeroizing::new(serde_json::to_vec(message).map_err(|_| Unwritten::NotSent)?);
         line.push(b'\n');
-        stdin
-            .write_all(&line)
-            .and_then(|()| stdin.flush())
-            .map_err(|_| ())
+        // The writer is idle: each line before this one was written, or
+        // the input counts as closed.
+        if lines.try_send(line).is_err() {
+            self.lines = None;
+            return Err(Unwritten::NotSent);
+        }
+        loop {
+            let Some(wait) = self.wait_slice(deadline) else {
+                self.lines = None;
+                return Err(Unwritten::Pending);
+            };
+            match self.written.recv_timeout(wait) {
+                Ok(true) => return Ok(()),
+                // A line the pipe refused part of is no message.
+                Ok(false) | Err(RecvTimeoutError::Disconnected) => {
+                    self.lines = None;
+                    return Err(Unwritten::NotSent);
+                }
+                Err(RecvTimeoutError::Timeout) => {}
+            }
+        }
+    }
+
+    /// How long the next wait on the child may last: what is left before
+    /// `deadline`, at most [`STOP_CHECK`]; `None` once the deadline has
+    /// passed or the server is stopping.
+    fn wait_slice(&self, deadline: Instant) -> Option<Duration> {
+        if self
+            .stop
+            .as_deref()
+            .is_some_and(|stop| stop.load(Ordering::Acquire))
+        {
+            return None;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        (!left.is_zero()).then_some(left.min(STOP_CHECK))
     }
 
     /// The message answering `id`, read before `deadline`. A request the
@@ -302,30 +395,27 @@ impl StdioChild {
     /// dropped.
     fn answer(&mut self, id: u64, deadline: Instant) -> Result<(Value, Vec<u8>), NoAnswer> {
         loop {
-            let left = deadline.saturating_duration_since(Instant::now());
-            if left.is_zero() {
-                return Err(NoAnswer::TimedOut);
-            }
-            match self.frames.recv_timeout(left) {
+            let wait = self.wait_slice(deadline).ok_or(NoAnswer::TimedOut)?;
+            match self.frames.recv_timeout(wait) {
                 Ok(Frame::Message(message, bytes)) if super::reply_read::answers(&message, id) => {
                     return Ok((message, bytes));
                 }
                 Ok(Frame::Message(message, mut bytes)) => {
                     bytes.zeroize();
-                    self.serve(message);
+                    self.serve(message, deadline);
                 }
                 Ok(Frame::Overlong) => return Err(NoAnswer::Unreadable),
-                Err(RecvTimeoutError::Timeout) => return Err(NoAnswer::TimedOut),
+                Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => return Err(NoAnswer::Ended),
             }
         }
     }
 
-    /// Answers a request the child made: a `ping` with an empty result,
-    /// anything else with a refusal, since this client serves no
-    /// elicitation, sampling or roots. A notification or a stale answer is
-    /// dropped.
-    fn serve(&mut self, message: Value) {
+    /// Answers a request the child made, before `deadline`: a `ping` with
+    /// an empty result, anything else with a refusal, since this client
+    /// serves no elicitation, sampling or roots. A notification or a stale
+    /// answer is dropped.
+    fn serve(&mut self, message: Value, deadline: Instant) {
         let request = message.get("method").and_then(Value::as_str);
         if let (Some(method), Some(id)) = (request, message.get("id")) {
             let reply = if method == "ping" {
@@ -337,8 +427,9 @@ impl StdioChild {
                     "error": { "code": -32601, "message": "this client serves no server requests" },
                 })
             };
-            // A child that cannot take the answer fails its call's read.
-            let _ = self.write(&reply);
+            // A child that does not take the answer fails its call's read:
+            // its input counts as closed, or the bound has passed.
+            let _ = self.write(&reply, deadline);
         }
         zeroize_json(message);
     }
@@ -351,8 +442,10 @@ impl StdioChild {
 
 impl Drop for StdioChild {
     fn drop(&mut self) {
-        // Closing its input asks an MCP stdio server to exit.
-        drop(self.stdin.take());
+        // Closing its input asks an MCP stdio server to exit: the writer
+        // closes it once it has no line left to write. A writer still
+        // blocked on a line ends when the child is killed.
+        drop(self.lines.take());
         let deadline = Instant::now() + STOP_GRACE;
         while Instant::now() < deadline {
             if !self.running() {
@@ -365,6 +458,22 @@ impl Drop for StdioChild {
         }
         drop(self.process.wait());
         drop(self.scratch.take());
+    }
+}
+
+/// Writes each line handed to it on a child's standard input and says
+/// whether it went, until no more lines can come or one does not go; the
+/// input is closed then.
+fn write_lines(
+    mut stdin: ChildStdin,
+    lines: &Receiver<Zeroizing<Vec<u8>>>,
+    written: &SyncSender<bool>,
+) {
+    for line in lines {
+        let went = stdin.write_all(&line).and_then(|()| stdin.flush()).is_ok();
+        if written.send(went).is_err() || !went {
+            return;
+        }
     }
 }
 
@@ -443,12 +552,14 @@ fn read_line(reader: &mut impl BufRead, line: &mut Zeroizing<Vec<u8>>) -> io::Re
 /// What one `tools/call` on a stdio connector came to.
 pub enum StdioDelivery {
     /// The request never reached a child: none could be started, or its
-    /// input was closed before the request was written.
+    /// input was closed (or the server was stopping) before the request was
+    /// handed to it.
     NotSent,
     /// The child answered: the message and its own bytes.
     Answered { message: Value, body: Vec<u8> },
-    /// The request went and no readable answer came back within the call's
-    /// bound; the child is stopped.
+    /// The request went, or may still have gone, and no readable answer
+    /// came back within the call's bound or before the server stopped; the
+    /// child is stopped.
     NoAnswer,
 }
 
@@ -476,7 +587,9 @@ pub struct StdioToolOutcome {
 #[derive(Default)]
 pub struct ConnectorStdioRegistry {
     slots: Mutex<BTreeMap<String, Arc<Mutex<StdioSlot>>>>,
-    stopping: AtomicBool,
+    /// Set once the server stops: no child starts, and every wait on one
+    /// ends.
+    stopping: Arc<AtomicBool>,
 }
 
 /// One connector's child and its recent starts.
@@ -505,7 +618,7 @@ impl ConnectorStdioRegistry {
         if self.stopping.load(Ordering::Acquire) {
             return not_sent();
         }
-        let Some(child) = slot.live(&name, &call) else {
+        let Some(child) = slot.live(&name, &call, &self.stopping) else {
             return not_sent();
         };
         let session_manifest = child.session_manifest.clone();
@@ -520,9 +633,10 @@ impl ConnectorStdioRegistry {
         }
     }
 
-    /// Stops every child, and starts none from here on. Each child's input
-    /// is closed, then it is killed after [`STOP_GRACE`]; a call in flight
-    /// finishes first.
+    /// Stops every child, and starts none from here on. A call in flight
+    /// stops waiting on its child within [`STOP_CHECK`]; a request it had
+    /// begun to write has no known delivery. Each child's input is closed,
+    /// then it is killed after [`STOP_GRACE`].
     pub fn stop(&self) {
         self.stopping.store(true, Ordering::Release);
         let slots: Vec<_> = lock(&self.slots).values().cloned().collect();
@@ -537,7 +651,12 @@ impl StdioSlot {
     /// The child for `call`'s connector settings and revision, started
     /// when none runs for them; `None` when it cannot start, or keeps
     /// exiting.
-    fn live(&mut self, name: &str, call: &StdioToolCall<'_>) -> Option<&mut StdioChild> {
+    fn live(
+        &mut self,
+        name: &str,
+        call: &StdioToolCall<'_>,
+        stop: &Arc<AtomicBool>,
+    ) -> Option<&mut StdioChild> {
         let identity = call.connector.installed_endpoint(name);
         let current = self.child.as_mut().is_some_and(|child| {
             child.identity == identity && child.revision == call.revision && child.running()
@@ -563,6 +682,7 @@ impl StdioSlot {
                 fence: call.fence,
                 requested_revision: call.revision,
                 accepts_revision: &accepts,
+                stop: Some(stop),
             };
             match StdioChild::start(&start) {
                 Ok(child) => self.child = Some(child),
@@ -585,13 +705,22 @@ impl ServedConnectorCallHost {
     /// read, then the `tools/call` goes to the connector's child. A send
     /// whose route would present a credential is not sent: a stdio child
     /// has no channel for one until the broker path (B2), and its
-    /// environment never carries one. The frozen call's header values ride
-    /// in its arguments; stdio has no headers.
+    /// environment never carries one. A call whose tool moved a parameter
+    /// into a header (`x-mcp-header`) is not sent either: stdio has no
+    /// headers, and the tool would not get that parameter.
     pub(super) fn send_stdio(
         &self,
         connector: &ConnectorHostConfig,
         view: &FrozenToolCallView,
     ) -> Sent {
+        if !view.headers().is_empty() {
+            tracing::warn!(
+                connector = view.server(),
+                "a stdio connector's call carries header parameters, which stdio cannot send; it \
+                 is not sent"
+            );
+            return Sent::not_sent(OutboundFailureKind::InvalidRequest, None);
+        }
         let presents = match self.vault.route_connector_call(view.server()) {
             Ok(Some(route)) => {
                 self.grant.is_some() || self.credential.is_some() || route.secret_ref.is_some()

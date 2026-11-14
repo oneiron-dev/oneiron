@@ -3,8 +3,9 @@
 //! cannot read the vault or the key custody directory beside it, keeps only
 //! a few of this process's variables, is restarted after it exits with a
 //! new session manifest, and is not sent anything when it never answers
-//! `initialize`; its endpoint names its settings, and a credential is never
-//! put in its environment.
+//! `initialize`; a call whose child reads no more ends when the server
+//! stops; its endpoint names its settings, and a credential is never put in
+//! its environment.
 //!
 //! The child is a Python stand-in, written to a temp directory beside the
 //! vault. Run the tests with `--test-threads=1`: the process environment
@@ -13,7 +14,8 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, mpsc};
+use std::thread;
 use std::time::{Duration, Instant};
 
 use oneiron_container::{GuestSeccomp, RunnerFence, RunnerFenceMechanism, SessionManifest};
@@ -36,7 +38,9 @@ const LEAK: &str = "ONEIRON_STDIO_TEST_LEAK";
 /// for `tools/call probe` says for each path whether it could read it,
 /// whether it could make a temp file, the variables it got, and how its
 /// own `roots/list` request was answered; `tools/call exit` exits unanswered.
-const STAND_IN: &str = r#"import json, os, sys, tempfile
+/// With `PROBE_DEAF=<path>` it makes that file once initialized and reads
+/// nothing more.
+const STAND_IN: &str = r#"import json, os, sys, tempfile, time
 
 def send(message):
     sys.stdout.write(json.dumps(message) + "\n")
@@ -83,6 +87,9 @@ while True:
             "protocolVersion": message["params"]["protocolVersion"],
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "probe", "version": "1"}}})
+    elif method == "notifications/initialized" and os.environ.get("PROBE_DEAF"):
+        open(os.environ["PROBE_DEAF"], "w").close()
+        time.sleep(600)
     elif method == "tools/list":
         send({"jsonrpc": "2.0", "id": message["id"], "result": {
             "tools": [{"name": "probe", "inputSchema": {"type": "object"}}]}})
@@ -337,6 +344,67 @@ fn a_stdio_child_that_never_answers_initialize_is_not_sent_the_call() {
 }
 
 #[test]
+fn a_call_whose_child_reads_no_more_ends_when_the_server_stops() {
+    let (ended, heard) = mpsc::channel();
+    // The call and the stop run apart from the test's thread, which waits
+    // on them within a bound: a stop that waited on the call would hang.
+    thread::spawn(move || {
+        let layout = layout();
+        let deaf = layout.stand_in.with_file_name("deaf");
+        let connector = section(
+            &layout,
+            &format!("env = {{ PROBE_DEAF = {:?} }}", deaf.display().to_string()),
+        );
+        let registry = ConnectorStdioRegistry::default();
+        // Far more than a pipe holds: its write waits on a child that
+        // reads no more.
+        let arguments = json!({ "padding": "x".repeat(4 * 1024 * 1024) });
+        thread::scope(|scope| {
+            let call = scope.spawn(|| {
+                registry.call_tool(StdioToolCall {
+                    name: "notes",
+                    connector: &connector,
+                    // Unfenced, so the stand-in may make `deaf` beside itself.
+                    fence: None,
+                    revision: REVISION,
+                    tool: "probe",
+                    arguments,
+                })
+            });
+            let waited = Instant::now();
+            while !deaf.exists() && waited.elapsed() < Duration::from_secs(20) {
+                thread::sleep(Duration::from_millis(20));
+            }
+            // The call is writing its request by now.
+            thread::sleep(Duration::from_millis(500));
+            let stopping = Instant::now();
+            registry.stop();
+            let stop_took = stopping.elapsed();
+            let outcome = call.join().expect("the call's thread");
+            let unknown = matches!(outcome.delivery, StdioDelivery::NoAnswer);
+            // The test may have given up waiting.
+            let _ = ended.send((deaf.exists(), unknown, stop_took));
+        });
+    });
+    let (went_deaf, unknown, stop_took) = heard
+        .recv_timeout(Duration::from_secs(60))
+        .expect("the call and the stop end once the server stops");
+    assert!(
+        went_deaf,
+        "the stand-in stopped reading (is python3 on PATH?)"
+    );
+    assert!(
+        unknown,
+        "a request the child may yet read has no known delivery"
+    );
+    eprintln!("runner_fence_stdio: the stop took {stop_took:?}");
+    assert!(
+        stop_took < Duration::from_secs(10),
+        "the stop waits on no write: {stop_took:?}"
+    );
+}
+
+#[test]
 fn a_stdio_child_on_a_host_without_the_fence_runs_with_an_unproven_manifest() {
     let layout = layout();
     let fence = HostRunnerFence::proved(
@@ -369,6 +437,7 @@ fn a_stdio_child_lists_its_tools_at_the_revision_both_sides_speak() {
         fence: Some(&fence),
         requested_revision: REVISION,
         accepts_revision: &accepts,
+        stop: None,
     })
     .expect("the child starts");
     assert_eq!(child.revision(), REVISION);
@@ -389,6 +458,7 @@ fn a_stdio_child_lists_its_tools_at_the_revision_both_sides_speak() {
         fence: Some(&fence),
         requested_revision: REVISION,
         accepts_revision: &refuses,
+        stop: None,
     });
     assert!(
         refused.is_err(),

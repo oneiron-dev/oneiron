@@ -312,6 +312,8 @@ pub(crate) fn discover_stdio(
         fence,
         requested_revision: pinned.unwrap_or(REQUESTED_REVISION),
         accepts_revision: &accepts,
+        // A listing is bounded by its handshake and page bounds.
+        stop: None,
     })
     .map_err(refused)?;
     let tools = list_pages(|_, params| child.request("tools/list", params, HANDSHAKE_TIMEOUT))
