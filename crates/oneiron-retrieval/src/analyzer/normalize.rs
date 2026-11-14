@@ -4,8 +4,9 @@
 //! hand-rolled mapping (U+30A1..U+30F6 → U+3041..U+3096) because ICU4X does
 //! not offer a standalone katakana→hiragana transform.
 //!
-//! Scripts outside the hand-rolled table (Zawgyi / Khmer COENG) are out of
-//! scope for v1 — see plan §14 and follow-up tickets ONE-361 / ONE-362.
+//! Khmer syllables are put in UTN #61 order before NFKC ([`super::khmer`],
+//! ONE-COENG). Myanmar Zawgyi detection and conversion (ONE-ZAWGYI) is still
+//! a follow-up (ARCH-0031 `#deferred`).
 
 use std::borrow::Cow;
 
@@ -13,6 +14,7 @@ use icu_casemap::CaseMapper;
 use icu_normalizer::ComposingNormalizer;
 use unicode_segmentation::UnicodeSegmentation;
 
+use super::khmer::{self, SyllableScanner};
 use super::manifest::NormalizationPolicy;
 
 pub fn nfkc(input: &str) -> Cow<'_, str> {
@@ -54,13 +56,16 @@ fn is_katakana_in_fold_range(c: char) -> bool {
     matches!(c as u32, 0x30A1..=0x30F6)
 }
 
-/// Result of applying NFKC + casefold to an input, with enough metadata to
-/// remap a byte offset on the normalized side back to the original.
+/// Result of applying Khmer canonical order, NFKC and casefold to an input,
+/// with enough metadata to remap a byte offset on the normalized side back
+/// to the original.
 ///
 /// Normalization is applied grapheme-by-grapheme so combining-mark
 /// recomposition inside a cluster (e.g. halfwidth `ｶ` + `ﾞ` → `ガ`) still
 /// fires, while the offset-remap step keeps token offsets pointing at the
-/// *original* UTF-8 per plan §3.3.
+/// *original* UTF-8 per plan §3.3. A Khmer syllable that runs across
+/// graphemes (the consonant after COENG starts a new one) is one unit, so a
+/// token inside a reordered syllable maps back to the whole syllable.
 #[derive(Debug)]
 pub struct NormalizedText<'a> {
     inner: Inner<'a>,
@@ -71,8 +76,9 @@ enum Inner<'a> {
     Unchanged(&'a str),
     Owned {
         text: String,
-        /// Sorted `(norm_byte, orig_byte)` boundaries at every grapheme
-        /// transition, including `(0, 0)` and `(text.len(), input.len())`.
+        /// Sorted `(norm_byte, orig_byte)` boundaries at every unit
+        /// transition (a grapheme, or the graphemes of one Khmer syllable),
+        /// including `(0, 0)` and `(text.len(), input.len())`.
         boundaries: Vec<(u32, u32)>,
     },
 }
@@ -137,14 +143,15 @@ impl<'a> NormalizedText<'a> {
     }
 }
 
-/// Apply the pre-tokenization stage of `policy` (NFKC + default casefold)
-/// to `input`, producing a [`NormalizedText`]. Returns `Unchanged` whenever
-/// the policy is off or the transform is a no-op.
+/// Apply the pre-tokenization stage of `policy` (Khmer canonical order, then
+/// NFKC + default casefold) to `input`, producing a [`NormalizedText`].
+/// Returns `Unchanged` whenever the policy is off or the transform is a
+/// no-op.
 pub fn normalize_with_offset_map<'a>(
     input: &'a str,
     policy: &NormalizationPolicy,
 ) -> NormalizedText<'a> {
-    if (!policy.nfkc && !policy.casefold) || input.is_empty() {
+    if (!policy.nfkc && !policy.casefold && !policy.khmer_coeng) || input.is_empty() {
         return NormalizedText::unchanged(input);
     }
 
@@ -167,9 +174,22 @@ pub fn normalize_with_offset_map<'a>(
     let mut boundaries: Vec<(u32, u32)> = Vec::with_capacity(input.len() / 3 + 2);
     boundaries.push((0, 0));
     let mut changed = false;
+    let khmer_coeng = policy.khmer_coeng;
+    let mut syllables = khmer_coeng.then(SyllableScanner::default);
 
-    for (orig_start, grapheme) in input.grapheme_indices(true) {
-        let mut chunk: Cow<'_, str> = Cow::Borrowed(grapheme);
+    // One unit is one grapheme, or the graphemes one Khmer syllable spans.
+    let mut unit_start = 0;
+    let mut unit_end = 0;
+    let mut normalize_unit = |start: usize, end: usize, out: &mut String| {
+        let unit = &input[start..end];
+        let mut chunk: Cow<'_, str> = if khmer_coeng {
+            khmer::canonical_order(unit)
+        } else {
+            Cow::Borrowed(unit)
+        };
+        if matches!(chunk, Cow::Owned(_)) {
+            changed = true;
+        }
         if let Some(n) = normalizer.as_ref()
             && let Cow::Owned(s) = n.normalize(&chunk)
         {
@@ -183,8 +203,20 @@ pub fn normalize_with_offset_map<'a>(
             changed = true;
         }
         out.push_str(&chunk);
-        let orig_end = (orig_start + grapheme.len()) as u32;
-        boundaries.push((out.len() as u32, orig_end));
+        boundaries.push((out.len() as u32, end as u32));
+    };
+    for (orig_start, grapheme) in input.grapheme_indices(true) {
+        let joins = syllables
+            .as_mut()
+            .is_some_and(|scanner| scanner.joins_previous(grapheme));
+        if !joins && unit_end > unit_start {
+            normalize_unit(unit_start, unit_end, &mut out);
+            unit_start = orig_start;
+        }
+        unit_end = orig_start + grapheme.len();
+    }
+    if unit_end > unit_start {
+        normalize_unit(unit_start, unit_end, &mut out);
     }
 
     if !changed {
@@ -219,5 +251,34 @@ mod tests {
         assert_eq!(out.remap_end(3), 3);
         assert_eq!(out.remap(3), 0);
         assert_eq!(out.remap_end(6), 3);
+    }
+
+    #[test]
+    fn a_reordered_khmer_syllable_maps_back_to_its_whole_span() {
+        // ស្ត្រី typed COENG RO first: six chars, 18 bytes, one syllable over
+        // three graphemes. The canonical form is as long, so only the
+        // boundaries show that the syllable is one unit.
+        let typed = "\u{179F}\u{17D2}\u{179A}\u{17D2}\u{178F}\u{17B8} ok";
+        let canonical = "\u{179F}\u{17D2}\u{178F}\u{17D2}\u{179A}\u{17B8} ok";
+        let policy = NormalizationPolicy::default();
+        let out = normalize_with_offset_map(typed, &policy);
+        assert_eq!(out.as_str(), canonical);
+        assert_eq!(out.remap(0), 0);
+        assert_eq!(out.remap(3), 0);
+        assert_eq!(out.remap_end(3), 18);
+        assert_eq!(out.remap_end(18), 18);
+        assert_eq!(out.remap(19), 19);
+    }
+
+    #[test]
+    fn khmer_order_is_off_without_its_flag() {
+        let typed = "\u{179F}\u{17D2}\u{179A}\u{17D2}\u{178F}\u{17B8}";
+        let policy = NormalizationPolicy {
+            khmer_coeng: false,
+            ..NormalizationPolicy::default()
+        };
+        let out = normalize_with_offset_map(typed, &policy);
+        assert!(out.is_unchanged());
+        assert_eq!(out.as_str(), typed);
     }
 }
