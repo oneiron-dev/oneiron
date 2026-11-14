@@ -13,6 +13,7 @@ use crate::EntityId;
 use crate::sync::selector::encode_sync_selector;
 use crate::sync::transport::TransportError;
 use crate::sync::types::WindowKey;
+use crate::sync::window::LoadedWindow;
 
 use super::rpc::{ResidenceRpc, refused, residence_budgets};
 
@@ -151,49 +152,9 @@ impl SyncClient {
         // The world's pads reach custody here before the snapshot (FIX 6706).
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
             .await;
-        // Do not merge a canonical frontier into an independently authored
-        // sparse window. Its prior ops would not be a causal continuation.
-        // A key pad held here is not mirrored into it: the snapshot carries
-        // the window's pads (FIX 3789).
-        let loaded = crate::sync::ingest::with_first_promotion_open(&self.vault, || {
-            self.ensure_window(window.as_str())
-        })?;
-        if !loaded.doc.oplog_vv().is_empty() {
-            return Err(TransportError::InvalidPayload(
-                "unpromoted window has local CRDT history",
-            ));
-        }
         let own_device = self.own_device_import(rpc.home);
-        if !import_promotion_snapshot_with(
-            &self.vault,
-            (window, &loaded.doc),
-            &snapshot,
-            own_device.as_ref(),
-        ) {
-            self.manager.discard_window(window);
-            return Err(refused());
-        }
-        if let Err(error) = loaded.persist_state(&self.vault) {
-            self.manager.discard_window(window);
-            return Err(TransportError::Storage(error.to_string()));
-        }
-        // Publish the writable marker only AFTER the canonical doc is
-        // durable. Cached thin bodies in this window can no longer shadow it.
-        self.vault
-            .with_write_txn_grouped(|txn| {
-                drop_thin_rows_in(&self.vault, txn, window)?;
-                self.vault
-                    .store
-                    .sync_state
-                    .put(txn, &format!("rp:w:{window}"), &[1])?;
-                Ok(())
-            })
-            .map_err(|e| TransportError::Storage(e.to_string()))?;
-        super::promoted_pads::land_pads(&self.vault, window, &pads);
-        self.materialize_sealed_mirror(window);
-        crate::store::turn_missing::reconcile_after_promotion(&self.vault);
-        self.manager.notify_promotion(window);
-        Ok(())
+        self.land_promoted_window(window, &snapshot, &pads, own_device.as_ref())
+            .map(drop)
     }
 
     /// The bundle sections this machine took in while `window` stood
@@ -230,7 +191,9 @@ impl SyncClient {
             self.catch_up_promoted_pads(window, None).await;
             return Ok(true);
         }
-        let budgets = residence_budgets(&self.vault)?;
+        // Read before the window opens, as before: a missing residence policy refuses the
+        // retain. The promotion below reads the budgets again for its own socket.
+        let _budgets = residence_budgets(&self.vault)?;
         let loaded = self.ensure_window(window.as_str())?;
         // The home admits a promotion through one live row it selects.
         let mut item = None;
@@ -245,6 +208,45 @@ impl SyncClient {
         let Some(item) = item else {
             return Ok(false);
         };
+        self.promote_from_anchor(window, item, Some(loaded.as_ref()))
+            .await
+    }
+
+    /// Prefetches a predicted window this machine does not hold, anchored on `anchor`, an item
+    /// of the window from its thin index. The home grant-checks the whole window first, exactly
+    /// as for a first-edit promotion. Never through `residence.touch` or `open_item`: the home's
+    /// touch log seeds its predictions, and a prefetch must not feed it. `Ok(true)` once the
+    /// window is promoted here; `Ok(false)` when the home refuses it or may not read its world.
+    pub(crate) async fn prefetch_window(
+        &mut self,
+        window: &WindowKey,
+        anchor: EntityId,
+    ) -> Result<bool, TransportError> {
+        if self.config.residence_mode != SyncResidenceMode::Opened {
+            return Err(refused());
+        }
+        if self
+            .vault
+            .sync_state_get(&format!("rp:w:{window}"))
+            .map_err(|e| TransportError::Storage(e.to_string()))?
+            .is_some()
+        {
+            return Ok(true);
+        }
+        self.promote_from_anchor(window, anchor, None).await
+    }
+
+    /// Promotes `window` through the home's grant for `item`, one live row it selects. A retain
+    /// merges the snapshot into the `held` copy; a prefetch opens the window it lands into. The
+    /// refusal marks stay here, on the retain's path alone: a prefetch writes no `rr:w:` row, so
+    /// the residence upkeep never retries one as a retain.
+    async fn promote_from_anchor(
+        &mut self,
+        window: &WindowKey,
+        item: EntityId,
+        held: Option<&LoadedWindow>,
+    ) -> Result<bool, TransportError> {
+        let budgets = residence_budgets(&self.vault)?;
         let selector = self
             .config
             .residence_selector
@@ -256,10 +258,13 @@ impl SyncClient {
             return Err(TransportError::home_offline());
         };
         // A home that may not read the window's world is not told its name or
-        // the selector (FIX 3872): the window stays on disk, marked for the
-        // residence upkeep to ask again, as when the home refuses it.
+        // the selector (FIX 3872): a retain stays on disk, marked for the
+        // residence upkeep to ask again, as when the home refuses it, while a
+        // prefetch waits for the next predicted pass.
         if ITEM11_UNREADABLE_HOME_PROMOTION && !home_reads_window(&self.vault, rpc.home, window) {
-            self.mark_retain_refused(window)?;
+            if held.is_some() {
+                self.mark_retain_refused(window)?;
+            }
             return Ok(false);
         }
         let reply = match rpc
@@ -273,7 +278,9 @@ impl SyncClient {
         {
             Ok(reply) => reply,
             Err(TransportError::InvalidPayload(_)) => {
-                self.mark_retain_refused(window)?;
+                if held.is_some() {
+                    self.mark_retain_refused(window)?;
+                }
                 return Ok(false);
             }
             Err(error) => return Err(error),
@@ -285,22 +292,45 @@ impl SyncClient {
         let pads = super::promoted_pads::checked_pads(window, &reply.pads)?;
         // Its envelope's pads reach custody first (FIX 7107), once its
         // isolated check over the window it merges into admits it (FIX 10474);
-        // a refused one is refused as a failed retain is.
-        let Some(snapshot) = self.promotion_snapshot(window, &reply.snapshot, Some(&loaded.doc))?
+        // a refused retain is marked as a failed retain is, while a refused
+        // prefetch waits for the next predicted pass.
+        let Some(snapshot) =
+            self.promotion_snapshot(window, &reply.snapshot, held.map(|loaded| &loaded.doc))?
         else {
-            self.mark_retain_refused(window)?;
+            if held.is_some() {
+                self.mark_retain_refused(window)?;
+            }
             return Ok(false);
         };
         // The world's pads reach custody here before the snapshot (FIX 6706).
         self.hydrate_promoted_pads(&mut rpc, window, &selector, item)
             .await;
         let own_device = self.own_device_import(rpc.home);
+        match held {
+            Some(loaded) => {
+                self.land_retained_window(window, loaded, &snapshot, &pads, own_device.as_ref())
+            }
+            None => self.land_promoted_window(window, &snapshot, &pads, own_device.as_ref()),
+        }
+    }
+
+    /// Lands a retain's snapshot into the held window: the two are the same canonical CRDT,
+    /// never an independently authored one. A window whose snapshot does not land stays on disk,
+    /// marked for the residence upkeep to ask again.
+    fn land_retained_window(
+        &self,
+        window: &WindowKey,
+        loaded: &LoadedWindow,
+        snapshot: &[u8],
+        pads: &[super::promoted_pads::PadRow],
+        own_device: Option<&OwnDeviceImport>,
+    ) -> Result<bool, TransportError> {
         if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES
             || !import_promotion_snapshot_with(
                 &self.vault,
                 (window, &loaded.doc),
-                &snapshot,
-                own_device.as_ref(),
+                snapshot,
+                own_device,
             )
         {
             self.mark_retain_refused(window)?;
@@ -321,7 +351,60 @@ impl SyncClient {
                     .put(txn, &format!("rp:w:{window}"), &[1])
             })
             .map_err(|e| TransportError::Storage(e.to_string()))?;
-        super::promoted_pads::land_pads(&self.vault, window, &pads);
+        super::promoted_pads::land_pads(&self.vault, window, pads);
+        self.materialize_sealed_mirror(window);
+        crate::store::turn_missing::reconcile_after_promotion(&self.vault);
+        self.manager.notify_promotion(window);
+        Ok(true)
+    }
+
+    /// Lands a first-edit promotion's or a prefetch's snapshot into the window it opens: never
+    /// into an independently authored sparse window. A prefetch reaches it never through
+    /// `residence.touch`, whose log seeds the home's predictions.
+    fn land_promoted_window(
+        &self,
+        window: &WindowKey,
+        snapshot: &[u8],
+        pads: &[super::promoted_pads::PadRow],
+        own_device: Option<&OwnDeviceImport>,
+    ) -> Result<bool, TransportError> {
+        if snapshot.len() > crate::sync::residence::MAX_PROMOTION_SNAPSHOT_BYTES {
+            return Err(refused());
+        }
+        // Do not merge a canonical frontier into an independently authored
+        // sparse window. Its prior ops would not be a causal continuation.
+        // A key pad held here is not mirrored into it: the snapshot carries
+        // the window's pads (FIX 3789).
+        let loaded = crate::sync::ingest::with_first_promotion_open(&self.vault, || {
+            self.ensure_window(window.as_str())
+        })?;
+        if !loaded.doc.oplog_vv().is_empty() {
+            return Err(TransportError::InvalidPayload(
+                "unpromoted window has local CRDT history",
+            ));
+        }
+        if !import_promotion_snapshot_with(&self.vault, (window, &loaded.doc), snapshot, own_device)
+        {
+            self.manager.discard_window(window);
+            return Err(refused());
+        }
+        if let Err(error) = loaded.persist_state(&self.vault) {
+            self.manager.discard_window(window);
+            return Err(TransportError::Storage(error.to_string()));
+        }
+        // Publish the writable marker only AFTER the canonical doc is
+        // durable. Cached thin bodies in this window can no longer shadow it.
+        self.vault
+            .with_write_txn_grouped(|txn| {
+                drop_thin_rows_in(&self.vault, txn, window)?;
+                self.vault
+                    .store
+                    .sync_state
+                    .put(txn, &format!("rp:w:{window}"), &[1])?;
+                Ok(())
+            })
+            .map_err(|e| TransportError::Storage(e.to_string()))?;
+        super::promoted_pads::land_pads(&self.vault, window, pads);
         self.materialize_sealed_mirror(window);
         crate::store::turn_missing::reconcile_after_promotion(&self.vault);
         self.manager.notify_promotion(window);
