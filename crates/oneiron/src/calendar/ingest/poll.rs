@@ -34,9 +34,10 @@ pub(crate) fn calendar_ics_feed_cursor_accepts_masked(bytes: &[u8]) -> bool {
 /// Actor string stamped on pause interventions.
 const ICS_POLL_INTERVENTION_ACTOR: &str = "calendar.ics.poll";
 
-const MAX_SECRET_REF_BYTES: usize = 256;
-
-const MAX_SYSTEM_BYTES: usize = 128;
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::ingest::poll::IcsFeedCursorSnapshot;
+#[doc(hidden)]
+use oneiron_verb_wire::calendar::ingest::poll::{MAX_SECRET_REF_BYTES, MAX_SYSTEM_BYTES};
 
 /// SECRET-custody poll configuration for one ICS feed.
 ///
@@ -423,21 +424,6 @@ pub fn ics_feed_pause_exceptions(
         });
     }
     Ok(rows)
-}
-
-/// Host-visible snapshot of one feed's poll cursor. Carries the custody
-/// record name and provider ETag — never the resolved URL.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct IcsFeedCursorSnapshot {
-    /// The ETag the next poll sends as `If-None-Match`, when one is held.
-    pub etag: Option<String>,
-    /// When the last complete feed was applied.
-    pub last_complete_at: Option<u64>,
-    /// Whether the feed is paused awaiting owner input.
-    pub paused: bool,
-    /// The worst CAL-09 screen-verdict class the last run admitted under
-    /// (`clear`, `flagged`, `indeterminate`, or `skipped`).
-    pub last_screen_verdict: Option<String>,
 }
 
 /// Reads one feed's cursor as a host-visible snapshot. `None` means no poll

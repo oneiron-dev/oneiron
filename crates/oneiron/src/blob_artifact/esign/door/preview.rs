@@ -1,32 +1,20 @@
 //! The typed recipient preview, on the engine's document memory port.
 use super::{EsignScope, lane_scope};
 use crate::blob_artifact::esign::render::{
-    self, DecodeAdmissionError, FieldLayout, InspectionMemory, PageGeometry,
+    self, DecodeAdmissionError, InspectionMemory, PageGeometry,
 };
 use crate::blob_artifact::esign::{EsignCapability, EsignField, FieldValue};
 use crate::entity_doc::document_resources::{document_resources, machine_memory_refused};
 use crate::memory::Memory;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 use oneiron_docedit::resource::{Hold, ResourceRefusal};
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-/// One recipient ceremony item to preview under its signing capability.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EsignSigningPreviewRequest {
-    pub token: String,
-    pub item: usize,
-}
-
-/// The pinned item's page geometry and fields, as `POST /sign/preview` lays them out.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EsignSigningPreviewView {
-    pub pages: Vec<PageGeometry>,
-    pub fields: Vec<FieldLayout>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::blob_artifact::esign::door::preview::{
+    EsignSigningPreviewRequest, EsignSigningPreviewView,
+};
 
 /// Pure field layout shared by the editor and capability-scoped previews.
 ///

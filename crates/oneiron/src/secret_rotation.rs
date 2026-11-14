@@ -22,6 +22,7 @@ use crate::store::secret_name_index::resolve_secret_ref_in_txn;
 use rmpv::Value;
 
 mod owner_door;
+mod provider_refresh;
 mod revoke;
 pub(crate) mod tables;
 #[cfg(test)]
@@ -122,14 +123,52 @@ pub struct RotationReceipt {
     pub rotated_at: u64,
     /// Which op minted this receipt.
     pub kind: RotationKind,
+    /// Why the op ran: the owner's act, or a provider's refresh answer the
+    /// engine stored (RULING MICROSOFT365-REFRESH-WRITEBACK).
+    pub cause: RotationCause,
 }
 
-const ROTATION_RECEIPT_BODY_KEYS: [&str; 5] = [
+/// Why a rotation or revoke ran.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RotationCause {
+    /// The owner's act: behind the owner's proof, or a holder performing an
+    /// owner's custody change. Every receipt written before causes were
+    /// recorded is one.
+    Owner,
+    /// The provider's own refresh answer, stored by the engine in place of
+    /// the grant a credential door read: the same name, bindings and custody
+    /// policy (RULING MICROSOFT365-REFRESH-WRITEBACK, 14 Nov 07:00).
+    ProviderRefresh,
+}
+
+impl RotationCause {
+    /// The wire string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::ProviderRefresh => "provider_refresh",
+        }
+    }
+
+    /// Parses the wire string.
+    #[must_use]
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "owner" => Some(Self::Owner),
+            "provider_refresh" => Some(Self::ProviderRefresh),
+            _ => None,
+        }
+    }
+}
+
+const ROTATION_RECEIPT_BODY_KEYS: [&str; 6] = [
     "secret_ref",
     "from_generation",
     "to_generation",
     "rotated_at",
     "kind",
+    "cause",
 ];
 
 fn encode_rotation_receipt_body(receipt: &RotationReceipt) -> Result<Vec<u8>> {
@@ -153,6 +192,10 @@ fn encode_rotation_receipt_body(receipt: &RotationReceipt) -> Result<Vec<u8>> {
         (
             Value::from(ROTATION_RECEIPT_BODY_KEYS[4]),
             Value::from(receipt.kind.as_str()),
+        ),
+        (
+            Value::from(ROTATION_RECEIPT_BODY_KEYS[5]),
+            Value::from(receipt.cause.as_str()),
         ),
     ]);
     let mut out = Vec::new();
@@ -191,7 +234,19 @@ fn decode_rotation_receipt_body(receipt_id: EntityId, bytes: &[u8]) -> Result<Ro
             "receipt kind",
         )?)
         .ok_or(invalid_body("receipt kind"))?,
+        cause: rotation_cause_at(&entries)?,
     })
+}
+
+/// The receipt's cause. A receipt written before causes were recorded has
+/// no `cause` key and was the owner's; a duplicated or unknown one refuses.
+fn rotation_cause_at(entries: &[(Value, Value)]) -> Result<RotationCause> {
+    let key = ROTATION_RECEIPT_BODY_KEYS[5];
+    if !entries.iter().any(|(k, _)| k.as_str() == Some(key)) {
+        return Ok(RotationCause::Owner);
+    }
+    RotationCause::parse(&string_at(entries, key, "receipt cause")?)
+        .ok_or(invalid_body("receipt cause"))
 }
 
 // ---------------------------------------------------------------------------

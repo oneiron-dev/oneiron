@@ -17,6 +17,7 @@ mod fact_subject;
 mod history;
 mod hosting;
 mod liveness;
+mod member_role;
 mod offer_activity;
 mod offer_erase;
 mod offer_history;
@@ -114,6 +115,7 @@ pub use liveness::{
 pub(in crate::workspace_roster) use liveness::{
     is_thread_root, thread_root_map, thread_task_bindings,
 };
+pub use member_role::{RoomMemberRoleReceipt, RoomMemberRoleSet};
 pub use offer_activity::OfferVoteRequest;
 pub(crate) use offer_activity::{ROOM_OFFER_IDLE_SECS, record_offer_append_in_txn};
 pub(in crate::workspace_roster) use offer_erase::drop_open_offer_in_txn;
