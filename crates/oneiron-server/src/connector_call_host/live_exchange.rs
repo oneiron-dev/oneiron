@@ -143,7 +143,7 @@ impl Posted {
     /// How a POST's send went: a 2xx was taken, a 5xx or a send error past
     /// the connect may have been, any other status was refused, and a
     /// connect or builder error sent nothing.
-    fn of_send(sent: &reqwest::Result<reqwest::blocking::Response>) -> Self {
+    pub(super) fn of_send(sent: &reqwest::Result<reqwest::blocking::Response>) -> Self {
         match sent {
             Ok(response) if response.status().is_success() => Self::Accepted,
             Ok(response) if response.status().is_server_error() => Self::Uncertain,

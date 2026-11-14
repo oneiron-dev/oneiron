@@ -2,9 +2,13 @@
 //! program's resume waits on, read over the attempt's own index rows, their
 //! abandon when the owner stops that try (FIX 7188), the abandon of the ones
 //! that certainly never went when a connector send's executor stands down
-//! (FIX 4747), and their supersession when that send's lease comes back
-//! (FIX 4747 slice 4).
+//! (FIX 4747), their supersession when that send's lease comes back
+//! (FIX 4747 slice 4), and the stop of the remote tasks its connectors took
+//! when the owner stops that try (L8-29).
 
+use super::super::remote_task_cancel::{
+    RemoteTaskCancelAsk, RemoteTaskCancelPhase, request_remote_task_cancel_in_txn,
+};
 use super::super::types::{
     IntentEscalationReason, IntentId, IntentLedgerError, IntentLedgerRecord, IntentLedgerResult,
     IntentState, RecordedOutboundOutcome,
@@ -82,6 +86,39 @@ pub(crate) fn abandon_attempt_pending_intents_in_txn(
         abandoned += 1;
     }
     Ok(abandoned)
+}
+
+/// Asks the stop of each of `attempt_id`'s Deferred sends whose remote task
+/// the host polls (L8-29: the owner's Stop of that try), in the caller's
+/// writer, which commits the marks with its own change: the host's next pass
+/// sends each task's connector one `tasks/cancel`. Each send stays Deferred
+/// until a poll reads its task's end. A send whose task keeps no poll, or
+/// whose stop is already marked, is left as it is. Only the attempt's own
+/// index rows are read, and one that does not read fails the whole walk.
+/// Opens no writer. Returns how many it newly marked.
+///
+/// # Errors
+///
+/// An attempt index that does not read, or a row it names that does not;
+/// storage errors.
+pub(crate) fn request_attempt_remote_task_cancels_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    attempt_id: AttemptId,
+) -> IntentLedgerResult<usize> {
+    let mut marked = 0_usize;
+    for id in attempt_intent_ids_in_txn(vault, &*wtxn, attempt_id)? {
+        let record = read_attempt_intent_in_txn(vault, &*wtxn, &id)?;
+        if record.state != IntentState::Deferred {
+            continue;
+        }
+        if request_remote_task_cancel_in_txn(vault, wtxn, &id)?
+            == RemoteTaskCancelAsk::Marked(RemoteTaskCancelPhase::Requested)
+        {
+            marked += 1;
+        }
+    }
+    Ok(marked)
 }
 
 /// Marks each of `attempt_id`'s sends that certainly never went Abandoned

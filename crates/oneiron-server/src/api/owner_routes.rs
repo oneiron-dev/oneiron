@@ -104,6 +104,7 @@ pub(super) mod peer_confidence_routes;
 pub(super) mod proactivity_routes;
 pub(super) mod recovery_kit_routes;
 pub(super) mod recovery_kit_target_routes;
+mod remote_task_cancel_routes;
 mod remote_task_input_routes;
 mod removal_archive_routes;
 pub(super) mod room_thread_setting_routes;
@@ -199,6 +200,7 @@ fn owner_tables() -> OwnerTable {
         feedback_triage_routes::owner_table(),
         decision_ask_routes::owner_table(),
         remote_task_input_routes::owner_table(),
+        remote_task_cancel_routes::owner_table(),
         desktop_takeover_routes::owner_table(),
         browser_takeover_routes::owner_table(),
         peer_confidence_routes::owner_table(),
