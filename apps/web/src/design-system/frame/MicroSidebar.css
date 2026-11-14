@@ -140,11 +140,16 @@
   text-align: center;
 }
 
-/* The waiting ring sits at the top corner; under a count, at the bottom. */
+/* The waiting ring sits at the top corner; under a count, at the bottom.
+   It prints in the ground's ink: this rule outranks the status dot's own
+   waiting ring, which takes the sheet's first ink (dark by day). */
 .sl-micro-item-needs {
   position: absolute;
   top: -3px;
   right: -4px;
+}
+
+.sl-micro-item .sl-micro-item-needs[data-state] {
   box-shadow: inset 0 0 0 1.5px var(--sl-micro-ink);
 }
 
