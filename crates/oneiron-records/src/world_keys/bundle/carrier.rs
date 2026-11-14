@@ -1,20 +1,10 @@
 //! Moved from `crates/oneiron/src/world_keys/bundle/carrier.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::world_keys::bundle::*;
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
-use getrandom::SysRng;
-use oneiron_base::error::Error;
 use oneiron_base::error::ErrorKind;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Serialize;
 use serde::ser::SerializeStruct as _;
-use std::collections::BTreeSet;
-use zeroize::Zeroizing;
 
 /// Where a readable world section stopped before it merged here (FIX 19525).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

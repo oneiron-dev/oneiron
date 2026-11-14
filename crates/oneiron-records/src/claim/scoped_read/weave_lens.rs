@@ -5,8 +5,6 @@ pub use oneiron_verb_wire::claim::scoped_read::weave_lens::WeaveLensPlanLine;
 pub use oneiron_verb_wire::claim::scoped_read::weave_lens::WeaveLensPlanSection;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Why a period has no render, saved on its digest row in the render's
 /// place: the step's answer did not meet the period, and neither did the

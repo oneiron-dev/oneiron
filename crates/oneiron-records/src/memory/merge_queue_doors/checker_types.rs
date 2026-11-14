@@ -7,8 +7,6 @@ pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::MergeQueueC
 pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::MergeQueueDiagnoseRequest;
 pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::MergeQueueInitializeRequest;
 pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::QueueCheckPhase;
-use serde::Deserialize;
-use serde::Serialize;
 
 impl From<QueueCheckPhase> for CheckPhase {
     fn from(phase: QueueCheckPhase) -> Self {

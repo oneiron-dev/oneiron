@@ -1,10 +1,6 @@
 //! Moved from `crates/oneiron/src/housekeeping/schedule.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-
 /// The first retry after a failure. It doubles with each failure in a row, up
 /// to the sweep's cadence and never past an hour.
 pub const RETRY_AFTER_SECS: u64 = 60;

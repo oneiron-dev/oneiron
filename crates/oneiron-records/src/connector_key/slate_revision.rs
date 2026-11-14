@@ -6,7 +6,6 @@ pub use oneiron_verb_wire::connector_key::slate_revision::ConnectorRevisionDefer
 use oneiron_verb_wire::connector_key::slate_scope_signal::ConnectorScopeExceed;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Why a slate revises its prior.

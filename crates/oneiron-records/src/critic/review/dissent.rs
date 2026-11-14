@@ -2,16 +2,12 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::critic::review::*;
-use crate::critic::*;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::critic_lens::invalid_critic_config;
 use oneiron_store::model_decision::questions::OutcomeBinding;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CriticPrediction {

@@ -3,12 +3,10 @@
 
 use crate::linear_sync::model::LinearMirrorReceipt;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
-pub(crate) use oneiron_verb_wire::linear_sync::mirror_event::EventDirection;
 pub use oneiron_verb_wire::linear_sync::mirror_event::LinearMirrorEvent;
 use oneiron_verb_wire::linear_sync::model::LinearFieldConflict;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 /// One mirror operation's outcome, as a receipt and a row carry it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

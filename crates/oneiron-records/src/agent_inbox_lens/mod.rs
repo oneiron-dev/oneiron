@@ -9,7 +9,5 @@ pub use oneiron_verb_wire::agent_inbox_lens::read_state::InboxItemLaterRequest;
 pub use oneiron_verb_wire::agent_inbox_lens::read_state::InboxItemMarked;
 pub use oneiron_verb_wire::agent_inbox_lens::read_state::InboxItemMessage;
 pub use oneiron_verb_wire::agent_inbox_lens::read_state::InboxItemRequest;
-use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
 
 pub mod read_state;

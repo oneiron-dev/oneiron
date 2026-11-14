@@ -3,9 +3,7 @@
 
 use crate::failure_signals::FailureClassV1;
 pub use crate::failure_signals::code_fix::exact::ReplayFidelity;
-pub(super) use crate::failure_signals::code_fix::queue::CodeFixShare;
 use oneiron_contracts::entity_id::EntityId;
-use rand_core::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
 

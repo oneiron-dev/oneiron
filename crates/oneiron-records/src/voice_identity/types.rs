@@ -5,8 +5,6 @@ pub use oneiron_consent_state::verbs::voice_records::consent::VoiceConsentBasis;
 pub use oneiron_consent_state::verbs::voice_records::consent::VoiceConsentState;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// Purpose a voice print may be used for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

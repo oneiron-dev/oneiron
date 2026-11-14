@@ -23,10 +23,6 @@ pub use oneiron_linkedin_policy::LinkedInSeatPolicyAction;
 pub use oneiron_linkedin_policy::LinkedInSeatPolicyDecision;
 pub use oneiron_linkedin_policy::LinkedInSeatSandboxPolicy;
 pub use oneiron_linkedin_policy::LinkedInSelectorDriver;
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::Value;
-use std::collections::HashSet;
 
 /// Default initial lookback for timestamped LinkedIn messages.
 pub const DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS: u64 = 7 * 24 * 60 * 60;

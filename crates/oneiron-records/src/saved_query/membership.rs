@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// Why a membership transition happened. A CLOSED set: an unknown cause fails
 /// decoding rather than becoming an opaque token nobody can route on.

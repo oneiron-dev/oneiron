@@ -3,9 +3,6 @@
 
 use oneiron_base::learning_estimate::OwnTally;
 use oneiron_verb_wire::claim::learning_evidence::Observation;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The same numerical accumulation for live evidence and its frozen snapshot.
 pub fn accumulate(tally: &mut OwnTally, observation: &Observation, w: f64) -> bool {

@@ -9,7 +9,6 @@ pub use oneiron_store::serialize::pack_accounting::PackItemAccountingReason;
 pub use oneiron_store::serialize::pack_accounting::PackItemTokenStats;
 pub use oneiron_store::serialize::pack_accounting::PackSectionTokenStats;
 pub use oneiron_store::serialize::pack_accounting::PackTokenStats;
-pub(crate) use oneiron_store::serialize::pack_accounting::PackWorldShare;
 pub use oneiron_store::serialize::pack_accounting::TokenAllocation;
 pub use oneiron_store::serialize::pack_format::FieldProfile;
 pub use oneiron_store::serialize::pack_format::PackFormat;

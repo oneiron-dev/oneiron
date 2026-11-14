@@ -3,13 +3,8 @@
 
 use crate::critic::review::*;
 use crate::critic::*;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::time::Duration;
-use std::time::Instant;
 
 /// Generated text beside one finding. Every part is optional: a note read
 /// from JSON names only the parts it has.

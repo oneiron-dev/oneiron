@@ -21,7 +21,6 @@ pub use crate::connector_key::record::key_record::PendingConnectorCharter;
 pub use crate::connector_key::setup::allow_ask::PackSetupOwnerAsk;
 pub use crate::connector_key::slate::SlateFacetNarrow;
 pub use crate::connector_key::slate_revision::SlateRevisionCause;
-pub(crate) use oneiron_consent_state::connector_key::tool_remember::ConnectorToolRememberContext;
 pub use oneiron_store::connector_key_status::ConnectorKeyStatus;
 pub use oneiron_verb_wire::connector_key::channel_subscription::ChannelMessageSubscription;
 pub use oneiron_verb_wire::connector_key::credential_binding::ConnectorIssuerHaltView;

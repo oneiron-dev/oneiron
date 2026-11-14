@@ -1,10 +1,6 @@
 //! Moved from `crates/oneiron/src/linkedin_lead_preload.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::path::Path;
-
 #[derive(Clone, Debug, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct LinkedInLeadCorpus {

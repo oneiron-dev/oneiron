@@ -1,12 +1,9 @@
 //! Moved from `crates/oneiron/src/conversation_dag/quote_strips.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
 pub use oneiron_verb_wire::conversation_dag::quote_strips::ReplyStripsRequest;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// How a strip's quote stands against its message now.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,13 +1,8 @@
 //! Moved from `crates/oneiron/src/ports/dependent_walk.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// OF-520 question a source's walk raised once it withdrew more dependents
 /// than the threshold. It is evidence for the host, never a refusal: the walk

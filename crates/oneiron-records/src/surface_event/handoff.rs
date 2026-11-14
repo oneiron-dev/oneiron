@@ -6,8 +6,6 @@ use oneiron_store::attempt_state::AttemptState;
 pub use oneiron_store::dispatch_attempt_kind::SURFACE_EVENT_ATTEMPT_KIND;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// Public reference to the durable attempt backing one admitted event.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

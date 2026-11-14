@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/embed/space.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_base::error::ArtifactError;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
@@ -12,13 +10,9 @@ pub use oneiron_store::embedding::EMBEDDING_SPACE_ID_MAX_LEN;
 pub use oneiron_store::embedding::EMBEDDING_SPACE_MAX_DIMENSIONS;
 pub use oneiron_store::embedding::EmbeddingSpace;
 pub use oneiron_store::embedding::KindSlotBindings;
-pub(super) use oneiron_store::embedding::space_key;
 pub use oneiron_store::embedding_vocabulary::InputKind;
-pub(crate) use oneiron_store::embedding_vocabulary::TEXT_HASH_LEN;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Who wrote an EMBEDDING_SETUP retirement or slot row (FIX 6697): the owner through a door, or a
 /// system move. Startup seeding honours only the owner's retirements and returns to a default;

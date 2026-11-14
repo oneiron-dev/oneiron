@@ -3,7 +3,6 @@
 
 pub use crate::authority::oauth_server::clients::OAuthClientRecord;
 pub use crate::authority::oauth_server::clients::OAuthClientSource;
-use ed25519_dalek::SigningKey;
 
 /// How long an access token stands (CALLS, FIX 4902: an engine call).
 pub const OAUTH_ACCESS_TTL_SECS: u64 = 3_600;

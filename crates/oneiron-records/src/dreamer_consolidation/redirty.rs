@@ -2,10 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_store::consolidation_scope::DreamerConsolidationScope;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::iter::Peekable;
 
 pub const fn slot(scope: DreamerConsolidationScope) -> usize {
     match scope {

@@ -1,14 +1,12 @@
 //! Moved from `crates/oneiron/src/tagging/tags.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::tagging::provisional;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::config::tagging::TaggingMarkerConfig;
 use oneiron_verb_wire::memory::extraction::types::SpeakerTarget;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// The memo-key of one tag set (ARCH-0035). Two tag sets under one envelope
 /// are interchangeable, so a save under the envelope the turn already holds

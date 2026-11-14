@@ -8,7 +8,6 @@ use oneiron_verb_wire::note::files::metadata::NameOnlyReason;
 pub use oneiron_verb_wire::note::folder_source::original::FileOriginal;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// Where one file of an attached folder stands in the ledger.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::authority::*;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// Who admitted a chain of a machine's revisions.
 #[derive(

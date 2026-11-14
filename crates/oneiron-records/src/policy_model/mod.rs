@@ -33,7 +33,6 @@ pub use crate::policy_model::verdict::PolicyReadError;
 pub use crate::policy_model::verdict::PolicyVerdictCategory;
 pub use oneiron_policy_vocabulary::policy_model::contract::PolicyModelAnswer;
 pub use oneiron_policy_vocabulary::policy_model::contract::PolicyOutputContract;
-pub(crate) use oneiron_policy_vocabulary::policy_model::goal_limits;
 pub use oneiron_policy_vocabulary::policy_model::pattern::POLICY_PATTERN_ID_MAX_LEN;
 pub use oneiron_policy_vocabulary::policy_model::pattern::POLICY_PATTERN_MAX_LEN;
 pub use oneiron_policy_vocabulary::policy_model::pattern::PolicyPatternRole;

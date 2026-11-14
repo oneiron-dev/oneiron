@@ -4,8 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::linear_sync::model::LinearFieldConflict;
 pub use oneiron_verb_wire::linear_sync::model::LinearIssueRef;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Bidirectional field: issue title.
 pub const LINEAR_FIELD_TITLE: &str = "title";

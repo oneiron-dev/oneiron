@@ -6,7 +6,6 @@ pub use oneiron_verb_wire::lens::proposal::LensListRequest;
 pub use oneiron_verb_wire::lens::proposal::LensSlot;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 /// Where a proposal stands in its slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

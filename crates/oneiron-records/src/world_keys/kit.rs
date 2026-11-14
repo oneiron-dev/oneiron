@@ -8,7 +8,6 @@ use oneiron_store::recovery_kit::KitSecretKind;
 use oneiron_store::recovery_kit::PieceHome;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The label of the vault key's escrow wrap to the current world kit's root.
 pub const WORLD_KIT_ESCROW: &str = "world-kit";

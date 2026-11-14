@@ -3,10 +3,8 @@
 
 use crate::gate::consult_fanout_values::ConsultFanOutScope;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The precedence row is itself vault policy. The stricter option ignores
 /// holder overrides; neither option permits a child to exceed the vault.

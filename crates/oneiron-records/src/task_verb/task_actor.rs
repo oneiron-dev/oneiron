@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/task_verb/task_actor.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
 use serde::Deserialize;

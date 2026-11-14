@@ -3,9 +3,6 @@
 
 use crate::policy_model::verdict::PolicyConfidence;
 use crate::policy_model::verdict::PolicyHedgeBucket;
-use serde_json::Value;
-use serde_json::json;
-use std::sync::Arc;
 use std::time::Duration;
 
 /// The default time the safeguard read has, from its call's start to its

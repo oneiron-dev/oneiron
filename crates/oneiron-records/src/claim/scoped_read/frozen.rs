@@ -1,17 +1,8 @@
 //! Moved from `crates/oneiron/src/claim/scoped_read/frozen.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::claim::scoped_read::*;
-use crate::claim::*;
 use oneiron_authority::federation::ScopeAxis;
 use oneiron_authority::federation::ScopeId;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicUsize;
 
 /// [`FrozenReadLane::freeze`]'s refusal of a narrowed guest credential's lane.
 pub const GUEST_LANE_NOT_SAVED: &str = "a narrowed guest credential's read lane is not saved";

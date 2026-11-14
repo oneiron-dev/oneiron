@@ -5,8 +5,6 @@ pub use oneiron_verb_wire::feedback::bundle::FEEDBACK_REF_MAX_BYTES;
 pub use oneiron_verb_wire::feedback::bundle::FeedbackCategory;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// Stable encoding token for the v1 feedback bundle wire contract.
 pub const FEEDBACK_BUNDLE_ENCODING: &str = "oneiron.feedback.bundle.v1";

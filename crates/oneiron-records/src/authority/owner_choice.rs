@@ -3,9 +3,6 @@
 
 use crate::authority::*;
 use oneiron_contracts::entity_id::EntityId;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// One choice as a surface shows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

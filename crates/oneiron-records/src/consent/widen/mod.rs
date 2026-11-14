@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/consent/widen/mod.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::Cursor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

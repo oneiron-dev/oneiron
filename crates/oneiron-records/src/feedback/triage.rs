@@ -18,8 +18,6 @@ pub use oneiron_verb_wire::feedback::triage::owner::FeedbackTriageRunRequest;
 pub use oneiron_verb_wire::feedback::triage::owner::FeedbackTriageStatusRequest;
 pub use oneiron_verb_wire::feedback::triage::source::FeedbackTriageSourceError;
 pub use oneiron_verb_wire::feedback::triage::source::FeedbackTriageSourceErrorKind;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// The domain a handoff row's key is taken under.
 pub const HANDOFF_DOMAIN: &[u8] = b"oneiron:feedback-triage:handoff:v1";

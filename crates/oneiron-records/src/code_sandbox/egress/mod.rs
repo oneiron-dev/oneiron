@@ -2,19 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::code_sandbox::egress::receipt::EgressReceipt;
-use std::collections::HashMap;
 use std::io;
 use std::net::IpAddr;
-use std::net::SocketAddr;
-use std::net::SocketAddrV4;
-use std::net::TcpStream;
-use std::net::ToSocketAddrs;
-use std::net::UdpSocket;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicBool;
 use std::time::Duration;
-use std::time::Instant;
 
 /// Host-owned limits, shared by all transports in a session.
 #[derive(Clone, Debug, serde::Deserialize)]

@@ -13,9 +13,7 @@ pub use crate::merge_queue::check_store::QueueCheckInitStage;
 pub use crate::merge_queue::check_store::QueueCheckLease;
 pub use crate::merge_queue::check_store::QueueCheckRequest;
 pub use crate::merge_queue::check_store::QueueCheckStatus;
-pub use crate::merge_queue::plan::FrozenCheckPlan;
 pub use crate::merge_queue::plan::REPO_CHECK_PLAN_PATH;
-pub use crate::merge_queue::plan::RepoCheckPlan;
 pub use crate::merge_queue::run::RepoQueueOrder;
 pub use crate::merge_queue::run::RepoQueuePredecessor;
 pub use crate::merge_queue::tested_types::QueueReceiptLink;
@@ -53,8 +51,6 @@ pub use oneiron_store::merge_queue::types::MergeProposal;
 pub use oneiron_store::merge_queue::types::MergeQueuePointers;
 pub use oneiron_store::merge_queue::types::Quarantine;
 pub use oneiron_store::merge_queue::types::SpeculativePath;
-pub(crate) use oneiron_verb_wire::merge_queue::review_policy::DEFAULT_QUEUE_REVIEW_CRITICS;
-pub(crate) use oneiron_verb_wire::merge_queue::review_policy::DEFAULT_QUEUE_REVIEW_VOTES;
 pub use oneiron_verb_wire::merge_queue::review_policy::QueueReviewPolicy;
 pub use oneiron_verb_wire::merge_queue::review_policy::QueueReviewThresholds;
 

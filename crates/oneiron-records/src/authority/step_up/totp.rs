@@ -1,14 +1,11 @@
 //! Moved from `crates/oneiron/src/authority/step_up/totp.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 pub use oneiron_verb_wire::authority::step_up::totp::StepUpTotpReset;
 pub use oneiron_verb_wire::authority::step_up::totp::StepUpTotpResetRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use zeroize::Zeroize;
-use zeroize::Zeroizing;
 
 /// A fresh provisioning secret, returned only to the enrolling person.
 /// It has no Debug or Clone; its seed text is wiped on drop. Do not log it.

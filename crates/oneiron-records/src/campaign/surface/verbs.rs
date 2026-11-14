@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Map as JsonMap;
 use serde_json::Value;
 
 /// One surface invocation: a verb name and its JSON body.

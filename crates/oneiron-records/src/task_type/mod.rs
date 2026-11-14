@@ -3,12 +3,9 @@
 
 pub use crate::task_type::placement::PLACEMENT_SKILL_ID;
 use oneiron_base::error::Error;
-use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::receipt::task_type_ref::ROOT_TYPE_NODE;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::fmt;
 
 /// The root node id: every unsure placement lands here.
 pub const ROOT_NODE_ID: &str = "root";

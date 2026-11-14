@@ -1,12 +1,9 @@
 //! Moved from `crates/oneiron/src/connector_key/meter/row.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::connector_key::meter::*;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::Cursor;
 
 /// Usage-row key tag of a key budget row.
 pub const EFFECTOR_BUDGET_ROW_TAG_KEY: u8 = 0;

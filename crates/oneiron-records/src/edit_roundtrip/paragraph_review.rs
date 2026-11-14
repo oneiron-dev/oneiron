@@ -7,9 +7,6 @@ use oneiron_verb_wire::edit_roundtrip::slides_review::SlideReviewLabels;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use serde_json::json;
-use std::collections::HashSet;
 
 /// One answered paragraph, bound to its native comment and the exact source
 /// version. Settlement keeps it with the consume-once receipt. Its hashes

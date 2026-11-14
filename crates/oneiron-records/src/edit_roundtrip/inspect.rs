@@ -4,8 +4,6 @@
 use oneiron_store::blob_artifact::office_address::OfficeFormat;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::collections::HashMap;
 
 /// One sheet in workbook order (1-based `index`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

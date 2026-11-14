@@ -1,11 +1,8 @@
 //! Moved from `crates/oneiron/src/dreamer_consolidation/routing.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

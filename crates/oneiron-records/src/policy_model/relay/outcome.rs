@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use serde::Serialize;
-use std::collections::HashMap;
 
 /// What a hosted pass examined: the policy's version AND hash, the pair an
 /// attestation is matched on, and the request's identity-free verification

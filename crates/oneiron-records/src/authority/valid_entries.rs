@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_authority::authority::AuthorityEntryHash;
-use std::collections::BTreeSet;
 
 /// A set of entry hashes that [`ValidEntries::difference`] takes away.
 pub trait EntryHashSet {

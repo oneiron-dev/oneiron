@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/authority/host_action.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::authority::*;
 use oneiron_base::error::ClaimError;
 use oneiron_base::error::Error;
 

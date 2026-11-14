@@ -1,11 +1,8 @@
 //! Moved from `crates/oneiron/src/scope_summary/arc_gate.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Why an Arc is still owed (FIX 7509 P8, PR3): typed, on its row, never a
 /// silent hold. A failure is retried at the backstop; work in progress

@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The score map from an old judge's scale to its successor's.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

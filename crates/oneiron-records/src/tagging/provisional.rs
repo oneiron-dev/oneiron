@@ -6,7 +6,6 @@ use serde::Deserialize;
 use serde::Serialize;
 #[cfg(feature = "sync")]
 use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// A cold entity a save minted, waiting for the Dreamer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

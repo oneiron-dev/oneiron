@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/learning_setting_choice.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use serde::Deserialize;
-use serde::Serialize;
-
 /// The four spawn fields an owner row may steer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SpawnChoice {

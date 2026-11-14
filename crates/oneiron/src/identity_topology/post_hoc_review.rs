@@ -79,7 +79,7 @@ use oneiron_records::identity_topology::post_hoc_review::SELECTION_DIGEST_DOMAIN
 #[doc(hidden)]
 pub use oneiron_records::identity_topology::post_hoc_review::{
     TopologyAuditCorrection, TopologyAuditDecider, TopologyAuditEvidence, TopologyAuditIntent,
-    TopologyAuditOutcome, TopologyAuditResult, TopologyAuditScope, TopologyAuditSelection,
+    TopologyAuditOutcome, TopologyAuditResult, TopologyAuditScope,
 };
 
 /// One durable candidate per eligible decision. Key: the audit id.
@@ -91,6 +91,44 @@ const SELECTIONS: SideTable<[u8; 32], TopologyAuditSelection, Named> =
 /// The one result of each reviewed candidate, append-only. Key: the audit id.
 const RESULTS: SideTable<[u8; 32], TopologyAuditResult, Named> =
     SideTable::new(&side_table::COACH_TOPOLOGY_AUDIT_RESULT);
+
+/// The first selection of one candidate, kept before any review: the pinned
+/// recipe and revision that selected, the prior decisions of its scope the
+/// selection weighed, and whether it selected.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TopologyAuditSelection {
+    pub audit_id: [u8; 32],
+    pub recipe: EntityId,
+    pub recipe_revision: [u8; 32],
+    /// The scope's prior decisions that drew a concern or were undone.
+    pub policy_evidence: Vec<EntityId>,
+    pub selected: bool,
+    pub evidence: TopologyAuditEvidence,
+    /// An engine code: `selected`, `not_selected`, `selection_abstained`,
+    /// `selection_refused:<code>`, or the code of a decision that moved
+    /// before its selection (`event_undone`, `event_superseded`,
+    /// `event_missing`, `core_changed`, `decision_incomplete`).
+    pub reason: String,
+    /// The ladder's decision receipt, as JSON; none for an engine skip.
+    pub decision_receipt: Option<String>,
+    /// The Coach attempt that selected.
+    pub selection_attempt: [u8; 16],
+    pub selected_at: u64,
+}
+
+impl TopologyAuditSelection {
+    /// The digest a result binds: the selection's stored encoding.
+    fn digest(&self) -> Result<[u8; 32]> {
+        let bytes = <Named as SideCodec<Self>>::encode(self)
+            .map_err(|_| Error::InvariantViolation("a topology audit selection did not encode"))?;
+        Ok(*blake3::Hasher::new()
+            .update(SELECTION_DIGEST_DOMAIN)
+            .update(&bytes)
+            .finalize()
+            .as_bytes())
+    }
+}
 
 /// One eligible decision as its writer holds it.
 pub(super) struct AuditDeclaration<'a> {

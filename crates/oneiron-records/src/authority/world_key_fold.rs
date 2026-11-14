@@ -5,8 +5,6 @@ use crate::authority::*;
 use oneiron_contracts::entity_id::EntityId;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::collections::btree_map::Entry;
-use std::sync::Arc;
 
 /// A record's commitment and owner.
 pub type KeyBytes = ([u8; 32], EntityId);

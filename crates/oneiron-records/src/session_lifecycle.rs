@@ -3,12 +3,9 @@
 
 pub use crate::session_lifecycle::speakers::SessionParticipant;
 pub use crate::session_lifecycle::speakers::SessionSpeakers;
-use heed::RwTxn;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use serde_json::json;
 
 /// One sitting's identity. Hosts bind it from their actor and machine context;
 /// it confers no write authority and cannot shape a Dreamer pass.

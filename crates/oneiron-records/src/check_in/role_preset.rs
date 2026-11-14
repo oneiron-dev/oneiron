@@ -1,10 +1,7 @@
 //! Moved from `crates/oneiron/src/check_in/role_preset.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::check_in::act_class::ActClass;
 use crate::check_in::mode::CheckInMode;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// One cell of the role table.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

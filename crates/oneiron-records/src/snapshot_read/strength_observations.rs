@@ -6,8 +6,6 @@ use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
 pub use oneiron_verb_wire::snapshot_read::strength_observations::StrengthObservationsPageRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// One observation page and the policy and config it was read under.
 #[derive(Debug, Clone, Serialize, Deserialize)]

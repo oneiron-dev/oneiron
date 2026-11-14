@@ -13,8 +13,6 @@ pub use oneiron_verb_wire::world_keys::owner_work::OwnerWorkCancelState;
 pub use oneiron_verb_wire::world_keys::owner_work::OwnerWorkStatus;
 pub use oneiron_verb_wire::world_keys::owner_work::OwnerWorkUnassigned;
 pub use oneiron_verb_wire::world_keys::owner_work::diagnostics::BundleHomeWarning;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub mod diagnostics;
 pub mod relay_start;

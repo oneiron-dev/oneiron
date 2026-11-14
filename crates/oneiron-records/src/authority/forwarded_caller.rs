@@ -1,11 +1,6 @@
 //! Moved from `crates/oneiron/src/authority/forwarded_caller.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::authority::*;
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::VerifyingKey;
-use oneiron_base::error::Result;
 use serde::Deserialize;
 use serde::Serialize;
 

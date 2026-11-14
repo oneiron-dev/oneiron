@@ -8,7 +8,6 @@ pub use oneiron_verb_wire::connector_key::slate::SlateCapability;
 pub use oneiron_verb_wire::connector_key::slate::SlatePackSource;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// ARCH-0054's one aggregate, with the slate's two named inputs: the

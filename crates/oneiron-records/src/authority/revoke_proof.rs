@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::authority::*;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A signed withdrawal that may cross rejected permissive ancestry.
 pub fn restrictive_withdrawal(op: &AuthorityOp) -> bool {

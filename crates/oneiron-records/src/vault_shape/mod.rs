@@ -19,9 +19,5 @@ pub use oneiron_verb_wire::vault_shape::run::ShapeApplyRun;
 pub use oneiron_verb_wire::vault_shape::shared_setup::ShapeLearningOutcome;
 pub use oneiron_verb_wire::vault_shape::shared_setup::ShapeLearningSetting;
 pub use oneiron_verb_wire::vault_shape::skill::ShapeSkillSource;
-use schemars::JsonSchema;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub mod channel;

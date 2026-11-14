@@ -10,7 +10,6 @@ pub use oneiron_verb_wire::code_document::review_views::CodeRepoDiffRequest;
 pub use oneiron_verb_wire::code_document::review_views::CodeTreeRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Who proposed a change, and why: the stamp its landed operation carries,
 /// each ref as the caller reads it.

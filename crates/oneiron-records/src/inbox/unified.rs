@@ -3,9 +3,6 @@
 
 use crate::inbox::compilation_target::CompilationTarget;
 pub use oneiron_verb_wire::inbox::unified::InboxGroupResolveTarget;
-use serde::Deserialize;
-use serde::Serialize;
-use std::cmp::Reverse;
 
 impl From<&InboxGroupResolveTarget> for CompilationTarget {
     fn from(value: &InboxGroupResolveTarget) -> Self {

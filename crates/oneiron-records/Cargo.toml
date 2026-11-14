@@ -12,12 +12,7 @@ homepage.workspace = true
 doctest = false
 
 [dependencies]
-aes-gcm = "0.10"
-base64 = "0.22"
 blake3 = { workspace = true, features = ["zeroize"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
-ed25519-dalek = { workspace = true }
-getrandom = { version = "=0.4.3", features = ["sys_rng"] }
 heed = { workspace = true }
 loro = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
@@ -30,7 +25,6 @@ oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
 oneiron-delivery-vocabulary = { version = "0.1.0", path = "../oneiron-delivery-vocabulary" }
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
-oneiron-keystore = { version = "0.1.0", path = "../oneiron-keystore" }
 oneiron-lens-wire = { version = "0.1.0", path = "../oneiron-lens-wire" }
 oneiron-linkedin-policy = { version = "0.1.0", path = "../oneiron-linkedin-policy" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
@@ -42,8 +36,6 @@ oneiron-verb-wire = { version = "0.1.0", path = "../oneiron-verb-wire" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
 oneiron-xlsx-formula = { version = "0.1.0", path = "../oneiron-xlsx-formula" }
-rand = "0.8"
-rand_core = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = [
     "blocking",
     "brotli",
@@ -61,14 +53,13 @@ serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 sha2 = "0.10"
 thiserror = { workspace = true }
-xxhash-rust = { workspace = true }
 zeroize = "1"
 
 [features]
 # Forwarded from `oneiron/sync` and `oneiron/test-support`: a moved item keeps the gate it had in the engine, and
 # a lower crate gets the features the engine gives it.
 sync = ["oneiron-contracts/sync", "oneiron-base/sync", "oneiron-store/sync", "oneiron-wake-contract/sync", "oneiron-verb-wire/sync"]
-test-support = ["oneiron-contracts/test-support", "oneiron-base/test-support", "oneiron-store/test-support", "oneiron-docedit/test-support", "oneiron-model/test-support", "oneiron-keystore/test-keystore", "oneiron-verb-wire/test-support"]
+test-support = ["oneiron-contracts/test-support", "oneiron-base/test-support", "oneiron-store/test-support", "oneiron-docedit/test-support", "oneiron-model/test-support", "oneiron-verb-wire/test-support"]
 test-hooks = ["oneiron-model/test-hooks", "oneiron-store/test-hooks", "oneiron-verb-wire/test-hooks"]
 
 [lints]

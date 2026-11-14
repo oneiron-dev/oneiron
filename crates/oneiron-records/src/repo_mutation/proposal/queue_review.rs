@@ -1,14 +1,11 @@
 //! Moved from `crates/oneiron/src/repo_mutation/proposal/queue_review.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_store::critic_lens::LensCatalog;
 use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
-use std::collections::BTreeSet;
 
 /// The review a proposal is held to. Stored under the row's `catalog` key
 /// with the wire of an optional catalog: every row before FIX 8268 reads as

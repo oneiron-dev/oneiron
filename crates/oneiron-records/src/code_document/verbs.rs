@@ -5,7 +5,6 @@ pub use oneiron_verb_wire::code_document::verbs::CodeDiffRequest;
 pub use oneiron_verb_wire::code_document::verbs::CodeStateRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// One tested state of a document, as a view names it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

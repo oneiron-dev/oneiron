@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// One corruption-gate check result. Serializes into receipts/viewer payloads;
 /// the `&'static str` check name means it does not round-trip back through

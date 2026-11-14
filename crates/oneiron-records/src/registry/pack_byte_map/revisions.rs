@@ -4,7 +4,6 @@
 use crate::registry::pack_byte_map::types::PackKindIdentity;
 use crate::registry::pack_byte_map::types::PackKindRegistration;
 use crate::registry::pack_byte_map::types::invalid;
-use heed::RoTxn;
 use oneiron_base::error::Result;
 use std::collections::BTreeSet;
 

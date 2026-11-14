@@ -1,8 +1,3 @@
-pub(crate) use oneiron_store::conversation_body::AUDIENCE_EDIT_BOUND;
-pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
-pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_KEY;
-pub(crate) use oneiron_store::conversation_body::THREAD_NOTICE_PRODUCER;
-pub(crate) use oneiron_store::conversation_body::ThreadBinding;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_doors::ThreadAudienceAddRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_doors::ThreadAudienceReceipt;
@@ -39,8 +34,5 @@ pub use oneiron_verb_wire::workspace_roster::rooms::thread_join::ThreadJoinReque
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepNudge;
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepPendingRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepVoiceRequest;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub mod audience_events;

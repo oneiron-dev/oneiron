@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Which section of the cut a source came from (FIX 7753).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -20,7 +20,6 @@ pub use oneiron_verb_wire::share_travel::pack_notice::PACK_NOTICE_WORDING;
 pub use oneiron_verb_wire::share_travel::pack_notice::PackNoticeWording;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The born-with text one federation grant's windows carry to another vault,
 /// with when the owner set it: the effective choice the grant travel door

@@ -3,8 +3,6 @@
 
 use crate::context_board::stream::frames::StreamConnectionId;
 pub use oneiron_verb_wire::context_board::stream::events::SubscriptionScope;
-use serde::Deserialize;
-use serde::Serialize;
 use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

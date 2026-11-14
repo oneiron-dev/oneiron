@@ -5,7 +5,6 @@ use crate::authority::oauth_server::OAUTH_CIMD_TTL_SECS;
 use reqwest::Url;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// One client that may sign in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

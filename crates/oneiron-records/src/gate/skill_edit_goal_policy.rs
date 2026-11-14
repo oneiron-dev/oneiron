@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use rmpv::Value;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub fn unique_field<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
     if entries.iter().any(|(name, _)| name.as_str().is_none()) {

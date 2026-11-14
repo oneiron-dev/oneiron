@@ -5,7 +5,6 @@ pub use oneiron_store::compaction::gate::CompactionGatePolicy;
 pub use oneiron_store::compaction::gate::CompactionOff;
 pub use oneiron_store::compaction::gate::CompactionRefusal;
 pub use oneiron_store::compaction::gate::CompactionSuppression;
-pub(crate) use oneiron_store::compaction::gate::compaction_pin_input_tokens;
 pub use oneiron_store::compaction::gate::compaction_reply_schema;
 pub use oneiron_verb_wire::compaction::driver::CompactionWindowMessage;
 pub use oneiron_verb_wire::compaction::fold_kinds::FoldKind;

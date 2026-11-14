@@ -1,5 +1,4 @@
 pub use crate::claim::scoped_read::weave_lens::WeaveLensRefusal;
-use crate::claim::*;
 pub use oneiron_contracts::claim::ReadScope;
 pub use oneiron_contracts::claim::ScopedReadReceipt;
 pub use oneiron_store::ports::point_read::PointRead;
@@ -21,10 +20,6 @@ pub use oneiron_verb_wire::claim::scoped_read::weave_serve::WeaveWrongLinkReques
 pub use oneiron_verb_wire::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveDiscoveryView;
 pub use oneiron_verb_wire::claim::scoped_read::weave_serve::sieve_audit::WeaveSieveFindingView;
 pub use oneiron_verb_wire::claim::scoped_read::weave_trigger::WeaveDigestRendered;
-use std::collections::HashSet;
-use std::sync::Arc;
-use std::sync::Mutex;
-use std::sync::atomic::AtomicUsize;
 
 pub mod frozen;
 pub mod weave_lens;

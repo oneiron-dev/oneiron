@@ -17,11 +17,7 @@ pub use oneiron_verb_wire::feedback::report::delivery::owner::ReportPublisherBin
 pub use oneiron_verb_wire::feedback::report::delivery::owner::ReportPublisherBindingRequest;
 pub use oneiron_verb_wire::feedback::report::delivery::retry::ReportDeliveryRetryRequest;
 pub use oneiron_verb_wire::feedback::report::disclosure::ReportDisclosureBasis;
-pub(super) use oneiron_verb_wire::feedback::report::invalid;
 pub use oneiron_verb_wire::feedback::report::routing::ReportDisclosureChoice;
 pub use oneiron_verb_wire::feedback::report::routing::ReportRoute;
-pub(super) use oneiron_verb_wire::feedback::report::validate_ref;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub mod routing;

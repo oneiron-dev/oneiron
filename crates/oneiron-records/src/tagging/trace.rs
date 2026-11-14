@@ -4,8 +4,6 @@
 use crate::tagging::output::OutputRefusal;
 use serde::Deserialize;
 use serde::Serialize;
-use std::panic::AssertUnwindSafe;
-use std::time::Instant;
 
 /// How an attempt settled.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

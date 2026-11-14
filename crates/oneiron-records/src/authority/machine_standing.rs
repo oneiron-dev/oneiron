@@ -2,11 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::authority::*;
-use std::cell::RefCell;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::rc::Rc;
-use std::sync::Arc;
 
 /// Whose trust a machine is judged under.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]

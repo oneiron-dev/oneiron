@@ -7,8 +7,6 @@ pub use oneiron_verb_wire::learning_setting_doors::LearningSettingMode;
 pub use oneiron_verb_wire::learning_setting_doors::LearningSettingScope;
 pub use oneiron_verb_wire::learning_setting_doors::LearningSettingSpecView;
 pub use oneiron_verb_wire::learning_setting_doors::LearningSettingsRequest;
-use serde::Deserialize;
-use serde::Serialize;
 
 impl From<LearningSettingMode> for SettingMode {
     fn from(mode: LearningSettingMode) -> Self {

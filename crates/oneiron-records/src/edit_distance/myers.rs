@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/edit_distance/myers.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::HashMap;
-use std::ops::Range;
-
 /// What a relocated line costs against a rewritten one.
 ///
 /// A move-paired character charges `2 · MOVE_DISCOUNT` (0.2) into the edit

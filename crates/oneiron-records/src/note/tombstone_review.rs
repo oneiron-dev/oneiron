@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/note/tombstone_review.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use chrono::Datelike;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;

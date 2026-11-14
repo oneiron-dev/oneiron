@@ -8,7 +8,6 @@ use oneiron_base::registry::TypeByteZone;
 use oneiron_base::registry::zone_of;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Exact pack source and kind schema bound to an author-scoped global name.
 /// Hashes are content identities, not signatures, verdicts, grants, or trust.

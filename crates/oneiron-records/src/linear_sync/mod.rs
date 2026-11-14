@@ -20,7 +20,6 @@ pub use oneiron_verb_wire::linear_sync::facade_types::LinearMappingView;
 pub use oneiron_verb_wire::linear_sync::facade_types::LinearProvenanceEntry;
 pub use oneiron_verb_wire::linear_sync::facade_types::LinearProvenancePage;
 pub use oneiron_verb_wire::linear_sync::facade_types::LinearProvenanceRequest;
-pub(crate) use oneiron_verb_wire::linear_sync::mirror_event::EventDirection;
 pub use oneiron_verb_wire::linear_sync::mirror_event::LinearMirrorEvent;
 pub use oneiron_verb_wire::linear_sync::model::LinearFieldConflict;
 pub use oneiron_verb_wire::linear_sync::model::LinearIssueRef;

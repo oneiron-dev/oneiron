@@ -1,21 +1,11 @@
 //! Moved from `crates/oneiron/src/companion/persona.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_authority::claim_history_handoff::PointRead;
 use oneiron_authority::federation::ScopeId;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::revision_ref::RevisionRef;
-pub(crate) use oneiron_store::serialize::person_identity::validated_persona_baseline;
-use oneiron_store::vault::entity_revision::types::ReadMode;
-pub(crate) use oneiron_store::write_envelope::person_identity::body_fields;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value as JsonValue;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Reproducible derivation inputs. This is provenance, never authorization.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

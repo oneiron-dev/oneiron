@@ -17,8 +17,6 @@ pub use oneiron_store::setting_seed::PLANNER_BIG_PLAN_WIDTH;
 pub use oneiron_store::setting_seed::PLANNER_SOLO_MARGIN;
 pub use oneiron_store::setting_seed::PLANNER_SOLO_SUCCESS_FLOOR;
 pub use oneiron_store::setting_seed::SettingSpec;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// The fewest families an offer eval set needs (FIX 10446): the owner's
 /// floor for a measured card. Zero asks for none.

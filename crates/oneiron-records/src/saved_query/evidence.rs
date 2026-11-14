@@ -9,9 +9,6 @@ pub use oneiron_store::query_memos::VerdictMemoKey;
 pub use oneiron_store::query_memos::VerdictMemoRow;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// A verdict plus the reason it was reached.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

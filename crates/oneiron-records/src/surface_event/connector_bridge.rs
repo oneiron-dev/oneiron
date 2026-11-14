@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// Predicate every surface-born connector event carries; a subscription
 /// filter names it to take only inbound channel traffic.

@@ -3,9 +3,6 @@
 
 use crate::claim::reaction_record::ReactionExternalId;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One glyph's live reactions, contributors in first-put order.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

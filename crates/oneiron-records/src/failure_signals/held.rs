@@ -4,8 +4,6 @@
 pub use oneiron_verb_wire::failure_signals::held::read::HeldFailureSignalBatchView;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::MutexGuard;
-use std::sync::PoisonError;
 
 /// Where a kept batch stood after its last send. A record: what a pass does
 /// with a carried batch is read from durable facts, and this counts only

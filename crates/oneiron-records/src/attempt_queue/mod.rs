@@ -1,4 +1,3 @@
-pub(crate) use oneiron_store::attempt_cleanup::AttemptQueueCleanupMetrics;
 pub use oneiron_store::attempt_cleanup::AttemptQueueCleanupMetricsSnapshot;
 pub use oneiron_store::attempt_cleanup::AttemptQueueCleanupReport;
 pub use oneiron_store::attempt_cleanup::AttemptQueueRetryReason;
@@ -17,10 +16,6 @@ pub use oneiron_store::attempt_inputs::RetryAttempt;
 pub use oneiron_store::attempt_inputs::SetAttemptResult;
 pub use oneiron_store::attempt_read_producer::ReadSetProducer;
 pub use oneiron_store::attempt_result::AttemptResultRef;
-pub(crate) use oneiron_store::attempt_retention::OWNER_RETAINED_ID_PREFIX;
-pub(crate) use oneiron_store::attempt_retention::OWNER_RETAINED_RANGE_START;
-pub(crate) use oneiron_store::attempt_retention::owner_retained_id;
-pub(crate) use oneiron_store::attempt_retention::owner_retained_kind;
 pub use oneiron_store::attempt_state::AttemptState;
 pub use oneiron_verb_wire::attempt_queue::cancel::types::SOFT_CANCEL_REJECTION_PATHOLOGY_THRESHOLD;
 pub use oneiron_verb_wire::store::attempt_cancel::AttemptCancelPressure;

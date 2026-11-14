@@ -13,8 +13,6 @@ use oneiron_model::llm::WorkerDescriptor;
 use oneiron_model::llm::WorkerKind;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::VecDeque;
-use std::sync::Arc;
 
 pub const MODEL: &str = "VoxCPM2";
 

@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::settings::room_threads::RoomThreadAdminSettings;
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;

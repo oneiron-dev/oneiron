@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The closed, surfaced pathology vocabulary. Every arm pauses for judgment
 /// and carries the evidence a human needs to rule on it.

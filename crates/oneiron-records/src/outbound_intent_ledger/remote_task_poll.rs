@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt;
 
 /// The credential a send presented, as a poll presents it again. A secret
 /// grant's redemption or a run's own record cannot be presented after the

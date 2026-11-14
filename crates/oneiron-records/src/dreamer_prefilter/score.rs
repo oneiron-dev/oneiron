@@ -1,10 +1,6 @@
 //! Moved from `crates/oneiron/src/dreamer_prefilter/score.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::VecDeque;
-
 /// Feature name: normalized token count.
 pub const PREFILTER_FEATURE_LEN: &str = "len";
 

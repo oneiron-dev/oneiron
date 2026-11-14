@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/access_grant/context.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeSet;
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AccessLimited {

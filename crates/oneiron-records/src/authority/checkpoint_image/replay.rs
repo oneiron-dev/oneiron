@@ -2,13 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::authority::checkpoint_image::*;
-use crate::authority::*;
-use serde::Deserialize;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// How many rows down a first-parent chain a whole state is kept again: the
 /// most fields deltas any reconstruction applies is one point's (CALLS "FIX

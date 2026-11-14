@@ -1,13 +1,8 @@
 //! Moved from `crates/oneiron/src/authority/checkpoint_attest.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::authority::*;
 use oneiron_base::error::Error;
 use oneiron_base::error::RecordError;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The crypto epoch a certified checkpoint key signs at: a binding names it,
 /// and a hash-based record below it is refused.

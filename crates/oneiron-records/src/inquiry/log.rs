@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 /// Who settled an inquiry in the member's vault (canon's ladder for an
 /// inquiry: standing rows, the companion, the member).

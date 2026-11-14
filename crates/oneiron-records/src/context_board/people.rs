@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// The `people` block one vault contributes to the cached prefix, and the

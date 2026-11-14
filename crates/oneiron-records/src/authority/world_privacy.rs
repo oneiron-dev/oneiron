@@ -6,7 +6,6 @@ pub use oneiron_base::machine_destination::Destination;
 pub use oneiron_base::machine_destination::EffectiveRead;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::authority::world_privacy::EffectiveModelOrder;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// How a machine stands toward a world, judged on the world's read: whether

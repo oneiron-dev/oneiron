@@ -3,9 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use std::borrow::Cow;
-use std::collections::VecDeque;
 
 /// Stable provenance marker persisted beside each seen LinkedIn message row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/identity_topology/post_hoc_review.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
@@ -80,44 +78,6 @@ impl TopologyAuditEvidence {
             Self::ModelJudgment => "model_judgment",
             Self::EngineSettled => "engine_settled",
         }
-    }
-}
-
-/// The first selection of one candidate, kept before any review: the pinned
-/// recipe and revision that selected, the prior decisions of its scope the
-/// selection weighed, and whether it selected.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TopologyAuditSelection {
-    pub audit_id: [u8; 32],
-    pub recipe: EntityId,
-    pub recipe_revision: [u8; 32],
-    /// The scope's prior decisions that drew a concern or were undone.
-    pub policy_evidence: Vec<EntityId>,
-    pub selected: bool,
-    pub evidence: TopologyAuditEvidence,
-    /// An engine code: `selected`, `not_selected`, `selection_abstained`,
-    /// `selection_refused:<code>`, or the code of a decision that moved
-    /// before its selection (`event_undone`, `event_superseded`,
-    /// `event_missing`, `core_changed`, `decision_incomplete`).
-    pub reason: String,
-    /// The ladder's decision receipt, as JSON; none for an engine skip.
-    pub decision_receipt: Option<String>,
-    /// The Coach attempt that selected.
-    pub selection_attempt: [u8; 16],
-    pub selected_at: u64,
-}
-
-impl TopologyAuditSelection {
-    /// The digest a result binds: the selection's stored encoding.
-    fn digest(&self) -> Result<[u8; 32]> {
-        let bytes = <Named as SideCodec<Self>>::encode(self)
-            .map_err(|_| Error::InvariantViolation("a topology audit selection did not encode"))?;
-        Ok(*blake3::Hasher::new()
-            .update(SELECTION_DIGEST_DOMAIN)
-            .update(&bytes)
-            .finalize()
-            .as_bytes())
     }
 }
 

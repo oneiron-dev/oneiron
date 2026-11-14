@@ -1,7 +1,5 @@
 pub use crate::dreamer_consolidation::resident_dream::ResidentDreamPartial;
 pub use crate::dreamer_consolidation::resident_dream::ResidentDreamProgress;
-pub(crate) use oneiron_store::conversation_residency::waits_on_residency;
-pub(crate) use oneiron_store::conversation_span::ConversationSpanRead;
 pub use oneiron_verb_wire::dreamer_consolidation::resources::nightly_link_grant::NightlyLinkGrantRequest;
 pub use oneiron_verb_wire::dreamer_consolidation::thing_agent::ThingDecideInput;
 pub use oneiron_verb_wire::dreamer_consolidation::thing_agent::ThingDecideOutput;

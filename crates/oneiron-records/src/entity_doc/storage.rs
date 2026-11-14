@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/entity_doc/storage.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use serde::Deserialize;

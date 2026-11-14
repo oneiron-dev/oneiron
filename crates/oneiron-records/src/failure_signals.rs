@@ -16,14 +16,8 @@ pub use crate::failure_signals::status::FailureSignalBatchReceipt;
 pub use crate::failure_signals::status::FailureSignalDeliveryStatus;
 pub use crate::failure_signals::status::FailureSignalWaiting;
 pub use oneiron_verb_wire::failure_signals::held::read::HeldFailureSignalBatchView;
-use rand_core::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::sync::Mutex;
-use std::sync::MutexGuard;
-use std::sync::atomic::AtomicUsize;
-use std::sync::atomic::Ordering;
 
 /// Graduating `Other` requires a new taxonomy variant and version; never
 /// reinterpret a previously exported class.

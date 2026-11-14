@@ -10,7 +10,6 @@ use oneiron_base::error::Result;
 use oneiron_crypto::backup::CheckpointSigner;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The domain every delegation statement is signed under.
 pub const BACKUP_SIGNER_DELEGATION_DOMAIN: &[u8] = b"oneiron/backup-signer-delegation/v1";

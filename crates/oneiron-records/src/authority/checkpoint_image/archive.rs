@@ -7,9 +7,6 @@ use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// One cold archive that holds covered rows' original signed scaffold: a
 /// content set and the machines that hold it.

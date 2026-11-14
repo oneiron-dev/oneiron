@@ -2,29 +2,10 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-pub(super) use oneiron_store::persona_snapshot_record::FINGERPRINT_HEX_LEN;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_ARTIFACT_FINGERPRINT;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_AUDIENCE_REF;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_COMPILED_AT_SECS;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_COMPILED_FINGERPRINT;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_EXPORTED_AT_SECS;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_GRANTED_AT_SECS;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_GRANTED_BY;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_IDENTITY_LINE;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_INCLUDED_ROW_IDS;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_OMITTED_REFS;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_SCHEMA_VERSION;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_STALE_AFTER_SECS;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_STRUCK_ROW_IDS;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_SUBJECT_REF;
-pub(super) use oneiron_store::persona_snapshot_record::KEY_TAKES_INCLUDED;
 pub use oneiron_store::persona_snapshot_record::PERSONA_SNAPSHOT_COMPILE_STAMP_SCHEMA_VERSION;
 pub use oneiron_store::persona_snapshot_record::PERSONA_SNAPSHOT_EXPORT_BODY_KEYS;
 pub use oneiron_store::persona_snapshot_record::PERSONA_SNAPSHOT_EXPORT_SCHEMA_VERSION;
 pub use oneiron_store::persona_snapshot_record::PersonaSnapshotExportRecord;
-pub(crate) use oneiron_store::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_FULL;
-pub(crate) use oneiron_store::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_MINIMAL;
-pub(crate) use oneiron_store::serialize::persona_export_fields::PERSONA_SNAPSHOT_EXPORT_FIELDS_STANDARD;
 use std::collections::BTreeSet;
 
 /// Row kind on a compiled persona snapshot.

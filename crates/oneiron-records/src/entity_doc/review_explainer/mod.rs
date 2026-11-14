@@ -7,7 +7,6 @@ use oneiron_model::llm::ModelId;
 use oneiron_model::llm::ReasoningEffort;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Skill-authored complexity, not a heuristic derived from fork count or size.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

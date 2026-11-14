@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
 /// ONE-1805 normalized token fields. Times and confidence are provider metadata,
 /// never turn authority or evidence of identity.

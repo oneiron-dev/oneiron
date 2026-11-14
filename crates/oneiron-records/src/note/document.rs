@@ -1,14 +1,7 @@
 //! Moved from `crates/oneiron/src/note/document.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use loro::CommitOptions;
-use loro::Container;
-use loro::ExportMode;
 use loro::Frontiers;
-use loro::LoroDoc;
-use loro::LoroMap;
-use loro::LoroValue;
-use loro::ValueOrContainer;
 use loro::cursor::Cursor;
 use loro::cursor::Side;
 use oneiron_base::error::Error;
@@ -17,7 +10,6 @@ use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 pub const BODY: &str = "body";
 

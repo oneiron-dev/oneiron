@@ -4,7 +4,6 @@
 pub use oneiron_store::dispatch_attempt_kind::BYOA_ATTEMPT_KIND;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Bytes of one exhaust stream held in memory before the rest spools to disk,
 /// and the size of each chunk a longer stream is stored in. Never a refusal:

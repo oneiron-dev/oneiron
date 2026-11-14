@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/world_keys/vault_key/state.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use getrandom::SysRng;
 use oneiron_base::error::Result;
 use oneiron_crypto::Argon2Cost;
 use oneiron_crypto::Envelope;
@@ -15,12 +14,9 @@ use oneiron_crypto::SuiteId;
 use oneiron_crypto::backup::KeyHeaderWrap as StoredWrap;
 use oneiron_crypto::backup::VaultKeyWrapInfo;
 use oneiron_crypto::backup::VaultKeyWrapKind;
-use oneiron_keystore::DeviceKeystore;
 use oneiron_store::key_material::refused;
 use oneiron_store::vault_page_seal::VaultDataKey;
 use oneiron_store::vault_page_seal::WrapDigest;
-use serde::Deserialize;
-use serde::Serialize;
 use zeroize::Zeroizing;
 
 pub const PAYLOAD_LABEL: &[u8] = b"oneiron/vault-dek/v1\0";

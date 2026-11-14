@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/secret_snapshot.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
 use oneiron_base::error::CodeError;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
@@ -10,7 +9,6 @@ use oneiron_store::side_table::codec::RawValue;
 pub use oneiron_verb_wire::secret_snapshot::SnapshotSecretLiftProposal;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The durable, value-free outcome of snapshot custody filtering.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

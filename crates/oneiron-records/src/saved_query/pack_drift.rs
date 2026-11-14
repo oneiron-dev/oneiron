@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A pack version move that touches predicates a query reads.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

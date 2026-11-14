@@ -3,16 +3,11 @@
 
 pub use crate::authority::checkpoint_image::archive::AuthorityArchiveCustodian;
 pub use crate::authority::checkpoint_image::archive::AuthorityArchiveManifest;
-pub(super) use crate::authority::checkpoint_image::replay::AUTHORITY_RESIDENCE_BODY_OVERFLOW;
-pub(super) use crate::authority::checkpoint_image::replay::parents_first_of;
 use crate::authority::*;
 use oneiron_base::error::Error;
 use oneiron_base::error::RecordError;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io::Cursor;
 
 /// The fold-state schema an image encodes. A decoder refuses any other. 5:
 /// each row summary marks whether its body is required (FIX 2988). 6: a

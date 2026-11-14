@@ -3,7 +3,6 @@
 
 use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value as Json;

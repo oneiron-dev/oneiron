@@ -6,7 +6,6 @@ use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeSet;
-use std::io::Cursor;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

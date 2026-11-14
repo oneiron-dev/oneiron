@@ -54,7 +54,7 @@ pub struct CellWrite {
 pub enum EditOp {
     /// One modern PowerPoint comment operation; never sent to a spreadsheet session.
     PptxComment {
-        patch: super::pptx::PptxCommentPatch,
+        patch: oneiron_verb_wire::edit_roundtrip::pptx::package::PptxCommentPatch,
     },
     /// A separately declared missing slide identity write produced by the writer.
     MintPptxSlideCreationId { slide: u64, creation_id: u32 },

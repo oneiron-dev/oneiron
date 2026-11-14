@@ -2,10 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::authority::conversation_training::*;
-use crate::authority::*;
 use oneiron_contracts::entity_id::EntityId;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A person's own opt-out, as their own surface shows it.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

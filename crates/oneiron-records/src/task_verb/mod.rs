@@ -24,14 +24,10 @@ pub use oneiron_verb_wire::task_verb::brief::Criterion;
 pub use oneiron_verb_wire::task_verb::brief::EscalationTrigger;
 pub use oneiron_verb_wire::task_verb::brief::SpawnPins;
 pub use oneiron_verb_wire::task_verb::brief::TypeRef;
-pub(crate) use oneiron_verb_wire::task_verb::brief::decode_hex;
-pub(crate) use oneiron_verb_wire::task_verb::brief::hex32;
 pub use oneiron_verb_wire::task_verb::comm_widen::revoke::CommWidenRevokeReceipt;
 pub use oneiron_verb_wire::task_verb::fanout_launch::FanoutCheckChoice;
 pub use oneiron_verb_wire::task_verb::highway_types::TaskAccept;
 pub use oneiron_verb_wire::task_verb::highway_types::TaskRedo;
 pub use oneiron_verb_wire::task_verb::verb_kind::TaskTtl;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub mod task_actor;

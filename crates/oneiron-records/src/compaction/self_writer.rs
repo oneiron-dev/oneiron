@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::Value;
 
 /// One paid call of a self-written pass, held until its host files it in
 /// the model-step family (FIX 4465 B): the admitted request and the

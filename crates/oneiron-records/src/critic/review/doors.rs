@@ -6,8 +6,6 @@ pub use oneiron_verb_wire::critic::review::doors::CriticOutcomeAnchor;
 pub use oneiron_verb_wire::critic::review::doors::CriticOutcomeSubmit;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// A standing critique outcome as the engine recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

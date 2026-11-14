@@ -4,7 +4,6 @@
 pub use crate::authority::step_up::totp::EnrolledTotp;
 pub use crate::authority::step_up::totp::TotpCode;
 pub use crate::authority::step_up::totp::TotpEnrollment;
-use heed::RwTxn;
 pub use oneiron_verb_wire::authority::step_up::StepUpPasskeysReset;
 pub use oneiron_verb_wire::authority::step_up::StepUpPasskeysResetRequest;
 pub use oneiron_verb_wire::authority::step_up::admin_inputs::WeaveAdminDigestRequest;

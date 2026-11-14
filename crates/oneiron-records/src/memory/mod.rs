@@ -206,7 +206,6 @@ pub use oneiron_verb_wire::memory::session_reads::HydrateRequest;
 pub use oneiron_verb_wire::memory::session_reads::QueryBm25Request;
 pub use oneiron_verb_wire::memory::shape_card_doors::ShapeGroupResolveRequest;
 pub use oneiron_verb_wire::memory::shape_card_doors::ShapeItemReceiptRequest;
-pub(crate) use oneiron_verb_wire::memory::shape_doors::AFTER_NEEDS_HANDLE;
 pub use oneiron_verb_wire::memory::signal_extraction::ProspectiveQueryHint;
 pub use oneiron_verb_wire::memory::signal_extraction::SignalExtractionMessage;
 pub use oneiron_verb_wire::memory::signal_extraction::SignalExtractionRequest;

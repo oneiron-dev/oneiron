@@ -6,8 +6,6 @@ pub use oneiron_store::dreamer_attempt_kind::WAVE_PLAN_ATTEMPT_KIND;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One task a planner proposes, addressed by a plan-local key.
 ///

@@ -3,8 +3,6 @@
 
 use crate::authority::*;
 use oneiron_contracts::entity_id::EntityId;
-use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Fold issue retained for diagnostics.

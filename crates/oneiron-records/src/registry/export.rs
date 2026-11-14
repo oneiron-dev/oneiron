@@ -4,7 +4,6 @@
 use oneiron_contracts::registry::EntityTypeRegistryEntry;
 use oneiron_contracts::registry::TypeByteFamilyEntry;
 use oneiron_contracts::registry::TypeByteZone;
-use oneiron_contracts::registry::zone_of;
 
 /// Engine registry snapshot: storage ABI plus live kind/family tables and
 /// zone ranges folded from `zone_of`.

@@ -5,8 +5,6 @@ pub use oneiron_contracts::secret_lease::SecretLeaseStatus;
 pub use oneiron_store::secret_lease::types::*;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::PathBuf;
-use zeroize::Zeroizing;
 
 /// The T0 door-injection receipt — the ONLY thing the workspace receives
 /// from [`Vault::inject_secret_at_door`]. Carries no value bytes by

@@ -1,14 +1,9 @@
 //! Moved from `crates/oneiron/src/off_record/promote.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RwTxn;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// `EntityId` carries no serde impls, so the receipt's closure travels as the
 /// raw 16-byte ids the entity tables already key on.

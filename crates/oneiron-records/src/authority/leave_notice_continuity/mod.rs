@@ -1,4 +1,3 @@
-use crate::authority::*;
 #[cfg(feature = "sync")]
 use std::collections::BTreeMap;
 #[cfg(feature = "sync")]

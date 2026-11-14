@@ -1,10 +1,6 @@
 //! Moved from `crates/oneiron/src/authority/slip.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
 use oneiron_authority::authority::MAX_WIRE_BYTES;
 use oneiron_authority::authority::SlipClaims;
 use oneiron_authority::authority::canonical;
@@ -12,9 +8,6 @@ use oneiron_authority::authority::invalid_authority;
 use oneiron_authority::federation::Scope;
 use oneiron_base::error::Result as EngineResult;
 pub use oneiron_verb_wire::authority::slip::SlipCaveat;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub const MAX_CAVEATS: usize = 64;
 

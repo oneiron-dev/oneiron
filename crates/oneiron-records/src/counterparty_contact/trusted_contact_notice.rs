@@ -4,9 +4,6 @@
 pub use oneiron_verb_wire::counterparty_contact::trusted_contact_notice::TrustedContactNoticeAuthorization;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::PoisonError;
-use std::sync::RwLockReadGuard;
-use std::sync::RwLockWriteGuard;
 
 /// Everything the host needs to send one notice, and what authorized it,
 /// and nothing from the turn or the verdict.

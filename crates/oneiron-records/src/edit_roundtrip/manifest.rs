@@ -76,7 +76,7 @@ pub struct EditManifest {
     pub pptx_holder_limits: Option<Box<super::pptx::PptxOperationalLimits>>,
     /// Typed slide judgments bound to exported modern comments, when present.
     #[serde(default)]
-    pub slide_judgments: Vec<super::slides_review::SlideJudgment>,
+    pub slide_judgments: Vec<oneiron_verb_wire::edit_roundtrip::slides_review::SlideJudgment>,
     /// Typed paragraph judgments bound to native Word comments, when present.
     #[serde(default)]
     pub paragraph_judgments: Vec<super::paragraph_review::ParagraphJudgment>,

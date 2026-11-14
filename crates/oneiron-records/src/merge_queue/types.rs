@@ -6,8 +6,6 @@ pub use oneiron_store::merge_queue::types::*;
 use oneiron_store::repo_fork::RepoForkHash;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::path::PathBuf;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CheckPhase {

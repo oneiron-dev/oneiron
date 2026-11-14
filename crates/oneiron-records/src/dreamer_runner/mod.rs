@@ -34,7 +34,6 @@ pub use oneiron_verb_wire::dreamer_runner::program::types::DisarmTurnProgram;
 pub use oneiron_verb_wire::dreamer_runner::program::types::ProgramRecipePin;
 pub use oneiron_verb_wire::dreamer_runner::program::types::ProgramTrigger;
 pub use oneiron_verb_wire::dreamer_runner::program::types::TurnProgramRegistration;
-pub(crate) use oneiron_wake_contract::dreamer_runner::admission::budget_line::AdmittedBudgetLine;
 pub use oneiron_wake_contract::dreamer_runner::park_resume::AGENT_RUNS_PARK_OWNER;
 pub use oneiron_wake_contract::dreamer_runner::park_resume::DRAFTER_RETRAIN_PARK_OWNER;
 pub use oneiron_wake_contract::dreamer_runner::park_resume::DREAMER_SERVER_PARK_OWNER;

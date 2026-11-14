@@ -1,14 +1,9 @@
 //! Moved from `crates/oneiron/src/dispatch_byoa/official_seats.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use base64::Engine as _;
 use oneiron_model::llm::BudgetExhaustionPolicy;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::sync::Arc;
 
 /// The vendor whose plan a seat spends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -1,6 +1,4 @@
 pub use crate::ports::dependent_walk::DependentWalkCheck;
-pub(crate) use oneiron_store::ports::document_fields::is_metadata_field;
-pub(crate) use oneiron_store::ports::document_fields::is_text_field;
 pub use oneiron_store::ports::manual_clock::ManualClock;
 pub use oneiron_store::ports::point_read::PointRead;
 pub use oneiron_store::ports::point_read::ReadTarget;

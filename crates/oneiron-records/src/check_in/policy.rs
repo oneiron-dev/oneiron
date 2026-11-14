@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/check_in/policy.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

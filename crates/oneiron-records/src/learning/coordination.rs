@@ -4,7 +4,6 @@
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One peer output's reuse delay.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

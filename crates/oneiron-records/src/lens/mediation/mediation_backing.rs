@@ -8,7 +8,6 @@ pub use oneiron_verb_wire::lens::mediation::mediation_backing::LensBackingTarget
 pub use oneiron_verb_wire::lens::mediation::mediation_backing::LensReadReach;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Client-authored atom selection. It names *what was pointed at* and nothing else:
 /// no entity id, body text, screenshot, write token, authority, or query string is

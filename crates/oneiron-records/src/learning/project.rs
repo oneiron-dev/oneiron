@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The fitted value of one setting, as of its last projection.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
