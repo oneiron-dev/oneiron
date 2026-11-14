@@ -4,14 +4,8 @@
 
 use super::*;
 
-/// Whether this vault has a data key, and whether this handle holds it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum VaultKeyStatus {
-    NoKey,
-    Locked,
-    Unlocked,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::world_keys::vault_key::vocabulary::VaultKeyStatus;
 
 /// The WebAuthn PRF input (`prf.eval.first`) a passkey wrap's KEK is the output
 /// at: `BLAKE3-derive_key("oneiron/vault-key-passkey-prf-input/v1", vault id ‖
