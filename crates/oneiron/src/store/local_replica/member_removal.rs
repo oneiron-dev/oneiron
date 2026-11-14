@@ -224,6 +224,8 @@ pub(super) fn remove_member(
     crate::ports::reindex_named_entities(store, txn, id, None)?;
     crate::store::blob_fingerprint::invalidate_blob_fingerprint(store, txn, id)?;
     crate::store::claim_projection::remove_claim_projection_index(store, txn, *id)?;
+    // Reads the stored PERSON body, so it runs before the row goes.
+    crate::store::person_party_keys::reindex_person_party_keys(store, txn, id, None)?;
     // A demoted epoch summary keeps its place in its session's count, so a
     // local mint never numbers under it (OF-013).
     crate::compaction::raise_epoch_floor_in_txn(store, txn, &raw)?;

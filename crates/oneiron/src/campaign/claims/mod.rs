@@ -58,6 +58,8 @@ pub(crate) use self::codec::{
 #[cfg(test)]
 use self::codec::decode_comm_bounce_value;
 pub(in crate::campaign) use self::member_replacement::member_replacement_body;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::store::take_person_party_key_reads;
 pub(crate) use self::store::{
     counterparty_do_not_contact_in_txn, do_not_contact_subjects_in_txn,
     subjects_do_not_contact_in_txn,

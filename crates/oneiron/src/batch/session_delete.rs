@@ -102,6 +102,7 @@ pub(super) fn stage_session_delete(
     super::delete_from_phonetic_postings(view, wtxn, id)?;
     super::delete_short_id_rows_for_id(view, wtxn, id)?;
     crate::ports::remove_dependency_rows_for_dependent_in_txn(view, wtxn, id)?;
+    crate::store::person_party_keys::reindex_person_party_keys(view, wtxn, id, None)?;
     if view.vectors.stages_row(id.as_bytes()) {
         crate::hnsw::hnsw_deindex(view, wtxn, id)?;
         view.vectors.delete(wtxn, id.as_bytes())?;
