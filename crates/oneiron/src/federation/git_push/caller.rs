@@ -273,6 +273,13 @@ impl GitPushStamp {
         matches!(self.arm, GitPushArm::Checkout)
     }
 
+    /// Whether this push was admitted as the vault's owner (a co-owner
+    /// included, on any route). Every other arm pushes under a Grant, and
+    /// may not delete or rewrite the repo's protected ref (L8-51).
+    pub(crate) const fn is_owner(&self) -> bool {
+        matches!(self.arm, GitPushArm::Owner)
+    }
+
     /// Whether this push named a checkout lease, whatever arm admitted it
     /// (FIX 8729): its ref moves and changed paths are listed and judged
     /// again in the final writer, under the lease and the run's Grant.
