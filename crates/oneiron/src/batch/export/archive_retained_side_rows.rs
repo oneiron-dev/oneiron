@@ -33,6 +33,12 @@ pub struct ArchiveRetainedSideRow {
     /// The stored value bytes, exactly as the source table holds them.
     #[serde(with = "bytes")]
     pub source_value: Vec<u8>,
+    /// Whether the exporting vault held this tuple live in its source table, not as an inert
+    /// copy. Only such a tuple installs on the owner's restore; an inert copy stays inert, so an
+    /// obsolete copy never displaces the source's live value (REVIEW-7771). A stored copy is
+    /// inert, so it never carries the flag, and the flag is no part of the row's identity.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub source_live: bool,
 }
 
 /// Byte fields as MessagePack bin, so the archive side tree reads them as bytes.
@@ -71,7 +77,7 @@ const RETAINED_SIDE_ROW_DOMAIN: &[u8] = b"oneiron.archive.retained_side_row.v1";
 
 /// The physical key of one retained row: BLAKE3 over the domain and the length-framed logical
 /// identity (the source table name bytes, the source key bytes, the 32-byte value hash), each
-/// part as a u64 little-endian length followed by its bytes.
+/// part as a u64 little-endian length followed by its bytes. `source_live` is no part of it.
 pub(crate) fn retained_side_row_key(row: &ArchiveRetainedSideRow) -> [u8; 32] {
     let value_hash = blake3::hash(&row.source_value);
     let mut hasher = blake3::Hasher::new();
@@ -128,8 +134,9 @@ pub(crate) fn retained_envelope_source_table(value: &[u8]) -> Option<String> {
 }
 
 /// Every retained row this export carries, in physical key order: the live rows of the 103
-/// retained source tables read raw, unioned with the envelopes already stored, deduplicated by
-/// [`retained_side_row_key`]. Collected into memory like the 41-family writer.
+/// retained source tables read raw and marked `source_live`, unioned with the inert envelopes
+/// already stored, deduplicated by [`retained_side_row_key`] with the live row kept. Collected
+/// into memory like the 41-family writer.
 pub(crate) fn collect_retained_side_rows_in_txn(
     store: &Store,
     rtxn: &RoTxn<'_>,
@@ -142,6 +149,7 @@ pub(crate) fn collect_retained_side_rows_in_txn(
                 source_table: decl.name.to_owned(),
                 source_key,
                 source_value,
+                source_live: true,
             };
             let key = retained_side_row_key(&envelope);
             let value = RETAINED_SIDE_ROWS.encode_value(&envelope)?;
@@ -297,7 +305,7 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
 
     let mut files = |file: &ExportBodyFile| file.read(&archive.files);
     let mut tables: BTreeMap<String, RetainedSideTableCount> = BTreeMap::new();
-    let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], Vec<u8>, ArchiveRetainedSideRow)>> =
+    let mut groups: BTreeMap<ArchivedSideGroup, Vec<([u8; 32], ArchiveRetainedSideRow)>> =
         BTreeMap::new();
     let mut after: Option<Vec<u8>> = None;
     while let Some((key, value)) = archive.index.next(Tag::Side, &[], after.as_deref())? {
@@ -326,23 +334,21 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                 source_table: envelope.source_table.clone(),
                 ..Default::default()
             });
-        if let Some(group) = permit.and_then(|_| archived_side_group(&envelope.source_table)) {
-            groups
-                .entry(group)
-                .or_default()
-                .push((typed, row.value, envelope));
+        // Only a tuple the source held live installs; an inert copy stays inert (REVIEW-7771).
+        let group = permit
+            .filter(|_| envelope.source_live)
+            .and_then(|_| archived_side_group(&envelope.source_table));
+        if let Some(group) = group {
+            groups.entry(group).or_default().push((typed, envelope));
         } else {
-            retain_envelope_in_txn(vault, wtxn, &typed, &row.value, &envelope, count)?;
+            retain_envelope_in_txn(vault, wtxn, &typed, &envelope, count)?;
         }
         after = Some(key);
     }
     if let Some(permit) = permit {
         // The enum declaration order is the fixed owning-group dependency order.
         for (group, staged) in groups {
-            let (identities, rows): (Vec<_>, Vec<_>) = staged
-                .into_iter()
-                .map(|(key, value, row)| ((key, value), row))
-                .unzip();
+            let (keys, rows): (Vec<_>, Vec<_>) = staged.into_iter().unzip();
             let outcomes =
                 land_archived_side_group_in_txn(group, vault, wtxn, permit, &rows, refresh)?;
             if outcomes.len() != rows.len() {
@@ -350,7 +356,7 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                     "an archive landing group must return one outcome per envelope",
                 ));
             }
-            for (((key, value), envelope), outcome) in identities.iter().zip(&rows).zip(outcomes) {
+            for ((key, envelope), outcome) in keys.iter().zip(&rows).zip(outcomes) {
                 let count =
                     tables
                         .get_mut(&envelope.source_table)
@@ -367,11 +373,11 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
                         count.unchanged_live_rows += 1;
                     }
                     ArchivedSideRowOutcome::KeptLive => {
-                        retain_envelope_in_txn(vault, wtxn, key, value, envelope, count)?;
+                        retain_envelope_in_txn(vault, wtxn, key, envelope, count)?;
                         count.kept_live_rows += 1;
                     }
                     ArchivedSideRowOutcome::HeldBack(reason) => {
-                        retain_envelope_in_txn(vault, wtxn, key, value, envelope, count)?;
+                        retain_envelope_in_txn(vault, wtxn, key, envelope, count)?;
                         add_held_back_count(&mut count.held_back, reason, 1);
                     }
                 }
@@ -396,15 +402,20 @@ pub(crate) fn install_or_retain_side_rows_in_txn<R: Read + Seek>(
     Ok(summary)
 }
 
-/// Keeps one envelope with SIDE-1's physical collision rules and inert-copy counters.
+/// Keeps one envelope as an inert copy (no `source_live`) with SIDE-1's physical collision rules
+/// and inert-copy counters.
 fn retain_envelope_in_txn(
     vault: &crate::Vault,
     wtxn: &mut RwTxn<'_>,
     key: &[u8; 32],
-    value: &[u8],
     envelope: &ArchiveRetainedSideRow,
     count: &mut RetainedSideTableCount,
 ) -> Result<()> {
+    let inert = ArchiveRetainedSideRow {
+        source_live: false,
+        ..envelope.clone()
+    };
+    let value = RETAINED_SIDE_ROWS.encode_value(&inert)?;
     match RETAINED_SIDE_ROWS.get_bytes(vault, wtxn, key)? {
         Some(stored) if stored == value => count.unchanged_rows += 1,
         Some(_) => {
@@ -413,7 +424,7 @@ fn retain_envelope_in_txn(
             ));
         }
         None => {
-            RETAINED_SIDE_ROWS.put(vault, wtxn, key, envelope)?;
+            RETAINED_SIDE_ROWS.put(vault, wtxn, key, &inert)?;
             count.inserted_rows += 1;
         }
     }

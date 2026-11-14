@@ -51,6 +51,7 @@ pub fn retained_row_withholds_credential(
         source_table: source_table.to_owned(),
         source_key: source_key.to_vec(),
         source_value: source_value.to_vec(),
+        source_live: true,
     };
     let value = <Named as SideCodec<ArchiveRetainedSideRow>>::encode(&row)
         .map_err(|_| Error::InvalidConfig("retained envelope does not encode".to_owned()))?;

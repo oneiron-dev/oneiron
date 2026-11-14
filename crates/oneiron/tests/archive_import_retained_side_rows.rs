@@ -192,6 +192,8 @@ fn decode_retained_envelope(
             "source_value" => {
                 value = Some(tree_bytes(&pair[1], zip).expect("source_value are bytes"));
             }
+            // Whether the exporting vault held the tuple live; no part of the tuple.
+            "source_live" => {}
             other => panic!("unknown retained envelope member {other}: {tree}"),
         }
     }
