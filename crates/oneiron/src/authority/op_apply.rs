@@ -134,7 +134,7 @@ pub(super) fn apply_op(
             for device in state.roster.values_mut() {
                 device.revoked = true;
             }
-            upsert_device(state, successor, None);
+            upsert_device(state, successor, Some(signer));
         }
         // The signed record of a shared-act change; the change itself is the
         // execution's (`federation::shared_act`).
