@@ -23,16 +23,12 @@
 //!
 //! An actor's erase and a room's erase of one of its people rewrite every
 //! edit that names them the same way (FIX 5640): it names them as no one,
-//! and anyone else it names stays named. The owner's confirmed erase of an
-//! edit is a privacy erase of it (FIX 5906, Engine ruling 2026-10-20); no
-//! edit bound applies to it.
+//! and anyone else it names stays named.
 
 use super::audience_edit_guard::kept_root_in;
 use super::audience_events::{AudienceEvent, erased_here_in, event_body, live_edit_in};
 use super::*;
-use crate::consent::AuthenticatedOwner;
 use crate::deletion::{ConfirmedEraseOutcome, DeleteEntityOutcome};
-use crate::memory::{DeleteReceipt, DeleteRequestState};
 use crate::registry::ENTITY_TYPE_TURN;
 use crate::store::legal_hold::HoldActor;
 
@@ -270,41 +266,4 @@ pub(crate) fn scrub_room_audience(
         }
         Ok(())
     })
-}
-
-impl Memory<'_> {
-    /// The owner's confirmed erase of `record` (FIX 5906): an audience edit
-    /// its live root keeps is erased as a privacy erase leaves it
-    /// ([`erase_audience_edit`]), the owner's proof re-proved in its write
-    /// and a hold placed since refusing it, with its erase receipt; any other
-    /// record goes through the owner delete rail, the owner's proof
-    /// re-proved in each of its writes before publication (FIX 9781). A
-    /// shared vault with two or more Owners never reaches here: its erase
-    /// waits out the vault's veto window first.
-    pub(crate) fn owner_confirmed_erase(
-        &self,
-        owner: &AuthenticatedOwner,
-        record: EntityId,
-        reason: crate::deletion::DeleteReason,
-    ) -> MemoryResult<DeleteReceipt> {
-        let vault = self.vault();
-        let erased = erase_audience_edit(
-            vault,
-            &record,
-            HoldActor::owner(self.actor()),
-            reason,
-            |txn| owner.revalidate_in_txn(vault, txn).map(drop),
-        )?;
-        match erased {
-            Some(outcome) => Ok(DeleteReceipt {
-                existed: outcome.existed,
-                reason: reason.as_str().to_owned(),
-                receipt_ref: outcome
-                    .receipt_id
-                    .map(|receipt| format!("redaction:{}", receipt.to_hex())),
-                state: DeleteRequestState::Applied,
-            }),
-            None => self.safe_delete_as_owner(owner, &record.to_hex(), reason),
-        }
-    }
 }

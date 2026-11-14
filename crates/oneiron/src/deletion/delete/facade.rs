@@ -7,7 +7,7 @@ use crate::error::{Error, Result};
 use super::super::gate::{GatedDeletion, reverify_deletion_authority_before_publication};
 use super::super::tombstone::DeleteReason;
 use super::guard::DeleteGuard;
-use super::{DeleteEntityOptions, DeleteEntityOutcome, PendingConfirmedErase};
+use super::{DeleteEntityOptions, DeleteEntityOutcome};
 
 impl Vault {
     /// Plain deletion retains a tombstone shell. Use `delete_entity_with_options`
@@ -38,7 +38,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        self.delete_entity_through_dependents(id, reason, None, None)
+        self.delete_entity_through_dependents(id, reason, None)
     }
 
     /// Facade delete seam carrying an owner gate evaluated before TXN1.
@@ -53,7 +53,7 @@ impl Vault {
         reason: DeleteReason,
         gate: GatedDeletion<'_>,
     ) -> Result<DeleteEntityOutcome> {
-        self.delete_entity_through_dependents(id, reason, Some(gate), None)
+        self.delete_entity_through_dependents(id, reason, Some(gate))
     }
 
     /// One delete and its dependent walks.
@@ -62,9 +62,8 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false, due);
+        let outcome = self.delete_entity_with_reason_impl(id, reason, gate, false);
         // A fence its erase committed reaches key custody now (FIX 11211).
         self.store.journal_staged_fence_facts();
         let outcome = outcome?;
@@ -99,7 +98,7 @@ impl Vault {
         id: &EntityId,
         reason: DeleteReason,
     ) -> Result<DeleteEntityOutcome> {
-        let outcome = self.delete_entity_with_reason_impl(id, reason, None, true, None)?;
+        let outcome = self.delete_entity_with_reason_impl(id, reason, None, true)?;
         self.finish_dependent_walks()?;
         while self.collect_lfs_garbage(32)? != 0 {}
         #[cfg(unix)]
@@ -205,9 +204,8 @@ impl Vault {
         reason: DeleteReason,
         gate: Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
-        due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteEntityOutcome> {
-        let guard = self.delete_guard_phase(id, reason, &gate, allow_replay_test, due)?;
+        let guard = self.delete_guard_phase(id, reason, &gate, allow_replay_test)?;
         let (requested_at, header) = match guard {
             DeleteGuard::Done(outcome) => return Ok(outcome),
             DeleteGuard::Proceed {
@@ -222,7 +220,6 @@ impl Vault {
                 reason,
                 &gate,
                 allow_replay_test,
-                due,
                 header,
                 plan.tombstone,
                 &plan.gate_decision,
@@ -236,7 +233,6 @@ impl Vault {
             reason,
             &gate,
             allow_replay_test,
-            due,
             header,
             plan.tombstone,
             &plan.gate_decision,
@@ -248,7 +244,6 @@ impl Vault {
             reason,
             &gate,
             allow_replay_test,
-            due,
             requested_at,
             header,
             plan.request_uuid,

@@ -41,10 +41,9 @@ pub(crate) fn cooperative_restriction_active_in_txn(
         .is_some())
 }
 
-/// Whether any cooperative restriction row exists. Since PR 2 only a
-/// restriction can keep a birth, a token or a carrier, and the birth read
-/// scans every `ROW_BIRTH` row, so it runs only while a restriction is
-/// filed.
+/// Whether any cooperative restriction row stands: the gate of the owed
+/// births read (`deletion::legal_hold::held_scrubs`), which scans every
+/// `ROW_BIRTH` row.
 pub(crate) fn any_cooperative_restriction_in_txn(
     dbs: &impl SideTableDbs,
     txn: &RoTxn<'_>,

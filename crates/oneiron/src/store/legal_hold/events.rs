@@ -121,19 +121,6 @@ pub(crate) fn logged_in_txn(
         .any(|(_, row)| row.event == event))
 }
 
-/// The newest event of `hold`'s own log.
-pub(super) fn last_event_in_txn(
-    dbs: &impl SideTableDbs,
-    txn: &RoTxn<'_>,
-    hold: &LegalHold,
-) -> Result<Option<LegalHoldEvent>> {
-    Ok(own_log(hold)
-        .iter_rev_from(dbs, txn, hold.hold_id.as_bytes())?
-        .next()
-        .transpose()?
-        .map(|(_, event)| event))
-}
-
 fn by_time(table: Events, dbs: &impl SideTableDbs, txn: &RoTxn<'_>) -> Result<Vec<LegalHoldEvent>> {
     let mut events: Vec<LegalHoldEvent> = table
         .scan(dbs, txn)?

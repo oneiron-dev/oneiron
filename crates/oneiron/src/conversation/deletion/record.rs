@@ -177,7 +177,7 @@ impl Vault {
                 }
                 drop(txn);
                 if privacy {
-                    targets = progress.unheld(self, &targets, actor, &reverify)?;
+                    targets = progress.unheld(self, &targets, &reverify)?;
                 }
                 for message in targets {
                     self.delete_room_record_as(room, message, actor, reason, subject, progress)?;
@@ -196,7 +196,7 @@ impl Vault {
             crate::reaction::record_reaction_claims_in(self, &txn, record)?
         };
         if privacy {
-            reactions = progress.unheld(self, &reactions, actor, &reverify)?;
+            reactions = progress.unheld(self, &reactions, &reverify)?;
         }
         crate::reaction::erase_reaction_claims(self, &reactions, reason)?;
         self.delete_entity_with_reason_gated(

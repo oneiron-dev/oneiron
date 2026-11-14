@@ -7,7 +7,7 @@ use crate::store::legal_hold::HoldActor;
 use super::super::gate::{GatedDeletion, reverify_deletion_authority_before_publication};
 use super::super::rendezvous::{DeleteRendezvous, signal_delete_rendezvous};
 use super::super::tombstone::DeleteReason;
-use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use super::DeleteEntityOutcome;
 use crate::error::RegistryError;
 
 /// What the delete guards decided: the headerful leg's header, or an outcome
@@ -29,7 +29,6 @@ impl Vault {
         reason: DeleteReason,
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
-        due: Option<&PendingConfirmedErase>,
     ) -> Result<DeleteGuard> {
         crate::store::base_agent::guard_actor_delete(id)?;
         {
@@ -95,12 +94,6 @@ impl Vault {
                 .as_ref()
                 .map_or(HoldActor::UNATTRIBUTED, GatedDeletion::hold_actor)
                 .privacy(reason == DeleteReason::GdprDelete);
-            // A due confirmed erase that no longer waits ends here, before
-            // any writer, and a hold names the owner its row records.
-            let actor = match due {
-                Some(due) => due.prove_in(self, &txn, id)?,
-                None => actor,
-            };
             self.store.reject_legal_holds_in_txn(&txn, &[*id], &actor)?;
             // A pad is held by its world's holds too (OF-470), refused as
             // this actor (FIX 3059).
@@ -112,7 +105,7 @@ impl Vault {
         let requested_at = self.store.clock.now_recorded_at();
         let Some(header) = self.read_entity_header(id)? else {
             return self
-                .delete_entity_without_header(id, reason, requested_at, gate.as_ref(), due)
+                .delete_entity_without_header(id, reason, requested_at, gate.as_ref())
                 .map(DeleteGuard::Done);
         };
         if crate::batch::delete_door_protected(header.entity_type)

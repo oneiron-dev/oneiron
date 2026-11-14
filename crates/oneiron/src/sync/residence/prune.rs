@@ -19,6 +19,7 @@ use crate::Vault;
 use crate::error::Result;
 use crate::ports::{WindowAddress, WindowDeletionRows};
 use crate::store::Store;
+use crate::store::legal_hold::HoldActor;
 use crate::store::local_replica::{KeepControls, remove_local_replica_window_in_txn};
 use crate::sync::WindowKey;
 
@@ -229,16 +230,16 @@ pub(crate) fn prune_thin_items_in_txn(
         if touched >= before {
             continue;
         }
-        // A cooperative restriction keeps every byte of the rows it names, a
-        // cached copy too: a held item's cache stays. So does a cached pad
-        // whose world, or a claim its key seals, a restriction names, read
-        // from the cache before anything goes (FIX 3061).
+        // The hold check answers a cooperatively restricted item with
+        // absence, which fails the prune; no legal hold refuses any more. A
+        // cached pad whose world, or a claim its key seals, a restriction
+        // names stays, read from the cache before anything goes (FIX 3061).
         let Ok(item) = EntityId::from_hex(id) else {
             continue;
         };
-        if crate::store::legal_hold::held_in_txn(&vault.store, txn, item.as_bytes())? {
-            continue;
-        }
+        vault
+            .store
+            .reject_legal_holds_in_txn(txn, &[item], &HoldActor::UNATTRIBUTED)?;
         if let Some(raw) = vault.store.sync_state.get(txn, &format!("ri:b:{id}"))?
             && crate::world_keys::held_pad_world_in_txn(&vault.store, txn, &raw)?
         {

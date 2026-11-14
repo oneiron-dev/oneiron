@@ -16,7 +16,7 @@ use super::super::tombstone::{DeleteReason, TombstoneValueV2};
 use super::super::topology_delete_intent::{
     TopologyDeletePhase, clear_own_topology_delete_in_txn, reserve_topology_delete_in_txn,
 };
-use super::{DeleteEntityOutcome, PendingConfirmedErase};
+use super::DeleteEntityOutcome;
 
 impl Vault {
     /// Scrubs the body shell of a soft delete, publishes its tombstone, and
@@ -27,7 +27,6 @@ impl Vault {
         reason: DeleteReason,
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
-        due: Option<&PendingConfirmedErase>,
         header: EntityMetadataHeader,
         tombstone: TombstoneValueV2,
         gate_decision: &Option<GateDecisionRecord>,
@@ -49,11 +48,6 @@ impl Vault {
         // arm publishes its tombstone after the scrub, so the re-fold below
         // in the publish txn is the decision that binds.
         reverify_deletion_authority_before_publication(gate.as_ref(), &wtxn)?;
-        // A due owner delete scrubs only while its request still waits
-        // (FIX 1465): this scrub is its first destructive commit.
-        if let Some(due) = due {
-            due.prove_in(self, &wtxn, id)?;
-        }
         // A Connect guest's PERSON leaves its pacts first (FIX 3875).
         revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
         // This scrub is the first destructive commit. The intent rides
@@ -197,7 +191,6 @@ impl Vault {
         reason: DeleteReason,
         gate: &Option<GatedDeletion<'_>>,
         allow_replay_test: bool,
-        due: Option<&PendingConfirmedErase>,
         header: EntityMetadataHeader,
         tombstone: TombstoneValueV2,
         gate_decision: &Option<GateDecisionRecord>,
@@ -210,14 +203,13 @@ impl Vault {
         // delete, so the authority behind it is re-proven atomically with the
         // recovery sidecar that stages it (`stage_deletion_gate_recovery`) —
         // a revoked owner must not publish a deletion other devices obey.
-        let crdt_persisted = self.write_crdt_tombstone_due(
+        let crdt_persisted = self.write_crdt_tombstone(
             id,
             header.learned_at,
             window_label,
             &tombstone,
             gate_decision.as_ref(),
             gate.as_ref(),
-            due,
         )?;
         #[cfg(all(test, feature = "sync"))]
         maybe_fail_after_tombstone_before_purge()?;

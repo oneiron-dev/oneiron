@@ -126,8 +126,7 @@ pub(crate) use actor_fields::{
     hard_erased_ids_in, rerun_actor_scrubs_in_txn, restore_erased_payload_targets_in_txn,
 };
 pub(crate) use checkpoint_payload::settle_checkpoint_payloads_for_reason_in_txn;
-// A due owner-confirmed erase rechecks its pending row (FIX 6337).
-pub(crate) use delete::{ConfirmedEraseOutcome, due_erase_requester_in_txn};
+pub(crate) use delete::ConfirmedEraseOutcome;
 pub(crate) use derived_rows::tear_derived_rows_in_txn;
 pub(crate) use erase::{TombstoneScopeProbes, classified_corrupt_claim_in_txn};
 // The relayed ask intents a legal hold kept from their holder's erase (FIX 20468), and those

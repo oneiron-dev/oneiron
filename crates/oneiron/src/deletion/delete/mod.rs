@@ -11,9 +11,7 @@ mod preflight;
 mod preview;
 mod receipt;
 
-pub(crate) use self::confirmed::{
-    ConfirmedEraseOutcome, PendingConfirmedErase, due_erase_requester_in_txn,
-};
+pub(crate) use self::confirmed::ConfirmedEraseOutcome;
 pub use self::impact::{HeldBytes, LfsChunkImpact};
 pub use self::outcome::{DeleteEntityOptions, DeleteEntityOutcome};
 pub use self::preview::DeleteEntityPreview;

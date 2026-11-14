@@ -47,10 +47,11 @@ impl Vault {
 /// Whether a scrub a cooperative restriction kept is still owed for one of
 /// an erase's `entity_ids`: a Gate decision's owed scrub, a relayed ask
 /// intent's owed retirement (FIX 20468), a birth or window carrier one of
-/// them made, or a stamp token naming one of them. Since PR 2 only a
-/// restriction can keep a birth, a token or a carrier, and the birth read
-/// scans every `ROW_BIRTH` row, so it runs only while a restriction is
-/// filed: with none, none outlived its actor's scrub.
+/// them made, or a stamp token naming one of them. Only a cooperative
+/// restriction keeps a birth, a token or a carrier, and the birth read scans
+/// every `ROW_BIRTH` row, so it runs only while a restriction row stands. What
+/// a lifted restriction kept waits for the next settle pass
+/// ([`Vault::settle_held_scrubs`]); this read does not see it.
 pub(in crate::deletion) fn held_scrubs_owed_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

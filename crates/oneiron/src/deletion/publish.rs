@@ -7,7 +7,6 @@ use crate::error::Error;
 use crate::error::Result;
 use crate::store::GateDecisionRecord;
 
-use super::delete::PendingConfirmedErase;
 use super::gate::GatedDeletion;
 // Publication-time authority re-verification only exists where there is a
 // publication; the no-feature arm publishes nothing.
@@ -67,8 +66,8 @@ const PAD_TOMBSTONE_PUBLISH_FAILURE_POLICY: PadTombstonePublishFailure =
     PadTombstonePublishFailure::KeepPendingAndWarn;
 
 impl Vault {
-    /// [`Self::write_crdt_tombstone_due`] for a delete that is no due
-    /// owner-confirmed erase.
+    /// Publishes the tombstone of a delete.
+    #[cfg(feature = "sync")]
     pub(super) fn write_crdt_tombstone(
         &self,
         id: &EntityId,
@@ -78,32 +77,6 @@ impl Vault {
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
     ) -> Result<bool> {
-        self.write_crdt_tombstone_due(
-            id,
-            window_ts,
-            window_label,
-            value,
-            gate_decision,
-            gate,
-            None,
-        )
-    }
-
-    /// Publishes the tombstone of a delete; a due owner-confirmed erase
-    /// (`due`) re-proves in the publish transaction that it still waits
-    /// (FIX 6337).
-    #[cfg(feature = "sync")]
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn write_crdt_tombstone_due(
-        &self,
-        id: &EntityId,
-        window_ts: u64,
-        window_label: &str,
-        value: &TombstoneValueV2,
-        gate_decision: Option<&GateDecisionRecord>,
-        gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
-    ) -> Result<bool> {
         let mut doc_mutated = false;
         let outcome = self.write_crdt_tombstone_impl(
             id,
@@ -112,7 +85,6 @@ impl Vault {
             value,
             gate_decision,
             gate,
-            due,
             &mut doc_mutated,
         );
         crate::sync::note::deleted_elsewhere(self, window_label, outcome.is_ok().then_some(*id));
@@ -191,7 +163,6 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
         doc_mutated: &mut bool,
     ) -> Result<bool> {
         use super::delete_bearing_update::export_tombstone_commit_delta;
@@ -270,7 +241,6 @@ impl Vault {
                     value,
                     gate_decision,
                     gate,
-                    due,
                 )?;
                 let vv_before = window.doc.oplog_vv();
                 let (delete_update, (snapshot, owes_compaction), vv) =
@@ -367,7 +337,6 @@ impl Vault {
             value,
             gate_decision,
             gate,
-            due,
         )?;
         let vv_before = doc.oplog_vv();
         self.store
@@ -552,12 +521,10 @@ impl Vault {
         value: &TombstoneValueV2,
         gate_decision: Option<&GateDecisionRecord>,
         gate: Option<&GatedDeletion<'_>>,
-        due: Option<&PendingConfirmedErase>,
     ) -> Result<heed::RwTxn<'_>> {
         let mut wtxn = self.store.env.write_txn()?;
         if let Err(refusal) =
             crate::blob_artifact::esign::reject_event_delete(&self.store, &wtxn, id)
-                .and_then(|()| due.map_or(Ok(()), |due| due.prove_in(self, &wtxn, id).map(drop)))
                 .and_then(|()| reverify_deletion_authority_before_publication(gate, &wtxn))
                 .and_then(|()| {
                     self.store.delete_guards.precheck_goal_delete(
@@ -582,8 +549,7 @@ impl Vault {
                 })
                 .and_then(|()| {
                     if value.reason.is_hard() {
-                        let requester = due.map(PendingConfirmedErase::requester);
-                        self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
+                        self.store.reject_legal_hold_in_txn(&wtxn, id.as_bytes())?;
                         crate::world_keys::reject_held_pad_world_in_txn(
                             &self.store,
                             &wtxn,
@@ -945,8 +911,8 @@ impl Vault {
     }
 
     #[cfg(not(feature = "sync"))]
-    #[allow(clippy::unnecessary_wraps, clippy::too_many_arguments)]
-    pub(super) fn write_crdt_tombstone_due(
+    #[allow(clippy::unnecessary_wraps)]
+    pub(super) fn write_crdt_tombstone(
         &self,
         _id: &EntityId,
         _window_ts: u64,
@@ -954,7 +920,6 @@ impl Vault {
         _value: &TombstoneValueV2,
         _gate_decision: Option<&GateDecisionRecord>,
         _gate: Option<&GatedDeletion<'_>>,
-        _due: Option<&PendingConfirmedErase>,
     ) -> Result<bool> {
         // No CRDT in this build — nothing is published, so there is no publish
         // commit and therefore NO linearization point here. `false` is the

@@ -298,11 +298,11 @@ struct Held {
 }
 
 impl Held {
-    fn plan(_store: &Store, _txn: &RoTxn<'_>, _kept: &Kept) -> Result<Self> {
+    fn plan(store: &Store, txn: &RoTxn<'_>, kept: &Kept) -> Result<Self> {
         let mut bodies = HashSet::new();
         // Body custody rows exist on unix only.
         #[cfg(unix)]
-        for raw in &_kept.raw {
+        for raw in &kept.raw {
             let Ok(bytes) = <[u8; 16]>::try_from(raw.as_slice()) else {
                 continue;
             };
@@ -310,8 +310,8 @@ impl Held {
                 continue;
             };
             crate::provenance::body::retained_body_side_keys_in_txn(
-                _store,
-                _txn,
+                store,
+                txn,
                 &owner,
                 &mut bodies,
             )?;
@@ -319,7 +319,7 @@ impl Held {
         // The kept removal archives' files, owned by their receipts, which
         // are no kept entity (FIX 3679).
         #[cfg(unix)]
-        crate::federation::removal_archive_body_keys_in_txn(_store, _txn, &mut bodies)?;
+        crate::federation::removal_archive_body_keys_in_txn(store, txn, &mut bodies)?;
         Ok(Self { bodies })
     }
 }

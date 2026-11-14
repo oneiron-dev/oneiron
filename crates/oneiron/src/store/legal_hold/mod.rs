@@ -199,20 +199,16 @@ impl Store {
     /// (LEGAL-HOLD-USE = B, ARCH-0038 #legal-hold-clone-ruling): every hold
     /// keeps its sealed copy outside the vault, and erases, deletes and
     /// backup expiry run as they would without it. Only a cooperative
-    /// restriction refuses now, with absence (`EntityNotFound`).
+    /// restriction refuses now, with absence (`EntityNotFound`), and no
+    /// refusal is logged, so `_actor` names no one in any log.
     pub(crate) fn reject_legal_holds_in_txn(
         &self,
         txn: &RoTxn<'_>,
         ids: &[EntityId],
-        actor: &HoldActor,
+        _actor: &HoldActor,
     ) -> Result<()> {
         for id in ids {
-            self.reject_held_key_in_txn(
-                txn,
-                &id_key(id.as_bytes()),
-                Some(LegalHoldTarget::Record(*id)),
-                actor,
-            )?;
+            self.reject_held_key_in_txn(txn, Some(LegalHoldTarget::Record(*id)))?;
         }
         Ok(())
     }
@@ -221,18 +217,16 @@ impl Store {
     /// no actor.
     pub(crate) fn reject_legal_hold_in_txn(&self, txn: &RoTxn<'_>, id: &[u8; 16]) -> Result<()> {
         let target = EntityId::from_bytes(*id).ok().map(LegalHoldTarget::Record);
-        self.reject_held_key_in_txn(txn, &id_key(id), target, &HoldActor::UNATTRIBUTED)
+        self.reject_held_key_in_txn(txn, target)
     }
 
+    /// Absence while a cooperative restriction stands on the record `target`
+    /// names; no hold refuses.
     fn reject_held_key_in_txn(
         &self,
         txn: &RoTxn<'_>,
-        key: &HeldKey,
         target: Option<LegalHoldTarget>,
-        actor: &HoldActor,
     ) -> Result<()> {
-        // No hold refuses: only a cooperative restriction does, with absence.
-        let _ = (key, actor);
         if let Some(LegalHoldTarget::Record(record)) = target
             && cooperative_restriction_active_in_txn(self, txn, &record)?
         {

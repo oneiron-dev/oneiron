@@ -526,7 +526,7 @@ impl Vault {
                 }
             }
             drop(txn);
-            let targets = progress.unheld(self, &targets, actor, &reauthorize)?;
+            let targets = progress.unheld(self, &targets, &reauthorize)?;
             for message in targets {
                 outcomes.push(self.delete_room_record_as(
                     room,
@@ -568,7 +568,7 @@ impl Vault {
                 })
                 .collect::<Result<Vec<_>>>()?;
             drop(txn);
-            let targets = progress.unheld(self, &targets, actor, &reauthorize)?;
+            let targets = progress.unheld(self, &targets, &reauthorize)?;
             for record in targets {
                 outcomes.push(self.delete_room_record_as(
                     room,
@@ -618,7 +618,7 @@ impl Vault {
                     )?
                 };
                 count.rows(records.len());
-                let reactions = progress.unheld(self, &reactions, actor, &reauthorize)?;
+                let reactions = progress.unheld(self, &reactions, &reauthorize)?;
                 crate::reaction::erase_reaction_claims(self, &reactions, DeleteReason::GdprDelete)?;
                 if records.len() < crate::reaction::ROOM_RECORD_PAGE {
                     break;
@@ -628,7 +628,7 @@ impl Vault {
             count.finish(self);
         }
         crate::workspace_roster::scrub_room_audience(self, room, person, &reauthorize, |ids| {
-            progress.unheld(self, ids, actor, &reauthorize)
+            progress.unheld(self, ids, &reauthorize)
         })?;
         // The single writer closes the in-flight fence only after every
         // selected active row has completed its reason-aware deletion. A
