@@ -24804,7 +24804,7 @@
      "path": "src/consent/codec.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "re-export": 1
      }
     },
@@ -64384,8 +64384,18 @@
      "path": "src/outbound_grant/doors.rs",
      "purpose": "The owner's mint of a standing outbound grant, a system path's mint of one it derives from the owner's…",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 8,
       "fn": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/outbound_grant/index.rs",
+     "purpose": "The standing outbound grant indexes by grant id and by principal (ARCH-0044 H424, census L3-28A): the by-id…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -64395,7 +64405,7 @@
      "path": "src/outbound_grant/mod.rs",
      "purpose": "Standing outbound grants for OF-367 RS6.2/RS6.5",
      "surface": {
-      "crate-vis": 5,
+      "crate-vis": 8,
       "re-export": 2
      }
     },
@@ -93034,7 +93044,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 82,
+      "mod": 83,
       "re-export": 1
      }
     },
@@ -93070,6 +93080,16 @@
      "purpose": "Door for `tests/off_record_continuation_shell.rs` (FIX 22388): the BASE conversation shell an off-record…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/outbound_grant_index.rs",
+     "purpose": "Doors for `tests/outbound_grant_index.rs` (census L3-28A): the by-id and by-principal reads of standing…",
+     "surface": {
+      "fn": 7
      }
     },
     {
@@ -104027,6 +104047,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/outbound_grant_index.rs",
+     "purpose": "Census L3-28A (ARCH-0044 H424): the standing outbound grant reads by principal and by grant id are served…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -106416,7 +106444,7 @@
      "purpose": "Payload-aware consent and transport boundary for scoped outbound tools"
     },
     "outbound_grant": {
-     "files": 8,
+     "files": 9,
      "impl_vault": true,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -106892,7 +106920,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 85,
+     "files": 86,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -107069,8 +107097,8 @@
    },
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7514,
-   "test_files": 1236
+   "source_files": 7516,
+   "test_files": 1237
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -160982,11 +161010,57 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "FieldClass"
+     ],
+     "path": "src/golden_day/manifest.rs",
+     "purpose": "The field manifest: how the normaliser treats every object key the golden-day trace holds (the receipt…",
+     "surface": {
+      "const": 3,
+      "enum": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "GoldenDayError",
+      "GoldenDayRun"
+     ],
+     "path": "src/golden_day/mod.rs",
+     "purpose": "The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's…",
+     "surface": {
+      "const": 7,
+      "fn": 8,
+      "mod": 2,
+      "re-export": 2,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "NormaliseError",
+      "Normaliser",
+      "UnknownKey"
+     ],
+     "path": "src/golden_day/normalise.rs",
+     "purpose": "The trace normaliser: one walk over a raw trace that classifies every object key it meets by…",
+     "surface": {
+      "const": 1,
+      "fn": 9,
+      "struct": 3
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/lib.rs",
      "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
      "surface": {
-      "mod": 13,
+      "mod": 14,
       "re-export": 7
      }
     },
@@ -161179,6 +161253,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/golden_day.rs",
+     "purpose": "The golden day (`oneiron_testkit::golden_day`): one scripted day on a fresh vault, and the normalised dump…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/kit.rs",
      "purpose": "The hashing embedder, the fake clock and fixture copies keep their promises",
      "surface": {}
@@ -161274,6 +161356,13 @@
      "layout": "file",
      "purpose": "Fixture vaults: seed a vault once, copy it for every test"
     },
+    "golden_day": {
+     "files": 3,
+     "impl_vault": false,
+     "largest_src_bucket": "m",
+     "layout": "dir",
+     "purpose": "The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's…"
+    },
     "lint": {
      "files": 1,
      "impl_vault": false,
@@ -161319,8 +161408,8 @@
    },
    "over_bar": 3,
    "purpose": "`oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09…",
-   "source_files": 22,
-   "test_files": 9
+   "source_files": 25,
+   "test_files": 10
   },
   "oneiron-uniffi": {
    "files": [
