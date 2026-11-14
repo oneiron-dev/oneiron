@@ -143,8 +143,8 @@ pub fn keep_found_key_as_text_embedded(
 /// person's own on a handle bound as that person (their presented slip, or
 /// a native call), as `vault.outbound.undo_send` takes it. An agent's handle
 /// is refused. The engine door then judges whether that person wrote the
-/// key.
-fn answerer_proof(memory: &Memory<'_>, verb: &str) -> MemoryResult<AuthenticatedOwner> {
+/// key. `vault.secrets.found.list` reads under the same proof.
+pub(super) fn answerer_proof(memory: &Memory<'_>, verb: &str) -> MemoryResult<AuthenticatedOwner> {
     if let Ok(owner) = memory.embedded_owner(verb) {
         return Ok(owner);
     }
