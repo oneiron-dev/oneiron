@@ -149,8 +149,9 @@ def mutant(name_line, function, genre, replacement, change):
             "replacement": replacement, "genre": genre}
 
 
-def outcomes_file(folder, results, fail_lines=None, baseline="Success"):
-    """A cargo-mutants 27.1.0 outcomes.json (as mutation.py's score() reads it) with one log per mutant."""
+def outcomes_file(folder, results, fail_lines=None, baseline="Success", meta=None):
+    """A cargo-mutants 27.1.0 outcomes.json (as mutation.py's score() reads it) with one log per mutant.
+    `meta` overrides top-level fields (an interrupted run has end_time null and fewer outcomes than total_mutants)."""
     folder = Path(folder)
     (folder / "log").mkdir(parents=True, exist_ok=True)
     outs = [{"scenario": "Baseline", "summary": baseline, "log_path": "log/baseline.log", "diff_path": None,
@@ -169,6 +170,7 @@ def outcomes_file(folder, results, fail_lines=None, baseline="Success"):
            "timeout": sum(1 for _, s in results if s == "Timeout"), "unviable": 0, "success": 0,
            "start_time": "2026-11-15T00:00:00Z", "end_time": "2026-11-15T00:01:00Z",
            "cargo_mutants_version": "27.1.0"}
+    doc.update(meta or {})
     path = folder / "outcomes.json"
     path.write_text(json.dumps(doc))
     return path
@@ -306,6 +308,11 @@ class MutantScreenTests(unittest.TestCase):
             "failed baselines, no mutants": ([([], None, "Failure")], [([], None, "Failure")]),
             "failed old baseline": ([([(a_old, "CaughtMutant")], None, "Failure")], [([(a_new, "CaughtMutant")],)]),
             "good baselines, no mutants": ([([],)], [([],)]),
+            "interrupted runs, one of two mutants": (
+                [([(a_old, "CaughtMutant")], None, "Success", {"end_time": None, "total_mutants": 2})],
+                [([(a_new, "CaughtMutant")], None, "Success", {"end_time": None, "total_mutants": 2})]),
+            "finished run, short inventory": (
+                [([(a_old, "CaughtMutant")], None, "Success", {"total_mutants": 2})], [([(a_new, "CaughtMutant")],)]),
         }
         for case, (old_sets, pruned_sets) in cases.items():
             with self.subTest(case):

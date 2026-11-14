@@ -35,8 +35,9 @@ Per crate (ranked by deleted tests; --crates overrides), until --crate-count cra
      a pair with a Timeout on either side runs once more with twice the timeout.
 Lost = caught by the old suite and missed by the pruned suite. Undecided = still a Timeout, or
 no outcome on one side. Verdict `loses_nothing` only when both lists are empty, and only over mutants
-that ran: an outcomes file without a Success baseline, an outcomes set with no mutant, or a report
-with no screened crate is exit 2, never a pass.
+that ran: an outcomes file without a Success baseline, an unfinished one (no end_time, or fewer
+mutant outcomes than total_mutants), an outcomes set with no mutant, or a report with no screened
+crate is exit 2, never a pass.
 
 Usage:
   mutant_screen.py --plan-only [--old REV] [--pruned REV] [--crates a,b]   (git only, no cargo)
@@ -717,25 +718,36 @@ def keyed(mutants):
 
 
 def read_outcomes(path):
-    """{mutant name: {summary, mutant, duration, log}} from one cargo-mutants outcomes.json."""
+    """{mutant name: {summary, mutant, duration, log}} and the baseline summary from one cargo-mutants outcomes.json.
+
+    A run whose baseline passed must be complete, as mutation.py's score() requires: an end_time, one Baseline, and
+    exactly total_mutants mutant outcomes. An interrupted run is an error, never a partial inventory to judge."""
     path = Path(path)
     data = json.loads(path.read_text())
     if not isinstance(data.get("outcomes"), list):
         raise ScreenError(f"{path}: no outcomes list")
-    out, baseline = {}, None
+    out, baseline, baselines, mutant_rows = {}, None, 0, 0
     for o in data["outcomes"]:
         scenario = o.get("scenario")
         if scenario == "Baseline":
-            baseline = o.get("summary")
+            baseline, baselines = o.get("summary"), baselines + 1
             continue
         if not isinstance(scenario, dict) or "Mutant" not in scenario:
             continue
+        mutant_rows += 1
         m = scenario["Mutant"]
         phases = o.get("phase_results") or []
         log = path.parent / o["log_path"] if o.get("log_path") else None
         out[m["name"]] = {"summary": o.get("summary"), "mutant": m,
                           "duration": phases[-1].get("duration", 0.0) if phases else 0.0,
                           "log": str(log) if log and log.is_file() else None}
+    if baseline == "Success":
+        if not data.get("end_time"):
+            raise ScreenError(f"{path}: unfinished cargo-mutants run (no end_time)")
+        if baselines != 1 or mutant_rows + 1 != len(data["outcomes"]) \
+                or data.get("total_mutants") != mutant_rows or len(out) != mutant_rows:
+            raise ScreenError(f"{path}: incomplete mutant inventory ({mutant_rows} mutant outcomes, "
+                              f"total_mutants {data.get('total_mutants')})")
     return out, baseline
 
 
