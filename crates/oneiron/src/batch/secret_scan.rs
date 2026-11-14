@@ -48,7 +48,6 @@ pub(crate) use self::mask::retained_repo::{
     RetainedRepoBlobMarks, RetainedRepoBlobPlan, RetainedRepoCustody, RetainedRepoPlacedKey,
     mark_retained_repo_blob_in_txn, plan_retained_repo_blob,
 };
-pub(crate) use self::mask::rule_spans;
 pub(crate) use self::mask::side_row::{
     SidePart, TextReplacements, admit_side_parts, admit_side_row, admit_tracked_side_parts,
     admit_typed, admitted_from, from_named_tree, named_tree, origin as side_row_origin,
@@ -280,6 +279,48 @@ pub(crate) fn decode_members(data: &[u8]) -> Option<rmpv::Value> {
     rmpv::decode::read_value(&mut cursor)
         .ok()
         .filter(|_| cursor.position() == data.len() as u64)
+}
+
+/// Where a value the owner ruled in a record can sit in `bytes` when this
+/// install knows it only by its ruled screen (L6-03-RULED-SCREEN-LOCAL): each
+/// span the door's text rules place, and each text or byte member of the body
+/// `bytes` decodes to, or of the body a framed carrier wraps, as the
+/// structured scan reads a credential field's value. Each copy is wiped on
+/// drop.
+pub(crate) fn ruled_screen_candidates(bytes: &[u8]) -> Vec<Zeroizing<Vec<u8>>> {
+    let mut candidates: Vec<Zeroizing<Vec<u8>>> = self::mask::rule_spans(bytes)
+        .into_iter()
+        .filter_map(|span| bytes.get(span))
+        .map(|hit| Zeroizing::new(hit.to_vec()))
+        .collect();
+    for body in std::iter::once(bytes).chain(framed_payload(bytes)) {
+        if let Some(value) = decode_members(body) {
+            member_texts(&value, &mut candidates);
+        }
+    }
+    candidates
+}
+
+/// Each text and byte member of `value`, map keys included, at any depth.
+fn member_texts(value: &rmpv::Value, out: &mut Vec<Zeroizing<Vec<u8>>>) {
+    match value {
+        rmpv::Value::String(text) => out.push(Zeroizing::new(text.as_bytes().to_vec())),
+        rmpv::Value::Binary(bytes) | rmpv::Value::Ext(_, bytes) => {
+            out.push(Zeroizing::new(bytes.clone()));
+        }
+        rmpv::Value::Array(items) => {
+            for item in items {
+                member_texts(item, out);
+            }
+        }
+        rmpv::Value::Map(entries) => {
+            for (key, item) in entries {
+                member_texts(key, out);
+                member_texts(item, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// [`decode_members`] at the write door, which refuses a body nested past

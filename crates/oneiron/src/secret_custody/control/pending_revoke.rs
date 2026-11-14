@@ -88,7 +88,11 @@ pub(super) fn can_carry_in_txn(
 /// Keeps the carry of `act`'s revoke of record `id`, at `generation`, as the
 /// act its `by` names (the owner's, or the writer's own [`ActBy::Person`]),
 /// with its screen, pending in the revoke's own transaction (CALLS
-/// CUSTODY_REVOKE_PENDING_CARRY), and returns the work that says so.
+/// CUSTODY_REVOKE_PENDING_CARRY), and returns the work that says so. A
+/// revoke already owed for `id` that carries a found-key ruling's screen
+/// stays as it is when `act` carries none (L6-03-RULED-SCREEN-LOCAL): its
+/// carry ends the id on the other machines just the same, and the ruling
+/// goes with it.
 pub(super) fn defer_revoke_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -99,6 +103,13 @@ pub(super) fn defer_revoke_in_txn(
 ) -> Result<SecretCustodyWork> {
     match CUSTODY_REVOKE_PENDING_CARRY {
         CustodyRevokePendingCarry::CarryWhenSignerLoads => {
+            if act.screen.is_none()
+                && PENDING
+                    .get(&vault.store, txn, &id)?
+                    .is_some_and(|owed| owed.screen.is_some())
+            {
+                return Ok(SecretCustodyWork::kept(CustodyKeptHere::CarryPending));
+            }
             let pending = PendingRevoke {
                 owner: act.actor,
                 surface: act.surface,
@@ -209,19 +220,26 @@ impl Vault {
 
     /// Carries the revoke owed for record `id` in `txn`, judged again here:
     /// dropped when the record is gone, no longer revoked at the generation
-    /// it revoked, ended by an admitted revoke already, or its owner is no
-    /// longer a live vault owner (a writer's own revoke: its person no longer
-    /// live); kept while this install cannot sign.
+    /// it revoked, ended by an admitted revoke already (unless it carries a
+    /// found-key ruling's screen no admitted revoke carries yet,
+    /// L6-03-RULED-SCREEN-LOCAL: the other revoke does not carry the ruling),
+    /// or its owner is no longer a live vault owner (a writer's own revoke:
+    /// its person no longer live); kept while this install cannot sign.
     fn carry_pending_revoke_in_txn(&self, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<bool> {
         let Some(pending) = PENDING.get(&self.store, txn, &id)? else {
             return Ok(false);
         };
         let fold = self.authority_view_readonly_in_txn(txn)?;
+        let screen_owed = pending.screen.is_some_and(|screen| {
+            !fold
+                .custody_revoke_screens()
+                .any(|carried| carried == screen)
+        });
         let record = read_secret_custody_meta_in_txn(&self.store, txn, &id)?.filter(|record| {
             custody_portable(record)
                 && record.status == SecretCustodyStatus::Revoked
                 && record.rotation_generation == pending.generation
-                && !fold.custody_revoked(&id)
+                && (!fold.custody_revoked(&id) || screen_owed)
         });
         let live = if pending.by_person {
             crate::consent::person_is_live_in_txn(self, txn, &pending.owner)?

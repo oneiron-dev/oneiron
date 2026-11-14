@@ -179,10 +179,8 @@ pub(crate) fn seal_whole_part_in_txn(
         ))
 }
 
-/// The spans of `bytes` the door's text rules place, at their offsets in it:
-/// where a value the owner ruled in a record, known on this install only by
-/// its ruled screen, can sit (L6-03-RULED-SCREEN-LOCAL).
-pub(crate) fn rule_spans(bytes: &[u8]) -> Vec<Range<usize>> {
+/// The spans of `bytes` the door's text rules place, at their offsets in it.
+pub(super) fn rule_spans(bytes: &[u8]) -> Vec<Range<usize>> {
     file_spans(bytes)
         .into_iter()
         .map(|(span, _)| span)

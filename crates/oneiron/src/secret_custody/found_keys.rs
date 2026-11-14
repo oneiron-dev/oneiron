@@ -517,16 +517,16 @@ impl KeptValues {
     /// `bytes` of `record` with each kept value's raw or encoded spelling
     /// overwritten by the mask's filler, for the door's scan; `None` when none
     /// sits there. A value this install knows only by its screen is found
-    /// where the door's text rules place a span: a span whose bytes, or one
-    /// of their spellings, the screen holds is the ruled value for this
-    /// scan, and every spelling of it is filled as a held value's is.
+    /// where the door's rules read one: a span its text rules place, or a
+    /// text member of the body, such as a credential field's value. One whose
+    /// bytes, or one of their spellings, the screen holds is the ruled value
+    /// for this scan, and every spelling of it is filled as a held value's is.
     pub(crate) fn screened(&self, record: &EntityId, bytes: &[u8]) -> Option<Vec<u8>> {
-        let mut found = Vec::new();
+        let mut found: Vec<Zeroizing<Vec<u8>>> = Vec::new();
         if self.screens.contains_key(record) {
-            for span in crate::batch::secret_scan::rule_spans(bytes) {
-                if let Some(value) = bytes
-                    .get(span)
-                    .and_then(|hit| self.ruled_spelling(record, hit))
+            for candidate in crate::batch::secret_scan::ruled_screen_candidates(bytes) {
+                if let Some(value) = self.ruled_spelling(record, &candidate)
+                    && !found.contains(&value)
                 {
                     found.push(value);
                 }

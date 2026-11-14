@@ -46,6 +46,13 @@ fn body() -> Vec<u8> {
     .expect("FIXTURE: the body encodes")
 }
 
+/// A record body with a credential-named field: the mask lifts its value
+/// whatever it is, and no text rule places a span on it.
+fn credential_body() -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({ "password": "cobalt" }))
+        .expect("FIXTURE: the body encodes")
+}
+
 /// Writes `body` as record `id` at `version`, as the owner's batch does.
 fn put(vault: &Vault, id: &EntityId, version: u64, body: &[u8]) -> oneiron::Result<()> {
     vault
@@ -65,10 +72,12 @@ fn stored(vault: &Vault, id: &EntityId) -> Result<Vec<u8>, Box<dyn std::error::E
     Ok(vault.get(id)?.ok_or("FIXTURE: the record is stored")?)
 }
 
+fn holds(bytes: &[u8], needle: &[u8]) -> bool {
+    bytes.windows(needle.len()).any(|window| window == needle)
+}
+
 fn holds_token(bytes: &[u8]) -> bool {
-    bytes
-        .windows(TOKEN.len())
-        .any(|window| window == TOKEN.as_bytes())
+    holds(bytes, TOKEN.as_bytes())
 }
 
 /// The handle of the key the mask lifted out of `record`.
@@ -86,19 +95,29 @@ fn found_handle(
         .ok_or("FIXTURE: the mask lifted the token into a found key")?)
 }
 
+/// A record of `body` whose `value` the mask lifted, and that key's handle.
+fn masked_record_of(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    body: &[u8],
+    value: &[u8],
+) -> Result<(EntityId, String), Box<dyn std::error::Error>> {
+    let id = EntityId::now();
+    put(vault, &id, 1, body)?;
+    assert!(
+        !holds(&stored(vault, &id)?, value),
+        "FIXTURE: the mask lifted the value"
+    );
+    let handle = found_handle(vault, owner, &id)?;
+    Ok((id, handle))
+}
+
 /// A record whose token the mask lifted, and that key's handle.
 fn masked_record(
     vault: &Vault,
     owner: &AuthenticatedOwner,
 ) -> Result<(EntityId, String), Box<dyn std::error::Error>> {
-    let id = EntityId::now();
-    put(vault, &id, 1, &body())?;
-    assert!(
-        !holds_token(&stored(vault, &id)?),
-        "FIXTURE: the mask lifted the token"
-    );
-    let handle = found_handle(vault, owner, &id)?;
-    Ok((id, handle))
+    masked_record_of(vault, owner, &body(), TOKEN.as_bytes())
 }
 
 #[test]
@@ -123,6 +142,31 @@ fn a_ruling_holds_where_only_its_carried_revoke_reaches() -> TestResult {
         stored(&vault, &id)?,
         body,
         "a value ruled no secret stays text where only the ruling's revoke reached"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_ruled_credential_field_holds_where_only_its_carried_revoke_reaches() -> TestResult {
+    let (_dir, vault, owner) = open_vault()?;
+    let body = credential_body();
+    let (id, handle) = masked_record_of(&vault, &owner, &body, b"cobalt")?;
+    vault.rule_found_key_not_a_secret(&owner, ActSurface::ThisInstall, &handle)?;
+    assert!(
+        holds(&stored(&vault, &id)?, b"cobalt"),
+        "FIXTURE: the ruling put the value back"
+    );
+
+    forget_found_keys_of(&vault, id)?;
+    vault.run_pending_owner_work(|| true)?;
+
+    put(&vault, &id, 2, &body)
+        .unwrap_or_else(|error| panic!("the record, written again, lands: {error:?}"));
+    assert_eq!(
+        stored(&vault, &id)?,
+        body,
+        "a credential field's value ruled no secret stays as written where only the \
+         ruling's revoke reached"
     );
     Ok(())
 }
