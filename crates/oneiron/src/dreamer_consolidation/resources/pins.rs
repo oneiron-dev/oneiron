@@ -44,6 +44,27 @@ impl<'r> BranchPins<'r> {
         }
     }
 
+    /// Borrow rebuilt branch pins as one view for a bound read projection.
+    /// The view answers the same correctable and project rules as a branch
+    /// view, over the projection's own pinned sources, prior heads, listing
+    /// and frozen turn texts under its scope.
+    pub(super) fn for_bound_read(
+        sources: &'r BTreeMap<EntityId, SourcePin>,
+        priors: &'r BTreeMap<EntityId, PriorHead>,
+        known: &'r Neighbourhood,
+        project: Option<EntityId>,
+        texts: &'r BTreeMap<EntityId, TurnText>,
+        scope: &'r Scope,
+    ) -> Self {
+        Self {
+            sources,
+            priors,
+            known,
+            project,
+            texts: PinnedTexts::Frozen(texts, scope),
+        }
+    }
+
     /// The exact version the branch pinned for `id`.
     pub(in crate::dreamer_consolidation) fn source_version(
         self,

@@ -163,7 +163,7 @@ impl DreamerAttemptBinding {
     /// when the bound page would not serve the marker and every member.
     /// `MODEL_UNAVAILABLE` when no host lends a ladder, after request and
     /// read checks. The binding's refusals and the ladder's own errors.
-    pub(crate) fn verdict(&self, input: AiVerdictRequest) -> MemoryResult<AiVerdict> {
+    pub(super) fn settlement_verdict(&self, input: AiVerdictRequest) -> MemoryResult<AiVerdict> {
         crate::request_limits::check_deadline_ms(input.deadline_ms)?;
         if input.routine {
             return Err(MemoryError::bad_request_with(

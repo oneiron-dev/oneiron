@@ -284,7 +284,7 @@ fn observation_record_reached_in_txn(
 /// Whether the observed claim's own row reads for this caller: the scope
 /// reaches its record and the scoped read finds it live. The open conflicts
 /// page judges a marker and each member by it too.
-pub(super) fn observed_claim_reads_in_txn(
+pub(crate) fn observed_claim_reads_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     read: &ScopedRead<'_>,

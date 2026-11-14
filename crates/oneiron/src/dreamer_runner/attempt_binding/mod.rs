@@ -13,6 +13,8 @@
 //! lease ends, even while the object lives on.
 
 mod decisions;
+mod extraction_decisions;
+mod extraction_evidence;
 mod invocation;
 
 pub use decisions::DreamerDecisionLender;
@@ -42,7 +44,7 @@ use super::{DreamerAdmittedAttempt, DreamerConsolidationScope, decode_dreamer_at
 enum BoundFacet {
     Strength,
     ConflictSettle,
-    /// The consolidation extraction job reads its inputs page and evidence spans.
+    /// The consolidation extraction job reads inputs, evidence spans and checked verdict packs.
     Extraction,
 }
 
@@ -296,7 +298,7 @@ fn facet_refused(facet: BoundFacet) -> MemoryError {
         ),
         BoundFacet::Extraction => (
             "the Dreamer extraction facet does not admit this operation",
-            "An extraction attempt reads its inputs page and evidence spans only.",
+            "An extraction attempt reads its inputs page, evidence spans and checked ai.verdict packs, and commits nothing.",
         ),
     };
     MemoryError::new(MEMORY_CODE_FORBIDDEN, message, &[hint])

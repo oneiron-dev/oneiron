@@ -7,6 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use rmpv::Value;
 
 use super::provenance::{PromotionCandidate, source_meet};
+use super::resources::prior_keys;
+use super::routing::{PredicateKeyRules, candidate_keys};
 use super::support::{
     DREAMER_BUCKET_HASH_DOMAIN, DREAMER_EVIDENCE_HASH_DOMAIN, TURN_BODY_FACET_REF_KEY,
     encode_value, hash_optional_entity, invalid_consolidation,
@@ -458,7 +460,10 @@ pub fn conflict_open_marker_id(
     )
 }
 
-fn prior_matches_identity(body: &ClaimBody, identity: &ConflictIdentity) -> Result<bool> {
+pub(super) fn prior_matches_identity(
+    body: &ClaimBody,
+    identity: &ConflictIdentity,
+) -> Result<bool> {
     let ClaimSubject::Entity(subject) = body.subject else {
         return Ok(false);
     };
@@ -576,4 +581,93 @@ pub fn corroboration_count(collapsed: &CollapsedEvidence, prior_heads: &[PriorHe
         })
         .count();
     collapsed.independent.len() + prior_signals
+}
+
+/// The heads matching `candidate` under `rules`: every bound prior whose
+/// routing identity and topic key equal the candidate's, each with whether
+/// its value key equals too. This mirrors `BranchResources::matching_priors`
+/// over the bound projection instead of branch resources, keying heads with
+/// the native `resources::prior_keys`.
+fn bound_matching_priors(
+    candidate: &PromotionCandidate,
+    priors: &[PriorHead],
+    rules: &PredicateKeyRules,
+) -> Result<Vec<(EntityId, bool)>> {
+    let key = candidate_keys(candidate, rules)?;
+    priors
+        .iter()
+        .filter_map(|prior| {
+            let prior_key = match prior_keys(prior, rules) {
+                Ok(key) => key,
+                Err(error) => return Some(Err(error)),
+            };
+            (key.identity == prior_key.identity && key.topic_key == prior_key.topic_key)
+                .then_some(Ok((prior.claim_id, key.value_key == prior_key.value_key)))
+        })
+        .collect()
+}
+
+/// Routes `priors` to the `conflicts` native nomination found over
+/// `candidates`, exactly as `BranchResources::route_priors` does: matched
+/// heads attach in id order, a candidate that exactly restates its one
+/// matched head leaves its set, emptied sets drop, and an unmatched
+/// candidate with an unequal match opens its own single set. Every matched
+/// head passes the caller's `check`, the native branch write rule, at the
+/// same loop point native checks it, exact members included: readability
+/// alone never routes. Returns the routed sets with the exact-restated
+/// indexes. Native loops stay untouched; this mirror serves the bound path.
+pub(in crate::dreamer_consolidation) fn route_bound_priors(
+    candidates: &[PromotionCandidate],
+    priors: &[PriorHead],
+    conflicts: Vec<ConflictSet>,
+    rules: &PredicateKeyRules,
+    mut check: impl FnMut(EntityId) -> Result<()>,
+) -> Result<(Vec<ConflictSet>, BTreeSet<usize>)> {
+    let mut exact = BTreeSet::new();
+    let mut matched = Vec::new();
+    for (index, candidate) in candidates.iter().enumerate() {
+        let matches = bound_matching_priors(candidate, priors, rules)?;
+        for (id, _) in &matches {
+            check(*id)?;
+        }
+        if matches.len() == 1 && matches[0].1 {
+            exact.insert(index);
+        }
+        matched.push(matches);
+    }
+    // Keep all sibling/cosine connected components. An exact member is
+    // replaced by its admitted stored head as context, not sent to judge.
+    let mut conflicts = conflicts;
+    for conflict in &mut conflicts {
+        let ids: BTreeSet<_> = conflict
+            .candidate_indexes
+            .iter()
+            .flat_map(|index| matched[*index].iter().map(|(id, _)| *id))
+            .collect();
+        conflict.prior_head = if ids.len() == 1 {
+            ids.first().copied()
+        } else {
+            None
+        };
+        conflict.prior_heads = ids.into_iter().collect();
+        conflict
+            .candidate_indexes
+            .retain(|index| !exact.contains(index));
+    }
+    conflicts.retain(|conflict| !conflict.candidate_indexes.is_empty());
+    for (index, matches) in matched.into_iter().enumerate() {
+        if matches.iter().any(|(_, equal)| !equal)
+            && !conflicts
+                .iter()
+                .any(|set| set.candidate_indexes.contains(&index))
+        {
+            conflicts.push(ConflictSet {
+                identity: candidate_keys(&candidates[index], rules)?.identity,
+                candidate_indexes: vec![index],
+                prior_head: (matches.len() == 1).then(|| matches[0].0),
+                prior_heads: matches.into_iter().map(|(id, _)| id).collect(),
+            });
+        }
+    }
+    Ok((conflicts, exact))
 }

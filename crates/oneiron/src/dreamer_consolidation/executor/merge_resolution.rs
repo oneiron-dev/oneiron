@@ -10,7 +10,9 @@
 //! them, and its answer is the pack's. The identity a merge or supersede keeps is the one
 //! final choice over the ids the groups named (FIX 8693).
 
-use super::decisions::{ConflictRows, FinalChoice, StatePart, id_options};
+use super::decisions::{
+    ChoiceSpec, ConflictRows, DecisionKeyPart, FinalChoice, StatePart, id_options, key_part_bytes,
+};
 use super::*;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 use crate::dreamer_consolidation::provenance::KeptDecision;
@@ -22,12 +24,123 @@ use crate::model_decision::{AnswerContract, DecisionAnswer, DecisionQuestion};
 
 /// A conflict's resolutions. With no prior head in scope, supersede degrades to merge (D7:
 /// at most one prior head; the promotion writer owns the supersession).
-const RESOLUTIONS: [&str; 4] = ["merge", "supersede", "accumulate", ESCALATE];
+pub(in crate::dreamer_consolidation) const RESOLUTIONS: [&str; 4] =
+    ["merge", "supersede", "accumulate", ESCALATE];
 /// The resolution that leaves the contradiction standing.
-const ESCALATE: &str = "escalate";
+pub(in crate::dreamer_consolidation) const ESCALATE: &str = "escalate";
 
 /// The resolution a final choice reads, if any, and its decisions.
 type FinalResolution = (Option<String>, Vec<KeptDecision>);
+
+/// The final options over `read` page answers: each answer once, in first-seen
+/// page order. Native final reads and the bound rebuild share this dedupe.
+pub(in crate::dreamer_consolidation) fn resolution_final_options(
+    read: &[Option<String>],
+) -> Vec<String> {
+    let mut options: Vec<String> = Vec::new();
+    for label in read.iter().flatten() {
+        if !options.contains(label) {
+            options.push(label.clone());
+        }
+    }
+    options
+}
+
+/// The shared key parts of a resolution question: the resolution marker with
+/// the page marker and number on a paged read.
+pub(in crate::dreamer_consolidation) fn resolution_key_parts(
+    page: Option<usize>,
+) -> Vec<DecisionKeyPart> {
+    let mut parts = vec![DecisionKeyPart::Text("resolution")];
+    if let Some(page) = page {
+        parts.extend([DecisionKeyPart::Text("page"), DecisionKeyPart::Number(page)]);
+    }
+    parts
+}
+
+/// The shared key parts of one identity group question: the identity marker
+/// with its group number, then the page marker and number on a paged read.
+pub(in crate::dreamer_consolidation) fn identity_key_parts(
+    group: usize,
+    page: Option<usize>,
+) -> Vec<DecisionKeyPart> {
+    let mut parts = vec![
+        DecisionKeyPart::Text("identity"),
+        DecisionKeyPart::Number(group),
+    ];
+    if let Some(page) = page {
+        parts.extend([DecisionKeyPart::Text("page"), DecisionKeyPart::Number(page)]);
+    }
+    parts
+}
+
+/// The shared key parts of a resolution final question.
+pub(in crate::dreamer_consolidation) fn resolution_final_parts() -> Vec<DecisionKeyPart> {
+    vec![
+        DecisionKeyPart::Text("resolution"),
+        DecisionKeyPart::Text("final"),
+    ]
+}
+
+/// Whether the conflict's members span predicates: any candidate's
+/// predicate differs from the `identity` one. A fact error reads as no
+/// span, as native always did. Native conflict reads and the bound rebuild
+/// share this rule.
+pub(in crate::dreamer_consolidation) fn resolution_spans_predicates(
+    identity: &ConflictIdentity,
+    candidates: &[&ClaimCandidate],
+) -> bool {
+    candidates.iter().any(|candidate| {
+        candidate_facts(candidate).is_ok_and(|facts| facts.predicate != identity.predicate)
+    })
+}
+
+/// One read's prepared resolution choice: how the conflict resolves, keyed
+/// for `page`. Native shows these options as they are, so the spec carries
+/// no shown texts.
+pub(in crate::dreamer_consolidation) fn resolution_choice_spec(page: Option<usize>) -> ChoiceSpec {
+    ChoiceSpec {
+        key: resolution_key_parts(page),
+        options: RESOLUTIONS
+            .iter()
+            .map(|label| (*label).to_owned())
+            .collect(),
+        shown: None,
+    }
+}
+
+/// One read's prepared identity choices over `ids`: which of them a merge
+/// keeps, in option groups with `none`, keyed for `page`, each group with
+/// the shown texts its question registers.
+pub(in crate::dreamer_consolidation) fn conflict_identity_specs(
+    ids: &[EntityId],
+    none: bool,
+    page: Option<usize>,
+    labels: &mut CallLabelMap,
+) -> Vec<ChoiceSpec> {
+    id_options(ids, none, labels)
+        .into_iter()
+        .enumerate()
+        .map(|(group, (options, shown))| ChoiceSpec {
+            key: identity_key_parts(group, page),
+            options,
+            shown: Some(shown),
+        })
+        .collect()
+}
+
+/// One final read's prepared resolution choice over `read` page answers:
+/// the resolutions they read, each once in first-seen order, keyed as the
+/// final. Native shows these options as they are.
+pub(in crate::dreamer_consolidation) fn resolution_final_prep(
+    read: &[Option<String>],
+) -> ChoiceSpec {
+    ChoiceSpec {
+        key: resolution_final_parts(),
+        options: resolution_final_options(read),
+        shown: None,
+    }
+}
 
 pub(super) enum MergeResolution {
     Merge {
@@ -73,10 +186,9 @@ impl ConsolidationExecutor<'_> {
         resources: &BranchResources<'_>,
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<ConflictAnswers>> {
-        let across = members.iter().any(|member| {
-            candidate_facts(&member.candidate)
-                .is_ok_and(|facts| facts.predicate != conflict.identity.predicate)
-        });
+        let member_candidates: Vec<&ClaimCandidate> =
+            members.iter().map(|member| &member.candidate).collect();
+        let across = resolution_spans_predicates(&conflict.identity, &member_candidates);
         // The pack reads the prior heads and candidates drawn from these turns. The
         // turns also keep one conflict's ask apart from another's on the same heads.
         let mut evidence: Vec<EntityId> = prior_heads.iter().map(|prior| prior.claim_id).collect();
@@ -166,10 +278,10 @@ impl ConsolidationExecutor<'_> {
         // Only a merge or supersede keeps an identity, so only one asks the final choice.
         let mut identity = None;
         if matches!(resolution.as_deref(), Some("merge" | "supersede")) {
-            let identity_key: [&[u8]; 1] = [b"identity"];
+            let identity_base = [DecisionKeyPart::Text("identity")];
             let choice = FinalChoice {
                 family: &CONFLICT_RESOLUTION,
-                key: &identity_key,
+                base: &identity_base,
                 wording: &self.decisions.identity_wording,
                 none: !across,
             };
@@ -230,16 +342,15 @@ impl ConsolidationExecutor<'_> {
         page_sources: &[Option<Vec<EntityId>>],
         charges: &mut StepChargeTally,
     ) -> DurableStepResult<Option<FinalResolution>> {
-        let mut options: Vec<String> = Vec::new();
-        for label in read.iter().flatten() {
-            if !options.contains(label) {
-                options.push(label.clone());
-            }
-        }
+        let spec = resolution_final_prep(read);
+        let owned: Vec<Vec<u8>> = spec.key.iter().map(key_part_bytes).collect();
+        let key: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
         let question = CONFLICT_RESOLUTION.question(
-            &[b"resolution".as_slice(), b"final".as_slice()],
+            &key,
             self.decisions.resolution_wording.clone(),
-            AnswerContract::Choice { options },
+            AnswerContract::Choice {
+                options: spec.options,
+            },
         )?;
         let questions = vec![question];
         let mut labels = CallLabelMap::default();
@@ -283,40 +394,35 @@ impl ConsolidationExecutor<'_> {
         labels: &mut CallLabelMap,
     ) -> Result<Vec<DecisionQuestion>> {
         let page = match part {
-            StatePart::Page { page, .. } => Some(page.to_string()),
+            StatePart::Page { page, .. } => Some(page),
             StatePart::Whole | StatePart::Final => None,
         };
-        let paging: Vec<&[u8]> = page
-            .iter()
-            .flat_map(|page| [b"page".as_slice(), page.as_bytes()])
-            .collect();
-        let mut key: Vec<&[u8]> = vec![b"resolution".as_slice()];
-        key.extend(&paging);
-        let mut questions = vec![
+        let resolution = resolution_choice_spec(page);
+        let mut questions = vec![{
+            let owned: Vec<Vec<u8>> = resolution.key.iter().map(key_part_bytes).collect();
+            let key: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
             CONFLICT_RESOLUTION.question(
                 &key,
                 self.decisions.resolution_wording.clone(),
                 AnswerContract::Choice {
-                    options: RESOLUTIONS
-                        .iter()
-                        .map(|label| (*label).to_owned())
-                        .collect(),
+                    options: resolution.options,
                 },
-            )?,
-        ];
-        for (group, (options, shown)) in id_options(ids, !across || page.is_some(), labels)
-            .into_iter()
-            .enumerate()
-        {
-            let group = group.to_string();
-            let mut key: Vec<&[u8]> = vec![b"identity".as_slice(), group.as_bytes()];
-            key.extend(&paging);
+            )?
+        }];
+        let specs = conflict_identity_specs(ids, !across || page.is_some(), page, labels);
+        for spec in specs {
+            let owned: Vec<Vec<u8>> = spec.key.iter().map(key_part_bytes).collect();
+            let key: Vec<&[u8]> = owned.iter().map(Vec::as_slice).collect();
             let question = CONFLICT_RESOLUTION.question(
                 &key,
                 self.decisions.identity_wording.clone(),
-                AnswerContract::Choice { options },
+                AnswerContract::Choice {
+                    options: spec.options,
+                },
             )?;
-            labels.show_choices(question.id, shown);
+            if let Some(shown) = spec.shown {
+                labels.show_choices(question.id, shown);
+            }
             questions.push(question);
         }
         self.label_questions(labels, &questions);
@@ -491,19 +597,42 @@ fn conflict_sources(
     evidence: &[EntityId],
     labels: &CallLabelMap,
 ) -> Option<Vec<EntityId>> {
+    let member_claims: Vec<EntityId> = members.iter().map(|member| member.claim_id).collect();
+    let member_sources: Vec<Option<Vec<EntityId>>> = members
+        .iter()
+        .map(|member| member.sources.clone())
+        .collect();
+    let label_rows: Vec<EntityId> = labels.rows().collect();
+    conflict_source_rows(&member_claims, &member_sources, evidence, &label_rows)
+}
+
+/// The rows one conflict read sends under (FIX 11526) over plain rows:
+/// every member's extraction rows (a superset of the members a page shows),
+/// the pack's evidence, and the stored `label_rows` that name no member's
+/// own unwritten claim id. `None` when a member's rows are not known. The
+/// bound rebuild sends no sources, so only native calls this; it stays a
+/// shared plain helper so wording-free preparation never needs the member
+/// type.
+pub(in crate::dreamer_consolidation) fn conflict_source_rows(
+    member_claims: &[EntityId],
+    member_sources: &[Option<Vec<EntityId>>],
+    evidence: &[EntityId],
+    label_rows: &[EntityId],
+) -> Option<Vec<EntityId>> {
     let stored: Vec<EntityId> = evidence
         .iter()
         .copied()
         .chain(
-            labels
-                .rows()
-                .filter(|id| !members.iter().any(|member| member.claim_id == *id)),
+            label_rows
+                .iter()
+                .copied()
+                .filter(|id| !member_claims.contains(id)),
         )
         .collect();
     crate::skill_optimize::union_source_rows(
-        members
+        member_sources
             .iter()
-            .map(|member| member.sources.clone())
+            .cloned()
             .chain(std::iter::once(Some(stored))),
     )
 }

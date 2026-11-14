@@ -111,46 +111,10 @@ impl<'a> BranchResources<'a> {
         };
         let messages = texts.values().flat_map(TurnText::versions);
         readable.extend(messages.map(|(_, version)| version.clone()));
-        // The queued/caller scope is an actual upper bound supplied by the
-        // trusted host. It binds TURNs to relationship/project slices through
-        // exact versions: neither axis is a conversation column. A TURN's own
-        // project stamp (pinned above) still bounds what it may support.
-        let mut granted = Scope {
-            world: branch.world_ref,
-            facet: branch.facet_ref,
-            relationship: requested.and_then(|scope| scope.relationship.clone()),
-            project: requested.and_then(|scope| scope.project),
-            readable,
-            writable: BTreeSet::from([output.clone()]),
-        };
-        let signals = branch.signals_resource();
-        granted.readable.insert(signals.clone());
-        granted
-            .writable
-            .insert(crate::dreamer_consolidation::gap::branch_gap_projection(
-                branch, &granted,
-            ));
-        // An unscoped branch holds the heads its neighbourhood lists as exact
-        // priors, read through this actor's scoped read at the wake's pin.
-        for (_, version) in known.into_iter().flat_map(Neighbourhood::claim_versions) {
-            granted.readable.insert(version.clone());
-            granted.writable.insert(version.clone());
-        }
-        // New membership context is read-only, not an additional prior.
-        let mut context_only = BTreeSet::new();
-        for (id, version) in known
-            .into_iter()
-            .flat_map(Neighbourhood::membership_versions)
-        {
-            if requested.is_none() && !granted.readable.contains(version) {
-                context_only.insert(id);
-            }
-            granted.readable.insert(version.clone());
-        }
-        // Never replace explicit missing rights with generated defaults. Extra
-        // exact documents are the caller's graph/project slice, not source TURNs.
-        // A supplied scope is authority, not a request to infer more authority.
-        let scope = requested.cloned().unwrap_or(granted);
+        // The branch scope metadata assembles in one shared helper, so a bound
+        // read rebuilds the same scope from the same pins.
+        let (scope, context_only, signals) =
+            assemble_branch_scope(branch, readable, known, requested);
         let mut resources = Self {
             actor,
             read,
@@ -244,4 +208,63 @@ impl<'a> BranchResources<'a> {
             ResourceOrigin::Root(_) => self.turns.values().any(|parent| parent == id),
         }
     }
+}
+
+/// Assemble the branch scope metadata from its pinned readable base, its
+/// listing and its trusted restriction. The readable base holds every part
+/// bucket, every branch document version and every witness message version
+/// the caller pinned in one snapshot. The listing contributes its exact head
+/// versions, and membership context contributes read-only versions tracked
+/// in the returned skip set. A supplied restriction is authority and becomes
+/// the scope unchanged; otherwise the granted scope is the scope. The third
+/// return value is the branch signals projection the scope reads. Native
+/// branch opening and a bound read rebuild call this same helper, so both
+/// scopes match version for version.
+pub(super) fn assemble_branch_scope(
+    branch: &QueuedBranch,
+    readable: BTreeSet<ScopeResource>,
+    known: Option<&Neighbourhood>,
+    requested: Option<&Scope>,
+) -> (Scope, BTreeSet<EntityId>, ScopeResource) {
+    // The queued/caller scope is an actual upper bound supplied by the
+    // trusted host. It binds TURNs to relationship/project slices through
+    // exact versions: neither axis is a conversation column. A TURN's own
+    // project stamp (pinned above) still bounds what it may support.
+    let mut granted = Scope {
+        world: branch.world_ref,
+        facet: branch.facet_ref,
+        relationship: requested.and_then(|scope| scope.relationship.clone()),
+        project: requested.and_then(|scope| scope.project),
+        readable,
+        writable: BTreeSet::from([branch.output_resource()]),
+    };
+    let signals = branch.signals_resource();
+    granted.readable.insert(signals.clone());
+    granted
+        .writable
+        .insert(crate::dreamer_consolidation::gap::branch_gap_projection(
+            branch, &granted,
+        ));
+    // An unscoped branch holds the heads its neighbourhood lists as exact
+    // priors, read through this actor's scoped read at the wake's pin.
+    for (_, version) in known.into_iter().flat_map(Neighbourhood::claim_versions) {
+        granted.readable.insert(version.clone());
+        granted.writable.insert(version.clone());
+    }
+    // New membership context is read-only, not an additional prior.
+    let mut context_only = BTreeSet::new();
+    for (id, version) in known
+        .into_iter()
+        .flat_map(Neighbourhood::membership_versions)
+    {
+        if requested.is_none() && !granted.readable.contains(version) {
+            context_only.insert(id);
+        }
+        granted.readable.insert(version.clone());
+    }
+    // Never replace explicit missing rights with generated defaults. Extra
+    // exact documents are the caller's graph/project slice, not source TURNs.
+    // A supplied scope is authority, not a request to infer more authority.
+    let scope = requested.cloned().unwrap_or(granted);
+    (scope, context_only, signals)
 }

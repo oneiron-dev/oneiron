@@ -2,8 +2,10 @@
 //! A projection grant is mandatory. Model-selected ids never grant vector access.
 
 use super::{BranchResources, document_version};
-use crate::claim::{PointRead, ReadRow, decode_claim_body};
+use crate::attempt_queue::AttemptId;
+use crate::claim::{ClaimApprovalStatus, PointRead, ReadRow, ScopedRead, decode_claim_body};
 use crate::dreamer_consolidation::conflict::candidate_facts;
+use crate::dreamer_consolidation::executor::extraction::claim_id_for_identity;
 use crate::dreamer_consolidation::provenance::PromotionCandidate;
 use crate::dreamer_consolidation::reviewed::{names, reviewed_output};
 use crate::dreamer_consolidation::support::{
@@ -14,8 +16,9 @@ use crate::edge::EdgeKind;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN,
 };
-use crate::{EntityId, Result};
-use oneiron_model::llm::Scope;
+use crate::write_envelope::ClaimCandidate;
+use crate::{EntityId, Result, Vault};
+use oneiron_model::llm::{Scope, ScopeResource};
 use rmpv::Value;
 
 /// The door a consolidation's promotion stamps its claims' births with:
@@ -270,6 +273,87 @@ fn axis(entries: &[(Value, Value)], name: &str) -> Result<Option<EntityId>> {
         }
     }
     Ok(found)
+}
+
+/// The stored vector `claim_id` names for one bound candidate, read in
+/// the caller's transaction: the engine-derived `candidate_signals` vector
+/// leg for a branch the bound projection rebuilt. The grant, identity and
+/// reviewed-output guards match native `candidate_signals` exactly; only the
+/// transaction changes. The projection grant is mandatory: a candidate the
+/// branch signals do not name reads nothing, and an arbitrary model-supplied
+/// id never selects a stored vector. A missing vector is `None`: absence of
+/// data, not an error.
+pub(super) fn candidate_vector_in_txn(
+    read: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    scope: &Scope,
+    signals: &ScopeResource,
+    attempt: AttemptId,
+    claim_id: EntityId,
+    candidate: &ClaimCandidate,
+) -> Result<Option<Vec<f32>>> {
+    if !scope.allows_read(signals) {
+        return Err(invalid_consolidation(
+            "branch signals projection read refused",
+        ));
+    }
+    // Recompute the output id from this attempt and the semantic identity
+    // through the one native id function. An arbitrary model-supplied claim
+    // id cannot select a stored vector.
+    if claim_id_for_identity(attempt, candidate)? != claim_id {
+        return Err(invalid_consolidation("candidate crossed its branch scope"));
+    }
+    let vault = read.vault();
+    // The candidate projection also permits host-materialized vector-only
+    // rows under engine-derived output ids. If an entity exists at that id,
+    // it must be an actor-readable matching claim, never another resource;
+    // or this attempt's own output, which an earlier pass committed into
+    // the owner's review and `reviewed_output` matched to this candidate.
+    if vault.get_entity_type_in_txn(txn, &claim_id)?.is_some()
+        && !reviewed_output_in_txn(vault, txn, &claim_id, candidate)?
+    {
+        let mut rows = read.get_entities_parts_in_txn(txn, std::slice::from_ref(&claim_id))?;
+        let Some((kind, _, bytes)) = rows.pop().flatten() else {
+            return Err(invalid_consolidation(
+                "candidate vector entity is not readable",
+            ));
+        };
+        if kind != ENTITY_TYPE_CLAIM {
+            return Err(invalid_consolidation(
+                "candidate vector identity is not a claim",
+            ));
+        }
+        let body = decode_claim_body(&bytes, true)?;
+        if !names(&candidate_facts(candidate)?, &body)? {
+            return Err(invalid_consolidation("candidate vector identity changed"));
+        }
+    }
+    crate::ports::RetrievalIndex::port_retrieval_vector_get(vault, txn, &claim_id)
+}
+
+/// Whether the claim at `claim_id` is one an earlier pass of this attempt
+/// committed into the owner's review, read in the caller's transaction: the
+/// `reviewed_output` check over the bound candidate's own facts. The attempt
+/// owns the id, so a different claim stored there is an error.
+fn reviewed_output_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_id: &EntityId,
+    candidate: &ClaimCandidate,
+) -> Result<bool> {
+    if vault.get_entity_type_in_txn(txn, claim_id)? != Some(ENTITY_TYPE_CLAIM) {
+        return Ok(false);
+    }
+    let Some(stored) = vault.get_claim_in_txn(txn, claim_id)? else {
+        return Ok(false);
+    };
+    if stored.approval == ClaimApprovalStatus::Auto {
+        return Ok(false);
+    }
+    if !names(&candidate_facts(candidate)?, &stored)? {
+        return Err(invalid_consolidation("candidate identity changed"));
+    }
+    Ok(true)
 }
 
 impl crate::Vault {
