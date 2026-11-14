@@ -9,7 +9,8 @@ mod speech;
 mod turn;
 
 use self::deadline::{
-    DeadlineSliceEnd, SliceProgram, guest_abi_digest, pending_preparation_changed,
+    DeadlineSliceEnd, SliceProgram, drop_refired_outputs, guest_abi_digest,
+    pending_preparation_changed,
 };
 use self::turn::{StepProgram, TurnProgram};
 use super::continuation::{ContinuationNote, continuation_note, turn_note};
@@ -293,6 +294,9 @@ impl EngineNativeExecutor<'_> {
                     &resume_preflight,
                 ));
             }
+            // A refire's live call writes its own body at its seq's bridge-result path, in place
+            // of the recorded call's, however the step ends from here (L8-23).
+            drop_refired_outputs(&mut record, host.refired_seqs());
             let step_outcome = match step_outcome {
                 Ok(outcome) => outcome,
                 Err(err) => {

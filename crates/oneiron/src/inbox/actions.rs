@@ -10,6 +10,9 @@ use super::notification::NotificationKind;
 use crate::agent_dispatch::{AGENT_RUN_EFFECT_ANSWER_VERB, AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER};
 use crate::authority::OAUTH_AUTHORIZATION_NOTIFICATION_PRODUCER;
 use crate::claim::{WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER, WeaveDigestSettingChangeStatus};
+use crate::engine_executor::resume_divergence::{
+    RESUME_DIVERGENCE_ANSWER_VERB, RESUME_DIVERGENCE_NOTIFICATION_PRODUCER,
+};
 use crate::entity_id::EntityId;
 use crate::llm::model_pack::{MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER, MODEL_PACK_REVERT_VERB};
 use crate::memory::Memory;
@@ -89,6 +92,9 @@ impl Memory<'_> {
             }
             NotificationKind::Ask if producer == AGENT_RUN_EFFECT_NOTIFICATION_PRODUCER => {
                 self.agent_run_effect_actions(row)
+            }
+            NotificationKind::Ask if producer == RESUME_DIVERGENCE_NOTIFICATION_PRODUCER => {
+                self.resume_divergence_actions(row)
             }
             NotificationKind::ModelPackChanged
                 if producer == MODEL_PACK_CHANGE_NOTIFICATION_PRODUCER =>
@@ -208,6 +214,43 @@ impl Memory<'_> {
                         "task_ref": task_ref,
                         "intent_ref": intent,
                         "resend": resend,
+                    }),
+                )
+            })
+            .collect()
+    }
+
+    /// The producer names the run in `source.result` and the step and effect digest in
+    /// `source.event` (L8-23); the ask is a vault owner's, and only an owner's proof answers it.
+    /// Shown while the step still waits for an answer: re-fire the changed effect steps once, or
+    /// leave them.
+    fn resume_divergence_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
+        let Some((run, step_seq, digest)) =
+            crate::engine_executor::resume_divergence::resume_divergence_ask_target(&row.source)
+        else {
+            return Vec::new();
+        };
+        let vault = self.vault();
+        let waits = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::error::Error::from)
+            .and_then(|txn| vault.resume_divergence_awaits_owner_in(&txn, run, step_seq, &digest));
+        if !matches!(waits, Ok(true)) {
+            return Vec::new();
+        }
+        let run_ref = run.to_hex();
+        ["refire", "leave"]
+            .into_iter()
+            .map(|choice| {
+                NotificationAction::new(
+                    RESUME_DIVERGENCE_ANSWER_VERB,
+                    serde_json::json!({
+                        "run_ref": run_ref,
+                        "step_seq": step_seq,
+                        "report_digest": digest,
+                        "choice": choice,
                     }),
                 )
             })

@@ -119,6 +119,9 @@ pub(super) fn run_engine_native_code_mode(
         Some(retry_after) => McpCodeExecutionError::ProviderUnavailable { retry_after },
         None => match error {
             EngineRunError::Binding(error) => McpCodeExecutionError::RunBinding(error),
+            EngineRunError::Run(
+                oneiron::engine_executor::EngineExecutorError::ResumeDivergence(report),
+            ) => McpCodeExecutionError::ResumeDivergence(report.to_string()),
             EngineRunError::Run(error) => McpCodeExecutionError::Run(error.to_string()),
             EngineRunError::Payer(fault) => McpCodeExecutionError::RunBinding(fault.to_string()),
         },

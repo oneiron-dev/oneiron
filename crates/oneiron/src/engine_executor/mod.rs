@@ -22,6 +22,7 @@ mod program_entry;
 mod record;
 mod repl;
 pub mod reply_evidence;
+pub(crate) mod resume_divergence;
 mod run_position;
 mod run_signals;
 mod self_brief;

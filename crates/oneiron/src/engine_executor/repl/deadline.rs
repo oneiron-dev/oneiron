@@ -14,7 +14,7 @@
 
 use super::super::host::DeadlineReplay;
 use super::super::host::resume_preflight::ResumePreflightReport;
-use super::super::store::SCRIPT_OUTPUT_DIR;
+use super::super::store::{SCRIPT_OUTPUT_DIR, bridge_result_output_path};
 use super::*;
 use crate::code_run::{ExecutorWireRepairs, PendingCodeStep};
 use crate::code_sandbox::SandboxBoundaryContract;
@@ -68,6 +68,19 @@ pub(super) struct SliceProgram<'p> {
 /// program until the step commits.
 fn pending_speech_output_path(seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/{seq:06}.pending-speech.txt")
+}
+
+/// Drops the kept bridge-result outputs a refire replaces (L8-23): the live call writes its own
+/// body at the same path, however the step ends.
+pub(super) fn drop_refired_outputs(record: &mut CodeRunReplayRecord, refired: &[u64]) {
+    if refired.is_empty() {
+        return;
+    }
+    record.outputs.retain(|output| {
+        !refired
+            .iter()
+            .any(|seq| output.path == bridge_result_output_path(*seq))
+    });
 }
 
 /// The digest of the guest boundary a step's program runs against: its WIT
@@ -155,14 +168,22 @@ impl EngineNativeExecutor<'_> {
         };
         let rows = record.bridge_calls.split_off(bridge_start);
         record.invalidate_verb_rows();
+        let mut replay = DeadlineReplay::new(
+            rows,
+            pending.guest_calls.clone(),
+            config.run_id,
+            pending.step_seq,
+            pending.bridge_frontier,
+        );
+        // The owner's answer to this step's ask, when the run's row still waits on it (L8-23).
+        if let Some(ask) = self.storage.resume_divergence_ask(config.run_id)?
+            && ask.step_seq == pending.step_seq
+            && let Some(choice) = ask.answer
+        {
+            replay = replay.with_answer(ask.report, choice);
+        }
         Ok(ResumedProgram {
-            replay: DeadlineReplay::new(
-                rows,
-                pending.guest_calls.clone(),
-                config.run_id,
-                pending.step_seq,
-                pending.bridge_frontier,
-            ),
+            replay,
             boundary_changed,
             program: StepProgram {
                 request_hash: pending.request_hash,
@@ -193,7 +214,9 @@ impl EngineNativeExecutor<'_> {
     /// or the walk's report, or the cancel that stopped it, and commits
     /// nothing. A program that ended with recorded calls unreached drops a
     /// pure tail and commits, and holds an effect tail with the report
-    /// (L8-23). A step its runtime stopped at its deadline parks.
+    /// (L8-23). A step its runtime stopped at its deadline parks. A pass that
+    /// re-fired a call live parks where it would hold, to keep the live row,
+    /// and a left tail commits with its kept rows (L8-23).
     pub(super) fn end_deadline_slice(
         &self,
         config: &EngineExecutorConfig,
@@ -209,13 +232,30 @@ impl EngineNativeExecutor<'_> {
             }
             return Err(invalid_code_run_replay(why).into());
         }
+        // A dry replay never parks at its deadline, nor does a left one turn dry (L8-23).
+        let parks_at_deadline = slice.ran && !slice.cancelled && host.parks_at_deadline();
+        // A pass that re-fired a call live parks where it would hold: committing nothing would
+        // lose the record of an effect that fired (L8-23). No ask is raised here: the next entry
+        // meets the refired row free and asks about the drift left.
+        if !slice.cancelled
+            && !parks_at_deadline
+            && !host.pending_replay_left()
+            && !host.refired_seqs().is_empty()
+            && let Some(report) = host.preflight_report_for_park()
+        {
+            let status = self.park_pending_step(config, record, expected, host, slice)?;
+            return Ok(Some(DeadlineSliceEnd {
+                status,
+                resume_preflight: Some(report),
+            }));
+        }
         if let Some(report) = host.dry_preflight_report() {
             if slice.cancelled {
                 return Err(cancelled().into());
             }
-            return Err(EngineExecutorError::ResumeDivergence(Box::new(report)));
+            return Err(self.resume_divergence_hold(config, report));
         }
-        if slice.ran && !slice.cancelled && host.parks_at_deadline() {
+        if parks_at_deadline {
             let resume_preflight = host.pending_preflight_report();
             let status = self.park_pending_step(config, record, expected, host, slice)?;
             return Ok(Some(DeadlineSliceEnd {
@@ -223,15 +263,40 @@ impl EngineNativeExecutor<'_> {
                 resume_preflight,
             }));
         }
+        // A left tail commits with its kept rows (L8-23).
+        if host.pending_replay_left() {
+            if slice.cancelled {
+                return Err(cancelled().into());
+            }
+            host.commit_left_tail();
+            return Ok(None);
+        }
         if host.pending_replay_unreached() {
             if slice.cancelled {
                 return Err(cancelled().into());
             }
             if let Some(report) = host.effect_tail_preflight_report() {
-                return Err(EngineExecutorError::ResumeDivergence(Box::new(report)));
+                return Err(self.resume_divergence_hold(config, report));
             }
         }
         Ok(None)
+    }
+
+    /// The hold a drifted resume takes (L8-23): raises the owner's ask once per drift, then holds
+    /// with the walk's report. A raise that fails returns its error instead; the entry still
+    /// commits nothing.
+    fn resume_divergence_hold(
+        &self,
+        config: &EngineExecutorConfig,
+        report: ResumePreflightReport,
+    ) -> EngineExecutorError {
+        if let Err(error) = self
+            .storage
+            .raise_resume_divergence_ask(config.run_id, &report)
+        {
+            return error.into();
+        }
+        EngineExecutorError::ResumeDivergence(Box::new(report))
     }
 
     /// Parks the step as the run's pending step (FIX 7703): its rows, its
@@ -256,6 +321,8 @@ impl EngineNativeExecutor<'_> {
             u64::try_from(at).map_err(|_| Error::ArithmeticOverflow("executor bridge position"))
         };
         let callable_rows = host.result_rows();
+        // Read before the replay leaves the host with its unreached calls (L8-23).
+        drop_refired_outputs(record, host.refired_seqs());
         let (rows, guest_calls) = host.take_parked_calls();
         // A write the step already made is in its rows, so no later step
         // makes it again under a fresh receipt.

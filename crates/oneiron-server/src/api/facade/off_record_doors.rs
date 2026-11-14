@@ -607,7 +607,7 @@ fn run_refusal(error: &McpCodeExecutionError) -> MemoryError {
             MEMORY_CODE_INVALID_STATE,
             "Check that the session is live and off record, then call again.",
         ),
-        McpCodeExecutionError::Run(_) => (
+        McpCodeExecutionError::Run(_) | McpCodeExecutionError::ResumeDivergence(_) => (
             MEMORY_CODE_INTERNAL,
             "Call again with the same run_ref; the run goes on from its last step.",
         ),

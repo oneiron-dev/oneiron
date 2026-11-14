@@ -318,6 +318,7 @@ fn mcp_code_execution_error(error: &crate::mcp::McpCodeExecutionError) -> McpGat
         | crate::mcp::McpCodeExecutionError::RunWaitedOut => -32020,
         crate::mcp::McpCodeExecutionError::RunBinding(_)
         | crate::mcp::McpCodeExecutionError::Run(_)
+        | crate::mcp::McpCodeExecutionError::ResumeDivergence(_)
         | crate::mcp::McpCodeExecutionError::ProviderUnavailable { .. } => -32603,
     };
     let retry_after = match error {

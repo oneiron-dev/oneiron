@@ -84,6 +84,36 @@ impl ResumePreflightReport {
             && !self.boundary_changed
             && !self.preparation_changed
     }
+
+    /// Lowercase hex BLAKE3 of the report's effect drift (L8-23): the run, the step, and the
+    /// changed and unreached entries that are effect steps, in report order. Pure noise never makes
+    /// a new ask.
+    #[must_use]
+    pub fn effect_digest(&self) -> String {
+        #[derive(serde::Serialize)]
+        struct EffectDrift<'a> {
+            run_id: EntityId,
+            step_seq: u64,
+            changed: Vec<&'a ChangedStep>,
+            unreached: Vec<&'a UnreachedStep>,
+        }
+        let drift = EffectDrift {
+            run_id: self.run_id,
+            step_seq: self.step_seq,
+            changed: self
+                .changed
+                .iter()
+                .filter(|step| step.effect_step)
+                .collect(),
+            unreached: self
+                .unreached
+                .iter()
+                .filter(|step| step.effect_step)
+                .collect(),
+        };
+        let bytes = serde_json::to_vec(&drift).unwrap_or_default();
+        crate::entity_id::bytes_to_hex_lower(blake3::hash(&bytes).as_bytes())
+    }
 }
 
 impl std::fmt::Display for ResumePreflightReport {
