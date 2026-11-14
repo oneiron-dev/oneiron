@@ -43,8 +43,7 @@ pub(crate) fn reader_optional_memory(
         Err(error) => return Err(core_engine_error("reader definition read failed", error)),
     };
     Ok(definition
-        .memory_profile
-        .and_then(|profile| profile.optional_memory)
+        .optional_memory
         .map(|profile| profile.for_family(reader.task_family.as_deref())))
 }
 

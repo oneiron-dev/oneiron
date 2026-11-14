@@ -185,14 +185,8 @@ fn relative_declaration_matches(path: &str, declared: &str) -> bool {
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-/// A value-free proposal to move a detected file secret into the vault.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SnapshotSecretLiftProposal {
-    pub path: String,
-    pub detector_reason: String,
-    pub suggested_secret_name: String,
-    pub project_id: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::secret_snapshot::SnapshotSecretLiftProposal;
 
 /// The durable, value-free outcome of snapshot custody filtering.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

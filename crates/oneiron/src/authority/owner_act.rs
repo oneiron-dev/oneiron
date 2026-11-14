@@ -80,27 +80,8 @@ pub(super) fn owner_live_at(state: &FoldState, owner: EntityId) -> bool {
 /// liveness in the fold", open).
 const OWNER_UNBOUND_TRUSTS_CARRIER: bool = true;
 
-/// What an owner act's commit did about the key work that follows it (mesh
-/// contract §5, the honest receipt). Only a holder opens, mints or rewraps a
-/// key: a carrier that holds none records the decision, and its receipt says
-/// so, never "done".
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum KeyWork {
-    /// The decision is recorded and needs no key work: the world reads
-    /// everywhere, so no key counts for it.
-    Recorded,
-    /// The decision is recorded, and a holder still has to mint or rewrap
-    /// the key: this install may not read the world, or holds no wrap of
-    /// its current key.
-    AwaitingHolder,
-    /// The decision is recorded and this install did the key work in the
-    /// same commit: it minted the world's first key, wrapped the current key
-    /// to the readers that lacked it, or found every reader holding it.
-    Enacted,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::owner_act::KeyWork;
 
 /// Who decided an act, in process only and never on the wire (mesh contract
 /// §1). A door takes one and records it as an [`OwnerAct`]'s `by`; the

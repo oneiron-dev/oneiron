@@ -1,0 +1,117 @@
+{
+  "binding": {
+    "case": "long-title",
+    "case_manifest_sha256": "bed43798aebb9b067607d0d0a8eac4e6e21ab926c0190d0f50dc61341df46f5c",
+    "case_set": "deck-create-v1",
+    "source": "474effa8c4e5b91093911eb6489117e0faa20ea7"
+  },
+  "detail": "PDFKit rasterized 1 page(s)",
+  "dialog_dismissals": [],
+  "environment": {
+    "font_account": "owner-console",
+    "font_inventory_sha256": "e14cb7e38f1cbf13de0f2894ce865836b36b960dad36a9d36188148cbcf69637",
+    "font_role": "owner",
+    "harness": "one-2531-v1",
+    "locale": "",
+    "macos": "27.0",
+    "macos_build": "26A428",
+    "observer": "system-events",
+    "pdfkit": "27.0",
+    "powerpoint": "16.113.2",
+    "raster_scale": 2
+  },
+  "fit": [
+    {
+      "block": "t-title",
+      "bound_emu": [
+        6273420,
+        1219200
+      ],
+      "detail": "",
+      "frame_emu": [
+        722313,
+        4406900,
+        7772400,
+        1362075
+      ],
+      "inner_emu": [
+        7589520,
+        1270635
+      ],
+      "kind": "text",
+      "name": "Title 1",
+      "planned_emu": [
+        722313,
+        4406900,
+        7772400,
+        1362075
+      ],
+      "shape_id": 2,
+      "shape_index": 1,
+      "slide": 1,
+      "verdict": "fits"
+    },
+    {
+      "block": "t-claim",
+      "bound_emu": [
+        4414076,
+        304800
+      ],
+      "detail": "",
+      "frame_emu": [
+        722313,
+        2906713,
+        7772400,
+        1500187
+      ],
+      "inner_emu": [
+        7589520,
+        1408747
+      ],
+      "kind": "text",
+      "name": "Text Placeholder 2",
+      "planned_emu": [
+        722313,
+        2906713,
+        7772400,
+        1500187
+      ],
+      "shape_id": 3,
+      "shape_index": 2,
+      "slide": 1,
+      "verdict": "fits"
+    }
+  ],
+  "fit_script_sha256": "409cea1e7911046e94d195ee62d136e0e1bfd5bddbb64c3cbd27c400daa80aa1",
+  "input": {
+    "bytes": 100142,
+    "sha256": "cf6523d693f90d996e6039307f1b31c98928e300a0b16119e56316c395bdd073"
+  },
+  "outputs": {
+    "page-0001.png": {
+      "bytes": 65656,
+      "sha256": "864cb53d0259470c65d5ad2315194e822de8fa496fbde4478bd9edb066b7c239"
+    },
+    "reference.pptx": {
+      "bytes": 30198,
+      "sha256": "744219409c0a7e278b38c10530b2ca7b96758c3bf5293bec2bf72a84a077be1f"
+    },
+    "render.pdf": {
+      "bytes": 26448,
+      "sha256": "1880058014591bf7ad52e88a3494a2daa8e84bd503820d4674b8dbeb22b58be7"
+    }
+  },
+  "pages": 1,
+  "raster_detail": "pages=1",
+  "saveback_normalized": {
+    "fields": [
+      "dc:creator",
+      "cp:lastModifiedBy"
+    ],
+    "part": "docProps/core.xml",
+    "value": "Oneiron oracle",
+    "written_sha256": "9d59de421d3bd293befec7d15bc3f5ca810b7d12e2c224a57abb4cdcd0b6504e"
+  },
+  "staged_input_sha256": "cf6523d693f90d996e6039307f1b31c98928e300a0b16119e56316c395bdd073",
+  "status": "clean"
+}

@@ -1,19 +1,26 @@
-//! `can`'s typed input: the read-only preflight of an ask, or the dated
-//! preflight of one effect (C2:207, FIX 22102).
+//! `can`'s typed input: the read-only preflight of an ask, the dated
+//! preflight of one effect (C2:207, FIX 22102), or one verb's gate for an
+//! actor (FIX [UI-GATE-PREVIEW]).
 use serde::{Deserialize, Serialize};
 
 use super::{OutboundScheduleRequest, TaskCanAskRequest};
 
 /// `can`'s input: `{ask: ...}`, one read-only preflight of a typed ask
-/// spec, or `{effect: ...}`, the dated preflight of one effect (C2:207, FIX
-/// 22102). Untagged, so an ask's input keeps its wire shape; each shape
-/// refuses the other's field, so an input that names both matches neither.
+/// spec, `{effect: ...}`, the dated preflight of one effect (C2:207, FIX
+/// 22102), or `{verb: ...}`, one verb's gate for an actor (FIX
+/// [UI-GATE-PREVIEW]). Untagged, so an ask's input keeps its wire shape;
+/// each shape refuses the others' fields, so an input that names two matches
+/// none.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum CanRequest {
     Ask(Box<TaskCanAskRequest>),
     Effect(Box<CanEffectRequest>),
+    Verb(Box<CanVerbRequest>),
 }
+
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::can::{CanConnectorCall, CanVerb, CanVerbRequest};
 
 /// `can({effect: ...})`: the dated preflight of one effect (C2:207, FIX
 /// 22102). It answers allow, deny, would-ask or a named hold, judged as the
@@ -40,13 +47,4 @@ pub enum CanEffect {
 #[serde(deny_unknown_fields)]
 pub struct CanOutboundSchedule {
     pub outbound_schedule: OutboundScheduleRequest,
-}
-
-/// `{connector_call: ...}`: the tool call `connector.call` with this same
-/// input would make, judged as its first chokepoint admission judges it (FIX
-/// 22102).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CanConnectorCall {
-    pub connector_call: crate::outbound_consent::ConnectorCallRequest,
 }

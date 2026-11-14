@@ -1,0 +1,14 @@
+{
+  "name": "vault.artifacts.image.edit",
+  "description": "Crops and resizes one image artifact you can read through the host's image organ; its PNG waits as one proposal for Keep, or is held with its reason until a node can export it.",
+  "input": "crate::task_verb::sdk::ImageEditRequest",
+  "output": "crate::task_verb::sdk::ImageEditAnswer",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.artifacts.image.edit\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {},
+  "section": false,
+  "host_door_proof": "image_editor"
+}

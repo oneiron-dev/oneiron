@@ -1,22 +1,26 @@
 //! One nightly thing per entity or topic (OF-498c, ARCH-0026 Nightly). The
 //! spans a night spends group by thing: its world, its facet, its private
-//! audience identity, and the entity a span's reading bound, else the
-//! structural topic. No conversation is in the key, so a thing may span
-//! conversations. Private threads whose whole current audiences name the
-//! same live PERSON share a thing; unresolved or group audiences stay per
-//! thread. Every actual reader and exposure boundary stays per part.
+//! audience identity, and the entity a span's reading bound, else the topic
+//! an unbound Name span names (`topics`), else the structural topic. No
+//! conversation is in the key, so a thing may span conversations. Private
+//! threads whose whole current audiences name the same live PERSON share a
+//! thing; unresolved or group audiences stay per thread. Every actual reader
+//! and exposure boundary stays per part.
 //!
 //! Each spent span is its OWN bound entity's (FIX 8723): a TURN whose spans
 //! bind several entities lands in each of their things, so no entity loses
 //! its thing or the neighbourhood its child reads. An unbound span rides
-//! with its TURN's highest scored bound entity, and a TURN none of whose
-//! spans is bound is its partition's topic's. Each thing is one child per
+//! with its TURN's highest scored bound entity, else with its own topic,
+//! else with its TURN's highest scored topic. A TURN that binds no entity
+//! lands in the thing of each topic its spans name, as a TURN binding
+//! several entities does. A TURN that binds no entity and names no topic is
+//! its partition's structural topic's. Each thing is one child per
 //! project it is read in (FIX 8724, `slices`), so each child lists its own
 //! project's priors: every conversation it appears in is one part, and the
 //! lines its parts are sliced in keep each exposure boundary inside the
 //! child, where a slice never crosses one. Each child names its thing in
-//! its payload. Nothing is dropped, and the number of entities, things or
-//! conversations is not bounded.
+//! its payload. Nothing is dropped, and the number of entities, topics,
+//! things or conversations is not bounded.
 
 use std::collections::BTreeMap;
 
@@ -30,6 +34,9 @@ use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
 use crate::{EntityId, Result, Vault};
 
 mod slices;
+mod topics;
+
+pub(super) use self::topics::{TopicKey, topics_in_txn};
 
 /// What one nightly thing is about.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,13 +46,20 @@ pub(super) struct NightlyThingKey {
     /// One PERSON named by the whole private audience, else its thread;
     /// `None` off any private thread. Never a reader set or a grant.
     pub(super) audience: Option<PartitionAudience>,
-    /// The entity a spent span's reading bound. `None` is the structural
-    /// topic: the TURNs none of whose spent spans is bound.
+    /// The entity a spent span's reading bound; `None` on a topic's thing
+    /// and on the structural topic.
     pub(super) entity: Option<EntityId>,
+    /// The topic an unbound Name span names (`topics`), on a thing whose
+    /// `entity` is `None`. Both `None` is the structural topic: the TURNs
+    /// none of whose spent spans binds an entity or names a topic.
+    pub(super) topic: Option<TopicKey>,
 }
 
 impl NightlyThingKey {
-    /// The thing as its children's payloads name it.
+    /// The thing as its children's payloads name it. A topic stays in the
+    /// plan: a topic thing's child names no entity and reads no topic of its
+    /// own, so two topic things' children over the same TURNs are one
+    /// child's work, and the enqueue's dedupe key makes them one attempt.
     pub(super) fn payload(self) -> PartitionThing {
         PartitionThing {
             entity: self.entity,
@@ -217,15 +231,16 @@ fn thread_in(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<Thre
 /// The things `partitions` hold, each first met at its highest scored span.
 /// `spans` is the night's queue readout, highest score first; a span that
 /// still owes a rung is neither placed nor spent here. `audiences` is
-/// [`audiences_in_txn`] and `exposures` `exposure::exposures_in_txn` over the
-/// same partitions.
+/// [`audiences_in_txn`], `exposures` `exposure::exposures_in_txn` and
+/// `topics` [`topics_in_txn`] over the same partitions.
 pub(super) fn plan_things(
     partitions: &[ConsolidationPartitionPlan],
     spans: &[SieveSpan],
     audiences: &BTreeMap<EntityId, Option<PartitionAudience>>,
     exposures: &BTreeMap<EntityId, Option<Exposure>>,
+    topics: &BTreeMap<[u8; 32], TopicKey>,
 ) -> Vec<NightlyThingPlan> {
-    let homes = turn_homes(partitions, spans);
+    let homes = turn_homes(partitions, spans, topics);
     let audience = |turn: &EntityId| audiences.get(turn).copied().flatten();
     let mut slots = BTreeMap::new();
     let mut drafts = Vec::new();
@@ -234,7 +249,7 @@ pub(super) fn plan_things(
             let key = thing_key(
                 &partitions[home.partition].key,
                 audience(&span.turn),
-                home.thing_of(span),
+                home.thing_of(span, topics),
             );
             let at = slot(&mut slots, &mut drafts, key);
             drafts[at].spans.push(span.clone());
@@ -242,17 +257,11 @@ pub(super) fn plan_things(
     }
     for (index, partition) in partitions.iter().enumerate() {
         for turn in &partition.turns {
-            let bound = homes
+            let holders = homes
                 .get(&turn.turn_id)
-                .map_or(&[][..], |home| home.entities.as_slice());
-            // Each entity its spans bind holds it; with none, its topic does.
-            let entities: Vec<Option<EntityId>> = if bound.is_empty() {
-                vec![None]
-            } else {
-                bound.iter().copied().map(Some).collect()
-            };
-            for entity in entities {
-                let key = thing_key(&partition.key, audience(&turn.turn_id), entity);
+                .map_or_else(|| vec![Holder::Structural], Home::holders);
+            for holder in holders {
+                let key = thing_key(&partition.key, audience(&turn.turn_id), holder);
                 let at = slot(&mut slots, &mut drafts, key);
                 drafts[at].turns.entry(index).or_default().push(*turn);
             }
@@ -267,30 +276,65 @@ pub(super) fn plan_things(
 fn thing_key(
     partition: &ConsolidationPartitionKey,
     audience: Option<PartitionAudience>,
-    entity: Option<EntityId>,
+    holder: Holder,
 ) -> NightlyThingKey {
+    let (entity, topic) = match holder {
+        Holder::Entity(entity) => (Some(entity), None),
+        Holder::Topic(topic) => (None, Some(topic)),
+        Holder::Structural => (None, None),
+    };
     NightlyThingKey {
         world: partition.world_ref,
         facet: partition.facet_ref,
         audience,
         entity,
+        topic,
     }
 }
 
-/// Where a planned TURN sits: its partition, by index, and every entity its
-/// spent spans bind, highest scored first. None bound is the structural
-/// topic.
+/// What holds a TURN or a span inside its world, facet and audience.
+#[derive(Debug, Clone, Copy)]
+enum Holder {
+    Entity(EntityId),
+    Topic(TopicKey),
+    /// The structural topic: no entity bound, no topic named.
+    Structural,
+}
+
+/// Where a planned TURN sits: its partition, by index, every entity its
+/// spent spans bind and every topic its spent unbound Name spans name, each
+/// highest scored first. None of either is the structural topic.
 struct Home {
     partition: usize,
     entities: Vec<EntityId>,
+    topics: Vec<TopicKey>,
 }
 
 impl Home {
     /// The thing `span`, one of this TURN's, is spent in: its own bound
     /// entity's; an unbound span's, its TURN's highest scored bound entity,
-    /// else its topic (`None`).
-    fn thing_of(&self, span: &SieveSpan) -> Option<EntityId> {
-        span.entity.or_else(|| self.entities.first().copied())
+    /// else its own topic, else its TURN's highest scored topic, else the
+    /// structural topic.
+    fn thing_of(&self, span: &SieveSpan, topics: &BTreeMap<[u8; 32], TopicKey>) -> Holder {
+        if let Some(entity) = span.entity.or_else(|| self.entities.first().copied()) {
+            return Holder::Entity(entity);
+        }
+        topics
+            .get(&span.id)
+            .or_else(|| self.topics.first())
+            .map_or(Holder::Structural, |topic| Holder::Topic(*topic))
+    }
+
+    /// The things this TURN is held in: each entity its spans bind; with
+    /// none, each topic they name; with neither, the structural topic.
+    fn holders(&self) -> Vec<Holder> {
+        if !self.entities.is_empty() {
+            self.entities.iter().copied().map(Holder::Entity).collect()
+        } else if !self.topics.is_empty() {
+            self.topics.iter().copied().map(Holder::Topic).collect()
+        } else {
+            vec![Holder::Structural]
+        }
     }
 }
 
@@ -298,6 +342,7 @@ impl Home {
 fn turn_homes(
     partitions: &[ConsolidationPartitionPlan],
     spans: &[SieveSpan],
+    topics: &BTreeMap<[u8; 32], TopicKey>,
 ) -> BTreeMap<EntityId, Home> {
     let mut homes = BTreeMap::new();
     for (index, partition) in partitions.iter().enumerate() {
@@ -307,16 +352,24 @@ fn turn_homes(
                 Home {
                     partition: index,
                     entities: Vec::new(),
+                    topics: Vec::new(),
                 },
             );
         }
     }
     for span in spans.iter().filter(|span| span.owed.is_empty()) {
-        if let Some(home) = homes.get_mut(&span.turn)
-            && let Some(entity) = span.entity
+        let Some(home) = homes.get_mut(&span.turn) else {
+            continue;
+        };
+        if let Some(entity) = span.entity
             && !home.entities.contains(&entity)
         {
             home.entities.push(entity);
+        }
+        if let Some(topic) = topics.get(&span.id)
+            && !home.topics.contains(topic)
+        {
+            home.topics.push(*topic);
         }
     }
     homes

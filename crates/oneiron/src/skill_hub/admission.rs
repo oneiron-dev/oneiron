@@ -21,33 +21,9 @@ const ADMISSION_HISTORY: SideTable<String, HubAdmissionReceipt, LegacyJson> =
 const ADMISSION_RECEIPT: SideTable<EntityId, HubAdmissionReceipt, LegacyJson> =
     SideTable::new(&side_table::SKILL_HUB_ADMISSION_RECEIPT);
 
-/// Durable ruling with both actual scores, exact consent, content and source.
-/// IDs are canonical hex strings to keep this envelope transport-neutral.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct HubAdmissionReceipt {
-    pub receipt_id: String,
-    pub candidate: String,
-    pub content_hash: String,
-    pub binding: String,
-    pub consent_digest: String,
-    pub publisher: String,
-    pub publisher_grant: String,
-    pub hub_id: String,
-    pub hub_ref: String,
-    pub evidence_skill: String,
-    pub held_out_digest: String,
-    pub held_out_count: usize,
-    pub before: f32,
-    pub after: f32,
-    pub accepted: bool,
-    /// Immutable revision of the skill that scored this candidate.
-    pub judge_revision: String,
-    /// Read projection of the replacement fence; original scores stay intact.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub displaced_by_revision: Option<String>,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_hub::admission::HubAdmissionReceipt;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum HubAdmissionDisposition {
     PendingConsent,
@@ -360,6 +336,7 @@ fn score(
         version,
         instructions,
         held_out_receipts: &snapshot.evidence,
+        goal: None,
     })?;
     if !score.is_finite() || !(0.0..=1.0).contains(&score) {
         return Err(invalid("invalid host held-out score"));

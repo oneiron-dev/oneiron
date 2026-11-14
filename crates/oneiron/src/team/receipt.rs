@@ -64,12 +64,8 @@ impl StoredTeamReceipt {
 /// Longest reference or model id kept.
 const MAX_REF_BYTES: usize = 256;
 
-/// The pattern skill revision a team ran.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct PatternSkillRef {
-    pub skill: EntityId,
-    pub version: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::team::receipt::PatternSkillRef;
 
 /// How many agents, in which roles.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]

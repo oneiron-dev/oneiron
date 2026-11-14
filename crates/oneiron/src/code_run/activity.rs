@@ -147,12 +147,8 @@ impl Witness {
     }
 }
 
-/// What a scope holds open: a tool call or a model call.
-#[derive(Debug, Clone, Copy)]
-enum Scope {
-    Tool,
-    Generation,
-}
+#[doc(hidden)]
+use oneiron_verb_wire::code_run::activity::Scope;
 
 /// One run's binding on its lease's entry (OF-568 L5), held as long as the
 /// run's dispatcher. The entry ends when its last binding drops.

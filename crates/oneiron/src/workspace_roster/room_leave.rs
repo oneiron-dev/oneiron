@@ -19,13 +19,8 @@ use crate::error::{ClaimError, Error};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
-/// Ends `person`'s current membership of `room`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RoomLeaveRequest {
-    pub room: EntityId,
-    pub person: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::room_leave::RoomLeaveRequest;
 
 /// The room's members once the leave committed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -20,24 +20,8 @@ pub(super) const IMPORTS: SideTable<(EntityId, EntityId, [u8; 32]), HubImportRec
 const ROUTES: SideTable<String, ReportRoute, Named> =
     SideTable::new(&side_table::FEEDBACK_REPORT_ROUTE);
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "destination", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ReportRoute {
-    #[default]
-    OwnerInbox,
-    Publisher {
-        publisher_ref: String,
-    },
-}
-
-/// The three DEC-0006 choices, scoped to this issue or its already-resolved publisher.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ReportDisclosureChoice {
-    ApproveOnce,
-    StopAskingForPublisher,
-    Deny,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feedback::report::routing::{ReportDisclosureChoice, ReportRoute};
 
 /// Fixed-shape content-free evidence. No caller-authored reference or prose crosses here.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

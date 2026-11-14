@@ -56,6 +56,7 @@ impl fmt::Debug for ServeArgs {
             .field("seal_tsa_url", &self.seal_tsa_url)
             .field("seal_signing_url", &self.seal_signing_url)
             .field("seal_organ", &self.seal_organ)
+            .field("image_organ", &self.image_organ)
             .field("esign_delivery_outbox_dir", &self.esign_delivery_outbox_dir)
             .field("cloud_registration_pins", &self.cloud_registration_pins)
             .field(
@@ -74,6 +75,10 @@ impl fmt::Debug for ServeArgs {
             .field("desktop_runtime", &self.desktop_runtime)
             .field("organ_dir", &self.organ_dir)
             .field("trusted_organ_builds", &self.trusted_organ_builds)
+            .field(
+                "release_payment_credentials_unfenced",
+                &self.release_payment_credentials_unfenced,
+            )
             .field("mesh_bind", &self.mesh_bind)
             .field("mesh_relays", &self.mesh_relays)
             .field("shared_model_root", &self.shared_model_root)

@@ -108,10 +108,13 @@ impl PipelineBuilder<'_> {
             session.is_none_or(crate::off_record::SessionRetrievalTelemetry::writes_to_base);
         #[cfg(feature = "sync")]
         let withheld = to_base && self.read.holds_room_rows();
+        #[cfg(feature = "sync")]
+        let eval = self.eval;
         let output = self.run_for_pack()?;
         let pending_vector_ids = pending_vector_ids(&output.pending_vectors);
+        // An eval run writes no embed job.
         #[cfg(feature = "sync")]
-        if to_base && !pending_vector_ids.is_empty() {
+        if to_base && !eval && !pending_vector_ids.is_empty() {
             if withheld {
                 // The saver those jobs would have landed under must still hold.
                 if let Some(door) = session {

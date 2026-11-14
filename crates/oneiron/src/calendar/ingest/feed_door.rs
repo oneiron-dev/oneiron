@@ -20,27 +20,10 @@ pub struct CalendarIcsFeedConfigureRequest {
     pub config: IcsFeedPollConfig,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarIcsFeedRequest {
-    pub system: String,
-}
-
-/// A successful call is a completion barrier, not an approval of imported claims.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct CalendarIcsPollCompletion {
-    pub poll_ref: String,
-    pub completed_at: u64,
-    pub result: CalendarIcsPollResult,
-    pub cursor: Option<IcsFeedCursorSnapshot>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum CalendarIcsPollResult {
-    Reenqueued { next_not_before: u64 },
-    PausedNeedsInput { inbox_exception_ref: String },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::ingest::feed_door::{
+    CalendarIcsFeedRequest, CalendarIcsPollCompletion, CalendarIcsPollResult,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct CalendarIcsFeedRegistration {

@@ -236,6 +236,7 @@ impl<'a> ContextPackBuilder<'a> {
                 let mut kept = Vec::with_capacity(scored.len());
                 for entry in scored {
                     if disclosure_admits_candidate(
+                        self.vault,
                         &self.read,
                         &rtxn,
                         ctx,
@@ -253,6 +254,7 @@ impl<'a> ContextPackBuilder<'a> {
             for entry in pipeline_output.capabilities {
                 if clamp.is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
                     && !disclosure_admits_candidate(
+                        self.vault,
                         &self.read,
                         &rtxn,
                         clamp.expect("checked"),
@@ -393,6 +395,7 @@ impl<'a> ContextPackBuilder<'a> {
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
                 let world_scope = neighbor_pipeline.neighbor_world_scope(&rtxn)?;
                 match walk_edges(
+                    self.vault,
                     &self.read,
                     &rtxn,
                     &seed_ids,
@@ -449,6 +452,7 @@ impl<'a> ContextPackBuilder<'a> {
             if self.include_edges && self.edge_hop > 0 {
                 for entity in &mut results {
                     entity.edges = match load_entity_edges(
+                        self.vault,
                         &self.read,
                         &rtxn,
                         &entity.id,
@@ -547,7 +551,7 @@ impl<'a> ContextPackBuilder<'a> {
             // OF-365 enforcement point 4 — final fail-closed sweep: the pack
             // build FAILS rather than leaks a non-admitted id.
             if let Some(ctx) = clamp {
-                validate_pack_disclosure(&self.read, &rtxn, ctx, &results, &neighbors)?;
+                validate_pack_disclosure(self.vault, &self.read, &rtxn, ctx, &results, &neighbors)?;
             }
             if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline) {
                 let valid = match super::super::l2_base::revalidate_l2_base(
@@ -634,6 +638,7 @@ impl<'a> ContextPackBuilder<'a> {
             // Resolved in this snapshot, so no second reader opens while it is
             // held (FIX 7611), and over the rows the pack keeps (FIX 9761).
             let instruction_files = super::instruction_files::pack_instruction_files(
+                self.vault,
                 &self.read,
                 self.l2_summary_reader,
                 &rtxn,
