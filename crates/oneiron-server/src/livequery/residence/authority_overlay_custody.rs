@@ -74,11 +74,13 @@ pub(in crate::livequery) fn run_machine(
 fn offer(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
     let offer = overlay_offer_from_wire(params).ok_or_else(AppError::invalid_params)?;
     let answer = authority_overlay_offer(&server.vault, peer, &offer).map_err(missing)?;
-    Ok((overlay_answer_to_wire(&answer), None))
+    // An answer carries keys and erased subjects, never a row.
+    Ok((overlay_answer_to_wire(&answer), Some(Vec::new())))
 }
 
 fn keys(server: &SyncServer, peer: PeerMachine, params: Value) -> Result<Answer, AppError> {
     let keys = overlay_keys_from_wire(params).ok_or_else(AppError::invalid_params)?;
     let installed = authority_overlay_keys(&server.vault, peer, keys).map_err(missing)?;
-    Ok((json!({"installed": installed}), None))
+    // A count of installed keys names no row.
+    Ok((json!({"installed": installed}), Some(Vec::new())))
 }
