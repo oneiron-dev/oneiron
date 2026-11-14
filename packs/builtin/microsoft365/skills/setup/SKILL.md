@@ -34,7 +34,8 @@ itself, and the pack stays a Candidate until its own qualification passes.
    the sign-in ran against) and the completed sign-in (`code`,
    `redirect_uri`, and the PKCE `code_verifier` when it used one) as two
    credentials bound for read to connector:microsoft365, then calls the
-   owner's Microsoft code exchange (`POST /v1/owner/packs/microsoft365/exchange`).
+   owner's Microsoft code exchange (`POST /v1/owner/packs/microsoft365/exchange`)
+   with `"device_only": true`, so the grant stays on this install.
    The engine exchanges the code at Microsoft and stores the grant under the
    name the card shows. Never ask for the owner's Microsoft password, never
    ask for the grant or the code in chat, and never repeat either back. A
@@ -45,9 +46,11 @@ itself, and the pack stays a Candidate until its own qualification passes.
 
 The engine refreshes the access token at Microsoft each time it uses the
 grant, so the hour an access token lasts never runs out mid-use. Microsoft
-ends a sign-in's refresh after 90 days, or sooner when the account's access
-is withdrawn: then the check fails, and the owner signs in again and runs the
-exchange with `replace_existing`. A grant stored by hand that holds only an
+hands back a newer refresh token with each refresh, and the engine stores it
+in place of the old one at most once a day, so a connection in use needs no
+new sign-in. A refresh token unused for 90 days expires, and Microsoft may
+withdraw the account's access sooner: then the check fails, and the owner
+signs in again and runs the exchange with `replace_existing`. A grant stored by hand that holds only an
 access token works until that token expires, about an hour after the
 sign-in.
 

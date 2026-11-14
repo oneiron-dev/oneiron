@@ -16,6 +16,7 @@ use std::thread;
 
 use oneiron::test_doors::microsoft_token::{
     exchange_code_at, mail_wire_refresh_via, microsoft365_me_status_via, refresh_grant_at,
+    refresh_successor_at,
 };
 use oneiron::test_doors::workspace_token::access_token_via;
 use serde_json::{Value, json};
@@ -309,6 +310,46 @@ fn a_stored_grant_refreshes_at_its_tenant_with_its_granted_scopes() -> TestResul
     ] {
         assert_eq!(refresh_grant_at("http://127.0.0.1:9", other)?, None);
     }
+    Ok(())
+}
+
+/// The refresh rewrites the stored grant around Microsoft's newer refresh
+/// token, for the custody write-back (RULING MICROSOFT365-REFRESH-WRITEBACK):
+/// the same client, secret, tenant and scope; an answer with no refresh
+/// token rewrites nothing.
+#[test]
+fn a_refresh_rewrites_the_grant_around_the_newer_refresh_token() -> TestResult {
+    let grant = json!({
+        "access_token": "at-1",
+        "refresh_token": "rt-1",
+        "client_id": "client-1",
+        "client_secret": "secret-1",
+        "tenant": "organizations",
+        "scope": MICROSOFT_TEST_SCOPE,
+    })
+    .to_string();
+    let (origin, taken) = test_token_endpoint(
+        200,
+        json!({"access_token": "at-2", "refresh_token": "rt-2", "scope": "User.Read"}),
+    )?;
+    let successor = refresh_successor_at(&origin, grant.as_bytes())?
+        .ok_or("Microsoft issued a newer refresh token")?;
+    taken.join().map_err(|_| "endpoint thread panicked")??;
+    let successor: Value = serde_json::from_slice(&successor)?;
+    assert_eq!(
+        successor,
+        json!({
+            "access_token": "at-2",
+            "refresh_token": "rt-2",
+            "client_id": "client-1",
+            "client_secret": "secret-1",
+            "tenant": "organizations",
+            "scope": MICROSOFT_TEST_SCOPE,
+        })
+    );
+    let (origin, taken) = test_token_endpoint(200, json!({"access_token": "at-3"}))?;
+    assert_eq!(refresh_successor_at(&origin, grant.as_bytes())?, None);
+    taken.join().map_err(|_| "endpoint thread panicked")??;
     Ok(())
 }
 

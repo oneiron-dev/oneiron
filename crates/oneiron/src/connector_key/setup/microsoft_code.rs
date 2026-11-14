@@ -8,9 +8,10 @@
 //! value names another host or path. A stored Microsoft grant names its
 //! tenant, and a grant that names none is never sent here: it is not one.
 //!
-//! Microsoft answers each refresh with a newer refresh token as well. It is
-//! dropped unread: the stored grant keeps the one its sign-in returned
-//! (ASK MICROSOFT365-REFRESH-WRITEBACK).
+//! Microsoft answers each refresh with a newer refresh token as well. The
+//! refresh rewrites the stored grant around it ([`GrantAccess::successor`]),
+//! and the caller hands that to the custody write-back once its door has
+//! returned (RULING MICROSOFT365-REFRESH-WRITEBACK, B).
 
 use std::io::Read as _;
 
@@ -18,8 +19,8 @@ use serde::{Deserialize, Serialize};
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{
-    AuthorizationCodeGrant, MAX_CHECK_REPLY_BYTES, ProviderConnectionChecks, bounded, invalid,
-    present,
+    AuthorizationCodeGrant, GrantAccess, MAX_CHECK_REPLY_BYTES, ProviderConnectionChecks, bounded,
+    invalid, present,
 };
 use crate::error::{Error, Result};
 
@@ -62,13 +63,14 @@ impl ProviderConnectionChecks {
     }
 
     /// A fresh access token for a stored Microsoft grant: one that carries
-    /// a refresh token, its OAuth client and its tenant. `None` for any other
-    /// credential. Called only inside an admitted credential door; nothing
-    /// is persisted.
+    /// a refresh token, its OAuth client and its tenant, with the grant
+    /// rewritten around Microsoft's newer refresh token. `None` for any
+    /// other credential. Called only inside an admitted credential door;
+    /// nothing is persisted here.
     pub(crate) fn refresh_stored_microsoft_grant(
         client: &reqwest::blocking::Client,
         value: &[u8],
-    ) -> Result<Option<Zeroizing<String>>> {
+    ) -> Result<Option<GrantAccess>> {
         refresh_stored_microsoft_grant_at(client, MICROSOFT_LOGIN_ORIGIN, value)
     }
 }
@@ -116,11 +118,12 @@ pub(crate) fn exchange_microsoft_code_at(
 /// [`ProviderConnectionChecks::refresh_stored_microsoft_grant`], against the
 /// token endpoints under `origin`. The scopes the sign-in was granted are
 /// asked for again; a grant that stored none asks for what it was granted.
+/// The successor keeps the grant's client, tenant and scope.
 pub(crate) fn refresh_stored_microsoft_grant_at(
     client: &reqwest::blocking::Client,
     origin: &str,
     value: &[u8],
-) -> Result<Option<Zeroizing<String>>> {
+) -> Result<Option<GrantAccess>> {
     let text = std::str::from_utf8(value)
         .map_err(|_| invalid("the stored credential is not text"))?
         .trim();
@@ -155,7 +158,26 @@ pub(crate) fn refresh_stored_microsoft_grant_at(
         .map(Zeroizing::new)
         .filter(|token| !token.trim().is_empty())
         .ok_or_else(|| invalid("Microsoft's refresh returned no access token"))?;
-    Ok(Some(token))
+    let successor = match present(&reply.refresh_token) {
+        Some(refresh_token) => {
+            let rotated = StoredMicrosoftGrantOut {
+                access_token: &token,
+                refresh_token: Some(refresh_token),
+                client_id,
+                client_secret: present(&grant.client_secret),
+                tenant,
+                scope: present(&grant.scope),
+            };
+            Some(Zeroizing::new(serde_json::to_vec(&rotated).map_err(
+                |_| invalid("the refreshed Microsoft grant could not be encoded"),
+            )?))
+        }
+        None => None,
+    };
+    Ok(Some(GrantAccess {
+        access_token: token,
+        successor,
+    }))
 }
 
 /// `tenant` as a path segment of a token endpoint: letters, digits, `-` and

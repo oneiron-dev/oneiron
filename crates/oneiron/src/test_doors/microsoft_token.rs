@@ -1,15 +1,19 @@
-//! Door for `tests/microsoft365_oauth.rs` ([MICROSOFT365-OAUTH-EXCHANGE]):
+//! Door for `tests/microsoft365_oauth.rs` and
+//! `tests/microsoft365_refresh_write_back.rs` ([MICROSOFT365-OAUTH-EXCHANGE]):
 //! Microsoft's code exchange and refresh against a test's own token
 //! endpoints, and the `microsoft365.me` check's and the mail wires' token
 //! steps run through a test's own proxy, so the test sees which host each
 //! step reaches.
 
+use crate::Vault;
 use crate::connector_key::{
     MicrosoftAuthorizationCode, ProviderConnectionChecks, exchange_microsoft_code_at,
     refresh_stored_microsoft_grant_at,
 };
 use crate::error::{Error, Result};
 use crate::mail_pack::GrantIssuer;
+use crate::secret_lease::DoorInjectionReceipt;
+use crate::secret_rotation::RotationReceipt;
 
 /// What a Microsoft code exchange stored: the grant's bytes, and whether
 /// Microsoft issued a refresh token.
@@ -63,7 +67,24 @@ pub fn exchange_code_at(
 /// unreachable, or its refusal.
 pub fn refresh_grant_at(origin: &str, grant: &[u8]) -> Result<Option<String>> {
     refresh_stored_microsoft_grant_at(&plain_client()?, origin, grant)
-        .map(|fresh| fresh.map(|token| token.as_str().to_owned()))
+        .map(|fresh| fresh.map(|access| access.access_token.as_str().to_owned()))
+}
+
+/// The grant a refresh of the stored grant `grant` at the token endpoints
+/// under `origin` rewrote around Microsoft's newer refresh token: what the
+/// custody write-back stores ([MICROSOFT365-OAUTH-EXCHANGE] B). `None` when
+/// the grant is not a refreshable Microsoft grant or the answer carried no
+/// refresh token.
+///
+/// # Errors
+///
+/// As [`refresh_grant_at`]'s.
+pub fn refresh_successor_at(origin: &str, grant: &[u8]) -> Result<Option<Vec<u8>>> {
+    refresh_stored_microsoft_grant_at(&plain_client()?, origin, grant).map(|fresh| {
+        fresh
+            .and_then(|access| access.successor)
+            .map(|successor| successor.to_vec())
+    })
 }
 
 /// The HTTP status of the `microsoft365.me` check's provider call with
@@ -94,7 +115,24 @@ pub fn mail_wire_refresh_via(issuer: &str, grant: &[u8], proxy: &str) -> Result<
     };
     issuer
         .refresh(&proxied_client(proxy)?, grant)
-        .map(|fresh| fresh.map(|token| token.as_str().to_owned()))
+        .map(|fresh| fresh.map(|access| access.access_token.as_str().to_owned()))
+}
+
+/// The provider refresh write-back of `successor` for the door read `door`,
+/// at `at`, as a wire runs it once its door has returned
+/// ([MICROSOFT365-OAUTH-EXCHANGE] B); `None` when a guard does not hold and
+/// nothing was written.
+///
+/// # Errors
+///
+/// The write-back's own.
+pub fn store_refreshed_grant(
+    vault: &Vault,
+    door: &DoorInjectionReceipt,
+    successor: &[u8],
+    at: u64,
+) -> Result<Option<RotationReceipt>> {
+    vault.store_provider_refreshed_grant(door, successor, at)
 }
 
 /// A client with no proxy, no redirects and a 10 s timeout, for a test's

@@ -276,7 +276,8 @@ pub fn module(name: &str) -> Option<&'static dyn WorkspaceApi> {
 }
 
 /// The access token `module`'s connection presents for the stored grant
-/// `value`, on `client`: the token step a send runs inside the custody door.
+/// `value`, on `client`, and the grant's successor when the step's refresh
+/// rotated it: the token step a send runs inside the custody door.
 ///
 /// # Errors
 ///
@@ -286,7 +287,7 @@ pub(crate) fn connection_access_token(
     module: &dyn WorkspaceApi,
     client: &reqwest::blocking::Client,
     value: &[u8],
-) -> Result<zeroize::Zeroizing<String>> {
+) -> Result<crate::connector_key::GrantAccess> {
     token::access_token(client, module.connection().token, value)
 }
 
