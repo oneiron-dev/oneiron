@@ -573,6 +573,24 @@ impl Vault {
         authority_cache_generation(&self.store, &rtxn)
     }
 
+    /// Whether `actor_ref` holds an Active binding at `actor_class` in `fold`
+    /// (a fold [`Self::authority_fold`] read) AND its row is live now, its
+    /// kind admitting the class: a soft-deleted actor's binding authorizes
+    /// nothing ([`crate::authority::actor_binding_is_live_in`]).
+    ///
+    /// # Errors
+    ///
+    /// The row or deletion-state read's.
+    pub fn actor_binding_is_live(
+        &self,
+        fold: &AuthorityFold,
+        actor_ref: &EntityId,
+        actor_class: &str,
+    ) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        crate::authority::actor_binding_is_live_in(&self.store, &txn, fold, actor_ref, actor_class)
+    }
+
     pub(crate) fn authority_fold_readonly_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,

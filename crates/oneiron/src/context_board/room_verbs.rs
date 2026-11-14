@@ -450,7 +450,7 @@ fn peer_read_keys_in(
         .iter()
         .filter(|member| **member != caller)
         .map(|member| {
-            if crate::disclosure::is_vault_owner(&fold, embedded_owner, member) {
+            if crate::disclosure::is_vault_owner(vault, txn, &fold, embedded_owner, member)? {
                 return Ok(crate::claim::ScopedReadActorKey::vault_owner(*member));
             }
             if owners.contains(member) {
