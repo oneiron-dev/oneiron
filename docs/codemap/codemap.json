@@ -2632,7 +2632,7 @@
      "surface": {}
     },
     {
-     "bucket": "L",
+     "bucket": "m",
      "kind": "test",
      "notable": [],
      "path": "src/anchored_annotation/tests/anchor_scenarios.rs",
@@ -63932,7 +63932,7 @@
      "purpose": "Connector-call resume, the pending listing, delivery acknowledgement and the caller's status read",
      "surface": {
       "crate-vis": 1,
-      "fn": 5
+      "fn": 4
      }
     },
     {
@@ -85350,7 +85350,7 @@
      "path": "src/sync/client/base.rs",
      "purpose": "SyncClient construction, window and ephemeral accessors, and root persistence",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 33,
       "fn": 17,
       "struct": 1
      }
@@ -85511,7 +85511,7 @@
      "path": "src/sync/client/residence.rs",
      "purpose": "Bounded on-demand home reads on an independent short-lived authenticated socket",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 14,
       "re-export": 6
      }
     },
@@ -85879,7 +85879,7 @@
      "path": "src/sync/client/residence/windows.rs",
      "purpose": "Window promote, retain, and demote lifecycle",
      "surface": {
-      "crate-vis": 2,
+      "crate-vis": 3,
       "fn": 3
      }
     },
@@ -86010,7 +86010,7 @@
      "path": "src/sync/connection/converge.rs",
      "purpose": "Convergence: run_convergence, re_bootstrap, server-frame pump",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -86071,7 +86071,7 @@
      "path": "src/sync/connection/handshake/resync_markers.rs",
      "purpose": "The `fr:w:` full-resync markers: the windows a reconnect re-bootstraps",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -88930,7 +88930,7 @@
      "path": "src/sync/transport.rs",
      "purpose": "Wire protocol encoding/decoding for WebSocket transport",
      "surface": {
-      "const": 42,
+      "const": 44,
       "crate-vis": 2,
       "fn": 28,
       "mod": 1,
@@ -93439,7 +93439,7 @@
      "path": "src/test_doors/world_follow.rs",
      "purpose": "The thin index's window choice and a negotiation's follow set on a device lane, for the integration tests of…",
      "surface": {
-      "fn": 3
+      "fn": 4
      }
     },
     {
@@ -102009,6 +102009,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/anchor_docx_scenarios.rs",
+     "purpose": "Word comment-anchor scenarios across a version bump (owner ask 2026-10-16; OF-368, owner ruling 2026-10-17)…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -107098,7 +107106,7 @@
    "over_bar": 274,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7516,
-   "test_files": 1237
+   "test_files": 1238
   },
   "oneiron-agent-runtime": {
    "files": [

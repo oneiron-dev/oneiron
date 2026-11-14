@@ -231,7 +231,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/anchored_annotation/recovery/stories.rs` | src | s | 3 crate-vis | — | Version re-anchoring inside the exact native story a locator names |
 | `src/anchored_annotation/tables.rs` | src | s | — | — | The side tables `anchored_annotation` keeps (core split slice 1): each row declares one, and the crate's… |
 | `src/anchored_annotation/tests.rs` | test | L | — | — | — |
-| `src/anchored_annotation/tests/anchor_scenarios.rs` | test | L | — | — | Comment-anchor scenarios across the three office locators (owner ask 2026-10-16; the cases come from tdoc's… |
+| `src/anchored_annotation/tests/anchor_scenarios.rs` | test | m | — | — | Comment-anchor scenarios across the three office locators (owner ask 2026-10-16; the cases come from tdoc's… |
 | `src/anchored_annotation/threads.rs` | src | L | 8 fn · 12 crate-vis | — | Vault CRUD: thread lifecycle, comments, brief assignment, and the txn-composable read cohort |
 | `src/anchored_annotation/threads/brief_text.rs` | src | s | 2 crate-vis | — | Whole annotation transcripts and capped dispatch briefings |
 | `src/anchored_annotation/verbs.rs` | src | m | 8 fn | — | Credential-bound adapters over the engine's anchored annotation lifecycle |
@@ -5202,7 +5202,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/outbound_consent/connector_call_code.rs` | src | m | 3 fn · 10 crate-vis | — | A held `connector.call` a code consent wait owns (DOOR-079 1a): the first effect a code consent wait binds |
 | `src/outbound_consent/connector_call_code/ask_repair.rs` | src | s | 1 fn · 2 crate-vis | — | The pass that retries a held call's typed code consent ask when its first ask did not open (#5367) |
 | `src/outbound_consent/connector_call_consent.rs` | src | m | 1 fn · 4 crate-vis | — | FIX 990: the owner's `always ask` setting on an admitted connector call |
-| `src/outbound_consent/connector_call_delivery.rs` | src | s | 5 fn · 1 crate-vis | — | Connector-call resume, the pending listing, delivery acknowledgement and the caller's status read |
+| `src/outbound_consent/connector_call_delivery.rs` | src | s | 4 fn · 1 crate-vis | — | Connector-call resume, the pending listing, delivery acknowledgement and the caller's status read |
 | `src/outbound_consent/connector_call_dispatch.rs` | src | s | 4 crate-vis | — | A connector dispatch's outcome mapped to a call step and its reason codes |
 | `src/outbound_consent/connector_call_driver.rs` | src | L | 2 fn · 9 crate-vis | — | The connector-call driver: tool resolution, schema reads and the durable pass that turns a gate decision… |
 | `src/outbound_consent/connector_call_driver/governance.rs` | src | s | 3 crate-vis | — | The one grant, governing key and approved-schema resolution a connector call and a schema read share (FIX… |
@@ -7008,7 +7008,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/chunks/tests.rs` | test | m | — | — | Real binary have/want exchanges between independent vaults |
 | `src/sync/client/artifacts.rs` | src | s | 4 crate-vis | — | Pinned artifact publications on the owner lane: each owed one goes out in bounded parts once the NOTE… |
 | `src/sync/client/ask_forward.rs` | src | s | 1 crate-vis | — | The client lane's registration for relayed ask intents (FIX 7494): after a frame that imports window rows… |
-| `src/sync/client/base.rs` | src | L | 1 struct · 17 fn · 28 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
+| `src/sync/client/base.rs` | src | L | 1 struct · 17 fn · 33 crate-vis | SyncClient | SyncClient construction, window and ephemeral accessors, and root persistence |
 | `src/sync/client/connect.rs` | src | m | 3 fn · 1 re-export · 6 crate-vis | — | Public Connect delivery/rejoin over the production guest admission path |
 | `src/sync/client/documents.rs` | src | m | 5 crate-vis | — | Document import and durable local-journal confirmation on the one socket |
 | `src/sync/client/endpoint.rs` | src | s | 4 crate-vis | — | FIX 8862: where this machine's sync credentials may go |
@@ -7023,7 +7023,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/note_session.rs` | src | s | 1 enum · 2 crate-vis | BindReceipt | The existing app-tier MessagePack auth.bind handshake on the sync socket |
 | `src/sync/client/own_device.rs` | src | s | 5 crate-vis | — | The proof that window bytes this client takes come from one of the owner's own machines (FIX 11709) |
 | `src/sync/client/repo_projection.rs` | src | s | 2 crate-vis | — | A device's admission of the masked repo copies its home sends (FIX 7608 slice 4, LEAF 4.3) |
-| `src/sync/client/residence.rs` | src | s | 6 re-export · 13 crate-vis | — | Bounded on-demand home reads on an independent short-lived authenticated socket |
+| `src/sync/client/residence.rs` | src | s | 6 re-export · 14 crate-vis | — | Bounded on-demand home reads on an independent short-lived authenticated socket |
 | `src/sync/client/residence/ask_option_link.rs` | src | s | 1 fn | — | A bearer call to its issuing install, not the current residence home |
 | `src/sync/client/residence/authority.rs` | src | m | 1 fn · 3 crate-vis | — | Authority history from the home for a machine that syncs what it opened (OF-469) |
 | `src/sync/client/residence/authority/parts.rs` | src | s | 3 crate-vis | — | An authority entry past one RPC frame, either way (FIX 8087, 8246) |
@@ -7057,7 +7057,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/residence/rpc.rs` | src | m | 13 crate-vis | — | The residence RPC lane's socket: one short-lived authenticated socket to the home a call reads from |
 | `src/sync/client/residence/search.rs` | src | s | 1 struct · 2 crate-vis | ResidenceSearchPage | A home search served in pages (FIX 8865, FIX 196): the device keeps the caller's whole count and asks the… |
 | `src/sync/client/residence/search_client.rs` | src | s | 2 fn · 1 crate-vis | — | Home search orchestration |
-| `src/sync/client/residence/windows.rs` | src | m | 3 fn · 2 crate-vis | — | Window promote, retain, and demote lifecycle |
+| `src/sync/client/residence/windows.rs` | src | m | 3 fn · 3 crate-vis | — | Window promote, retain, and demote lifecycle |
 | `src/sync/client/root_updates.rs` | src | s | 7 crate-vis | — | One socket's incomplete root image |
 | `src/sync/client/sealed_updates.rs` | src | m | 6 crate-vis | — | A machine's side of the sealed world-update relay (DEC-0005 fix 8: "A my-machines world on it still syncs |
 | `src/sync/client/staged_bodies.rs` | src | m | 4 fn · 2 crate-vis | — | Delivery of the bodies a confirmed staged import still owes (FIX 12408) |
@@ -7068,13 +7068,13 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/client/window_pads.rs` | src | m | 15 crate-vis | — | The device's side of the window pad envelope (KS-5, FIX 7107) |
 | `src/sync/client/window_pads/deferred.rs` | src | m | 9 crate-vis | — | A sealed window payload's isolated check before its capsule installs, and the updates that wait for the pads… |
 | `src/sync/connection/batch_admission.rs` | src | m | 1 enum · 1 trait · 1 fn · 3 type · 16 crate-vis | SyncBatchAdmission, SyncBatchVerdict | The host's admission for each batch a sync connection applies or sends (FIX 12036), and the pause that keeps… |
-| `src/sync/connection/converge.rs` | src | m | 6 crate-vis | — | Convergence: run_convergence, re_bootstrap, server-frame pump |
+| `src/sync/connection/converge.rs` | src | m | 7 crate-vis | — | Convergence: run_convergence, re_bootstrap, server-frame pump |
 | `src/sync/connection/directives.rs` | src | s | 1 crate-vis | — | The owner's residence directives, applied on the machine they name (OF-534) |
 | `src/sync/connection/document_response.rs` | src | s | 2 crate-vis | — | Ordered NOTE command release; the durable queue retains the logical command |
 | `src/sync/connection/handshake.rs` | src | m | 2 fn · 4 crate-vis | — | Handshake: run loop, open_sync_session, overflow check |
 | `src/sync/connection/handshake/acks.rs` | src | s | 2 crate-vis | — | Residence queue acknowledgments during the initial exchange, and the queue clear they drive |
 | `src/sync/connection/handshake/replay.rs` | src | s | 1 crate-vis | — | Phase 3 queue replay: the queued rows a session sends, each in its window pad envelope, batched on the node… |
-| `src/sync/connection/handshake/resync_markers.rs` | src | s | 3 crate-vis | — | The `fr:w:` full-resync markers: the windows a reconnect re-bootstraps |
+| `src/sync/connection/handshake/resync_markers.rs` | src | s | 4 crate-vis | — | The `fr:w:` full-resync markers: the windows a reconnect re-bootstraps |
 | `src/sync/connection/handshake/upgrade.rs` | src | s | 2 crate-vis | — | A sync session's upgrade: its request, proved with this machine's credential, and the socket it opens, to… |
 | `src/sync/connection/home_handoff.rs` | src | m | 2 crate-vis | — | FIX 5661 C2a: the old home's delivery worker |
 | `src/sync/connection/home_search.rs` | src | s | 1 struct · 1 enum · 6 fn · 6 crate-vis | DeviceResidence, HomeSearch | The home search this device's query doors reach through its own sync connection (OF-534): a search an opened… |
@@ -7324,7 +7324,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/sync/source_audiences/wake.rs` | src | s | 1 crate-vis | — | The live mirror's drain of policy wakes (fix list row 17203; [`crate::source_audience`] keeps the wakes and… |
 | `src/sync/sweep_fence.rs` | src | s | 6 crate-vis | — | Windows a sweep holds closed while it rewrites their persisted state |
 | `src/sync/tests.rs` | test | m | — | — | Observer B and forward rematerialization admit through one entity-ingest entry and one tombstone… |
-| `src/sync/transport.rs` | src | m | 2 struct · 28 fn · 42 const · 1 mod · 11 re-export · 2 crate-vis | EncodedFrame, EphemeralWireState | Wire protocol encoding/decoding for WebSocket transport |
+| `src/sync/transport.rs` | src | m | 2 struct · 28 fn · 44 const · 1 mod · 11 re-export · 2 crate-vis | EncodedFrame, EphemeralWireState | Wire protocol encoding/decoding for WebSocket transport |
 | `src/sync/transport/admission_fault.rs` | src | s | 7 crate-vis | — | How a window admission's error crosses the transport boundary (FIX 5926): a fault reading this device's own… |
 | `src/sync/transport/asset_bodies.rs` | src | s | 5 struct · 9 fn · 6 const | AssetBodyAddress, AssetBodyData, AssetBodyEnd, AssetBodyReceipt, AssetBodyWant | By-reference ASSET body frames (FIX 5489) |
 | `src/sync/transport/codec.rs` | src | m | 4 struct · 17 fn · 11 const · 2 mod · 2 crate-vis | LinkBytes, TagBytesRow, WireCodecs, WireSocket | The own-link codec frame (ARCH-0081 §7, OF-604): zstd-3 on our own sockets |
@@ -7698,7 +7698,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/test_doors/untangle_regressions.rs` | src | m | 3 struct · 1 enum · 25 fn | ClaimGateDecision, DreamerLandingRow, RevokeAnswer, SideDoorTurnText | Doors for the untangle regression tests (`tests/untangle_regressions.rs`; lead 19:05 9 Nov, TESTS-MUST-RUN)… |
 | `src/test_doors/verb_hook_ask.rs` | src | s | 1 re-export | — | Doors for `oneiron-server`'s `tests/workflow_park_save_retry.rs` ([WORKFLOW-PARK-FAIL-RETRYABLE]): a verb… |
 | `src/test_doors/wake_d1_park_release.rs` | src | m | 12 fn | — | Doors for `tests/wake_d1_park_release.rs` (#6877, WAKE-D1): the wake pass's local node id, the owner notice… |
-| `src/test_doors/world_follow.rs` | src | s | 3 fn | — | The thin index's window choice and a negotiation's follow set on a device lane, for the integration tests of… |
+| `src/test_doors/world_follow.rs` | src | s | 4 fn | — | The thin index's window choice and a negotiation's follow set on a device lane, for the integration tests of… |
 | `src/test_fixtures.rs` | src | s | 4 crate-vis | — | Fixture writes that every test build shares: the crate's unit tests (`test_util`), dependent crates… |
 | `src/test_support.rs` | src | s | 9 fn | — | Doors for tests that drive the engine from another crate, such as the seal organ's end-to-end check, which… |
 | `src/test_util/channel_identity.rs` | src | s | 2 crate-vis | — | Self-held ChannelIdentity fixtures: a row in a chosen state, reached by walking its machine |
@@ -8340,6 +8340,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/agent_retract_deferred.rs` | test | m | — | — | An agent's retract of its own approved claim waits for the holder (e2e MEMORY-01; ARCH-0040 `mcp:5`… |
 | `tests/agent_room_offer.rs` | test | s | — | — | A custom agent asks to join a room by an offer card (ARCH-0006a, OF-530 = A) |
 | `tests/agent_wake_hold.rs` | test | m | — | — | The wake hold of a sleeping resident (AGM-4 = C; agent-mind-design-v1 §1.6 #inbox-wake, ARCH-0067… |
+| `tests/anchor_docx_scenarios.rs` | test | m | — | — | Word comment-anchor scenarios across a version bump (owner ask 2026-10-16; OF-368, owner ruling 2026-10-17)… |
 | `tests/approval_target_round_trip.rs` | test | s | — | — | FIX 22398 (APPROVAL-TARGET): every approval family spends what it composed |
 | `tests/archive_import_reserved_claims.rs` | test | m | — | — | Whole-vault archive restore of a vault that holds reserved claims (FIX row… |
 | `tests/archive_import_reserved_families.rs` | test | s | — | — | The whole-vault import's one decision per reserved predicate family, and two families whose omitted rows… |
