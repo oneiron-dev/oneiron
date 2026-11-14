@@ -148,6 +148,16 @@ pub(crate) enum ArchivedSideGroup {
     ConnectorSlate,
     /// Parked gate consent and its rebuilt answer obligation.
     PendingGateConsent,
+    /// Immutable org-admin policy.
+    OrgAdmin,
+    /// Shared-act policy change requests.
+    SharedAct,
+    /// Source-audience policies before their dependent threads.
+    SourceAudience,
+    /// Edit-distance escalation standing policies.
+    EscalationPolicy,
+    /// Mail compliance switch.
+    MailCompliance,
 }
 
 /// Selects only the tables with a landing group; every other envelope stays retained-only.
@@ -211,7 +221,12 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::POLICY_SETTING_ACT.name => Some(Group::PolicySetting),
         name if name == side_table::OWNER_POLICY_CHANGE_EVENT.name => Some(Group::PolicyModel),
         name if name == side_table::OWNER_POLICY_SECRET_SCAN_RECEIPT.name
-            || name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name =>
+            || name == side_table::OWNER_POLICY_SECRET_SCAN_MODE.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_RECEIPT.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_REQUEST.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY.name
+            || name == side_table::OWNER_POLICY_WORLD_PRIVACY_UNANIMITY_OFF.name
+            || name == side_table::POLICY_HOLD_QUEUE.name =>
         {
             Some(Group::PolicyModel)
         }
@@ -253,6 +268,15 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::CONVERSATION_ROLE_GRANT.name => Some(Group::ConversationRole),
         name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
         name if name == side_table::PENDING_GATE_CONSENT.name => Some(Group::PendingGateConsent),
+        name if name == side_table::ORG_ADMIN_POLICY.name => Some(Group::OrgAdmin),
+        name if name == side_table::SHARED_ACT_POLICY_CHANGE.name => Some(Group::SharedAct),
+        name if name == side_table::SOURCE_AUDIENCE_POLICY.name => Some(Group::SourceAudience),
+        name if name == side_table::EDIT_DISTANCE_ESCALATION_POLICY.name => {
+            Some(Group::EscalationPolicy)
+        }
+        name if name == side_table::MAIL_PACK_COMPLIANCE_SETTING.name => {
+            Some(Group::MailCompliance)
+        }
         _ => None,
     }
 }
@@ -412,6 +436,31 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::PendingGateConsent => {
             crate::store::pending_gate_consent::archive_restore::land_archived_pending_gate_consent_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::OrgAdmin => {
+            crate::federation::org_admin::land_archived_org_admin_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::SharedAct => {
+            crate::federation::pending_act::policy_change::land_archived_shared_act_policy_change_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::SourceAudience => {
+            crate::source_audience::archive_restore::land_archived_source_audience_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::EscalationPolicy => {
+            crate::edit_distance::escalation::archive_restore::land_archived_escalation_policy_rows_in_txn(
+                vault, txn, permit, rows,
+            )
+        }
+        ArchivedSideGroup::MailCompliance => {
+            crate::mail_pack::compliance::land_archived_mail_compliance_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }

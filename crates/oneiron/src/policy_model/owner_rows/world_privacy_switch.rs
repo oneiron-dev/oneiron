@@ -21,6 +21,12 @@ use crate::authority::{
     ActSurface, EffectiveRead, EffectiveWorldPrivacy, KeyWork, PolicyRevision, WorldEditAuthor,
     WorldPrivacy,
 };
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::PolicyRowScope;
@@ -383,4 +389,45 @@ impl Vault {
 /// 32 bytes as lowercase hex.
 pub(super) fn hex32(bytes: &[u8; 32]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+/// Lands one archived `OWNER_POLICY_WORLD_PRIVACY_RECEIPT` envelope in `txn`: canonical
+/// outer decode and the credential predicate, then the writer's own receipt shape (keyed
+/// by its revision, first revision 1, hex ids, 64-hex revisions). Passive history: no
+/// liveness is checked, and no edit, event, key work or notification is written here.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(super) fn land_archived_world_privacy_receipt_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    let (key, value) = match decode_archived_row(&RECEIPTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    if value.revision != key {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidEncoding,
+        ));
+    }
+    let hex_ok = |hex: &str| EntityId::from_hex(hex).is_ok();
+    if value.revision == 0
+        || !hex_ok(&value.receipt_id)
+        || !hex_ok(&value.world)
+        || !hex_ok(&value.author)
+        || value.agent.as_deref().is_some_and(|hex| !hex_ok(hex))
+        || value.answer.as_deref().is_some_and(|hex| !hex_ok(hex))
+        || !hex_ok(&value.machine)
+        || parse_revision(&value.revision_after).is_none()
+        || parse_revision(&value.entry_hash).is_none()
+        || value.orphaned_from.iter().any(|hex| !hex_ok(hex))
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(
+            RetainedSideHeldBackReason::InvalidValue,
+        ));
+    }
+    install_archived_row(&RECEIPTS, vault, txn, permit, &key, row)
 }

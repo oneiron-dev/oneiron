@@ -9,6 +9,13 @@ use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
 use crate::authority::{PolicyRevision, WorldPrivacy};
+use crate::batch::export::archive_side_install::{
+    ArchivedSideRowOutcome, decode_archived_row, install_archived_row,
+};
+use crate::batch::export::{
+    ArchiveRetainedSideRow, OwnerArchiveRestorePermit, RetainedSideHeldBackReason,
+};
+use crate::consent::person_is_live_in_txn;
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::decision::{AskTo, HumanDecisionRequest, WORLD_PRIVACY_ASK_QUEUE};
@@ -16,6 +23,7 @@ use crate::model_decision::{
     AnswerContract, DecisionClass, DecisionQuestion, DecisionRung, HumanAskReason, ProviderPin,
 };
 use crate::side_table::{self, Named, SideTable};
+use crate::vault::live_entity_row_in_txn;
 use crate::{EntityId, Vault};
 
 use super::super::world_privacy_switch::hex32;
@@ -356,4 +364,91 @@ fn widen_ask(
         to: AskTo::owner(),
         correlation: Some(id),
     })
+}
+
+/// Lands one archived `OWNER_POLICY_WORLD_PRIVACY_REQUEST` envelope in `txn`: canonical
+/// outer decode and the credential predicate, then the writer's own request shape (the key
+/// names its request id, hex ids, the 64-hex revision it was decided on). A pending ask on
+/// a world a connected vault owns, or one a connected vault sent here, names a dest-alien
+/// peer and stays inert; a pending row whose world, agent or holder is not live on this
+/// vault waits for no one and stays inert; an applied row whose settings receipt is not
+/// live names a companion this pass did not land. Settled rows are history otherwise: no
+/// settings change is applied, no ask is queued, no wait is settled, nothing is signalled
+/// or notified, and the live waiters reconcile from the landed rows on their next pass.
+///
+/// # Errors
+/// Storage faults; validation stays in the returned outcome.
+pub(in crate::policy_model::owner_rows) fn land_archived_world_privacy_request_row_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    permit: &OwnerArchiveRestorePermit,
+    row: &ArchiveRetainedSideRow,
+) -> Result<ArchivedSideRowOutcome> {
+    use RetainedSideHeldBackReason::{
+        InvalidEncoding, InvalidValue, MissingCompanion, MissingLiveEntity, NonPortableReference,
+    };
+    use WorldPrivacyRequestStatus::{Applied, Declined, Pending};
+    let (key, value) = match decode_archived_row(&REQUESTS, row) {
+        Ok(decoded) => decoded,
+        Err(reason) => return Ok(ArchivedSideRowOutcome::HeldBack(reason)),
+    };
+    let id_matches = match value.id() {
+        Ok(id) => id == key,
+        Err(_) => false,
+    };
+    if !id_matches {
+        return Ok(ArchivedSideRowOutcome::HeldBack(InvalidEncoding));
+    }
+    let hex_ok = |hex: &str| EntityId::from_hex(hex).is_ok();
+    let status_ok = match &value.status {
+        Pending => true,
+        Applied { receipt_id, holder } => hex_ok(receipt_id) && hex_ok(holder),
+        Declined { holder } => hex_ok(holder),
+    };
+    if !hex_ok(&value.world)
+        || !hex_ok(&value.author)
+        || value.agent.as_deref().is_some_and(|hex| !hex_ok(hex))
+        || value.holders.iter().any(|hex| !hex_ok(hex))
+        || value.needs.iter().any(|hex| !hex_ok(hex))
+        || value.yes.iter().any(|hex| !hex_ok(hex))
+        || parse_revision(&value.seen).is_none()
+        || !status_ok
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+    }
+    if value.status == Pending && (value.owned_by.is_some() || value.asked_from.is_some()) {
+        return Ok(ArchivedSideRowOutcome::HeldBack(NonPortableReference));
+    }
+    if value.status == Pending {
+        let Some(world) = EntityId::from_hex(&value.world).ok() else {
+            return Ok(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+        };
+        if !live_entity_row_in_txn(&vault.store, txn, &world)?.is_live() {
+            return Ok(ArchivedSideRowOutcome::HeldBack(MissingLiveEntity));
+        }
+        if let Some(agent) = value.agent.as_deref() {
+            let Some(agent) = EntityId::from_hex(agent).ok() else {
+                return Ok(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+            };
+            if !live_entity_row_in_txn(&vault.store, txn, &agent)?.is_live() {
+                return Ok(ArchivedSideRowOutcome::HeldBack(MissingLiveEntity));
+            }
+        }
+        for holder in &value.holders {
+            let Some(holder) = EntityId::from_hex(holder).ok() else {
+                return Ok(ArchivedSideRowOutcome::HeldBack(InvalidValue));
+            };
+            if !person_is_live_in_txn(vault, txn, &holder)? {
+                return Ok(ArchivedSideRowOutcome::HeldBack(MissingLiveEntity));
+            }
+        }
+    }
+    if let Applied { receipt_id, .. } = &value.status
+        && vault
+            .world_privacy_receipt_in_txn(txn, receipt_id)?
+            .is_none()
+    {
+        return Ok(ArchivedSideRowOutcome::HeldBack(MissingCompanion));
+    }
+    install_archived_row(&REQUESTS, vault, txn, permit, &key, row)
 }
