@@ -1,8 +1,9 @@
 //! L8-23: a resumed pending step walks its recorded calls against the re-entered program.
 //!
 //! Entry 1 parks a step after a memory search and a claim put. Entry 2 re-enters with the same,
-//! a pure-changed, or an effect-changed program: a pure change proceeds with the divergence
-//! recorded, an effect change holds with the walk's report, and nothing re-fires. A changed
+//! a pure-changed, an effect-changed, or an effect-swapped program: a pure change proceeds with
+//! the divergence recorded, an effect change holds with the walk's report, a call swapped in
+//! before the claim put ends the walk with the put unreached, and nothing re-fires. A changed
 //! guest boundary alone is a report flag, not a refusal.
 //!
 //! Red on main: a changed guest boundary or a changed call holds the entry, and main's outcome
@@ -140,6 +141,8 @@ enum Variant {
     Same,
     PureChanged,
     EffectChanged,
+    /// A new read before the recorded claim put: the walk ends at seq 1 on an effect tail.
+    EffectSwapped,
 }
 
 /// Entry 1 parks after a memory search and a claim put; entry 2 runs `reentered`.
@@ -216,6 +219,13 @@ impl JsCodeModeRuntime for TwoEntryRuntime {
                         vec![
                             Self::search_call("alpha"),
                             self.put_call(self.new_claim, "black tea"),
+                        ]
+                    }
+                    Variant::EffectSwapped => {
+                        vec![
+                            Self::search_call("alpha"),
+                            Self::search_call("beta"),
+                            self.put_call(self.claim, "green tea"),
                         ]
                     }
                 };
@@ -436,6 +446,48 @@ fn effect_change_holds_with_report_and_fires_nothing() {
         divergence_line(&error),
         Some(
             "step 0 replays free \u{00b7} step 1 changed \u{00b7} 1 effect step would re-fire"
+                .to_owned()
+        ),
+    );
+}
+
+#[test]
+fn swapped_effect_ends_the_walk_with_the_tail_unreached() {
+    let mut fixture = Fixture::open(Variant::EffectSwapped);
+    fixture.park();
+    let frontier = fixture
+        .vault
+        .get_code_run_replay_record(&fixture.run_id)
+        .expect("the parked record reads")
+        .expect("the parked record is present")
+        .pending_step
+        .expect("the step parks pending")
+        .bridge_frontier;
+    let error = fixture
+        .reenter()
+        .expect_err("the walk ends on an effect tail and holds");
+    assert!(
+        fixture
+            .vault
+            .get_claim(&fixture.runtime.claim)
+            .expect("a claim read")
+            .is_some(),
+        "the parked claim C1 stands",
+    );
+    let record = fixture
+        .vault
+        .get_code_run_replay_record(&fixture.run_id)
+        .expect("the held record reads")
+        .expect("the held record is present");
+    let pending = record.pending_step.expect("the step is still pending");
+    assert_eq!(pending.bridge_frontier, frontier);
+    assert_eq!(record.bridge_calls.len(), frontier as usize);
+    // The put after the swapped-in read must not line up with the kept tail again: the held read
+    // took no position, yet the walk ended there.
+    assert_eq!(
+        divergence_line(&error),
+        Some(
+            "step 0 replays free \u{00b7} step 1 unreached \u{00b7} 1 effect step would re-fire"
                 .to_owned()
         ),
     );

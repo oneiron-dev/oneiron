@@ -58,6 +58,9 @@ pub(in crate::engine_executor) struct DeadlineReplay {
     /// Whether the walk turned dry: an effect step changed or went unreached,
     /// so nothing runs live for the rest of the pass.
     dry: bool,
+    /// Whether the walk ended on a tail holding an effect step: the positions past it no longer
+    /// compare, so every later call holds and the tail stays unreached (L8-23).
+    walk_ended: bool,
 }
 
 /// What one call of the resumed program meets in the walk (L8-23).
@@ -170,6 +173,7 @@ impl DeadlineReplay {
             boundary_changed: false,
             preparation_changed: false,
             dry: false,
+            walk_ended: false,
         }
     }
 
@@ -190,6 +194,11 @@ impl DeadlineReplay {
     fn take(&mut self, at: u64, call: &SelfCall, results: &[CodeRunRawOutput]) -> PreflightTake {
         if let Some(held) = self.held {
             return PreflightTake::Held(PreflightHeld::Integrity(held));
+        }
+        // A held call takes no position, so a later call could line up with the kept tail again
+        // and read as replay free (L8-23).
+        if self.walk_ended {
+            return PreflightTake::Held(PreflightHeld::Preflight);
         }
         match (
             self.guest_calls.front().copied(),
@@ -302,10 +311,11 @@ impl DeadlineReplay {
     }
 
     /// The walk ends here (L8-23): every recorded program call left is unreached and classified.
-    /// A tail holding an effect step turns the replay dry; a pure tail drops its rows and this
-    /// call runs live.
+    /// A tail holding an effect step turns the replay dry, and this call and every later one
+    /// hold; a pure tail drops its rows and this call runs live.
     fn end_walk(&mut self, results: &[CodeRunRawOutput]) -> PreflightTake {
         if self.dry {
+            self.walk_ended = true;
             return PreflightTake::Held(PreflightHeld::Preflight);
         }
         let mut tail: Vec<(CodeRunBridgeCall, Vec<CodeRunBridgeCall>)> = Vec::new();
@@ -322,6 +332,7 @@ impl DeadlineReplay {
         if holds_effect {
             self.restore_tail(tail);
             self.dry = true;
+            self.walk_ended = true;
             PreflightTake::Held(PreflightHeld::Preflight)
         } else {
             for (row, _) in &tail {
