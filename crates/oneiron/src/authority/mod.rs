@@ -235,6 +235,8 @@ pub use export_secret_work::{
 };
 pub(crate) use export_secret_work::{HolderExportBasis, HolderExportNeed, export_secret_executor};
 pub use oneiron_authority::authority::{ExportSecretWork, SealedWorkOutput};
+// The sealed-file ruling work body (Engine RULING PLAN-SEALED-FILE-RULING-CARRY).
+pub use oneiron_authority::authority::FileRulingWork;
 // The heads a root request's revision is over, its witness (FIX 5551).
 pub use oneiron_authority::authority::RootRevisionBasis;
 // The challenge a device's new owner key signs to enrol, and its proof's
