@@ -3,8 +3,8 @@
 use super::gate::{LfsAccess, authorize_request, require_lfs_write};
 use super::support::{
     ChargedBody, LFS_BATCH_NOT_FOUND, LFS_BATCH_UNPROCESSABLE, LFS_OBJECT_MEDIA_TYPE,
-    LfsMarkedRead, declared_size, href_base, lfs_disk_floor, lfs_engine_error, lfs_json_response,
-    lfs_waited_out, now_secs,
+    LfsMarkedRead, declared_size, href_base, lfs_disk_floor, lfs_engine_error,
+    lfs_install_waited_out, lfs_json_response, lfs_waited_out, now_secs,
 };
 use super::wire::{
     LfsAction, LfsBatchObject, LfsBatchOperation, LfsBatchRequest, LfsBatchResponse,
@@ -232,7 +232,7 @@ pub(crate) async fn lfs_upload(
     let outcome = match outcome {
         super::streaming::Uploaded::Stored(outcome) => outcome,
         super::streaming::Uploaded::Floored => return Ok(lfs_disk_floor()),
-        super::streaming::Uploaded::WaitedOut => return Ok(lfs_waited_out()),
+        super::streaming::Uploaded::WaitedOut => return Ok(lfs_install_waited_out()),
     };
     lfs_json_response(
         StatusCode::OK,

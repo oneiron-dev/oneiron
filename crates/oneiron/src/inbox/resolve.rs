@@ -546,7 +546,7 @@ fn accept_member_with_amendment_in_txn(
     if !delta_reasons.is_empty() {
         bump_amendment_uncaptured_in_txn(vault, wtxn, AMENDMENT_UNCAPTURED_INBOX)?;
     }
-    vault.complete_deferred_claim_in_txn(wtxn, id, false, now, learning.map(|(actor, _)| actor))?;
+    vault.complete_deferred_claim_in_txn(wtxn, id, None, now, learning.map(|(actor, _)| actor))?;
     crate::task_verb::settle_task_proposal_in_txn(
         vault,
         wtxn,

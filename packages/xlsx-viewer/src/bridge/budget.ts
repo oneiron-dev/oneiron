@@ -22,7 +22,13 @@
  * follow the engine's OPC rules, `[Content_Types].xml` is present, and no part
  * would send SheetJS to another format's reader first (OpenDocument, Numbers),
  * nor to the nested `Index.zip` it reads without this preflight.
+ *
+ * Last, every deflated entry's stream is walked as an inflater walks it,
+ * keeping none of its output (`inflate.ts`): SheetJS's inflater never stops on
+ * a stream that does not finish inside its entry, so such a stream, or one
+ * that writes other than its declared size, is refused.
  */
+import { deflateStreamFault } from "./inflate";
 
 /** The lines one preview stays within. */
 export interface PreviewBudget {
@@ -217,6 +223,8 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
     throw new WorkbookBudgetError("entries", "more entries than the budget");
   }
   const patches: [offset: number, compressed: number, expanded: number][] = [];
+  /** Each deflated entry's stream, walked once the records are known to stand apart. */
+  const streams: [data: number, compressed: number, expanded: number][] = [];
   /** Each local record, and where its name and extra field are checked once records are apart. */
   const records: [start: number, end: number, centralName: number, nameLength: number, extra: number][] = [];
   let expandedTotal = 0;
@@ -335,6 +343,7 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
       if (copyTotal > budget.copyBytes) {
         throw new WorkbookBudgetError("copyBytes", "inflating the entries copies past the copy budget");
       }
+      streams.push([data, compressed, expanded]);
     }
   }
   if (at !== end) {
@@ -359,6 +368,12 @@ export function preflightPackage(bytes: Uint8Array, budget: PreviewBudget = PREV
       throw structure("local header disagrees with the central directory");
     }
     refuseZip64(bytes, offset + 30 + nameLength, extra);
+  }
+  for (const [data, compressed, expanded] of streams) {
+    const fault = deflateStreamFault(bytes, data, data + compressed, expanded);
+    if (fault !== undefined) {
+      throw structure(`deflated entry: ${fault}`);
+    }
   }
   if (patches.length === 0) {
     return bytes;

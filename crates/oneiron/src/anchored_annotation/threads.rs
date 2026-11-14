@@ -9,7 +9,8 @@ use super::codec::{
 use super::comment_parts::comment_parts;
 use super::model::{
     ANNOTATION_BRIEF_PREDICATE, ANNOTATION_COMMENT_PREDICATE, ANNOTATION_THREAD_PREDICATE, Anchor,
-    AnnotationComment, AnnotationThread, CODE_ANCHOR_VERSION, TaskBrief, ThreadState,
+    AnnotationComment, AnnotationThread, CODE_ANCHOR_VERSION, Locator, PLAN_DOC_ANCHOR_VERSION,
+    TaskBrief, ThreadState,
 };
 use crate::Vault;
 use crate::agent_dispatch::{
@@ -21,7 +22,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::{
-    ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_TASK, artifact_family_kind_of,
+    ArtifactFamilyKindId, ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_NOTE, ENTITY_TYPE_TASK,
+    artifact_family_kind_of,
 };
 use crate::temporal::TimeRange;
 use crate::write_envelope::task_body::TaskRole;
@@ -47,6 +49,9 @@ impl Vault {
     /// artifact entity in one transaction. The anchor version must resolve to a
     /// real version in the artifact's chain. An opening comment past one stored
     /// comment's bound lands whole as linked parts in the same transaction.
+    /// A thread on a plan-doc NOTE anchors on a text span at a frontier of
+    /// the plan's text (plan mode's markup), and its head keeps that frontier
+    /// as its body anchor.
     pub fn open_annotation_thread(
         &self,
         anchor: &Anchor,
@@ -56,6 +61,9 @@ impl Vault {
         learned_at: u64,
     ) -> Result<AnnotationThread> {
         validate_comment_text(first_comment)?;
+        // An entity's type never changes, so the writer's check below holds
+        // for the type read here.
+        let on_note = self.get_entity_type(&anchor.artifact_id)? == Some(ENTITY_TYPE_NOTE);
 
         let thread_id = self.store.clock.entity_id()?;
         let head_claim_id = self.store.clock.entity_id()?;
@@ -70,14 +78,18 @@ impl Vault {
             state: ThreadState::Open,
             locator: anchor.locator.clone(),
             drift: None,
-            body: None,
+            body: if on_note { anchor.body.clone() } else { None },
         };
         let head_envelope = annotation_envelope(author, "open_thread")?;
         let comment_envelope = annotation_envelope(author, "comment")?;
         let author_id = author.entity_ref();
 
         self.with_write_txn_grouped(|wtxn| {
-            self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
+            if on_note {
+                self.require_plan_doc_anchor_in_txn(&*wtxn, anchor)?;
+            } else {
+                self.require_anchor_version_in_txn(&*wtxn, &anchor.artifact_id, anchor.version)?;
+            }
             let mut batch = self.batch_in().claim_candidate(
                 &head_claim_id,
                 ClaimCandidate::new(
@@ -577,6 +589,42 @@ impl Vault {
             )));
         }
         Ok(())
+    }
+
+    /// Refuses a thread anchor on a NOTE unless the NOTE is a plan-doc and
+    /// the anchor is a text span, at [`PLAN_DOC_ANCHOR_VERSION`], whose body
+    /// names the same span at a frontier of the plan-doc's text that holds
+    /// it (plan mode's markup, `note::plan_markup`).
+    fn require_plan_doc_anchor_in_txn(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        anchor: &Anchor,
+    ) -> Result<()> {
+        let (
+            Locator::Text {
+                char_start,
+                char_end,
+            },
+            Some(body),
+        ) = (&anchor.locator, &anchor.body)
+        else {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "a plan-doc anchor is a text span at a frontier",
+            )));
+        };
+        if anchor.version != PLAN_DOC_ANCHOR_VERSION || body.locator != anchor.locator {
+            return Err(Error::Artifact(ArtifactError::InvalidAnchor(
+                "a plan-doc anchor's version is PLAN_DOC_ANCHOR_VERSION and its body names its span",
+            )));
+        }
+        crate::note::require_plan_doc_span_in_txn(
+            self,
+            rtxn,
+            anchor.artifact_id,
+            &body.frontier,
+            *char_start,
+            *char_end,
+        )
     }
 
     pub(super) fn annotation_thread_in_txn(

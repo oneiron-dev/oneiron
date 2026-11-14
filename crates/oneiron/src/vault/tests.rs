@@ -60,7 +60,7 @@ fn resolve_policy_manifest(vault: &Vault) -> Result<crate::gate::PolicyManifestR
 fn remove_default_policy_manifest(vault: &Vault) -> Result<()> {
     let id = crate::gate::default_policy_manifest_id()?;
     vault.with_write_txn(|wtxn| {
-        crate::batch::deindex_entity_for_test(&vault.store, wtxn, &id)?;
+        crate::batch::deindex_entity_for_test(&vault, wtxn, &id)?;
         Ok(())
     })
 }

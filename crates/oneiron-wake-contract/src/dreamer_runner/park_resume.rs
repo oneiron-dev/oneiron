@@ -130,11 +130,14 @@ pub enum ParkResumer {
     PassStart,
     /// The owner's write of a resident's share that frees a resident share wait; it wakes the park's trap.
     ResidentShareRaise,
+    /// The owner's policy-manifest write that changes the policy an ExecutorError park waits on (a source-trust
+    /// ceiling, an Auto approval row); it requeues the parks of that policy once (FIX 23347).
+    PolicyChange,
 }
 
 impl ParkResumer {
     /// Every resumer, in table order.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::LaterPass,
         Self::TrapConsume,
         Self::OutageSweep,
@@ -152,6 +155,7 @@ impl ParkResumer {
         Self::SeatAvailable,
         Self::PassStart,
         Self::ResidentShareRaise,
+        Self::PolicyChange,
     ];
 }
 
@@ -180,6 +184,7 @@ impl ParkResume {
     /// | SeatAvailable | none here: only [`Self::admits_wait`] admits it, for a Seat wait | none |
     /// | PassStart | none here: only [`Self::admits_wait`] admits it, for a PassBudget wait on a Trap park | none |
     /// | ResidentShareRaise | none here: only [`Self::admits_wait`] admits it, for a ResidentShare wait on a Trap park | none |
+    /// | PolicyChange | ExecutorError | DreamerServer, AgentRuns, Workflows, Other |
     ///
     /// Typed waits narrow these rows through [`Self::admits_wait`]:
     ///
@@ -238,6 +243,15 @@ impl ParkResume {
             ParkResumer::FeedbackTriage => matches!(owner, Owner::FeedbackTriage),
             ParkResumer::OwnerRelease => {
                 Self::waits_on_owner(cause)
+                    && matches!(
+                        owner,
+                        Owner::DreamerServer | Owner::AgentRuns | Owner::Workflows | Owner::Other
+                    )
+            }
+            // An owner policy write requeues only the executor-error parks the owner may release; its index
+            // names which of them wait on the policy it changed (FIX 23347).
+            ParkResumer::PolicyChange => {
+                matches!(cause, Cause::ExecutorError)
                     && matches!(
                         owner,
                         Owner::DreamerServer | Owner::AgentRuns | Owner::Workflows | Owner::Other
@@ -918,6 +932,12 @@ mod tests {
                 !ParkResume::admits(cause, owner, ParkResumer::ResidentShareRaise),
                 "{cause:?} {owner:?}"
             );
+            // An owner policy write requeues an ExecutorError park the owner's release serves, and no other.
+            assert_eq!(
+                ParkResume::admits(cause, owner, ParkResumer::PolicyChange),
+                release && cause == DreamerParkCause::ExecutorError,
+                "{cause:?} {owner:?}"
+            );
         }
     }
 
@@ -993,7 +1013,7 @@ mod tests {
 
     #[test]
     fn a_typed_budget_wait_narrows_a_trap_park_to_its_top_up_and_trap_consume() {
-        assert_eq!(ParkResumer::ALL.len(), 17);
+        assert_eq!(ParkResumer::ALL.len(), 18);
         for cause in CAUSES {
             for owner in ParkOwnerClass::ALL {
                 for resumer in ParkResumer::ALL {

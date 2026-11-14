@@ -101,6 +101,7 @@ fn stated_reset_secs(error: &RetryableLlmError, now: u64) -> Option<u64> {
             kind: SpentKind::Window,
             retry_after,
             resets_at,
+            ..
         } => (*retry_after, resets_at),
         _ => return None,
     };
@@ -109,7 +110,7 @@ fn stated_reset_secs(error: &RetryableLlmError, now: u64) -> Option<u64> {
 
 /// When the provider limit `error` says it resets, in Unix seconds (FIX 11226): a Retry
 /// park the refusal makes comes due then. None when it states none.
-pub(super) fn stated_reset_at(error: &LlmError) -> Option<u64> {
+pub(crate) fn stated_reset_at(error: &LlmError) -> Option<u64> {
     let LlmError::Retryable(error) = error else {
         return None;
     };

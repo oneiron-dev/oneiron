@@ -106,6 +106,11 @@ crate::side_table::side_tables! {
     /// (ARCH-0032, FIX 2418). Key: id16(note).
     NOTE_OVERRIDE: VaultMeta b"note_override:v1:" Named
         [restore: content] [family: owner Note] [tier: canonical];
+    /// A plan-doc's review (plan mode): when it was proposed, and the owner's last verdict with
+    /// the revision hash it was given at. No actor ref; the proposer is the NOTE's author and the
+    /// owner is in the verdict's gate decision. Key: id16(note).
+    NOTE_PLAN_DOC_REVIEW: VaultMeta b"note_plan_doc_review:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Review bundle grouping several fork proposals under one shared explainer. Key: id16(bundle
     /// id).
     NOTE_PROPOSAL_BUNDLE: VaultMeta b"note_proposal:v1:" Named

@@ -34,7 +34,7 @@ pub(super) fn fixture_intent_with_pointers(
         quarantine_path: None,
     };
     vault
-        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door)
+        .record_receive_pack_intent(&unpinned_repo_ref(root), &stamp, &door, None)
         .expect("pre-effect durable intent");
     stamp.operation_id
 }
@@ -87,7 +87,7 @@ impl Vault {
         let attribution = existing.map_or_else(
             || fixture_attribution(self, outcome),
             |row| ReceivePackAttribution {
-                actor_id: row.actor_id,
+                actor_id: row.actor_id.id().expect("an unerased publication actor"),
                 provenance_claim_id: row.provenance_claim_id,
             },
         );

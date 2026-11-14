@@ -75,16 +75,22 @@ impl TurnText {
     ) -> Result<Vec<(EntityId, String)>> {
         let mut messages = Vec::with_capacity(self.messages.len());
         for (id, words, body) in self.messages {
-            if readable(&id)?
-                && !body.is_empty()
-                && !crate::batch::export::write_door_refuses_body(&body)
-                && !crate::batch::secret_scan::write_door_refuses_raw(words.as_bytes())
-            {
+            if readable(&id)? && message_words_released(&words, &body) {
                 messages.push((id, words));
             }
         }
         Ok(messages)
     }
+}
+
+/// Whether a door that releases a message's `words` gives them, read from
+/// `body`, the body they are read from with its document's text in it
+/// ([`TurnText::released`]): only a kept body the write door does not refuse,
+/// and only words its text rules do not refuse.
+pub(crate) fn message_words_released(words: &str, body: &[u8]) -> bool {
+    !body.is_empty()
+        && !crate::batch::export::write_door_refuses_body(body)
+        && !crate::batch::secret_scan::write_door_refuses_raw(words.as_bytes())
 }
 
 /// The words a read of `turn` at `mode` serves and the text revision that

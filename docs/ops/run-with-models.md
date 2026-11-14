@@ -1815,7 +1815,7 @@ model = "house:qwen3.8-27b"
 recipe = "prompts/decision-read/recipe.toml"   # your prompt package; relative to this file
 max_response_bytes = 67108864                  # one answer body (the default, 64 MiB)
 person_threshold = 0.9                         # the PersonThreshold row's start value
-think_threshold = 0.8                          # the ThinkThreshold row's start value
+think_threshold = 0.277                        # the ThinkThreshold row's start value (the default)
 ```
 
 The recipe is yours, not the server's (`format = 3`): it names the plain
@@ -1899,7 +1899,12 @@ reading is recorded on every receipt and routes nothing.
 
 `think_threshold` starts the ThinkThreshold row: a paired "does this need
 more thinking?" reading (Q2) at or above it lets the call step up a rung
-while its clock allows (`ReasoningCause::PairedHigh`). The house read
+while its clock allows (`ReasoningCause::PairedHigh`). It starts at 0.277,
+the p90 of the house read's Q2 over 1,000 BoolQ reads (FIX 22229), so about
+one read in ten steps up to the Big rung until the Coach tunes the row. Each
+read weighed against the row logs its route (direct, stepped up or step
+unfinished), its Q2 reading and the host's step-up rate so far, under the
+`oneiron::decision::think_route` log target. The house read
 measures Q2 jointly with each question's labels. A generated read (a
 caller's own model, `DecisionLadder::run_pack_generated`) asks the ladder's
 paired question, the recipe's `paired` wording, beside each of its questions
@@ -2928,7 +2933,25 @@ api_key_env = "ONEIRON_GPU_POD_KEY"
 id = "pod-a"
 url = "https://pod-a.example:8000/v1"
 capacity = 4
+
+# A home GPU box that takes batches only at night, in its owner's time.
+[[gpu.pods]]
+id = "home-gpu"
+url = "https://home-gpu.example:8000/v1"
+capacity = 2
+hours = { start = "22:00", end = "07:00", utc_offset = "+09:00" }
 ```
+
+A pod with `hours` takes new batches only inside them (CROSS-ARCH-0024
+#my-network 07: embeddings can run on the GPU box at night). `start` is the
+first minute in and `end` the first minute out, both `"HH:MM"` in
+`utc_offset`; a start later than the end runs across midnight. The offset is
+required and fixed, so it does not follow daylight-saving changes. A batch
+that took its lease inside the hours keeps it until the batch ends. Outside
+every pod's hours, batches go to the `[embedder]` endpoint, as with no
+healthy pod. A pod without `hours` takes batches at any hour. `serve` refuses
+a time that is not `"HH:MM"`, a start equal to the end, and an offset beyond
+14:00.
 
 `serve` polls each pod at start and then every `poll_seconds`. A pod is
 healthy when it answers at all (transport), answers `health_path` with a 2xx

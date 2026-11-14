@@ -17,7 +17,7 @@ pub(super) struct ClaimSupport {
 /// owner's direct correction, which closes the prior head at once.
 pub(super) struct ClaimLanding {
     pub(super) closure_envelope: crate::WriteEnvelope,
-    pub(super) owner_correction: bool,
+    pub(super) owner_correction: Option<super::owner_correction::OwnerCorrection>,
 }
 
 impl Memory<'_> {
@@ -61,13 +61,12 @@ impl Memory<'_> {
                 .get_claim_in_txn(content.read(), &old_id)?
                 .ok_or(Error::EntityNotFound)?;
             content.require_claim(old_id)?;
-            super::super::authorship::require_claim_self_grant_in_txn(
+            super::super::authorship::require_claim_supersede_in_txn(
                 self.vault,
                 content.read(),
                 envelope.actor(),
                 old_id,
                 &old,
-                "memory.claim.supersede",
             )?;
         }
         Ok(None)
@@ -247,9 +246,10 @@ impl Memory<'_> {
         // the only door allowed to close the prior head. The owner's own
         // direct correction is the exception (FIX 22041): it keeps the Auto
         // it requested, so the Gate judges it as the owner's fresh write, and
-        // the finish closes the prior in this write.
+        // the finish closes the prior in this write. So does the owner's
+        // ruling over their own agent's claim (OWNER-SUPERSEDES-OWN-AGENT-CLAIM).
         let owner_correction = self.owner_correction_in_txn(content.read(), write, &envelope)?;
-        if prior.is_some() && !owner_correction {
+        if prior.is_some() && owner_correction.is_none() {
             envelope = envelope.with_approval(ClaimApprovalStatus::Proposed);
         }
         self.sign_machine_claim_in_txn(content.read(), id, &candidate, &mut envelope)?;
@@ -343,11 +343,18 @@ impl Memory<'_> {
             })?;
         }
         if let Some(old_id) = prior {
-            if *owner_correction {
+            if let Some(correction) = owner_correction {
                 let owner = closure_envelope.actor();
+                let ruled_author = correction.ruled_author();
                 content.update_claim(old_id, |txn, _lane| {
-                    self.vault
-                        .supersede_by_owner_correction_in_txn(txn, &id, &old_id, owner, now)
+                    self.vault.supersede_by_owner_correction_in_txn(
+                        txn,
+                        &id,
+                        &old_id,
+                        owner,
+                        ruled_author,
+                        now,
+                    )
                 })?;
             } else {
                 content.update_claim(old_id, |txn, _lane| {

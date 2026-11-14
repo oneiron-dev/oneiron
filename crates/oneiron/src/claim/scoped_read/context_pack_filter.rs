@@ -160,6 +160,7 @@ impl ScopedRead<'_> {
             for id in &critical.budget_omitted_ids {
                 if self.is_entity_retrievable_held_in(&rtxn, &policy, &filter, id, &held)?
                     && crate::context_pack::disclosure_admits_target(
+                        self.vault,
                         &self.store_read(),
                         &rtxn,
                         disclosure,
@@ -402,7 +403,8 @@ impl ScopedRead<'_> {
         }
         let store = self.store_read();
         if let Some(clamp) = disclosure
-            && !clamp.admits_from(
+            && !clamp.admits_in_from(
+                self.vault,
                 &store,
                 rtxn,
                 &entity.id,

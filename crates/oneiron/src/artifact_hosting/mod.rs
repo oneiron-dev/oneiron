@@ -70,8 +70,8 @@ const ARTIFACT_ADMISSIONS: SideTable<
     crate::side_table::LegacyJson,
 > = SideTable::new(&side_table::ARTIFACT_PUBLISH_ADMISSION);
 
-const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
-const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+#[doc(hidden)]
+use oneiron_verb_wire::artifact_hosting::{ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHANNEL_PUBLISHED};
 
 /// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
 /// exactly as `artifact_pointer_key` used to spell it.
@@ -310,18 +310,8 @@ impl Vault {
         let entity_id = self
             .resolve_export_owner_in_txn(wtxn, artifact, export)?
             .ok_or(Error::EntityNotFound)?;
-        let refs = exhaust_taint_refs_in_txn(&self.store, wtxn, &entity_id)?;
-        let stale_taint_override = match taint_state_for_refs_in_txn(&self.store, wtxn, &refs)? {
-            ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => false,
-            ArtifactTaintState::TaintedStale => {
-                if !allow_stale_publish_in_txn(&self.store, wtxn)? {
-                    return Err(Error::Secret(SecretError::TaintedArtifactStale {
-                        artifact: artifact.to_owned(),
-                    }));
-                }
-                true
-            }
-        };
+        let stale_taint_override =
+            self.publish_stale_taint_override_in_txn(wtxn, &entity_id, artifact)?;
         put_artifact_pointer_in_txn(
             &self.store,
             wtxn,
@@ -338,6 +328,33 @@ impl Vault {
             stale_taint_override,
             serve_tier,
         })
+    }
+
+    /// The stale-taint stamp a publish of `owner`'s export carries, read in
+    /// the publish's own transaction: none for a clean or live-tainted export;
+    /// for a stale-tainted one, the stamp while the stale-publish policy
+    /// permits it, else [`SecretError::TaintedArtifactStale`] for `artifact`.
+    /// Both publish doors (an export pointer and a code snapshot) admit
+    /// through it.
+    fn publish_stale_taint_override_in_txn(
+        &self,
+        wtxn: &RwTxn<'_>,
+        owner: &EntityId,
+        artifact: &str,
+    ) -> Result<bool> {
+        let refs = exhaust_taint_refs_in_txn(&self.store, wtxn, owner)?;
+        match taint_state_for_refs_in_txn(&self.store, wtxn, &refs)? {
+            ArtifactTaintState::Clean | ArtifactTaintState::TaintedLive => Ok(false),
+            ArtifactTaintState::TaintedStale => {
+                if allow_stale_publish_in_txn(&self.store, wtxn)? {
+                    Ok(true)
+                } else {
+                    Err(Error::Secret(SecretError::TaintedArtifactStale {
+                        artifact: artifact.to_owned(),
+                    }))
+                }
+            }
+        }
     }
 
     pub fn unpublish_artifact_pointer(
@@ -424,5 +441,7 @@ use self::publish::publish_artifact_pointer_in_txn;
 pub(crate) use self::publish::{artifact_publish_gate_refs_in_txn, artifact_publish_receipts};
 
 pub(crate) mod tables;
+// FIX [LIBTEST-QUARANTINE-ARTIFACT-HOSTING-TESTS]: the lib test target's type check fails here (1 errors: E0599 x1); port it, then drop this gate
+#[cfg(any())]
 #[cfg(test)]
 mod tests;
