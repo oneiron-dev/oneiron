@@ -15,7 +15,9 @@ With neither, a machine dials no one.
      --machine yours > link.txt
    ```
 
-   Omit `--scope`: `/ws` admits only an owner-grade slip. `--machine` takes `yours`,
+   Omit `--scope` and keep `--actor-class human`: `/ws` full replication admits only the owner's
+   own full slip, so a slip narrowed by `--scope` or paired with no actor class does not sync.
+   `--machine` takes `yours`,
    `work_school` or `rented`; only the owner, in person, answers for a machine. The link lasts
    an hour and is spent once redeemed.
 

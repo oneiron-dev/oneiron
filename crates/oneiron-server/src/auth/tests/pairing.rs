@@ -40,6 +40,16 @@ fn principal(fixture: &Fixture, org: oneiron::EntityId) -> PairingPrincipal {
         comm: None,
     }
 }
+/// The vault owner's own full slip. A link mints a slip, so only the owner
+/// makes one: a full-scope slip someone else holds is refused
+/// (OWNER-GRADE-IS-NOT-OWNERSHIP).
+fn owner_slip(fixture: &Fixture) -> CapabilitySlip {
+    let owner = fixture.vault.ensure_embedded_owner_actor().unwrap();
+    fixture.mint(|claims| {
+        claims.holder_ref = owner.to_hex();
+        claims.actor_class = Some("human".into());
+    })
+}
 fn org_scope() -> Scope {
     let mut scope = Scope::top();
     scope.verbs = verbs(&["org:add-member"]);
@@ -92,7 +102,7 @@ async fn owner_approved_org_ticket_delivers_fixed_principal_and_only_approved_po
         &server,
         "POST",
         "/v1/core/pairing/links",
-        fixture.headers(&fixture.mint(|_| {})),
+        fixture.headers(&owner_slip(&fixture)),
         Some(payload),
     )
     .await;
@@ -242,7 +252,7 @@ async fn mixed_org_request_is_refused_and_generic_pairing_remains_available() {
         &server,
         "POST",
         "/v1/core/pairing/links",
-        fixture.headers(&fixture.mint(|_| {})),
+        fixture.headers(&owner_slip(&fixture)),
         Some(json!({"scope":scope,"lifetime_secs":600,"principal":principal(&fixture, org)})),
     )
     .await;
@@ -286,7 +296,7 @@ async fn paired_mcp_enrollment_requires_holder_proof_and_consumes_both_header_no
         &server,
         "POST",
         "/v1/core/pairing/links",
-        fixture.headers(&fixture.mint(|_| {})),
+        fixture.headers(&owner_slip(&fixture)),
         Some(json!({"scope":scope,"lifetime_secs":600,"principal":{
             "holder_ref":fixture.actor.to_hex(),"actor_class":"human"}})),
     )
