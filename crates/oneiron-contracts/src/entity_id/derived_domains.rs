@@ -435,6 +435,11 @@ pub const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.a
 /// offering actor. No parts: policy binds this one engine writer.
 pub const PLUGIN_SECTION_FIT_INSTALL_ACTOR: &[u8] = b"oneiron.plugin-section.fit-install.actor.v1";
 
+/// The commitment lapse writer (`housekeeping::lapse_writer`), the System
+/// MACHINE a host-run lapse lands under, distinct from the owner and from the
+/// commitment projector. No parts: policy binds this one engine writer.
+pub const COMMITMENT_LAPSE_ACTOR: &[u8] = b"oneiron.commitment.lapse.actor.v1";
+
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
 pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
@@ -544,4 +549,5 @@ pub(crate) const ALL: [&[u8]; 71] = [
     VAD_ANNOTATION_CLAIM,
     ESIGN_DOCUMENT_COMMITMENT,
     RESIDENT_MESSAGE_ASK,
+    COMMITMENT_LAPSE_ACTOR,
 ];

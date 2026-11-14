@@ -162,6 +162,7 @@ fn the_receipt_log_carries_ids_and_codes_never_run_text() {
             seat: None,
             source_rows: None,
             initiator: None,
+            world: None,
         })),
         instance: oneiron::EntityId::now(),
         occurred_at: 0,

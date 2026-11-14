@@ -153,6 +153,12 @@ pub(crate) fn engine_thread(name: String) -> std::thread::Builder {
 /// runs blocking work in line (`server::blocking`) leaves the worker with
 /// `block_in_place`, which a `LocalSet` forbids; on a current-thread runtime
 /// it holds the only executor thread while that work runs.
+///
+/// Serve it with `into_make_service_with_connect_info::<SocketAddr>()`, as
+/// [`managed::BoundServeListener`] does. A server with
+/// `allow_unauthenticated` and no `auth_secret` answers only callers on this
+/// device, and a connection that recorded no peer is not on it: such an app
+/// refuses every request with 401 (ARCH-0028 #unauth-loopback-open).
 pub fn build_app(server: Arc<SyncServer>) -> Router {
     let position = if server.managed_issuer.is_some() || server.vault().is_host_readable() {
         // A cloud node's provider requests skip gzip (ARCH-0081 §6, OF-603).
@@ -185,10 +191,15 @@ pub fn build_app_for_position(
     };
     Router::new()
         .merge(handler::ws_routes(server.clone()))
-        .merge(api::api_routes(server))
+        .merge(api::api_routes(server.clone()))
         .merge(web_client::routes(web_client::EndpointDescriptor::engine(
             position, mode,
         )))
+        // Outermost, so a hatch server's off-device caller reaches no route.
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            auth::refuse_off_device_hatch_callers,
+        ))
 }
 
 /// Builds the artifact-only app: `/a/` and nothing else, for a listener of
@@ -196,7 +207,10 @@ pub fn build_app_for_position(
 /// Serve it beside [`build_app`] over the same server, and record its port
 /// with [`SyncServer::with_artifact_listener`] before the server is shared.
 pub fn build_artifact_app(server: Arc<SyncServer>) -> Router {
-    api::artifact_app(server)
+    api::artifact_app(server.clone()).layer(axum::middleware::from_fn_with_state(
+        server,
+        auth::refuse_off_device_hatch_callers,
+    ))
 }
 
 #[cfg(test)]
