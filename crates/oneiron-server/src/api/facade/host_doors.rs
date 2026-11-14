@@ -60,6 +60,8 @@ pub(crate) use super::agent_definition_doors::*;
 pub(crate) use super::agent_grant_doors::*;
 // The owner's verdict on a plan-doc (plan mode) too.
 pub(crate) use super::plan_doc_doors::*;
+// A check-in holder's answer (ROLES-CHECKIN P2.3c), likewise.
+pub(crate) use super::check_in_doors::*;
 // The Steward doors: member asks, the system-agent grant narrowing and the
 // engine-control receipts (untangle 6.3, 6.6).
 pub(crate) use super::steward_doors::*;
@@ -96,7 +98,10 @@ pub(crate) use super::cleanup_doors::*;
 pub(crate) use super::clustering_doors::*;
 pub(crate) use super::default_facet_doors::*;
 pub(crate) use super::extraction_doors::*;
+pub(crate) use super::hosted_import_doors::*;
 pub(crate) use super::identity_doors::*;
+// The image organ's edit door (L4-15) too.
+pub(crate) use super::image_edit_doors::vault_artifacts_image_edit;
 pub(crate) use super::legal_hold_doors::*;
 pub(crate) use super::linear_doors::*;
 pub(crate) use super::live_run_doors::*;

@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Retrieval kernels of the oneiron engine: the multilingual analyzer, cosine distance and score fusion"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 # No doc-comment code fences in this crate.

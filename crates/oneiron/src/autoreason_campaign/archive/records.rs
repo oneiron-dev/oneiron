@@ -42,11 +42,10 @@ pub struct CampaignArchiveInstall {
     pub proposal: ArchiveAxesProposal,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignArchiveRequest {
-    pub root: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::archive::records::{
+    CampaignArchiveAdmission, CampaignArchiveRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -107,17 +106,6 @@ pub struct CampaignArchiveCoverage {
     pub descriptor_revision: String,
     pub incumbent_outputs: Vec<ArchiveOutputRef>,
     pub candidate_outputs: Vec<ArchiveOutputRef>,
-}
-
-/// Admission to the coverage floor only; other promotion gates still apply.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CampaignArchiveAdmission {
-    pub descriptor_revision: String,
-    pub candidate: EntityId,
-    pub required_cells: Vec<ArchiveCell>,
-    pub covered_cells: Vec<ArchiveCell>,
-    pub admitted: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

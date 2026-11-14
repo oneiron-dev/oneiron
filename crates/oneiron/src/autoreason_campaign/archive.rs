@@ -60,28 +60,8 @@ impl ArchiveOutputRef {
     }
 }
 
-/// Coordinates use the axis order in the pinned definition. Cluster cells are
-/// deliberately unnamed and cannot mix with categorical cells.
-#[derive(
-    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ArchiveCell {
-    Axes { bins: Vec<String> },
-    Cluster { index: usize },
-}
-
-/// The scoring definition shared by every output in this campaign: a judge
-/// SKILL (`metric_id`, its entity id in hex) at its pinned package revision
-/// (`revision`, the package's canonical tree hash in lowercase hex). A rubric
-/// edit re-pins the judge, so it needs a new campaign (RULING
-/// ARCHIVE-QUALITY-RULER, 13 Nov 22:47).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveQualityMetric {
-    pub metric_id: String,
-    pub revision: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::archive::{ArchiveCell, ArchiveQualityMetric};
 
 /// Immutable campaign descriptor. Its content hash binds every receipt to the
 /// task, human goal revision, quality ruler, proposal and sample outputs.
