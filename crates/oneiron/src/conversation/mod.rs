@@ -35,6 +35,8 @@ pub(crate) use deletion::{
 };
 pub use live_speakers::{LiveSpeakerCall, RoomLiveSpeakerEntries};
 pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_speakers};
+#[cfg(oneiron_test_support)]
+pub(crate) use membership::test_support as membership_index_test_support;
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use output_guard::ContainerOutputGuard;
 pub use output_guard::OutputMark;

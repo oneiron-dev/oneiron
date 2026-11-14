@@ -48,6 +48,17 @@ pub struct MembershipRow {
 }
 pub use crate::memory::conversation_membership::MembershipWindow;
 
+#[cfg(oneiron_test_support)]
+thread_local! {
+    static LEDGER_ROWS_FOLDED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+/// rows this thread's whole-ledger scans decoded, for tests/membership_index.rs (L6-16). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn ledger_rows_folded_for_test() -> u64 {
+    LEDGER_ROWS_FOLDED.get()
+}
+
 pub(super) fn revision_in(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
@@ -73,6 +84,8 @@ pub(super) fn rows_in(
 ) -> Result<Vec<MembershipRow>> {
     let mut rows = Vec::new();
     for (_, row) in MEMBERSHIP_ROWS.scan_from(store, txn, conversation.as_bytes())? {
+        #[cfg(oneiron_test_support)]
+        LEDGER_ROWS_FOLDED.set(LEDGER_ROWS_FOLDED.get() + 1);
         if row.v != MEMBERSHIP_ROW_VERSION
             || rows
                 .last()
@@ -543,5 +556,70 @@ impl Vault {
                 &body.to_bytes()?,
             )
             .apply(txn)
+    }
+}
+
+/// Fold and index controls for tests/membership_index.rs (L6-16). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) mod test_support {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    pub(crate) fn ledger_rows_folded() -> u64 {
+        ledger_rows_folded_for_test()
+    }
+
+    pub(crate) fn folded_members_at(
+        vault: &Vault,
+        room: EntityId,
+        at: u64,
+    ) -> Result<BTreeSet<EntityId>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(members_at_rows(&rows_in(&vault.store, &txn, room)?, at))
+    }
+
+    pub(crate) fn folded_windows(
+        vault: &Vault,
+        room: EntityId,
+        person: EntityId,
+    ) -> Result<Vec<MembershipWindow>> {
+        let txn = vault.store.env.read_txn()?;
+        windows_rows(&rows_in(&vault.store, &txn, room)?, person)
+    }
+
+    pub(crate) fn folded_current_join(
+        vault: &Vault,
+        room: EntityId,
+        person: EntityId,
+    ) -> Result<Option<u64>> {
+        let txn = vault.store.env.read_txn()?;
+        let mut current = None;
+        for (index, row) in (0_u64..).zip(rows_in(&vault.store, &txn, room)?) {
+            if row.person != person {
+                continue;
+            }
+            match row.action {
+                MembershipAction::Join => current = Some(index),
+                MembershipAction::Leave => current = None,
+                MembershipAction::History => {}
+            }
+        }
+        Ok(current)
+    }
+
+    pub(crate) fn folded_ever_members(vault: &Vault, room: EntityId) -> Result<BTreeSet<EntityId>> {
+        let txn = vault.store.env.read_txn()?;
+        Ok(rows_in(&vault.store, &txn, room)?
+            .into_iter()
+            .filter(|row| row.action == MembershipAction::Join)
+            .map(|row| row.person)
+            .collect())
+    }
+
+    pub(crate) fn set_ledger_revision(vault: &Vault, room: EntityId, revision: u64) -> Result<()> {
+        let mut txn = vault.store.env.write_txn()?;
+        MEMBERSHIP_SEQ.put(&vault.store, &mut txn, &room, &revision)?;
+        txn.commit()?;
+        Ok(())
     }
 }
