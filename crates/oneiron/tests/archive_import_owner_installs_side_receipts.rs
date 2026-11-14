@@ -720,6 +720,10 @@ fn a_destination_act_at_the_same_sequence_stays_live_and_the_source_act_stays_re
 /// A Delivered send summary without its idempotency support is held back.
 #[test]
 fn a_delivered_send_summary_without_its_idempotency_support_is_held_back() {
+    // A provider channel that no built-in pack names: the seeded vault holds
+    // its built-in email packs only as candidates, and a channel one of them
+    // serves sends only through an installed, checked pack.
+    const SEND_CHANNEL: &str = "email_resend";
     let source_dir = tempfile::tempdir().expect("temp dir for the source vault");
     let source_clock = ManualClock::new(90);
     let mut source_config = VaultConfig::default();
@@ -769,7 +773,7 @@ fn a_delivered_send_summary_without_its_idempotency_support_is_held_back() {
         scope,
         selectors: Some(PolicyGrantValue::Map(vec![PolicyGrantMapEntry {
             key: PolicyGrantValue::String("channel".to_owned()),
-            value: PolicyGrantValue::String("email".to_owned()),
+            value: PolicyGrantValue::String(SEND_CHANNEL.to_owned()),
         }])),
         budget: None,
         receipt_required: false,
@@ -784,12 +788,12 @@ fn a_delivered_send_summary_without_its_idempotency_support_is_held_back() {
             manifest,
         },
     )
-    .expect("the owner grants the agent email sends");
+    .expect("the owner grants the agent sends on the channel");
     source
         .register_connector_key(
             &fixed_id(0x4E),
             ConnectorKeyRecord::active(
-                "email",
+                SEND_CHANNEL,
                 None,
                 vec![EffectorBudget::sends(
                     5,
@@ -802,10 +806,10 @@ fn a_delivered_send_summary_without_its_idempotency_support_is_held_back() {
                 1_000,
             ),
         )
-        .expect("the source registers the email sends key");
+        .expect("the source registers the channel's sends key");
     let draft = OutboundDraftInput {
         verb: "send".to_owned(),
-        channel: "email".to_owned(),
+        channel: SEND_CHANNEL.to_owned(),
         target: "transport:shared-inbox".to_owned(),
         on_behalf_of: None,
         content_ref: None,
@@ -1009,6 +1013,26 @@ fn restored_free_time_and_team_receipts_install_as_history()
         Some(team.clone()),
         "the owner import installs the team receipt live"
     );
+    // A restored agent definition comes back switched off and proposed, and
+    // an agent that is off opens no free-time cycle. The owner turns it back
+    // on, as after any restore.
+    let mut restored = dest
+        .get_agent_definition(&source_agent)?
+        .expect("the destination holds the restored agent");
+    assert!(
+        !restored.enabled,
+        "an owner import restores an agent definition switched off"
+    );
+    restored.enabled = true;
+    restored.approval_status = oneiron::ClaimApprovalStatus::Approved;
+    restored.version = "2".to_owned();
+    dest.update_agent_definition_as(
+        &dest_owner,
+        &source_agent,
+        &restored,
+        TimeRange { start: 2, end: 2 },
+        2,
+    )?;
     dest.set_free_time_policy(
         &dest_owner,
         None,
