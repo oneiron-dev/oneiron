@@ -13,18 +13,18 @@ const UNSCOPED: &str = "kettle by the stove credkey";
 
 /// A project room holding the owner and the vault's own agent. One message
 /// was said in a relationship's space, one in none.
-struct Room {
+pub(super) struct Room {
     _dir: tempfile::TempDir,
-    server: Arc<SyncServer>,
-    owner: oneiron::EntityId,
-    agent: oneiron::EntityId,
-    room: oneiron::EntityId,
+    pub(super) server: Arc<SyncServer>,
+    pub(super) owner: oneiron::EntityId,
+    pub(super) agent: oneiron::EntityId,
+    pub(super) room: oneiron::EntityId,
     space: oneiron::EntityId,
     spaced: oneiron::EntityId,
     unscoped: oneiron::EntityId,
 }
 
-fn room() -> Room {
+pub(super) fn room() -> Room {
     let (_dir, server) = interlocutor_test_server();
     // The consent door takes only the vault's live owner, on a personal vault
     // its embedded owner, as the signer of a project's birth.
@@ -117,7 +117,7 @@ fn room() -> Room {
 }
 
 impl Room {
-    fn agent_recipe(&self, records: Option<&[oneiron::EntityId]>) -> String {
+    pub(super) fn agent_recipe(&self, records: Option<&[oneiron::EntityId]>) -> String {
         let mut recipe = format!(
             "scope=core:read;principal_ref={};actor_class=agent",
             self.agent.to_hex()
@@ -1044,9 +1044,12 @@ async fn legacy_discovery_counts_only_what_the_credential_reads() {
     assert_eq!(messages(agent).await, owner);
 }
 
-/// F16 H145: a room's roster resolves for a caller that reads the room or
-/// sits in it. Anyone else naming the room gets what a missing room gets,
-/// and no member's id.
+/// F16 H145, narrowed by L9-52 (Engine RULING L9-52-ROOM-STRUCTURE = A, 14
+/// Nov 14:29): a room's roster resolves for a caller its room admits, the
+/// owner, a member, or a reader on a live grant that opens the room's
+/// relationship. Anyone else naming the room gets what a missing room
+/// gets, and no member's id, a reader whose lane reads the room's row
+/// included.
 #[tokio::test]
 async fn a_room_its_reader_cannot_read_is_a_missing_room() {
     let room = room();
@@ -1093,10 +1096,17 @@ async fn a_room_its_reader_cannot_read_is_a_missing_room() {
     );
     let (status, body) = pack(room.room).await;
     assert_eq!(
-        status,
-        StatusCode::OK,
-        "a reader that reads the room resolves it: {body}"
+        (status, &body["error"]["code"], &body["error"]["details"]),
+        (
+            missing_status,
+            &missing["error"]["code"],
+            &missing["error"]["details"]
+        ),
+        "an outsider whose lane reads the room reads it as missing: {body}"
     );
+    for member in [room.owner, room.agent] {
+        assert!(!body.to_string().contains(&member.to_hex()), "{body}");
+    }
 }
 
 /// F16 round 3 (Sol F3) and round 4 (Sol F2 = Astra F2): membership stands

@@ -64,6 +64,7 @@ mod retrieval_bounds;
 mod retrieval_bounds_rows;
 mod retrieval_depth_quality;
 mod retrieval_shaping;
+mod room_structure_doors;
 mod run_gate;
 mod run_tree;
 mod search_deadline;
