@@ -50,6 +50,13 @@ pub enum ActBy {
     /// An agent whose live Grant names this act. An agent is never
     /// relabelled as the owner.
     Agent { agent: EntityId, grant: EntityId },
+    /// A PERSON acting in their own right, not as a vault owner: the
+    /// record's `owner` names that person, authenticated at the writer. A
+    /// person is never relabelled as the owner either. It carries one act
+    /// only, the custody revoke of a key the person wrote and ruled no
+    /// secret (Engine RULING L6-03-WRITER-CARRY, 14 Nov 06:16); see
+    /// [`OwnerAct::validate_carried`].
+    Person,
 }
 
 /// Where the owner's say-so reached the carrier. Audit and receipts only: no
@@ -233,7 +240,8 @@ pub struct OwnerAct {
     /// The PERSON whose will this is: a live vault owner, by the existing
     /// resolver (the embedded PERSON, or a live Owner-role member of a shared
     /// vault). A per-world owner rule replaces the resolver behind this
-    /// field later; the record's shape does not change.
+    /// field later; the record's shape does not change. A person act
+    /// ([`ActBy::Person`]) names the person who acted, who owns no vault.
     pub owner: EntityId,
     pub by: ActBy,
     /// Audit and receipts only.
@@ -273,12 +281,37 @@ impl OwnerAct {
         }
     }
 
+    /// `person`'s own act of kind `act` on `target`, decided from `surface`
+    /// on revision `seen`: a PERSON acting in their own right, never
+    /// relabelled as the owner ([`ActBy::Person`]).
+    #[must_use]
+    pub fn by_person(
+        person: EntityId,
+        act: OwnerActKind,
+        target: EntityId,
+        surface: ActSurface,
+        seen: [u8; 32],
+    ) -> Self {
+        Self {
+            owner: person,
+            by: ActBy::Person,
+            surface,
+            act,
+            target,
+            seen,
+            answer: None,
+        }
+    }
+
     /// The check every carrying op runs: the record names the op's own kind
-    /// and target, and only the owner's own say-so answers an ask.
+    /// and target, only the owner's own say-so answers an ask, and a
+    /// person's own act is a custody transition (which custody change, the
+    /// owner work request judges: a revoke alone).
     pub fn validate_carried(&self, act: OwnerActKind, target: EntityId) -> Result<()> {
         if self.act != act
             || self.target != target
             || (self.answer.is_some() && self.by != ActBy::Owner)
+            || (self.by == ActBy::Person && act != OwnerActKind::CustodyTransition)
         {
             return Err(invalid_authority());
         }
@@ -322,12 +355,16 @@ pub fn owner_act_from_value(value: &Value) -> Result<OwnerAct> {
     decode_owner_act(value)
 }
 
-/// The record's value, the map an op carries under [`OP_KEY_ACT`].
+/// The record's value, the map an op carries under [`OP_KEY_ACT`]. A person
+/// act ([`ActBy::Person`]) is `by: "person"` with no agent and no grant: the
+/// key set stays the one every signed entry was written with, so their
+/// bytes, hashes and signatures re-encode unchanged.
 pub(super) fn owner_act_value(act: &OwnerAct) -> Value {
     let id = |id: &EntityId| Value::from(id.to_hex());
     let (by, agent, grant) = match &act.by {
         ActBy::Owner => ("owner", Value::Nil, Value::Nil),
         ActBy::Agent { agent, grant } => ("agent", id(agent), id(grant)),
+        ActBy::Person => ("person", Value::Nil, Value::Nil),
     };
     let (surface, surface_machine) = match &act.surface {
         ActSurface::ThisInstall => ("this_install", Value::Nil),
@@ -369,6 +406,7 @@ pub(super) fn decode_owner_act(value: &Value) -> Result<OwnerAct> {
     ) {
         (Some("owner"), None, None) => ActBy::Owner,
         (Some("agent"), Some(agent), Some(grant)) => ActBy::Agent { agent, grant },
+        (Some("person"), None, None) => ActBy::Person,
         _ => return Err(invalid_authority()),
     };
     let surface = match (

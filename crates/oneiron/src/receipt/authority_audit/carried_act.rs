@@ -16,6 +16,9 @@ pub(super) fn classify_policy_setting(
     let (holder_ref, grant_ref) = match set.act.by {
         ActBy::Owner => (None, None),
         ActBy::Agent { agent, grant } => (Some(agent.to_hex()), Some(grant.to_hex())),
+        // No setting takes a person's own act (`OwnerAct::validate_carried`);
+        // were one stored, its row names the person who acted.
+        ActBy::Person => (Some(set.act.owner.to_hex()), None),
     };
     let change = if set.value.is_some() { "set" } else { "clear" };
     (

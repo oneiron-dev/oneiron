@@ -210,8 +210,14 @@ impl Vault {
         }
         let rotation =
             self.revoke_secret_in_txn(&mut wtxn, secret_ref, super::RevokeCause::Revoked, at)?;
-        let custody =
-            self.carry_custody_revoke_in_txn(&mut wtxn, actor, surface, secret_ref, at)?;
+        let custody = self.carry_custody_revoke_in_txn(
+            &mut wtxn,
+            actor,
+            crate::authority::ActBy::Owner,
+            surface,
+            secret_ref,
+            at,
+        )?;
         wtxn.commit()?;
         self.mirror_custody_change(&custody);
         Ok(SecretRevoked { rotation, custody })

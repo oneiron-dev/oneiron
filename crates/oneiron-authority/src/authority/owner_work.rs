@@ -18,6 +18,9 @@
 //! ([`WorldPrivacyWorkBasis`], FIX 4704): it carries that edit's own act,
 //! whoever's it is (a holder who owns no vault, or an agent within its
 //! Grant), never a new key act, and binds the key to a live vault owner.
+//! One custody change is a person's own act ([`ActBy::Person`]): the revoke
+//! of a key the person wrote and ruled no secret (Engine RULING
+//! L6-03-WRITER-CARRY), labelled as theirs, never as the owner's.
 //!
 //! The first kind is a world's key work ([`OwnerWorkBody::WorldKey`]): ensure
 //! the world's key after a settings edit, or re-assert the executor's own
@@ -460,8 +463,18 @@ impl OwnerWorkRequest {
         self.act
             .validate_carried(self.work.kind().act(), self.act.target)?;
         // Key, custody and root acts are owner-only until a Grant line names
-        // them (Engine 10-19 02:2x).
-        if self.act.by != ActBy::Owner {
+        // them (Engine 10-19 02:2x). One custody change is a person's own:
+        // the revoke of a key they wrote and ruled no secret (Engine RULING
+        // L6-03-WRITER-CARRY, 14 Nov 06:16), carried as theirs.
+        let person_revoke = self.act.by == ActBy::Person
+            && matches!(
+                self.work,
+                OwnerWorkBody::Custody {
+                    change: CustodyChange::Revoke,
+                    ..
+                }
+            );
+        if self.act.by != ActBy::Owner && !person_revoke {
             return Err(invalid_authority());
         }
         // A root change is done on the install it changes, and only there,

@@ -434,7 +434,7 @@ impl Vault {
                 set_by_agent: matches!(actor.by, ActBy::Agent { .. }).then_some(actor.acting),
                 set_grant: match actor.by {
                     ActBy::Agent { grant, .. } => Some(grant),
-                    ActBy::Owner => None,
+                    ActBy::Owner | ActBy::Person => None,
                 },
                 set_at,
                 holder_not_before: None,
