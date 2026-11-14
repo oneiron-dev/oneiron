@@ -15,6 +15,14 @@
 //! `an_owner_who_hands_ownership_on_and_stays_as_admin_keeps_no_owner_key`
 //! (the key stays live, and the owner verb still passes). Guard, which passes
 //! on main too: `removing_another_owner_leaves_an_owners_key_and_binding`.
+//!
+//! Part 2: an added Owner's first owner key binds them as `human` in the
+//! enrolment's transaction, signed by the enrolment's predecessor, on a
+//! self-hosted vault (BIND-TIMING, BIND-SIGNER and OP-SHAPE = A, the Engine
+//! 16:23; KEY-ORIGIN = A, the lead 16:2x). Red before it:
+//! `an_added_owners_first_owner_key_binds_them` (the added Owner's owner verb
+//! answers OWNER_BINDING_REQUIRED). Guard: an Owner a binding names already,
+//! the embedded owner included, gains no second one.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_enrol`.
 #![cfg(oneiron_test_support)]
@@ -23,7 +31,8 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActAuthority, ActSurface, HostSlipIssuer, MachineRole, OwnerKeyEnrollment,
+    ActAuthority, ActSurface, ActorBindingStatus, AuthorityKey, HostSlipIssuer, MachineRole,
+    OwnerKeyEnrollment,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
@@ -31,7 +40,6 @@ use oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
-use oneiron::test_doors::owner_enrol::bind_owner_key;
 use oneiron::test_support::bind_host_owner;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 
@@ -163,6 +171,19 @@ impl Shared {
             .live
     }
 
+    /// The person a live `human` binding on `public_key` names, if any.
+    fn bound_to(&self, public_key: [u8; 32]) -> Option<EntityId> {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .actor_bindings
+            .get(&AuthorityKey::Ed25519(public_key))
+            .filter(|binding| {
+                binding.status == ActorBindingStatus::Active && binding.actor_class == "human"
+            })
+            .map(|binding| binding.actor_ref)
+    }
+
     fn passes_owner_verbs(&self, person: EntityId) -> bool {
         match self
             .vault
@@ -177,11 +198,9 @@ impl Shared {
         }
     }
 
-    /// The co-Owner's own key, enrolled and bound to them.
+    /// The co-Owner's own key, enrolled, which binds them.
     fn bound_co_owner_key(&self) -> [u8; 32] {
         let key = self.enrol_owner_key(self.co_owner, 7);
-        bind_owner_key(&self.vault, &self.issuer, key, self.co_owner)
-            .expect("the co-Owner's key bound to them");
         assert!(self.key_is_live(key), "the enrolled key is live");
         assert!(
             self.passes_owner_verbs(self.co_owner),
@@ -261,4 +280,51 @@ fn an_owner_who_hands_ownership_on_and_stays_as_admin_keeps_no_owner_key() {
         shared.passes_owner_verbs(shared.owner),
         "the Owner who stays keeps the host root's binding"
     );
+}
+
+#[test]
+fn an_added_owners_first_owner_key_binds_them() {
+    let shared = shared();
+    assert!(
+        !shared.passes_owner_verbs(shared.co_owner),
+        "an added Owner holds no binding before their first owner key"
+    );
+
+    let key = shared.enrol_owner_key(shared.co_owner, 7);
+
+    assert_eq!(
+        shared.bound_to(key),
+        Some(shared.co_owner),
+        "the added Owner's first owner key is bound to them"
+    );
+    assert!(
+        shared.passes_owner_verbs(shared.co_owner),
+        "the added Owner passes the owner verbs"
+    );
+    assert!(
+        shared.passes_owner_verbs(shared.owner),
+        "the first owner keeps the host root's binding"
+    );
+    let second = shared.enrol_owner_key(shared.co_owner, 8);
+    assert!(shared.key_is_live(second), "a second owner key enrols");
+    assert_eq!(
+        shared.bound_to(second),
+        None,
+        "an Owner a live binding names gains no second one"
+    );
+}
+
+#[test]
+fn the_embedded_owners_enrolled_key_binds_no_one() {
+    let shared = shared();
+
+    let key = shared.enrol_owner_key(shared.owner, 9);
+
+    assert!(shared.key_is_live(key), "the embedded owner's key enrols");
+    assert_eq!(
+        shared.bound_to(key),
+        None,
+        "the host root binds the embedded owner already"
+    );
+    assert!(shared.passes_owner_verbs(shared.owner));
 }
