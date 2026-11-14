@@ -42,8 +42,8 @@ const PACKS: [(&str, &str); 8] = [
         include_str!("../../../../../packs/builtin/telegram/PACK.md"),
     ),
     (
-        "sheets",
-        include_str!("../../../../../packs/builtin/sheets/PACK.md"),
+        "google",
+        include_str!("../../../../../packs/builtin/google/PACK.md"),
     ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
@@ -79,8 +79,8 @@ const SETUP_SKILLS: [(&str, &str); 8] = [
         include_str!("../../../../../packs/builtin/telegram/skills/setup/SKILL.md"),
     ),
     (
-        "sheets",
-        include_str!("../../../../../packs/builtin/sheets/skills/setup/SKILL.md"),
+        "google",
+        include_str!("../../../../../packs/builtin/google/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";

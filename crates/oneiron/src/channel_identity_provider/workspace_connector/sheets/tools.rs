@@ -1,4 +1,4 @@
-//! The four Sheets tools (FIX 4862): their names, typed inputs and input
+//! The four `google.sheets` tools (FIX 4862): their names, typed inputs and input
 //! schemas. Arguments are spelled as the Sheets v4 REST fields are, so an
 //! agent that knows the API writes them as it knows them. Each input is typed
 //! at its top level; a structural request passes through as JSON, checked
@@ -8,10 +8,9 @@ use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Map, Value, json};
 
+use super::super::{ARGUMENTS_INVALID, WorkspaceTool};
 use super::{SHEETS_READ_GRANT, SHEETS_WRITE_GRANT};
 
-/// The reason code of arguments that are not the tool's input.
-pub(super) const ARGUMENTS_INVALID: &str = "connector_arguments_invalid";
 /// The most ranges one read or write names.
 const MAX_RANGES: usize = 100;
 /// The most structural requests one `spreadsheets.batchUpdate` carries.
@@ -23,7 +22,7 @@ const MAX_RANGE_BYTES: usize = 512;
 
 /// One `google.sheets` tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum SheetsTool {
+pub(super) enum SheetsTool {
     /// `spreadsheets.get`: the spreadsheet's title, and each sheet's id,
     /// title, index and grid size.
     SpreadsheetGet,
@@ -39,7 +38,7 @@ pub(crate) enum SheetsTool {
 
 impl SheetsTool {
     /// Every tool, in catalog order.
-    pub(crate) const ALL: [Self; 4] = [
+    pub(super) const ALL: [Self; 4] = [
         Self::SpreadsheetGet,
         Self::ValuesBatchGet,
         Self::ValuesBatchUpdate,
@@ -47,7 +46,7 @@ impl SheetsTool {
     ];
 
     /// The tool's name, as `connector.call` names it.
-    pub(crate) const fn as_str(self) -> &'static str {
+    pub(super) const fn as_str(self) -> &'static str {
         match self {
             Self::SpreadsheetGet => "spreadsheets.get",
             Self::ValuesBatchGet => "values.batchGet",
@@ -57,17 +56,17 @@ impl SheetsTool {
     }
 
     /// The tool `name` names.
-    pub(crate) fn parse(name: &str) -> Option<Self> {
+    pub(super) fn parse(name: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|tool| tool.as_str() == name)
     }
 
     /// Whether the tool changes the spreadsheet.
-    pub(crate) const fn writes(self) -> bool {
+    pub(super) const fn writes(self) -> bool {
         matches!(self, Self::ValuesBatchUpdate | Self::StructuralBatchUpdate)
     }
 
     /// The pack grant the owner must have allowed for a call of the tool.
-    pub(crate) const fn grant(self) -> &'static str {
+    pub(super) const fn grant(self) -> &'static str {
         if self.writes() {
             SHEETS_WRITE_GRANT
         } else {
@@ -75,8 +74,17 @@ impl SheetsTool {
         }
     }
 
+    /// The tool as the workspace core lists it.
+    pub(super) const fn descriptor(self) -> WorkspaceTool {
+        WorkspaceTool {
+            name: self.as_str(),
+            grant: self.grant(),
+            writes: self.writes(),
+        }
+    }
+
     /// The tool's input schema, typed at its top level.
-    pub(crate) fn input_schema(self) -> Value {
+    pub(super) fn input_schema(self) -> Value {
         let spreadsheet_id = json!({
             "type": "string",
             "minLength": 1,
@@ -303,15 +311,6 @@ impl SheetsCall {
             Ok(call)
         } else {
             Err(ARGUMENTS_INVALID)
-        }
-    }
-
-    pub(super) const fn tool(&self) -> SheetsTool {
-        match self {
-            Self::SpreadsheetGet { .. } => SheetsTool::SpreadsheetGet,
-            Self::ValuesBatchGet(_) => SheetsTool::ValuesBatchGet,
-            Self::ValuesBatchUpdate(_) => SheetsTool::ValuesBatchUpdate,
-            Self::StructuralBatchUpdate(_) => SheetsTool::StructuralBatchUpdate,
         }
     }
 

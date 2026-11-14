@@ -1,21 +1,22 @@
-//! The built-in Google Sheets connector's credential-broker leg (FIX 4862).
+//! The built-in workspace connectors' credential-broker leg (FIX 4862;
+//! L3-17).
 //!
-//! The engine builds each Sheets request whole and calls [`SheetsBroker`]
-//! twice for it: once to check it as the broker will and connect, before any
-//! credential is read, and once inside the grant's custody door with the
-//! access token, which goes to the broker with that one request. The broker
-//! adds it as `Authorization: Bearer`, sends once over verified TLS to
-//! Google's Sheets origin, and strips it from the reply. Only broker clients
-//! and the serve runtime are kept here, never the key door, so the vault's
-//! transports hold no reference back to the vault.
+//! The engine builds each workspace request whole and calls
+//! [`WorkspaceBroker`] twice for it: once to check it as the broker will and
+//! connect, before any credential is read, and once inside the grant's
+//! custody door with the access token, which goes to the broker with that
+//! one request. The broker adds it as `Authorization: Bearer`, sends once
+//! over verified TLS to the endpoint's origin, and strips it from the reply.
+//! Only broker clients and the serve runtime are kept here, never the key
+//! door, so the vault's transports hold no reference back to the vault.
 
 use std::fmt;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
-use oneiron::channel_identity_provider::sheets::{
-    SHEETS_API_ORIGIN, SHEETS_WIRE_MODEL, SheetsBrokerCall, SheetsBrokerHost, SheetsEndpoint,
-    SheetsWireOutcome, SheetsWireRequest,
+use oneiron::channel_identity_provider::workspace_connector::{
+    WorkspaceBrokerCall, WorkspaceBrokerHost, WorkspaceEndpoint, WorkspaceWireOutcome,
+    WorkspaceWireRequest,
 };
 use oneiron_broker::{BrokerClient, BrokerConnection, BrokerError, CallHeader, Outcome, Shape};
 use serde_json::Value;
@@ -25,58 +26,58 @@ use super::super::broker::{BrokerSite, REPLY_MARGIN};
 use super::{BrokerContext, is_cloud_node};
 use crate::config::models::{BrokerConfig, ModelsConfig};
 
-/// How long one Sheets send may run in the broker.
-const SHEETS_SEND: Duration = Duration::from_secs(30);
+/// How long one workspace send may run in the broker.
+const WORKSPACE_SEND: Duration = Duration::from_secs(30);
 
-/// Where the Sheets leg's broker client comes from.
+/// Where the workspace leg's broker client comes from.
 enum Site {
     /// The serve context's broker, or why it has none.
     Shared(Result<BrokerClient, String>),
     /// No serve context: the broker `[models.broker]` names, by default the
-    /// same-user child, made at the first Sheets call.
+    /// same-user child, made at the first workspace call.
     Deferred {
         broker: BrokerConfig,
         client: OnceLock<Result<BrokerClient, String>>,
     },
 }
 
-/// The host's Sheets broker leg.
-struct SheetsBroker {
+/// The host's workspace broker leg.
+struct WorkspaceBroker {
     runtime: tokio::runtime::Handle,
     site: Site,
 }
 
-impl fmt::Debug for SheetsBroker {
+impl fmt::Debug for WorkspaceBroker {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("SheetsBroker").finish_non_exhaustive()
+        f.debug_struct("WorkspaceBroker").finish_non_exhaustive()
     }
 }
 
 impl BrokerContext {
-    /// The Sheets leg over this context's broker.
-    pub(crate) fn sheets_broker(&self) -> Arc<dyn SheetsBrokerHost> {
+    /// The workspace leg over this context's broker.
+    pub(crate) fn workspace_broker(&self) -> Arc<dyn WorkspaceBrokerHost> {
         let client = self
             .inner
             .site
             .as_ref()
             .map_err(Clone::clone)
-            .and_then(sheets_client);
-        Arc::new(SheetsBroker {
+            .and_then(workspace_client);
+        Arc::new(WorkspaceBroker {
             runtime: self.inner.runtime.clone(),
             site: Site::Shared(client),
         })
     }
 
-    /// The Sheets leg of a serve that made no broker context, since nothing
-    /// in its config takes a vault-secret key: the broker `models` names,
-    /// made at the first Sheets call, so a host that never calls Sheets
-    /// starts no broker. `None` outside a runtime.
-    pub(crate) fn sheets_broker_from_config(
+    /// The workspace leg of a serve that made no broker context, since
+    /// nothing in its config takes a vault-secret key: the broker `models`
+    /// names, made at the first workspace call, so a host that never calls a
+    /// workspace connector starts no broker. `None` outside a runtime.
+    pub(crate) fn workspace_broker_from_config(
         models: Option<&ModelsConfig>,
-    ) -> Option<Arc<dyn SheetsBrokerHost>> {
+    ) -> Option<Arc<dyn WorkspaceBrokerHost>> {
         let runtime = tokio::runtime::Handle::try_current().ok()?;
         let broker = models.map_or_else(BrokerConfig::default, |models| models.broker.clone());
-        Some(Arc::new(SheetsBroker {
+        Some(Arc::new(WorkspaceBroker {
             runtime,
             site: Site::Deferred {
                 broker,
@@ -86,45 +87,56 @@ impl BrokerContext {
     }
 }
 
-/// A client on `site` whose reply waits out one Sheets send.
-fn sheets_client(site: &BrokerSite) -> Result<BrokerClient, String> {
-    site.client(SHEETS_SEND + REPLY_MARGIN)
+/// A client on `site` whose reply waits out one workspace send.
+fn workspace_client(site: &BrokerSite) -> Result<BrokerClient, String> {
+    site.client(WORKSPACE_SEND + REPLY_MARGIN)
         .map_err(|error| error.to_string())
 }
 
-impl SheetsBroker {
+impl WorkspaceBroker {
     fn client(&self) -> Result<&BrokerClient, String> {
         let client = match &self.site {
             Site::Shared(client) => client,
             Site::Deferred { broker, client } => client.get_or_init(|| {
-                BrokerSite::with_timeout(broker, SHEETS_SEND)
+                BrokerSite::with_timeout(broker, WORKSPACE_SEND)
                     .map_err(|error| error.to_string())
-                    .and_then(|site| sheets_client(&site))
+                    .and_then(|site| workspace_client(&site))
             }),
         };
         client.as_ref().map_err(Clone::clone)
     }
 }
 
-impl SheetsBrokerHost for SheetsBroker {
+/// The broker shape row `endpoint` names.
+const fn shape(endpoint: WorkspaceEndpoint) -> Shape {
+    match endpoint {
+        WorkspaceEndpoint::SheetsSpreadsheetGet => Shape::SheetsSpreadsheetGet,
+        WorkspaceEndpoint::SheetsValuesBatchGet => Shape::SheetsValuesBatchGet,
+        WorkspaceEndpoint::SheetsValuesBatchUpdate => Shape::SheetsValuesBatchUpdate,
+        WorkspaceEndpoint::SheetsBatchUpdate => Shape::SheetsBatchUpdate,
+    }
+}
+
+impl WorkspaceBrokerHost for WorkspaceBroker {
     fn prepare(
         &self,
-        request: &SheetsWireRequest,
+        request: &WorkspaceWireRequest,
         call: &str,
-    ) -> Result<Box<dyn SheetsBrokerCall>, String> {
-        let (shape, headers) = match request.endpoint() {
-            SheetsEndpoint::SpreadsheetGet => (Shape::SheetsSpreadsheetGet, Vec::new()),
-            SheetsEndpoint::ValuesBatchGet => (Shape::SheetsValuesBatchGet, Vec::new()),
-            SheetsEndpoint::ValuesBatchUpdate => (Shape::SheetsValuesBatchUpdate, json_content()),
-            SheetsEndpoint::BatchUpdate => (Shape::SheetsBatchUpdate, json_content()),
+    ) -> Result<Box<dyn WorkspaceBrokerCall>, String> {
+        let endpoint = request.endpoint();
+        // A write's body is JSON; a read sends none.
+        let headers = if endpoint.method() == "GET" {
+            Vec::new()
+        } else {
+            vec![("content-type".to_owned(), "application/json".to_owned())]
         };
         let header = CallHeader::new(
             call.to_owned(),
-            shape,
-            SHEETS_API_ORIGIN.to_owned(),
+            shape(endpoint),
+            endpoint.origin().to_owned(),
             request.path().to_owned(),
             headers,
-            SHEETS_WIRE_MODEL.to_owned(),
+            endpoint.wire_model().to_owned(),
             is_cloud_node(),
             request.body(),
         );
@@ -135,7 +147,7 @@ impl SheetsBrokerHost for SheetsBroker {
         let connection = on_runtime(&self.runtime, || client.connect())
             .ok_or_else(|| "the credential broker connection did not run".to_owned())?
             .map_err(|error| error.to_string())?;
-        Ok(Box::new(SheetsCall {
+        Ok(Box::new(WorkspaceCall {
             runtime: self.runtime.clone(),
             connection,
             header,
@@ -144,16 +156,16 @@ impl SheetsBrokerHost for SheetsBroker {
     }
 }
 
-/// One checked Sheets request on a connected broker.
-struct SheetsCall {
+/// One checked workspace request on a connected broker.
+struct WorkspaceCall {
     runtime: tokio::runtime::Handle,
     connection: BrokerConnection,
     header: CallHeader,
     body: Vec<u8>,
 }
 
-impl SheetsBrokerCall for SheetsCall {
-    fn present(self: Box<Self>, access_token: &[u8]) -> SheetsWireOutcome {
+impl WorkspaceBrokerCall for WorkspaceCall {
+    fn present(self: Box<Self>, access_token: &[u8]) -> WorkspaceWireOutcome {
         let Self {
             runtime,
             connection,
@@ -167,34 +179,29 @@ impl SheetsBrokerCall for SheetsCall {
         });
         match sent {
             Some(Ok(reply)) => match reply.outcome {
-                Outcome::Answered { status, .. } => SheetsWireOutcome::Answered {
+                Outcome::Answered { status, .. } => WorkspaceWireOutcome::Answered {
                     status,
                     body: serde_json::from_slice(&reply.body).unwrap_or(Value::Null),
                 },
                 Outcome::Refused { reason } => {
-                    SheetsWireOutcome::NotSent(format!("sheets_broker_refused: {reason}"))
+                    WorkspaceWireOutcome::NotSent(format!("workspace_broker_refused: {reason}"))
                 }
                 Outcome::Failed { reason } => {
-                    SheetsWireOutcome::Uncertain(format!("sheets_broker_failed: {reason}"))
+                    WorkspaceWireOutcome::Uncertain(format!("workspace_broker_failed: {reason}"))
                 }
             },
             Some(Err(error @ (BrokerError::Unreachable | BrokerError::Peer))) => {
-                SheetsWireOutcome::NotSent(format!("sheets_broker_unreachable: {error}"))
+                WorkspaceWireOutcome::NotSent(format!("workspace_broker_unreachable: {error}"))
             }
             Some(Err(error @ BrokerError::Refused(_))) => {
-                SheetsWireOutcome::NotSent(format!("sheets_broker_refused: {error}"))
+                WorkspaceWireOutcome::NotSent(format!("workspace_broker_refused: {error}"))
             }
             Some(Err(BrokerError::Lost)) => {
-                SheetsWireOutcome::Uncertain("sheets_broker_reply_lost".to_owned())
+                WorkspaceWireOutcome::Uncertain("workspace_broker_reply_lost".to_owned())
             }
-            None => SheetsWireOutcome::Uncertain("sheets_broker_thread_failed".to_owned()),
+            None => WorkspaceWireOutcome::Uncertain("workspace_broker_thread_failed".to_owned()),
         }
     }
-}
-
-/// The content type a Sheets write's JSON body goes with.
-fn json_content() -> Vec<(String, String)> {
-    vec![("content-type".to_owned(), "application/json".to_owned())]
 }
 
 /// Runs the future `make` builds to its end on the serve runtime: on this
