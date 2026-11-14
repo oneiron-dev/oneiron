@@ -1,6 +1,9 @@
-//! Erase asks (ARCH-0043 "Who may archive, delete and erase", 2026-10-09): in
-//! a shared vault a Member requests an erase and an Admin or a Deputy (which
-//! holds Admin's powers, ARCH-0082 #roles) proposes one, while
+//! Erase asks (ARCH-0043 "Who may archive, delete and erase", 2026-10-09;
+//! ARCH-0082 #role-defaults: "Any actor, in any role, may open an erase
+//! proposal"; Engine ruling P24-SHAPE Q8 = A): in a shared vault every
+//! person whose role reads the record may ask. A Member, a Viewer, a
+//! Delegate or a Guest requests an erase, and an Admin, a Deputy (which
+//! holds Admin's powers, ARCH-0082 #roles) or a Steward proposes one, while
 //! only an Owner erases, by hand, through the erase doors and their veto
 //! window. An ask erases nothing, starts no window and lifts no hold. It is
 //! one durable record, an inbox ask to every live Owner, and the asker's own
@@ -18,7 +21,8 @@ pub const NOTIFICATION_PRODUCER_ERASE_ASK: &str = "shared_vault.erase_ask";
 /// The act name an Owner's erase runs under, which a closing answer names.
 const ERASE_ACT: &str = "erase";
 
-/// Who asked: a Member requests, an Admin or a Deputy proposes.
+/// Who asked: a role that works inside its scopes requests; a role that
+/// runs or organises the vault proposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EraseAskKind {
@@ -28,14 +32,16 @@ pub enum EraseAskKind {
 
 impl EraseAskKind {
     /// What an erase ask from a live holder of `role` is, once its grant
-    /// carries `write`: a Member's request, or an Admin's or a Deputy's
-    /// proposal. `None` for every other role; an Owner erases instead of
-    /// asking, and the erase itself stays the Owner's.
+    /// carries `read` (P24-SHAPE Q8 = A): a Member's, a Viewer's, a
+    /// Delegate's or a Guest's request, or an Admin's, a Deputy's or a
+    /// Steward's proposal. `None` for an Owner, who erases instead of
+    /// asking; the erase itself stays the Owner's. An agent's ask is FIX
+    /// row CHECK-IN-AGENT-ERASE-PROPOSAL.
     pub(crate) const fn for_asker_role(role: Role) -> Option<Self> {
         match role {
-            Role::Member => Some(Self::Request),
-            Role::Admin | Role::Deputy => Some(Self::Proposal),
-            _ => None,
+            Role::Member | Role::Viewer | Role::Delegate | Role::Guest => Some(Self::Request),
+            Role::Admin | Role::Deputy | Role::Steward => Some(Self::Proposal),
+            Role::Owner => None,
         }
     }
 }
@@ -56,8 +62,7 @@ pub enum EraseAskStatus {
     },
 }
 
-/// One Member's request, or an Admin's or a Deputy's proposal, to erase a
-/// record.
+/// One person's request or proposal to erase a record.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedEraseAsk {
@@ -91,9 +96,9 @@ impl Vault {
         Ok(asks)
     }
 
-    /// Ask the Owners to erase `record`, a live record of this vault: a live
-    /// Member requests it and a live Admin or Deputy proposes it, each
-    /// through their grant's `write` verb. Every live Owner gets an inbox ask
+    /// Ask the Owners to erase `record`, a live record of this vault: every
+    /// live holder whose grant carries `read` asks, a request or a proposal
+    /// by their role ([`EraseAskKind::for_asker_role`]). Every live Owner gets an inbox ask
     /// naming the record. Asking again while the asker's ask for the record is
     /// open answers that ask.
     pub fn ask_shared_erase(
@@ -113,7 +118,7 @@ impl Vault {
             .find(|holder| holder.member == actor)
             .and_then(|holder| {
                 EraseAskKind::for_asker_role(holder.role)
-                    .filter(|_| holder.can(&[holder.role], "write"))
+                    .filter(|_| holder.can(&[holder.role], "read"))
             })
             .ok_or_else(invalid)?;
         if !crate::vault::live_entity_row_in_txn(&self.store, &txn, &record)?.is_live() {

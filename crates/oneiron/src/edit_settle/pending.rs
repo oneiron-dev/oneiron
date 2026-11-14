@@ -130,6 +130,19 @@ pub(crate) struct DeckExportHold {
     pub(crate) effects: Vec<String>,
 }
 
+/// The version a native output is proposed over, as a version number and
+/// its content hash. Keep forks from it when the head has moved past it.
+#[derive(Clone, Copy)]
+pub(super) enum OutputBase {
+    /// The head as the output is retained; a deck export's base is the
+    /// version its deck projected over (FIX 2700).
+    Head,
+    /// The version the producer read (review of #7368).
+    MadeAgainst((u64, [u8; 32])),
+    /// A fork from this version even while it is the head (FIX 8208).
+    Fork((u64, [u8; 32])),
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum PendingBody {
@@ -394,8 +407,10 @@ impl Vault {
     }
 
     /// Offers one native organ result to an artifact as a waiting proposal,
-    /// pinned to the head it was made against (none for a new artifact). Its
-    /// named made_by is admitted under `reader` (FIX 1229).
+    /// pinned to the head as it is retained (none for a new artifact);
+    /// [`Self::propose_native_output_made_against`] pins it to the version
+    /// it was made from. Its named made_by is admitted under `reader`
+    /// (FIX 1229).
     pub fn propose_native_output(
         &self,
         artifact_id: &EntityId,
@@ -434,10 +449,41 @@ impl Vault {
             reader,
             (actor, retained_at),
             None,
-            None,
+            OutputBase::Head,
             false,
             read_rows,
             delta_receipt,
+            None,
+        )
+    }
+
+    /// [`Self::propose_native_output_with_reads`] of an output made from
+    /// `made_against`, the version (and its content hash) of this same
+    /// artifact the producer read: the proposal is pinned to that version,
+    /// not to the head as it is retained, so a head that moved after the
+    /// read keeps the output as a fork of the version it was made from
+    /// (review of #7368). `None` pins it to the head. An organ call's
+    /// output carries no delta receipt.
+    pub fn propose_native_output_made_against(
+        &self,
+        artifact_id: &EntityId,
+        output: &NativeOutput,
+        reader: Option<MadeByReader<'_>>,
+        (actor, retained_at): (WriteActor, u64),
+        made_against: Option<(u64, [u8; 32])>,
+        read_rows: &[EntityId],
+    ) -> Result<PendingProposalView> {
+        self.propose_output(
+            artifact_id,
+            output,
+            BlobContent::Bytes(&output.bytes),
+            reader,
+            (actor, retained_at),
+            None,
+            made_against.map_or(OutputBase::Head, OutputBase::MadeAgainst),
+            false,
+            read_rows,
+            None,
             None,
         )
     }
@@ -490,7 +536,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             None,
-            None,
+            OutputBase::Head,
             false,
             read_rows,
             delta_receipt,
@@ -520,7 +566,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             None,
-            fork_base,
+            fork_base.map_or(OutputBase::Head, OutputBase::Fork),
             true,
             &[],
             delta_receipt,
@@ -548,7 +594,7 @@ impl Vault {
             reader,
             (actor, retained_at),
             Some((base, hold)),
-            None,
+            OutputBase::Head,
             false,
             &[],
             delta_receipt,
@@ -568,7 +614,7 @@ impl Vault {
         reader: Option<MadeByReader<'_>>,
         (actor, retained_at): (WriteActor, u64),
         deck: Option<((u64, [u8; 32]), DeckExportHold)>,
-        base_override: Option<(u64, [u8; 32])>,
+        base: OutputBase,
         authorize_content_write: bool,
         read_rows: &[EntityId],
         delta_receipt: Option<&str>,
@@ -583,11 +629,13 @@ impl Vault {
             &body,
             authorize_content_write,
         )?;
-        let head = self.blob_artifact_head(artifact_id)?;
-        let base = match (base_override, &deck) {
-            (Some(base), _) => Some(base),
-            (None, Some((base, _))) => Some(*base),
-            (None, None) => head.as_ref().map(|head| (head.version, head.content_hash)),
+        let explicit_fork = matches!(base, OutputBase::Fork(_));
+        let base = match (base, &deck) {
+            (OutputBase::Fork(base) | OutputBase::MadeAgainst(base), _) => Some(base),
+            (OutputBase::Head, Some((base, _))) => Some(*base),
+            (OutputBase::Head, None) => self
+                .blob_artifact_head(artifact_id)?
+                .map(|head| (head.version, head.content_hash)),
         };
         // An output past the inline size waits in its body file, written
         // before the writer that keeps its row opens; the row names it
@@ -603,7 +651,7 @@ impl Vault {
             (actor, self.get_entity_type(&actor.entity_ref())?),
             retained_at,
             base,
-            base_override.is_some(),
+            explicit_fork,
             deck.map(|(_, hold)| hold),
             report,
             delta_receipt,

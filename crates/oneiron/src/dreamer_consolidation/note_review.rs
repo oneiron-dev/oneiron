@@ -253,8 +253,7 @@ impl ConsolidationExecutor<'_> {
             Some(note.facet),
             None,
         );
-        let (request, labels) = match Self::note_request(
-            &call,
+        let (request, labels) = match self.note_request(
             note.id,
             &note.listed,
             &note.markdown,

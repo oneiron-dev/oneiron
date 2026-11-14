@@ -73,9 +73,11 @@ pub use budget::{
 pub use children::create_research_child;
 pub use continuation::{
     ResearchContinuation, ResearchContinuationState, ResearchRunning, ResearchSplit, ResearchTask,
-    ResearchWork, advance_research_continuations, ensure_research_continuations,
-    research_work_pending,
+    ResearchWork, advance_research_campaign, advance_research_continuations,
+    ensure_research_continuations, research_continuations, research_work_pending,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use continuation::{seed_research_continuation, step_research_continuation};
 pub use estimator::{
     BranchBelief, ENGINE_ESTIMATOR_VERSION, MIN_SELECTION_BENCHMARK_CASES, PriorRung, PriorSeed,
     SelectionBenchmark, SelectionRanking, record_selection_benchmark, selection_benchmark,

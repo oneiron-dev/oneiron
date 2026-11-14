@@ -76,6 +76,9 @@ impl AttemptQueue<'_> {
             // Slice 6.5b: a parent's wait over this child is answered in the
             // write that ends it.
             crate::agent_dispatch::settle_agent_child_waits_in_txn(vault, wtxn, record)?;
+            // Census L2-38: a child's end is staged for its spawner's board
+            // STREAM in the same write.
+            crate::context_board::stage_child_done_in_txn(vault, wtxn, record)?;
         }
         Ok(())
     }

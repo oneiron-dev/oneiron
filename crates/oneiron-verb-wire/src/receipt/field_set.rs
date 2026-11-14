@@ -28,3 +28,7 @@ pub const FIELD_BUDGET_REFUSAL: &str = "budget_refusal";
 /// The run's project, frozen beside its typeRef: the scope its learning
 /// cells key on (FIX 6038). Absent, the vault's.
 pub const FIELD_TYPE_REF_PROJECT: &str = "type_ref.project";
+
+pub const BOARD_STATE_REF_PREFIX: &str = "board:";
+
+pub const ACTIVATED_MEMORY_IDS_SEPARATOR: char = ',';

@@ -45,35 +45,10 @@ impl AuthorityHandoffEquivocation {
 
 const ALARM_PREFIX: &[u8] = b"authority:handoff-alarm:v1:";
 
-/// The saved fork alarm for one key a held handoff retired: the refused row
-/// that raised it and the handoffs the key signed. It stays until the vault's
-/// owner acknowledges it; a refused row the owner has not seen raises it again.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct AuthorityHandoffAlarm {
-    /// The retired key, `suite:hex`.
-    pub signer: String,
-    /// The refused row's hash, hex.
-    pub refused: String,
-    /// The held handoffs the key signed, hex.
-    pub handoffs: Vec<String>,
-    pub raised_at: u64,
-    pub acknowledged: Option<AuthorityHandoffAlarmAck>,
-    /// Refused rows the owner has acknowledged.
-    pub seen: BTreeSet<String>,
-}
-
-/// Who acknowledged an alarm, and when.
-#[derive(
-    Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(deny_unknown_fields)]
-pub struct AuthorityHandoffAlarmAck {
-    pub by: String,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::authority::handoff_equivocation::{
+    AuthorityHandoffAlarm, AuthorityHandoffAlarmAck,
+};
 
 fn signer_label(key: &AuthorityKey) -> String {
     let (suite, bytes) = match key {

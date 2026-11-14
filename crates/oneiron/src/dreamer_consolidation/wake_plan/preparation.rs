@@ -185,7 +185,7 @@ pub(super) fn collect_queued(
             turn_ids: turns,
             scope: effective_scope.clone(),
             input: payload.input.clone(),
-            queued_input: payload.input.clone(),
+            queued_input: payload.input,
             source_versions: BTreeMap::new(),
             retry_budget: budget,
             neighbourhood: Default::default(),

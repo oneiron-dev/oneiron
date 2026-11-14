@@ -8,40 +8,14 @@ use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::{EntityId, Error};
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
-use serde::{Deserialize, Serialize};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::claim_admission::{
     AllRelationships, ClaimRelationships, ClaimScope,
 };
 
-/// Public claim admission. Provenance is host-authored; made_by is not an input field.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ScopedClaimInput {
-    pub id: Option<String>,
-    pub predicate: String,
-    pub subject_ref: String,
-    pub value: serde_json::Value,
-    pub confidence: f32,
-    pub source: String,
-    pub scope: ClaimScope,
-    /// Optional sensitivity band, in 0..=3, independent of the four position axes.
-    pub sensitivity: Option<u8>,
-    #[serde(default)]
-    pub evidence_turn_refs: Vec<String>,
-    pub valid_from: Option<u64>,
-    pub valid_to: Option<u64>,
-    pub occurred_at: Option<u64>,
-    pub learned_at: Option<u64>,
-    pub salience: Option<f32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ScopedCommitRequest {
-    pub claims: Vec<ScopedClaimInput>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::claim_admission::{ScopedClaimInput, ScopedCommitRequest};
 
 /// One scoped claim resolved outside its writer (`Memory::prepare_scoped_claim`).
 struct PreparedScopedClaim {

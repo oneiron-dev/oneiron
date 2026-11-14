@@ -42,7 +42,9 @@ use oneiron::policy_manifest_doors::{
 };
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
-use oneiron::workspace_roster::{ProjectRecord, RoomPinPolicySet, RoomPinReply, RoomPinRequest};
+use oneiron::workspace_roster::{
+    ProjectRecord, RoomMemberRoleSet, RoomPinPolicySet, RoomPinReply, RoomPinRequest,
+};
 use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -455,6 +457,129 @@ fn managers_policy_in_an_ordinary_room() -> TestResult {
     // The owner sets it back; members may again.
     set_policy(&person(&fx, fx.owner), room, RoomPinPolicy::Members)?;
     person(&fx, fx.member).rooms_pins_unpin(&target)?;
+    Ok(())
+}
+
+/// `vault.rooms.members.role.set` by its verb name, as `memory`'s caller,
+/// through the verb table every door serves.
+fn set_role(
+    memory: &oneiron::memory::Memory<'_>,
+    room: EntityId,
+    person: EntityId,
+    role: &str,
+) -> Result<serde_json::Value, oneiron::memory::MemoryError> {
+    oneiron::verbs::invoke(
+        memory,
+        "vault.rooms.members.role.set",
+        serde_json::json!({"room": room.to_hex(), "person": person.to_hex(), "role": role}),
+    )
+}
+
+/// [ROOM-ROLE-SET] (the lead 14 Nov 00:2x; Engine RULING
+/// ROOM-ROLE-SET-RECEIPT = A, 05:22): in an ordinary room the owner, whose
+/// role the room policy lets delegate, makes a plain member an admin through
+/// `vault.rooms.members.role.set`. The reply is the act's receipt (room,
+/// person, role, who set it, the engine time), and the admin then runs the
+/// room's pins: it sets them to Managers, and under Managers it changes them
+/// where a plain member is refused. A member the policy does not let delegate
+/// is refused and no role changes; an agent never sets a role, and never the
+/// pins policy, though it is the new admin's own pen. On main the verb is
+/// not in the table, so the owner's call is refused.
+#[test]
+fn a_delegating_owner_makes_a_member_admin_who_then_runs_the_pins() -> TestResult {
+    let fx = open_fixture()?;
+    let room = EntityId::now();
+    let owner = WriteActor::new(fx.owner, EdgeActorClass::Human);
+    fx.vault.create_conversation(
+        room,
+        &ConversationBody {
+            kind: ConversationKind::Group,
+            member_ids: vec![fx.leader, fx.member],
+            ..Default::default()
+        },
+        owner,
+        fx.vault.now_recorded_at(),
+    )?;
+    // A plain member does not run the pins.
+    assert!(set_policy(&person(&fx, fx.leader), room, RoomPinPolicy::Managers).is_err());
+    // A member without Delegate sets no role.
+    assert!(set_role(&person(&fx, fx.member), room, fx.leader, "admin").is_err());
+    assert!(fx.vault.conversation_body(room)?.roles.is_empty());
+
+    let before = fx.vault.now_recorded_at();
+    let receipt = set_role(&person(&fx, fx.owner), room, fx.leader, "admin")
+        .map_err(|error| format!("the owner's role set: {error:?}"))?;
+    let after = fx.vault.now_recorded_at();
+    assert_eq!(receipt["room"], room.to_hex(), "{receipt}");
+    assert_eq!(receipt["person"], fx.leader.to_hex(), "{receipt}");
+    assert_eq!(receipt["role"], "admin", "{receipt}");
+    assert_eq!(receipt["set_by"], fx.owner.to_hex(), "{receipt}");
+    let set_at = receipt["set_at"].as_u64().ok_or("the receipt's time")?;
+    assert!((before..=after).contains(&set_at), "{receipt}");
+    assert_eq!(
+        fx.vault
+            .conversation_body(room)?
+            .roles
+            .get(&fx.leader.to_hex()),
+        Some(&RoomRole::Admin)
+    );
+
+    // The admin runs the pins; its own pen agent still never sets the policy.
+    assert!(set_policy(&agent(&fx, fx.leader_agent), room, RoomPinPolicy::Managers).is_err());
+    set_policy(&person(&fx, fx.leader), room, RoomPinPolicy::Managers)?;
+    assert_eq!(
+        fx.vault.conversation_body(room)?.pin_policy,
+        RoomPinPolicy::Managers
+    );
+    let target = pin(room, fx.targets[0]);
+    assert!(person(&fx, fx.member).rooms_pins_unpin(&target).is_err());
+    person(&fx, fx.leader).rooms_pins_unpin(&target)?;
+
+    // An agent sets no role, the admin's pen included.
+    assert!(set_role(&agent(&fx, fx.leader_agent), room, fx.member, "admin").is_err());
+    assert_eq!(fx.vault.conversation_body(room)?.roles.len(), 1);
+    Ok(())
+}
+
+/// Review round 1 of #7700 (P1): a PERSON acting as an agent sets no role,
+/// even in a room it created, whose creator holds the owner's standing in an
+/// unrooted vault whatever class it acts as. Refused through the door and
+/// through the verb, and no role changes; the same PERSON acting as itself
+/// then sets the role. At the reviewed head 92b3176c5a5 the agent-class call
+/// made the member an admin.
+#[test]
+fn a_person_acting_as_an_agent_sets_no_role_in_a_room_it_created() -> TestResult {
+    let fx = open_fixture()?;
+    let room = EntityId::now();
+    fx.vault.create_conversation(
+        room,
+        &ConversationBody {
+            kind: ConversationKind::Group,
+            member_ids: vec![fx.leader, fx.member],
+            ..Default::default()
+        },
+        WriteActor::new(fx.leader, EdgeActorClass::Agent),
+        fx.vault.now_recorded_at(),
+    )?;
+    let input = RoomMemberRoleSet {
+        room,
+        person: fx.member,
+        role: RoomRole::Admin,
+    };
+    let refused = agent(&fx, fx.leader).rooms_members_role_set(&input);
+    assert!(refused.is_err(), "{refused:?}");
+    assert!(set_role(&agent(&fx, fx.leader), room, fx.member, "admin").is_err());
+    assert!(fx.vault.conversation_body(room)?.roles.is_empty());
+
+    let receipt = person(&fx, fx.leader).rooms_members_role_set(&input)?;
+    assert_eq!(receipt.set_by, fx.leader);
+    assert_eq!(
+        fx.vault
+            .conversation_body(room)?
+            .roles
+            .get(&fx.member.to_hex()),
+        Some(&RoomRole::Admin)
+    );
     Ok(())
 }
 

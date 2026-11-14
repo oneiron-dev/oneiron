@@ -35,6 +35,17 @@ pub struct OrganJob {
     pub submitter: Option<EntityId>,
 }
 
+/// An [`OrganJob`] before its artifact is named: [`OrganRouter::submit_to`]
+/// makes the artifact once the call has run or is held.
+#[derive(Debug, Clone)]
+pub(crate) struct JobCall {
+    pub(crate) run_ref: String,
+    pub(crate) call: OrganCall,
+    pub(crate) lent: Vec<LentInput>,
+    pub(crate) trigger: Option<MadeByTrigger>,
+    pub(crate) submitter: Option<EntityId>,
+}
+
 /// What became of a submitted job.
 #[derive(Debug)]
 pub enum Submitted {
@@ -201,16 +212,51 @@ impl OrganRouter {
             trigger,
             submitter,
         } = job;
+        let job = JobCall {
+            run_ref,
+            call,
+            lent,
+            trigger,
+            submitter,
+        };
+        self.submit_to(vault, job, || Ok(artifact), actor, asks)
+            .map(|(_, submitted)| submitted)
+    }
+
+    /// [`Self::submit`] of a job whose artifact `target` makes only once
+    /// the call has run or is held, so a call that fails leaves no artifact
+    /// behind (the image edit's new PNG artifact, [`crate::image`]).
+    /// Answers the artifact with what became of the job.
+    ///
+    /// # Errors
+    /// As [`Self::submit`], and `target`'s own error.
+    pub(crate) fn submit_to(
+        &self,
+        vault: &Vault,
+        job: JobCall,
+        target: impl FnOnce() -> Result<EntityId, HostError>,
+        actor: WriteActor,
+        asks: &AskHandlers<'_>,
+    ) -> Result<(EntityId, Submitted), HostError> {
+        let JobCall {
+            run_ref,
+            call,
+            lent,
+            trigger,
+            submitter,
+        } = job;
         let held = oneiron_organ_protocol::to_vec(&HeldCall::of(&call, &lent))
             .map_err(|err| HostError::ReplyInvalid(format!("the call does not encode: {err}")))?;
         match self.call_with(vault, call, lent, asks)? {
             Routed::Done { outcome, ran_on } => {
+                let artifact = target()?;
                 let proposals = propose_organ_outputs(
                     vault, &artifact, &outcome, &run_ref, trigger, actor, submitter,
                 )?;
-                Ok(Submitted::Landed { proposals, ran_on })
+                Ok((artifact, Submitted::Landed { proposals, ran_on }))
             }
             Routed::Waiting(wait) => {
+                let artifact = target()?;
                 let row = OrganWait {
                     artifact_id: artifact,
                     run_ref,
@@ -222,9 +268,8 @@ impl OrganRouter {
                     held_by: actor,
                     held_at: vault.now_recorded_at(),
                 };
-                Ok(Submitted::Waiting(
-                    vault.hold_organ_wait(&row, &wait.reason)?,
-                ))
+                let view = vault.hold_organ_wait(&row, &wait.reason)?;
+                Ok((artifact, Submitted::Waiting(view)))
             }
         }
     }

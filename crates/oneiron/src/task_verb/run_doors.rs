@@ -56,16 +56,11 @@ use crate::{EntityId, Vault, WriteActor};
 const TASK_FIX: &str =
     "Name a TASK ref; a spawned agent reads by its attempt through vault.agents.spawn.get.";
 
-/// The owner's force: every live branch of `task_ref` stops, for `reason`
-/// when one is given.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CancelForceRequest {
-    pub task_ref: EntityId,
-    /// Kept on each terminal cancellation receipt the force writes.
-    #[serde(default)]
-    pub reason: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::run_doors::{
+    CancelForceRequest, ConsultDisposition, ConsultLandSpend, ConsultReadRequest,
+    RunBranchesRequest,
+};
 
 /// What the force did: whether it stopped anything, how many branches this
 /// call cancelled, and every branch of the TASK after it. A repeat on
@@ -76,13 +71,6 @@ pub struct CancelForceReceipt {
     pub effected: bool,
     pub forced: u32,
     pub branches: Vec<RunBranchView>,
-}
-
-/// The owner's read of every branch of one TASK.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RunBranchesRequest {
-    pub task_ref: EntityId,
 }
 
 /// Every branch of the TASK, in the order the queue created them.
@@ -123,13 +111,6 @@ pub struct RunBranchView {
     pub cancel_state: AttemptCancelState,
 }
 
-/// The owner's read of one consult TASK.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConsultReadRequest {
-    pub task_ref: EntityId,
-}
-
 /// One consult TASK as its owner inspects it: its deadline, when it has one,
 /// and its terminal register. `terminal` is `None` while nothing has settled
 /// the consult: no answer, abstention, expiry or ladder outcome yet.
@@ -161,19 +142,6 @@ pub struct ConsultTerminalView {
     /// The TASK a countered ladder outcome created in the same transaction.
     #[serde(default)]
     pub counter_task_ref: Option<EntityId>,
-}
-
-/// How a consult ended. `expired` (its deadline passed) and `abandoned` (its
-/// executor went away) stay distinct causes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ConsultDisposition {
-    Completed,
-    Rejected,
-    Failed,
-    Expired,
-    Abandoned,
-    Cancelled,
 }
 
 /// An answer's evidence, or an abstention's reason, by ref.
@@ -224,16 +192,6 @@ pub enum ConsultLandKind {
         result_ref: EntityId,
         reason_ref: ConsultPayloadRef,
     },
-}
-
-/// What one consult cost its peer, measured, in one unit.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ConsultLandSpend {
-    /// A budget line's unit: `tokens`, or one a pack row names.
-    pub unit: LeaseUnit,
-    #[schemars(range(max = "JS_SAFE_INTEGER"))]
-    pub units: u64,
 }
 
 /// What the landing came to: the consult's terminal register as stored, and

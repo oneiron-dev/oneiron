@@ -38,6 +38,13 @@ const COMM_RECORD_KEYS: [&str; 17] = [
     "source_position",
 ];
 
+/// The one record key that may be elided: an approved clear's receipt names
+/// the request it answered. Every other record, and a receipt written before
+/// the key existed, leaves it out, so their bytes do not change.
+const KEY_REQUESTED_AT: &str = "requested_at";
+
+const COMM_RECORD_OPTIONAL_KEYS: [&str; 1] = [KEY_REQUESTED_AT];
+
 const RECORD_KIND_EVENT: &str = "event";
 
 const RECORD_KIND_GATE: &str = "gate";
@@ -115,6 +122,11 @@ pub enum CommRecord {
         occurred_at: u64,
         outcome: String,
         actor_ref: EntityId,
+        /// When the clear request this ruling answered was made: the oldest
+        /// pending request, the one the ruling judged stale or not. `None` on
+        /// a receipt written before receipts named it. Never after
+        /// `occurred_at`.
+        requested_at: Option<u64>,
     },
 }
 
@@ -178,6 +190,8 @@ pub fn encode_comm_record(record: &CommRecord) -> CommResult<Vec<u8>> {
             occurred_at,
             outcome,
             actor_ref,
+            // Elidable: written after the fixed keys below.
+            requested_at: _,
         } => {
             values[1] = Value::from(RECORD_KIND_RECEIPT);
             values[4] = Value::from(party_ref.to_hex());
@@ -187,14 +201,19 @@ pub fn encode_comm_record(record: &CommRecord) -> CommResult<Vec<u8>> {
             values[14] = Value::from(actor_ref.to_hex());
         }
     }
-    let map = Value::Map(
-        COMM_RECORD_KEYS
-            .iter()
-            .zip(values)
-            .map(|(key, value)| (Value::from(*key), value))
-            .collect(),
-    );
-    encode_value(&map).map_err(CommError::from)
+    let mut entries: Vec<(Value, Value)> = COMM_RECORD_KEYS
+        .iter()
+        .zip(values)
+        .map(|(key, value)| (Value::from(*key), value))
+        .collect();
+    if let CommRecord::Receipt {
+        requested_at: Some(requested_at),
+        ..
+    } = record
+    {
+        entries.push((Value::from(KEY_REQUESTED_AT), Value::from(*requested_at)));
+    }
+    encode_value(&Value::Map(entries)).map_err(CommError::from)
 }
 
 pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
@@ -204,7 +223,8 @@ pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
         return Err(CommError::InvalidRecord);
     }
     let entries = value_map(&value).map_err(|_| CommError::InvalidRecord)?;
-    validate_keys(entries, &COMM_RECORD_KEYS).map_err(|_| CommError::InvalidRecord)?;
+    validate_keys_with_optional(entries, &COMM_RECORD_KEYS, &COMM_RECORD_OPTIONAL_KEYS)
+        .map_err(|_| CommError::InvalidRecord)?;
     if required_u64(entries, KEY_SCHEMA_VERSION).map_err(|_| CommError::InvalidRecord)?
         != COMM_SCHEMA_VERSION
     {
@@ -217,6 +237,11 @@ pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
         && (!matches!(required_value(entries, "original_head"), Ok(Value::Nil))
             || !matches!(required_value(entries, "source_position"), Ok(Value::Nil)))
     {
+        return Err(CommError::InvalidRecord);
+    }
+    let requested_at =
+        elided_u64(entries, KEY_REQUESTED_AT).map_err(|_| CommError::InvalidRecord)?;
+    if kind != RECORD_KIND_RECEIPT && requested_at.is_some() {
         return Err(CommError::InvalidRecord);
     }
     match kind {
@@ -304,11 +329,17 @@ pub fn decode_comm_record(bytes: &[u8]) -> CommResult<CommRecord> {
                 .map_err(|_| CommError::InvalidRecord)?
                 .to_owned();
             validate_channel_class(&channel_class).map_err(|_| CommError::InvalidRecord)?;
+            let occurred_at =
+                required_u64(entries, KEY_OCCURRED_AT).map_err(|_| CommError::InvalidRecord)?;
+            // A ruling never predates the request it answers.
+            if requested_at.is_some_and(|requested_at| requested_at > occurred_at) {
+                return Err(CommError::InvalidRecord);
+            }
             Ok(CommRecord::Receipt {
                 party_ref,
                 channel_class,
-                occurred_at: required_u64(entries, KEY_OCCURRED_AT)
-                    .map_err(|_| CommError::InvalidRecord)?,
+                occurred_at,
+                requested_at,
                 outcome: required_string(entries, "outcome")
                     .map_err(|_| CommError::InvalidRecord)?
                     .to_owned(),

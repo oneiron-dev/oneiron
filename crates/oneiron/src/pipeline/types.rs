@@ -40,7 +40,6 @@ pub use oneiron_retrieval::pipeline::ScoredEntity;
 pub use crate::store::retrieval_signal::Signal;
 
 pub(super) const SECONDS_PER_DAY_F64: f64 = 86_400.0;
-pub(super) const RETRIEVAL_TRACE_RRF_K: f32 = 60.0;
 
 pub use crate::memory::retrieval_defaults::DEFAULT_RECENCY_HALF_LIFE_DAYS;
 

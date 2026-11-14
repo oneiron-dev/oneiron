@@ -1,5 +1,4 @@
 //! Typed facade calls over the engine's peer-relative federation burst doors.
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -67,16 +66,8 @@ pub fn federation_burst_host_only<T, I>(
     ))
 }
 
-/// `vault.sync.retained_work.wait.set`'s input: one retained-work queue and
-/// its new wait. `None` (or an absent `secs`) resets that queue to its
-/// existing default; no cap or default is invented here.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct RetainedWorkWaitSetRequest {
-    pub queue: RetainedWorkQueue,
-    #[serde(default)]
-    pub secs: Option<u64>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::federation_burst::RetainedWorkWaitSetRequest;
 
 /// `vault.sync.retained_work.wait.set`: the owner sets one retained-work
 /// queue's wait in seconds, or resets it to its existing default, and

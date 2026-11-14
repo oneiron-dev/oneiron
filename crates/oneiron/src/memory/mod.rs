@@ -311,6 +311,7 @@ pub use crate::lens::{
 pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
+pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING};
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.
 /// The recipient a host proved for a handle's repo reads (FIX 7608 2b-ii).
@@ -430,13 +431,18 @@ pub(crate) use witness::{
     ArchivedMessage, ArchivedMessageAdmission, ArchivedMessageLink, archived_container_body,
     archived_message_body,
 };
+#[cfg(feature = "sync")]
+pub(crate) use witness::{ForeignTurn, speak_as_counterparty};
 pub(crate) use witness::{
     IMPORTED_SOURCE_KEY, ImportedTurnStamp, guard_import_stamp, turn_admits_message_bodies,
     witness_message_body,
 };
 pub(crate) use witness::{
-    next_witness_message_order, sole_edge_target, taken_witness_message_order,
-    witness_message_order,
+    SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,
+};
+pub(crate) use witness::{
+    next_witness_message_order, sole_edge_target, stored_witness_turn_author,
+    taken_witness_message_order, witness_message_order,
 };
 
 // Read-version, revision-change, and publication types are available under

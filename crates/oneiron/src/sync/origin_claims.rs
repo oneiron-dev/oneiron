@@ -376,7 +376,7 @@ pub(crate) fn scrub_section_fit_receipts(
             if !vault.carrier_actor_erased_in_txn(&rtxn, &actor)? {
                 continue;
             }
-            let mut normalized = body.clone();
+            let mut normalized = body;
             if !set_receipt_actor(&mut normalized) {
                 continue;
             }

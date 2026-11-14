@@ -12,7 +12,7 @@ use crate::{EntityId, TimeRange, Vault, error::Result};
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
-const PACKS: [(&str, &str); 8] = [
+const PACKS: [(&str, &str); 9] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/PACK.md"),
@@ -42,14 +42,18 @@ const PACKS: [(&str, &str); 8] = [
         include_str!("../../../../../packs/builtin/telegram/PACK.md"),
     ),
     (
-        "sheets",
-        include_str!("../../../../../packs/builtin/sheets/PACK.md"),
+        "google",
+        include_str!("../../../../../packs/builtin/google/PACK.md"),
+    ),
+    (
+        "microsoft365",
+        include_str!("../../../../../packs/builtin/microsoft365/PACK.md"),
     ),
 ];
 /// Each built-in pack's guided setup skill (OF-378), at the folder its
 /// PACK.md `setup` names. It ships in the same exact source, so the owner
 /// reads it while the connector is still a Candidate.
-const SETUP_SKILLS: [(&str, &str); 8] = [
+const SETUP_SKILLS: [(&str, &str); 9] = [
     (
         "slack",
         include_str!("../../../../../packs/builtin/slack/skills/setup/SKILL.md"),
@@ -79,8 +83,12 @@ const SETUP_SKILLS: [(&str, &str); 8] = [
         include_str!("../../../../../packs/builtin/telegram/skills/setup/SKILL.md"),
     ),
     (
-        "sheets",
-        include_str!("../../../../../packs/builtin/sheets/skills/setup/SKILL.md"),
+        "google",
+        include_str!("../../../../../packs/builtin/google/skills/setup/SKILL.md"),
+    ),
+    (
+        "microsoft365",
+        include_str!("../../../../../packs/builtin/microsoft365/skills/setup/SKILL.md"),
     ),
 ];
 const SETUP_SKILL_PATH: &str = "skills/setup/SKILL.md";
@@ -543,6 +551,26 @@ pub struct CheckedBuiltinConnection {
     pub connection: super::PackSetupConnection,
     /// Its Verified check: the account, and the provider's own id for it.
     pub check: super::PackSetupCheckRecord,
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Door for `tests/booking_feed_move_held.rs`
+    /// ([FEED-MOVE-HOLD-UNTESTED-AND-INCREMENTAL-CURSOR]): removes this
+    /// vault's first-open built-in pack seed marker, so the built-in channel
+    /// check (OF-519) reads the vault as one that never seeded the packs, as
+    /// an unseeded open leaves it. Every other seeded row stays. Compiled
+    /// only under `--cfg oneiron_test_support`; never API.
+    ///
+    /// # Errors
+    ///
+    /// The write's failure.
+    pub(crate) fn remove_builtin_pack_seed_marker_for_test(&self) -> Result<()> {
+        let mut txn = self.store.env.write_txn()?;
+        SEEDED.delete(&self.store, &mut txn, &())?;
+        txn.commit()?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

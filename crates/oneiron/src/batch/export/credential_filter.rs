@@ -219,6 +219,70 @@ pub(crate) fn export_released_record(
     Ok(Some(record))
 }
 
+/// One admitted row's stored `body` as its reader is served it: as stored
+/// for a reader that `reads_stored`
+/// ([`crate::claim::ScopedRead::reads_stored_bodies_in`]); for every other,
+/// as [`released_body`] releases it: the stored body when the rule changes
+/// nothing, the Nulled body's bytes when it rewrites. `None` is a body
+/// withheld whole: the row keeps its place, id and metadata, without a body.
+///
+/// # Errors
+/// A failed raw release check.
+pub(crate) fn released_body_for(
+    reads_stored: bool,
+    entity_type: u8,
+    body: &[u8],
+) -> Result<Option<std::borrow::Cow<'_, [u8]>>> {
+    if reads_stored {
+        return Ok(Some(std::borrow::Cow::Borrowed(body)));
+    }
+    Ok(match released_body(entity_type, body)? {
+        ReleasedBody::Unchanged => Some(std::borrow::Cow::Borrowed(body)),
+        ReleasedBody::Rewritten { bytes, .. } => Some(std::borrow::Cow::Owned(bytes)),
+        ReleasedBody::Withheld => None,
+    })
+}
+
+impl crate::claim::ScopedRead<'_> {
+    /// Whether this lane reads each admitted body as stored, judged in `txn`
+    /// (ruling EXPORTDOORS Q4 = A): the vault owner's own key, and a narrower
+    /// credential of the owner's while its holder is still the bound owner
+    /// ([`crate::claim::ScopedReadActorKey::facets_owner_exempt_in`]). Every
+    /// other reader, an agent within its Grant included, reads each body as
+    /// [`released_body`] releases it; a credential reaches that reader only
+    /// through a reveal or a materialization.
+    ///
+    /// # Errors
+    /// An owner binding that cannot be read in `txn`.
+    pub(crate) fn reads_stored_bodies_in(&self, txn: &heed::RoTxn<'_>) -> Result<bool> {
+        self.actor_key().facets_owner_exempt_in(self.vault(), txn)
+    }
+
+    /// [`Self::reads_stored_bodies_in`] in a snapshot of its own, for a door
+    /// that holds none.
+    ///
+    /// # Errors
+    /// A failed read transaction, or an owner binding that cannot be read.
+    pub(crate) fn reads_stored_bodies(&self) -> Result<bool> {
+        let txn = self.vault().store.env.read_txn()?;
+        self.reads_stored_bodies_in(&txn)
+    }
+
+    /// [`released_body_for`] for this lane's reader, judged in `txn`.
+    ///
+    /// # Errors
+    /// An owner binding that cannot be read in `txn`, or a failed raw release
+    /// check.
+    pub(crate) fn released_body_in<'b>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        entity_type: u8,
+        body: &'b [u8],
+    ) -> Result<Option<std::borrow::Cow<'b, [u8]>>> {
+        released_body_for(self.reads_stored_bodies_in(txn)?, entity_type, body)
+    }
+}
+
 /// A contact bundle's body for a stored body that [`released_body`] changes,
 /// and whether a credential was nulled from it; `None` when the rule changes
 /// nothing, and the body keeps the bundle's JSON reading. A rewritten

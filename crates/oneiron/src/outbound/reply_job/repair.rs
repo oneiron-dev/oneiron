@@ -247,11 +247,11 @@ impl Vault {
         let Some(payload_ref) = source.origin.payload_ref.as_deref() else {
             return Ok(false);
         };
-        if self
+        Ok(self
             .read_provider_event_text_in_txn(txn, &source.origin.channel, payload_ref)?
             .as_deref()
-            != Some(source.inbound.as_str())
-            || self
+            == Some(source.inbound.as_str())
+            && self
                 .connector_reply_body_in_txn(
                     txn,
                     &source.job.event.event_id,
@@ -259,15 +259,11 @@ impl Vault {
                     &source.reply_ref,
                 )?
                 .as_ref()
-                != Some(&source.kept)
-            || self
+                == Some(&source.kept)
+            && self
                 .connector_reply_body_text_in_txn(txn, &source.kept.content_ref)?
                 .as_deref()
-                != Some(source.reply.as_str())
-        {
-            return Ok(false);
-        }
-        Ok(true)
+                == Some(source.reply.as_str()))
     }
 
     fn repair_connector_reply_witness(

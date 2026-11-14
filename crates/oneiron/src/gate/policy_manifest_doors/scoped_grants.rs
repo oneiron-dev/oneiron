@@ -55,12 +55,8 @@ pub struct PolicyGrantMapEntry {
     pub value: PolicyGrantValue,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct PolicyGrantExtension {
-    pub tag: i8,
-    pub data: Vec<u8>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::gate::policy_manifest_doors::scoped_grants::PolicyGrantExtension;
 
 impl PolicyGrantValue {
     fn from_value(value: &Value) -> Result<Self> {

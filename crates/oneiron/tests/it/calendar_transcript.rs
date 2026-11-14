@@ -187,14 +187,15 @@ fn turns_preserve_source_labels_timestamps_order_and_blob_provenance() {
         rmp_serde::from_slice(&vault.get(&turn_refs[1]).unwrap().unwrap()).unwrap();
     // The source display name is PROVENANCE, and lives under a key outside the
     // dirty scan's `speaker|spkr` alias set. The GATE-10 keys carry the role, so
-    // a named import decodes as an admissible User turn instead of `Unknown`.
+    // a named import decodes as an admissible Counterparty turn instead of
+    // `Unknown`: words from a file are never the vault's own user's (FIX 15412).
     assert_eq!(first["speaker_label"], "Ada");
-    assert_eq!(first["speaker"], "user");
-    assert_eq!(first["spkr"], "user");
-    assert_eq!(first["role"], "user");
+    assert_eq!(first["speaker"], "counterparty");
+    assert_eq!(first["spkr"], "counterparty");
+    assert_eq!(first["role"], "counterparty");
     assert_eq!(first["ordinal"], 0);
     assert_eq!(second["speaker_label"], "Bob");
-    assert_eq!(second["speaker"], "user");
+    assert_eq!(second["speaker"], "counterparty");
     assert_eq!(second["ordinal"], 1);
     assert_eq!(first["source_blob_ref"], blob.to_hex());
     assert_eq!(first["claimed_start_ms"], 123400);

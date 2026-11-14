@@ -11,6 +11,7 @@ use crate::dreamer_consolidation::{
 use crate::error::{Error, Result};
 use crate::ports::EdgeStoreRead;
 use crate::registry::ENTITY_TYPE_TURN;
+use crate::vault::entity_revision::message_words_released;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 
@@ -70,13 +71,14 @@ pub(crate) struct TurnChunks {
 /// document's text when the field lives in one) reads as that one chunk, as
 /// a consolidation branch reads it. A witnessed TURN reads its visible
 /// MESSAGE rows in message order, the words its saved tags index, each only
-/// if the Dreamer may read it.
+/// if the Dreamer may read it. Every chunk holds only words a door that
+/// releases a turn's words gives ([`released`]).
 pub(crate) fn turn_chunks_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     turn: &EntityId,
 ) -> Result<Option<TurnChunks>> {
-    let Some(members) = crate::tagging::turn_members_in_txn(vault, &vault.store, txn, turn, false)?
+    let Some(members) = crate::tagging::turn_members_in_txn(vault, &vault.store, txn, turn, true)?
     else {
         return Ok(None);
     };
@@ -98,7 +100,10 @@ pub(crate) fn turn_chunks_in_txn(
     };
     if let Some(text) = decode_turn_body(&body).text {
         return Ok(Some(TurnChunks {
-            chunks: vec![Chunk::new(*turn, text)],
+            chunks: released(text, &body)
+                .map(|text| Chunk::new(*turn, text))
+                .into_iter()
+                .collect(),
             withheld: false,
         }));
     }
@@ -106,17 +111,27 @@ pub(crate) fn turn_chunks_in_txn(
     let readable = readable_in(vault, txn, &ids)?;
     let mut withheld = false;
     let mut chunks = Vec::with_capacity(members.len());
-    for ((message, text, _), readable) in members.into_iter().zip(readable) {
+    for ((message, text, body), readable) in members.into_iter().zip(readable) {
         let Some(text) = text else {
             continue;
         };
-        if readable {
-            chunks.push(Chunk::new(message, text));
-        } else {
+        if !readable {
             withheld = true;
+        } else if let Some(text) = released(text, &body) {
+            chunks.push(Chunk::new(message, text));
         }
     }
     Ok(Some(TurnChunks { chunks, withheld }))
+}
+
+/// `words` read from `body`, where a door that releases a turn's words gives
+/// them ([`message_words_released`]; ARCH-0069 #readers-followups-open, the
+/// Dreamer sieve's TURN reads). A source stored while the owner's scan was
+/// off, whose body or words the write door now refuses, gives none. It is
+/// not withheld: no grant releases it, and the owner's edit of it owes the
+/// turn a new read.
+fn released(words: String, body: &[u8]) -> Option<String> {
+    message_words_released(&words, body).then_some(words)
 }
 
 /// Whether the Dreamer may read a source as a chunk of its turn now.
@@ -220,8 +235,9 @@ fn part_of_in(
 
 /// The text of one chunk of `turn`, read as [`turn_chunks_in_txn`] reads it,
 /// for a read that goes on in it: `None` when the turn or the source no
-/// longer reads, the source is no longer part of the turn, or the Dreamer
-/// may no longer read it.
+/// longer reads, the source is no longer part of the turn, the Dreamer may
+/// no longer read it, or its words are not [`released`], so a span queued
+/// on such a source before reads none of them.
 pub(crate) fn chunk_text_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -231,12 +247,15 @@ pub(crate) fn chunk_text_in_txn(
     if admissions_in_txn(vault, txn, &[(*turn, *source)])? != [Admission::Readable] {
         return Ok(None);
     }
-    let body = crate::ports::safe_read_text(vault, txn, source)?;
-    Ok(if source == turn {
-        body.and_then(|body| decode_turn_body(&body).text)
+    let Some(body) = crate::ports::safe_read_text(vault, txn, source)? else {
+        return Ok(None);
+    };
+    let text = if source == turn {
+        decode_turn_body(&body).text
     } else {
-        body.and_then(|body| crate::tagging::shown_message_text(&body))
-    })
+        crate::tagging::shown_message_text(&body)
+    };
+    Ok(text.and_then(|text| released(text, &body)))
 }
 
 /// The words `span` indexes, read as [`chunk_text_in_txn`] reads its source:

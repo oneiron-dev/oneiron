@@ -13,13 +13,12 @@ use self::keys::{
     KEY_CONFIDENCE, KEY_CONNECTORS, KEY_DEP_MIN_VERSION, KEY_DEP_SKILL_ID, KEY_DESC,
     KEY_DISPLAY_NAME, KEY_DREAMING, KEY_DREAMING_MODEL, KEY_ENABLED, KEY_FORKED_FROM,
     KEY_GENERATED, KEY_HUMAN_AUTHORED, KEY_INSTRUCTIONS, KEY_LIFECYCLE_STATUS, KEY_LOGICAL_ID,
-    KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_MODELS, KEY_PROFILE_BUDGET_SPLIT,
+    KEY_MEMORY_PROFILE, KEY_MODEL_TIER, KEY_MODELS, KEY_OPTIONAL_MEMORY, KEY_PROFILE_BUDGET_SPLIT,
     KEY_PROFILE_COMPACTION, KEY_PROFILE_COMPACTION_BACKEND, KEY_PROFILE_HOT_STEPS,
-    KEY_PROFILE_OPTIONAL_MEMORY, KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS,
-    KEY_PROFILE_WINDOW_TOKEN_BUDGET, KEY_PROVENANCE, KEY_REFUSAL, KEY_SCOPE, KEY_SKILLS,
-    KEY_SOURCE, KEY_SPLIT_CLAIMS, KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS,
-    KEY_VERSION, KEY_WAKE_CADENCE, KEY_WORLD, OUTPUT_DECAY_KEYS, SCOPE_ALL, SCOPE_BASE,
-    SCOPE_WORLD,
+    KEY_PROFILE_OUTPUT_DECAY, KEY_PROFILE_VERBATIM_PINS, KEY_PROFILE_WINDOW_TOKEN_BUDGET,
+    KEY_PROVENANCE, KEY_REFUSAL, KEY_SCOPE, KEY_SKILLS, KEY_SOURCE, KEY_SPLIT_CLAIMS,
+    KEY_SPLIT_OTHER, KEY_SPLIT_SUMMARIES, KEY_SPLIT_TURNS, KEY_VERSION, KEY_WAKE_CADENCE,
+    KEY_WORLD, OUTPUT_DECAY_KEYS, SCOPE_ALL, SCOPE_BASE, SCOPE_WORLD,
 };
 use self::models::{decode_agent_models, decode_compaction_model, encode_agent_models};
 use self::refusal::{decode_refusal_dial, encode_refusal_dial};
@@ -162,6 +161,12 @@ pub fn encode_agent_definition(def: &AgentDefinition) -> Result<Vec<u8>> {
             Value::from(model.as_str()),
         ));
     }
+    if let Some(optional_memory) = &def.optional_memory {
+        entries.push((
+            Value::from(KEY_OPTIONAL_MEMORY),
+            self::optional_memory::encode_optional_memory_profile(optional_memory),
+        ));
+    }
     let value = Value::Map(entries);
     let mut out = Vec::new();
     rmpv::encode::write_value(&mut out, &value)
@@ -256,8 +261,8 @@ fn encode_skill_dependency(dependency: &SkillDependency) -> Value {
 }
 
 /// Encodes a [`MemoryProfile`] sub-map: the [`MEMORY_PROFILE_KEYS`] in
-/// pinned order, with `budget_split`, `hot_steps`, `output_decay`, an empty
-/// `verbatim_pins` and `optional_memory` elided when absent.
+/// pinned order, with `budget_split`, `hot_steps`, `output_decay` and an
+/// empty `verbatim_pins` elided when absent.
 fn encode_memory_profile(profile: &MemoryProfile) -> Value {
     let mut entries = vec![(
         Value::from(KEY_PROFILE_WINDOW_TOKEN_BUDGET),
@@ -305,12 +310,6 @@ fn encode_memory_profile(profile: &MemoryProfile) -> Value {
                     .map(|pin| Value::from(pin.as_str()))
                     .collect(),
             ),
-        ));
-    }
-    if let Some(optional_memory) = &profile.optional_memory {
-        entries.push((
-            Value::from(KEY_PROFILE_OPTIONAL_MEMORY),
-            self::optional_memory::encode_optional_memory_profile(optional_memory),
         ));
     }
     Value::Map(entries)

@@ -1,0 +1,17 @@
+{
+  "name": "vault.coach.training_offers.run",
+  "description": "Run one Coach training-offer pass now on this host, for the owner or a holder of engine.controls.maintenance_cadence; it shares the nightly pass's day budget, and its offers wait on the owner's answer.",
+  "input": "crate::skill_optimize::offer_doors::OfferPassRunRequest",
+  "output": "crate::skill_optimize::offer_doors::OfferPassRunAnswer",
+  "call": "crate::task_verb::sdk::host_only(memory, \"vault.coach.training_offers.run\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "spawn",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "engine_controller"
+}

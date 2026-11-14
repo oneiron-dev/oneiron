@@ -4,29 +4,16 @@
 //! these DTOs only carry the original signed envelopes over JSON.
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
-use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 pub use crate::authority::{AuthorityClockRepair, AuthorityClockRepairOutcome};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
 
-/// Full signed history, including quarantined forks, in parent-first export
-/// order. Each entry is the original MessagePack envelope in standard base64,
-/// not an audit row or a re-serialized signed payload. Import accepts any
-/// arrival order and may carry only new entries whose parents are held.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SignedAuthorityHistory {
-    pub entries: Vec<String>,
-}
-
-/// The content-addressed authority entry ids returned by the atomic import.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AuthorityHistoryImported {
-    pub entry_refs: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::authority_history::{
+    AuthorityHistoryImported, SignedAuthorityHistory,
+};
 
 /// `vault.authority.history.export`: no local signing secret leaves.
 pub fn export_authority_history_as_owner(

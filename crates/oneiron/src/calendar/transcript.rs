@@ -131,33 +131,8 @@ pub struct TranscriptFileDropRequest<'a> {
     pub arrived_at_ms: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum TranscriptIngestOutcome {
-    Session {
-        session_ref: crate::EntityId,
-        turn_refs: Vec<crate::EntityId>,
-        /// IDs carried by the same in-transaction SessionEnd wake plan.
-        wake_turn_refs: Vec<crate::EntityId>,
-        extraction_enqueued: bool,
-    },
-    RetryOpenSession {
-        open_session_ref: crate::EntityId,
-    },
-    /// The original session-open hook has asked; no SESSION was minted.
-    HookPending {
-        session_ref: crate::EntityId,
-        ask: crate::EntityId,
-    },
-    /// The same upload is already retained under its native lease or due instant.
-    Queued {
-        attempt_ref: String,
-    },
-    /// A nonempty file with no usable turns remains explicit caller-owned NOTE input.
-    NoteFallback {
-        note_ref: crate::EntityId,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::calendar::transcript::TranscriptIngestOutcome;
 
 /// Mints (or detects) the session before persisting transcript turns, then
 /// atomically closes it through the standard lifecycle path.
@@ -242,10 +217,17 @@ fn persist_turns_with_source(
     source_version: Option<&crate::blob_artifact::BlobArtifactVersion>,
     meeting_source: Option<&crate::ingest::meeting_audio::MeetingImportProvenance>,
 ) -> crate::Result<Vec<crate::EntityId>> {
-    let conversation_body = meeting_source
-        .map(|source| source.conversation_body())
-        .transpose()?;
     let conversation_ref = vault.store.clock.entity_id()?;
+    // The conversation and every TURN carry an import stamp: a meeting
+    // import's own source, else the registry's file-drop source. These are
+    // words brought in from outside, not spoken in this vault (FIX 15412).
+    let conversation_body = match meeting_source {
+        Some(source) => source.conversation_body()?,
+        None => rmp_serde::to_vec_named(&serde_json::json!({
+            (crate::memory::IMPORTED_SOURCE_KEY): FILE_DROP_TRANSCRIPT_SOURCE_ID,
+        }))
+        .map_err(|_| crate::Error::InvariantViolation("transcript CONVERSATION encode"))?,
+    };
     vault
         .batch_in()
         .put(
@@ -256,7 +238,7 @@ fn persist_turns_with_source(
                 end: arrived_at_ms / 1000,
             },
             arrived_at_ms / 1000,
-            conversation_body.as_deref().unwrap_or(&[]),
+            &conversation_body,
         )
         .apply(wtxn)?;
     let mut ids = Vec::with_capacity(turns.len());
@@ -268,15 +250,17 @@ fn persist_turns_with_source(
         // and classify as `Unknown` — inadmissible, i.e. invisible to every
         // dirty scan. The source label stays verbatim beside them under
         // `speaker_label`, which is provenance-only and outside the alias set.
-        // Import provides no verified PERSON identity. Do not stamp `actor`:
-        // the string is not authorship, so only owner/admin policy can later
-        // authorize deletion of this unknown-author room TURN.
+        // Import provides no verified PERSON identity, so every alias names a
+        // counterparty, never the vault's own user (FIX 15412). Do not stamp
+        // `actor`: the string is not authorship, so only owner/admin policy
+        // can later authorize deletion of this unknown-author room TURN.
         let mut body_value = serde_json::json!({
-            "ordinal": turn.ordinal, "speaker": "user", "spkr": "user",
-            "role": "user", "speaker_label": turn.speaker_label,
+            "ordinal": turn.ordinal, "speaker": "counterparty", "spkr": "counterparty",
+            "role": "counterparty", "speaker_label": turn.speaker_label,
             "text": turn.text, "txt": turn.text, "source_blob_ref": source_blob_ref.to_hex(),
             "claimed_start_ms": turn.claimed_start_ms, "claimed_end_ms": turn.claimed_end_ms,
             "arrived_at_ms": arrived_at_ms,
+            (crate::memory::IMPORTED_SOURCE_KEY): FILE_DROP_TRANSCRIPT_SOURCE_ID,
         });
         if let Some(source_version) = source_version {
             if let serde_json::Value::Object(ref mut map) = body_value {

@@ -200,6 +200,37 @@ class PlanTest(unittest.TestCase):
         )
         self.assertEqual([entry["name"] for entry in chosen["selections"]], ["libs", "tests-01"])
 
+    def test_a_package_with_no_tested_target_leaves_every_selection(self) -> None:
+        metadata = json.loads(json.dumps(METADATA))
+        metadata["workspace_members"] += ["oneiron-py 0.1.0", "oneiron-macros 0.1.0"]
+        metadata["packages"] += [
+            {
+                "id": "oneiron-py 0.1.0",
+                "name": "oneiron-py",
+                "targets": [
+                    {"name": "oneiron_py", "kind": ["cdylib"], "test": False},
+                    {"name": "build-script-build", "kind": ["custom-build"], "test": False},
+                ],
+            },
+            {  # an untested lib beside a tested integration test: still tested
+                "id": "oneiron-macros 0.1.0",
+                "name": "oneiron-macros",
+                "targets": [
+                    {"name": "oneiron_macros", "kind": ["proc-macro"], "test": False},
+                    target("expand", "test"),
+                ],
+            },
+        ]
+        self.assertEqual(nightly_report.untested_packages(metadata), ["oneiron-py"])
+        chosen = nightly_report.plan(metadata, shard_files=3)
+        self.assertEqual(chosen["untested"], ["oneiron-py"])
+        for entry in chosen["selections"]:
+            args = nightly_report.selection_args(chosen, entry)
+            excluded = [args[i + 1] for i, arg in enumerate(args) if arg == "--exclude"]
+            self.assertEqual(excluded, ["oneiron-bench", "oneiron-py"], entry["name"])
+        self.assertEqual(nightly_report.untested_packages(METADATA), [])
+        self.assertEqual(nightly_report.plan(METADATA)["untested"], [])
+
     def test_shards_split_the_integration_tests_into_runs_of_n_names(self) -> None:
         chosen = nightly_report.plan(METADATA, shard_files=2)
         self.assertEqual(
@@ -323,7 +354,7 @@ class PruneTest(unittest.TestCase):
                 self.assertEqual(
                     nightly_report.main(["prune", str(plan_file), "tests-01", str(failed), str(metadata)]), 0
                 )
-                nightly_report.main(["tests", str(plan_file), "tests-01"])
+                nightly_report.main(["binaries", str(plan_file), "tests-01"])
                 nightly_report.main(["args", str(plan_file), "--name", "libs"])
                 nightly_report.main(["args", str(plan_file)])
                 self.assertEqual(nightly_report.main(["drop", str(plan_file), "libs", "a reason"]), 3)
@@ -702,6 +733,11 @@ class BudgetSetTest(unittest.TestCase):
                 crate = REPO / Path(row["source"]).parts[0] / Path(row["source"]).parts[1]
                 self.assertIn(f'name = "{row["package"]}"', (crate / "Cargo.toml").read_text())
                 text = source.read_text()
+                if row["kind"] == "job":  # a bench job's metric (PR 10b2)
+                    import nightly_bench  # noqa: PLC0415 (the bench module came with the job rows)
+
+                    self.assertIn(row["binary"], [job[0] for job in nightly_bench.BENCH_JOBS])
+                    continue
                 if row["match"] == "=":
                     self.assertIn(f"fn {row['test'].rsplit('::', 1)[-1]}(", text)
                 elif row["match"] == "~":
@@ -797,8 +833,8 @@ class BudgetSummaryTest(unittest.TestCase):
             (out / "budget-baseline-proposal.tsv").read_text().splitlines(),
             [
                 "host\ttest\tseconds\tnights\tfirst\tlast",
-                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.000\t5\t2026-11-10\t2026-11-14",
-                "nelly\toneiron::alpha props::a_merge_converges\t11.000\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.0\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron::alpha props::a_merge_converges\t11.0\t5\t2026-11-10\t2026-11-14",
             ],
         )
         samples = json.loads((out / "budget-samples.json").read_text())
@@ -830,10 +866,28 @@ class BudgetSummaryTest(unittest.TestCase):
         self.assertEqual(
             (out / "budget-baseline-proposal.tsv").read_text().splitlines()[1:],
             [
-                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.000\t5\t2026-11-10\t2026-11-14",
+                "nelly\toneiron access::grant::tests::a_grant_reads_its_rows\t2.0\t5\t2026-11-10\t2026-11-14",
                 "nelly\toneiron::alpha props::a_merge_converges\t20.000\t5\t2026-10-01\t2026-10-05",
             ],
             "the proposal is the whole file: the committed rows and the new one",
+        )
+
+    def test_a_sub_millisecond_baseline_round_trips_through_the_proposal_and_stays_in_its_band(self) -> None:
+        # review 7885 P1: a bench p99 of 0.0001 s was proposed as 0.000, so the committed row read over band
+        for day in range(10, 15):
+            _, _, out = self.night(f"2026-11-{day}", 0.0001)
+        proposal = out / "budget-baseline-proposal.tsv"
+        self.assertIn(
+            "nelly\toneiron::alpha props::a_merge_converges\t0.0001\t5\t2026-11-10\t2026-11-14",
+            proposal.read_text().splitlines(),
+        )
+        committed = write(self.base / "budget-baseline.tsv", proposal.read_text())
+        code, line, out = self.night("2026-11-15", 0.0001, committed=str(committed))
+        self.assertEqual(code, 0, line)
+        self.assertIn(" budget_in=2 budget_out=0 budget_pending=0 ", line)
+        self.assertIn(
+            "budget oneiron::alpha props::a_merge_converges: 0.0001 s, baseline 0.0001 s (committed), in band (+0%)",
+            (out / "summary.txt").read_text(),
         )
 
     def test_each_budget_row_without_a_result_says_why_and_a_failed_budget_test_gives_no_sample(self) -> None:

@@ -30,8 +30,8 @@ use super::yaml_format::write_yaml_groups;
 
 /// Codec label for deterministic code-run raw output previews.
 pub const CODE_RUN_OUTPUT_PREVIEW_CODEC: &str = "utf8-lossy-whitespace-compact-v1";
-/// Default character cap for compact code-run raw output previews.
-pub const CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS: usize = 256;
+#[doc(hidden)]
+pub use oneiron_verb_wire::serialize::pack_entry::CODE_RUN_OUTPUT_PREVIEW_MAX_CHARS;
 
 /// Stable serializer identity recorded in whole-vault export manifests.
 pub const WHOLE_VAULT_EXPORT_SERIALIZER: &str = "oneiron.whole_vault_export";
@@ -225,6 +225,8 @@ pub(super) fn serialize_prepared_pack(
     mut prepared: PreparedPack,
     tokenizer: PackTokenizer,
 ) -> Vec<u8> {
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::pack_encode_work::record_pack_encode();
     let empty =
         prepared.results.is_empty() && prepared.neighbors.is_empty() && prepared.l2_base.is_none();
     let l2_base = prepared.l2_base.clone();
