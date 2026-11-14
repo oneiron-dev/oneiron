@@ -171,6 +171,31 @@ the same. The row asks whether everything is okay, and the report names it in
 `serve`'s queue lands queued sessions in passes of about that much; a session
 past it lands alone, and its rows ask in `serve`'s log.
 
+## Export zips: the archive pre-check
+
+Before anything of an export zip is read, one pass reads the zip's own entry
+list, the same way every time:
+
+- An entry whose path would leave the export's folder (`../x`, `/etc/x`), a
+  symbolic link, and a device file, FIFO or socket are skipped, never read,
+  and listed in `warnings` (`"warning": "archive_entry_skipped"`, its `name`
+  and `reason`: `escaping_path`, `symbolic_link` or `special_file`). The
+  rest of the zip imports.
+- The import is refused, and nothing lands, when two entries share their
+  bytes (overlapping entries), when two entries have one name, when the zip
+  declares more entries than `[import] archive_max_entries` (262,144 unless
+  set), or when `conversations.json` does not start as JSON.
+- The bytes it unzips are counted as they come, whatever the zip's headers
+  say. With `[import] storage_cap_bytes` set, the import reads at most the
+  cap less what the vault's folder already holds, and stops there. Unset (the
+  default), a local vault has no cap; Oneiron Cloud sets it for each plan.
+
+```toml
+[import]
+archive_max_entries = 262144      # raise it for a zip with more entries
+# storage_cap_bytes = 10737418240 # the vault's storage cap, in bytes
+```
+
 ## The report
 
 stdout is one JSON document of counts: per conversation (its source id, kind,
