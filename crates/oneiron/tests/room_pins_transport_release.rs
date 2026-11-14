@@ -1,4 +1,7 @@
 //! Room bodies leave non-owner transports without shared pins, while pin policy stays.
+//! No Connect guest door is tested: a room is stamped in the base world at birth and
+//! never moves, and a Connect grant never holds the base world, so a guest envelope
+//! or guest document never carries a room.
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test room_pins_transport_release`
 #![cfg(oneiron_test_support)]
 #![cfg(feature = "sync")]
@@ -15,31 +18,24 @@ use oneiron::authority::{HostSlipIssuer, PeerMachine};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind, RoomPinPolicy};
 use oneiron::counterparty_contact::CounterpartyContactRecord;
-use oneiron::federation::{
-    FederationDirectionScope, FederationGrantRole, FederationGrantScope, Scope, ScopeAxis, ScopeId,
-    Sensitivity, SensitivityCeiling,
-};
+use oneiron::federation::{FederationGrantRole, FederationGrantScope, Scope, ScopeAxis};
 use oneiron::memory::{ExportOptions, WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::policy_manifest_doors::{
     PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow, policy_manifests_as_owner,
     put_policy_manifest_as_owner,
 };
 use oneiron::policy_model::SecretScanMode;
-use oneiron::registry::{
-    ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_POLICY_MANIFEST,
-};
+use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
-use oneiron::sync::selector::{GuestDocumentShareRequest, share_guest_document_as_owner};
 use oneiron::sync::types::WindowKey;
 use oneiron::sync::{
-    ConnectExportRequest, SyncClient, SyncSelector, SyncSelectorWorld, filtered_window_doc,
-    filtered_window_doc_for_peer,
+    SyncSelector, SyncSelectorWorld, filtered_window_doc, filtered_window_doc_for_peer,
 };
 use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::workspace_roster::{RoomPinPolicySet, RoomPinRequest};
-use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 use rmpv::Value;
 
@@ -272,12 +268,6 @@ fn map_get_bytes(map: &LoroMap, key: &str) -> Option<Vec<u8>> {
     }
 }
 
-fn import_update(update: &[u8]) -> TestResult<LoroDoc> {
-    let doc = LoroDoc::new();
-    doc.import(update)?;
-    Ok(doc)
-}
-
 fn assert_released_room(doc: &LoroDoc, fixture: &Fixture) -> TestResult {
     let raw = map_get_bytes(&doc.get_map("entities"), &fixture.room.to_hex())
         .ok_or("the transport must admit the room row")?;
@@ -314,148 +304,6 @@ fn assert_stored_room_unchanged(fixture: &Fixture) -> TestResult {
         Some(fixture.raw.as_slice()),
         "transport leaves the stored room row byte-exact"
     );
-    Ok(())
-}
-
-fn admit_sensitive_guest_rows(vault: &Vault, owner: &AuthenticatedOwner) -> TestResult {
-    let ids = vault.entities_by_type(ENTITY_TYPE_POLICY_MANIFEST)?;
-    assert_eq!(ids.len(), 1, "the fixture has one default policy manifest");
-    let id = ids[0];
-    let mut manifest: serde_json::Value =
-        rmp_serde::from_slice(&vault.get(&id)?.ok_or("default policy missing")?)?;
-    let rows = manifest["federation_grant_rows"]
-        .as_array_mut()
-        .ok_or("grant policy rows missing")?;
-    let row = rows
-        .iter_mut()
-        .find(|row| row["kind"] == "connect_guest_ceiling")
-        .ok_or("Connect guest ceiling missing")?;
-    let mut scope: Scope = serde_json::from_value(row["scope"].clone())?;
-    scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Sensitive);
-    row["scope"] = serde_json::to_value(scope)?;
-    vault.install_owner_policy_manifest(
-        owner,
-        id,
-        rmp_serde::to_vec_named(&manifest)?,
-        LEARNED_AT,
-    )?;
-    Ok(())
-}
-
-fn guest_scope(world: EntityId) -> Scope {
-    let mut scope = Scope::top();
-    scope.worlds = ScopeAxis::Some([ScopeId(world)].into());
-    scope.verbs = ScopeAxis::Some(["read".to_owned(), "propose".to_owned()].into());
-    scope.sensitivity = SensitivityCeiling::AtMost(Sensitivity::Sensitive);
-    scope
-}
-
-fn guest_direction(world: EntityId) -> FederationDirectionScope {
-    FederationDirectionScope {
-        worlds: ScopeAxis::Some([ScopeId(world)].into()),
-        facets: ScopeAxis::All,
-        bands: ScopeAxis::All,
-    }
-}
-
-struct GuestFixture {
-    room: Fixture,
-    issuer: HostSlipIssuer,
-    manager: Arc<WindowManager>,
-    world: EntityId,
-    grant: EntityId,
-    pact: String,
-    _recipient_directory: tempfile::TempDir,
-}
-
-fn guest_fixture() -> TestResult<GuestFixture> {
-    let room = open_fixture()?;
-    let vault = &room.vault;
-    let owner = &room.authenticated_owner;
-    let issuer = HostSlipIssuer::from_secret(b"room-pins-source")?;
-    vault.ensure_host_root_slip(&issuer)?;
-    admit_sensitive_guest_rows(vault, owner)?;
-    let world = vault.create_world(owner, "owen", LEARNED_AT)?;
-    // Place the pinned room in the guest's world with an edge only: no body put.
-    vault
-        .batch()
-        .edge(&room.room, EdgeKind::InWorld, &world, 1.0)
-        .commit()?;
-    assert_stored_room_unchanged(&room)?;
-
-    let (recipient_directory, recipient) = open_vault()?;
-    let recipient_owner = scan_off(&recipient)?;
-    let recipient_issuer = HostSlipIssuer::from_secret(b"room-pins-recipient")?;
-    recipient.ensure_host_root_slip(&recipient_issuer)?;
-    admit_sensitive_guest_rows(&recipient, &recipient_owner)?;
-    let recipient_world = recipient.create_world(&recipient_owner, "yuki", LEARNED_AT)?;
-    let source_id = vault
-        .authority_fold()?
-        .vault_id
-        .ok_or("rooted source vault missing")?;
-    let recipient_id = recipient
-        .authority_fold()?
-        .vault_id
-        .ok_or("rooted recipient vault missing")?;
-    let minted = vault.mint_connect_grant(owner, recipient_id, guest_scope(world), None, None)?;
-    let reciprocal = recipient.mint_connect_grant(
-        &recipient_owner,
-        source_id,
-        guest_scope(recipient_world),
-        None,
-        None,
-    )?;
-    let offer = vault.propose_connect_as(
-        owner,
-        &issuer,
-        minted.grant,
-        recipient_id,
-        guest_direction(world),
-        guest_direction(recipient_world),
-    )?;
-    let (_, counter) = recipient.accept_connect_as(
-        &recipient_owner,
-        &recipient_issuer,
-        reciprocal.grant,
-        &offer,
-    )?;
-    vault.accept_connect_as(owner, &issuer, minted.grant, &counter)?;
-    let pact = offer
-        .pact_id
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect::<String>();
-    let manager = manager(vault);
-    manager.open_window(&WindowKey::new(WINDOW))?;
-    Ok(GuestFixture {
-        room,
-        issuer,
-        manager,
-        world,
-        grant: minted.grant,
-        pact,
-        _recipient_directory: recipient_directory,
-    })
-}
-
-#[test]
-fn guest_envelope_room_leaves_without_pins() -> TestResult {
-    let fixture = guest_fixture()?;
-    let delivery = SyncClient::export_connect_window_as(
-        &fixture.manager,
-        &fixture.room.authenticated_owner,
-        &fixture.issuer,
-        ConnectExportRequest {
-            pact: fixture.pact.clone(),
-            window_key: WINDOW.to_owned(),
-            world_ref: fixture.world,
-            facets: vec![],
-            bands: vec![],
-        },
-    )?;
-    let doc = import_update(&delivery.body.update)?;
-    assert_released_room(&doc, &fixture.room)?;
-    assert_stored_room_unchanged(&fixture.room)?;
     Ok(())
 }
 
@@ -701,26 +549,5 @@ fn code_run_export_room_leaves_without_pins() -> TestResult {
         "the code-run archive keeps stored member_ids"
     );
     assert_stored_room_unchanged(&fixture)?;
-    Ok(())
-}
-
-#[test]
-fn guest_document_room_leaves_without_pins() -> TestResult {
-    let fixture = guest_fixture()?;
-    let (shared, _) = share_guest_document_as_owner(
-        &fixture.manager,
-        &fixture.room.authenticated_owner,
-        &fixture.issuer,
-        &GuestDocumentShareRequest {
-            grant_ref: fixture.grant,
-            world_ref: fixture.world,
-            window_key: WINDOW.to_owned(),
-            facets: vec![],
-            bands: vec![],
-        },
-    )?;
-    let doc = import_update(&shared.envelope.body.update)?;
-    assert_released_room(&doc, &fixture.room)?;
-    assert_stored_room_unchanged(&fixture.room)?;
     Ok(())
 }
