@@ -1424,7 +1424,7 @@ fn subscription_view_in_txn(
 }
 
 /// How the subscriber's lane judges one candidate.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Judge {
     /// An edit, a settlement or a redirty notice: shown when this read of its entity is.
     Read(PointRead<'static>),

@@ -342,7 +342,7 @@ fn no_kind() -> Error {
 
 /// A typed handle on one catalogue key: what [`setting_keys!`] declares, and what a reader reads
 /// through.
-pub struct Setting<T> {
+pub struct Setting<T: 'static> {
     pub(crate) spec: &'static SettingSpec,
     pub(crate) kind: &'static Kind<T>,
     pub(crate) value: PhantomData<fn() -> T>,
