@@ -107,10 +107,11 @@ use oneiron_store::extraction_work;
 
 pub mod ports {
     pub use crate::ports::{
-        BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp, ClaimStore, Clock, DependencyIndex,
-        EdgeDirection, EdgeStore, EntityRecord, EntityStore, IdGen, JobQueue, JobScope,
-        ManualClock, PlaceStore, RetrievalIndex, ShortIdStore, SourceSpan, StoreClock,
-        TombstoneStore, Transactions, safe_read_asset_text, safe_read_text,
+        AssetTextRead, AssetTextValidity, BlobStore, ChangeLogRecord, ChangeLogStore, ChangeOp,
+        ClaimStore, Clock, DependencyIndex, EdgeDirection, EdgeStore, EntityRecord, EntityStore,
+        IdGen, JobQueue, JobScope, ManualClock, PlaceStore, RetrievalIndex, ShortIdStore,
+        SourceSpan, StoreClock, TombstoneStore, Transactions, safe_read_asset_text,
+        safe_read_asset_text_diagnostic, safe_read_text,
     };
     pub use crate::ports::{
         ChangeLogStoreRead, DeletionFamily, DeletionMarker, DeletionState, EdgeStoreRead,
