@@ -63,11 +63,15 @@ pub enum VaultKeyWrapKind {
     /// The printed recovery sheet: a KEK derived from the sheet's random
     /// code. One per vault; the "Nobody but me" recovery preset issues it.
     Sheet,
+    /// One data-key kit piece sealed under a passkey's PRF output, by the
+    /// kit's id as 8 hex and the host's credential id. It opens a piece,
+    /// never the data key: a second piece must join it.
+    KitPoint { kit: String, credential: String },
 }
 
 impl VaultKeyWrapKind {
-    /// The wrap's id: one wrap per device, per passkey and per escrow label, one
-    /// password and one sheet.
+    /// The wrap's id: one wrap per device, per passkey, per escrow label and
+    /// per kit's passkey piece, one password and one sheet.
     pub fn id(&self) -> String {
         match self {
             Self::Device { install } => format!("device:{install}"),
@@ -75,6 +79,7 @@ impl VaultKeyWrapKind {
             Self::Passkey { credential } => format!("passkey:{credential}"),
             Self::Escrow { label } => format!("escrow:{label}"),
             Self::Sheet => "sheet".to_owned(),
+            Self::KitPoint { kit, credential } => format!("kit_point:{kit}:{credential}"),
         }
     }
 
@@ -86,6 +91,7 @@ impl VaultKeyWrapKind {
             Self::Passkey { .. } => WrapType::Passkey,
             Self::Escrow { .. } => WrapType::HybridCapsule,
             Self::Sheet => WrapType::SymmetricKek,
+            Self::KitPoint { .. } => WrapType::Passkey,
         }
     }
 }
@@ -104,12 +110,22 @@ pub enum RecoveryPreset {
     /// "Nobody but me": the printed sheet alone restores the vault. No
     /// password, passkey or escrow wrap, and nobody else holds a piece.
     NobodyButMe,
+    /// "Nobody but me" with its switch "any 2 pieces": two of the data-key
+    /// kit's pieces restore the vault, and no single secret does. No sheet,
+    /// password, passkey or escrow wrap.
+    NobodyButMeAnyTwo,
 }
 
 impl RecoveryPreset {
     /// Whether this is the default preset, which a key header leaves out.
     pub fn is_standard(&self) -> bool {
         *self == Self::Standard
+    }
+
+    /// Whether nobody but the owner holds a piece: "Nobody but me", with
+    /// its switch on or off.
+    pub fn is_nobody_but_me(self) -> bool {
+        self != Self::Standard
     }
 }
 

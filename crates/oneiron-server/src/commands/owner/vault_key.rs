@@ -124,17 +124,20 @@ fn recovery_preset(args: VaultKeyRecoveryPresetArgs) -> anyhow::Result<()> {
             preset: vault.recovery_preset()?,
         });
     };
-    let (preset, need) = match set {
-        RecoveryPresetArg::Standard => (RecoveryPreset::Standard, KeyNeed::Open),
-        RecoveryPresetArg::NobodyButMe => (RecoveryPreset::NobodyButMe, KeyNeed::Held),
-    };
-    let sheet_out = match (preset, args.sheet_out) {
-        (RecoveryPreset::NobodyButMe, Some(path)) => Some(path),
-        (RecoveryPreset::NobodyButMe, None) => anyhow::bail!(
-            "--set nobody-but-me writes the printed sheet's code to a new owner-only file:              --sheet-out FILE"
+    let (preset, need, sheet_out) = match (set, args.sheet_out) {
+        (RecoveryPresetArg::NobodyButMe, Some(path)) => {
+            (RecoveryPreset::NobodyButMe, KeyNeed::Held, Some(path))
+        }
+        (RecoveryPresetArg::NobodyButMe, None) => anyhow::bail!(
+            "--set nobody-but-me writes the printed sheet's code to a new owner-only file: \
+             --sheet-out FILE"
         ),
-        (RecoveryPreset::Standard, None) => None,
-        (RecoveryPreset::Standard, Some(_)) => {
+        (RecoveryPresetArg::NobodyButMeAnyTwo, _) => anyhow::bail!(
+            "\"any 2 pieces\" is turned on with the kit its pieces come from: \
+             oneiron recovery-kit issue-vault-key --any-two-pieces"
+        ),
+        (RecoveryPresetArg::Standard, None) => (RecoveryPreset::Standard, KeyNeed::Open, None),
+        (RecoveryPresetArg::Standard, Some(_)) => {
             anyhow::bail!("--sheet-out is read only with --set nobody-but-me")
         }
     };

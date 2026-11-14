@@ -33,6 +33,7 @@ pub(crate) enum VaultKeyWrapKindSchema {
     Passkey { credential: String },
     Escrow { label: String },
     Sheet,
+    KitPoint { kit: String, credential: String },
 }
 
 /// One wrap as the owner reads it.
@@ -42,7 +43,8 @@ pub(crate) struct WrapView {
     #[schemars(with = "VaultKeyWrapKindSchema")]
     pub(crate) kind: VaultKeyWrapKind,
     pub(crate) created: String,
-    /// For a passkey: the PRF input (`prf.eval.first`) to ask it at, base64url.
+    /// For a passkey, or a kit piece sealed under one: the PRF input
+    /// (`prf.eval.first`) to ask it at, base64url.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) prf_input: Option<String>,
 }
@@ -50,7 +52,8 @@ pub(crate) struct WrapView {
 impl WrapView {
     pub(crate) fn of(vault_id: &[u8; 32], info: VaultKeyWrapInfo) -> Self {
         let prf_input = match &info.kind {
-            VaultKeyWrapKind::Passkey { credential } => {
+            VaultKeyWrapKind::Passkey { credential }
+            | VaultKeyWrapKind::KitPoint { credential, .. } => {
                 oneiron::world_keys::passkey_prf_input(vault_id, credential)
                     .ok()
                     .map(|input| b64(&input))

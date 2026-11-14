@@ -30,6 +30,23 @@ pub fn escrow_recipient(seed: &[u8; 32]) -> Result<HybridSecretKey> {
         .map_err(|_| refused("an escrow seed is 32 bytes, not all zero"))
 }
 
+/// A synced passkey as one data-key kit piece (census L10-18): its credential
+/// name and its PRF output at [`passkey_prf_input`], borrowed from the guard
+/// that wipes it. The same output a passkey wrap of that name opens with.
+#[derive(Clone, Copy)]
+pub struct KitPasskey<'a> {
+    pub credential: &'a str,
+    pub prf: &'a Zeroizing<[u8; 32]>,
+}
+
+impl std::fmt::Debug for KitPasskey<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KitPasskey")
+            .field("credential", &self.credential)
+            .finish_non_exhaustive()
+    }
+}
+
 /// One wrap to add to the held vault data key, with the secret it seals to.
 pub enum NewVaultKeyWrap<'a> {
     /// This install's keystore.
@@ -92,6 +109,10 @@ pub enum VaultKeyUnlock<'a> {
         vault_id: [u8; 32],
         pieces: &'a [crate::store::recovery_kit::KitPiece],
         passphrase: Option<&'a crate::store::recovery_kit::KitPassphrase>,
+        /// The owner's synced passkey: the kit piece a carried `kit_point`
+        /// wrap of its name seals joins `pieces` (census L10-18). `None`
+        /// joins none.
+        passkey: Option<KitPasskey<'a>>,
         /// This host's keystore, as a sealed vault's pages unlock on it: the
         /// piece of the kit it keeps for an install a carried device wrap
         /// names joins `pieces`, so the owner gives one piece fewer here (FIX
@@ -132,11 +153,13 @@ impl<'a> VaultKeyUnlock<'a> {
                 vault_id,
                 pieces,
                 passphrase,
+                passkey,
                 ..
             } => Self::Kit {
                 vault_id,
                 pieces,
                 passphrase,
+                passkey,
                 keystore,
             },
             Self::WorldKit {

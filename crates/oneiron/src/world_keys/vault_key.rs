@@ -58,6 +58,7 @@ pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
 pub(super) mod kit;
+mod kit_passkey;
 mod recovery_preset;
 pub(super) mod restore;
 mod state;
@@ -69,12 +70,13 @@ pub use self::escrow::{
     reseal_escrow_capsule,
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
-pub use self::recovery_preset::{RecoveryPresetChange, RecoverySheet};
+pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
 use self::recovery_preset::{
     admit_delivered_key, admit_escrow_opened_key, admit_presented_capsule, admit_wrap,
 };
 pub use self::vocabulary::{
-    NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient, passkey_prf_input,
+    KitPasskey, NewVaultKeyWrap, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,
+    passkey_prf_input,
 };
 
 /// The vault key as it rests: its commitment and every wrap's sealed envelope,
