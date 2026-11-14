@@ -12,14 +12,18 @@ use std::ops::Bound;
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::{ClaimReadStatus, ScopedRead, ScopedReadResult};
+use crate::derive::ARCHIVE_NOT_A_CLAIM;
 use crate::dreamer_consolidation::selection::{SelectionConfig, selection_config_pin_in_txn};
 use crate::dreamer_consolidation::strength::{
-    ConsolidationStrengthPolicy, OBSERVATIONS, StrengthObservations, observation_pin_in_txn,
-    policy_in_txn, strength_policy_pin_in_txn,
+    ConsolidationStrengthPolicy, OBSERVATIONS, StrengthObservations, archive_fence_in_txn,
+    observation_pin_in_txn, policy_in_txn, strength_policy_pin_in_txn,
 };
+use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::{Scope, grant_scope, holds_system_agent_grant, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::{EntityId, Result, Vault};
 
 /// The next observation page, bounded by the effective snapshot page settings.
@@ -65,6 +69,12 @@ pub struct ObservedClaim {
     pub sources_omitted: bool,
     pub signals: Option<ObservedSignals>,
     pub pin: Option<String>,
+    /// For a current claim, the archive fence's reason token for this
+    /// caller at the page's clock, or `None` when the fence lets it through
+    /// now (RULING S69C4-FENCE-NOISE = B): the strength archive skips a
+    /// fenced claim, and Archive runs the same fence again in its item's
+    /// savepoint. `None` for a claim that is not current.
+    pub fence: Option<String>,
 }
 
 /// A source's coarse status; withheld sources disclose nothing else, and are
@@ -102,6 +112,30 @@ pub fn strength_observations_page(
     memory: &Memory<'_>,
     input: &StrengthObservationsPageRequest,
 ) -> MemoryResult<ScopedReadResult<StrengthObservationsPage>> {
+    observations_page(memory, input, None)
+}
+
+/// [`strength_observations_page`] for a strength attempt's bound client
+/// (untangle 6.9c PR 3): `binding` is proved in the page's own read, before
+/// any row of it is read.
+///
+/// # Errors
+///
+/// As [`strength_observations_page`], and the binding's refusals.
+pub(crate) fn strength_observations_page_bound(
+    memory: &Memory<'_>,
+    input: &StrengthObservationsPageRequest,
+    binding: &DreamerAttemptBinding,
+) -> MemoryResult<ScopedReadResult<StrengthObservationsPage>> {
+    observations_page(memory, input, Some(binding))
+}
+
+/// The one page body, with the binding of a bound call to prove in its read.
+fn observations_page(
+    memory: &Memory<'_>,
+    input: &StrengthObservationsPageRequest,
+    binding: Option<&DreamerAttemptBinding>,
+) -> MemoryResult<ScopedReadResult<StrengthObservationsPage>> {
     let vault = memory.vault();
     let owner = memory
         .embedded_owner("vault.consolidation.strength.observations.page")
@@ -117,10 +151,18 @@ pub fn strength_observations_page(
     let _pins = read.prepare_point_read::<MemoryError>()?;
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     memory.prove_read_authority_in_txn(&txn)?;
+    if let Some(binding) = binding {
+        binding.check_in_txn(&txn)?;
+    }
     let scope = observation_reader_scope_in_txn(memory, &txn, owner.as_ref())?;
     read.read_projected_in_txn(&txn, &[], None, |txn, _| {
-        let mut page = StrengthObservationsPage {
+        let judge = ArchiveFenceJudge {
+            actor: memory.actor(),
+            now_ms: vault.store.clock.now_recorded_at().saturating_mul(1_000),
             policy: policy_in_txn(vault, txn)?,
+        };
+        let mut page = StrengthObservationsPage {
+            policy: judge.policy.clone(),
             policy_pin: strength_policy_pin_in_txn(vault, txn)?,
             config: vault.consolidation_selection_in_txn(txn)?,
             config_pin: selection_config_pin_in_txn(vault, txn)?,
@@ -134,7 +176,7 @@ pub fn strength_observations_page(
         while let Some(entry) = rows.next() {
             let (id, observations) = entry?;
             let Some(mut claim) =
-                observed_claim_in_txn(vault, txn, &read, scope.as_ref(), id, observations)?
+                observed_claim_in_txn(vault, txn, &read, scope.as_ref(), id, observations, &judge)?
             else {
                 continue;
             };
@@ -252,6 +294,50 @@ fn observed_claim_reads_in_txn(
         && read.entity_raw_live_in(txn, &id)?.is_some())
 }
 
+/// Who the page judges the archive fence for, at what clock, under which
+/// policy: the caller, the page's recorded-at clock in milliseconds (as
+/// Archive's), and the page's effective strength policy.
+struct ArchiveFenceJudge {
+    actor: EntityId,
+    now_ms: u64,
+    policy: ConsolidationStrengthPolicy,
+}
+
+/// The archive fence's reason token over the readable observed claim `id`
+/// for `judge` (RULING S69C4-FENCE-NOISE = B): `None` when Archive's fence
+/// lets it through now. It reads the stored row, as Archive does.
+fn archive_fence_token_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+    judge: &ArchiveFenceJudge,
+) -> Result<Option<String>> {
+    let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&vault.store.read(), txn, &id)?
+    else {
+        return Ok(Some(ARCHIVE_NOT_A_CLAIM.to_owned()));
+    };
+    let Some(header) = EntityMetadataHeader::parse(&raw)
+        .filter(|header| header.entity_type == ENTITY_TYPE_CLAIM)
+        .filter(|_| raw.len() > ENTITY_METADATA_HEADER_LEN)
+    else {
+        return Ok(Some(ARCHIVE_NOT_A_CLAIM.to_owned()));
+    };
+    let Ok(body) = crate::claim::decode_claim_body(&raw[ENTITY_METADATA_HEADER_LEN..], true) else {
+        return Ok(Some(ARCHIVE_NOT_A_CLAIM.to_owned()));
+    };
+    Ok(archive_fence_in_txn(
+        vault,
+        txn,
+        judge.actor,
+        &id,
+        &body,
+        header.learned_at,
+        judge.now_ms,
+        &judge.policy,
+    )?
+    .map(|fence| fence.token().to_owned()))
+}
+
 fn observed_claim_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -259,6 +345,7 @@ fn observed_claim_in_txn(
     scope: Option<&Scope>,
     id: EntityId,
     observations: StrengthObservations,
+    judge: &ArchiveFenceJudge,
 ) -> Result<Option<ObservedClaim>> {
     if !observed_claim_reads_in_txn(vault, txn, read, scope, id)? {
         return Ok(None);
@@ -283,10 +370,13 @@ fn observed_claim_in_txn(
             distinct_diversity: diversity.len(),
         }
     });
-    let pin = if current {
-        observation_pin_in_txn(vault, txn, &id)?
+    let (pin, fence) = if current {
+        (
+            observation_pin_in_txn(vault, txn, &id)?,
+            archive_fence_token_in_txn(vault, txn, id, judge)?,
+        )
     } else {
-        None
+        (None, None)
     };
     Ok(Some(ObservedClaim {
         claim: id.to_hex(),
@@ -297,6 +387,7 @@ fn observed_claim_in_txn(
         sources_omitted: false,
         signals,
         pin,
+        fence,
     }))
 }
 

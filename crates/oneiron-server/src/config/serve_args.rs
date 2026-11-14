@@ -351,9 +351,9 @@ pub struct ServeArgs {
     #[arg(long = "seal-ocsp-origins", value_delimiter = ',', num_args = 1..)]
     pub seal_ocsp_origins: Option<Vec<String>>,
 
-    /// Managed mode: the signing page seal evidence names
-    /// (`ONEIRON_SEAL_URL`); the sign page at the vault's public origin
-    /// without it.
+    /// Managed mode: the public signing page (`ONEIRON_SEAL_URL`); the sign
+    /// page at the vault's public origin without it. The seal certificate's
+    /// QR names the QR page `/esign/verify` at its origin.
     #[arg(long = "seal-signing-url")]
     pub seal_signing_url: Option<String>,
 

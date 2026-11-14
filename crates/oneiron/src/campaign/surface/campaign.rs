@@ -27,6 +27,7 @@ pub use crate::memory::campaign_records::CAMPAIGN_SCHEMA_VERSION;
 pub use crate::memory::campaign_records::CampaignDefinition;
 pub use crate::memory::campaign_records::CampaignLifecycle;
 pub use crate::memory::campaign_records::CampaignRecord;
+pub use crate::memory::campaign_records::CopyReviewMode;
 pub use crate::memory::campaign_records::CreateCampaignRequest;
 pub use crate::memory::campaign_records::UpdateCampaignRequest;
 
@@ -59,6 +60,8 @@ pub fn create_campaign(
         definition_version: 1,
         lifecycle: CampaignLifecycle::Draft,
         reply_snooze_policy,
+        voice_guide_ref: request.voice_guide_ref,
+        copy_review: request.copy_review.unwrap_or_default(),
     };
     validate_campaign_definition(&definition)?;
     let record = CampaignRecord {
@@ -68,7 +71,10 @@ pub fn create_campaign(
         updated_at: now,
     };
     let kind = campaign_type_byte(vault)?;
-    vault.with_write_txn_grouped(|wtxn| store_campaign_in_txn(vault, wtxn, &record, kind))?;
+    vault.with_write_txn_grouped(|wtxn| {
+        validate_voice_guide_in_txn(vault, wtxn, &record.definition)?;
+        store_campaign_in_txn(vault, wtxn, &record, kind)
+    })?;
     Ok(record)
 }
 
@@ -126,8 +132,13 @@ pub fn update_campaign(
                 .reply_snooze_policy
                 .clone()
                 .unwrap_or_else(|| record.definition.reply_snooze_policy.clone()),
+            voice_guide_ref: request
+                .voice_guide_ref
+                .unwrap_or(record.definition.voice_guide_ref),
+            copy_review: request.copy_review.unwrap_or(record.definition.copy_review),
         };
         validate_campaign_definition(&definition)?;
+        validate_voice_guide_in_txn(vault, wtxn, &definition)?;
         record.definition = definition;
         record.updated_at = now;
         store_campaign_in_txn(vault, wtxn, &record, kind)?;
@@ -460,6 +471,22 @@ fn validate_campaign_definition(definition: &CampaignDefinition) -> Result<()> {
     validate_snooze_policy(&definition.reply_snooze_policy)
 }
 
+/// A named voice guide must be a NOTE this vault holds: the copy review
+/// reads its text, and any other kind of record has none to check against.
+fn validate_voice_guide_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    definition: &CampaignDefinition,
+) -> Result<()> {
+    let Some(guide) = definition.voice_guide_ref else {
+        return Ok(());
+    };
+    if vault.get_entity_type_in_txn(txn, &guide)? != Some(crate::registry::ENTITY_TYPE_NOTE) {
+        return Err(invalid("campaign voice_guide_ref must name a NOTE"));
+    }
+    Ok(())
+}
+
 /// Loads a campaign the principal owns THROUGH the caller's transaction, or
 /// reports it as absent. Ownership is part of the read, not a post-filter.
 pub(crate) fn owned_campaign_in_txn(
@@ -496,7 +523,11 @@ pub(crate) fn campaign_type_byte(vault: &Vault) -> Result<u8> {
 }
 
 fn registered_campaign_type_byte(vault: &Vault) -> Option<u8> {
-    vault
+    registered_campaign_type_byte_in(&vault.store)
+}
+
+fn registered_campaign_type_byte_in(store: &crate::store::Store) -> Option<u8> {
+    store
         .structural_kind_registrations()
         .into_iter()
         .find(|registration| {
@@ -532,8 +563,29 @@ pub(crate) fn load_campaign_in_txn(
     campaign_ref: EntityId,
     kind: u8,
 ) -> Result<Option<CampaignRecord>> {
-    let Some(raw) = vault
-        .store
+    load_campaign_in_store_txn(&vault.store, txn, campaign_ref, kind)
+}
+
+/// [`load_registered_campaign`] read through `store` on the caller's
+/// transaction: the Gate's copy-review stage reads a campaign this way.
+pub(crate) fn load_registered_campaign_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    campaign_ref: EntityId,
+) -> Result<Option<CampaignRecord>> {
+    let Some(kind) = registered_campaign_type_byte_in(store) else {
+        return Ok(None);
+    };
+    load_campaign_in_store_txn(store, txn, campaign_ref, kind)
+}
+
+fn load_campaign_in_store_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    campaign_ref: EntityId,
+    kind: u8,
+) -> Result<Option<CampaignRecord>> {
+    let Some(raw) = store
         .port_entity_record(txn, &campaign_ref)?
         .map(|row| row.encode())
     else {
@@ -615,6 +667,17 @@ fn decode_campaign_record(raw: &[u8]) -> Result<CampaignRecord> {
                 .cloned()
                 .and_then(|policy| serde_json::from_value(policy).ok())
                 .ok_or_else(corrupt)?,
+            voice_guide_ref: match definition.get("voice_guide_ref") {
+                None | Some(Value::Null) => None,
+                Some(_) => Some(stored_entity_ref(definition, "voice_guide_ref")?),
+            },
+            copy_review: match definition.get("copy_review") {
+                None => crate::memory::campaign_records::CopyReviewMode::default(),
+                Some(mode) => mode
+                    .as_str()
+                    .and_then(crate::memory::campaign_records::CopyReviewMode::parse)
+                    .ok_or_else(corrupt)?,
+            },
         },
         created_at: stored_u64(&value, "created_at")?,
         updated_at: stored_u64(&value, "updated_at")?,

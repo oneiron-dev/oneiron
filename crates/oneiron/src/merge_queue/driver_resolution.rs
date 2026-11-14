@@ -19,9 +19,10 @@ impl MergeQueue<'_> {
         link: &mut QueueConflictLink,
         retained: &[MergeBatch],
     ) -> Result<bool> {
-        let Some(task) = link.task else {
+        // A successor counts only once the reconciliation TASK exists.
+        if link.task.is_none() {
             return Ok(false);
-        };
+        }
         let _guard = lock_repository(self.repo.common_dir())?;
         let Some(target) = self
             .initialized_configuration()?
@@ -54,16 +55,18 @@ impl MergeQueue<'_> {
             if link.batches.contains(&retained.id) {
                 continue;
             }
+            // The successor is matched by the conflict its proposals resolve
+            // (conflict_proposal_paths), not by the TASK it runs under: no
+            // run is leased on the reconciliation TASK itself (RULING
+            // CODECUSTODY-RECONCILE-SUCCESSOR = A).
             let batch = self.batch(&retained.id)?;
-            if !batch
-                .run_order
-                .as_ref()
-                .is_some_and(|order| order.task == task)
-                || matches!(
-                    batch.state,
-                    BatchState::Cancelled | BatchState::RolledBack | BatchState::Quarantined
-                )
-            {
+            if matches!(
+                batch.state,
+                BatchState::Cancelled
+                    | BatchState::RolledBack
+                    | BatchState::Quarantined
+                    | BatchState::Superseded
+            ) {
                 continue;
             }
             if batch.state == BatchState::GreenAdvanced {
@@ -143,14 +146,19 @@ impl MergeQueue<'_> {
         {
             return Ok(Vec::new());
         }
-        if let RepoProposalOperation::ResolveConflictFile {
+        // Only a resolution of this open conflict counts: another change to a
+        // conflicted path does not resolve it.
+        let RepoProposalOperation::ResolveConflictFile {
             branch_subject,
             open_conflict_claim_id,
             branch_name,
         } = &row.operation
-            && (*branch_subject != open.subject
-                || *open_conflict_claim_id != open.claim_id
-                || branch_name != &open.branch)
+        else {
+            return Ok(Vec::new());
+        };
+        if *branch_subject != open.subject
+            || *open_conflict_claim_id != open.claim_id
+            || branch_name != &open.branch
         {
             return Ok(Vec::new());
         }

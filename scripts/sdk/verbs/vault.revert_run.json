@@ -1,6 +1,6 @@
 {
   "name": "vault.revert_run",
-  "description": "The owner compensates all or selected changes of a settled run, preserving later work and listing every change not undone and why.",
+  "description": "The owner compensates all or selected changes of a run, settled or not, preserving later work and listing every change not undone and why.",
   "input": "crate::memory::run_review::RevertRunRequest",
   "output": "crate::memory::run_review::RevertRunOutcome",
   "call": "memory.revert_run_as_owner(&memory.embedded_owner(\"vault.revert_run\")?, &input)?",

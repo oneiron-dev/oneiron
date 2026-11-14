@@ -139,7 +139,7 @@ impl ConsolidationExecutor<'_> {
             resources.known(),
         )?;
         let config = ctx.vault.consolidation_selection()?;
-        let (slices, low_trust) =
+        let (slices, serial_width) =
             resources.extraction_slices(&turn_ids, config.extraction_turns_per_child)?;
         // The attempt's read set: every row its slices' calls read and
         // every row its branch pinned, which every later read of this branch
@@ -160,11 +160,19 @@ impl ConsolidationExecutor<'_> {
             ReadSetProducer::DREAMER_EXTRACTION,
             Some(read),
         );
-        let width = if low_trust {
+        let width = if serial_width {
             1
         } else {
             config.extraction_parallelism
         };
+        tracing::info!(
+            target: "oneiron::dreamer",
+            attempt_id = %bytes_to_hex_lower(attempt_id.as_bytes()),
+            slices = slices.len(),
+            width,
+            serial_width,
+            "dreamer extraction fan-out width"
+        );
         let step_ctx = DurableStepContext {
             vault: ctx.vault,
             attempt_id,
@@ -295,6 +303,7 @@ impl ConsolidationExecutor<'_> {
         let mut replies = Vec::new();
         let mut refused = None;
         let mut budget_refused = None;
+        let mut seat_refused = None;
         let mut trapped = false;
         let mut checkpoint = false;
         for (
@@ -320,10 +329,30 @@ impl ConsolidationExecutor<'_> {
                 SliceFate::BudgetRefused { reason, refusal } => {
                     budget_refused.get_or_insert((reason, refusal));
                 }
+                SliceFate::SeatRefused {
+                    reason,
+                    seat,
+                    reset_at_s,
+                } => {
+                    seat_refused.get_or_insert((reason, seat, reset_at_s));
+                }
             }
         }
         if trapped {
             return Ok(PartitionRun::Trapped);
+        }
+        // A spent seat waits for its login or its reset, even once the pass
+        // is out of time or stopped: a checkpoint would let a later pass ask
+        // the seat again before its available write. A spend scope's refusal
+        // for good still comes first (SEAT-PARK-MODEL-STEP-PATH).
+        if budget_refused.is_none()
+            && let Some((reason, seat, reset_at_s)) = seat_refused
+        {
+            return Ok(PartitionRun::SeatRefused {
+                reason,
+                seat,
+                reset_at_s,
+            });
         }
         if checkpoint || ctx.deadline.expired() || ctx.cancel_requested() {
             return Ok(PartitionRun::Checkpoint);

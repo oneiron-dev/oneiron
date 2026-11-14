@@ -21,7 +21,10 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/embedder.rs` | src | s | 1 struct · 5 fn · 1 const | HashingEmbedder | The hashing embedder: stable pseudo-vectors with no model |
 | `src/fault.rs` | src | s | 5 fn | — | Fault injection through doors the engine already has |
 | `src/fixture.rs` | src | m | 4 struct · 1 enum · 19 fn · 1 type | FixtureCache, FixtureError, FixtureVault, SeedRecord, TestVault | Fixture vaults: seed a vault once, copy it for every test |
-| `src/lib.rs` | src | s | 13 mod · 7 re-export | — | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… |
+| `src/golden_day/manifest.rs` | src | s | 1 enum · 3 const | FieldClass | The field manifest: how the normaliser treats every object key the golden-day trace holds (the receipt… |
+| `src/golden_day/mod.rs` | src | m | 2 struct · 8 fn · 7 const · 2 mod · 2 re-export | GoldenDayError, GoldenDayRun | The golden day: one scripted day on a fresh vault, and the normalised dump of what it leaves behind (Fable's… |
+| `src/golden_day/normalise.rs` | src | m | 3 struct · 9 fn · 1 const | NormaliseError, Normaliser, UnknownKey | The trace normaliser: one walk over a raw trace that classifies every object key it meets by… |
+| `src/lib.rs` | src | s | 14 mod · 7 re-export | — | `oneiron-testkit`: what every door test and the E2E seeding script stand on (Fable's verdict 2026-11-09… |
 | `src/lint.rs` | src | L | 3 struct · 1 enum · 13 fn · 1 const | Baseline, Finding, LintReport, Rule | The test lint: no sleeps, no wall clock, no network and no real model in tests (Fable's verdict, sections 3… |
 | `src/pending_door.rs` | src | s | 2 struct · 7 fn · 1 const | PendingDoors, WaitingTest | The nightly pending-door filter (Engine ruling 03:32, 10 Nov; Fable's verdict, section 1, "Door waits")… |
 | `src/provider/backend.rs` | src | s | 1 struct · 5 fn | ScriptedBackend | [`ScriptedBackend`]: the script as an in-process [`LlmBackend`], for door tests that hand the engine a… |
@@ -36,6 +39,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/canary.rs` | test | m | — | — | The canary leak detector, step 1: each audience class seeded through public verbs reaches the readers in its… |
 | `tests/door.rs` | test | s | — | — | A verb run through the in-process door leaves a receipt the receipt reader reads back through `vault.receipts` |
 | `tests/dreamer.rs` | test | s | — | — | In-process Dreamer wake passes over a small seeded vault, every model call answered by the scripted backend |
+| `tests/golden_day.rs` | test | s | — | — | The golden day (`oneiron_testkit::golden_day`): one scripted day on a fresh vault, and the normalised dump… |
 | `tests/kit.rs` | test | s | — | — | The hashing embedder, the fake clock and fixture copies keep their promises |
 | `tests/lint_rules.rs` | test | s | — | — | The test lint finds sleeps, wall-clock reads, network, fixed ports and real models in test code, and nothing… |
 | `tests/pending_door.rs` | test | s | — | — | A test that waits on a product door runs nightly without failing it until its deadline; past the deadline… |

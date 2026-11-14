@@ -351,7 +351,7 @@ impl Vault {
                     self.complete_deferred_claim_in_txn(
                         wtxn,
                         &binding.claim_id,
-                        true,
+                        Some(removal),
                         now,
                         closer,
                     )?;
@@ -361,7 +361,7 @@ impl Vault {
                 self.store
                     .delete_critical_confirm_index_in_txn(wtxn, &confirm_id)?;
                 // A held provenance claim stamped no flags on its edge.
-                if removal == crate::store::TrayRemoval::Answered
+                if removal.is_answered()
                     && body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE
                 {
                     self.restamp_cleared_edge_provenance_in_txn(wtxn, &binding.claim_id)?;

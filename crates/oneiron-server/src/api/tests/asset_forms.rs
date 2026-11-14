@@ -105,12 +105,19 @@ impl Assets {
         reference
     }
 
-    /// The text form a text-only reader is served for the generated image.
+    /// The text form a text-only reader is served for the generated image,
+    /// with the image's view handle `<asset>@<content hash hex[..16]>`
+    /// (cddc46d0d46, #1694, OF-329: served with it at every rung).
     fn text_form(&self) -> Value {
         json!({
             "form": "asset_text",
             "asset_text_ref": self.image.asset_text_ref,
             "text": self.caption,
+            "handle": format!(
+                "{}@{}",
+                self.image.asset_ref,
+                &blake3::hash(PIXELS).to_hex()[..16]
+            ),
         })
     }
 }

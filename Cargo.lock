@@ -8398,11 +8398,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-dreamer"
+version = "0.1.0"
+dependencies = [
+ "oneiron-remote",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-driver"
 version = "0.1.0"
 dependencies = [
  "oneiron",
+ "oneiron-dreamer",
  "oneiron-llm-local",
+ "oneiron-remote",
  "rmpv",
  "serde_json",
  "tempfile",
@@ -8799,6 +8810,19 @@ dependencies = [
  "unicode-script",
  "unicode-segmentation",
  "whichlang",
+]
+
+[[package]]
+name = "oneiron-ruler"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.20",
 ]
 
 [[package]]

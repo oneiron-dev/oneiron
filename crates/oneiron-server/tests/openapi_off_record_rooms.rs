@@ -2,11 +2,13 @@
 //! served OpenAPI document, with their rows' request and answer shapes, and
 //! every room route the document names is served.
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::Router;
 use axum::body::{Body, to_bytes};
+use axum::extract::ConnectInfo;
 use axum::http::{Method, Request, StatusCode, header};
+use axum::{Extension, Router};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::Value;
 use tower::ServiceExt;
@@ -39,7 +41,10 @@ fn app() -> (tempfile::TempDir, Router) {
         )
         .expect("sync server"),
     );
-    (dir, build_app(server))
+    // A hatch server answers only callers on this device: each request
+    // comes from a loopback peer.
+    let loopback = ConnectInfo(SocketAddr::from(([127, 0, 0, 1], 0)));
+    (dir, build_app(server).layer(Extension(loopback)))
 }
 
 async fn served_spec(app: &Router) -> Value {
