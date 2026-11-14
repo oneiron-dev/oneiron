@@ -637,7 +637,7 @@ impl Sealer<'_, '_> {
         value: &[u8],
         held: HeldForm,
     ) -> Result<String> {
-        if let Some(handle) = self.sealed.get(value) {
+        if let Some(handle) = self.sealed.get(value, held) {
             return Ok(handle.clone());
         }
         let handle = match self.door {
@@ -656,7 +656,7 @@ impl Sealer<'_, '_> {
             // custody already holds whole takes a handle.
             None => held_whole(self.known, value).ok_or_else(|| secret_scan_error(self.reason))?,
         };
-        self.sealed.insert(value.to_vec(), handle.clone());
+        self.sealed.insert(value.to_vec(), held, handle.clone());
         Ok(handle)
     }
 
@@ -749,7 +749,7 @@ pub(super) fn seal_value_in_txn(
     });
     let minted = plan.mint(write, wtxn, at)?;
     minted
-        .get(value)
+        .get(value, held)
         .map(|(handle, _)| handle.clone())
         .ok_or(Error::InvariantViolation(
             "a sealed value's custody record has no handle",
