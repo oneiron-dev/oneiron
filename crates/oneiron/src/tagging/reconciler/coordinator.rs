@@ -173,6 +173,11 @@ pub struct TaggingReconciler {
     pub(super) history_trimmed: AtomicBool,
     /// The turn the next trimming read starts from.
     pub(super) trim_from: Mutex<Option<[u8; 16]>>,
+    /// Whether every saved tag set an older tagger made has been marked
+    /// again; until it has, every pass starts by reading the next part.
+    pub(super) older_sets_marked: AtomicBool,
+    /// The turn the next read for tag sets an older tagger made starts after.
+    pub(super) older_sets_from: Mutex<Option<crate::EntityId>>,
 }
 
 impl TaggingReconciler {
@@ -219,6 +224,8 @@ impl TaggingReconciler {
             stale_scanned: AtomicBool::new(false),
             history_trimmed: AtomicBool::new(false),
             trim_from: Mutex::new(None),
+            older_sets_marked: AtomicBool::new(false),
+            older_sets_from: Mutex::new(None),
         })
     }
 
@@ -338,7 +345,9 @@ impl TaggingReconciler {
     /// units (FIX 6902): the tag passes a physical tear left owed are marked
     /// (FIX 6262); then the start scan while it has not run to its end,
     /// else the hand-back of every held marker no preparation, call or
-    /// settlement owns; then the trace history's trimming and expiry.
+    /// settlement owns; then the trace history's trimming and expiry; then
+    /// the turns whose saved tag sets an older tagger made are marked again,
+    /// one bounded read a pass (ARCH-0036).
     /// `Ok(true)` when `paused` cut it short: what it did not reach waits for
     /// the next upkeep. A host driving the staged API runs it between its
     /// rounds, under its admission.
@@ -354,10 +363,10 @@ impl TaggingReconciler {
             !self.stale_scanned.load(Ordering::Acquire)
         };
         // Each later step runs only when the one before it ran to its end.
-        if cut_short || self.trim_history(paused)? {
+        if cut_short || self.trim_history(paused)? || self.prune_expired_traces(paused)? {
             return Ok(true);
         }
-        self.prune_expired_traces(paused)
+        self.mark_older_tag_sets(paused)
     }
 
     /// The class a claim would take now, from one read and no writer: live
