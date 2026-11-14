@@ -18,9 +18,10 @@
 #               build, run, delete the shard's test binaries, move the cursor.
 #               The night stops before a shard when --max-shards shards have
 #               run, or when the longest shard so far would end past the
-#               deadline (--stop-at HH:MM Japan time, or --deadline-epoch), and
-#               at a selection whose build fails beyond pruning (the cursor
-#               stays on it, so the next night retries it).
+#               deadline (--stop-at HH:MM Japan time, or --deadline-epoch), at
+#               a selection whose build fails beyond pruning, and at a shard
+#               whose verdict stage did not run (the cursor stays on it, so the
+#               next night retries it).
 #               The next night resumes at the cursor; a full cycle runs every
 #               file once.
 # oneiron-bench is left out, as CI's full tier leaves it out.
@@ -35,7 +36,13 @@
 #               the pending filter P and the expired filter X. An expired test
 #               fails the night: door or delete.
 #   verdict     `--profile nightly -E 'not (P | X) & not (<lib report>)'`. The
-#               profile's default filter keeps the quarantined tests out.
+#               profile's default filter keeps the quarantined tests out. A
+#               stage ran when nextest exits 0 (passed) or 100 (tests failed)
+#               and wrote its JUnit; any other end (a test list nextest could
+#               not make, a setup error) is a stage that did not run. Each
+#               stage's end is a row of stages.tsv in --out; a verdict stage
+#               that did not run makes the night red, and on a shard it stops
+#               the night with the cursor kept on that shard.
 #   libtest     (libs only) the lib tests of oneiron and oneiron-server under
 #               the nightly profile, report only: their results per quarantined
 #               module (Engine ruling 13 Nov 16:20, ASK PR10-NIGHTLY-OVERLAP).
@@ -95,7 +102,8 @@ fi
 export CARGO_TERM_COLOR=never ONEIRON_TESTKIT_TODAY=$night
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg oneiron_test_support"
 commit=$(git rev-parse HEAD) || exit 2
-rm -f "$out"/junit-*.xml "$out/pending-door.json"   # a reused --out dir must not lend an older night's results
+# a reused --out dir must not lend an older night's results or build errors
+rm -f "$out"/junit-*.xml "$out/pending-door.json" "$out/stages.tsv" "$out"/build-*.log "$out"/failed-units-*.json
 echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files max_shards=${max_shards:-none} deadline=${deadline:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default}"
 if ! cargo nextest --version > "$out/nextest-version.txt" 2>&1; then
   step nextest missing; exit 2
@@ -109,11 +117,13 @@ echo "## NIGHTLY plan target=$target cursor=$(tr -d '\n' 2>/dev/null < "$cursor"
 
 build_selection() {  # name -> 0 once its units build (failed units left out), 1 when it is dropped
   local name=$1 round=0 rc log start jobs=${CARGO_BUILD_JOBS:-}
-  local -a args
+  local -a args logs
+  logs=()
   [ "$name" = libs ] && [ -n "${NIGHTLY_LIB_JOBS:-}" ] && jobs=$NIGHTLY_LIB_JOBS
   while :; do
     round=$((round + 1))
     log=$out/build-$name-$round.log
+    logs+=("$log")
     read -r -a args <<< "$(report args "$plan" --name "$name")"
     start=$SECONDS
     if [ -n "$jobs" ]; then
@@ -125,7 +135,7 @@ build_selection() {  # name -> 0 once its units build (failed units left out), 1
     step "build-$name" $rc "round=$round seconds=$((SECONDS - start))"
     [ $rc -eq 0 ] && return 0
     sed -n 's/^error: could not compile /## NIGHTLY failed-unit /p' "$log" | sort -u | head -40
-    report failed-units "$out/build-$name-"*.log > "$out/failed-units-$name.json"
+    report failed-units "${logs[@]}" > "$out/failed-units-$name.json"   # this build's rounds only
     if [ $round -ge 3 ]; then
       report drop "$plan" "$name" "the build failed in $round rounds"
       return 1
@@ -134,7 +144,7 @@ build_selection() {  # name -> 0 once its units build (failed units left out), 1
   done
 }
 
-run_stage() {  # stage profile filter selection-name -- selection args
+run_stage() {  # stage profile filter selection-name -- selection args; 0 when the stage ran (exit 0 or 100, JUnit)
   local stage=$1 profile=$2 filter=$3 name=$4; shift 5
   # nextest's store dir is target/nextest under the workspace root unless the config moves it; look under the
   # target dir too
@@ -147,7 +157,12 @@ run_stage() {  # stage profile filter selection-name -- selection args
     [ -f "$candidate" ] && { junit=$candidate; break; }
   done
   [ -n "$junit" ] && cp "$junit" "$out/junit-$stage-$name.xml"
+  local ran=no
+  if [ -n "$junit" ] && { [ $rc -eq 0 ] || [ $rc -eq 100 ]; }; then ran=yes; fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$stage" "$name" "$rc" "$([ -n "$junit" ] && echo yes || echo no)" "$ran" \
+    >> "$out/stages.tsv"
   step "$stage-$name" $rc "seconds=$((SECONDS - start))${junit:+ junit=$junit}$([ -n "$junit" ] || echo ' (no JUnit)')"
+  [ "$ran" = yes ]
 }
 
 delete_test_binaries() {  # selection name: its integration test binaries in the target's deps dir
@@ -206,7 +221,15 @@ for name in $(report args "$plan" | cut -d' ' -f1); do
     fi
   fi
   read -r -a sel_args <<< "$(report args "$plan" --name "$name")"
-  run_stage verdict nightly "not ($pending_filter | $expired_filter) & not ($lib_report)" "$name" -- "${sel_args[@]}"
+  if ! run_stage verdict nightly "not ($pending_filter | $expired_filter) & not ($lib_report)" "$name" -- \
+    "${sel_args[@]}" && [ "$name" != libs ]; then
+    # The shard's tests did not run (stages.tsv makes the night red): stop with the cursor on it, as for a dropped
+    # build, so the next night retries it and no shard is skipped. The libs run every night, so theirs goes on.
+    measure "$name" $((SECONDS - started))
+    [ "$shard_files" -gt 0 ] && delete_test_binaries "$name"
+    echo "## NIGHTLY stop reason=verdict-not-run next=$name"
+    break
+  fi
   if [ "$name" = libs ]; then
     run_stage libtest nightly "($lib_report) & not ($pending_filter | $expired_filter)" "$name" -- "${sel_args[@]}"
   fi

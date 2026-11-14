@@ -3,7 +3,8 @@
 The stub answers `cargo nextest --version`, `cargo metadata` and `cargo nextest
 run` (with and without --no-run) from a fixture workspace, logs each call with
 its CARGO_BUILD_JOBS, and writes the JUnit nextest would write. It fails to
-compile the test targets named in STUB_FAIL_TESTS.
+compile the test targets named in STUB_FAIL_TESTS, and cannot list the tests of
+a run that selects a target named in STUB_LIST_ERROR_TESTS (exit 104, no JUnit).
 
 Run: python3 -m unittest discover -s scripts/nightly -p 'test_*.py' -v
 """
@@ -69,6 +70,9 @@ STUB_CARGO = textwrap.dedent(
         if not (deps / f"{t}-0123456789abcdef").exists():
             print(f"stub: the {t} test binary is gone before its run", file=sys.stderr)
             sys.exit(102)
+    if any(t in os.environ.get("STUB_LIST_ERROR_TESTS", "").split(",") for t in tests):
+        print("error: creating test list failed (stub)", file=sys.stderr)
+        sys.exit(104)
     profile = args[args.index("--profile") + 1]
     expression = args[args.index("-E") + 1]
     cases = []
@@ -267,6 +271,40 @@ class RunNightlyTest(unittest.TestCase):
         self.assertIn(" RED build=partial cycle=1 shards_run=1/4 next=beta ", self.summary_line(result))
         self.assertEqual(json.loads(cursor.read_text()), {"next": "beta", "cycle": 1})
         self.assertEqual(len(self.builds()), 3, "libs, tests-01, and tests-02 once (no unit to leave out)")
+
+    def test_a_shard_whose_tests_could_not_be_listed_stops_the_night_red_and_keeps_the_cursor_on_it(self) -> None:
+        cursor = self.out.parent / "cursor.json"
+        result = self.run_nightly("--shard-files", "1", "--cursor", str(cursor), STUB_LIST_ERROR_TESTS="beta")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("## NIGHTLY verdict-tests-02 rc=104 ", result.stdout)
+        self.assertIn("## NIGHTLY stop reason=verdict-not-run next=tests-02", result.stdout)
+        line = self.summary_line(result)
+        self.assertIn(
+            " RED build=ok cycle=1 shards_run=1/4 next=beta passed=2 failed=0 skipped=0 verdict_not_run=1 ", line
+        )
+        self.assertEqual(json.loads(cursor.read_text()), {"next": "beta", "cycle": 1})
+        self.assertIn(
+            "the verdict stage of tests-02 did not run (exit 104, no JUnit)",
+            json.loads((self.out / "summary.json").read_text())["reasons"],
+        )
+        self.assertFalse((self.target / "debug/deps/beta-0123456789abcdef").exists(), "the stopped shard's binaries")
+
+    def test_a_reused_out_dir_lends_no_older_nights_build_errors_to_the_pruning(self) -> None:
+        self.out.mkdir()
+        # an older night's lib error in a later round's log name, and its stage ends
+        (self.out / "build-tests-01-2.log").write_text(
+            "error: could not compile `oneiron` (lib) due to 1 previous error\n"
+        )
+        (self.out / "stages.tsv").write_text("verdict\ttests-01\t104\tno\tno\n")
+        result = self.run_nightly(STUB_FAIL_TESTS="beta")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        line = self.summary_line(result)
+        self.assertIn(
+            " RED build=partial cycle=1 shards_run=1/1 next=alpha passed=4 failed=0 skipped=0 verdict_not_run=0 ", line
+        )
+        text = (self.out / "summary.txt").read_text()
+        self.assertIn("unselected: tests-01 oneiron test beta (did not compile)", text)
+        self.assertNotIn("dropped:", text)
 
     def test_a_host_without_cargo_nextest_cannot_start_the_night(self) -> None:
         result = self.run_nightly(STUB_NO_NEXTEST="1")

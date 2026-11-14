@@ -403,6 +403,26 @@ def stage_results(out: Path) -> dict[str, dict[str, str]]:
     return results
 
 
+def stage_ends(out: Path) -> list[dict]:
+    """How each stage run ended (stages.tsv: stage, selection, exit code, JUnit yes|no, ran yes|no).
+
+    run_nightly.sh writes one row per stage run: a stage ran when nextest
+    exited 0 or 100 and wrote its JUnit.
+    """
+    path = out / "stages.tsv"
+    if not path.is_file():
+        return []
+    ends = []
+    for line in path.read_text().splitlines():
+        stage, selection, code, junit, ran = line.split("\t")
+        ends.append({"stage": stage, "selection": selection, "rc": code, "junit": junit == "yes", "ran": ran == "yes"})
+    return ends
+
+
+def not_run_text(end: dict) -> str:
+    return f"the {end['stage']} stage of {end['selection']} did not run (exit {end['rc']}{'' if end['junit'] else ', no JUnit'})"
+
+
 def counts(outcomes: dict[str, str]) -> dict[str, int]:
     values = list(outcomes.values())
     return {"passed": values.count("pass"), "failed": values.count("fail"), "skipped": values.count("skip")}
@@ -500,6 +520,8 @@ def summary(args: argparse.Namespace) -> int:
     shards_run = len(chosen["shards_run"])
     pending_door = json.loads(Path(args.pending_door).read_text()) if Path(args.pending_door).is_file() else None
     results = stage_results(out)
+    stages_not_run = [end for end in stage_ends(out) if not end["ran"]]
+    verdict_not_run = [end for end in stages_not_run if end["stage"] == "verdict"]
     verdict = counts(results["verdict"])
     libtest = counts(results["libtest"])
     quarantined = counts(results["quarantine"])
@@ -515,6 +537,7 @@ def summary(args: argparse.Namespace) -> int:
         reasons.append(
             f"build {build}: {len(chosen['dropped'])} selection(s) dropped, {len(chosen['unselected'])} unit(s) left out"
         )
+    reasons += [not_run_text(end) for end in verdict_not_run]
     if not results["verdict"]:
         reasons.append("the verdict run reported no test")
     if verdict["failed"]:
@@ -532,6 +555,7 @@ def summary(args: argparse.Namespace) -> int:
         f" cycle={chosen['cursor_in']['cycle']} shards_run={shards_run}/{len(chosen['order'])}"
         f" next={chosen['cursor_out']['next']}"
         f" passed={verdict['passed']} failed={verdict['failed']} skipped={verdict['skipped']}"
+        f" verdict_not_run={len(verdict_not_run)}"
         f" quarantined={quarantined['passed'] + quarantined['failed']}"
         f" pending={pending_door.get('pending', 0) if pending_door else '?'}"
         f" expired={pending_door.get('expired', 0) if pending_door else '?'}"
@@ -561,6 +585,7 @@ def summary(args: argparse.Namespace) -> int:
             "pending": pending_run,
         },
         "failed": failed_tests,
+        "stages_not_run": stages_not_run,
         "libtest_failed": sorted(test for test, outcome in results["libtest"].items() if outcome == "fail"),
         "flipped": flipped,
         "quarantine": report,
@@ -594,6 +619,10 @@ def summary(args: argparse.Namespace) -> int:
     not_run = len(chosen["order"]) - len(chosen["shards_run"])
     if not_run:
         text.append(f"not run tonight: {not_run} shard(s); the cursor resumes at {chosen['cursor_out']['next']}")
+    text += [
+        f"not run: {not_run_text(end)}" + ("" if end["stage"] == "verdict" else " (report only)")
+        for end in stages_not_run
+    ]
     text += [f"failed: {test}" for test in failed_tests]
     text += [f"dropped: {d['selection']} ({d['reason']})" for d in chosen["dropped"]]
     text += [

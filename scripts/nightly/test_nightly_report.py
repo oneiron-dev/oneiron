@@ -552,6 +552,23 @@ class SummaryTest(unittest.TestCase):
         self.assertIn("not run tonight: 1 shard(s); the cursor resumes at beta", text)
         self.assertIn("dropped: tests-02 (the build failed in 3 rounds)", text)
 
+    def test_a_verdict_stage_that_did_not_run_makes_the_night_red_beside_a_passing_one(self) -> None:
+        write(
+            self.out / "stages.tsv",
+            "verdict\tlibs\t0\tyes\tyes\nverdict\ttests-01\t104\tno\tno\nquarantine\tlibs\t96\tyes\tno\n",
+        )
+        code, line = self.run_summary()
+        self.assertEqual(code, 1)
+        self.assertIn(
+            " RED build=ok cycle=1 shards_run=0/1 next=alpha passed=2 failed=0 skipped=0 verdict_not_run=1 ", line
+        )
+        record = json.loads((self.out / "summary.json").read_text())
+        self.assertEqual(record["reasons"], ["the verdict stage of tests-01 did not run (exit 104, no JUnit)"])
+        self.assertEqual([end["selection"] for end in record["stages_not_run"]], ["tests-01", "libs"])
+        text = (self.out / "summary.txt").read_text()
+        self.assertIn("not run: the verdict stage of tests-01 did not run (exit 104, no JUnit)\n", text)
+        self.assertIn("not run: the quarantine stage of libs did not run (exit 96) (report only)\n", text)
+
     def test_a_verdict_run_that_wrote_no_junit_makes_the_night_red(self) -> None:
         (self.out / "junit-verdict-workspace.xml").unlink()
         code, _ = self.run_summary()
