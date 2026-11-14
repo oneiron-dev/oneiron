@@ -37,9 +37,10 @@
  *   two characters before it, and the text before a marker once per `]]>`
  *   ahead of it, so a crafted text grows with the square of its length.
  *   Excel and LibreOffice write no CDATA in xlsx parts. The marker counts as
- *   SheetJS reads it: as it stands, through its browser UTF-8 decode, and in
- *   a cell value, which SheetJS unescapes, decodes and, for a formula's
- *   string result, unescapes again;
+ *   SheetJS reads it: as it stands; across any piece from a `<` to a `>`,
+ *   which SheetJS may drop and join the rest (rich-text runs, comments);
+ *   through its UTF-8 decodes; and in a cell value, which SheetJS unescapes,
+ *   decodes and, for a formula's string result, unescapes again;
  * - the read's part lookups. SheetJS finds a part by comparing its name with
  *   every path of the container (`safegetzipfile`), and some reads make one
  *   lookup per record: two per listed sheet, before it applies the `sheets`
@@ -138,87 +139,108 @@ const COMMENT_TAG = /<(?:\w+:)?comment[^<>]*>/g;
 /** A person's tag (`parse_people_xml`). */
 const PERSON_TAG = /<(?:\w+:)?person[ \n\r]/g;
 
-/** The marker that opens a CDATA section. */
-const CDATA_MARKER = "<![CDATA[";
+/** The marker that opens a CDATA section, by character code. */
+const CDATA_MARKER = Array.from("<![CDATA[", (char) => char.charCodeAt(0));
 
 /**
- * The character SheetJS's browser UTF-8 decode (`utf8reada`) reads at `at`
- * of a text of bytes, and how many bytes it takes. It checks no continuation
- * byte, so an invalid form can read as any character below 128; a four-byte
- * form reads as two surrogates, which no marker holds (-1).
+ * Follows the CDATA marker through `text` as one of SheetJS's UTF-8 decodes
+ * reads it, across any piece SheetJS may drop ({@link mayHoldCdataMarker}):
+ * the browser decode (`browser`), or Node's and Bun's.
+ *
+ * A state is how many marker characters have been read and, in the browser
+ * decode, how many bytes the form of the next one still needs: bit
+ * `3 * read + needs`. A state is in `live`, or in `dropped` once a piece that
+ * SheetJS may drop starts at a `<`; such a piece may end at any `>` after it,
+ * and the state goes on after that `>`. A marker may start at any character,
+ * so wherever SheetJS's decode starts a character, the states that follow it
+ * are among those followed.
  */
-function lenientCharAt(text: string, at: number): readonly [number, number] {
-  const c = text.charCodeAt(at);
-  if (c < 128) {
-    return [c, 1];
+function followsCdataMarker(text: string, browser: boolean): boolean {
+  const found = 3 * CDATA_MARKER.length;
+  let live = 0;
+  let dropped = 0;
+  for (let at = 0; at < text.length; at += 1) {
+    const char = text.charCodeAt(at);
+    let next = char === 62 ? dropped : 0;
+    // State 0, nothing read, is live at every character.
+    for (let states = live | 1; states !== 0; states &= states - 1) {
+      const state = 31 - Math.clz32(states & -states);
+      if (char === 60 && state !== 0) {
+        dropped |= 1 << state;
+      }
+      const want = CDATA_MARKER[(state / 3) | 0]!;
+      let to = -1;
+      switch (state % 3) {
+        case 2:
+          // The second byte of a three-byte form: bits 6 to 11 of the character.
+          to = (char & 63) === want >> 6 ? state - 1 : -1;
+          break;
+        case 1:
+          // The last byte of a two- or three-byte form: bits 0 to 5.
+          to = (char & 63) === (want & 63) ? state + 2 : -1;
+          break;
+        default:
+          if (!browser || char < 128) {
+            // Node and Bun read a character's low byte, and a byte from 80 up
+            // as no character below 128.
+            to = (char & 255) === want ? state + 3 : -1;
+          } else if (char > 191 && char < 224) {
+            to = (char & 31) === want >> 6 ? state + 1 : -1;
+          } else if (char < 240) {
+            to = (char & 15) === 0 ? state + 2 : -1;
+          }
+      }
+      if (to === found) {
+        return true;
+      }
+      if (to !== -1) {
+        next |= 1 << to;
+      }
+    }
+    live = next;
   }
-  const d = text.charCodeAt(at + 1) & 63;
-  if (c > 191 && c < 224) {
-    return [((c & 31) << 6) | d, 2];
-  }
-  const e = text.charCodeAt(at + 2) & 63;
-  return c < 240 ? [((c & 15) << 12) | (d << 6) | e, 3] : [-1, 4];
+  return false;
+}
+
+/**
+ * Whether a text SheetJS unescapes, built from `text`, could hold the CDATA
+ * marker.
+ *
+ * SheetJS may first drop pieces of the text and join what is left: its
+ * rich-text read joins a string's runs and drops the tags and phonetic runs
+ * between them (`parse_si`), and its styles read drops comments
+ * (`parse_sty_xml`). Each piece it drops starts at a `<` and ends at a `>`,
+ * so the marker is followed across any such piece, between two of its
+ * characters or inside the UTF-8 form of one.
+ *
+ * It may then decode the text as UTF-8. Node's and Bun's decode
+ * (`utf8readc`) keeps each character's low byte and reads the bytes
+ * strictly, so only a low byte below 128 reads as one. The browser decode
+ * (`utf8reada`) checks no continuation byte, so an invalid two- or
+ * three-byte form reads as any character below 128: `C0 BC` and `80 80 BC`
+ * read as `<`.
+ */
+function mayHoldCdataMarker(text: string): boolean {
+  return followsCdataMarker(text, false) || (/[^\x00-\x7f]/.test(text) && followsCdataMarker(text, true));
 }
 
 /** A cell value element as `str_match_xml_ns(d, "v")` finds it: a start tag, then the first end tag after it. */
 const VALUE_ELEMENT = /<(?:\w+:)?v\b[^<>]*>([\s\S]*?)<\/(?:\w+:)?v>/g;
 
 /**
- * Whether SheetJS's browser UTF-8 decode, started anywhere in `text`, reads
- * the CDATA marker. It is followed from every character, so wherever SheetJS
- * starts one, the characters it reads are among those followed.
- */
-function decodesToCdataMarker(text: string): boolean {
-  for (let start = 0; start < text.length; start += 1) {
-    let at = start;
-    let matched = 0;
-    while (matched < CDATA_MARKER.length && at < text.length) {
-      const [code, length] = lenientCharAt(text, at);
-      if (code !== CDATA_MARKER.charCodeAt(matched)) {
-        break;
-      }
-      matched += 1;
-      at += length;
-    }
-    if (matched === CDATA_MARKER.length) {
-      return true;
-    }
-  }
-  return false;
-}
-
-/**
- * Whether a text SheetJS unescapes could hold the CDATA marker, after the
- * UTF-8 decode SheetJS may run first: its browser decode (any character
- * below 128 from an invalid form), or Node's and Bun's, which keep each
- * character's low byte and read the bytes strictly, so only a byte below 128
- * reads as one.
- */
-function decodedTextHoldsCdataMarker(text: string): boolean {
-  if (text.includes(CDATA_MARKER)) {
-    return true;
-  }
-  const lowBytes = text.replace(/[\u0100-\uffff]/g, (char) => String.fromCharCode(char.charCodeAt(0) & 0xff));
-  if (lowBytes.includes(CDATA_MARKER)) {
-    return true;
-  }
-  return /[^\x00-\x7f]/.test(text) && decodesToCdataMarker(text);
-}
-
-/**
  * Whether SheetJS's unescape could meet a CDATA marker in a text it takes
- * from this part: in the text as it stands or decoded, or in a cell value
- * unescaped once and decoded, which SheetJS unescapes again for a formula's
- * string result (`t="str"`). A value is read up to the first end tag after
- * its start tag, as SheetJS reads it, and a value whose text SheetJS cuts
- * shorter is a part of it.
+ * from this part ({@link mayHoldCdataMarker}), or in a cell value unescaped
+ * once, which SheetJS decodes and unescapes again for a formula's string
+ * result (`t="str"`). A value is read up to the first end tag after its start
+ * tag, as SheetJS reads it, and a value whose text SheetJS cuts shorter is a
+ * part of it.
  */
 function holdsCdataMarker(text: string): boolean {
-  if (decodedTextHoldsCdataMarker(text)) {
+  if (mayHoldCdataMarker(text)) {
     return true;
   }
   for (const [, value] of text.matchAll(VALUE_ELEMENT)) {
-    if (/[&_]/.test(value!) && decodedTextHoldsCdataMarker(unescapeEntities(value!))) {
+    if (/[&_]/.test(value!) && mayHoldCdataMarker(unescapeEntities(value!))) {
       return true;
     }
   }
