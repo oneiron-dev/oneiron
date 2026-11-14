@@ -18,21 +18,26 @@
 //!   no other pass moved the row (REVIEW-RESEARCH-ADVANCE D1-D3): a pass that lost its row
 //!   reserves nothing; the step that spends the shot serves the cohort and settles its
 //!   exposure in one write; a stale confirmation pass leaves the winner's token work open,
-//!   and the winner's referee runs on it. These three take single steps through the
-//!   `test_doors::research_continuation::step` door, on a row as a pass read it.
+//!   and the winner's referee runs on it; a pass that read the row before the dispatch
+//!   enqueues no second run, even after the winner's run has ended (REVIEW-7694 P1). These
+//!   four take single steps through the `test_doors::research_continuation::step` door, on a
+//!   row as a pass read it.
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test verb_vault_research_advance`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use oneiron::attempt_queue::{AttemptId, AttemptQueue, AttemptState};
+use oneiron::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptState, ClaimAttempt, ClaimOutcome, CompleteAttempt,
+};
 use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::autoreason_campaign::research::{
     ResearchContinuation, ResearchSplit, ResearchTask, ResearchWork, research_continuations,
     research_promotions, research_reservations,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::llm::{RsiBudgetConfig, RsiBudgetShare, RsiSettlement, RsiTopUp};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
@@ -64,6 +69,9 @@ const DAY: u64 = 86_400;
 
 /// Token units each run of the campaign reserves.
 const UNITS: u64 = 10;
+
+/// The lease owner this file's runs are claimed by.
+const WORKER: &str = "research-advance-test";
 
 /// The rubric revision the sealed cohort is cut under.
 const RUBRIC: &str = "fixture-rubric";
@@ -807,6 +815,107 @@ fn a_pass_that_lost_its_row_reserves_nothing() {
         fixture.vault.rsi_budget().expect("token line").reserved,
         UNITS,
         "the vault token line holds the winner's reservation alone"
+    );
+}
+
+/// The scorer runs queued under `root` in its campaign's run, in creation order.
+fn scorer_runs(fixture: &Fixture, root: &Root) -> Vec<AttemptId> {
+    AttemptQueue::new(&fixture.vault)
+        .list_run(&root.run_id)
+        .expect("read the campaign's runs")
+        .into_iter()
+        .filter(|record| {
+            record.kind == DREAMER_RUNNER_ATTEMPT_KIND
+                && decode_dreamer_attempt_payload(&record.payload)
+                    .is_ok_and(|payload| payload.parent_attempt == Some(root.id))
+        })
+        .map(|record| record.id)
+        .collect()
+}
+
+/// Runs `run` to its end: leased to this file's worker, then completed. The runner's rows
+/// are claimed oldest first, so rows queued before it are claimed past.
+fn complete_run(fixture: &Fixture, run: AttemptId) {
+    let queue = AttemptQueue::new(&fixture.vault);
+    let leased = (0..64)
+        .find_map(|_| {
+            match queue
+                .claim_kind(
+                    DREAMER_RUNNER_ATTEMPT_KIND,
+                    ClaimAttempt {
+                        lease_owner: WORKER.to_owned(),
+                        now: u64::MAX,
+                    },
+                )
+                .expect("claim the next queued row")
+            {
+                ClaimOutcome::Claimed(row) => Some(row).filter(|row| row.id == run),
+                _ => panic!("the queue ran out before the run was claimed"),
+            }
+        })
+        .expect("the run is claimed");
+    queue
+        .complete(CompleteAttempt {
+            id: run,
+            lease_owner: WORKER.to_owned(),
+            attempt_count: leased.attempt_count,
+            now: leased.updated_at,
+        })
+        .expect("the run completes");
+}
+
+#[test]
+fn a_stale_pass_dispatches_nothing_after_the_run_it_lost_to_ended() {
+    let fixture = rooted_vault();
+    configure_rsi(&fixture, 120, 2, &[]);
+    let agents = agents(&fixture);
+    let root = create_root(&fixture, "stale-dispatch");
+    bind(&fixture, &root, Some(&agents), None, None);
+    seed_continuation(
+        &fixture.vault,
+        root.id,
+        ResearchWork::Bootstrap,
+        vec![ResearchTask::Measure {
+            node: root.id,
+            split: ResearchSplit::Search,
+        }],
+        T0,
+    )
+    .expect("seed the bootstrap measure");
+    // The first step reserves the measure's token work. A pass reads the row then, before
+    // the dispatch; another pass dispatches the scorer, and the scorer's run ends, so the
+    // dedupe key no longer finds a pending run.
+    step_stored(&fixture, &root);
+    let read = stored_continuation(&fixture, &root);
+    let reservation = read
+        .running
+        .as_ref()
+        .filter(|running| running.run.is_none())
+        .expect("the measure is reserved, not yet dispatched")
+        .reservation;
+    step_stored(&fixture, &root);
+    let run = stored_continuation(&fixture, &root)
+        .running
+        .and_then(|running| running.run)
+        .expect("the scorer run is dispatched");
+    assert_eq!(scorer_runs(&fixture, &root), vec![run]);
+    complete_run(&fixture, run);
+
+    let lost = step(&fixture.vault, root.id, &read, T0)
+        .expect_err("the row moved since this pass read it");
+    assert!(matches!(lost, Error::ConcurrentWrite(_)), "{lost:?}");
+    assert_eq!(
+        scorer_runs(&fixture, &root),
+        vec![run],
+        "the stale pass enqueued no second scorer run"
+    );
+    let row = stored_continuation(&fixture, &root);
+    assert_eq!(row.runs, vec![run], "{row:?}");
+    assert_eq!(row.running.and_then(|running| running.run), Some(run));
+    assert_eq!(
+        settlement(&fixture, &root, reservation),
+        None,
+        "the stale pass refunded nothing of the winner's"
     );
 }
 

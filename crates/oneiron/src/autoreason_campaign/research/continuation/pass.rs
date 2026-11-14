@@ -6,10 +6,12 @@
 //! same write as the row it moves to, and that write first checks that no
 //! other pass moved the row since it was read. A pass that lost the row
 //! changes nothing, and a crash leaves a step whole or undone. A dispatch
-//! and the record doors an ended run's answer goes to write on their own,
-//! each once: a dispatch by its dedupe key, a record by its node.
+//! enqueues its run in the write that puts the run on the row. The record
+//! doors an ended run's answer goes to write on their own, once each, by
+//! node.
 
 use super::*;
+use crate::agent_dispatch::AgentSpawnAdmission;
 
 /// A refused refund or settlement leaves the reservation as it stands; any
 /// other error stops the pass.
@@ -34,6 +36,14 @@ fn shot_spent_hold() -> ResearchContinuationState {
     ResearchContinuationState::Held {
         reason: SHOT_SPENT.to_owned(),
     }
+}
+
+/// `run` is the row's task in flight, last on its run trail.
+fn put_run(next: &mut ResearchContinuation, run: AttemptId) {
+    if let Some(running) = &mut next.running {
+        running.run = Some(run);
+    }
+    next.runs.push(run);
 }
 
 impl Pass<'_> {
@@ -249,7 +259,10 @@ impl Pass<'_> {
         Ok(Flow::Next)
     }
 
-    /// Dispatch the task in flight. After a crash the same dedupe key brings
+    /// Dispatch the task in flight. The enqueue commits in the write that puts
+    /// the run on the row, after that write's row check: a pass that lost the
+    /// row enqueues nothing, even once the run it lost to has ended and the
+    /// dedupe key no longer finds it. After a crash the same dedupe key brings
     /// back the run already made. A refused dispatch refunds and fails.
     fn dispatch(&self, row: &ResearchContinuation, running: &ResearchRunning) -> Result<Flow> {
         let root = self.root();
@@ -282,7 +295,8 @@ impl Pass<'_> {
         let reservation = self
             .reservation(running.reservation)?
             .ok_or(invalid("the running research task has no reservation"))?;
-        let outcome = AgentDispatcher::new(self.vault).dispatch_with_context(
+        let dispatcher = AgentDispatcher::new(self.vault);
+        let admission = dispatcher.admit_spawn(
             DispatchAgent {
                 target: AgentDispatchTarget::Custom(agent),
                 parent_attempt: Some(parent),
@@ -299,19 +313,10 @@ impl Pass<'_> {
                 .with_token_ceiling(reservation.units)
                 .with_context_spec(ContextSpec::excluded().with_briefing(briefing)),
         );
-        let reason = match outcome {
-            Ok(
-                AgentDispatchOutcome::Dispatched(status) | AgentDispatchOutcome::Existing(status),
-            ) => {
-                let mut next = row.clone();
-                if let Some(running) = &mut next.running {
-                    running.run = Some(status.attempt.id);
-                }
-                next.runs.push(status.attempt.id);
-                self.save(row, next)?;
-                return Ok(Flow::Next);
-            }
-            Ok(_) => "the dispatcher parked the run rather than start it".to_owned(),
+        let reason = match admission.and_then(|admission| self.enqueue(row, &dispatcher, admission))
+        {
+            Ok(true) => return Ok(Flow::Next),
+            Ok(false) => "the dispatcher parked the run rather than start it".to_owned(),
             Err(error @ (Error::InvalidConfig(_) | Error::Artifact(_) | Error::Gate(_))) => {
                 error.to_string()
             }
@@ -322,6 +327,45 @@ impl Pass<'_> {
         next.state = failed(reason);
         self.commit(row, next, |txn, _| self.refund_running_in_txn(txn, running))?;
         Ok(Flow::Stop)
+    }
+
+    /// Put the run `admission` names on the row, in one write with its
+    /// enqueue when it is a new run; `false` when the dispatcher parked the
+    /// run rather than start it, which writes nothing.
+    fn enqueue(
+        &self,
+        row: &ResearchContinuation,
+        dispatcher: &AgentDispatcher<'_>,
+        admission: AgentSpawnAdmission,
+    ) -> Result<bool> {
+        let admitted = match admission {
+            AgentSpawnAdmission::Admitted(admitted) => *admitted,
+            // A pending run under this row's dedupe key is the run it made.
+            AgentSpawnAdmission::Answered(outcome) => {
+                let AgentDispatchOutcome::Existing(status) = *outcome else {
+                    return Ok(false);
+                };
+                self.commit(row, row.clone(), |_, next| {
+                    put_run(next, status.attempt.id);
+                    Ok(())
+                })?;
+                return Ok(true);
+            }
+        };
+        self.commit(row, row.clone(), |txn, next| {
+            let (AgentDispatchOutcome::Dispatched(status)
+            | AgentDispatchOutcome::Existing(status)) =
+                dispatcher.enqueue_admitted_in_txn(txn, admitted)?
+            else {
+                return Err(Error::InvariantViolation(
+                    "an admitted agent spawn enqueues its run or finds it",
+                ));
+            };
+            put_run(next, status.attempt.id);
+            Ok(())
+        })?;
+        self.vault.store.notify_attempt_observers();
+        Ok(true)
     }
 
     /// Spend the candidate's sealed confirmation, serve its cohort and keep
