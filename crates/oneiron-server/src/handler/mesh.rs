@@ -60,11 +60,6 @@ impl MeshConfig {
         Self { bind, relays }
     }
 
-    #[cfg(feature = "mesh")]
-    pub(crate) fn outbound_settings(&self) -> Option<(SocketAddr, &[String])> {
-        self.bind.map(|bind| (bind, self.relays.as_slice()))
-    }
-
     pub(crate) fn from_env() -> anyhow::Result<Self> {
         let bind = match std::env::var(BIND_ENV) {
             Ok(raw) if !raw.trim().is_empty() => Some(
@@ -87,22 +82,37 @@ impl MeshConfig {
     }
 }
 
+/// Which of this install's services the mesh listener offers: `Full` is
+/// serve's and the phones' engine's (sync, organ calls, model calls, with
+/// their ticks); `SyncOnly` is the macOS app's: the sync route alone, no
+/// organ host, no model service, no tick (L7-47).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MeshRouteSet {
+    Full,
+    #[cfg_attr(not(feature = "mesh"), allow(dead_code))]
+    SyncOnly,
+}
+
 /// Starts the mesh listener when `config` names a bind address, serving
 /// `app` for sync. `None` when it is off; then the vault's rows of the
 /// models the owner's other nodes offered go stale, since no mesh catalog
-/// refresh keeps them current (FIX 22227).
+/// refresh keeps them current (FIX 22227). A sync-only device keeps no mesh
+/// model rows, so its off path withdraws none (L7-47).
 pub(crate) async fn start(
     server: Arc<crate::server::SyncServer>,
     config: &MeshConfig,
     app: &Router,
     limits: ConnectionLimits,
+    routes: MeshRouteSet,
 ) -> anyhow::Result<Option<MeshHost>> {
     let Some(bind) = config.bind else {
         #[cfg(feature = "mesh")]
-        crate::models::withdraw_discovered(server.vault());
+        if routes == MeshRouteSet::Full {
+            crate::models::withdraw_discovered(server.vault());
+        }
         return Ok(None);
     };
-    host::start(server, bind, &config.relays, app, limits).await
+    host::start(server, bind, &config.relays, app, limits, routes).await
 }
 
 #[cfg(not(feature = "mesh"))]
@@ -143,6 +153,7 @@ mod host {
         _relays: &[String],
         _app: &Router,
         _limits: ConnectionLimits,
+        _routes: super::MeshRouteSet,
     ) -> anyhow::Result<Option<MeshHost>> {
         // The config keeps the address, not which of the two named it.
         anyhow::bail!(
@@ -265,6 +276,23 @@ mod host {
         let _ = winding.wait_for(|now| *now >= step).await;
     }
 
+    /// The sync route the mesh listener serves, for [`mesh_routes`] and the
+    /// sync-only listener alike: one HTTP/1.1 connection per stream to the
+    /// server's router, under the listener's floor and stop (L7-47).
+    fn sync_route(
+        app: &Router,
+        limits: ConnectionLimits,
+        server: &Arc<crate::server::SyncServer>,
+        stop: &Arc<MeshStop>,
+    ) -> SyncRoute {
+        SyncRoute {
+            app: app.clone(),
+            limits,
+            floor: MeshFloor::new(limits.max_connections, Arc::clone(&server.mesh_pressure)),
+            stop: Arc::clone(stop),
+        }
+    }
+
     /// Every protocol the mesh listener serves. Add a protocol's row here.
     pub(crate) fn mesh_routes(
         app: &Router,
@@ -281,18 +309,7 @@ mod host {
         // The organ work's stop and cancel, and the model calls' deadline.
         let work = &stop.shutdown;
         MeshRoutes::default()
-            .route(
-                SYNC_ALPN,
-                Arc::new(SyncRoute {
-                    app: app.clone(),
-                    limits,
-                    floor: MeshFloor::new(
-                        limits.max_connections,
-                        Arc::clone(&server.mesh_pressure),
-                    ),
-                    stop: Arc::clone(stop),
-                }),
-            )
+            .route(SYNC_ALPN, Arc::new(sync_route(app, limits, server, stop)))
             .route(
                 ORGAN_ALPN,
                 Arc::new(
@@ -399,6 +416,10 @@ mod host {
         transport: Arc<IrohTransport>,
         /// This install's MACHINE, whose enrolled home the listener pins.
         machine: oneiron::EntityId,
+        /// The ALPNs the listener bound, the sync ALPN alone on a sync-only
+        /// device, read by the test door (L7-47).
+        #[cfg(oneiron_test_support)]
+        alpns: Vec<Vec<u8>>,
         stopping: Arc<MeshStop>,
         /// The accept loop, which owns each connection it admitted.
         accepts: JoinHandle<()>,
@@ -411,6 +432,13 @@ mod host {
         /// endpoint rather than binding a second ([`crate::device_sync`]).
         pub(crate) fn transport(&self) -> Arc<dyn MeshTransport> {
             Arc::clone(&self.transport) as Arc<dyn MeshTransport>
+        }
+
+        /// The ALPNs the listener bound: the sync ALPN alone on a sync-only
+        /// device (L7-47).
+        #[cfg(oneiron_test_support)]
+        pub(crate) fn alpns(&self) -> &[Vec<u8>] {
+            &self.alpns
         }
 
         /// Whether the listener admits `home` on sync as the home this
@@ -464,6 +492,7 @@ mod host {
         relays: &[String],
         app: &Router,
         limits: ConnectionLimits,
+        route_set: super::MeshRouteSet,
     ) -> anyhow::Result<Option<MeshHost>> {
         let vault = Arc::clone(&server.vault);
         let (machine, key) = TransportKey::for_install(&vault)
@@ -471,13 +500,22 @@ mod host {
             .ok_or_else(|| {
                 anyhow::anyhow!("the mesh listener needs this install enrolled as a machine")
             })?;
-        // The installed packs' organs go on the host before it is offered.
-        let installing = Arc::clone(&server);
-        tokio::task::spawn_blocking(move || installing.install_pack_organs())
-            .await
-            .map_err(|error| anyhow::anyhow!("pack organ install: {error}"))?;
+        // The installed packs' organs go on the host before it is offered. A
+        // sync-only device offers no organ host, so it installs none (L7-47).
+        if route_set == super::MeshRouteSet::Full {
+            let installing = Arc::clone(&server);
+            tokio::task::spawn_blocking(move || installing.install_pack_organs())
+                .await
+                .map_err(|error| anyhow::anyhow!("pack organ install: {error}"))?;
+        }
         let stopping = Arc::new(MeshStop::new());
-        let routes = Arc::new(mesh_routes(app, limits, &server, &stopping));
+        let routes = Arc::new(match route_set {
+            super::MeshRouteSet::Full => mesh_routes(app, limits, &server, &stopping),
+            super::MeshRouteSet::SyncOnly => MeshRoutes::default().route(
+                SYNC_ALPN,
+                Arc::new(sync_route(app, limits, &server, &stopping)),
+            ),
+        });
         let policy = AcceptPolicy {
             roster: Arc::new(PinnedRoster {
                 local: machine,
@@ -490,7 +528,9 @@ mod host {
         };
         let relays =
             private_relay_map(relays).map_err(|_| anyhow::anyhow!("mesh relay URL refused"))?;
-        let alpns = routes.routes.iter().map(|(alpn, _)| alpn.clone()).collect();
+        let alpns: Vec<Vec<u8>> = routes.routes.iter().map(|(alpn, _)| alpn.clone()).collect();
+        #[cfg(oneiron_test_support)]
+        let bound = alpns.clone();
         let transport = Arc::new(
             IrohTransport::bind_paired(
                 key,
@@ -521,6 +561,8 @@ mod host {
         Ok(Some(MeshHost {
             transport,
             machine,
+            #[cfg(oneiron_test_support)]
+            alpns: bound,
             stopping,
             accepts,
             ticks,

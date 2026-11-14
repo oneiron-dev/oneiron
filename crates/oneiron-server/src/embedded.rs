@@ -214,6 +214,7 @@ async fn serve_prepared<A: AppHost>(
             &crate::handler::mesh::MeshConfig::from_env()?,
             &mesh_app,
             config.limits.connections(),
+            crate::handler::mesh::MeshRouteSet::Full,
         )
         .await?;
         // A machine that is not the elected home dials its home, on that

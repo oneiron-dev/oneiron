@@ -202,6 +202,20 @@ pub fn build_app_for_position(
         ))
 }
 
+/// The `/ws` route alone, for a listener that serves sync and nothing else
+/// (the macOS app's mesh listener, L7-47); every slip, machine proof and
+/// grant check of `ws_routes` runs unchanged.
+#[cfg(feature = "mesh")]
+pub(crate) fn build_sync_router(server: Arc<SyncServer>) -> Router {
+    Router::new()
+        .merge(handler::ws_routes(server.clone()))
+        // Outermost, so a hatch server's off-device caller reaches no route.
+        .layer(axum::middleware::from_fn_with_state(
+            server,
+            auth::refuse_off_device_hatch_callers,
+        ))
+}
+
 /// Builds the artifact-only app: `/a/` and nothing else, for a listener of
 /// its own, so a code bundle's scripts run on an origin that holds no API.
 /// Serve it beside [`build_app`] over the same server, and record its port

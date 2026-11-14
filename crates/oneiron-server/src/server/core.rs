@@ -88,6 +88,10 @@ pub struct SyncServer {
     /// Whether this server's merge queue checker ran a pass yet: its first
     /// asks again for a check that needed host configuration (FIX 7310).
     pub(crate) queue_driver_started: std::sync::atomic::AtomicBool,
+    /// Whether this server's vault syncs as a device of another home through a
+    /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
+    /// serves the vault's other machines as a peer, never as their home (L7-47).
+    pub(crate) runs_device_link: std::sync::atomic::AtomicBool,
     /// Server configuration.
     pub(crate) config: SyncServerConfig,
     /// Permits for git and LFS transfers, sized by `config.limits`.
@@ -349,6 +353,7 @@ const _: fn(&SyncServer) = |server| {
         standing_block_cache, broadcast_tx, next_conn_id, lease_registrar, reassert_manager,
         _reactive_tee, lifecycle_session_id, lifecycle_in_flight, housekeeping_passes,
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
+        runs_device_link,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
         mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
@@ -805,6 +810,21 @@ impl SyncServer {
     /// assert sync_state durability).
     pub fn vault(&self) -> &Arc<oneiron::Vault> {
         &self.vault
+    }
+
+    /// Marks this server's vault as syncing as a device of another home through
+    /// a link this process runs, so it serves the vault's other machines as a
+    /// peer, never as their home (L7-47).
+    #[cfg(feature = "mesh")]
+    pub(crate) fn mark_device_link(&self) {
+        self.runs_device_link.store(true, Ordering::Release);
+    }
+
+    /// Whether this server's vault syncs as a device of another home through a
+    /// link this process runs (the macOS app's `EmbeddedDeviceSync`), so it
+    /// serves the vault's other machines as a peer, never as their home (L7-47).
+    pub(crate) fn runs_device_link(&self) -> bool {
+        self.runs_device_link.load(Ordering::Acquire)
     }
 
     /// Installs this serve's dedicated shared environments once. A second
