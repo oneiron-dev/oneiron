@@ -104,81 +104,107 @@ impl AnthropicMessagesTransport for AnthropicHttp {
         lease: &'a BudgetLease,
     ) -> Result<AnthropicMessagesProviderStream<'a>, AnthropicMessagesTransportError> {
         let body = self.with_output_cap(request.body);
-        let mut inference = InferenceUsage::new(
+        let inference = InferenceUsage::new(
             lease,
             body.get("model")
                 .and_then(JsonValue::as_str)
                 .and_then(|wire| self.engine_models.get(wire))
                 .cloned(),
         );
-        let mut closed = false;
         let events = self
             .http
             .post_sse_leased(&request.path, &request.headers, &body, lease);
-        let frames = events.map(move |item| {
-            let item = match item {
-                Ok(item) => item,
-                Err(error) => {
-                    closed = true;
-                    return Err(error.into());
-                }
-            };
-            match item {
-                SseItem::Status(mut reply) => {
-                    if !closed {
-                        inference.record(reply.body.get_mut("usage"));
-                    }
-                    closed = true;
-                    Ok(AnthropicMessagesStreamFrame::Status(
-                        AnthropicMessagesHttpResponse {
-                            status: reply.status,
-                            headers: reply.headers,
-                            body: reply.body,
-                        },
-                    ))
-                }
-                SseItem::Event(event) => {
-                    let mut data: JsonValue = match serde_json::from_str(&event.data) {
-                        Ok(data) => data,
-                        Err(_) => {
-                            closed = true;
-                            return Err(AnthropicMessagesTransportError::StreamCut);
-                        }
-                    };
-                    // `message_start`: later `message_delta` usage extends the
-                    // usage it opens, so the served model rides to the end.
-                    if let Some(message) = data.get_mut("message") {
-                        carry_served_model(message);
-                    }
-                    if !closed {
-                        match data.get("type").and_then(JsonValue::as_str) {
-                            Some("message_start") => inference.record(
-                                data.get_mut("message")
-                                    .and_then(|message| message.get_mut("usage")),
-                            ),
-                            Some("message_delta") => inference.record(data.get_mut("usage")),
-                            Some("message_stop") => {
-                                inference.finish();
-                                closed = true;
-                            }
-                            Some("error") => {
-                                inference.record(data.get_mut("usage"));
-                                closed = true;
-                            }
-                            _ => {}
-                        }
-                    }
-                    Ok(AnthropicMessagesStreamFrame::Event(data))
-                }
-            }
-        });
-        Ok(Box::pin(frames))
+        Ok(messages_frames(events, Some(inference)))
     }
+}
+
+/// The Messages stream as the adapter reads it, from either transport. The
+/// brokered stream passes no inference, as the brokered whole reply records
+/// none.
+pub(super) fn messages_frames<'a, S>(
+    events: S,
+    inference: Option<InferenceUsage>,
+) -> AnthropicMessagesProviderStream<'a>
+where
+    S: futures_util::Stream<Item = Result<SseItem, HttpReleaseError>> + Send + 'a,
+{
+    let mut inference = inference;
+    let mut closed = false;
+    let frames = events.map(move |item| {
+        let item = match item {
+            Ok(item) => item,
+            Err(error) => {
+                closed = true;
+                return Err(error.into());
+            }
+        };
+        match item {
+            SseItem::Status(mut reply) => {
+                if !closed && let Some(inference) = inference.as_mut() {
+                    inference.record(reply.body.get_mut("usage"));
+                }
+                closed = true;
+                Ok(AnthropicMessagesStreamFrame::Status(
+                    AnthropicMessagesHttpResponse {
+                        status: reply.status,
+                        headers: reply.headers,
+                        body: reply.body,
+                    },
+                ))
+            }
+            SseItem::Event(event) => {
+                let mut data: JsonValue = match serde_json::from_str(&event.data) {
+                    Ok(data) => data,
+                    Err(_) => {
+                        closed = true;
+                        return Err(AnthropicMessagesTransportError::StreamCut);
+                    }
+                };
+                // `message_start`: later `message_delta` usage extends the
+                // usage it opens, so the served model rides to the end.
+                if let Some(message) = data.get_mut("message") {
+                    carry_served_model(message);
+                }
+                if !closed {
+                    match data.get("type").and_then(JsonValue::as_str) {
+                        Some("message_start") => {
+                            if let Some(inference) = inference.as_mut() {
+                                inference.record(
+                                    data.get_mut("message")
+                                        .and_then(|message| message.get_mut("usage")),
+                                );
+                            }
+                        }
+                        Some("message_delta") => {
+                            if let Some(inference) = inference.as_mut() {
+                                inference.record(data.get_mut("usage"));
+                            }
+                        }
+                        Some("message_stop") => {
+                            if let Some(inference) = inference.as_mut() {
+                                inference.finish();
+                            }
+                            closed = true;
+                        }
+                        Some("error") => {
+                            if let Some(inference) = inference.as_mut() {
+                                inference.record(data.get_mut("usage"));
+                            }
+                            closed = true;
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(AnthropicMessagesStreamFrame::Event(data))
+            }
+        }
+    });
+    Box::pin(frames)
 }
 
 /// One physical send's native counts and the calls its usage names. Dropping
 /// this state leaves each call's last partial measurement on the lease.
-struct InferenceUsage {
+pub(super) struct InferenceUsage {
     lease: BudgetLease,
     calls: Vec<ObservedCall>,
     model: Option<ModelId>,

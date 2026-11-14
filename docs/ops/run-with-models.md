@@ -284,9 +284,11 @@ extra_roots = ["/etc/oneiron/private-ca.pem"] # optional, absolute
 ```
 
 A declared run's paid keys must sit at T0, so its teacher calls go out this way.
-A `key_secret` provider answers whole chat replies only for now: a streamed chat
-call to it is refused before it starts. Its media calls go through the same
-broker (§10).
+A streamed chat call to a `key_secret` provider goes through the broker as
+the provider's event request; the broker strips each form of the key from
+the events as they pass, and the call keeps its permit and digest binding.
+A Gemini provider's chat still answers whole replies only. Its media calls
+go through the same broker (§10).
 
 A self-hosted `serve` takes `--settings-file <path>` too: a TOML file in its
 config file's schema, read as one more config file over `--config` and under
