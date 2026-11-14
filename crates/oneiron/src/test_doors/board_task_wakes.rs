@@ -4,7 +4,7 @@
 //! read of the TASK; these doors take that answer as `admit`.
 
 use crate::context_board::{
-    BoardStreamRegistry, CommittedTaskBoardState, PendingTaskWake, StreamConnectionId,
+    BoardStreamRegistry, CommittedTaskBoardState, PendingTaskWake, StreamConnectionId, TaskWakeRead,
 };
 use crate::{EntityId, Result, Vault};
 
@@ -58,7 +58,26 @@ pub fn publish_staged_task_wakes(
     registry: &mut BoardStreamRegistry,
     admit: impl Fn(&StreamConnectionId, EntityId) -> bool,
 ) -> Result<()> {
-    let read = PendingTaskWake::read_all(vault)?;
+    let read = read_staged_task_wakes(vault)?;
+    apply_staged_task_wakes(vault, registry, read, admit)
+}
+
+/// The staged pass's read: each staged wake, its TASK read again now. Serve
+/// takes the registry lock only after it, so the TASK loop can stage and
+/// route a later occurrence between this read and
+/// [`apply_staged_task_wakes`].
+pub fn read_staged_task_wakes(vault: &Vault) -> Result<TaskWakeRead> {
+    PendingTaskWake::read_all(vault)
+}
+
+/// The staged pass after its read: forget the spent rows' offers, offer each
+/// pending wake, and settle the spent rows.
+pub fn apply_staged_task_wakes(
+    vault: &Vault,
+    registry: &mut BoardStreamRegistry,
+    read: TaskWakeRead,
+    admit: impl Fn(&StreamConnectionId, EntityId) -> bool,
+) -> Result<()> {
     registry.forget_spent_task_wakes(&read.spent);
     registry.publish_task_wakes(read.pending, |connection, wake| {
         admit(connection, wake.task())
