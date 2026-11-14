@@ -1,4 +1,4 @@
-//! The image organ: eight verbs over the `image` body, schema 1.
+//! The image organ: seven verbs over the `image` body, schema 1.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -11,8 +11,7 @@ use oneiron_organ_protocol::{
 use serde::Deserialize;
 
 use crate::body::{
-    Filter, Format, Icc, ImageBody, KIND, SCHEMA, Shape, Size, Source, Stroke, bad, from_value,
-    to_value,
+    Filter, Format, Icc, ImageBody, KIND, SCHEMA, Shape, Source, Stroke, bad, from_value, to_value,
 };
 use crate::decode::{Header, Profile, check_size, decode, header_cost, read_header};
 use crate::ops::{self, Edited};
@@ -25,10 +24,9 @@ pub const VERB_RESIZE: &str = "image.resize";
 pub const VERB_ANNOTATE: &str = "image.annotate";
 pub const VERB_EXPORT: &str = "image.export";
 pub const VERB_RENDER: &str = "image.render";
-pub const VERB_PREVIEW: &str = "image.preview";
 
 /// Every verb, with whether it reads a body.
-const VERBS: [(&str, bool); 8] = [
+const VERBS: [(&str, bool); 7] = [
     (VERB_INSPECT, false),
     (VERB_OPEN, false),
     (VERB_CROP, true),
@@ -36,15 +34,10 @@ const VERBS: [(&str, bool); 8] = [
     (VERB_ANNOTATE, true),
     (VERB_EXPORT, true),
     (VERB_RENDER, false),
-    (VERB_PREVIEW, false),
 ];
 
-/// The most ops one `image.render` or `image.preview` applies.
+/// The most ops one `image.render` applies.
 const MAX_RENDER_OPS: usize = 256;
-
-/// The bounds of `image.preview`'s `max_side`, in pixels.
-pub const MIN_PREVIEW_SIDE: u32 = 16;
-pub const MAX_PREVIEW_SIDE: u32 = 2048;
 
 /// The warning code for a source with no colour profile, read as sRGB. Notes
 /// carry codes; the host words them.
@@ -192,14 +185,6 @@ struct RenderArgs {
     format: String,
 }
 
-/// `image.preview`'s args: `image.render`'s ops, and the longest side the
-/// preview may have.
-#[derive(Deserialize)]
-struct PreviewArgs {
-    ops: Vec<Value>,
-    max_side: u32,
-}
-
 #[derive(Deserialize)]
 struct RenderOpName {
     op: String,
@@ -260,7 +245,6 @@ impl Organ for ImageOrgan {
             }
             VERB_EXPORT => self.export(call),
             VERB_RENDER => self.render(call),
-            VERB_PREVIEW => self.preview(call),
             other => Err(OrganError::new(ErrorCode::UnknownVerb, other)),
         }
     }
@@ -360,24 +344,6 @@ fn render_op(
         other => return Err(bad(format!("a render op is crop or resize, not {other}"))),
     };
     Ok(edited.body)
-}
-
-/// The size a preview of `canvas` scales to so that neither side passes
-/// `max_side`, its aspect kept and each side at least one pixel; `None`
-/// when the canvas fits already.
-fn preview_fit(canvas: Size, max_side: u32) -> Option<Size> {
-    let long = canvas.w.max(canvas.h);
-    if long <= max_side {
-        return None;
-    }
-    let scaled = |side: u32| {
-        let side = (u64::from(side) * u64::from(max_side) + u64::from(long) / 2) / u64::from(long);
-        u32::try_from(side).map_or(max_side, |side| side.clamp(1, max_side))
-    };
-    Some(Size {
-        w: scaled(canvas.w),
-        h: scaled(canvas.h),
-    })
 }
 
 /// Refuses what the first slice cannot keep, then checks the size.
@@ -522,69 +488,27 @@ impl ImageOrgan {
     fn render(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let args: RenderArgs = from_value(call.args, "render args")?;
         png_only(&args.format)?;
-        let (body, input, header) = self.rendered_body(call, &args.ops)?;
-        let peak = ops::render_peak(&body, &|| call.check_cancel())?;
-        self.export_png(call, &body, peak, input, &header)
-    }
-
-    /// `image.preview {ops, max_side}` over its one input (L4-16):
-    /// `image.render`'s ops, then one bilinear resize, its aspect kept, when
-    /// the canvas is wider or taller than `max_side`, then the PNG. Its answer
-    /// is the export's; a host shows the PNG and lands nothing.
-    fn preview(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
-        let args: PreviewArgs = from_value(call.args, "preview args")?;
-        if !(MIN_PREVIEW_SIDE..=MAX_PREVIEW_SIDE).contains(&args.max_side) {
-            return Err(bad(format!(
-                "a preview's max_side is {MIN_PREVIEW_SIDE} to {MAX_PREVIEW_SIDE}, not {}",
-                args.max_side
-            )));
-        }
-        let (mut body, input, header) = self.rendered_body(call, &args.ops)?;
-        let check = || call.check_cancel();
-        if let Some(fit) = preview_fit(body.canvas, args.max_side) {
-            body = ops::resize(
-                body,
-                fit.w,
-                fit.h,
-                Filter::Bilinear,
-                work_budget(call),
-                &check,
-            )?
-            .body;
-        }
-        let peak = ops::render_peak(&body, &check)?;
-        self.export_png(call, &body, peak, input, &header)
-    }
-
-    /// The body of the call's one input with `ops` applied in order, as
-    /// `image.render` and `image.preview` build it, beside the input and its
-    /// checked header.
-    fn rendered_body<'a>(
-        &self,
-        call: &'a CallContext<'_>,
-        ops: &[Value],
-    ) -> Result<(ImageBody, &'a InputBytes, Header), OrganError> {
-        if ops.len() > MAX_RENDER_OPS {
+        if args.ops.len() > MAX_RENDER_OPS {
             return Err(bad(format!(
                 "a render takes at most {MAX_RENDER_OPS} ops, not {}",
-                ops.len()
+                args.ops.len()
             )));
         }
         let input = only_input(call)?;
         let (header, icc) = self.admitted(call, input)?;
         let check = || call.check_cancel();
         let mut body = ImageBody::new(source_from(input, &header, icc));
-        for op in ops {
+        for op in &args.ops {
             check()?;
             body = render_op(body, op, work_budget(call), &check)?;
         }
-        Ok((body, input, header))
+        let peak = ops::render_peak(&body, &check)?;
+        self.export_png(call, &body, peak, input, &header)
     }
 
     /// The PNG of `body` over its source `input`, whose header and profile
     /// the caller has checked, with `peak` the most bytes rendering it
-    /// holds: the answer of `image.export`, `image.render` and
-    /// `image.preview` alike.
+    /// holds: the answer of `image.export` and `image.render` alike.
     fn export_png(
         &self,
         call: &CallContext<'_>,
