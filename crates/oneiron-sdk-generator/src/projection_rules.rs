@@ -29,6 +29,7 @@ const TS_NATIVE: &str = "packages/oneiron/src/native-verbs.ts";
 const CLIENT: &str = "packages/oneiron-client/src/facade.ts";
 const PY: &str = "crates/oneiron-py/python/oneiron/_facade_verbs.py";
 const PYI: &str = "crates/oneiron-py/python/oneiron/_facade_verbs.pyi";
+const WIRE_INPUTS: &str = "crates/oneiron-verb-wire/src/generated/verb_input_checks.rs";
 
 /// The repository the crate sits in.
 fn repository() -> PathBuf {
@@ -520,4 +521,77 @@ fn a_facade_handler_decodes_each_call_once() {
         .expect("the describe handler");
     assert!(describe.contains("sdk::validate_input(\"describe\", &value)?;"));
     assert!(!describe.contains("facade_invoke"));
+}
+
+/// The quoted names a pattern's first group captures in a generated text, in order.
+fn captured_names(text: &str, pattern: &str) -> Vec<String> {
+    crate::py::re::compile(pattern)
+        .captures_iter(text)
+        .map(|found| found[1].to_owned())
+        .collect()
+}
+
+/// The path segments of a type text but their modules: `crate::a::B<crate::c::D>` -> `B`, `D`.
+fn type_names(text: &str) -> Vec<String> {
+    captured_names(text, r"(?:[A-Za-z_]\w*::)*([A-Za-z_]\w*)")
+}
+
+/// Lib split W3-GEN: each callable row's input check and each schema row's input schema is in exactly one of the
+/// lib's `sdk_generated.rs` and the wire crate's `verb_input_checks.rs`. A row whose check runs admission checks or
+/// that takes a board shape and a host shape keeps its check in the lib; the wire crate's check of a row names the
+/// row's own input type, by the wire crate's path.
+#[test]
+fn each_input_check_and_schema_is_in_the_lib_or_the_wire_crate() {
+    let generator = crate::generate::Generator::new(&repository()).expect("the generator");
+    let names = |ids: &[crate::generate::RowId]| -> Vec<String> {
+        let mut names: Vec<String> = generator
+            .rows
+            .select(ids)
+            .iter()
+            .map(|row| row.get("name").expect("a row name").str())
+            .collect();
+        names.sort();
+        names
+    };
+    let core = text(baseline(), CORE);
+    let wire = text(baseline(), WIRE_INPUTS);
+    let core_checks = captured_names(core, r#""([^"]+)" => validate_input_\w+\(value\)\?,"#);
+    let wire_checks = captured_names(wire, r#""([^"]+)" => Some\(validate_input_\w+\(value\)\),"#);
+    let core_schemas = captured_names(
+        core,
+        r#"\("([^"]+)", crate::code_run::vault_read::request_schema::<"#,
+    );
+    let wire_schemas = captured_names(
+        wire,
+        r#"\("([^"]+)", oneiron_contracts::code_run::vault_read::request_schema::<"#,
+    );
+    assert!(!wire_checks.is_empty() && !wire_schemas.is_empty());
+    for (core, wire, ids) in [
+        (&core_checks, &wire_checks, &generator.callable_rows),
+        (&core_schemas, &wire_schemas, &generator.schema_rows),
+    ] {
+        let mut both: Vec<String> = core.iter().chain(wire.iter()).cloned().collect();
+        both.sort();
+        assert_eq!(both, names(ids));
+    }
+    let board_hosts = names(&generator.board_host_rows);
+    let wire_types = crate::py::re::compile(
+        r"fn validate_input_\w+\(value: &serde_json::Value\) -> MemoryResult<\(\)> \{ let _input: ([^=]+) = decode",
+    );
+    let mut wire_types = wire_types.captures_iter(wire);
+    for row in generator.rows.select(&generator.callable_rows) {
+        let name = row.get("name").expect("a row name").str();
+        let checked = row
+            .get("admission")
+            .and_then(|admission| admission.as_dict()?.get("validate"))
+            .is_some_and(Value::truthy);
+        if !wire_checks.contains(&name) {
+            continue;
+        }
+        assert!(!checked && !board_hosts.contains(&name), "{name}");
+        let found = wire_types.next().expect("one wire check per wire row");
+        let input = row.get("input").expect("an input").str();
+        assert_eq!(type_names(found[1].trim()), type_names(&input), "{name}");
+    }
+    assert!(wire_types.next().is_none());
 }
