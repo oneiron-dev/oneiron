@@ -55,6 +55,10 @@ impl RoomParty {
 /// no owner here, as the callers' own census read does
 /// (`owners_in_txn(..).unwrap_or_default()`): it fails closed, never a
 /// refusal.
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "the signature is #7900's, whose liveness read can fail; the census read here fails closed"
+)]
 pub(crate) fn is_vault_owner(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
