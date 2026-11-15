@@ -7,8 +7,11 @@
 //!
 //! - `GET` lists every enrolled owner key: the machine that holds it, the
 //!   install that carried the act, the owner, whether it is live, whether
-//!   his checkpoint policy may name it now, what kind of key it is and
-//!   whether this install holds it. Empty before any enrollment.
+//!   his checkpoint policy may name it now, what kind of key it is,
+//!   whether this install holds it, every machine whose removal ends it and
+//!   whether it is also the recovery root's authority key, so a removal
+//!   screen can say before the act which keys end and whether the recovery
+//!   kit ends with them. Empty before any enrollment.
 //! - `POST .../challenge` answers the bytes the device's new key signs: the
 //!   vault, the machine, the key and the owner this request proves, fixed
 //!   here; the act's target and zero `seen` follow from them.
@@ -66,7 +69,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/owner-signing-keys",
-                summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live, whether a checkpoint policy may name it now, its kind (`device` or `recovery_authority`) and whether this install holds it. Empty before any enrollment.",
+                summary: "Every owner signing key enrolled on the vault's roster (FIX 4920), ascending by key: its enrollment entry, the machine that holds it, the install that carried the act, the owner, whether it is live, whether a checkpoint policy may name it now, its kind (`device` or `recovery_authority`), whether this install holds it, every machine whose removal ends it (`device_machines`) and whether a counted enrollment marks it the recovery root's authority key (`recovery_authority`). Empty before any enrollment.",
                 row: None,
                 shape: None,
             },
@@ -218,6 +221,15 @@ struct KeyReply {
     kind: &'static str,
     /// Whether this install holds the key, so it can sign a removal.
     held_here: bool,
+    /// Every machine a counted enrollment names as holding the key as a
+    /// device's key, each as 32 hex, ascending: removing one of them ends
+    /// the key. Empty for a key enrolled only as the recovery root's.
+    device_machines: Vec<String>,
+    /// A counted enrollment marks the key the recovery root's authority
+    /// key, whatever `kind` says of the listed one. With a machine in
+    /// `device_machines` the key is both, and the recovery kit ends with
+    /// that machine's removal or the key's.
+    recovery_authority: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -446,6 +458,12 @@ fn key_reply(key: &EnrolledOwnerKey, held: &[AuthorityKey]) -> KeyReply {
         at: key.at,
         kind: kind_name(key.kind),
         held_here: held.contains(&AuthorityKey::Ed25519(key.public_key)),
+        device_machines: key
+            .device_machines
+            .iter()
+            .map(oneiron::EntityId::to_hex)
+            .collect(),
+        recovery_authority: key.recovery_authority,
     }
 }
 

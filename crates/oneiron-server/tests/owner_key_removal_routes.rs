@@ -220,6 +220,15 @@ async fn managed_host_removes_no_owner_key() -> TestResult {
     assert_eq!(keys[0]["live"], true, "the key is live: {answer}");
     assert_eq!(keys[0]["kind"], "device", "a device key: {answer}");
     assert_eq!(keys[0]["held_here"], false, "never held here: {answer}");
+    assert_eq!(
+        keys[0]["device_machines"],
+        json!([machine.clone()]),
+        "removing the holding machine ends the key: {answer}"
+    );
+    assert_eq!(
+        keys[0]["recovery_authority"], false,
+        "no enrolment marks it the recovery root's: {answer}"
+    );
 
     // Its removal is refused: this install holds no owner key.
     let (status, answer) = host

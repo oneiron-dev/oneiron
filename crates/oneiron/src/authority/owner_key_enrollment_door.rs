@@ -153,6 +153,16 @@ pub struct EnrolledOwnerKey {
     pub at: u64,
     /// What the key is, as its enrollment's attestation kind says.
     pub kind: EnrolledOwnerKeyKind,
+    /// Every machine a counted enrollment names as holding the key as a
+    /// device's key: the machines whose removal ends it. A key enrolled on
+    /// two branches may name two. A key enrolled only as the recovery
+    /// root's names none.
+    pub device_machines: BTreeSet<EntityId>,
+    /// A counted enrollment marks the key the recovery root's authority key,
+    /// whatever [`Self::kind`] says of the listed one. With a machine in
+    /// [`Self::device_machines`] the key is both, and the recovery kit ends
+    /// with that machine's removal or the key's.
+    pub recovery_authority: bool,
 }
 
 /// What an enrolled owner key is, read from its enrollment row alone (pass
@@ -851,6 +861,7 @@ fn keep_enrolled(
         return;
     }
     let device = fold.roster.get(&enroll.device.key);
+    let kind = EnrolledOwnerKeyKind::of(enroll);
     keys.insert(
         *public_key,
         EnrolledOwnerKey {
@@ -863,7 +874,12 @@ fn keep_enrolled(
             eligible: device
                 .is_some_and(|device| super::checkpoint_policy::selectable_root(device, managed)),
             at: entry.ts,
-            kind: EnrolledOwnerKeyKind::of(enroll),
+            kind,
+            device_machines: match kind {
+                EnrolledOwnerKeyKind::Device => BTreeSet::from([enroll.machine]),
+                EnrolledOwnerKeyKind::RecoveryAuthority => BTreeSet::new(),
+            },
+            recovery_authority: kind == EnrolledOwnerKeyKind::RecoveryAuthority,
         },
     );
 }

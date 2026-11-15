@@ -15,6 +15,10 @@
 //! branch the removal never saw, two removals that cross both show in the
 //! changes list, and a key enrolled as a device's and as the recovery root's
 //! ends with its machine.
+//!
+//! The key list says before a removal what it ends: a key's row names every
+//! machine a counted enrolment names for it, and says whether one marks it
+//! the recovery root's.
 
 #![cfg(oneiron_test_support)]
 
@@ -1668,5 +1672,191 @@ fn a_key_enrolled_as_a_devices_and_as_the_recovery_roots_ends_with_its_machine()
                 "a machine removal ends every live device owner key that any counted enrolment names for that machine: another key remains, so no ask: {remaining:?}"
             )
         }
+    }
+}
+
+#[test]
+fn the_key_list_names_every_machine_whose_removal_ends_a_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let install = removal_vault.install();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let machine_b = removal_vault.enrol_machine_with([0x76; 16], JOINING_SEED);
+    let machine_c = removal_vault.enrol_machine_with([0x77; 16], MACHINE_C_SEED);
+    let machine_c_signing_key = signing(MACHINE_C_SEED);
+    let predecessor_signing_key = SigningKey::from_bytes(&[76; 32]);
+    let (_, branch_parent) =
+        removal_vault.enrol_owner_key_on_machine(install, &predecessor_signing_key);
+    let shared_signing_key = SigningKey::from_bytes(&[77; 32]);
+    let shared_key = shared_signing_key.verifying_key().to_bytes();
+    let (_, first_enrolment) =
+        removal_vault.enrol_owner_key_on_machine(machine_b, &shared_signing_key);
+    let second_enrolment = removal_vault.store_sibling_enrolment(
+        vec![branch_parent],
+        1,
+        &predecessor_signing_key,
+        machine_c,
+        &machine_c_signing_key,
+        machine_c,
+        &shared_signing_key,
+    );
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&first_enrolment),
+        "the key list names every machine whose removal ends a key: the first enrolment counts"
+    );
+    assert!(
+        fold.valid_entries.contains(&second_enrolment),
+        "the key list names every machine whose removal ends a key: the second enrolment counts"
+    );
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    let shared = enrolled_keys
+        .iter()
+        .find(|enrolled| enrolled.public_key == shared_key)
+        .expect("the shared key is enrolled");
+    assert_eq!(
+        shared.device_machines,
+        BTreeSet::from([machine_b, machine_c]),
+        "the key list names every machine whose removal ends a key: both machines of a key enrolled for two"
+    );
+    assert!(
+        !shared.recovery_authority,
+        "the key list names every machine whose removal ends a key: no enrolment marks the shared key the recovery root's"
+    );
+    let first = enrolled_keys
+        .iter()
+        .find(|enrolled| enrolled.public_key == first_key)
+        .expect("the first key is enrolled");
+    assert_eq!(
+        first.device_machines,
+        BTreeSet::from([install]),
+        "the key list names every machine whose removal ends a key: a key enrolled once names its one machine"
+    );
+    assert!(
+        !first.recovery_authority,
+        "the key list names every machine whose removal ends a key: a plain device key is not the recovery root's"
+    );
+}
+
+#[test]
+fn the_key_list_marks_a_key_enrolled_both_ways_as_the_recovery_roots() {
+    for recovery_enrolment_listed in [false, true] {
+        let removal_vault = RemovalVault::hosted();
+        removal_vault.enrol_owner_key();
+        let first_key = removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .into_iter()
+            .find(|enrolled| enrolled.live)
+            .expect("the install's owner key is enrolled")
+            .public_key;
+        let machine_b = removal_vault.enrol_machine_with([0x76; 16], JOINING_SEED);
+        let machine_b_signing_key = signing(JOINING_SEED);
+        let predecessor_signing_key = SigningKey::from_bytes(&[76; 32]);
+        let install = removal_vault.install();
+        let (_, branch_parent) =
+            removal_vault.enrol_owner_key_on_machine(install, &predecessor_signing_key);
+        let shared_signing_key = SigningKey::from_bytes(&[77; 32]);
+        let shared_key = shared_signing_key.verifying_key().to_bytes();
+        let (_, device_enrolment) =
+            removal_vault.enrol_owner_key_on_machine(machine_b, &shared_signing_key);
+        let start = now_seconds();
+        let mut chosen = None;
+        for offset in 0..64u64 {
+            let timestamp = start + offset;
+            let (entry, hash) = removal_vault.sibling_enrolment_row(
+                vec![branch_parent],
+                1,
+                &predecessor_signing_key,
+                machine_b,
+                &machine_b_signing_key,
+                machine_b,
+                &shared_signing_key,
+                RECOVERY_AUTHORITY_POSSESSION_KIND,
+                timestamp,
+            );
+            if (hash < device_enrolment) == recovery_enrolment_listed {
+                chosen = Some((entry, hash, timestamp));
+                break;
+            }
+        }
+        let (recovery_entry, recovery_enrolment, recovery_time) = chosen.expect(
+            "a recovery enrolment hashes on the wanted side of the device enrolment within 64 timestamps",
+        );
+        removal_vault
+            .vault
+            .put_authority_log_entry(
+                &recovery_entry,
+                TimeRange {
+                    start: recovery_time,
+                    end: recovery_time,
+                },
+                recovery_time,
+            )
+            .expect("the sibling recovery enrolment lands");
+        let fold = removal_vault
+            .vault
+            .authority_fold()
+            .expect("authority fold");
+        assert!(
+            fold.valid_entries.contains(&device_enrolment),
+            "the key list marks a key enrolled both ways as the recovery root's: the device enrolment counts"
+        );
+        assert!(
+            fold.valid_entries.contains(&recovery_enrolment),
+            "the key list marks a key enrolled both ways as the recovery root's: the recovery enrolment counts"
+        );
+        let enrolled_keys = removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys");
+        let shared = enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == shared_key)
+            .expect("the shared key is enrolled");
+        let (listed_entry, listed_kind) = if recovery_enrolment_listed {
+            (recovery_enrolment, EnrolledOwnerKeyKind::RecoveryAuthority)
+        } else {
+            (device_enrolment, EnrolledOwnerKeyKind::Device)
+        };
+        assert_eq!(
+            shared.entry, listed_entry,
+            "the key list marks a key enrolled both ways as the recovery root's: the row keeps the smaller entry"
+        );
+        assert_eq!(
+            shared.kind, listed_kind,
+            "the key list marks a key enrolled both ways as the recovery root's: the row's kind is the listed enrolment's"
+        );
+        assert!(
+            shared.recovery_authority,
+            "the key list marks a key enrolled both ways as the recovery root's, whichever enrolment the row lists (recovery enrolment listed: {recovery_enrolment_listed})"
+        );
+        assert_eq!(
+            shared.device_machines,
+            BTreeSet::from([machine_b]),
+            "the key list marks a key enrolled both ways as the recovery root's: the row names the machine whose removal ends it, whichever enrolment the row lists (recovery enrolment listed: {recovery_enrolment_listed})"
+        );
+        let first = enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == first_key)
+            .expect("the first key is enrolled");
+        assert!(
+            !first.recovery_authority,
+            "the key list marks a key enrolled both ways as the recovery root's: a plain device key is not"
+        );
     }
 }
