@@ -1,0 +1,14 @@
+{
+  "name": "vault.esign.rules.amend",
+  "description": "Proposes a whole e-sign rule pack against the active version. A tightening activates with a notice only within the caller ceiling; anything else waits for the owner stamp. The UETA review row is never waived.",
+  "input": "crate::blob_artifact::esign::EsignRulesAmendRequest",
+  "output": "crate::blob_artifact::esign::EsignRulesReceipt",
+  "call": "memory.esign_rules_amend(&input)?",
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}

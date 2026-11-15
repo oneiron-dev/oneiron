@@ -11,6 +11,7 @@ mod notice_door;
 mod notice_scope;
 mod notice_send_act;
 mod notice_unattended;
+mod rules;
 pub use lifecycle::{
     EsignLifecycleRules, EsignNoticeSwitches, EsignReminderSweep, HeldEsignReminder,
 };
@@ -18,6 +19,12 @@ pub use notice_dispatch::{ESIGN_NOTICE_ATTEMPT_KIND, EsignNotice};
 pub use notice_door::{EsignNoticeOutcome, EsignNoticesDispatchRequest, EsignNoticesDispatchView};
 pub(crate) use notice_send_act::erase_notice_send_act_actor_in_txn;
 pub use notice_unattended::{EsignNoticeGroup, EsignUnattendedNotices};
+pub use rules::{
+    ESIGN_RULES_PACK_ID, ESIGN_UETA_REVIEW_ROW, EsignComplianceRow, EsignComplianceRowKind,
+    EsignComplianceSource, EsignRulePack, EsignRulesAmendRequest, EsignRulesDecisionRequest,
+    EsignRulesDisposition, EsignRulesGetRequest, EsignRulesPending, EsignRulesReceipt,
+    EsignRulesView,
+};
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
 #[path = "../../test_doors/esign_seal_verify_reasons.rs"]

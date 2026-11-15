@@ -1,0 +1,14 @@
+{
+  "name": "vault.esign.rules.get",
+  "description": "Reads the e-sign rule pack: the lifecycle default row, the compliance rows, the proposal awaiting the owner stamp with its hash, and every activation notice, from one snapshot.",
+  "input": "crate::blob_artifact::esign::EsignRulesGetRequest",
+  "output": "crate::blob_artifact::esign::EsignRulesView",
+  "call": "memory.esign_rules_get(&input)?",
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true
+}
