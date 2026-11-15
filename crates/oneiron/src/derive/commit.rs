@@ -1,6 +1,7 @@
 //! One derivation commit: every item staged in a savepoint of one write, and
 //! the batch recorded beside them.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::batch::{DerivationBatch, DerivationItem, DerivationStamp, ItemRef};
@@ -60,6 +61,9 @@ pub(super) struct ItemContext<'s> {
     pub(super) now: u64,
     /// The row each landed item of the batch so far created, by local name.
     landed: BTreeMap<String, EntityId>,
+    /// The deferred-grant gate receipts staged grants wrote, for the commit
+    /// to count as metrics only after its write commits. Never counted inside.
+    pub(super) grant_receipts: RefCell<Vec<crate::gate::RecordedClaimGateDecision>>,
 }
 
 impl ItemContext<'_> {
@@ -98,6 +102,26 @@ impl Vault {
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
     ) -> Result<DerivationReceipt> {
+        let (receipt, _) = self.derive_commit_in_txn_with_grant_receipts(txn, stamp, batch)?;
+        Ok(receipt)
+    }
+
+    /// [`Self::derive_commit_in_txn`] with the deferred-grant gate receipts
+    /// staged grants wrote, for the caller to count as metrics only after its
+    /// write commits. Never counted inside the transaction.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::derive_commit_in_txn`].
+    pub(crate) fn derive_commit_in_txn_with_grant_receipts(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        stamp: &DerivationStamp,
+        batch: &DerivationBatch,
+    ) -> Result<(
+        DerivationReceipt,
+        Vec<crate::gate::RecordedClaimGateDecision>,
+    )> {
         batch.validate()?;
         super::sources::recheck_in_txn(self, txn, stamp, batch)?;
         let mut context = ItemContext {
@@ -105,6 +129,7 @@ impl Vault {
             stamp,
             now: crate::ports::recorded_at_in_txn(&self.store, txn)?,
             landed: BTreeMap::new(),
+            grant_receipts: RefCell::new(Vec::new()),
         };
         let mut refused: BTreeSet<String> = BTreeSet::new();
         let mut items = Vec::with_capacity(batch.items.len());
@@ -172,6 +197,9 @@ impl Vault {
                     DerivationItem::Candidate(candidate) => {
                         super::candidate::stage_in_txn(self, txn, &context, candidate)?
                     }
+                    DerivationItem::ConflictResolution(resolution) => {
+                        super::conflict_resolution::stage_in_txn(self, txn, &context, resolution)?
+                    }
                 }
             };
             match &outcome {
@@ -211,10 +239,14 @@ impl Vault {
             context.batch,
             &batch_record(stamp, context.now, &items, revisions, applied_edges),
         )?;
-        Ok(DerivationReceipt {
-            batch: context.batch,
-            items,
-        })
+        let receipts = context.grant_receipts.take();
+        Ok((
+            DerivationReceipt {
+                batch: context.batch,
+                items,
+            },
+            receipts,
+        ))
     }
 
     /// [`Self::derive_commit_in_txn`] in a write of its own.
@@ -227,7 +259,13 @@ impl Vault {
         stamp: &DerivationStamp,
         batch: &DerivationBatch,
     ) -> Result<DerivationReceipt> {
-        self.with_write_txn_grouped(|txn| self.derive_commit_in_txn(txn, stamp, batch))
+        let (receipt, grants) = self.with_write_txn_grouped(|txn| {
+            self.derive_commit_in_txn_with_grant_receipts(txn, stamp, batch)
+        })?;
+        for grant in &grants {
+            grant.record_metrics(&self.store.diagnostics.gate);
+        }
+        Ok(receipt)
     }
 }
 

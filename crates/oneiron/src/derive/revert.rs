@@ -309,6 +309,36 @@ impl Vault {
                     self, txn, marker, *author, reverter, now_ms,
                 )?;
             }
+            // A resolution's rows: the replacement alone (skip, merge) or the
+            // members written in set order (accumulate). Each reverts as the
+            // Dreamer's own per-row inverse. For a replacement still held, the
+            // retract closes its tray row and leaves its parked supersession
+            // (it drops a parked retract only), which is removed here. The
+            // open marker a held supersession of a critical or attributed
+            // claim wrote stays, as it does when the owner reverts a held
+            // replacement of a native pass.
+            "conflict_resolution" => {
+                for row in &item.rows {
+                    let held = self.deferred_claim_is_supersession_in_txn(&*txn, row)?;
+                    crate::dreamer_consolidation::revert_authored_change_in_txn(
+                        self, &mut *txn, *row, *author, reverter, now_ms,
+                    )?;
+                    if held {
+                        self.cancel_deferred_claim_in_txn(&mut *txn, row)?;
+                        if self
+                            .store
+                            .pending_gate_consent_in_txn(&*txn, row)?
+                            .is_some()
+                        {
+                            self.store.remove_pending_gate_consent_in_txn(
+                                &mut *txn,
+                                row,
+                                crate::store::TrayRemoval::Silent,
+                            )?;
+                        }
+                    }
+                }
+            }
             _ => return Ok(false),
         }
         Ok(true)

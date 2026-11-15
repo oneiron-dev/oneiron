@@ -17,8 +17,9 @@ use serde::{Deserialize, Serialize};
 
 use super::batch::{
     DerivationBatch, DerivationItem, DerivedArchive, DerivedCandidate, DerivedClaim,
-    DerivedConflict, DerivedConflictMember, DerivedEvidence, DerivedEvidenceSpans as BatchSpans,
-    DerivedSameAs, DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    DerivedConflict, DerivedConflictMember, DerivedConflictResolution, DerivedEvidence,
+    DerivedEvidenceSpans as BatchSpans, DerivedResolutionOutcome, DerivedSameAs, DerivedSettle,
+    DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -132,6 +133,52 @@ pub struct DeriveCandidateInput {
     pub member: DeriveConflictMember,
 }
 
+/// The job's decision for a conflict set: `skip` replaces the set's prior
+/// head with the set's one member and no verdict, `merge` lands one merged
+/// claim from the whole set, `accumulate` lands every member beside the
+/// heads. Never a string.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DeriveConflictResolutionOutcome {
+    /// The set's one member replaces the set's prior head with no verdict.
+    Skip,
+    /// One merged claim from the whole set replaces the recomputed head.
+    Merge,
+    /// Every member lands as a plain write beside the heads.
+    Accumulate,
+}
+
+/// A conflict resolution: the Conflict item's set shape with the job's
+/// decision for that set. The engine rebuilds the set exactly as the Conflict
+/// item does and then does what native's conflict loop does for that
+/// decision, inside the batch's write transaction. The job never names the
+/// head a claim replaces, and the engine computes every field it can.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DeriveConflictResolutionInput {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The conflict's candidates, 1..n.
+    pub members: Vec<DeriveConflictMember>,
+    /// The stored heads the set stands against, each with the version the
+    /// job read: what a Resolution read names as `priors`. The engine
+    /// rebuilds the heads itself; these must equal them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub heads: Vec<PinnedClaim>,
+    /// As the pack's `set_members`: the candidate indexes of the one set to
+    /// resolve, when the members form more than one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set_members: Option<Vec<usize>>,
+    /// The job's decision for the set.
+    pub outcome: DeriveConflictResolutionOutcome,
+    /// The kept member's index into `members`, for `merge` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kept: Option<usize>,
+    /// The merged value's bytes, for `merge` only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<serde_json::Value>,
+}
+
 /// One wire item: `{"kind": "<kind>", "spec": {...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
@@ -150,6 +197,8 @@ pub enum DeriveItemInput {
     Archive(DeriveArchiveInput),
     Conflict(DeriveConflictInput),
     Candidate(DeriveCandidateInput),
+    /// A job decision over one rebuilt extraction conflict set.
+    ConflictResolution(DeriveConflictResolutionInput),
 }
 
 impl DeriveItemInput {
@@ -239,6 +288,43 @@ impl DeriveItemInput {
                     "a candidate member's confidence is a number from 0 to 1",
                 )?,
             }),
+            Self::ConflictResolution(resolution) => {
+                if !matches!(resolution.outcome, DeriveConflictResolutionOutcome::Merge)
+                    && (resolution.kept.is_some() || resolution.value.is_some())
+                {
+                    return Err(MemoryError::bad_request(
+                        "a kept member and a merged value are refused with skip and accumulate",
+                    ));
+                }
+                let outcome = match resolution.outcome {
+                    DeriveConflictResolutionOutcome::Skip => DerivedResolutionOutcome::Skip,
+                    DeriveConflictResolutionOutcome::Merge => DerivedResolutionOutcome::Merge {
+                        kept: resolution.kept,
+                        value: resolution.value.ok_or_else(|| {
+                            MemoryError::bad_request("a merge needs a value that is not null")
+                        })?,
+                    },
+                    DeriveConflictResolutionOutcome::Accumulate => {
+                        DerivedResolutionOutcome::Accumulate
+                    }
+                };
+                DerivationItem::ConflictResolution(DerivedConflictResolution {
+                    local: resolution.local,
+                    members: resolution
+                        .members
+                        .into_iter()
+                        .map(|member| {
+                            derived_member(
+                                member,
+                                "a conflict resolution member's confidence is a number from 0 to 1",
+                            )
+                        })
+                        .collect::<MemoryResult<_>>()?,
+                    heads: resolution.heads,
+                    set_members: resolution.set_members,
+                    outcome,
+                })
+            }
         })
     }
 }

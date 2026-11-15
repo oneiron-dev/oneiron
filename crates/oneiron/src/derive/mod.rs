@@ -32,6 +32,7 @@ mod candidate;
 mod claim;
 mod commit;
 mod conflict;
+mod conflict_resolution;
 mod evidence;
 mod extraction_opening;
 mod extraction_set;
@@ -56,9 +57,10 @@ pub use artifact::{
 };
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
-    DerivedCandidate, DerivedClaim, DerivedConflict, DerivedConflictMember, DerivedEvidence,
-    DerivedEvidenceSpans, DerivedPersonAbout, DerivedPsychProfile, DerivedSameAs, DerivedSettle,
-    DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
+    DerivedCandidate, DerivedClaim, DerivedConflict, DerivedConflictMember,
+    DerivedConflictResolution, DerivedEvidence, DerivedEvidenceSpans, DerivedPersonAbout,
+    DerivedPsychProfile, DerivedResolutionOutcome, DerivedSameAs, DerivedSettle, DerivedSettlement,
+    DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
 };
 pub use candidate::{
     CANDIDATE_CONTESTS_HEAD, CANDIDATE_DUPLICATE, CANDIDATE_IMPORTED_EVIDENCE,
@@ -72,6 +74,15 @@ pub(crate) use conflict::inputs::member_candidate;
 pub use conflict::{
     CONFLICT_DUPLICATE, CONFLICT_HEADS_DIFFER, CONFLICT_NEEDS_EXTRACTION_ATTEMPT,
     CONFLICT_OPERANDS_REFUSED,
+};
+pub use conflict_resolution::{
+    CONFLICT_RESOLUTION_DUPLICATE, CONFLICT_RESOLUTION_HEADS_DIFFER,
+    CONFLICT_RESOLUTION_IMPORTED_EVIDENCE, CONFLICT_RESOLUTION_LANDING_REFUSED,
+    CONFLICT_RESOLUTION_MERGE_REFUSED, CONFLICT_RESOLUTION_NEEDS_EXTRACTION_ATTEMPT,
+    CONFLICT_RESOLUTION_NOT_ATTEMPT_DREAMER, CONFLICT_RESOLUTION_NOTHING_TO_LAND,
+    CONFLICT_RESOLUTION_OPERANDS_REFUSED, CONFLICT_RESOLUTION_OUTPUT_REFUSED,
+    CONFLICT_RESOLUTION_OWNER_DECLINED, CONFLICT_RESOLUTION_RESTATES_HEAD,
+    CONFLICT_RESOLUTION_SKIP_NOT_ALLOWED,
 };
 pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_SPAN_UNBOUND, EVIDENCE_UNVERIFIED};
 pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
@@ -87,10 +98,11 @@ pub use supersede::{
 };
 pub use wire::{
     DeriveArchiveInput, DeriveCandidateInput, DeriveClaimInput, DeriveCommitInput,
-    DeriveCommitView, DeriveConflictInput, DeriveConflictMember, DeriveEvidenceInput,
-    DeriveEvidenceSpans, DeriveItemInput, DeriveItemView, DeriveLeftItemView, DeriveRef,
-    DeriveRevertInput, DeriveRevertView, DeriveSameAsInput, DeriveSettleInput,
-    DeriveSettlementInput, DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
+    DeriveCommitView, DeriveConflictInput, DeriveConflictMember, DeriveConflictResolutionInput,
+    DeriveConflictResolutionOutcome, DeriveEvidenceInput, DeriveEvidenceSpans, DeriveItemInput,
+    DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput, DeriveRevertView,
+    DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals,
+    DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it

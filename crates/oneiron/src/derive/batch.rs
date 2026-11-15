@@ -166,6 +166,44 @@ pub struct DerivedCandidate {
     pub member: DerivedConflictMember,
 }
 
+/// The job's decision for a conflict set: `skip` replaces the set's prior
+/// head with the set's one member and no verdict, `merge` lands one merged
+/// claim from the whole set, `accumulate` lands every member beside the
+/// heads.
+#[derive(Debug, Clone)]
+pub enum DerivedResolutionOutcome {
+    /// The set's one member replaces the set's prior head with no verdict.
+    Skip,
+    /// One merged claim from the whole set, with the kept member's index
+    /// into the members and the merged value's bytes.
+    Merge {
+        /// The kept member's index into the members, when the job names one.
+        kept: Option<usize>,
+        /// The merged value's bytes, never null.
+        value: serde_json::Value,
+    },
+    /// Every member lands as a plain write beside the heads.
+    Accumulate,
+}
+
+/// A conflict resolution an extraction job stages: the Conflict item's set
+/// shape with the job's decision for that set.
+#[derive(Debug, Clone)]
+pub struct DerivedConflictResolution {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The conflict's candidates, 1..n.
+    pub members: Vec<DerivedConflictMember>,
+    /// The stored heads the set stands against, each with the version the
+    /// job read: what the Resolution read names as `priors`.
+    pub heads: Vec<PinnedClaim>,
+    /// As the pack's `set_members`: the candidate indexes of the one set to
+    /// resolve, when the members form more than one.
+    pub set_members: Option<Vec<usize>>,
+    /// The job's decision for the set.
+    pub outcome: DerivedResolutionOutcome,
+}
+
 /// An archive an agent derived: its own weak claim `claim`, with the
 /// strength it scored.
 #[derive(Debug, Clone)]
@@ -287,6 +325,9 @@ pub enum DerivationItem {
     /// A candidate an extraction job lands: one extraction candidate that
     /// replaces nothing.
     Candidate(DerivedCandidate),
+    /// A conflict resolution an extraction job stages: the Conflict item's
+    /// set shape with the job's decision for that set.
+    ConflictResolution(DerivedConflictResolution),
 }
 
 impl DerivationItem {
@@ -304,6 +345,7 @@ impl DerivationItem {
             Self::Archive(archive) => &archive.local,
             Self::Conflict(conflict) => &conflict.local,
             Self::Candidate(candidate) => &candidate.local,
+            Self::ConflictResolution(resolution) => &resolution.local,
         }
     }
 
@@ -321,6 +363,7 @@ impl DerivationItem {
             Self::Archive(_) => "archive",
             Self::Conflict(_) => "conflict",
             Self::Candidate(_) => "candidate",
+            Self::ConflictResolution(_) => "conflict_resolution",
         }
     }
 
@@ -342,6 +385,7 @@ impl DerivationItem {
                 | Self::Topology(_)
                 | Self::Conflict(_)
                 | Self::Candidate(_)
+                | Self::ConflictResolution(_)
         )
     }
 
@@ -354,7 +398,7 @@ impl DerivationItem {
             // A conflict item holds no `ItemRef`: its pins are checked by
             // its stager through the extraction read, never by
             // `derive/sources.rs`.
-            Self::Conflict(_) | Self::Candidate(_) => &[],
+            Self::Conflict(_) | Self::Candidate(_) | Self::ConflictResolution(_) => &[],
             _ => &[],
         }
     }
@@ -381,8 +425,8 @@ impl DerivationItem {
             // A conflict item holds no `ItemRef`: its pins are checked by
             // its stager through the extraction read, never by
             // `derive/sources.rs`. A candidate item's versions are inside
-            // its operand, likewise.
-            Self::Conflict(_) | Self::Candidate(_) => Vec::new(),
+            // its operand, likewise, as are a resolution item's.
+            Self::Conflict(_) | Self::Candidate(_) | Self::ConflictResolution(_) => Vec::new(),
         }
     }
 }
@@ -412,8 +456,9 @@ impl DerivationBatch {
     /// locators on claim and evidence items, well-formed conflict items:
     /// at least one member, bounded collections, every member confidence
     /// finite and in `[0, 1]`, and prospective query hints the lexical
-    /// normaliser admits, and well-formed candidate items: the member
-    /// checks with the evidence bound.
+    /// normaliser admits, well-formed candidate items: the member
+    /// checks with the evidence bound, and well-formed resolution items:
+    /// the conflict checks with a merge's kept member and value.
     ///
     /// # Errors
     ///
@@ -477,6 +522,9 @@ impl DerivationBatch {
                 }
                 DerivationItem::Conflict(conflict) => validate_conflict(conflict)?,
                 DerivationItem::Candidate(candidate) => validate_candidate(candidate)?,
+                DerivationItem::ConflictResolution(resolution) => {
+                    validate_conflict_resolution(resolution)?;
+                }
                 _ => {}
             }
         }
@@ -496,31 +544,66 @@ fn malformed(why: &'static str) -> Error {
 /// selector) is judged by the extraction read when the item stages, and
 /// refuses the item, not the batch.
 fn validate_conflict(item: &DerivedConflict) -> Result<()> {
-    if item.members.is_empty() {
-        return Err(malformed("a conflict item holds at least one member"));
-    }
-    let bounded = [
-        item.members.len(),
+    validate_conflict_shape(
+        &item.members,
         item.heads.len(),
         item.set_members.as_ref().map_or(0, Vec::len),
-    ];
+        "a conflict item holds at least one member",
+        "a conflict collection exceeds the native decision state bound",
+        "a conflict member's confidence is a number from 0 to 1",
+    )
+}
+
+/// Checks one resolution item's shape: the Conflict item's checks with a
+/// merge's kept member and value. A merge needs a value that is not null;
+/// a kept member indexes the members. Every other fault is judged when the
+/// item stages, and refuses the item, not the batch.
+fn validate_conflict_resolution(item: &DerivedConflictResolution) -> Result<()> {
+    validate_conflict_shape(
+        &item.members,
+        item.heads.len(),
+        item.set_members.as_ref().map_or(0, Vec::len),
+        "a conflict resolution item holds at least one member",
+        "a conflict resolution collection exceeds the native decision state bound",
+        "a conflict resolution member's confidence is a number from 0 to 1",
+    )?;
+    if let DerivedResolutionOutcome::Merge { kept, value } = &item.outcome {
+        if value.is_null() {
+            return Err(malformed("a merge needs a value that is not null"));
+        }
+        if kept.is_some_and(|kept| kept >= item.members.len()) {
+            return Err(malformed("a kept member indexes the members"));
+        }
+    }
+    Ok(())
+}
+
+/// Checks the Conflict item's shape shared with resolutions: at least one
+/// member, bounded collections and evidence, and each member's confidence
+/// and hints.
+fn validate_conflict_shape(
+    members: &[DerivedConflictMember],
+    heads_len: usize,
+    set_members_len: usize,
+    empty: &'static str,
+    bound: &'static str,
+    confidence: &'static str,
+) -> Result<()> {
+    if members.is_empty() {
+        return Err(malformed(empty));
+    }
+    let bounded = [members.len(), heads_len, set_members_len];
     if bounded
         .iter()
         .any(|length| *length > MAX_DECISION_STATE_BYTES)
-        || item
-            .members
+        || members
             .iter()
             .any(|member| member.operand.evidence.len() > MAX_DECISION_STATE_BYTES)
     {
-        return Err(malformed(
-            "a conflict collection exceeds the native decision state bound",
-        ));
+        return Err(malformed(bound));
     }
-    for member in &item.members {
-        validate_conflict_member(
-            member,
-            "a conflict member's confidence is a number from 0 to 1",
-        )?;
+    for member in members {
+        validate_conflict_member(member, confidence)?;
     }
     Ok(())
 }
