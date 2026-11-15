@@ -1,6 +1,7 @@
 //! Door for `tests/off_record_side_row_custody.rs` (FIX 2329): one row of an
 //! authored side table, a code run's replay table, written as a code run's
-//! checkpoint writes it, on a room's write route or through a bare store.
+//! checkpoint writes it: on a room's write route, through the vault, which
+//! holds the custody door, or through a bare store; and read back in a room.
 
 use crate::error::Result;
 use crate::off_record::OffRecordSession;
@@ -38,4 +39,26 @@ pub fn put_bare_store_replay_row(vault: &Vault, run: EntityId, body: &[u8]) -> R
     REPLAY_ROWS.put(&vault.store, &mut wtxn, &run, &body.to_vec())?;
     wtxn.commit()?;
     Ok(())
+}
+
+/// Writes `body` as the replay row of `run` through `vault`, whose custody
+/// door mints a record for each fresh secret the side-row wall places.
+///
+/// # Errors
+///
+/// The side-row wall's refusal, or storage errors.
+pub fn put_vault_replay_row(vault: &Vault, run: EntityId, body: &[u8]) -> Result<()> {
+    let mut wtxn = vault.store.env.write_txn()?;
+    REPLAY_ROWS.put(vault, &mut wtxn, &run, &body.to_vec())?;
+    wtxn.commit()?;
+    Ok(())
+}
+
+/// The replay row of `run` as `session` reads it, over its overlay and base.
+///
+/// # Errors
+///
+/// A participant no longer in the room, or storage errors.
+pub fn room_replay_row(session: &OffRecordSession<'_>, run: EntityId) -> Result<Option<Vec<u8>>> {
+    session.routed_side_read(|rtxn, read| REPLAY_ROWS.get(&read, rtxn, &run))
 }

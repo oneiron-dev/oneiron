@@ -1,10 +1,12 @@
-//! FIX 2329 (OF-067 B; Engine RULING FIX-2329-ROOM-CUSTODY = C): an
-//! off-record room holds no custody of its own, and no off-record byte
-//! enters base, so the side-row wall refuses a code run's row there that
-//! holds a fresh key. The refusal names that case and its remedy with
-//! `gate.secret_scan.off_record_fresh_key`: put the value in vault custody
-//! first, or run on record. A bare store, which also holds no custody door,
-//! is no room, and its refusal names no room remedy.
+//! FIX 2329 (OF-067 B; Engine RULINGS FIX-2329-ROOM-CUSTODY = C and
+//! FIX-2329-CUSTODY-FIRST = A): an off-record room holds no custody of its
+//! own, and no off-record byte enters base, so the side-row wall refuses a
+//! code run's row there that holds a fresh key. The refusal names that case
+//! and its remedy with `gate.secret_scan.off_record_fresh_key`: put the value
+//! in vault custody first, or run on record. A value vault custody holds
+//! takes its handle in the room's row, as in a reply published there (FIX
+//! 6647). A bare store, which also holds no custody door, is no room, and its
+//! refusal names no room remedy.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test off_record_side_row_custody`.
@@ -14,14 +16,19 @@ use std::sync::Arc;
 
 use oneiron::error::GateError;
 use oneiron::off_record::OffRecordBackendClass;
-use oneiron::test_doors::off_record_side_row::{put_bare_store_replay_row, put_room_replay_row};
+use oneiron::test_doors::off_record_side_row::{
+    put_bare_store_replay_row, put_room_replay_row, put_vault_replay_row, room_replay_row,
+};
 use oneiron::{EntityId, Error, Vault, VaultConfig};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
 const OFF_RECORD_FRESH_KEY: &str = "gate.secret_scan.off_record_fresh_key";
 
-/// A replay row's bytes holding a GitHub token no custody record holds.
+/// A GitHub token, in a shape the side-row wall reads as a secret.
+const KEY: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// A replay row's bytes holding [`KEY`], which no custody record holds.
 const FRESH_KEY_ROW: &[u8] = b"step output: ghp_0123456789abcdefghijklmnopqrstuvwxyz\n";
 
 fn vault() -> TestResult<(tempfile::TempDir, Vault)> {
@@ -96,6 +103,37 @@ fn a_fresh_key_through_a_bare_store_names_no_room_remedy() -> TestResult {
     assert!(
         !codes.contains(&OFF_RECORD_FRESH_KEY),
         "a bare store is no room: {codes:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_value_in_vault_custody_first_takes_its_handle_in_a_rooms_side_row() -> TestResult {
+    let (_directory, vault) = vault()?;
+    assert!(
+        std::str::from_utf8(FRESH_KEY_ROW)?.contains(KEY),
+        "FIXTURE: the row holds the key"
+    );
+
+    // The value goes into vault custody first: an on-record row through the
+    // vault, whose custody door mints its record and leaves its handle.
+    put_vault_replay_row(&vault, EntityId::now(), FRESH_KEY_ROW)?;
+
+    let session = vault
+        .off_record_session_vault()
+        .enter("sess-side-row-custody-first", OffRecordBackendClass::Local)?;
+    let run = EntityId::now();
+    put_room_replay_row(&session, run, FRESH_KEY_ROW)
+        .map_err(|error| format!("a value custody holds is refused in the room: {error:?}"))?;
+    let stored = room_replay_row(&session, run)?.ok_or("the room keeps the row")?;
+    let stored = String::from_utf8(stored)?;
+    assert!(
+        !stored.contains(KEY),
+        "the room's row holds the handle, never the value: {stored}"
+    );
+    assert!(
+        stored.contains("[secret "),
+        "the value reads as its custody handle: {stored}"
     );
     Ok(())
 }
