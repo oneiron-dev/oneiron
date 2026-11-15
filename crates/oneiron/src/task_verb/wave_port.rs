@@ -154,7 +154,7 @@ fn wave_statement_in(
                     target: AgentDispatchTarget::Custom(actor_ref),
                     parent_attempt: origin.and_then(TaskCreateOrigin::parent_attempt),
                     dedupe_key: None,
-                    run_id: origin.and_then(TaskCreateOrigin::run_id),
+                    run_id: origin.and_then(TaskCreateOrigin::child_run_id),
                     now,
                 }),
                 _ => {

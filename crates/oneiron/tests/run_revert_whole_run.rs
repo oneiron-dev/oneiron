@@ -19,6 +19,11 @@
 //! nothing and its revert answers not_found. The wait test is a guard: green
 //! on main, on the base and on the head.
 //!
+//! Review round 1 of #8407: a child the root's TASK assignee route
+//! dispatches joins the root's run too (as does a `self.workflows.
+//! dispatch_bound` run, by the same join). Red on this head without that
+//! join: the TASK's child holds no run, and the root's run lists nothing.
+//!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test run_revert_whole_run`
 #![cfg(all(oneiron_test_support, feature = "test-support"))]
 
@@ -43,6 +48,7 @@ use oneiron::memory::HostWriteOrigin;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AgentVerb, invoke};
+use oneiron::task_verb::{HostBinding, TaskAssignee, TaskCreateSpec, TaskRouteOutcome};
 use oneiron::test_doors::run_changes::put_claim_asking_auto;
 use oneiron::test_support::{
     bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
@@ -325,6 +331,37 @@ impl Fixture {
                 attempt_ref, ..
             }) => Ok(attempt_ref),
             other => Err(format!("expected a queued child, got {other:?}").into()),
+        }
+    }
+
+    /// The root's TASK assigned to the default agent, created on the root's
+    /// own leased binding as its host binds it: the child the TASK's route
+    /// dispatched.
+    fn assign_task(&self, root: AttemptId, actor: WriteActor) -> TestResult<AttemptId> {
+        let leased = AttemptQueue::new(&self.vault)
+            .get(root)
+            .map_err(at("read the root's row"))?
+            .ok_or("the root's row reads nothing")?;
+        let binding = HostBinding::from_leased(&leased, None).map_err(at("the root's binding"))?;
+        let created = self
+            .vault
+            .memory(actor.entity_ref(), actor.actor_class())
+            .with_task_host(binding)
+            .tasks_create(
+                &TaskCreateSpec::new(
+                    rmpv::Value::Nil,
+                    Some("note the matcha order".to_owned()),
+                    None,
+                    Some(11),
+                )
+                .with_assignee(TaskAssignee::AgentDef {
+                    agent_def_ref: self.agent,
+                }),
+            )
+            .map_err(at("the root's TASK create"))?;
+        match created.route {
+            Some(TaskRouteOutcome::AgentDispatch { attempt_ref, .. }) => Ok(attempt_ref),
+            other => Err(format!("expected the TASK's agent child, got {other:?}").into()),
         }
     }
 
@@ -633,6 +670,48 @@ fn a_root_without_a_run_id_takes_back_its_childs_changes() -> TestResult {
     );
     assert!(undone[0].1.starts_with("gate:"), "{undone:?}");
     assert_eq!(rows(&outcome, "not_undone", "reason")?, Vec::new());
+    assert_eq!(f.claim_state(claim)?.1, "retracted");
+    Ok(())
+}
+
+/// A root with no `run_id` delegates through a TASK it assigns to an agent,
+/// not a spawn: the TASK's realizing child joins the root's run all the
+/// same, so the root's undo-all takes back that child's claim too.
+#[test]
+fn a_root_without_a_run_id_takes_back_its_task_assignees_changes() -> TestResult {
+    let f = Fixture::open()?;
+    let (root, actor) = f.root_agent(10)?;
+    let child = f.assign_task(root, actor)?;
+    let root_run = format!("agent:{}", hex(root));
+    assert_eq!(
+        f.run_id_of(child)?,
+        Some(root_run.clone()),
+        "the TASK's child joins its root's run"
+    );
+    let child_actor = WriteActor::new(f.agent, EdgeActorClass::Agent);
+    let child_run = HostSelfDispatcher::for_agent_attempt(&f.vault, child_actor, child)
+        .map_err(at("the child's dispatcher"))?;
+    let claim = Fixture::put(&child_run, f.person()?, "hojicha", 12)?;
+    assert_eq!(
+        f.claim_state(claim)?,
+        ("auto".to_owned(), "active".to_owned()),
+        "the child's claim lands at once"
+    );
+
+    let listed = f.changes(&root_run)?;
+    assert!(
+        listed.contains(&json!({ "kind": "claim", "claim_ref": claim.to_hex() })),
+        "the root's run lists its TASK child's claim: {listed:?}"
+    );
+    let outcome = f.revert_all(&root_run)?;
+    let undone: Vec<_> = rows(&outcome, "compensated", "receipt")?
+        .into_iter()
+        .map(|(change, _)| change)
+        .collect();
+    assert!(
+        undone.contains(&claim.to_hex()),
+        "the root's undo-all takes back its TASK child's claim: {outcome}"
+    );
     assert_eq!(f.claim_state(claim)?.1, "retracted");
     Ok(())
 }
