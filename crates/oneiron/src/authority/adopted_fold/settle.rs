@@ -99,7 +99,8 @@ pub(super) fn settle_tail(
     };
     let causal = crate::authority::fold_engine::CausalPast::new(&summaries);
     let context = FoldContext {
-        sequence_floors: Some(&log.observations.sequence_floors),
+        // The tail moves no floor and sits past none (`tail_folds_past`).
+        sequence_floors: Some(&crate::authority::fold_engine::SEQUENCE_FLOORS_FROM_ROWS),
         floor_vouched: (!log.observations.unvouched).then_some(&log.observations.vouched),
         install_held: None,
         entry_ancestors: None,

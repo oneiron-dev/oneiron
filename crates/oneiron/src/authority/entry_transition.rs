@@ -58,11 +58,15 @@ pub(super) fn fold_entry_state(
         return EntryFold::Invalid(AuthorityFoldIssue::InvalidEntry(hash));
     }
 
-    // A strictly older observed sequence is rollback. Equal-sequence siblings
-    // have separate hashes and fold under their own ancestry, not a fork alarm.
-    // A restriction still lands (Astra #1430): a machine revision and a world
-    // edit keep their restrictive effect when a later row of their signer
-    // arrived first, as restriction only. A machine removal so stays terminal
+    // A row below its floor, the highest sequence among its signer's rows
+    // in its scope that do not descend from it (`rows_floor`), forks its
+    // signer's sequence: no install counts what it grants, whatever order
+    // its rows arrived in. Equal-sequence siblings have separate hashes and
+    // fold under their own ancestry, not a fork alarm. A row that only takes
+    // away is never floored (`only_takes_away`). A restriction still lands
+    // (Astra #1430): a machine revision and a world edit keep their
+    // restrictive effect below a later row of their signer that does not
+    // descend from them, as restriction only. A machine removal so stays terminal
     // on every replica and in the log, where a later edit finds it among its
     // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
     // #1430b). A row a handoff or a removal vouches for is never refused, and

@@ -162,15 +162,8 @@ impl Vault {
                 Ok((*hash, entry.clone()))
             })
             .collect::<Result<Vec<_>>>()?;
-        let metas: Vec<_> = closed_tail
-            .iter()
-            .map(|(hash, entry)| super::fold_resume::RowMeta::of(Some(*hash), entry))
-            .collect();
-        // The tail's observations alone: none is read for a covered row.
         let observations =
-            super::sequence_observation::authority_local_observations_of_rows_in_txn(
-                store, txn, &metas,
-            )?;
+            super::sequence_observation::authority_local_observations_in_txn(store, txn)?;
         let peers = crate::federation::admitted_peer_consent_roots_in_txn(self, txn)?;
         let pin = super::pinned_root::read_pinned_root_in_txn(store, txn)?;
         let no_first_seen = BTreeMap::new();

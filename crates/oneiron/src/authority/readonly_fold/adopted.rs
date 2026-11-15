@@ -63,14 +63,8 @@ pub(super) fn fold_adopted_in_txn(
         };
         first_seen_at_secs.insert(*hash, first_seen);
     }
-    let rows: Vec<_> = tail
-        .iter()
-        .map(|(hash, entry)| crate::authority::fold_resume::RowMeta::of(Some(*hash), entry))
-        .collect();
     let observations =
-        crate::authority::sequence_observation::authority_local_observations_of_rows_in_txn(
-            store, txn, &rows,
-        )?;
+        crate::authority::sequence_observation::authority_local_observations_in_txn(store, txn)?;
     let peer_consent_roots =
         crate::federation::admitted_peer_consent_roots_for_store_in_txn(store, txn)?;
     let folded = crate::authority::adopted_fold::fold_adopted_checkpoint_tail(

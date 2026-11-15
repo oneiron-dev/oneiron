@@ -18,8 +18,17 @@ mod entry_points;
 pub(super) use causal::{CausalPast, ImagePast, ParentSummaries, named_beneath};
 pub use entry_points::*;
 
+/// The floors given to a fold with sequence floors on: none. Its once fold
+/// takes each row's floor from the rows (`rows_floor`); a fold past a base or
+/// an image folds only rows past no floor (`fold_resume`, `adopted_fold`).
+pub(super) static SEQUENCE_FLOORS_FROM_ROWS: BTreeMap<AuthorityEntryHash, u64> = BTreeMap::new();
+
 #[derive(Clone, Copy)]
 pub(super) struct FoldContext<'a> {
+    /// Some: sequence floors apply. A once fold replaces the map it is given
+    /// by the rows' own floors (`rows_floor`), less what causal ancestry
+    /// vouches for (`sequence_ancestry`); the gate (`fold_entry_state`)
+    /// reads the result. None: no floor applies.
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
     /// Rows no floor refuses (a handoff's line, a removal's own branch); one
     /// past its floor still lands restriction only.
@@ -334,15 +343,24 @@ fn judged_entries(
     (by_hash, issues)
 }
 
-/// The floors a fold of `entries` under `context` applies, once causal
-/// ancestry has vouched for every row it can (`sequence_ancestry`).
+/// The floors a fold of `entries` under `context` applies: the rows' own
+/// floors, once causal ancestry has vouched for every row it can
+/// (`sequence_ancestry`). None when no floor applies or the log is past its
+/// memory floor.
 pub(super) fn causal_floors_of(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
 ) -> Option<BTreeMap<AuthorityEntryHash, u64>> {
+    context.sequence_floors?;
     let (by_hash, _) = judged_entries(entries);
     let (ancestors, _) = entry_ancestor_index(&by_hash, context.memory_floor_bytes)?;
-    super::sequence_ancestry::causal_sequence_floors(&by_hash, &ancestors, context)
+    let rows_floors = super::rows_floor::rows_sequence_floors(&by_hash, &ancestors);
+    Some(super::sequence_ancestry::causal_sequence_floors(
+        &by_hash,
+        &ancestors,
+        &rows_floors,
+        context,
+    ))
 }
 
 pub(super) fn fold_authority_log_once(
@@ -351,15 +369,26 @@ pub(super) fn fold_authority_log_once(
     handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
     capture: Option<&super::fold_resume::FoldCapture>,
 ) -> AuthorityFold {
-    let original_floors = context.sequence_floors;
     let (by_hash, mut issues) = judged_entries(entries);
     let Some((entry_ancestors, counted_ancestor_pairs)) =
         entry_ancestor_index(&by_hash, context.memory_floor_bytes)
     else {
         return super::log_budget::memory_floor_fold(context.memory_floor_bytes);
     };
-    let causal_floors =
-        super::sequence_ancestry::causal_sequence_floors(&by_hash, &entry_ancestors, context);
+    // Each row's floor comes from the rows (`rows_floor`), never from the
+    // order they arrived in, so every install folds them alike.
+    let rows_floors = context
+        .sequence_floors
+        .map(|_| super::rows_floor::rows_sequence_floors(&by_hash, &entry_ancestors));
+    let original_floors = rows_floors.as_ref();
+    let causal_floors = rows_floors.as_ref().map(|rows_floors| {
+        super::sequence_ancestry::causal_sequence_floors(
+            &by_hash,
+            &entry_ancestors,
+            rows_floors,
+            context,
+        )
+    });
     let context = FoldContext {
         sequence_floors: causal_floors.as_ref(),
         entry_ancestors: Some(&entry_ancestors),

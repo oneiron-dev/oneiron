@@ -146,6 +146,7 @@ mod recovery;
 mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
+mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
 mod sequence_observation;

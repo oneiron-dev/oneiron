@@ -495,6 +495,9 @@ fn tail_folds_past(
     {
         return None;
     }
+    if !rows_floors_unmoved(image, tail) {
+        return None;
+    }
     let mut confirms = (
         image.safety.confirm_ids.clone(),
         image.safety.confirm_nonces.clone(),
@@ -518,15 +521,77 @@ fn tail_folds_past(
         parents_stand
             && !retired
             && !image.safety.missing_parents.contains(hash)
-            && log
-                .observations
-                .sequence_floors
-                .get(hash)
-                .is_none_or(|floor| entry.seq >= *floor)
             && (super::fold_resume::admits_past(&image.aggregate.merged, entry, &mut confirms)
                 || serial_withdrawal(image, tail, log, entry))
     });
     folds_past.then_some(confirms)
+}
+
+/// Whether `tail` moves no covered row's sequence floor and holds no row
+/// past its own (`rows_floor`): per signer and scope, the tail's rows rise
+/// strictly above the image's top, the lowest descends from every covered
+/// row at that top, and each next from the one below it, along that scope's
+/// rows. A covered row under no top sits past its floor with no row at or
+/// above it that vouches for it, so a tail row that misses it changes no
+/// verdict; every other covered row is then among each tail row's
+/// ancestors.
+fn rows_floors_unmoved(
+    image: &AuthorityCheckpointV2,
+    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+) -> bool {
+    let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
+    for (hash, entry) in tail {
+        scopes
+            .entry((
+                entry.signer_key(),
+                crate::authority::world_privacy::side_world(&entry.op),
+            ))
+            .or_default()
+            .push((entry.seq, *hash));
+    }
+    let mut tops = BTreeMap::<_, (u64, Vec<AuthorityEntryHash>)>::new();
+    for (hash, row) in &image.rows {
+        let key = (&row.signer, row.world);
+        if !scopes.contains_key(&key) {
+            continue;
+        }
+        let top = tops.entry(key).or_insert((row.seq, Vec::new()));
+        if row.seq > top.0 {
+            *top = (row.seq, Vec::new());
+        }
+        if row.seq == top.0 {
+            top.1.push(*hash);
+        }
+    }
+    let row = |hash: &AuthorityEntryHash| match tail.get(hash) {
+        Some(entry) => Some((
+            entry.parent_hashes.as_slice(),
+            crate::authority::world_privacy::side_world(&entry.op),
+        )),
+        None => image
+            .rows
+            .get(hash)
+            .map(|row| (row.parents.as_slice(), row.world)),
+    };
+    scopes.iter_mut().all(|(key, rows)| {
+        rows.sort_unstable();
+        let (mut below_seq, mut below) = tops
+            .get(key)
+            .map_or((None, Vec::new()), |(seq, rows)| (Some(*seq), rows.clone()));
+        rows.iter().all(|(seq, hash)| {
+            let rises = below_seq.is_none_or(|below_seq| *seq > below_seq)
+                && below.iter().all(|lower| {
+                    crate::authority::rows_floor::descends_within_scope(
+                        lower,
+                        &tail[hash].parent_hashes,
+                        key.1,
+                        row,
+                    )
+                });
+            (below_seq, below) = (Some(*seq), vec![*hash]);
+            rises
+        })
+    })
 }
 
 /// A withdrawal [`super::fold_resume::admits_past`] leaves to the history
