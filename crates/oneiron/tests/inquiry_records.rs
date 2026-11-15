@@ -29,6 +29,7 @@ use oneiron::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::inquiry as door;
 use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron_contracts::register::Register;
 use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
 
@@ -491,7 +492,7 @@ fn the_receipt_keeps_each_send_and_no_answer_text() {
             receipts[0].receipt_id.as_str()
         ]
     );
-    assert_eq!(ReceiptKind::parse("inquiry"), Some(ReceiptKind::Inquiry));
+    assert_eq!(ReceiptKind::named("inquiry"), Some(ReceiptKind::Inquiry));
     assert_eq!(ReceiptKind::Inquiry.as_str(), "inquiry");
 }
 

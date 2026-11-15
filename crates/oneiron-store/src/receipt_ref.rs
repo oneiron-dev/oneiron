@@ -10,6 +10,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 
 use crate::gate_decision::types::GateDecisionId;
 use crate::receipt_row::ReceiptKind;
@@ -181,7 +182,7 @@ impl FromStr for ReceiptRef {
     /// A known kind, a `:`, then lowercase hex of that kind's width; anything else is refused.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
         let (kind, hex) = text.split_once(':').ok_or(ReceiptRefError::NoKind)?;
-        let kind = ReceiptKind::parse(kind).ok_or(ReceiptRefError::UnknownKind)?;
+        let kind = ReceiptKind::named(kind).ok_or(ReceiptRefError::UnknownKind)?;
         let id = match id_width(kind).ok_or(ReceiptRefError::NotAReferenceKind)? {
             IdWidth::Short => {
                 ReceiptId::Short(oneiron_hex::decode(hex).ok_or(ReceiptRefError::BadId)?)

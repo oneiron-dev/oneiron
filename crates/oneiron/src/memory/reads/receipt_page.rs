@@ -16,6 +16,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::family_receipt;
@@ -153,7 +154,7 @@ impl FamilyCursor {
         let mut parts = text.splitn(3, ':');
         Some(Self {
             occurred_at: parts.next()?.parse().ok()?,
-            kind: ReceiptKind::parse(parts.next()?)?,
+            kind: ReceiptKind::named(parts.next()?)?,
             receipt_id: parts.next()?.to_owned(),
         })
     }
@@ -171,7 +172,7 @@ fn foreign_cursor() -> MemoryError {
 fn family_query(limit: usize, kinds: &[String]) -> MemoryResult<ReceiptQuery> {
     let mut query = ReceiptQuery::new(limit);
     for name in kinds {
-        let kind = ReceiptKind::parse(name.trim()).ok_or_else(|| {
+        let kind = ReceiptKind::named(name.trim()).ok_or_else(|| {
             MemoryError::bad_request_with(
                 format!("unknown receipt kind {name:?}"),
                 &[
