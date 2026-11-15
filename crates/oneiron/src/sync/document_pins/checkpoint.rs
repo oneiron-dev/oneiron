@@ -16,9 +16,8 @@ use super::{Carried, carrier_key, decode_carried, decode_pin, key_ids};
 use crate::entity_doc::DocActor;
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::room_codec::document_pins::carried_pin_from;
 use crate::store::checkpoint_payload::rows::{OwnerRef, bad_part};
-use crate::sync::carrier_parts::is_part_key;
+use crate::sync::carrier_parts::{is_part_key, join_parts_from};
 use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified, ValueSplit};
 
 /// A whole pin that does not encode once its actor is out.
@@ -69,23 +68,25 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
 }
 
 /// Whether the parted pin `value` under `key` is the pin its key names, its
-/// parts joined through `part` (UC-10 PR 1), as the pin codec reads a
-/// joined pin: `Some(true)` when the joined pin is filed under its own key,
-/// `Some(false)` when the parts join to another pin or to none. `None` for a
-/// value that is no parted pin, and for one whose parts do not all join.
+/// parts joined through `part` (UC-10 PR 1): `Some(true)` when the joined
+/// pin's carrier key is `key`, `Some(false)` when it is another pin's. `None`
+/// for a value that is no parted pin, for one whose parts do not all join,
+/// and for joined bytes that read as no pin. The codec's rules on how a pin
+/// is spelled in parts (no actor in a part; a pin that fits one part rides
+/// whole) say nothing about which pin it is, so they prove no mismatch: a
+/// scrub that erases a parted pin's actor can leave a joined pin that fits
+/// one part under its own key.
 pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
     key: &str,
     value: &[u8],
     part: impl FnMut(&str) -> Option<B>,
 ) -> Option<bool> {
-    if !matches!(decode_carried(value), Ok(Carried::Parted(_))) {
+    let Ok(Carried::Parted(parted)) = decode_carried(value) else {
         return None;
-    }
-    match carried_pin_from(key, value, part) {
-        Ok(Some(_)) => Some(true),
-        Ok(None) => None,
-        Err(_) => Some(false),
-    }
+    };
+    let whole = join_parts_from(&parted.parts, part)?;
+    let (pin, message, citation) = decode_pin(&whole).ok()?;
+    Some(carrier_key(message, citation, &pin).ok()? == key)
 }
 
 /// What a pin map key spells: a pin's ids and a digest of the pin naming
