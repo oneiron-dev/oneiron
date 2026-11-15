@@ -494,6 +494,17 @@ pub const SEAL_OBJECTIVE_FLAW: QuestionFamily = QuestionFamily {
     class: DecisionClass::Judgment,
 };
 
+/// Does an earlier calibration pick still fit the judge's rubric as edited, as the Coach's
+/// model reads the pick beside the rubric now in force (ARCH-0042 judge re-pin, OF-420,
+/// ARCH-0076 #decide-required)? Yes is the pick still fits, no is the rubric now calls for
+/// the other option. One question per pending pick, keyed by the checker protocol's digest
+/// and the rubric's digest; an abstain gives no verdict on the pick.
+pub const JUDGE_LABEL_FIT: QuestionFamily = QuestionFamily {
+    name: "skill_optimize.judge_label_fit",
+    version: 1,
+    class: DecisionClass::Judgment,
+};
+
 /// What the owner does about an offer parked on a spent window or spent credit: wait, top
 /// up, add an account, pay as you go, or use the usage left on another provider (OF-305,
 /// FIX 562). Asked of a person only; keyed by the parked offer's row and what was spent.
@@ -568,6 +579,7 @@ pub const FAMILIES: &[QuestionFamily] = &[
     COMPACTION_SUPPORT,
     CLAIM_SOURCE_SUPPORT,
     SEAL_OBJECTIVE_FLAW,
+    JUDGE_LABEL_FIT,
     QUOTA_SPENT,
     MESSAGE_CLASS,
 ];

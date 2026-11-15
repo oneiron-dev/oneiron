@@ -216,7 +216,10 @@ pub struct JudgeLabelRecheckRequest<'a> {
 }
 
 /// The host's side of a re-check: one model call per pending pick, made
-/// outside any vault transaction.
+/// outside any vault transaction. The host asks each pick's fits question
+/// on the decision ladder (`JudgeLabelFitCheck::decide`), its Coach model
+/// the ladder's one rung; the seam lends the Coach's seat and the case it
+/// reads, never a verdict of its own.
 pub trait JudgeLabelChecker {
     fn check(&self, request: &JudgeLabelRecheckRequest<'_>) -> Result<JudgeLabelFit>;
 }
