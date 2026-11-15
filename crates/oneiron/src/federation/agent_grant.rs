@@ -711,7 +711,11 @@ impl Vault {
     /// [`Vault::ensure_agent_principal`] derives from its name (an OAuth
     /// client's sign-in, FIX 4902). Any other machine is a device and any
     /// other person a person.
-    fn is_agent_principal_in_txn(&self, txn: &heed::RoTxn<'_>, agent: EntityId) -> Result<bool> {
+    pub(crate) fn is_agent_principal_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        agent: EntityId,
+    ) -> Result<bool> {
         Ok(match live_entity_row_in_txn(&self.store, txn, &agent)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_AGENT_DEF,
