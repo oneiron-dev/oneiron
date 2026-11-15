@@ -6,7 +6,9 @@
 //! The host asks whether this one signature lands, first of the person the
 //! agent signs for (or, with no principal named, the document's sender),
 //! then up the chain to the vault owners: an ask its person leaves
-//! unanswered for [`ESIGN_ASK_CLIMB_HOURS`] climbs. The ask is an e-signature act, so
+//! unanswered for [`ESIGN_ASK_CLIMB_HOURS`] climbs, and an ask the vault
+//! owners leave unanswered for the vault's `esign.held_signing.owner_lapse`
+//! (30 days by default) lapses unsigned. The ask is an e-signature act, so
 //! at every rung only a natural person answers; a board or an agent holding
 //! the role never does. No rule or model rung answers that question:
 //! decide() advises and never grants, so the ask goes straight to the role
@@ -20,6 +22,8 @@ use super::ceremony::{sign, signed_event};
 use super::field_admission::{EventFields, InspectedPages, inspect_event_pages};
 use super::ledger::state_in;
 use super::model::*;
+use super::setting_keys::{ESIGN_HELD_SIGNING_OWNER_LAPSE, HeldSigningLapse};
+use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::llm::decision::DecisionAsk;
 use crate::model_decision::AnswerActor;
 use crate::model_decision::catalogue;
@@ -37,10 +41,15 @@ pub const HOLD_ALLOW: &str = "allow";
 /// The answer that keeps the signature from landing.
 pub const HOLD_DECLINE: &str = "decline";
 
+/// The producer of the inbox notice each vault owner gets when a held sign
+/// act's ask lapses unanswered at the owners.
+pub const HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER: &str = "esign.held_signing_lapse";
+
 /// Hours a held sign act's unanswered ask waits on the person it went to
 /// before it climbs to the next role up its chain (CALLS "OF-415 held
-/// signing climb"). At the vault owners it waits on: no unanswered ask
-/// signs or lapses.
+/// signing climb"). At the vault owners it does not climb: it waits for the
+/// vault's `esign.held_signing.owner_lapse`, then lapses unsigned. No
+/// unanswered ask signs.
 pub const ESIGN_ASK_CLIMB_HOURS: crate::store::setting_seed::SettingSpec =
     crate::store::setting_seed::SettingSpec {
         key: "esign.ask.climb_hours",
@@ -72,6 +81,11 @@ pub enum HeldSigningState {
     /// The document moved on before the answer could land: the recipient's
     /// turn passed or the document ended.
     Superseded { at: u64 },
+    /// No vault owner answered its ask within the vault's
+    /// `esign.held_signing.owner_lapse`: the signature did not land, the ask
+    /// left the owners' queue, and the recipient's turn stays open for the
+    /// document's sender, as after a decline.
+    Lapsed { at: u64 },
 }
 
 /// The rung a held sign act's ask waits at, and since when: each rung of a
@@ -306,8 +320,9 @@ impl Vault {
     /// passes the question on, through the climb that keeps the ask's
     /// natural-person filter and ceiling. An ask another door moved after
     /// its last climb (a holder passing it on, a role left unheld) starts
-    /// its wait when this pass first sees it there. An ask at the vault
-    /// owners, or at no live holder, waits on. `true` when it climbed.
+    /// its wait when this pass first sees it there. An ask at no live holder
+    /// waits on; one at the vault owners waits for
+    /// [`Self::lapse_stale_esign_ask`]. `true` when it climbed.
     ///
     /// # Errors
     /// The setting, the climb's write or the hold's wait write failed.
@@ -320,15 +335,8 @@ impl Vault {
             return Ok(false);
         };
         let now = self.now_recorded_at();
-        let since = match &held.state {
-            HeldSigningState::Asked {
-                wait: Some(wait), ..
-            } if wait.role == at.role => wait.since,
-            HeldSigningState::Asked { wait: Some(_), .. } => {
-                self.esign_hold_waits(held, &at.role, now)?;
-                return Ok(false);
-            }
-            _ => ask.asked_at,
+        let Some(since) = self.esign_ask_waits_since(held, ask, &at.role, now)? else {
+            return Ok(false);
         };
         let hours = crate::learning_setting::setting_value(self, &ESIGN_ASK_CLIMB_HOURS)?;
         if (now.saturating_sub(since) as f64) < hours * 3600.0 {
@@ -339,6 +347,118 @@ impl Vault {
         };
         self.esign_hold_waits(held, &climbed.role, now)?;
         Ok(true)
+    }
+
+    /// Lapses a held sign act's `ask` left unanswered at the vault owners
+    /// once it has waited there for the vault's
+    /// `esign.held_signing.owner_lapse` (30 days by default; never, when the
+    /// owner set it so): since it was asked there, or since the climb that
+    /// brought it there. In one write the hold settles as
+    /// [`HeldSigningState::Lapsed`], the ask is withdrawn from the owners'
+    /// queue, so a later answer is refused, and each vault owner gets an
+    /// inbox notice. A lapse never signs: the document stays unsigned and
+    /// the recipient's turn stays open for the document's sender, as after a
+    /// decline. An ask another door moved to the owners after its wait was
+    /// timed starts its wait when this pass first sees it there. `true` when
+    /// it lapsed.
+    ///
+    /// # Errors
+    /// The setting's read (a row that does not decode included: the hold
+    /// waits on), the lapse's write or the hold's wait write failed.
+    pub fn lapse_stale_esign_ask(&self, held: &HeldSigning, ask: &DecisionAsk) -> Result<bool> {
+        let Some(at) = ask
+            .role
+            .as_ref()
+            .filter(|role| ask.answer.is_none() && role.role.rank() == RoleRank::Owner)
+        else {
+            return Ok(false);
+        };
+        let now = self.now_recorded_at();
+        let Some(since) = self.esign_ask_waits_since(held, ask, &at.role, now)? else {
+            return Ok(false);
+        };
+        let lapse = {
+            let txn = self.store.env.read_txn()?;
+            ESIGN_HELD_SIGNING_OWNER_LAPSE
+                .read_in_txn(self, &txn, &[], None)?
+                .value
+        };
+        let HeldSigningLapse::AfterSecs(after) = lapse else {
+            return Ok(false);
+        };
+        if now.saturating_sub(since) < after {
+            return Ok(false);
+        }
+        let lapsed = self.with_write_txn_grouped(|txn| {
+            let key = key(&held.document, &held.recipient);
+            let Some(mut now_held) = HELD
+                .get(&self.store, txn, &key)?
+                .filter(|row| row.held_at == held.held_at)
+            else {
+                return Ok(false);
+            };
+            let question = ask.question.id.to_hex();
+            let asked_by_this = matches!(
+                &now_held.state,
+                HeldSigningState::Asked { question: asked, .. } if *asked == question
+            );
+            // An ask answered or withdrawn since this pass read it is not
+            // lapsed: its answer settles the hold on the next pass.
+            if !asked_by_this || !self.withdraw_decision_ask_in_txn(txn, ask.seq)? {
+                return Ok(false);
+            }
+            now_held.state = HeldSigningState::Lapsed { at: now };
+            HELD.put(&self.store, txn, &key, &now_held)?;
+            let document = EntityId::from_hex(&held.document)?;
+            for owner in crate::policy_model::owners_in_txn(self, &*txn)? {
+                self.record_notification_in_txn(
+                    txn,
+                    &NotificationEvent {
+                        kind: NotificationKind::Finding,
+                        source: NotificationSource {
+                            producer: HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER.to_owned(),
+                            event: format!("{key}:{}:{}", held.held_at, owner.to_hex()),
+                            result: Some(held.document.clone()),
+                            detail: Some(held.recipient.clone()),
+                            ..NotificationSource::default()
+                        },
+                        subject_refs: vec![document],
+                        recipient: Some(owner),
+                        created_at: now,
+                        origin_conversation: None,
+                    },
+                )?;
+            }
+            Ok(true)
+        })?;
+        // A lapsed ask's waiters wake once its withdrawal committed (FIX 4706).
+        if lapsed {
+            self.signal_decision_answer(ask.seq);
+        }
+        Ok(lapsed)
+    }
+
+    /// When `held`'s unanswered `ask` began its wait at `role`, the rung it
+    /// waits at: the hold's timed wait there, or with none timed, when it
+    /// was asked. `None` when another door moved the ask since its wait was
+    /// timed: its wait at `role` starts at `now`, and this pass waits.
+    fn esign_ask_waits_since(
+        &self,
+        held: &HeldSigning,
+        ask: &DecisionAsk,
+        role: &AskRole,
+        now: u64,
+    ) -> Result<Option<u64>> {
+        Ok(match &held.state {
+            HeldSigningState::Asked {
+                wait: Some(wait), ..
+            } if wait.role == *role => Some(wait.since),
+            HeldSigningState::Asked { wait: Some(_), .. } => {
+                self.esign_hold_waits(held, role, now)?;
+                None
+            }
+            _ => Some(ask.asked_at),
+        })
     }
 
     /// Starts an asked hold's wait at `role`, from `since`. A hold settled

@@ -7,9 +7,11 @@
 //! owners; it is an e-signature act, so at every rung it resolves only to a
 //! natural person holding the role, who answers on the decision-ask door.
 //! An ask its person leaves unanswered for `esign.ask.climb_hours` climbs to
-//! the next role. An allow whose answerer was erased lands nothing, and the
-//! hold is asked again. A hold that fails a tick stays as it was for the
-//! next, never dropped.
+//! the next role; one the vault owners leave unanswered for the vault's
+//! `esign.held_signing.owner_lapse` (30 days by default) lapses unsigned, and
+//! each owner is told in the inbox. An allow whose answerer was erased lands
+//! nothing, and the hold is asked again. A hold that fails a tick stays as it
+//! was for the next, never dropped.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -135,8 +137,9 @@ fn ask(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
         .esign_hold_asked(&held.document, &held.recipient, held.held_at, question.id)
 }
 
-/// Settles one asked hold once a holder of its role answered it, and climbs
-/// an ask left unanswered past its wait.
+/// Settles one asked hold once a holder of its role answered it, lapses an
+/// ask the vault owners left unanswered past their wait, and climbs any
+/// other ask left unanswered past its wait.
 fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()> {
     let Some(latest) = server
         .decision_host()
@@ -146,7 +149,13 @@ fn settle(server: &SyncServer, owner: EntityId, held: &HeldSigning) -> Result<()
         return Ok(());
     };
     if latest.answer.is_none() {
-        if server.vault().climb_stale_esign_ask(held, &latest)? {
+        if server.vault().lapse_stale_esign_ask(held, &latest)? {
+            tracing::info!(
+                document = %held.document,
+                recipient = %held.recipient,
+                "esign hold's ask lapsed unanswered at the vault owners; it did not sign"
+            );
+        } else if server.vault().climb_stale_esign_ask(held, &latest)? {
             tracing::info!(
                 document = %held.document,
                 recipient = %held.recipient,

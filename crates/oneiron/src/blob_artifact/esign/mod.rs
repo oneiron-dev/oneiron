@@ -67,10 +67,11 @@ pub use door::{
 mod escalation;
 pub(crate) use escalation::erase_held_signing_actor_in_txn;
 pub use escalation::{
-    ESIGN_ASK_CLIMB_HOURS, HOLD_ALLOW, HOLD_DECLINE, HeldAskWait, HeldSigning, HeldSigningAnswer,
-    HeldSigningState,
+    ESIGN_ASK_CLIMB_HOURS, HELD_SIGNING_LAPSE_NOTIFICATION_PRODUCER, HOLD_ALLOW, HOLD_DECLINE,
+    HeldAskWait, HeldSigning, HeldSigningAnswer, HeldSigningState,
 };
 mod principals;
+pub(crate) mod setting_keys;
 pub use capability::EsignCapability;
 pub(crate) use capability::recipient_capability_unrevoked_in;
 pub use ceremony::{
