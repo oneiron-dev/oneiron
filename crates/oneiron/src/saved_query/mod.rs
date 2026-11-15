@@ -64,6 +64,7 @@ mod memo_lifetime;
 mod memory_watch;
 mod pack_drift;
 mod receipts;
+pub(crate) mod setting_keys;
 mod storage;
 mod support;
 mod sweep;
