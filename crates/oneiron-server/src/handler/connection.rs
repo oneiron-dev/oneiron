@@ -38,7 +38,11 @@ pub(crate) fn ws_routes(server: Arc<SyncServer>) -> Router {
 /// Handles WebSocket upgrade requests.
 ///
 /// Auth: the upgrade request must present an owner-grade credential in the
-/// `Authorization: Bearer` header — a logged, holder-bound top-scope slip.
+/// `Authorization: Bearer` header — a logged, holder-bound top-scope slip —
+/// that the owner door proves is the vault owner's: his own full slip, a
+/// self-hosted root or the dev mode acting as him, or a managed vault's live
+/// owner. A full-scope slip another holder carries is refused 403
+/// (OWNER-GRADE-IS-NOT-OWNERSHIP).
 /// Neither the issuer secret nor a device lease grants socket access.
 /// An unauthenticated upgrade is rejected with 401 BEFORE the socket upgrade
 /// (fail-closed) — without this gate any network peer could pull the full
@@ -176,7 +180,7 @@ async fn ws_upgrade_handler(
 }
 
 /// The full-replication socket an upgrade opens for the caller whose upgrade
-/// proved `machine`: its owner-grade credential and its peer session, the
+/// proved `machine`: the owner's credential and its peer session, the
 /// facade socket of a caller whose own slip is narrower ([`facade_mode`]),
 /// or the refusal it is answered with before the upgrade.
 fn replication_mode(
@@ -199,10 +203,14 @@ fn replication_mode(
             }
         },
     };
-    // Full replication reads the whole vault, an owner act: a hosted
-    // operator's root is refused before the upgrade (FIX 2222), with its
-    // typed body (FIX 6032). Every refusal stays this door's 403.
-    crate::api::host_action::require_host_owner_act(server, &auth).map_err(|refused| {
+    // Full replication reads the whole vault, an owner act, so the owner door
+    // admits it: a self-hosted root or the dev mode acting as the owner, a
+    // managed vault's live owner, or the owner's own full slip. A full-scope
+    // slip another holder carries is a scope, not ownership, and is refused
+    // before the upgrade (OWNER-GRADE-IS-NOT-OWNERSHIP). A hosted operator's
+    // root is refused too (FIX 2222), with its typed body (FIX 6032). Every
+    // refusal stays this door's 403.
+    crate::api::owner(&auth, server).map_err(|refused| {
         if refused.status() == StatusCode::FORBIDDEN {
             refused.into_response()
         } else {

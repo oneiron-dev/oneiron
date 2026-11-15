@@ -16,6 +16,20 @@ alone does not narrow it. Scoped, organization-bound, or caveated credentials do
 not meet that bar, even if they can call a corresponding `/v1/core/*` route.
 `/api/health` remains public.
 
+Owner acts check ownership, not grade. Grade is a property of the slip and says
+nothing about who holds it. These acts admit only the vault's owner: his own full
+slip with actor class `human`, a self-hosted root or the dev mode acting as him, or
+a managed vault's live owner. The acts are the quota answer
+(`POST /v1/ai/quota/{question}`), the owner-only commits of `POST /v1/core/batch`
+and the `remember` verb (turning an agent definition back on, model changes,
+source-audience widening), the owner path of core delete, the voice bank
+(`/v1/ai/voices/*`), organization admin policy, pairing link creation, slip
+revocation, and full replication over `/ws`. A full-scope slip someone else holds
+is refused with 403; a core delete it sends is judged by the delete authority. An
+owner device paired without `--actor-class human` holds a slip with no actor
+class and loses these acts: pair it again with
+`oneiron token pair --principal-ref <owner> --actor-class human`.
+
 Scoped credentials are checked against the scopes and access rules of the
 `/v1/core/*` and `/v1/companion/*` routes they call. Move scoped callers of legacy
 routes to the corresponding scoped route where one exists. The former
