@@ -47,7 +47,10 @@ pub(crate) async fn vault_mail_sources_sync(
     let (source, budget) = input.step()?;
     let server = Arc::clone(server);
     super::clock_ingress::run_blocking(move || -> MemoryResult<MailSyncReport> {
-        server.vault().mail_source_sync_step(&owner, source, budget)
+        let guard = server.hosted_egress_guard();
+        server
+            .vault()
+            .mail_source_sync_step_with_hosted_guard(&owner, source, budget, guard)
     })
     .await
     .map_err(|_| internal("vault.mail.sources.sync"))?
