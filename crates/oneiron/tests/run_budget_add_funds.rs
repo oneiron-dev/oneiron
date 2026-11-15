@@ -5,7 +5,10 @@
 //! they buy whole units at the quote, rounded down, so never more than he
 //! named; the root scope's cap rises by them for good (no later hold takes
 //! the raise back, unlike an overdraft), the amount is recorded, and the run
-//! resumes. An unpriced unit is never offered the choice.
+//! resumes. Each of the run's meters also takes the bought units once, as it
+//! takes an overdraft's cap, until the next hold (Engine ruling
+//! RUNBUDGET-ADDFUNDS-METER = A, 16 Nov 2026): a step whose own line is spent
+//! goes on under them. An unpriced unit is never offered the choice.
 //!
 //! The press, the funds read and the price on the status are new doors, so
 //! this file builds only on the head:
@@ -131,8 +134,8 @@ fn cap_of(dispatcher: &AgentDispatcher<'_>, scope: &SpendScopeId) -> u64 {
 
 /// A priced run's ask offers `add_funds` at the quote. The owner's dollars
 /// buy whole units, rounded down; the root cap rises by them, the amount is
-/// recorded, the run resumes, and no overdraft is approved. The next hold
-/// asks again and keeps the raise.
+/// recorded, and the run resumes. The next hold asks again and keeps the
+/// raise.
 #[test]
 fn the_owners_dollars_raise_a_held_runs_root_cap_for_good() {
     let (_dir, vault) = open();
@@ -187,14 +190,6 @@ fn the_owners_dollars_raise_a_held_runs_root_cap_for_good() {
         assert_eq!(funds[0].usd_micros, AMOUNT_USD_MICROS);
         assert_eq!(funds[0].units, BOUGHT_UNITS);
         assert_eq!(funds[0].ask, listed[0].seq);
-        assert_eq!(
-            dispatcher
-                .run_overdraft(attempt)
-                .expect("overdraft read")
-                .map(|overdraft| overdraft.cap_units),
-            None,
-            "added dollars are no overdraft"
-        );
     }
     let ask = vault
         .decision_ask(listed[0].seq)
@@ -221,6 +216,52 @@ fn the_owners_dollars_raise_a_held_runs_root_cap_for_good() {
         run_budget_questions(&vault).expect("status list").len(),
         1,
         "and asks again"
+    );
+}
+
+/// The units the owner's dollars buy are also the held run's one-off grant:
+/// each of its meters takes them once under the answer's arrival number, as
+/// it takes an overdraft's cap, so a step whose own line is spent goes on
+/// (Engine ruling RUNBUDGET-ADDFUNDS-METER = A). The next hold deletes the
+/// grant and keeps the root scope's raise.
+#[test]
+fn the_owners_dollars_reach_the_held_runs_meters_once() {
+    let (_dir, vault) = open();
+    assert!(vault.install_launch_usd_prices(Arc::new(HeldRunTokenPrice)));
+    let proof = owner_proof(&vault);
+    let queue = AttemptQueue::new(&vault);
+    let dispatcher = AgentDispatcher::new(&vault);
+    let now = unix_now();
+    let (root, other) = leased_run(&queue, "run-add-funds-meter", now);
+    let scope = open_run_root(&dispatcher, &root);
+    hold(&dispatcher, &root, &root, now + 2);
+    let seq = run_budget_questions(&vault).expect("status list")[0].seq;
+
+    vault
+        .press_run_budget_add_funds(&proof, seq, AMOUNT_USD_MICROS)
+        .expect("the owner's press");
+    for attempt in [root.id, other.id] {
+        assert_eq!(
+            dispatcher
+                .run_overdraft(attempt)
+                .expect("grant read")
+                .map(|grant| (grant.cap_units, grant.ask)),
+            Some((BOUGHT_UNITS, seq)),
+            "each meter of the run takes the bought units once, under the answer's number"
+        );
+    }
+
+    let again = claimed(claim(&queue, KIND, now + 3));
+    hold(&dispatcher, &root, &again, now + 4);
+    assert_eq!(
+        dispatcher.run_overdraft(root.id).expect("grant read"),
+        None,
+        "the next hold spends the grant"
+    );
+    assert_eq!(
+        cap_of(&dispatcher, &scope),
+        ROOT_CAP + BOUGHT_UNITS,
+        "and keeps the raise"
     );
 }
 

@@ -23,7 +23,10 @@
 //!   at his press ([`Vault::press_run_budget_add_funds`]); they buy whole
 //!   units at the quote's upper-bound rate, so never more than he named, and
 //!   the root scope's cap rises by them for good: no hold takes the raise
-//!   back ([`RunFunds`]). The run resumes.
+//!   back ([`RunFunds`]). The run resumes, and each of its meters takes the
+//!   bought units once, as it takes an overdraft's cap, so a step whose own
+//!   line is spent goes on under them (Engine ruling
+//!   RUNBUDGET-ADDFUNDS-METER = A).
 //! - When the host names a free local chat model that serves the run's
 //!   calls now, the ask also offers `continue_on_local` ([`RunLocalRoute`]).
 //!   That answer resumes the run, and each of its later calls runs on that
@@ -32,10 +35,11 @@
 //!   to `continue_on_local` is his standing answer: with a free local model
 //!   named, the hold resumes the run on it in the hold's own write and asks
 //!   nothing; with none named, he is asked (Engine ruling RUNBUDGET-KNOB = A).
-//! - The next hold of the run spends the overdraft and the local route: both
-//!   are deleted and the owner is asked again. A resume at the hold's own
-//!   door withdraws the open ask ([`withdraw_run_budget_ask_in_txn`]). With no
-//!   answer the run stays held.
+//! - The next hold of the run spends the overdraft (or the units added
+//!   dollars bought) and the local route: both are deleted and the owner is
+//!   asked again; an added amount's raise of the root scope stays. A resume
+//!   at the hold's own door withdraws the open ask
+//!   ([`withdraw_run_budget_ask_in_txn`]). With no answer the run stays held.
 //! - `GET /v1/ai/status` lists the open asks ([`run_budget_questions`]); the
 //!   status shows them and does not own them.
 
@@ -257,9 +261,9 @@ pub(super) fn funds_units(price: &FundsPrice, amount_usd_micros: u64) -> Result<
         })
 }
 
-/// The one-off overdraft the owner approved for a held run: each of its
-/// meters takes `cap_units` once, as the grant `ask`, until the run is held
-/// again.
+/// The one-off grant the owner approved for a held run: an overdraft's cap,
+/// or the whole units his `add_funds` dollars bought. Each of its meters
+/// takes `cap_units` once, as the grant `ask`, until the run is held again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunOverdraft {
     pub cap_units: u64,
@@ -269,7 +273,8 @@ pub struct RunOverdraft {
     pub approved_at: u64,
 }
 
-/// Approved overdrafts keyed by the run's root attempt.
+/// Approved overdrafts and added-funds grants keyed by the run's root
+/// attempt.
 const OVERDRAFT: SideTable<AttemptId, RunOverdraft, Named> =
     SideTable::new(&side_table::AGENT_DISPATCH_RUN_OVERDRAFT);
 
@@ -624,9 +629,10 @@ fn raise_root_scope_in_txn(
 /// The owner `by`'s `add_funds` answer to ask `seq`, naming
 /// `amount_usd_micros`, for the held run rooted at `root`, in the answer's
 /// write: the whole units the amount buys at the vault's USD quote raise the
-/// run's open root scope for good, the amount is recorded, and the run
-/// resumes as `by`. `false` when the run is no longer held, or the owner may
-/// not raise its scope.
+/// run's open root scope for good, the amount is recorded, each of the run's
+/// meters takes the units once (the run's grant row, as an overdraft's), and
+/// the run resumes as `by`. `false` when the run is no longer held, or the
+/// owner may not raise its scope.
 ///
 /// # Errors
 ///
@@ -651,6 +657,20 @@ fn add_funds_in_txn(
         .ok_or_else(|| invalid("the run's budget unit has no USD price, or no open root scope"))?;
     let units = funds_units(&price, amount_usd_micros)?;
     raise_root_scope_in_txn(vault, wtxn, root, by, units, now, "run add_funds")?;
+    // The raise alone leaves a step whose own line is spent held again at
+    // its next call: its meter takes the bought units once, as it takes an
+    // overdraft's cap (Engine ruling RUNBUDGET-ADDFUNDS-METER = A). The next
+    // hold deletes the grant; the raise stays.
+    OVERDRAFT.put(
+        &vault.store,
+        wtxn,
+        &root,
+        &RunOverdraft {
+            cap_units: units,
+            ask: seq,
+            approved_at: now,
+        },
+    )?;
     record_funds_in_txn(
         vault,
         wtxn,
@@ -778,10 +798,11 @@ impl Vault {
     /// RUN-BUDGET-SPENT = B): the dollars he names, `amount_usd_micros`,
     /// answered and applied in one write, his proof revalidated in it. They
     /// buy whole units at the vault's USD quote, rounded down, and raise the
-    /// held run's root scope for good; the run resumes. The family's ask about
-    /// a Dreamer try parked at its budget trap takes the same press. Any other
-    /// ask passes unchanged, for the generic answer door. The same answer
-    /// again is a no-op.
+    /// held run's root scope for good; the run resumes, and each of its
+    /// meters takes the units once. The family's ask about a Dreamer try
+    /// parked at its budget trap takes the same press. Any other ask passes
+    /// unchanged, for the generic answer door. The same answer again is a
+    /// no-op.
     ///
     /// # Errors
     ///
@@ -841,8 +862,9 @@ impl Vault {
 
 impl AgentDispatcher<'_> {
     /// The overdraft the owner approved for the run `attempt` belongs to (the
-    /// root or any attempt of its run), while the run has not been held again:
-    /// each of its meters takes its cap once. `None` with none approved.
+    /// root or any attempt of its run), or the units his added dollars bought
+    /// it, while the run has not been held again: each of its meters takes
+    /// its cap once. `None` with none approved.
     ///
     /// # Errors
     ///
