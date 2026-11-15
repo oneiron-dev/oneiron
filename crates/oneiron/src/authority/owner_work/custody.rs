@@ -183,10 +183,13 @@ impl AuthorityFold {
     /// request for it. A custody record no request names never left the
     /// install that minted it (FILE-CUSTODY-MERGE-AFTER-REWRAP).
     pub(crate) fn owner_work_names(&self, secret: &EntityId) -> bool {
-        self.owner_work
-            .requests
-            .values()
-            .any(|folded| folded.request.act.target == *secret)
+        self.owner_work.requests.values().any(|folded| {
+            folded.request.act.target == *secret
+                || matches!(
+                    &folded.request.work,
+                    OwnerWorkBody::ExportSecret(work) if work.secret == *secret
+                )
+        })
     }
 }
 

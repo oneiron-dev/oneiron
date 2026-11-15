@@ -258,7 +258,7 @@ pub use export::{
 pub use export_audit::{ExportAuditScope, ExportReceipt};
 pub(crate) use export_audit::{
     ExportCopy, owner_copy_in_txn, record_export, record_raw_export, record_raw_json_export,
-    turn_thread_root,
+    turn_thread_root, whole_vault_exported_since_in_txn,
 };
 pub use export_kept::KeptExportLapse;
 pub use export_transfer_read::{

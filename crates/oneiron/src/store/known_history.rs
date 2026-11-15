@@ -601,8 +601,9 @@ impl Store {
     /// interrupted process's included: the custody finisher's order (marker,
     /// unlink, directory sync), then the handoff to the custody journal,
     /// whose obligations carry completion. Only an erase's intent runs, for
-    /// a holder whose permanent hard-delete marker stands and whose history
-    /// no reference names; anything else is refused by name.
+    /// a holder whose permanent hard-delete marker or merge receipt stands
+    /// (FILE-CUSTODY-MERGE-AFTER-REWRAP) and whose history no reference
+    /// names; anything else is refused by name.
     ///
     /// # Errors
     ///
@@ -631,7 +632,12 @@ fn known_retirement_ready(
             "known-value history retires for an erase only",
         ));
     }
-    if !store.port_deletion_marked(txn, DeletionMarker::HardDelete, &holder)? {
+    // An erase writes the permanent hard-delete marker. A merge revokes its
+    // record with the value erased while another record holds the same
+    // bytes, and keeps its receipt instead (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+    if !store.port_deletion_marked(txn, DeletionMarker::HardDelete, &holder)?
+        && !crate::secret_custody::custody_merged_in_txn(store, txn, &holder)?
+    {
         return Err(Error::CorruptedIndex(
             "retiring known-value history has no erase marker",
         ));

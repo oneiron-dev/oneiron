@@ -325,6 +325,25 @@ fn append_in_txn(
     EXPORT_RECEIPTS.put(&vault.store, txn, &sequence, receipt)
 }
 
+/// Whether a whole-vault copy was made here at or after `since`, vault clock
+/// seconds, read in `txn`: an owner archive carries every custody value it
+/// opens, so a record minted before such a copy left this install in it
+/// (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+///
+/// # Errors
+///
+/// The store's.
+pub(crate) fn whole_vault_exported_since_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    since: u64,
+) -> crate::Result<bool> {
+    Ok(EXPORT_RECEIPTS
+        .scan(store, txn)?
+        .into_iter()
+        .any(|(_, receipt)| receipt.scope == ExportAuditScope::WholeVault && receipt.at >= since))
+}
+
 /// Records the whole-vault copy a raw `Vault` door wrote to its sink as
 /// `format` for the embedded owner `exporter` ([`record_export`]): no act,
 /// and no length or digest, its sink not being read back.

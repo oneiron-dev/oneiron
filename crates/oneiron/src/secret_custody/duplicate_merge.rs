@@ -16,12 +16,13 @@
 //! file (its mask origin's place is `file`), still active at its first
 //! generation with no binding, that no custody transition here, no owner
 //! work request, lease, reveal, label, payment mark, purpose or settled
-//! found key names. Any other duplicate keeps both records
+//! found key names, and that no whole-vault copy made here since its mint
+//! carried. Any other duplicate keeps both records
 //! (FILE-CUSTODY-DUP-UNOPENED = A). The merge is this install's alone: `b`
 //! never reached another install, so no other install holds a row to change,
 //! and no wire kind or signed act is added (stored change: keep).
 
-use heed::RwTxn;
+use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -32,6 +33,7 @@ use crate::error::Result;
 use crate::ports::ShortIdStoreRead;
 use crate::secret_record::custody_portable;
 use crate::side_table::{self, Named, SideTable};
+use crate::store::Store;
 
 /// Each record a merge retired, keyed by its id. It holds no value.
 const MERGES: SideTable<EntityId, CustodyMerge, Named> =
@@ -43,6 +45,18 @@ const MERGES: SideTable<EntityId, CustodyMerge, Named> =
 pub(crate) struct CustodyMerge {
     pub(crate) winner: EntityId,
     pub(crate) merged_at: u64,
+}
+
+/// Whether a merge retired the record `id`, its receipt standing: its value
+/// was erased here while another record holds the same bytes, so its
+/// known-value history retires as an erased record's does, with no
+/// hard-delete marker (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+///
+/// # Errors
+///
+/// The store's.
+pub(crate) fn custody_merged_in_txn(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+    MERGES.contains(store, txn, id)
 }
 
 /// One value's known-value entry, as a merge compares it: its length and
@@ -179,9 +193,11 @@ fn value_entry_in_txn(
 
 /// Whether the record `id`, a write door's mint held here as `record`,
 /// never left this install: no custody transition here and no owner work
-/// request names it, and no lease, reveal, label, payment mark, purpose or
-/// settled found key does. A record any of them names keeps standing beside
-/// the opened one (FILE-CUSTODY-DUP-UNOPENED = A).
+/// request names it, no lease, reveal, label, payment mark, purpose or
+/// settled found key does, and no whole-vault copy made here at or after its
+/// mint carried it (an owner archive holds every custody value it opens). A
+/// record any of them names keeps standing beside the opened one
+/// (FILE-CUSTODY-DUP-UNOPENED = A).
 fn never_left_in_txn(
     vault: &Vault,
     wtxn: &RwTxn<'_>,
@@ -206,6 +222,11 @@ fn never_left_in_txn(
                 .is_none()
             && !super::reveal::custody_ever_revealed_in_txn(store, wtxn, id)?
             && !crate::secret_rotation::secret_ever_leased_in_txn(store, wtxn, &record.name)?
-            && !super::found_keys::found_key_settled_in_txn(store, wtxn, id)?,
+            && !super::found_keys::found_key_settled_in_txn(store, wtxn, id)?
+            && !crate::memory::whole_vault_exported_since_in_txn(
+                store,
+                wtxn,
+                record.registered_at,
+            )?,
     )
 }
