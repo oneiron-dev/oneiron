@@ -190,6 +190,22 @@ fn enrolled_passkey(public_key: Vec<u8>, evidence: Vec<u8>) -> DeviceAuthority {
     }
 }
 
+/// `input`'s passkey as the roster names it (compressed SEC1) and its
+/// enrolled shape, its assertion in its envelope as the possession evidence.
+fn passkey_enrollment_device(input: &OwnerPasskeyEnrollment) -> Result<(Vec<u8>, DeviceAuthority)> {
+    let public_key =
+        canonical_p256_key_bytes(&input.public_key).map_err(|_| not_valid(NOT_VALID))?;
+    let envelope = webauthn_assertion_envelope(
+        &input.authenticator_data,
+        &input.client_data_json,
+        &input.signature,
+    )
+    .map_err(|_| not_valid(NOT_VALID))?;
+    let evidence = owner_passkey_possession_evidence(&input.credential_id, &envelope)
+        .map_err(|_| not_valid(NOT_VALID))?;
+    Ok((public_key.clone(), enrolled_passkey(public_key, evidence)))
+}
+
 /// The op's own checks on `entry` before anyone signs it: the fixed shape,
 /// the act's kind and target, the one cosign, and the proof of possession.
 /// The envelope's signature checks wait for the signatures.
@@ -474,19 +490,51 @@ impl Vault {
     where
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
-        let public_key =
-            canonical_p256_key_bytes(&input.public_key).map_err(|_| not_valid(NOT_VALID))?;
-        let envelope = webauthn_assertion_envelope(
-            &input.authenticator_data,
-            &input.client_data_json,
-            &input.signature,
-        )
-        .map_err(|_| not_valid(NOT_VALID))?;
-        let evidence = owner_passkey_possession_evidence(&input.credential_id, &envelope)
-            .map_err(|_| not_valid(NOT_VALID))?;
-        let device = enrolled_passkey(public_key.clone(), evidence);
+        let (public_key, device) = passkey_enrollment_device(input)?;
         let (entry, machine) =
             self.enrol_owner_device_as(authority, None, device, predecessor, sign_predecessor)?;
+        Ok(OwnerPasskeyEnrollmentReceipt {
+            entry,
+            machine,
+            public_key,
+            credential_id: input.credential_id.clone(),
+        })
+    }
+
+    /// The owner confirms a passkey that only another passkey vouched for
+    /// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B; Sol xhigh stack review
+    /// F5), as [`Self::confirm_owner_key_as`] confirms a device's key:
+    /// `predecessor`, an owner-held key that is no passkey, vouches for
+    /// `input`'s passkey again, carried by this install. `input` is the
+    /// passkey's enrollment input again, its assertion over the challenge
+    /// [`Self::owner_passkey_enrollment_challenge_as`] answers, and nothing
+    /// on the roster changes. After it the passkey vouches for further keys;
+    /// its own limits stay (it re-roots nothing and revokes no other owner
+    /// key, Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B).
+    ///
+    /// # Errors
+    /// As [`Self::confirm_owner_key_as`]; a key, a credential id or an
+    /// assertion that does not decode is
+    /// [`RecordError::InvalidAuthorityLogBody`].
+    pub fn confirm_owner_passkey_as<S>(
+        &self,
+        authority: &ActAuthority,
+        input: &OwnerPasskeyEnrollment,
+        predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<OwnerPasskeyEnrollmentReceipt>
+    where
+        S: FnOnce(&[u8]) -> Result<Vec<u8>>,
+    {
+        let (public_key, device) = passkey_enrollment_device(input)?;
+        let (entry, machine) = self.write_owner_key_enroll_as(
+            authority,
+            None,
+            device,
+            predecessor,
+            sign_predecessor,
+            true,
+        )?;
         Ok(OwnerPasskeyEnrollmentReceipt {
             entry,
             machine,
