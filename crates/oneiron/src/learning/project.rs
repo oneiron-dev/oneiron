@@ -41,13 +41,10 @@ const DAY_SECS: f64 = 86_400.0;
 pub(crate) const SETTING_FIT: SideTable<String, SettingFit, Named> =
     SideTable::new(&side_table::LEARNING_SETTING_FIT);
 
-/// The fitted value of one setting, as of its last projection.
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-pub struct SettingFit {
-    pub value: f64,
-    pub runs: f64,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::learning::project::SettingFit;
+#[doc(hidden)]
+use oneiron_records::learning::project::VALUE_KIND;
 
 /// The claim value: the estimate, its cell, the derived UNTESTED mark and
 /// the as-projected donor tally a borrower lends.
@@ -68,8 +65,6 @@ pub(crate) struct StoredEstimateClaim {
     #[serde(default)]
     pub(crate) frozen: Option<FrozenFold>,
 }
-
-const VALUE_KIND: &str = "estimate";
 
 impl StoredEstimateClaim {
     fn new(
