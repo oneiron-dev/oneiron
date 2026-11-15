@@ -1,5 +1,5 @@
 //! Model-local prompt configuration and host-owned HTTP transport.
-use crate::{build_image_request, classify_image_status, parse_image_response};
+use crate::openrouter::{build_image_request, classify_image_status, parse_image_response};
 use oneiron::llm::image::{ImageBackend, ImageCatalogRow, ImageFuture, ImageIntent, ImageResponse};
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId};
 use serde_json::Value;

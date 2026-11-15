@@ -175,8 +175,7 @@ to its modules and source files. It does not cover the applications under `apps/
 | [oneiron-uniffi](./crates/oneiron-uniffi) | UniFFI binding of the SDK verb table over the shared `OneironClient` (embedded and remote). |
 | [oneiron-android](./crates/oneiron-android) | JNI/Kotlin ownership adapter. |
 | [oneiron-llm](./crates/oneiron-llm) | Text model wire adapters, one module per protocol: OpenAI-compatible, Anthropic Messages, Gemini, the user-hosted model endpoint (`oneiron_rpc`), a host-supplied in-process model (`local`) and the remote typed-decision service (`systemone`). |
-| [oneiron-image-comfyui](./crates/oneiron-image-comfyui) | ComfyUI image adapter. |
-| [oneiron-image-openrouter](./crates/oneiron-image-openrouter) | OpenRouter image adapter. |
+| [oneiron-gen](./crates/oneiron-gen) | Generation job wire adapters, one module per protocol: Gemini images and Veo video (`gemini`), the self-hosted ComfyUI image server (`comfyui`) and the OpenRouter Image API (`openrouter`). |
 | [oneiron-mesh-transport](./crates/oneiron-mesh-transport) | Vault-scoped peer transport. |
 | [oneiron-linear](./crates/oneiron-linear) | Linear issue-mirroring adapter. |
 | [oneiron-docedit](./crates/oneiron-docedit) | Native document editing and revision support. |

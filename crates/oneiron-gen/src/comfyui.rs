@@ -1,5 +1,5 @@
 //! Self-hosted ComfyUI image adapter. Workflow and model dialects are host-supplied data.
-//! The engine only sees `ImageIntent`; this crate owns upload, submit, poll and fetch.
+//! The engine only sees `ImageIntent`; this module owns upload, submit, poll and fetch.
 
 use oneiron::llm::image::{ImageBackend, ImageBytes, ImageFuture, ImageIntent, ImageResponse};
 use oneiron::{BudgetLease, FatalLlmError, LlmResult, ModelId, RetryableLlmError};

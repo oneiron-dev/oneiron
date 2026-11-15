@@ -1,14 +1,9 @@
 //! Gemini wire adapter. Vendors and prices are registry data; retries and budget stay above LlmBackend.
-mod media;
 mod stream;
 #[cfg(test)]
 mod tests;
 mod transport;
 mod wire;
-pub use media::{
-    GeminiMediaBackend, GeminiMediaFuture, GeminiMediaHttpRequest, GeminiMediaHttpResponse,
-    GeminiMediaTransport,
-};
 use oneiron::{
     BudgetLease, FatalLlmError, LlmBackend, LlmCapability, LlmCatalogEntry, LlmGenerateFuture,
     LlmRequest, LlmStream, LlmStreamResult, ModelId,

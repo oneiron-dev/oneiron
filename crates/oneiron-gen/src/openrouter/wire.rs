@@ -1,5 +1,5 @@
 //! Buffered `/api/v1/images` request and response mapping.
-use crate::backend::{OpenRouterImageConfig, OpenRouterImageHttpRequest};
+use crate::openrouter::backend::{OpenRouterImageConfig, OpenRouterImageHttpRequest};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use oneiron::llm::{
     image::{ImageBytes, ImageIntent, ImageResponse},

@@ -239,17 +239,3 @@ pub fn classify_status(status: u16, body: &Value) -> LlmError {
         _ => FatalLlmError::InvalidRequest.into(),
     }
 }
-/// [`classify_status`] for a media reply, which keeps its headers: a rate
-/// limit's named wait (`Retry-After`) survives.
-pub(super) fn classify_media_status(
-    status: u16,
-    headers: &std::collections::BTreeMap<String, String>,
-    body: &Value,
-) -> LlmError {
-    match status {
-        429 if body.pointer("/error/status").and_then(Value::as_str) != Some("BUDGET_EXCEEDED") => {
-            oneiron::llm::limit::limit_refusal(status, headers, body).into()
-        }
-        _ => classify_status(status, body),
-    }
-}
