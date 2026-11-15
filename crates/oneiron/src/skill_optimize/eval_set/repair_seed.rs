@@ -39,7 +39,7 @@ use crate::claim::ScopedReadReceipt;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{Memory, MemoryResult};
-use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::ports::{EntityStoreRead, TombstoneStoreRead, raw_readable_in_txn};
 use crate::side_table::{self, Named, SideTable};
 
 /// One seed per task source, keyed by the BLAKE3 of the source's identity.
@@ -254,6 +254,30 @@ fn sources_live_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, rows: &[EntityId]) 
     Ok(true)
 }
 
+/// Whether `row` still reads in this snapshot, by the capture listing's rule
+/// ([`raw_readable_in_txn`]): present, and not deleted, withdrawn, stale or
+/// source-withdrawn.
+pub(crate) fn row_reads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = vault.get_raw_in(txn, row)? else {
+        return Ok(false);
+    };
+    raw_readable_in_txn(&vault.store, txn, row, &raw)
+}
+
+/// The refusal of a seed for a task whose contract a seed from another
+/// source or seat holds, where the listing shows that seed.
+const CONTRACT_SEEDED: &str = "the task's contract already has a seed, from another source or seat";
+
+/// The refusal of a seed for a task whose contract is held only by seeds
+/// whose captures no longer read. The listing leaves such a row out and
+/// shows nothing of those seeds, so the refusal says no more than that
+/// (Astra delta 3 K2; RULING UNBUILT-P05E-WITHDRAWN-SEED = A).
+const UNLISTED_REPAIR: &str = "the repair is no longer listed";
+
 /// Whether a cohort of `seat` already holds `family`. A case added to the
 /// family now was never in that cohort, and the cohort's retirement would
 /// release it to development unserved, so a held family takes no new repair.
@@ -276,7 +300,8 @@ fn family_held_in_txn(
 /// refused as `CandidateFailed` stands, so no candidate is chosen by a sealed
 /// task's result. Nor by an alias of it: a task whose contract has a seed
 /// from another source or seat takes none (RULING
-/// UNBUILT-P05E-CONTRACT-ALIAS = A).
+/// UNBUILT-P05E-CONTRACT-ALIAS = A), and its refusal names that seed only
+/// where the listing would show it: while its capture reads.
 fn commit_proposal(
     vault: &Vault,
     task: &EvalRepairTask,
@@ -288,14 +313,26 @@ fn commit_proposal(
         if let Some(existing) = SEEDS.get(&vault.store, txn, &key)? {
             return Ok(existing);
         }
-        if SEEDS
-            .scan(&vault.store, txn)?
-            .iter()
-            .any(|(_, seed)| seed.contract_key == Some(task.contract_key))
-        {
-            return Err(invalid(
-                "the task's contract already has a seed, from another source or seat",
-            ));
+        let mut refusal = None;
+        for (_, seed) in SEEDS.scan(&vault.store, txn)? {
+            if seed.contract_key != Some(task.contract_key) {
+                continue;
+            }
+            refusal = Some(UNLISTED_REPAIR);
+            let mut shown = true;
+            for row in &seed.source_rows {
+                if !row_reads_in_txn(vault, txn, row)? {
+                    shown = false;
+                    break;
+                }
+            }
+            if shown {
+                refusal = Some(CONTRACT_SEEDED);
+                break;
+            }
+        }
+        if let Some(refusal) = refusal {
+            return Err(invalid(refusal));
         }
         if !sources_live_in_txn(vault, txn, &task.source_rows)? {
             return Err(invalid(

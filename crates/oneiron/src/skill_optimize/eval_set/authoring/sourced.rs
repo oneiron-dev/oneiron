@@ -9,7 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::super::cohort::{EXPOSURE_PREFIX, is_space_probe_seat};
-use super::super::repair_seed::seeds_in_txn;
+use super::super::repair_seed::{row_reads_in_txn, seeds_in_txn};
 use super::super::repair_task::task_contract_key;
 use super::super::{
     CASE_PREFIX, DerivationKind, EvalCase, EvalExposure, EvalRepairSeed, EvalRepairSeedState,
@@ -26,7 +26,6 @@ use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ingest::{AgUiRepairLinkStatus, ag_ui_captures_in_txn};
-use crate::ports::raw_readable_in_txn;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::{SkillContentHash, SkillLifecycle};
 use crate::skill_optimize::gate::target_of;
@@ -98,31 +97,15 @@ fn task_contracts(failure: &Value) -> Vec<(String, [u8; 32])> {
 /// and task pointer.
 type SeedTaskKey<'a> = (&'a str, &'a str, usize, &'a str);
 
-/// Whether every row `seed` was compiled from still reads in this snapshot,
-/// by the capture listing's rule ([`raw_readable_in_txn`]): present, and not
-/// deleted, withdrawn, stale or source-withdrawn.
-fn seed_capture_reads_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    seed: &EvalRepairSeed,
-) -> Result<bool> {
-    for id in &seed.source_rows {
-        let Some(raw) = vault.get_raw_in(txn, id)? else {
-            return Ok(false);
-        };
-        if !raw_readable_in_txn(&vault.store, txn, id, &raw)? {
-            return Ok(false);
-        }
-    }
-    Ok(true)
-}
-
 /// Every stored seed, by its task and by its task contract: one pass over
-/// the seeds, whatever the repair rows.
+/// the seeds, whatever the repair rows. Whether a seed's rows still read is
+/// asked once per row in a listing, however many repair rows share its
+/// contract (Astra delta 3 K5).
 struct SeedIndex<'a> {
     seeds: &'a [EvalRepairSeed],
     by_task: BTreeMap<SeedTaskKey<'a>, Vec<usize>>,
     by_contract: BTreeMap<[u8; 32], Vec<usize>>,
+    reads: BTreeMap<EntityId, bool>,
 }
 
 impl<'a> SeedIndex<'a> {
@@ -148,7 +131,29 @@ impl<'a> SeedIndex<'a> {
             seeds,
             by_task,
             by_contract,
+            reads: BTreeMap::new(),
         }
+    }
+
+    /// Whether every row the seed at `index` was compiled from still reads
+    /// in `txn`, by the capture listing's rule ([`row_reads_in_txn`]), each
+    /// row read at most once in this listing.
+    fn seed_reads(&mut self, vault: &Vault, txn: &heed::RoTxn<'_>, index: usize) -> Result<bool> {
+        let seeds = self.seeds;
+        for row in &seeds[index].source_rows {
+            let reads = match self.reads.get(row) {
+                Some(&reads) => reads,
+                None => {
+                    let reads = row_reads_in_txn(vault, txn, row)?;
+                    self.reads.insert(*row, reads);
+                    reads
+                }
+            };
+            if !reads {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// Every seed of a repair row, in seat order: its task's own, and every
@@ -159,7 +164,7 @@ impl<'a> SeedIndex<'a> {
     /// takes that one, and shows nothing of it (RULING
     /// UNBUILT-P05E-WITHDRAWN-SEED = A).
     fn seeds_of(
-        &self,
+        &mut self,
         vault: &Vault,
         txn: &heed::RoTxn<'_>,
         task: SeedTaskKey<'_>,
@@ -172,21 +177,18 @@ impl<'a> SeedIndex<'a> {
             .flatten()
             .copied()
             .collect();
-        let held = self
-            .by_contract
-            .get(contract)
-            .map_or(&[][..], Vec::as_slice);
-        for &index in held {
-            if !rows.contains(&index) && seed_capture_reads_in_txn(vault, txn, &self.seeds[index])?
-            {
+        let held = self.by_contract.get(contract).cloned().unwrap_or_default();
+        for &index in &held {
+            if !rows.contains(&index) && self.seed_reads(vault, txn, index)? {
                 rows.insert(index);
             }
         }
         if rows.is_empty() && !held.is_empty() {
             return Ok(None);
         }
+        let stored = self.seeds;
         let mut seeds: Vec<&'a EvalRepairSeed> =
-            rows.into_iter().map(|index| &self.seeds[index]).collect();
+            rows.into_iter().map(|index| &stored[index]).collect();
         seeds.sort_by(|a, b| a.source.seat.cmp(&b.source.seat));
         Ok(Some(seeds))
     }
@@ -334,7 +336,7 @@ pub fn eval_authoring_inventory_sourced(
         MAX_REPAIR_CAPTURES,
     )?;
     let seeds = seeds_in_txn(vault, &txn)?;
-    let seed_index = SeedIndex::new(&seeds);
+    let mut seed_index = SeedIndex::new(&seeds);
     'captures: for meta in &captures {
         read.push(meta.claim);
         let mut contracts: BTreeMap<usize, Vec<(String, [u8; 32])>> = BTreeMap::new();
