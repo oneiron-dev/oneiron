@@ -362,21 +362,18 @@ pub(super) fn scratchpad_memory<'a>(
 /// The engine's refusal on the board's error contract: its code picks the
 /// status, its message and suggestions pass through.
 pub(in crate::api) fn scratchpad_error(error: oneiron::MemoryError) -> ApiError {
-    let details = match error.code.as_str() {
-        oneiron::MEMORY_CODE_BAD_REQUEST => ApiErrorDetails::BadRequest { field: None },
-        oneiron::MEMORY_CODE_NOT_FOUND => return ApiError::not_found("scratchpad", None),
-        oneiron::MEMORY_CODE_FORBIDDEN | oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED => {
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            }
-        }
-        oneiron::MEMORY_CODE_INVALID_STATE => ApiErrorDetails::InvalidState {
-            state: Some("scratchpad".to_owned()),
-        },
-        _ => {
-            tracing::error!(code = %error.code, error = %error.message, "scratchpad failed");
-            return ApiError::internal_server_error("scratchpad failed");
-        }
+    // Named override: a malformed request keeps the engine's suggestions.
+    if error.code == oneiron::MEMORY_CODE_BAD_REQUEST {
+        return ApiError::new(
+            error.message,
+            ApiErrorDetails::BadRequest { field: None },
+            error.suggestions,
+        );
+    }
+    let route = crate::api::error_map::MemoryCodeRoute {
+        resource: "scratchpad",
+        state: Some("scratchpad"),
+        failed: "scratchpad failed",
     };
-    ApiError::new(error.message, details, error.suggestions)
+    ApiError::from_memory_code(error, route)
 }

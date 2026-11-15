@@ -14,10 +14,7 @@ use axum::extract::{Path, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::code_run::ResultFacet;
-use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL, MEMORY_CODE_NOT_FOUND,
-    MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError,
-};
+use oneiron::memory::{MEMORY_CODE_INTERNAL, MEMORY_CODE_OWNER_BINDING_REQUIRED, MemoryError};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use utoipa::ToSchema;
@@ -25,7 +22,7 @@ use utoipa::ToSchema;
 use super::conversation_transcript::reader;
 use super::facade::ROOM_TURN_HEADER;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 
 /// One read of a MESSAGE's result.
@@ -135,24 +132,20 @@ pub(crate) async fn read_core_message_result(
 /// read that refused.
 pub(super) fn refusal(error: MemoryError) -> EnvelopedApiError {
     let receipt = error.read_receipt.clone();
+    let route = super::error_map::MemoryCodeRoute {
+        resource: "message_result",
+        state: None,
+        failed: "message result read failed",
+    };
     let api = match error.code.as_str() {
-        MEMORY_CODE_NOT_FOUND => ApiError::not_found("message_result", None),
-        MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, None),
-        MEMORY_CODE_FORBIDDEN => ApiError::new(
-            error.message,
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            },
-            error.suggestions,
-        ),
         // The authority log's refusal keeps its own code (FIX 6032).
         MEMORY_CODE_OWNER_BINDING_REQUIRED => {
             ApiError::owner_binding_required(error.message, None, error.suggestions)
         }
-        _ => {
-            tracing::error!(code = %error.code, "message result read failed");
-            ApiError::internal_server_error("message result read failed")
-        }
+        // Named override (N4, open): a state that refuses is this read's
+        // failure, not a 409.
+        oneiron::MEMORY_CODE_INVALID_STATE => route.failure(&error.code),
+        _ => ApiError::from_memory_code(error, route),
     };
     let enveloped = EnvelopedApiError::from(api);
     match receipt {

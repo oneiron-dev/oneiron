@@ -155,6 +155,10 @@ pub(super) async fn write_member(
 }
 /// A refused room join, in the core error envelope. A refusal keeps the
 /// engine's code, words and suggestions, bound to `room_join` (FIX 6032).
+/// Not on `ApiError::from_memory_code` (UC-11): four arms differ, a
+/// malformed request names the `join` field, an authority refusal and an
+/// owner binding refusal (under its own code) carry the `room_join` scope,
+/// and a state that refuses answers fixed words.
 fn join_error(error: oneiron::memory::MemoryError) -> ApiError {
     use oneiron::memory::{
         MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,

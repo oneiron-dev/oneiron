@@ -9,7 +9,6 @@ use super::unix_seconds_now;
 use crate::auth::CoreAuth;
 use crate::auth::CoreScope;
 use crate::error::ApiError;
-use crate::error::ApiErrorDetails;
 use crate::error::ApiErrorEnvelope;
 use crate::error::EnvelopedApiError;
 use crate::server::SyncServer;
@@ -595,31 +594,12 @@ fn host_run_control(
 /// caller they do not admit is told why, and a transition the queue refuses
 /// is the malformed intervention it always was.
 pub(super) fn run_control_refusal(error: oneiron::memory::MemoryError) -> EnvelopedApiError {
-    use oneiron::memory::{
-        MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE,
-        MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OWNER_BINDING_REQUIRED,
+    let route = super::error_map::MemoryCodeRoute {
+        resource: "job",
+        state: None,
+        failed: "core run tree intervene failed",
     };
-    match error.code.as_str() {
-        MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => ApiError::new(
-            error.message,
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            },
-            error.suggestions,
-        ),
-        MEMORY_CODE_NOT_FOUND => ApiError::not_found("job", None),
-        MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, None),
-        MEMORY_CODE_INVALID_STATE => ApiError::new(
-            error.message,
-            ApiErrorDetails::InvalidState { state: None },
-            error.suggestions,
-        ),
-        _ => {
-            tracing::error!(code = %error.code, "core run tree intervene failed");
-            ApiError::internal_server_error("core run tree intervene failed")
-        }
-    }
-    .into()
+    ApiError::from_memory_code(error, route).into()
 }
 
 pub(crate) fn validate_core_run_tree_query(params: &CoreRunTreeQuery) -> Result<(), ApiError> {

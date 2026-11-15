@@ -10,18 +10,14 @@ use axum::extract::{Path, Query, State};
 use axum::http::HeaderMap;
 use axum::response::Json;
 use oneiron::claim::ScopedReadReceipt;
-use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INTERNAL,
-    MEMORY_CODE_INVALID_STATE, MEMORY_CODE_NOT_FOUND, MEMORY_CODE_OWNER_BINDING_REQUIRED,
-    MemoryError, TranscriptPage,
-};
+use oneiron::memory::{MEMORY_CODE_INTERNAL, MemoryError, TranscriptPage};
 use oneiron::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 use utoipa::IntoParams;
 
 use super::facade::ROOM_TURN_HEADER;
 use crate::auth::{CoreAuth, CoreScope};
-use crate::error::{ApiError, ApiErrorDetails, ApiErrorEnvelope, EnvelopedApiError};
+use crate::error::{ApiError, ApiErrorEnvelope, EnvelopedApiError};
 use crate::server::SyncServer;
 
 /// Turns a transcript page returns when the request names no limit.
@@ -140,28 +136,12 @@ pub(super) fn reader(auth: &CoreAuth) -> Result<(EntityId, EdgeActorClass), ApiE
 /// read that refused.
 pub(super) fn refusal(error: MemoryError) -> EnvelopedApiError {
     let receipt = error.read_receipt.clone();
-    let api = match error.code.as_str() {
-        MEMORY_CODE_NOT_FOUND => ApiError::not_found("conversation", None),
-        MEMORY_CODE_BAD_REQUEST => ApiError::bad_request(error.message, None),
-        MEMORY_CODE_INVALID_STATE => ApiError::new(
-            error.message,
-            ApiErrorDetails::InvalidState {
-                state: Some("transcript_turns_moved".to_owned()),
-            },
-            error.suggestions,
-        ),
-        MEMORY_CODE_FORBIDDEN | MEMORY_CODE_OWNER_BINDING_REQUIRED => ApiError::new(
-            error.message,
-            ApiErrorDetails::Forbidden {
-                required_scope: None,
-            },
-            error.suggestions,
-        ),
-        _ => {
-            tracing::error!(code = %error.code, "transcript read failed");
-            ApiError::internal_server_error("transcript read failed")
-        }
+    let route = super::error_map::MemoryCodeRoute {
+        resource: "conversation",
+        state: Some("transcript_turns_moved"),
+        failed: "transcript read failed",
     };
+    let api = ApiError::from_memory_code(error, route);
     let enveloped = EnvelopedApiError::from(api);
     match receipt {
         Some(receipt) => enveloped.with_read_receipt(*receipt),
