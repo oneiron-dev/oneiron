@@ -13004,7 +13004,7 @@
      "path": "src/campaign.rs",
      "purpose": "CRM pack engine-side registration home",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "mod": 10,
       "re-export": 2,
@@ -13427,6 +13427,16 @@
       "const": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/member_index.rs",
+     "purpose": "The `campaign.member` claims by the CAMPAIGN their value is scoped to and by the SAVED_QUERY that derived…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -89331,6 +89341,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/campaign_member_index.rs",
+     "purpose": "Doors for `tests/campaign_member_index.rs` (census L3-28C): the claims the campaign member index nominates…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SealedCampaignEmail"
      ],
@@ -90024,7 +90044,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 117,
+      "mod": 118,
       "re-export": 1
      }
     },
@@ -98504,6 +98524,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/campaign_member_index.rs",
+     "purpose": "Census L3-28C (ARCH-0044 H202): a campaign's and a saved query's membership pages nominate their heads from…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -102651,7 +102679,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -103995,7 +104023,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 120,
+     "files": 121,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104172,8 +104200,8 @@
    },
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7601,
-   "test_files": 1341
+   "source_files": 7603,
+   "test_files": 1342
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -117833,6 +117861,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthBoundError",
+      "AuthBoundSecretStore"
+     ],
+     "path": "src/auth_bound.rs",
+     "purpose": "A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -117864,14 +117908,14 @@
       "const": 1,
       "enum": 5,
       "fn": 8,
-      "re-export": 11,
+      "re-export": 12,
       "struct": 1,
       "trait": 1,
       "type": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LinuxTpmKeystore"
@@ -117879,7 +117923,7 @@
      "path": "src/linux_tpm.rs",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -117905,7 +117949,7 @@
      "path": "src/memory.rs",
      "purpose": "Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its…",
      "surface": {
-      "fn": 1,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -117983,6 +118027,14 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/linux_tpm_auth_bound.rs",
+     "purpose": "Row OCS-OWNER-PIN, the TPM tier: the device PIN key rests in the chip under an auth value",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -118014,6 +118066,13 @@
      "layout": "file",
      "purpose": "Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES…"
     },
+    "auth_bound": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier)"
+    },
     "file": {
      "files": 1,
      "impl_vault": false,
@@ -118024,7 +118083,7 @@
     "linux_tpm": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)"
     },
@@ -118071,10 +118130,10 @@
      "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…"
     }
    },
-   "over_bar": 1,
+   "over_bar": 2,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 12,
-   "test_files": 2
+   "source_files": 13,
+   "test_files": 3
   },
   "oneiron-lens-wire": {
    "files": [
