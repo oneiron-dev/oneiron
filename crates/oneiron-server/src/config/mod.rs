@@ -15,7 +15,6 @@ mod embedder_space;
 mod embedding;
 mod failure_signals;
 mod feedback;
-mod file_admission;
 pub mod import;
 mod keystore;
 mod limits;

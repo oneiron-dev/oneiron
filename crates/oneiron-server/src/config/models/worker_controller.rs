@@ -15,7 +15,7 @@ pub(crate) fn worker_controller_config(path: &Path) -> anyhow::Result<ModelsConf
         models: ModelsFile,
     }
 
-    let text = crate::config::file_admission::read_config_file(path)?;
+    let text = crate::config::merge::read_config_file(path)?;
     let file: File = crate::config::parse_toml(path, &text)?;
     file.models.resolve(path.parent())
 }

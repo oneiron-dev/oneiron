@@ -19,6 +19,7 @@ use std::path::Path;
 
 use anyhow::Context;
 
+use super::super::diagnostics::locate_toml_root_key;
 use crate::commands::credential_file;
 
 /// The config key that holds the issuer key itself. Every other credential
@@ -55,7 +56,7 @@ pub(crate) fn read_config_file(path: &Path) -> anyhow::Result<String> {
         .with_context(|| unread(path))?;
     if stored && sets_issuer_key(&raw) {
         credential_file::admit(path, &file).with_context(|| {
-            let place = match super::diagnostics::locate_toml_root_key(&raw, ISSUER_KEY_SETTING) {
+            let place = match locate_toml_root_key(&raw, ISSUER_KEY_SETTING) {
                 Some(line) => format!(" at line {line}"),
                 None => String::new(),
             };

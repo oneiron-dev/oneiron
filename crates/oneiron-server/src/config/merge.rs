@@ -37,9 +37,11 @@ use super::{
     MergeQueueCheckerConfig, NativeMailConfig, embedder, remote_embedder,
 };
 
+mod file_admission;
 mod sections;
 mod validation;
 
+pub(crate) use self::file_admission::read_config_file;
 pub use self::sections::default_config_path;
 pub(crate) use self::validation::settings_schema_keys;
 use self::validation::{validate_embedder_config, validate_serve_config};
@@ -286,7 +288,7 @@ fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverrid
     struct BackupOnly {
         backup: Option<BackupConfigOverride>,
     }
-    let raw = super::file_admission::read_config_file(path)?;
+    let raw = read_config_file(path)?;
     let file: BackupOnly = super::parse_toml(path, &raw)?;
     Ok(file.backup)
 }
@@ -295,7 +297,7 @@ fn load_backup_section(path: &Path) -> anyhow::Result<Option<BackupConfigOverrid
 /// (`file_admission`), and one that does not parse names only itself and
 /// the place it failed (FIX 9477).
 fn load_file_config(path: &Path) -> anyhow::Result<PartialServeConfig> {
-    let raw = super::file_admission::read_config_file(path)?;
+    let raw = read_config_file(path)?;
     let mut config: FileServeConfig = super::parse_toml(path, &raw)?;
     let models = config
         .models
