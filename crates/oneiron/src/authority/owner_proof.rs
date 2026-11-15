@@ -224,14 +224,14 @@ impl Default for FoldedOwnerKeyRequirement {
 /// act of the setting as a clear
 /// ([`super::policy_setting_choice::apply_policy_setting`]).
 pub(super) fn folded_owner_key_requirement(state: &FoldState) -> FoldedOwnerKeyRequirement {
-    let requirement = if runs_on_web_sign_in(state) {
-        OwnerKeyRequirement::WebSignIn
-    } else if state.roster.keys().any(|key| gives_owner_proof(state, key)) {
+    let requirement = if owner_key_required(state) {
         OwnerKeyRequirement::Required {
             web_sign_in_switch: web_sign_in_switch(state),
         }
-    } else {
+    } else if state.owner_keys_ever.is_empty() {
         OwnerKeyRequirement::NeverHeld
+    } else {
+        OwnerKeyRequirement::WebSignIn
     };
     let web_sign_in_acts = PolicySetting::WebSignIn
         .reserved_target()

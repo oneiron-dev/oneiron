@@ -333,10 +333,10 @@ impl<P> OwnerChoiceState<P> {
         })
     }
 
-    /// Every choice of `target` the register landed, with its value (`None`
-    /// for a clear): the register as every replica holds it, with no pin and
-    /// no install's counting. A choice that waits or was refused landed
-    /// nothing and is not among them.
+    /// Every choice of `target` the register landed, live or since replaced,
+    /// with its value (`None` for a clear): the register as every replica
+    /// holds it, with no pin and no install's counting. A choice that waits
+    /// or was refused landed nothing and is not among them.
     pub(super) fn landed(
         &self,
         target: EntityId,
@@ -348,6 +348,7 @@ impl<P> OwnerChoiceState<P> {
                 frontier
                     .live
                     .iter()
+                    .chain(&frontier.superseded)
                     .map(|(hash, choice)| (*hash, choice.settings.choice.as_ref()))
             })
     }
