@@ -346,11 +346,7 @@ pub(super) fn mcp_board_sections(
         .map_err(|error| mcp_engine_error("board children failed", error))?;
     let read = mcp_scoped_read(&server.vault, actor)?;
     let people = {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| {
-                u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-            });
+        let now = oneiron_base::unix_millis_now();
         let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
             read.is_entity_readable(&person)
         })
