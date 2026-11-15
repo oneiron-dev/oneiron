@@ -8,7 +8,7 @@
     reason = "a test process starts its own git subprocesses; the rule covers the server's crates"
 )]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -22,9 +22,13 @@ use oneiron::checkout::lease::{
 use oneiron::codebase::RepoRef;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dispatch_byoa::{
-    BYOA_ATTEMPT_KIND, ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView,
-    ContinueOutsideWorkRequest, ContinueOutsideWorkView, OnSeatSpent, RunnerContinueCaller,
-    RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatIdentity, SeatPassedOver, hosted_seat_bound,
+    BYOA_ATTEMPT_KIND, ByoEndpointBackendFactory, ByoEndpointSpec, ByoaDispatcher, ByoaEgressLease,
+    ByoaEgressPort, ByoaError, ByoaResult, ContinueOutsideWorkCheckRequest,
+    ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest, ContinueOutsideWorkView,
+    DrySeatFallback, OfficialDreamerSeat, OfficialSeatRegistry, OfficialSeatRoute,
+    OfficialSeatSpec, OnSeatSpent, ProviderAdapterRegistry, RunnerContinueCaller, RunnerSeat,
+    RunnerSeatPolicy, SeatAuth, SeatIdentity, SeatPassedOver, SeatPlacementApproval,
+    hosted_seat_bound, register_official_dreamer_providers,
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::habit::TaskRole;
@@ -41,7 +45,7 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
-use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, HostingPrivacyPosture, LlmBackend, Vault, VaultConfig};
 use serde_json::json;
 
 const IMPORTED_AT: u64 = 1_700_100_000;
@@ -88,6 +92,23 @@ fn owner_vault() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     let owner_proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("authenticated owner");
+    (dir, vault, owner_proof)
+}
+
+/// A vault in the hosted posture, as custody_will_over_substrate.rs builds
+/// one: the test host's cloud root, this install's profile under it, the
+/// owner bound there.
+fn hosted_vault() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open(dir.path(), config).expect("hosted vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's machine profile under the host root");
+    let (_owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
     (dir, vault, owner_proof)
 }
 
@@ -296,6 +317,55 @@ impl CheckoutLiveness for NoLiveness {
     }
 }
 
+/// A seat run reaches no endpoint (the seat host's own stub).
+struct NoEndpoints;
+
+impl ByoEndpointBackendFactory for NoEndpoints {
+    fn resolve_backend(&self, _spec: &ByoEndpointSpec) -> ByoaResult<Arc<dyn LlmBackend>> {
+        Err(ByoaError::Backend("the test serves no endpoint".to_owned()))
+    }
+}
+
+/// A seat run takes no egress lease (the seat host's own stub).
+struct NoEgress;
+
+impl ByoaEgressPort for NoEgress {
+    fn open(&mut self, profile_ref: &str, _intent_ref: &str) -> ByoaResult<ByoaEgressLease> {
+        Err(ByoaError::EgressDenied {
+            profile_ref: profile_ref.to_owned(),
+            reason: "the test leases no egress".to_owned(),
+        })
+    }
+}
+
+/// The node's registry when its settings name an official Codex seat on
+/// a ChatGPT plan, OpenAI's hosted approval recorded, whose login lives on
+/// `machine`: the seat settings' registry, as the seat host builds it.
+fn official_codex_registry(machine: &str) -> ProviderAdapterRegistry {
+    let mut registry = ProviderAdapterRegistry::default();
+    let seat = OfficialDreamerSeat {
+        spec: OfficialSeatSpec {
+            route: OfficialSeatRoute::CodexAppServerChatGptPlan,
+            account_ref: "acct-codex".to_owned(),
+            machine_ref: Some(machine.to_owned()),
+            login_store_ref: None,
+            credential_ref: None,
+            unmodified_binary: true,
+            approvals: SeatPlacementApproval {
+                anthropic_agent_sdk: false,
+                openai_hosted_plan: true,
+            },
+            dry_fallback: DrySeatFallback::default(),
+            plan_window: None,
+        },
+        model_slug_map: BTreeMap::new(),
+        base_url: None,
+    };
+    register_official_dreamer_providers(&mut registry, &OfficialSeatRegistry::standard(), [seat])
+        .expect("the official Codex seat registers");
+    registry
+}
+
 fn leases(vault: &Vault) -> CheckoutLeaseService<'_, Facts, NoLiveness> {
     CheckoutLeaseService::new(vault, Facts, NoLiveness)
 }
@@ -329,13 +399,19 @@ fn an_outside_session_continues_on_this_node_from_its_pushed_commit() {
     let conversation = import_conversation(&vault, &owner_proof);
     let conversation_hex = conversation.to_hex();
     let policy = login_policy("claude-code");
+    let registry = ProviderAdapterRegistry::standard();
     let check = ContinueOutsideWorkCheckRequest {
         repo: "demo".to_owned(),
         runner: "claude-code".to_owned(),
     };
     let before = counts(&vault);
     let ready = vault
-        .continue_outside_work_check(RunnerContinueCaller::Owner(&owner_proof), &policy, &check)
+        .continue_outside_work_check(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &check,
+        )
         .expect("the check answers");
     assert!(
         matches!(ready, ContinueOutsideWorkCheckView::Ready { seat: 0, .. }),
@@ -351,7 +427,12 @@ fn an_outside_session_continues_on_this_node_from_its_pushed_commit() {
         note: None,
     };
     let first = vault
-        .continue_outside_work(RunnerContinueCaller::Owner(&owner_proof), &policy, &input)
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &input,
+        )
         .expect("the door answers");
     let ContinueOutsideWorkView::Bound {
         binding,
@@ -396,7 +477,12 @@ fn an_outside_session_continues_on_this_node_from_its_pushed_commit() {
     assert_eq!(tasks_after, before.0 + 1, "one TASK lands");
     assert_eq!(attempts_after, before.1 + 1, "one attempt lands");
     let second = vault
-        .continue_outside_work(RunnerContinueCaller::Owner(&owner_proof), &policy, &input)
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &input,
+        )
         .expect("the repeat answers");
     let ContinueOutsideWorkView::Bound {
         binding: again_binding,
@@ -428,6 +514,7 @@ fn a_commit_the_push_never_landed_starts_nothing() {
     let (_bare, commit_p, _commit_c) = seed_custody_repo(&vault);
     let conversation = import_conversation(&vault, &owner_proof);
     let policy = login_policy("claude-code");
+    let registry = ProviderAdapterRegistry::standard();
     let before = counts(&vault);
     let input = ContinueOutsideWorkRequest {
         repo: "demo".to_owned(),
@@ -438,7 +525,12 @@ fn a_commit_the_push_never_landed_starts_nothing() {
         note: None,
     };
     let refused = vault
-        .continue_outside_work(RunnerContinueCaller::Owner(&owner_proof), &policy, &input)
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &input,
+        )
         .expect_err("a commit past the tip starts nothing");
     assert_eq!(refused.code, oneiron::memory::MEMORY_CODE_INVALID_STATE);
     assert_eq!(counts(&vault), before, "nothing is written");
@@ -446,21 +538,11 @@ fn a_commit_the_push_never_landed_starts_nothing() {
 
 #[test]
 fn a_hosted_node_keeps_a_login_its_vendor_keeps_off_hosted() {
-    let dir = tempfile::tempdir().expect("temporary vault directory");
-    let mut config = VaultConfig::device();
-    config.privacy.posture = HostingPrivacyPosture::Hosted;
-    let vault = Vault::open(dir.path(), config).expect("hosted vault");
-    // The hosted fixture of custody_will_over_substrate.rs: the test host's
-    // cloud root, this install's profile under it, the owner bound there.
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    vault
-        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-        .expect("this install's machine profile under the host root");
-    let (_owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let (_dir, vault, owner_proof) = hosted_vault();
     let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
     let conversation = import_conversation(&vault, &owner_proof);
     let policy = login_policy("codex");
+    let registry = ProviderAdapterRegistry::standard();
     let before = counts(&vault);
     let expected = hosted_seat_bound(
         Some(SeatIdentity::CliProgram("codex")),
@@ -475,7 +557,12 @@ fn a_hosted_node_keeps_a_login_its_vendor_keeps_off_hosted() {
         runner: "codex".to_owned(),
     };
     let checked = vault
-        .continue_outside_work_check(RunnerContinueCaller::Owner(&owner_proof), &policy, &check)
+        .continue_outside_work_check(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &check,
+        )
         .expect("the check answers");
     let ContinueOutsideWorkCheckView::NoSeat { skipped } = checked else {
         panic!("the check finds no seat: {checked:?}");
@@ -492,7 +579,12 @@ fn a_hosted_node_keeps_a_login_its_vendor_keeps_off_hosted() {
         note: None,
     };
     let answered = vault
-        .continue_outside_work(RunnerContinueCaller::Owner(&owner_proof), &policy, &input)
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &input,
+        )
         .expect("the door answers");
     let ContinueOutsideWorkView::NoSeat { skipped } = answered else {
         panic!("the door finds no seat: {answered:?}");
@@ -504,12 +596,123 @@ fn a_hosted_node_keeps_a_login_its_vendor_keeps_off_hosted() {
 }
 
 #[test]
+fn a_continue_keeps_to_the_runner_it_names() {
+    // Seat 0 is Codex on its ChatGPT login, which a hosted node keeps off;
+    // seat 1 is Claude Code, which runs here. The caller asked for Codex, so
+    // neither door hands the work to Claude Code, whatever the spend rule.
+    let (_dir, vault, owner_proof) = hosted_vault();
+    let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
+    let conversation = import_conversation(&vault, &owner_proof);
+    let mut policy = login_policy("codex");
+    let registry = ProviderAdapterRegistry::standard();
+    policy.seats.extend(login_policy("claude-code").seats);
+    policy.on_spent = OnSeatSpent::Stop;
+    let before = counts(&vault);
+    let check = ContinueOutsideWorkCheckRequest {
+        repo: "demo".to_owned(),
+        runner: "codex".to_owned(),
+    };
+    let checked = vault
+        .continue_outside_work_check(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &check,
+        )
+        .expect("the check answers");
+    let ContinueOutsideWorkCheckView::NoSeat { skipped } = checked else {
+        panic!("the check offers no seat of another runner: {checked:?}");
+    };
+    assert_eq!(
+        skipped.len(),
+        1,
+        "only the Codex seat is named: {skipped:?}"
+    );
+    assert_eq!(skipped[0].seat, 0, "seat 0 is skipped");
+    assert_eq!(skipped[0].runner, "codex", "the skipped seat is Codex");
+    let input = ContinueOutsideWorkRequest {
+        repo: "demo".to_owned(),
+        git_ref: CONTINUE_REF.to_owned(),
+        commit: commit_c,
+        conversation: conversation.to_hex(),
+        runner: "codex".to_owned(),
+        note: None,
+    };
+    let answered = vault
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &input,
+        )
+        .expect("the door answers");
+    let ContinueOutsideWorkView::NoSeat { skipped } = answered else {
+        panic!("the door binds no seat of another runner: {answered:?}");
+    };
+    assert_eq!(
+        skipped.len(),
+        1,
+        "only the Codex seat is named: {skipped:?}"
+    );
+    assert_eq!(skipped[0].seat, 0, "seat 0 is skipped");
+    assert_eq!(skipped[0].runner, "codex", "the skipped seat is Codex");
+    assert_eq!(counts(&vault), before, "nothing is written");
+}
+
+#[test]
+fn a_continue_runs_the_seat_the_node_registry_names() {
+    // The node's settings name an official Codex seat whose login lives on
+    // machine-b. The door runs the seat under that registry, so the login's
+    // machine rides the attempt: a host on machine-a never claims it.
+    let (_dir, vault, owner_proof) = owner_vault();
+    let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
+    let conversation = import_conversation(&vault, &owner_proof);
+    let policy = login_policy("codex");
+    let registry = official_codex_registry("machine-b");
+    let input = ContinueOutsideWorkRequest {
+        repo: "demo".to_owned(),
+        git_ref: CONTINUE_REF.to_owned(),
+        commit: commit_c,
+        conversation: conversation.to_hex(),
+        runner: "codex".to_owned(),
+        note: None,
+    };
+    let bound = vault
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &input,
+        )
+        .expect("the door answers");
+    let ContinueOutsideWorkView::Bound { seat, attempt, .. } = bound else {
+        panic!("the door binds the work: {bound:?}");
+    };
+    assert_eq!(seat, 0, "the work binds on the Codex seat");
+    let attempt = hex_bytes(&attempt);
+    let dispatcher = ByoaDispatcher::new(&vault, NoEndpoints, NoEgress);
+    let ready_on = |machine: &str| {
+        dispatcher
+            .ready_host_cli_attempts(u64::MAX, &[machine.to_owned()], |_| true)
+            .expect("the queue reads")
+            .iter()
+            .any(|id| id.as_bytes() == &attempt)
+    };
+    assert!(
+        !ready_on("machine-a"),
+        "a host on another machine never claims the login seat's run"
+    );
+    assert!(ready_on("machine-b"), "the login's own machine claims it");
+}
+
+#[test]
 fn only_an_agent_whose_grant_names_the_verb_may_continue() {
     let (_dir, vault, owner_proof) = owner_vault();
     let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
     let conversation = import_conversation(&vault, &owner_proof);
     let agent = ensure_agent(&vault, &owner_proof, "continue_outside_work_agent");
     let policy = login_policy("claude-code");
+    let registry = ProviderAdapterRegistry::standard();
     let before = counts(&vault);
     let input = ContinueOutsideWorkRequest {
         repo: "demo".to_owned(),
@@ -520,19 +723,34 @@ fn only_an_agent_whose_grant_names_the_verb_may_continue() {
         note: None,
     };
     vault
-        .continue_outside_work(RunnerContinueCaller::GrantedAgent(agent), &policy, &input)
+        .continue_outside_work(
+            RunnerContinueCaller::GrantedAgent(agent),
+            &registry,
+            &policy,
+            &input,
+        )
         .expect_err("an agent with no Grant is refused");
     let check = ContinueOutsideWorkCheckRequest {
         repo: "demo".to_owned(),
         runner: "claude-code".to_owned(),
     };
     vault
-        .continue_outside_work_check(RunnerContinueCaller::GrantedAgent(agent), &policy, &check)
+        .continue_outside_work_check(
+            RunnerContinueCaller::GrantedAgent(agent),
+            &registry,
+            &policy,
+            &check,
+        )
         .expect_err("the check refuses an agent with no Grant");
     assert_eq!(counts(&vault), before, "nothing is written");
     mint_continue_grant(&vault, &owner_proof, agent);
     let bound = vault
-        .continue_outside_work(RunnerContinueCaller::GrantedAgent(agent), &policy, &input)
+        .continue_outside_work(
+            RunnerContinueCaller::GrantedAgent(agent),
+            &registry,
+            &policy,
+            &input,
+        )
         .expect("the granted agent continues");
     assert!(
         matches!(
