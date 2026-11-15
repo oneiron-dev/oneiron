@@ -136,9 +136,9 @@ impl FoldState {
 
     /// Whether `key` authorizes no `ReRoot`, no `RotateKey`, no
     /// `EnrollDevice`, no revoke of another owner key or of a key its
-    /// parents do not hold (a device or an actor binding), no actor binding
-    /// of another key, and no roster-signed machine answer as the owner's or
-    /// removal, from any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
+    /// parents do not hold (a device or an actor binding), no actor binding,
+    /// and no roster-signed machine answer as the owner's or removal, from
+    /// any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
     /// or a key only a passkey vouched for, until confirmed (lead ruling
     /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
     /// rule that counts an entry's participants asks it of each.
@@ -202,8 +202,10 @@ pub(super) fn remember_passkey_vouch(
 /// merges the two (Astra stack review finding 1). A `RevokeActor` reads the
 /// same way: its watermark would kill an owner key's binding on a sibling
 /// branch for good (Astra delta review finding 1). A `BindActor` or
-/// `RebindActor` of any key but itself, which would move another owner
-/// key's binding to an actor of its choosing. And a roster-signed
+/// `RebindActor`: of another key it would move that key's binding to an
+/// actor of its choosing, and of itself it would make any row an actor's on
+/// every branch for good, which ends the standing of a machine with that
+/// row (Astra delta 2 review finding 1). And a roster-signed
 /// `MachineProfile` that answers a machine as the owner's (`Owned(_)`) or
 /// removes one: the owner's say-so for a machine, of the vouch and revoke
 /// class, judged by role alone so that no sibling branch reopens it
@@ -212,7 +214,9 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
     match op {
         AuthorityOp::ReRoot { .. }
         | AuthorityOp::RotateKey { .. }
-        | AuthorityOp::EnrollDevice { .. } => true,
+        | AuthorityOp::EnrollDevice { .. }
+        | AuthorityOp::BindActor { .. }
+        | AuthorityOp::RebindActor { .. } => true,
         AuthorityOp::RevokeDevice {
             revoked_key: target,
         }
@@ -226,8 +230,6 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
                     .get(target)
                     .is_some_and(|device| device.revoked || device.roles & ROLE_OWNER == 0)
         }
-        AuthorityOp::BindActor { authority_key, .. }
-        | AuthorityOp::RebindActor { authority_key, .. } => authority_key != key,
         AuthorityOp::MachineProfile(profile) => {
             matches!(profile.role, MachineRole::Owned(_) | MachineRole::Removed)
         }
