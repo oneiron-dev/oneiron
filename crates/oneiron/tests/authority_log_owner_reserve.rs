@@ -69,15 +69,15 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityEntryHash, AuthorityKey,
-    AuthorityLogEntry, AuthorityObservationPolicy, AuthorityOp, AuthoritySignature,
-    AuthorityVaultId, HostSlipIssuer, KeyWork, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
-    MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerAct, OwnerActKind,
-    OwnerKeyEnrollment, OwnerWorkBody, OwnerWorkRequest, ReadLocation, WorldKeyMode, WorldPrivacy,
-    WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id, authority_transcript,
-    decode_authority_log_entry_body, encode_authority_log_entry_body,
-    machine_profile_proof_transcript,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
+    AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityObservationPolicy, AuthorityOp,
+    AuthoritySignature, AuthorityTier, AuthorityVaultId, DeviceAuthority, HostSlipIssuer, KeyWork,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerAct,
+    OwnerActKind, OwnerKeyEnrollment, OwnerWorkBody, OwnerWorkRequest, ROLE_ADMIN, ROLE_OWNER,
+    ReadLocation, WorldKeyMode, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
+    authority_log_entity_id, authority_transcript, decode_authority_log_entry_body,
+    encode_authority_log_entry_body, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -1056,4 +1056,116 @@ fn a_revoked_owner_keys_row_waits_past_the_reserve_while_the_owners_lands() {
         .expect("the owner's own row past the reserve lands");
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
+}
+
+/// `op` signed by `signing` at `seq` on `parents`, and cosigned by
+/// `cosigning`.
+fn row_cosigned_by(
+    rooted: &Rooted,
+    signing: &SigningKey,
+    cosigning: &SigningKey,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+) -> AuthorityLogEntry {
+    let mut entry = row_signed_by(rooted, signing, seq, parents, op);
+    let cosigner = AuthorityKey::Ed25519(cosigning.verifying_key().to_bytes());
+    entry.cosigns.push(AuthoritySignature {
+        suite: cosigner.suite(),
+        public_key: cosigner,
+        signature: vec![0; 64],
+    });
+    // The transcript names every cosigner's key, so both sign it again.
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signing.sign(&transcript).to_bytes().to_vec();
+    entry.cosigns[0].signature = cosigning.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+/// Owner-reserve delta review F1 (OWNER-RESERVE-REVOKED-OWNER-KEY = A). The
+/// owner revokes the owner key K a thief holds. Under the reserve, K enrols
+/// a fresh owner key X: the fold refuses that row, since K is revoked, but
+/// the door stores it, and the log's signed structure takes X as a slip
+/// issuer. Past the reserve, a row K signs and X cosigns is no owner's work,
+/// because no roster holds X as a live owner, so the row waits at the door.
+/// At 788e3af5 the reserve counted any issuer the fold did not show revoked
+/// or retired, so X's cosign landed K's row past the reserve.
+#[test]
+fn a_row_cosigned_by_a_key_a_revoked_owner_key_enrolled_waits_past_the_reserve() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let stolen = SigningKey::from_bytes(&[0x4B; 32]);
+    let stolen_key = AuthorityKey::Ed25519(stolen.verifying_key().to_bytes());
+    let enrollment = enrol_owner_key(&rooted, flooder.machine, &stolen);
+    let revocation = host_root_row(
+        &rooted,
+        vec![enrollment],
+        AuthorityOp::RevokeDevice {
+            revoked_key: stolen_key.clone(),
+        },
+    );
+    rooted
+        .vault
+        .put_authority_log_entry(&revocation, AT, 1)
+        .expect("the owner's revocation lands");
+    let planted = SigningKey::from_bytes(&[0x58; 32]);
+    let planted_key = AuthorityKey::Ed25519(planted.verifying_key().to_bytes());
+    let planting = row_signed_by(
+        &rooted,
+        &stolen,
+        1,
+        vec![authority_entry_hash(&revocation).expect("hash")],
+        AuthorityOp::EnrollDevice {
+            device: DeviceAuthority {
+                key: planted_key.clone(),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER | ROLE_ADMIN,
+            },
+        },
+    );
+    rooted
+        .vault
+        .put_authority_log_entry(&planting, AT, 1)
+        .expect("under the reserve the door stores the revoked key's enrollment of X");
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        fold.roster
+            .get(&stolen_key)
+            .is_some_and(|device| device.revoked),
+        "the fold shows the stolen owner key revoked"
+    );
+    assert!(
+        !fold
+            .roster
+            .get(&planted_key)
+            .is_some_and(|device| !device.revoked),
+        "the fold refuses the revoked key's enrollment, so it holds X as no live owner"
+    );
+    let (landed, end) = flood(&rooted, &flooder);
+    let FloodEnd::Waited(held) = end else {
+        panic!(
+            "after {landed} flood rows the flood ended {end:?}: no row waited at the owner \
+             reserve"
+        );
+    };
+    let thiefs = row_cosigned_by(
+        &rooted,
+        &stolen,
+        &planted,
+        2,
+        held.parent_hashes.clone(),
+        AuthorityOp::SlipRevoke {
+            slip_id: [0x58; 32],
+        },
+    );
+    let arrival = rooted.vault.put_authority_log_entry(&thiefs, AT, 1);
+    assert!(
+        matches!(&arrival, Err(error) if error.kind() == ErrorKind::AuthorityLogFull),
+        "a row the revoked key signs and X cosigns past the reserve waits at the door: \
+         {arrival:?}"
+    );
 }
