@@ -671,7 +671,11 @@ pub(super) fn refund_on_visitor_cancel_in_writer(
 /// own cancel decided, and a booking with no deposit is untouched.
 ///
 /// Calendar ingest calls this after it records the cancellation, outside any
-/// writer of its own.
+/// writer of its own, and again on every later sighting of the same explicit
+/// cancellation: the refund is its own commit, so a stop between the two
+/// commits is repaired by the next read of the feed. A deposit that already
+/// owes or has made its refund, or was voided, is left as it stands, and an
+/// EVENT with no deposit costs one read.
 ///
 /// # Errors
 ///
@@ -681,6 +685,9 @@ pub(crate) fn refund_deposit_on_host_cancel(
     event_ref: &EntityId,
     now_utc: u64,
 ) -> Result<(), BookingError> {
+    if !host_cancel_may_owe_refund(vault, event_ref)? {
+        return Ok(());
+    }
     booking_writer(vault, |wtxn| {
         let Some(link) = DEPOSIT_BOOKING
             .get(&vault.store, &*wtxn, &booking_key(event_ref))
@@ -708,6 +715,28 @@ pub(crate) fn refund_deposit_on_host_cancel(
         put_deposit(vault, wtxn, &link.deposit_key, &row)?;
         enqueue_settle(vault, wtxn, &link.deposit_key, "host-cancel", now_utc)
     })
+}
+
+/// Whether the booking `event_ref` has a deposit a host cancel would move:
+/// one still to capture, or captured. A read, so the repeated sighting of a
+/// cancellation opens no writer.
+fn host_cancel_may_owe_refund(vault: &Vault, event_ref: &EntityId) -> Result<bool, BookingError> {
+    let rtxn = read_txn(vault)?;
+    let Some(link) = DEPOSIT_BOOKING
+        .get(&vault.store, &rtxn, &booking_key(event_ref))
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
+        return Ok(false);
+    };
+    Ok(DEPOSIT
+        .get(&vault.store, &rtxn, &link.deposit_key)
+        .map_err(|error| engine_failure("meta read", error))?
+        .is_some_and(|row| {
+            matches!(
+                row.state,
+                DepositState::CaptureDue { .. } | DepositState::Captured { .. }
+            )
+        }))
 }
 
 // -------------------------------------------------------------------------
