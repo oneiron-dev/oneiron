@@ -152,15 +152,7 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for DreamerJobsExecutor<E
                 &self.conflict_cursor,
             ));
         }
-        if is_psych_profile_attempt(attempt) {
-            let Some(vault) = self.vault.as_ref() else {
-                return Ok(psych_profile::unlent());
-            };
-            let lender = self.extraction_resources.as_ref().map(|resources| {
-                Arc::new(PsychProfileAttemptLender::new(Arc::clone(resources), ctx))
-            });
-            return Ok(run_psych_profile(vault, attempt, lender));
-        }
+        // RED PIN (6.9i PR 2 proof): no host arm runs the psych profile job.
         self.inner.execute(attempt, ctx).await
     }
 }
