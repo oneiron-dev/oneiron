@@ -142,7 +142,9 @@ pub trait VendorSandboxClient: Send + Sync {
         bound: VendorCallBound<'_>,
     ) -> Result<VendorSandboxId>;
 
-    /// Writes the `len` bytes `body` yields to the file `path` on `sandbox`.
+    /// Writes `body` to the file `path` on `sandbox`. Each
+    /// [`SandboxProposalBody::reader`] reads it from its start, so a client
+    /// that retries an upload reads it again.
     ///
     /// # Errors
     ///
@@ -151,8 +153,7 @@ pub trait VendorSandboxClient: Send + Sync {
         &self,
         sandbox: &VendorSandboxId,
         path: &str,
-        body: &mut dyn Read,
-        len: u64,
+        body: &SandboxProposalBody,
         bound: VendorCallBound<'_>,
     ) -> Result<()>;
 
@@ -341,13 +342,7 @@ impl VendorBatchBackend {
             )));
         }
         bound.cancel.check()?;
-        client.upload(
-            &sandbox.id,
-            HOST_FRAMES,
-            &mut opening.reader(),
-            opening.len(),
-            bound,
-        )?;
+        client.upload(&sandbox.id, HOST_FRAMES, opening, bound)?;
         bound.cancel.check()?;
         // The transcript, not the guest's exit status, carries the run's
         // outcome: a failed program still ends it with its error and finish.
