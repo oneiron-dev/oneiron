@@ -278,6 +278,11 @@ impl Vault {
             EntityId::from_hex(&root.claims_scope_ref).map_err(|_| invalid())?,
             leader,
         )?;
+        // The minted child attenuates its parent's budget by one, as a
+        // spawned child does, so threads convert under minted projects. A
+        // root with no budget left mints a child with none, as before.
+        project.depth_limit = root.depth_limit;
+        project.depth_remaining = root.depth_remaining.min(root.depth_limit).saturating_sub(1);
         project.board = board.iter().map(EntityId::to_hex).collect();
         project.roster.extend(project.board.iter().cloned());
         if !project.roster.contains(&actor.to_hex()) {

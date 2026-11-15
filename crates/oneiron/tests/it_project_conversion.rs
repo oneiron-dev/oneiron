@@ -57,6 +57,17 @@ fn host_issuer(vault: &Vault) -> HostSlipIssuer {
     issuer
 }
 
+/// The conversion debits the source's depth budget by one, as a spawn
+/// does: a root child carries the root's budget minus one.
+fn grant_source_budget(vault: &Vault, source: &mut ProjectRecord) -> Result<()> {
+    let root = vault.project(vault.root_project()?)?.expect("root");
+    source.depth_remaining = root
+        .depth_remaining
+        .checked_sub(1)
+        .expect("root depth budget");
+    Ok(())
+}
+
 #[test]
 fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Result<()> {
     let dir = tempfile::tempdir()?;
@@ -80,6 +91,7 @@ fn conversion_moves_open_task_and_projects_thread_origin_without_copy() -> Resul
     )
     .expect("fixture");
     source.roster.push(holder.to_hex());
+    grant_source_budget(&vault, &mut source)?;
     vault.put_project(source_id, &source, 1)?;
     // Rooted after the source's birth: a project new to a rooted vault needs
     // an owner-signed birth, which this fixture's source does not carry.
@@ -230,6 +242,7 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
     )
     .expect("fixture");
     source.roster.push(owner_id.to_hex());
+    grant_source_budget(&vault, &mut source)?;
     vault.put_project(source_id, &source, 1)?;
     // Rooted after the source's birth, as in the first test.
     let issuer = host_issuer(&vault);
@@ -595,6 +608,7 @@ fn held_thread(leader_in_roster: bool) -> Result<HeldThread> {
     if leader_in_roster {
         source.roster.push(leader.to_hex());
     }
+    grant_source_budget(&vault, &mut source)?;
     vault.put_project(source_id, &source, 1)?;
     let room = EntityId::from_hex(&source.home_room)?;
     let trunk = EntityId::now();
