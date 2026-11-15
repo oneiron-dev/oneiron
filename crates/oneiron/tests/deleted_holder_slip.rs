@@ -5,7 +5,9 @@
 //! slip at every door, and the per-use liveness check still read it live.
 //! The slip now follows its holder's row: a deleted shell's slip does not
 //! stand, and neither does one minted for it after the delete. A live
-//! holder's slip beside a deleted one is the control.
+//! holder's slip beside a deleted one is the control. A PROJECT write
+//! proof, verified live at its put with no vault door, follows the same
+//! rule (Sol review of #8289, P1 2).
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test deleted_holder_slip`.
@@ -21,6 +23,7 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::workspace_roster::{ProjectProofVersion, ProjectRecord, ProjectWriteProof};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 const REQUEST_CHALLENGE: &[u8] = b"oneiron-request:deleted-holder-slip";
@@ -206,4 +209,85 @@ fn a_slip_minted_for_a_holder_after_its_delete_does_not_verify() {
             );
         }
     }
+}
+
+/// A top-scope slip the host mints straight for `holder`, bound to the key
+/// `binding_seed` names: a credential that signs a PROJECT write proof.
+fn minted_slip(fixture: &Fixture, holder: EntityId, binding_seed: u8) -> Paired {
+    let key = SigningKey::from_bytes(&[binding_seed; 32]);
+    let root = fixture
+        .vault
+        .ensure_host_root_slip(&fixture.issuer)
+        .expect("host root slip");
+    let mut claims = root.claims;
+    claims.slip_id = *blake3::hash(EntityId::now().as_bytes()).as_bytes();
+    claims.parent_id = None;
+    claims.holder_ref = holder.to_hex();
+    claims.binding_key = key.verifying_key().to_bytes();
+    claims.actor_class = Some("agent".to_owned());
+    let slip = fixture
+        .vault
+        .mint_capability_slip(&fixture.issuer, claims)
+        .expect("a minted top-scope slip");
+    Paired { slip, key }
+}
+
+/// `project`'s stored record, signed afresh by `paired`'s holder over the
+/// project's current anchor.
+fn signed_by(fixture: &Fixture, project: EntityId, paired: &Paired) -> ProjectRecord {
+    let mut body = fixture
+        .vault
+        .project(project)
+        .expect("project read")
+        .expect("the project is stored");
+    let anchor = body.anchor().expect("the project's anchor");
+    let signed_at = paired.slip.claims.issued_at;
+    let version = ProjectProofVersion::V3;
+    let challenge = body
+        .authority_at(version)
+        .write_challenge(project, version, signed_at, &anchor)
+        .expect("the write challenge");
+    let transcript = paired
+        .slip
+        .binding_transcript(&challenge)
+        .expect("the holder's binding transcript");
+    body.write_proof = Some(ProjectWriteProof {
+        slip_wire: paired.slip.to_token().expect("slip token"),
+        holder_signature: paired.key.sign(&transcript).to_bytes().to_vec(),
+        signed_at,
+        anchor,
+        version,
+    });
+    body
+}
+
+#[test]
+fn a_deleted_holders_slip_signs_no_live_project_write() {
+    let fixture = fixture();
+    let vault = &fixture.vault;
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let root = vault.root_project().expect("the root project");
+    let project = EntityId::now();
+    let record = ProjectRecord::new(project, Some(root), root, owner).expect("a project record");
+    vault
+        .put_project(project, &record, 2)
+        .expect("an owner-door project");
+    let gone = named_agent(&fixture, "deleted_holder_slip_project_gone");
+    let kept = named_agent(&fixture, "deleted_holder_slip_project_kept");
+    let gone_slip = minted_slip(&fixture, gone, 0x71);
+    let kept_slip = minted_slip(&fixture, kept, 0x72);
+
+    delete_to_shell(&fixture, gone);
+
+    // The put judges the fresh proof live; who may change the project is the
+    // read's judgment, so a live holder's proof lands here either way.
+    let refused = vault.put_project(project, &signed_by(&fixture, project, &gone_slip), 3);
+    let error = refused.expect_err("a deleted holder's slip signed a live project write");
+    assert!(
+        format!("{error:?}").contains("holder is deleted"),
+        "holder={gone:?}: refused for another reason: {error}"
+    );
+    vault
+        .put_project(project, &signed_by(&fixture, project, &kept_slip), 3)
+        .expect("a live holder's slip still signs a live project write");
 }

@@ -200,17 +200,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         claims: &SlipClaims,
     ) -> Result<()> {
-        let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
-            return Ok(());
-        };
-        let deleted = match crate::vault::live_entity_row_in_txn(&self.store, txn, &holder)? {
-            crate::vault::LiveEntityRow::DeletedShell => true,
-            crate::vault::LiveEntityRow::Absent => {
-                self.local_hard_delete_marker_exists_in_txn(txn, &holder)?
-            }
-            crate::vault::LiveEntityRow::Live { .. } => false,
-        };
-        if deleted {
+        if slip_holder_is_deleted_in_txn(&self.store, txn, &claims.holder_ref)? {
             return Err(invalid_authority());
         }
         Ok(())
@@ -232,4 +222,28 @@ impl Vault {
             Err(error) => Err(error),
         }
     }
+}
+
+/// Whether the entity `holder_ref` names is deleted here: its row a deleted
+/// shell, or gone under a hard-delete marker (RULING DELETED-ACTOR-SLIP-AUTH
+/// = A). A `holder_ref` that names no entity (`host`, `operator`), and an
+/// entity with no row and no marker here, is not. It reads the store alone,
+/// for a live door with no vault at hand (a PROJECT write proof).
+pub(crate) fn slip_holder_is_deleted_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    holder_ref: &str,
+) -> Result<bool> {
+    let Ok(holder) = EntityId::from_hex(holder_ref) else {
+        return Ok(false);
+    };
+    Ok(
+        match crate::vault::live_entity_row_in_txn(store, txn, &holder)? {
+            crate::vault::LiveEntityRow::DeletedShell => true,
+            crate::vault::LiveEntityRow::Absent => {
+                crate::deletion::hard_delete_marker_exists_in_txn(store, txn, &holder)?
+            }
+            crate::vault::LiveEntityRow::Live { .. } => false,
+        },
+    )
 }
