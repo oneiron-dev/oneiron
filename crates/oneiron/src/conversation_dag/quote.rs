@@ -772,9 +772,8 @@ mod hex32 {
     }
 }
 
-fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
+#[doc(hidden)]
+use oneiron_records::conversation_dag::quote::hex;
 
 fn unhex(text: &str) -> Result<[u8; 32]> {
     let mut out = [0_u8; 32];

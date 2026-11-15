@@ -252,10 +252,13 @@ pub fn gmail_authorization(
 
 /// Keeps every usable access credential unchanged, otherwise exchanges the
 /// stored refresh grant inside the same already-admitted custody callback.
+/// A stored Microsoft grant is refused whole: not even its access token goes
+/// to Gmail ([MICROSOFT365-OAUTH-EXCHANGE]).
 pub(super) fn bearer_header_for_client(
     client: &reqwest::blocking::Client,
     token: &[u8],
 ) -> Result<HeaderValue> {
+    crate::connector_key::ProviderConnectionChecks::refuse_microsoft_grant(token)?;
     match bearer_header(token) {
         Ok(header) => Ok(header),
         Err(original) => {

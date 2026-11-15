@@ -1,5 +1,5 @@
 //! Policy-bound extraction-teacher probe approval for manifest publication.
-use super::{ModelBinding, ModelManifest, ModelRole, invalid};
+use super::{ModelManifest, ModelRole, invalid};
 use crate::{Vault, error::Result, llm::ModelId};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
@@ -18,11 +18,8 @@ pub struct TeacherProbeApproval {
     pub holder_ref: Option<String>,
 }
 
-fn binding_hash(binding: &ModelBinding) -> Result<String> {
-    let bytes = serde_json::to_vec(binding)
-        .map_err(|e| invalid(&format!("teacher binding serialization failed: {e}")))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
-}
+#[doc(hidden)]
+use oneiron_verb_wire::llm::manifest::teacher_probe::binding_hash;
 
 impl TeacherProbeApproval {
     /// Called by the bench only after evaluating an actual checkpoint. The
@@ -91,5 +88,4 @@ impl Vault {
     }
 }
 
-pub(crate) use crate::teacher_probe_policy::valid_holder_ref;
 pub use crate::teacher_probe_policy::{TEACHER_PROBE_ID, TeacherProbePolicy};
