@@ -45,7 +45,6 @@ use oneiron::secret_custody::{
     CloudRegistrationBinding, CloudRegistrationFence, CloudRegistrationPhase,
     CloudRegistrationTokenUse,
 };
-use oneiron_base::unix_seconds_now;
 use serde::Serialize;
 use zeroize::Zeroizing;
 
@@ -307,6 +306,13 @@ pub(crate) struct LoggedOut {
     revoke: Revoke,
 }
 
+/// Unix seconds now, the clock tokens are judged on.
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
+}
+
 /// A token of the slot `fence` names, copied out at the T0 door for
 /// `token_use` alone: the access token for `Access`, else the refresh
 /// token, with when the access token stops. `None` when the fence moved or
@@ -386,7 +392,7 @@ impl Online {
         match reply.status {
             200 => match reply.json::<RegistrationStatus>("registration status") {
                 Ok(status) if jwt::matches_status(pins, verified, &status) => Self::Registered {
-                    verified_at: unix_seconds_now(),
+                    verified_at: unix_now(),
                     expires_at: status.expires_at,
                 },
                 Ok(_) => {

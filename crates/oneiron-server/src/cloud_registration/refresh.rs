@@ -21,7 +21,7 @@ use super::http::{Http, Reply};
 use super::jwt;
 use super::pins::Pins;
 use super::wire::{CLIENT_ID, Failure, REFRESH_GRANT, TokenReply, TokenSet};
-use super::{CloudRegistration, LinkView, Online, Status, failed_status, revoke, unix_seconds_now};
+use super::{CloudRegistration, LinkView, Online, Status, failed_status, revoke, unix_now};
 
 impl CloudRegistration {
     /// Refreshes the owner's link once, then checks it online.
@@ -159,7 +159,7 @@ impl Rotation<'_> {
         if !tokens.on_wire() {
             return self.unkept(&tokens, "the token answer is not the wire's shape");
         }
-        let verified = match jwt::verify(self.pins, &tokens.access_token, unix_seconds_now()) {
+        let verified = match jwt::verify(self.pins, &tokens.access_token, unix_now()) {
             Ok(verified) => verified,
             Err(failure) => return self.unkept(&tokens, &failure.reason()),
         };

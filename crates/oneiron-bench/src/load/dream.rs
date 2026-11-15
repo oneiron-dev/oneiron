@@ -35,9 +35,8 @@ mod turns;
 use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use oneiron_base::unix_seconds_now;
 use serde_json::{Value, json};
 
 use super::client::Agent;
@@ -163,9 +162,15 @@ fn say(text: &str) {
     );
 }
 
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
 fn execute(plan: &Plan) -> Result<(), String> {
     let origin = Instant::now();
-    let started_unix = unix_seconds_now();
+    let started_unix = unix_now();
     let turns = turns::read(&plan.corpus, &plan.selection)?;
     let queries = turns::queries(&turns, QUERY_CAP);
     let key = setup::read_key(&plan.model_key_file)?;

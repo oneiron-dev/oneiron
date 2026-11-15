@@ -7,7 +7,7 @@ use super::config_types::{
     TOOL_CALL_CAP, TaskBundle, TaskClass,
 };
 use super::reports_and_fixture_helpers::{
-    aggregate_rows, full_run_report, token_burn_extrapolation, unix_seconds_now,
+    aggregate_rows, full_run_report, token_burn_extrapolation, unix_now,
 };
 use super::taskgen::{build_task_bundle, read_json, write_json_atomic, write_taskgen_outputs};
 use super::wire_and_scoring::{
@@ -132,7 +132,7 @@ pub(super) fn run_smoke(out_dir: &Path, settings: &RunSettings) -> Result<PathBu
         campaign: CAMPAIGN_ID.to_owned(),
         model: settings.model.clone(),
         provider: settings.provider_lock(),
-        run_id: format!("interface-bench-1-smoke-{}", unix_seconds_now()),
+        run_id: format!("interface-bench-1-smoke-{}", unix_now()),
         task_count: bundle.smoke_tasks.len(),
         aggregates: aggregate_rows(&rows),
         full_run_token_burn_extrapolation: token_burn_extrapolation(&rows, settings.full_reps),

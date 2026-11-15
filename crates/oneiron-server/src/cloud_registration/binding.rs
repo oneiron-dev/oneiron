@@ -28,7 +28,7 @@ use super::wire::{
 };
 use super::{
     CloudRegistration, LinkView, Local, LoggedOut, Online, Polled, Revoke, Started, Status,
-    failed_status, held_token, revoke, unix_seconds_now,
+    failed_status, held_token, revoke, unix_now,
 };
 
 /// The longest code lifetime and the shortest interval the client takes
@@ -300,7 +300,7 @@ impl CloudRegistration {
                 "the token answer is not the wire's shape".to_owned(),
             ));
         }
-        let verified = match jwt::verify(pins, &tokens.access_token, unix_seconds_now()) {
+        let verified = match jwt::verify(pins, &tokens.access_token, unix_now()) {
             Ok(verified) => verified,
             Err(failure) => return Ok(unkept(failure.reason())),
         };
@@ -425,7 +425,7 @@ impl CloudRegistration {
                 reason: "the slot's token does not open here".to_owned(),
             });
         };
-        let now = unix_seconds_now();
+        let now = unix_now();
         if expires_at <= now {
             return Ok(Status::NeedsRefresh { link });
         }

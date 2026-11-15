@@ -26,9 +26,9 @@ mod report;
 mod vault_flow;
 
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::EntityId;
-use oneiron_base::unix_seconds_now;
 
 use super::{EvalError, EvalResult, help_requested, required_value, write_json_line};
 use cases::TRUTH_PREDICATE;
@@ -73,7 +73,7 @@ pub(super) fn run_route_calibration(args: &[String]) -> EvalResult<()> {
             args.out.display()
         )));
     }
-    let started_at = unix_seconds_now();
+    let started_at = unix_now();
     let definition = cases::load_definition(&args.definition)?;
     let case_file = cases::load_cases(&args.cases)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -101,7 +101,7 @@ pub(super) fn run_route_calibration(args: &[String]) -> EvalResult<()> {
         contract_version: ROUTE_CALIBRATION_CONTRACT_VERSION,
         run_id: EntityId::now().to_hex(),
         started_at,
-        finished_at: unix_seconds_now(),
+        finished_at: unix_now(),
         vault: bench.path().display().to_string(),
         owner: bench.owner().to_hex(),
         models: rung.pins().clone(),
@@ -183,4 +183,12 @@ fn failure(reason: String) -> EvalError {
 /// A failure an engine door reported in its own words.
 fn failure_from(error: impl std::fmt::Display) -> EvalError {
     failure(error.to_string())
+}
+
+/// Wall-clock Unix seconds: the clock a standing answer's `answered_at` and its
+/// gold fact's `occurred_at` are read on.
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_secs())
 }

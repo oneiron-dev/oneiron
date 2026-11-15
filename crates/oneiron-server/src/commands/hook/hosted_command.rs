@@ -22,7 +22,6 @@ use std::io::Write as _;
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use oneiron_base::unix_millis_now;
 use serde_json::json;
 
 use super::hosted_selection::{self, HostedAuthMode, HostedVault, Selection};
@@ -140,7 +139,7 @@ fn login(args: &HostedLoginArgs) -> anyhow::Result<()> {
             ),
         }
     }
-    vault.verified_at_ms = unix_millis_now();
+    vault.verified_at_ms = now_ms();
     selection
         .vaults
         .retain(|kept| kept.vault_id != vault.vault_id);
@@ -256,4 +255,12 @@ fn slip_vault_id(file: &Path) -> anyhow::Result<String> {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
