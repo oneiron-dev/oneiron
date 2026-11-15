@@ -40,7 +40,7 @@ use crate::task_verb::sdk::AgentVerb;
 
 use super::connector_call::{
     ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, PENDING_CALLS,
-    PendingConnectorCall, SettledConnectorCall, Step, connector_call_ref, now_ms, refused,
+    PendingConnectorCall, SettledConnectorCall, Step, connector_call_ref, refused,
 };
 use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
 use super::scope::ScopedMcpCallContext;
@@ -435,7 +435,9 @@ impl Vault {
         }
         // Expiry commits an existing held row with its wait. Keep the
         // receipt-only fallback when that row disappeared before the writer.
-        if let Some(expired) = self.expire_connector_call_if_due(call_ref, &pending, now_ms())? {
+        if let Some(expired) =
+            self.expire_connector_call_if_due(call_ref, &pending, crate::unix_millis_now())?
+        {
             self.settle_code_wait(wait_id, &expired, pending.source_rows.as_deref())?;
             return Ok((expired, pending.source_rows));
         }
