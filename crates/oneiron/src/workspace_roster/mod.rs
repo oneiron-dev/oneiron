@@ -111,7 +111,7 @@ pub(crate) use self::house_link::{
 pub use self::intent::CompanionChoice;
 pub use self::intent::{
     CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
-    WorkspaceRosterPreset,
+    PersonalVaultLink, WorkspaceRosterPreset,
 };
 pub use self::offboard::{
     MemberOffboardingIntent, MemberOffboardingOutcome, OffboardedCompanion,
@@ -123,8 +123,8 @@ use self::records::{
     RosterMemberKey, RosterMemberRow,
 };
 pub use self::records::{
-    MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
-    WorkspaceRosterEntry, WorkspaceRosterRole,
+    MemberOnboardingOutcome, MemberOnboardingStep, PersonalVaultLinkView, PersonalVaultOrigin,
+    WORKSPACE_ROSTER_SCHEMA_VERSION, WorkspaceRosterEntry, WorkspaceRosterRole,
 };
 // The bind-interval read; its first reader outside the tests is FIX row
 // SPEAKER-BYLINE-FOR-ORG's statement byline.

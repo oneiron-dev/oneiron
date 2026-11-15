@@ -269,6 +269,7 @@ impl Fixture {
             },
             companion,
             delegated_mailbox: None,
+            personal_vault: None,
             occurred_at: self.vault.now_recorded_at(),
         };
         self.vault

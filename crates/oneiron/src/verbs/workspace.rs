@@ -9,8 +9,8 @@ use crate::federation::{FederationGrantPreset, FederationGrantRole};
 use crate::memory::MemoryResult;
 use crate::workspace_roster::{
     CompanionBirthIntent, CompanionChoice, MemberGrantBundle, MemberOffboardingIntent,
-    MemberOffboardingOutcome, MemberOnboardingIntent, MemberOnboardingOutcome, WorkCompanionPolicy,
-    WorkspaceRosterEntry, WorkspaceRosterPreset,
+    MemberOffboardingOutcome, MemberOnboardingIntent, MemberOnboardingOutcome, PersonalVaultLink,
+    PersonalVaultLinkView, WorkCompanionPolicy, WorkspaceRosterEntry, WorkspaceRosterPreset,
 };
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
@@ -60,6 +60,11 @@ pub struct WorkspaceMemberOnboardRequest {
     pub work_facet_ref: EntityId,
     pub federation_grant_ref: EntityId,
     pub companion: WorkspaceCompanionInput,
+    /// The member's personal vault the host links on her roster row: her
+    /// own (`brought`) or the one it minted under the org account
+    /// (`minted`), by its 64-hex genesis id (ARCH-0063:359 [INB-07]).
+    #[serde(default)]
+    pub personal_vault: Option<PersonalVaultLinkView>,
     pub occurred_at: u64,
 }
 
@@ -112,6 +117,11 @@ pub fn onboard_workspace_member_as(
         },
     };
     let profile_grant_ref = companion.birth().map(|birth| birth.profile_grant_ref);
+    let personal_vault = input
+        .personal_vault
+        .as_ref()
+        .map(PersonalVaultLink::from_view)
+        .transpose()?;
     let intent = MemberOnboardingIntent {
         onboarding_id: input.onboarding_id,
         workspace: input.workspace,
@@ -127,6 +137,7 @@ pub fn onboard_workspace_member_as(
         },
         companion,
         delegated_mailbox: None,
+        personal_vault,
         occurred_at: input.occurred_at,
     };
     Ok(vault.onboard_workspace_member(

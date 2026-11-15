@@ -127,7 +127,8 @@ pub(super) const ONBOARDING_STEPS: [MemberOnboardingStep; 6] = [
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::records::{
-    MemberOnboardingOutcome, WorkspaceRosterEntry, WorkspaceRosterRole,
+    MemberOnboardingOutcome, PersonalVaultLinkView, PersonalVaultOrigin, WorkspaceRosterEntry,
+    WorkspaceRosterRole,
 };
 
 /// A member roster row as stored under [`MEMBER`].
@@ -140,6 +141,10 @@ pub(super) struct RosterMemberRow {
     pub(super) companion_facet_ref: Option<EntityId>,
     pub(super) identity_ref: Option<EntityId>,
     pub(super) companion_origin: CompanionOrigin,
+    /// The member's personal vault, linked here by her onboarding; `None`
+    /// for a row with no link, and for every row written before the link
+    /// (STORED-CHANGE keep path).
+    pub(super) personal_vault: Option<PersonalVaultLink>,
 }
 
 /// Where a roster row's companion came from, as its onboarding recorded it:

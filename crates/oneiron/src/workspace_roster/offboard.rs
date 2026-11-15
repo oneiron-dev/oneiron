@@ -40,6 +40,12 @@
 //!   room keeps its history.
 //! * The leaver's open member asks are declined and the check-ins they
 //!   asked let go; check-ins waiting on them are left to the ladder.
+//! * The member's personal vault, when her roster row links one, is
+//!   handed over (ARCH-0063:359 "A matching offboarding verb hands the vault
+//!   over"; RULING INB-07-VAULT-LINK = A): the link goes with the row, the
+//!   seat's inquiry route to the vault ends with the seat, and the outcome
+//!   names the vault and its origin for the host, which moves a minted one
+//!   out of the org account.
 //! * The roster row and the onboarding reservations go; a journal row
 //!   answers a replay of the same offboarding id.
 
@@ -165,6 +171,12 @@ pub struct MemberOffboardingOutcome {
     /// send can use it.
     pub custody_left_for_owner: Option<String>,
     pub rooms_left: Vec<OffboardedRoomLeave>,
+    /// The member's personal vault her roster row linked, handed over
+    /// (ARCH-0063:359 [INB-07]): it is hers, the company keeps no route to
+    /// it (the seat's inquiry route ends with the seat) and never reads it.
+    /// A `minted` one leaves the org account through the host, which owns
+    /// the account and the billing. `None` when the row linked none.
+    pub personal_vault: Option<PersonalVaultLinkView>,
     /// The leaver's open member asks, declined.
     pub member_asks_declined: Vec<String>,
     /// The open check-ins the leaver's person or actors asked, let go.
@@ -201,6 +213,7 @@ impl MemberOffboardingOutcome {
             custody_revoked: None,
             custody_left_for_owner: None,
             rooms_left: Vec::new(),
+            personal_vault: None,
             member_asks_declined: Vec::new(),
             check_ins_let_go: Vec::new(),
             check_ins_waiting_on_leaver: Vec::new(),
@@ -507,8 +520,9 @@ impl Vault {
         outcome.check_ins_let_go = let_go;
         outcome.check_ins_waiting_on_leaver = waiting_on_leaver;
 
-        // The roster row and the onboarding reservation go; the journal
-        // answers a replay.
+        // The roster row and the onboarding reservation go, and the
+        // personal-vault link with the row; the journal answers a replay.
+        outcome.personal_vault = row.personal_vault.as_ref().map(PersonalVaultLink::view);
         MEMBER.delete(&self.store, txn, &key)?;
         MEMBER_INTENT.delete(
             &self.store,

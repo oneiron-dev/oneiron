@@ -230,6 +230,7 @@ fn intent(vault: &Vault, workspace_ref: &str, venture_name: &str) -> MemberOnboa
         },
         companion_birth: Some(companion_birth()),
         delegated_mailbox: None,
+        personal_vault: None,
         occurred_at: AT,
     }
 }

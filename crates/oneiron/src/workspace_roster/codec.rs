@@ -385,7 +385,44 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
         }
         CompanionOrigin::Unrecorded => {}
     }
+    if let Some(link) = row.personal_vault {
+        entries.push((
+            Value::from("personal_vault_id"),
+            Value::from(crate::entity_id::bytes_to_hex_lower(&link.vault)),
+        ));
+        entries.push((
+            Value::from("personal_vault_origin"),
+            Value::from(link.origin.as_str()),
+        ));
+    }
     Value::Map(entries)
+}
+
+/// The personal vault a roster row links; a row with neither
+/// `personal_vault_*` key links none, as every row written before the link
+/// does (STORED-CHANGE keep path).
+fn decode_personal_vault(entries: &[(Value, Value)]) -> Result<Option<PersonalVaultLink>> {
+    let field = |name: &str| {
+        entries
+            .iter()
+            .find(|(key, _)| key.as_str() == Some(name))
+            .map(|(_, value)| value)
+    };
+    match (field("personal_vault_id"), field("personal_vault_origin")) {
+        (None, None) => Ok(None),
+        (Some(vault), Some(origin)) => {
+            let vault = vault
+                .as_str()
+                .and_then(crate::deletion::parse_hex::<32>)
+                .ok_or_else(|| invalid("roster member personal_vault_id is not 32 bytes of hex"))?;
+            let origin = origin
+                .as_str()
+                .and_then(PersonalVaultOrigin::parse)
+                .ok_or_else(|| invalid("roster member personal_vault_origin is unrecognized"))?;
+            Ok(Some(PersonalVaultLink { vault, origin }))
+        }
+        _ => Err(invalid("roster member personal vault is half recorded")),
+    }
 }
 
 /// The companion origin a roster row records; a row written before
@@ -419,6 +456,7 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
         identity_ref: optional_entity(&entries, "identity_ref")?,
         companion_origin: decode_companion_origin(&entries)?,
+        personal_vault: decode_personal_vault(&entries)?,
     })
 }
 
@@ -438,7 +476,7 @@ pub(super) fn intent_digest(intent: &MemberOnboardingIntent) -> Result<[u8; 32]>
 
 pub(super) fn intent_canonical_value(intent: &MemberOnboardingIntent) -> Result<Value> {
     let companion = companion_choice_canonical_value(&intent.companion)?;
-    Ok(Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from("onboarding_id"),
             Value::from(intent.onboarding_id.as_str()),
@@ -473,7 +511,22 @@ pub(super) fn intent_canonical_value(intent: &MemberOnboardingIntent) -> Result<
                 .map_or(Value::Nil, mailbox_canonical_value),
         ),
         (Value::from("occurred_at"), Value::from(intent.occurred_at)),
-    ]))
+    ];
+    // Absent with no link, so an onboarding journaled before the link keeps
+    // its digest and its replay still answers (STORED-CHANGE keep path).
+    if let Some(link) = &intent.personal_vault {
+        entries.push((
+            Value::from("personal_vault"),
+            Value::Map(vec![
+                (
+                    Value::from("vault"),
+                    Value::from(crate::entity_id::bytes_to_hex_lower(&link.vault)),
+                ),
+                (Value::from("origin"), Value::from(link.origin.as_str())),
+            ]),
+        ));
+    }
+    Ok(Value::Map(entries))
 }
 
 pub(super) fn grant_bundle_canonical_value(bundle: &MemberGrantBundle) -> Value {
@@ -813,6 +866,7 @@ pub(super) fn outcome_of(
         companion_actor_ref: Some(intent.companion.actor_ref()),
         work_companion_suggested: suggested,
         delegated_identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
+        personal_vault: intent.personal_vault.as_ref().map(PersonalVaultLink::view),
         completed_at,
     }
 }
