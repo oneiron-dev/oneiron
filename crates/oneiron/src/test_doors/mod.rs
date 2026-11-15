@@ -44,6 +44,7 @@ pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod extraction_inputs;
 pub mod extraction_routing;
+pub mod extraction_single_valued;
 pub mod extraction_steps;
 pub mod extraction_verdict;
 pub mod fanout_admission;
