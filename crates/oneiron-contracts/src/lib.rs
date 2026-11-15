@@ -17,6 +17,7 @@ pub mod lifecycle;
 pub mod limit_ask;
 pub mod limits;
 pub mod memory;
+pub mod msgpack;
 pub mod posterior;
 pub mod record_layout;
 pub mod registry;

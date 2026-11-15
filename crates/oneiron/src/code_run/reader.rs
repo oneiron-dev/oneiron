@@ -22,50 +22,23 @@ use crate::agent_def::AgentModel;
 use crate::agent_dispatch::SpendScopeId;
 use crate::attempt_queue::{AttemptId, BorrowedAttemptLease};
 use crate::vault::VaultId;
-use crate::{EdgeActorClass, EntityId, Error, Result, Vault, WriteActor};
+use crate::{EntityId, Result, Vault};
 
 pub use self::coverage::SourceDeliveryWitness;
 pub(crate) use self::coverage::{merge_ranges, subtract_ranges};
 pub(crate) use self::origins::OriginsUnion;
 pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 
-/// What the parent keeps back of its own window for the fold that reads its
-/// children's findings: the fold's code-first dedupe plus two staged
-/// summarize rounds at ~20 s a model call.
-pub const DEFAULT_READER_FOLD_RESERVE_MS: u64 = 60_000;
+#[doc(hidden)]
+pub use oneiron_records::code_run::reader::{
+    DEFAULT_READER_FOLD_RESERVE_MS, ReaderActor, ReaderJobState, ReaderJobStatus,
+    ReaderReportReceipt, ReaderRoute, ReaderSpawnReceipt, RunDeadline, SummarizeEffort,
+    SummarizeReply, TaskWaitFailure, TaskWaitFinding, TaskWaitPolicy, TaskWaitSetCall,
+    TaskWaitSetResult,
+};
 
 /// The longest spawn or wait key, in bytes.
 pub(crate) const READER_KEY_MAX_BYTES: usize = 256;
-
-/// The one clock a parent's children run on: its cutoff, and the part of its
-/// window kept back for its fold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RunDeadline {
-    pub cutoff_unix_ms: u64,
-    pub fold_reserve_ms: u64,
-}
-
-impl RunDeadline {
-    /// A cutoff with the default fold reserve, cut to the last quarter of
-    /// what is left of the window at `now_ms` (the decision ladder's
-    /// last-quarter rule), so a short window still leaves children three
-    /// quarters of it.
-    #[must_use]
-    pub fn with_default_reserve(cutoff_unix_ms: u64, now_ms: u64) -> Self {
-        let left = cutoff_unix_ms.saturating_sub(now_ms);
-        Self {
-            cutoff_unix_ms,
-            fold_reserve_ms: DEFAULT_READER_FOLD_RESERVE_MS.min(left / 4),
-        }
-    }
-
-    /// When every child of the parent stops: its cutoff less its fold
-    /// reserve.
-    #[must_use]
-    pub const fn child_cutoff(&self) -> u64 {
-        self.cutoff_unix_ms.saturating_sub(self.fold_reserve_ms)
-    }
-}
 
 /// What a run's reader children spend on.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -163,27 +136,6 @@ pub fn summary_exceeds_window_bytes(bytes: u64, max_bytes: u64, window_tokens: u
     format!(
         "{SUMMARY_GROUP_EXCEEDS_WINDOW} bytes={bytes} max_bytes={max_bytes} window_tokens={window_tokens}"
     )
-}
-
-/// How hard one `summarize` works.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SummarizeEffort {
-    Low,
-    #[default]
-    Medium,
-    High,
-}
-
-impl SummarizeEffort {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Low => "low",
-            Self::Medium => "medium",
-            Self::High => "high",
-        }
-    }
 }
 
 /// What one summary is made by: its prompt's version, effort and frozen
@@ -291,46 +243,6 @@ impl SelfSummarizeCall {
     }
 }
 
-/// What a `summarize` answers: the summary's card once it is made (a memo
-/// hit), its task and state while it is made (`defer`), or the reply a
-/// withheld member answers in its place.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum SummarizeReply {
-    Done {
-        task: EntityId,
-        card: serde_json::Value,
-    },
-    Pending {
-        task: EntityId,
-        job: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        reason: Option<String>,
-    },
-    Withheld {
-        reply: serde_json::Value,
-    },
-}
-
-impl SummarizeReply {
-    /// What the guest reads: the card, `{task, state}`, or the withheld
-    /// reply.
-    #[must_use]
-    pub fn output(&self) -> serde_json::Value {
-        match self {
-            Self::Done { card, .. } => card.clone(),
-            Self::Pending { task, job, reason } => {
-                let mut pending = serde_json::json!({"task": task.to_hex(), "state": job});
-                if let Some(reason) = reason {
-                    pending["reason"] = serde_json::json!(reason);
-                }
-                pending
-            }
-            Self::Withheld { reply } => reply.clone(),
-        }
-    }
-}
-
 /// The memo key of a summary of `members` by `recipe`: each member's
 /// occurrence and range, in order, then the recipe, so authority and taint
 /// stay per occurrence.
@@ -383,94 +295,6 @@ pub struct SelfReaderReportCall {
     pub bound: Option<ReaderFindingRef>,
 }
 
-/// `tasks.wait({tasks, all?, n_of?, until?, step_key})`, as the guest wrote
-/// it; the dispatcher normalises it against the run's children. One naming
-/// `request` waits on that world-privacy request instead (FIX 4706), and one
-/// naming `agents` waits on those AGENT children of the run (slice 6.5b).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TaskWaitSetCall {
-    pub tasks: Vec<String>,
-    #[serde(default)]
-    pub all: Option<bool>,
-    #[serde(default)]
-    pub n_of: Option<u32>,
-    #[serde(default)]
-    pub until: Option<u64>,
-    pub step_key: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub request: Option<String>,
-    /// The AGENT children's attempt ids, hex, as `self.agents.spawn`
-    /// answered them.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agents: Option<Vec<String>>,
-}
-
-/// What a spawn answers: the child's task, the attempt its spend is keyed
-/// by, its run, its cutoff, and whether the same key had already spawned it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReaderSpawnReceipt {
-    pub task: EntityId,
-    pub attempt: String,
-    pub run: EntityId,
-    pub cutoff_unix_ms: u64,
-    pub state: String,
-    pub replay: bool,
-}
-
-/// What a child's report answers: its task, its finding's occurrence ref,
-/// and whether the same finding was already its latest.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReaderReportReceipt {
-    pub task: EntityId,
-    #[serde(rename = "ref")]
-    pub finding: String,
-    pub replay: bool,
-}
-
-/// A child whose finding a wait counts: its task, its finding's occurrence
-/// ref and size, and why it settled short, for a partial one.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskWaitFinding {
-    pub task: EntityId,
-    #[serde(rename = "ref")]
-    pub finding: String,
-    pub bytes: u64,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub reason: Option<String>,
-}
-
-/// A child a wait cannot count, and why.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskWaitFailure {
-    pub task: String,
-    pub reason: String,
-}
-
-/// One reduction of a wait set over its children; an answer adds their steps' type feedback.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskWaitSetResult {
-    pub ready: Vec<TaskWaitFinding>,
-    pub partial: Vec<TaskWaitFinding>,
-    pub failed: Vec<TaskWaitFailure>,
-    pub pending: Vec<EntityId>,
-    pub done: bool,
-    /// Why it is done: `all`, `quorum`, `cutoff` or `impossible`; `None`
-    /// while it is not.
-    pub reason: Option<String>,
-    pub until: u64,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub program_steps: Vec<super::ProgramStepFeedback>,
-}
-
-/// How many children a wait set waits for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum TaskWaitPolicy {
-    All,
-    NOf { n: u32 },
-}
-
 /// One wait over a parent's children, keyed by the parent and its step key.
 /// Its first done reduction is kept and answers every later call.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -498,44 +322,6 @@ pub struct ReaderParent {
     pub active: u64,
 }
 
-/// The actor a parent runs as, as its children's rows keep it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReaderActor {
-    pub entity: EntityId,
-    /// [`EdgeActorClass`] as its stored byte.
-    pub class: u8,
-}
-
-impl ReaderActor {
-    #[must_use]
-    pub const fn of(actor: WriteActor) -> Self {
-        Self {
-            entity: actor.entity_ref(),
-            class: actor.actor_class() as u8,
-        }
-    }
-
-    /// The parent's actor again.
-    ///
-    /// # Errors
-    ///
-    /// [`Error::CorruptedIndex`] for a class byte no actor class has.
-    pub fn write_actor(&self) -> Result<WriteActor> {
-        let class = EdgeActorClass::try_from_u8(self.class)
-            .ok_or(Error::CorruptedIndex("reader job actor class"))?;
-        Ok(WriteActor::new(self.entity, class))
-    }
-}
-
-/// Where a child's rows and run live: its parent's vault store (its id, hex),
-/// and the parent's session and participant when the parent runs off record.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReaderRoute {
-    pub vault: String,
-    pub session_ref: Option<String>,
-    pub participant: Option<EntityId>,
-}
-
 /// What a child is bound to: its parent run, actor and route, the source it
 /// reads, what it spends on, the clock it stops on and the model list its
 /// seat is held to. Never the parent's door, credential or body bytes.
@@ -553,73 +339,6 @@ pub struct SpawnParentBinding {
     /// The parent attempt's lease a scoped child borrowed (FIX 7507).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_lease: Option<BorrowedAttemptLease>,
-}
-
-/// A reader job's state without its reason.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReaderJobStatus {
-    Queued,
-    Active,
-    Done,
-    Partial,
-    Failed,
-}
-
-/// Where a child stands. A settled one (`Done`, `Partial`, `Failed`) never
-/// moves again. `Done` is completed with a committed finding: it proves no
-/// read of any input (FIX 7735).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "state", rename_all = "snake_case")]
-pub enum ReaderJobState {
-    Queued,
-    Active,
-    Done,
-    Partial { reason: String },
-    Failed { reason: String },
-}
-
-impl oneiron_contracts::lifecycle::Lifecycle for ReaderJobState {
-    type Kind = ReaderJobStatus;
-
-    fn kind(&self) -> Self::Kind {
-        match self {
-            Self::Queued => ReaderJobStatus::Queued,
-            Self::Active => ReaderJobStatus::Active,
-            Self::Done => ReaderJobStatus::Done,
-            Self::Partial { .. } => ReaderJobStatus::Partial,
-            Self::Failed { .. } => ReaderJobStatus::Failed,
-        }
-    }
-
-    fn next_kinds(kind: Self::Kind) -> &'static [Self::Kind] {
-        match kind {
-            // A queued job is claimed active or settles from the queue.
-            ReaderJobStatus::Queued => &[
-                ReaderJobStatus::Active,
-                ReaderJobStatus::Done,
-                ReaderJobStatus::Partial,
-                ReaderJobStatus::Failed,
-            ],
-            // An active job is parked queued for its payer, or settles.
-            ReaderJobStatus::Active => &[
-                ReaderJobStatus::Queued,
-                ReaderJobStatus::Done,
-                ReaderJobStatus::Partial,
-                ReaderJobStatus::Failed,
-            ],
-            ReaderJobStatus::Done | ReaderJobStatus::Partial | ReaderJobStatus::Failed => &[],
-        }
-    }
-}
-
-impl oneiron_contracts::lifecycle::LifecycleWords for ReaderJobState {
-    const WORDS: &'static [(Self::Kind, &'static str)] = &[
-        (ReaderJobStatus::Queued, "queued"),
-        (ReaderJobStatus::Active, "active"),
-        (ReaderJobStatus::Done, "done"),
-        (ReaderJobStatus::Partial, "partial"),
-        (ReaderJobStatus::Failed, "failed"),
-    ];
 }
 
 /// One reader child. `generation` counts its claims and fences: a report or

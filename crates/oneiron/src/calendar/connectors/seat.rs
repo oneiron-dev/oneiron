@@ -204,17 +204,8 @@ impl CalendarConnectorSeatState {
     }
 }
 
-/// The attempt payload one connector poll carries. Custody NAME only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CalendarConnectorSyncPayload {
-    /// The seat this attempt polls.
-    pub config: CalendarConnectorSeatConfig,
-    /// The provider cursor the run resumes from.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor: Option<String>,
-    /// The instant at or after which the host should run this poll.
-    pub not_before: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::calendar::connectors::seat::CalendarConnectorSyncPayload;
 
 /// The attempt kind one provider's poll chain uses.
 #[must_use]
