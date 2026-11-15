@@ -538,7 +538,7 @@ fn file_pass(vault: &Vault, job: EntityId, execution: &mut CompactionExecution) 
         job,
         writer,
         &calls,
-        now_ms(),
+        crate::unix_millis_now(),
     ) {
         Ok(mut steps) => {
             if execution.snapshot().is_some() {
@@ -554,12 +554,4 @@ fn file_pass(vault: &Vault, job: EntityId, execution: &mut CompactionExecution) 
             execution.step_unfiled = Some(STEP_FILING_REFUSED.to_owned());
         }
     }
-}
-
-fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }

@@ -1,7 +1,7 @@
 {
   "name": "vault.members.remove",
   "description": "An Admin removes one member from a shared vault.",
-  "input": "crate::task_verb::sdk::SharedMemberRequest",
+  "input": "crate::task_verb::sdk::SharedMemberRemoveRequest",
   "output": "crate::federation::SharedActExecutionReceipt",
   "call": "crate::task_verb::sdk::remove_shared_member_as(memory.vault(), &memory.embedded_owner(\"vault.members.remove\")?, None, input)?",
   "host_door": true,

@@ -6,10 +6,13 @@ mod archive;
 mod assertions;
 mod base;
 mod codec;
+#[cfg(feature = "sync")]
+mod foreign_speech;
 mod linked;
 mod program;
 mod reply_assertions;
 mod session;
+mod source_attribution;
 mod stream;
 mod turn_program;
 mod types;
@@ -41,13 +44,18 @@ pub(crate) use self::archive::{
 pub(crate) use self::codec::{
     IMPORTED_SOURCE_KEY, guard_import_stamp, turn_admits_message_bodies, witness_message_body,
 };
+#[cfg(feature = "sync")]
+pub(crate) use self::foreign_speech::{ForeignTurn, speak_as_counterparty};
 pub(crate) use self::program::ImportedTurnStamp;
 pub use self::program::{SessionWitnessBinding, SessionWitnessContext, SessionWitnessOutcome};
+pub(crate) use self::source_attribution::{
+    SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,
+};
 
 pub(super) use self::validation::validate_witness_occurrence;
 pub(crate) use self::validation::{
-    next_witness_message_order, sole_edge_target, taken_witness_message_order,
-    witness_message_order,
+    next_witness_message_order, sole_edge_target, stored_witness_turn_author,
+    taken_witness_message_order, witness_message_order,
 };
 
 // Helpers the sibling test suite resolves through `use super::witness::*`;
