@@ -10,6 +10,10 @@
     )
 )]
 
+// `oneiron-records` is still empty (lib split R1-R3). Until its first record type is re-exported here, this keeps
+// the dependency in use for Cargo's `unused_dependencies` lint (Rust 1.100). R1 drops it.
+use oneiron_records as _;
+
 // ===== Vault core & maintenance ===== LMDB substrate: Vault, store, ABI, ids, config, repair
 pub mod batch;
 pub use oneiron_store::config;

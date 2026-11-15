@@ -79,10 +79,11 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::memory::{
     ArchiveDeleteBatchResult, ArchiveDeleteConfirmOutcome, ArchiveDeleteConfirmRequest,
-    ArchiveDeleteError, ArchiveDeleteItem, ArchiveDeleteReceiptView,
-    CHECK_IN_PENDING_REASON_PREFIX, DeleteReceipt, MEMORY_CODE_BAD_REQUEST,
-    MEMORY_CODE_CHECK_IN_PENDING, MEMORY_CODE_INVALID_STATE, Memory, MemoryResult,
-    SafeDeleteReason, confirm_archive_delete_wire,
+    ArchiveDeleteError, ArchiveDeleteItem, ArchiveDeletePreviewOutcome,
+    ArchiveDeletePreviewRequest, ArchiveDeleteReceiptView, CHECK_IN_PENDING_REASON_PREFIX,
+    DeleteReceipt, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_CHECK_IN_PENDING,
+    MEMORY_CODE_INVALID_STATE, Memory, MemoryResult, SafeDeleteReason, confirm_archive_delete_wire,
+    preview_archive_delete_wire,
 };
 use oneiron::note::TakeTarget;
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -316,14 +317,24 @@ impl Org {
     }
 
     /// Whether archived `note` is gone: an archive confirm hard-deletes the
-    /// record, where the cleanup's archive kept its body. A merely archived
-    /// record already reads as a deleted shell, so [`Self::deleted`] cannot
-    /// tell the two apart.
+    /// record, where the cleanup's archive kept its body and marker. A merely
+    /// archived record already reads as a deleted shell, and `Vault::get_raw`
+    /// reads its fenced body as absent, so neither tells the two apart. The
+    /// Owner's `vault.archive.delete.preview` does: it previews a record only
+    /// while its cleanup archive marker and its body stand.
     fn purged(&self, note: &str) -> bool {
-        self.vault
-            .get_raw(&EntityId::from_hex(note).expect("note id"))
-            .expect("raw read")
-            .is_none()
+        let memory = self.vault.memory(self.owner, EdgeActorClass::Human);
+        let view = preview_archive_delete_wire(
+            &memory,
+            &ArchiveDeletePreviewRequest {
+                targets: vec![note.to_owned()],
+            },
+        )
+        .expect("the preview answers");
+        !matches!(
+            view.entries.as_slice(),
+            [entry] if matches!(entry.result, ArchiveDeletePreviewOutcome::Previewed(_))
+        )
     }
 
     /// The Owner approves pending check-in `id` over the effect it waits on,
