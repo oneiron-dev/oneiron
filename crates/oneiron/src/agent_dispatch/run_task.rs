@@ -58,6 +58,7 @@ use std::sync::PoisonError;
 
 use serde::{Deserialize, Serialize};
 
+use super::spend_record::SpendScopeId;
 use super::{AGENT_DISPATCH_ATTEMPT_TYPE, AgentDispatchInput, AgentDispatcher};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -348,9 +349,9 @@ impl FrozenContextBound {
 }
 
 /// The spend an agent run's launch reserved, as the machines that ran it
-/// spent it (FIX 4889): numbers only, never a body. The take reserves the
-/// remainder of the launch from it, and the custody machine folds the
-/// shares into its one counter (PR 2).
+/// committed it (FIX 4889): numbers only, never a body. The take reserves
+/// the remainder of the launch from it, and the custody machine folds the
+/// other machines' shares into its one counter (PR 2).
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct AgentRunSpendCarry {
     /// The machine whose spend tree funded the launch: the one counter the
@@ -358,48 +359,62 @@ pub(super) struct AgentRunSpendCarry {
     /// a move carries no budget).
     pub(super) custody_node: u64,
     /// How much of the other machines' shares the custody machine has folded
-    /// into its scope of the run so far (PR 2 writes it; 0 until then).
+    /// into its scope of the run so far (PR 2 writes it; 0 until then). The
+    /// custody machine's own share counts those units again.
     #[serde(default)]
     pub(super) custody_folded_units: u64,
-    /// One share per machine that ran the run.
+    /// One share per scope a machine ran the run under.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub(super) shares: Vec<AgentRunSpendShare>,
 }
 
-/// What one machine spent of an agent run's launch (FIX 4889): the
-/// `spent_units` of the scope the run spends under there, as that machine
-/// last wrote the run TASK.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// What one machine committed of an agent run's launch under one scope (FIX
+/// 4889): the scope's `spent_units` plus its `held_units`, what its open
+/// children hold, as that machine last wrote the run TASK. A child's spend
+/// reaches the scope only when the child settles, and a child carries its
+/// own carve when it moves, so the whole hold counts (REVIEW-7879). A
+/// machine that runs the run under a second scope (a successor try's, once
+/// the first settled) keeps a share for each, so what it spent under the
+/// first stays counted (REVIEW-7879).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub(super) struct AgentRunSpendShare {
     /// The machine's client id, as `AgentRunExecutorLease.node_id` holds it.
     pub(super) node: u64,
-    /// The `spent_units` of the run's scope on that machine.
-    pub(super) spent_units: u64,
+    /// The scope the run spends under on that machine.
+    pub(super) scope: SpendScopeId,
+    /// That scope's `spent_units` plus its `held_units`.
+    pub(super) committed_units: u64,
 }
 
 impl AgentRunSpendCarry {
-    /// The saturating sum of the shares of every machine but `node` (FIX
-    /// 4889): what the launch reserved less this is what a taker may still
-    /// reserve.
-    pub(super) fn spent_elsewhere(&self, node: u64) -> u64 {
+    /// What the machines that ran the run committed of its launch (FIX
+    /// 4889): the saturating sum of every share, less what the custody
+    /// machine folded, which its own share counts again. A take that opens a
+    /// new scope may reserve what the launch reserved less this.
+    pub(super) fn committed_units(&self) -> u64 {
         self.shares
             .iter()
-            .filter(|share| share.node != node)
             .fold(0_u64, |total, share| {
-                total.saturating_add(share.spent_units)
+                total.saturating_add(share.committed_units)
             })
+            .saturating_sub(self.custody_folded_units)
     }
 
-    /// Sets the share of `node` to `spent_units`, adding it when absent
-    /// (FIX 4889). A machine keeps one scope row for the run across its
-    /// generations (a kept scope at a take; a retry spends under the scope
-    /// of the try it retries), so a share is per machine, never per lease
-    /// generation.
-    pub(super) fn stamp(&mut self, node: u64, spent_units: u64) {
-        if let Some(share) = self.shares.iter_mut().find(|share| share.node == node) {
-            share.spent_units = spent_units;
+    /// Sets the share of `scope` on `node` to `committed_units`, adding it
+    /// when absent (FIX 4889).
+    pub(super) fn stamp(&mut self, node: u64, scope: &SpendScopeId, committed_units: u64) {
+        if let Some(share) = self
+            .shares
+            .iter_mut()
+            .find(|share| share.node == node && share.scope == *scope)
+        {
+            share.committed_units = committed_units;
         } else {
-            self.shares.push(AgentRunSpendShare { node, spent_units });
+            self.shares.push(AgentRunSpendShare {
+                node,
+                scope: scope.clone(),
+                committed_units,
+            });
         }
     }
 }
@@ -1225,11 +1240,12 @@ pub(super) fn update_agent_run_task_body_in_txn(
 }
 
 /// Stamps this machine's own spend share on the run TASK `body` in the
-/// caller's snapshot (FIX 4889): the `spent_units` of the scope the run's
-/// live try spends under here. Only the run's executor stamps, and only a
-/// metered run carries a share; a carry that is absent, a machine that is
-/// not this run's executor, a live try that does not parse, and a try that
-/// spends unmetered here each leave the body as it is.
+/// caller's snapshot (FIX 4889): the `spent_units` plus `held_units` of the
+/// scope the run's live try spends under here, as that scope's share. Only
+/// the run's executor stamps, and only a metered run carries a share; a
+/// carry that is absent, a machine that is not this run's executor, a live
+/// try that does not parse, and a try that spends unmetered here each leave
+/// the body as it is.
 fn stamp_own_spend_share_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -1250,7 +1266,11 @@ fn stamp_own_spend_share_in_txn(
     let Some(scope) = AgentDispatcher::new(vault).attempt_spend_scope_in_txn(txn, live)? else {
         return Ok(());
     };
-    carry.stamp(node, scope.spent_units);
+    carry.stamp(
+        node,
+        &scope.scope,
+        scope.spent_units.saturating_add(scope.held_units),
+    );
     Ok(())
 }
 
