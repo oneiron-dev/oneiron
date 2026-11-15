@@ -27,11 +27,11 @@ use oneiron::code_sandbox::{SandboxProposalBody, SandboxVendor};
 use oneiron_agent_runtime::code_sandbox::microvm::{
     VendorCallBound, VendorSandboxClient, VendorSandboxId, VendorSandboxSpec,
 };
-use reqwest::blocking::{Client, RequestBuilder, Response, multipart};
+use reqwest::blocking::{Client, RequestBuilder, multipart};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::vendor_http::{CancellableReader, DELETE_TIMEOUT, OwnerVendorKey, VendorHttp, quoted};
+use super::vendor_http::{Answer, CancellableReader, OwnerVendorKey, VendorHttp, quoted};
 
 /// The one vendor this client reaches.
 const VENDOR: SandboxVendor = SandboxVendor::Daytona;
@@ -138,14 +138,8 @@ impl DaytonaClient {
         request: RequestBuilder,
         key: &str,
         bound: VendorCallBound<'_>,
-    ) -> oneiron::Result<Response> {
-        bound.cancel.check()?;
-        let response = request
-            .bearer_auth(key)
-            .timeout(HTTP.remaining(bound.deadline)?)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
-        HTTP.checked(response, &[key])
+    ) -> oneiron::Result<Answer> {
+        HTTP.send(request.bearer_auth(key), &[key], bound)
     }
 
     /// Polls the sandbox until it runs, and opens the run's command session.
@@ -175,9 +169,7 @@ impl DaytonaClient {
             HTTP.pause(wait, bound)?;
             wait = (wait * 2).min(LONGEST_POLL);
             let answer: SandboxAnswer =
-                Self::send(http.get(self.sandbox_url(sandbox)?), key, bound)?
-                    .json()
-                    .map_err(|error| HTTP.http_failed(error, &[key]))?;
+                Self::send(http.get(self.sandbox_url(sandbox)?), key, bound)?.json()?;
             (state, reason) = (answer.state, answer.error_reason);
         }
         Self::send(
@@ -190,13 +182,8 @@ impl DaytonaClient {
     }
 
     fn delete_on(&self, http: &Client, key: &str, sandbox: &str) -> oneiron::Result<()> {
-        let response = http
-            .delete(self.sandbox_url(sandbox)?)
-            .bearer_auth(key)
-            .timeout(DELETE_TIMEOUT)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
-        HTTP.checked(response, &[key]).map(drop)
+        HTTP.send_delete(http.delete(self.sandbox_url(sandbox)?).bearer_auth(key), &[key])
+            .map(drop)
     }
 }
 
@@ -224,8 +211,7 @@ impl VendorSandboxClient for DaytonaClient {
             &key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
+        .json()?;
         let id = VendorSandboxId::new(HTTP.segment(&made.id)?)?;
         // From here the sandbox is this run's to delete, on any failure.
         if let Err(error) = self.start(&http, &key, id.as_str(), made, bound) {
@@ -279,8 +265,7 @@ impl VendorSandboxClient for DaytonaClient {
             &key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
+        .json()?;
         let status_url = self.toolbox_url(
             sandbox.as_str(),
             &format!(
@@ -290,9 +275,7 @@ impl VendorSandboxClient for DaytonaClient {
         )?;
         let mut wait = FIRST_POLL;
         loop {
-            let status: CommandStatus = Self::send(http.get(&status_url), &key, bound)?
-                .json()
-                .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
+            let status: CommandStatus = Self::send(http.get(&status_url), &key, bound)?.json()?;
             if let Some(code) = status.exit_code {
                 return Ok(code);
             }
@@ -310,13 +293,13 @@ impl VendorSandboxClient for DaytonaClient {
     ) -> oneiron::Result<()> {
         let key = self.key.read()?;
         let http = HTTP.client()?;
-        let response = Self::send(
+        Self::send(
             http.get(self.toolbox_url(sandbox.as_str(), "files/download")?)
                 .query(&[("path", path)]),
             &key,
             bound,
-        )?;
-        HTTP.copy_body(response, sink, &[key.as_str()], bound)
+        )?
+        .copy_to(sink)
     }
 
     fn delete(&self, sandbox: &VendorSandboxId) -> oneiron::Result<()> {
