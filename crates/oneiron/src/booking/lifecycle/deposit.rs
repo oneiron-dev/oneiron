@@ -689,32 +689,47 @@ pub(crate) fn refund_deposit_on_host_cancel(
         return Ok(());
     }
     booking_writer(vault, |wtxn| {
-        let Some(link) = DEPOSIT_BOOKING
-            .get(&vault.store, &*wtxn, &booking_key(event_ref))
-            .map_err(|error| engine_failure("meta read", error))?
-        else {
-            return Ok(());
-        };
-        let Some(mut row) = DEPOSIT
-            .get(&vault.store, &*wtxn, &link.deposit_key)
-            .map_err(|error| engine_failure("meta read", error))?
-        else {
-            return Ok(());
-        };
-        let next = match row.state {
-            DepositState::CaptureDue { .. } => DepositState::VoidDue,
-            DepositState::Captured { amount_minor } => DepositState::RefundDue { amount_minor },
-            _ => return Ok(()),
-        };
         let booking = super::claim::read_booking_facts_to_cancel(vault, &*wtxn, event_ref)?;
         if booking.status == super::types::BookingStatus::Cancelled {
             return Ok(());
         }
-        row.state = next;
-        row.updated_at = now_utc;
-        put_deposit(vault, wtxn, &link.deposit_key, &row)?;
-        enqueue_settle(vault, wtxn, &link.deposit_key, "host-cancel", now_utc)
+        refund_on_host_cancel_in_writer(vault, wtxn, event_ref, now_utc)
     })
+}
+
+/// A host cancel's deposit step inside a booking writer the caller holds:
+/// the calendar's imported cancellation above, and the owner's BK-09
+/// emergency cancel in its own commit (OPUS-SECREAD-A N2, 15 Nov). A deposit
+/// still to capture is released (`VoidDue`), a captured one is owed back
+/// whole (`RefundDue`), and its settle row is queued "host-cancel". A booking
+/// with no deposit, or one already voided, refunded or owing a refund, is
+/// untouched. The caller decides whether the booking was still live.
+pub(super) fn refund_on_host_cancel_in_writer(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    event_ref: &EntityId,
+    now_utc: u64,
+) -> Result<(), BookingError> {
+    let Some(link) = DEPOSIT_BOOKING
+        .get(&vault.store, &*wtxn, &booking_key(event_ref))
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
+        return Ok(());
+    };
+    let Some(mut row) = DEPOSIT
+        .get(&vault.store, &*wtxn, &link.deposit_key)
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
+        return Ok(());
+    };
+    row.state = match row.state {
+        DepositState::CaptureDue { .. } => DepositState::VoidDue,
+        DepositState::Captured { amount_minor } => DepositState::RefundDue { amount_minor },
+        _ => return Ok(()),
+    };
+    row.updated_at = now_utc;
+    put_deposit(vault, wtxn, &link.deposit_key, &row)?;
+    enqueue_settle(vault, wtxn, &link.deposit_key, "host-cancel", now_utc)
 }
 
 /// Whether the booking `event_ref` has a deposit a host cancel would move:
