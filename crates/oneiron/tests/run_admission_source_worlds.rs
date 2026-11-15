@@ -33,8 +33,8 @@ use oneiron::llm::{self, ReplyAssertions, SingleRouteBackend};
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{
-    BudgetLease, ContentPart, EdgeActorClass, EntityId, FatalLlmError, FinishReason, LlmBackend,
-    LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult,
+    BudgetLease, ContentPart, EdgeActorClass, EdgeKind, EntityId, FatalLlmError, FinishReason,
+    LlmBackend, LlmGenerateFuture, LlmMessage, LlmMessageRole, LlmRequest, LlmResponse, LlmResult,
     LlmStreamResult, LlmUsage, Vault, VaultConfig,
 };
 use serde_json::{Value, json};
@@ -119,6 +119,8 @@ struct Fixture {
     harbor: EntityId,
     harbor_claim: EntityId,
     base_claim: EntityId,
+    /// A NOTE in base reality and in the world.
+    shared_note: EntityId,
     receipts: Arc<VaultReceipts>,
 }
 
@@ -172,11 +174,22 @@ fn fixture() -> Fixture {
         .expect("owner creates a world");
     let harbor_claim = write_owner_claim(&vault, owner, &owner_proof, harbor, "harbor claim");
     let base_claim = write_owner_claim(&vault, owner, &owner_proof, base_world_id(), "base claim");
+    let shared_note = vault
+        .memory(owner, EdgeActorClass::Human)
+        .create_note("research", "Harbor tide tables, kept in base reality too.")
+        .expect("owner writes a NOTE");
+    let shared_note = EntityId::from_hex(&shared_note.id_hex).expect("the NOTE's id");
+    for world in [base_world_id(), harbor] {
+        vault
+            .put_edge(&shared_note, EdgeKind::InWorld, &world, 1.0)
+            .expect("the NOTE joins the world");
+    }
     Fixture {
         _dir: dir,
         harbor,
         harbor_claim,
         base_claim,
+        shared_note,
         receipts: Arc::new(VaultReceipts {
             vault: Arc::new(vault),
             rows: MemoryReceipts::default(),
@@ -361,5 +374,26 @@ fn a_held_call_names_its_rows_worlds() -> TestResult {
         Some(&worlds_json(&[fixture.harbor])?),
         "the held call's Denied receipt names the worlds of the rows it would have sent: {row}",
     );
+    Ok(())
+}
+
+#[test]
+fn a_row_in_base_and_a_world_names_both() -> TestResult {
+    let fixture = fixture();
+    // A row in base reality and in the world: base among its worlds never
+    // stands for the whole, so its receipts name both.
+    let run = declared_run(&fixture.receipts).sourced(Some(vec![fixture.shared_note]));
+    call_once(&run)?;
+
+    let rows = receipt_rows(&fixture.receipts)?;
+    assert_eq!(rows.len(), 3, "{rows:?}");
+    let expected = worlds_json(&[fixture.harbor, base_world_id()])?;
+    for (kind, row) in &rows {
+        assert_eq!(
+            row.get("source_worlds"),
+            Some(&expected),
+            "the {kind} receipt names every world of a row in two: {row}",
+        );
+    }
     Ok(())
 }

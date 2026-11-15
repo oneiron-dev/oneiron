@@ -123,9 +123,15 @@ fn customer_offer(credential: &str) -> TestResult<OfferBinding> {
 }
 
 fn declared_run() -> (RunAdmission, Arc<MemoryReceipts>) {
+    declared_run_named(format!("denied-world:{}", EntityId::now().to_hex()))
+}
+
+/// A run of `name` on its own meter, as [`declared_run`]: two runs of one
+/// name issue the same lease ids.
+fn declared_run_named(name: String) -> (RunAdmission, Arc<MemoryReceipts>) {
     let receipts = Arc::new(MemoryReceipts::default());
     let run = RunAdmission::new(
-        format!("denied-world:{}", EntityId::now().to_hex()),
+        name,
         RunDeclaration::declared(BudgetLine {
             limit_units: 10_000,
             reserve_units: CALL_RESERVE,
@@ -236,6 +242,66 @@ fn a_refused_dispatch_names_its_admitted_world() -> TestResult {
         Some(RunDenied::Dispatch {
             refused: DispatchRefused::OfferMismatch
         }),
+    );
+    Ok(())
+}
+
+#[test]
+fn a_foreign_lease_refusal_names_no_world() -> TestResult {
+    let harbor = EntityId::now();
+    let elsewhere = EntityId::now();
+    // Two runs of one name, each on its own meter: their first permits have
+    // the same lease id.
+    let name = format!("denied-world:{}", EntityId::now().to_hex());
+    let (ours, receipts) = declared_run_named(name.clone());
+    let (theirs, _their_receipts) = declared_run_named(name);
+    let offer = customer_offer("customer-key-1")?;
+    let our_request = request_in(Some(harbor))?;
+    let our_permit = ours
+        .admit(RunCall {
+            selector: None,
+            request: &our_request,
+            offer: &offer,
+        })
+        .map_err(|denied| format!("our call refused at admission: {denied:?}"))?;
+    let their_request = request_in(Some(elsewhere))?;
+    let their_permit = theirs
+        .admit(RunCall {
+            selector: None,
+            request: &their_request,
+            offer: &offer,
+        })
+        .map_err(|denied| format!("their call refused at admission: {denied:?}"))?;
+    assert_eq!(
+        their_permit.lease().id(),
+        our_permit.lease().id(),
+        "two meters issue the same lease id"
+    );
+    // Their permit at our gate: our run refuses the foreign lease and writes
+    // a Denied row for it, which names no world of ours.
+    let gate = ours.gate(Arc::new(UnreachedProvider), &offer);
+    let sent = block_on_ready(gate.generate(their_request.clone(), their_permit.lease()));
+    assert!(sent.is_err(), "a foreign permit never starts");
+    drop(their_permit);
+    drop(our_permit);
+
+    let rows = denied_rows(&receipts)?;
+    let refused: Vec<&Value> = rows
+        .iter()
+        .filter(|row| row.get("lease").is_some())
+        .collect();
+    assert_eq!(refused.len(), 1, "one lease-keyed Denied receipt: {rows:?}");
+    assert_eq!(
+        refused[0].get("world"),
+        None,
+        "a foreign lease's refusal names no world of the run's own call: {}",
+        refused[0],
+    );
+    assert_eq!(
+        refused[0].get("source_worlds"),
+        None,
+        "a foreign lease's refusal names no source worlds: {}",
+        refused[0],
     );
     Ok(())
 }
