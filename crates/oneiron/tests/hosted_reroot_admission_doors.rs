@@ -1,16 +1,18 @@
 //! Pass 27 R4 PR 1 (Engine RULING HOSTED-REROOT-ADMISSION-DOORS = C): the
 //! hosted ReRoot refusal at the admission doors. A ReRoot signed by the kit
 //! root's authority key on a hosted vault whose host root is live is refused
-//! at the signed-history import and at the authority-log puts, each judged
-//! against the fold before the row; the host's own move still imports into
+//! at the signed-history import, at the paged import (the authority-tail
+//! append and history repair reach it; Sol xhigh F3 on f98a5d6d8442) and at
+//! the authority-log puts, each judged against the fold before the row; the
+//! host's own move still imports into
 //! a fresh hosted replica. Such a
 //! ReRoot revokes every roster row, the custodial root included, and every
 //! slip the host minted stops verifying (NOTE WAYBACK-REROOT-TRACE, 15 Nov
 //! 22:02). The successor asks the owner role alone, so the fold would count
 //! the move.
 //!
-//! Red on head 4494593651b1: the import and the put land the row, and the
-//! custodial root is revoked.
+//! Red on head 4494593651b1: the import, the paged import and the put land
+//! the row, and the custodial root is revoked.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test hosted_reroot_admission_doors`.
 #![cfg(oneiron_test_support)]
@@ -309,6 +311,39 @@ fn a_hosted_vault_refuses_a_put_reroot_by_the_roots_key() {
             now,
         )
         .expect_err("a put ReRoot by the root's key is refused");
+    assert_hosted_refused(&refusal);
+    assert_eq!(
+        fixture.history().len(),
+        stored,
+        "the refusal writes nothing"
+    );
+    let host_root = fixture.issuer.public_key();
+    assert!(
+        live(&fixture.vault, &host_root),
+        "the custodial root stays live"
+    );
+    assert!(
+        live(&fixture.vault, &fixture.root_key),
+        "the root's authority key stays live"
+    );
+}
+
+/// The paged import (the authority-tail append and history repair reach it)
+/// judges an arriving ReRoot as the full-history import does (Sol xhigh F3 on
+/// f98a5d6d8442).
+#[test]
+fn a_hosted_vault_refuses_a_paged_reroot_by_the_roots_key() {
+    let fixture = fixture();
+    let stored = fixture.history().len();
+    let heads = fixture.heads();
+    let seq = fixture.next_seq(&fixture.root_key);
+    let row = fixture.re_root_row(&fixture.root_signing, seq, &heads, RE_ROOT_SEED);
+    let bytes = encode_authority_log_entry_body(&row).expect("the signed bytes");
+
+    let refusal = fixture
+        .vault
+        .import_signed_authority_page(&[bytes])
+        .expect_err("a paged ReRoot by the root's key is refused");
     assert_hosted_refused(&refusal);
     assert_eq!(
         fixture.history().len(),
