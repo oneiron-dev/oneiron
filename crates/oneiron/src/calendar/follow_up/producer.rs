@@ -174,8 +174,10 @@ impl Vault {
     /// the reply contract is refused, and nothing is written. Each item is
     /// then read alone, and one that names an unlisted recipient or label,
     /// cites no owner TURN, or holds empty or oversized words is skipped,
-    /// never cut or guessed. The lease and the source revision are checked
-    /// beside the writes in one writer; each draft writes in its own
+    /// never cut or guessed. The lease, the attempt's own SESSION and the
+    /// source (its TURNs still retained and not kept from the Dreamer, every
+    /// row it was read from unchanged) are checked beside the writes in one
+    /// writer; each draft writes in its own
     /// savepoint, so a draft the door refuses leaves its siblings written.
     ///
     /// # Errors
@@ -202,6 +204,12 @@ impl Vault {
                 )
                 .into());
             }
+            // A SESSION's drafts file only under the attempt queued for it.
+            let queued: MeetingFollowUpDraftPayload = serde_json::from_slice(&record.payload)
+                .map_err(|_| Error::InvalidClaimBody("meeting follow-up payload is invalid"))?;
+            if EntityId::from_hex(&queued.session_ref).ok() != Some(source.session_ref) {
+                return Err(transition("source_mismatch"));
+            }
             if record.state != AttemptState::Leased {
                 return Err(transition(record.state.as_str()));
             }
@@ -217,7 +225,7 @@ impl Vault {
             {
                 return Err(transition("cancel_pending"));
             }
-            if source::source_revision_in_txn(self, txn, source)? != source.revision {
+            if !source::source_unchanged_in_txn(self, txn, source)? {
                 return Err(transition("source_changed"));
             }
             let author = self.dreamer_authority_in_txn(txn, self.now_recorded_at())?;

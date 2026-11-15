@@ -27,7 +27,8 @@ use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOut
 use oneiron::calendar::follow_up::{
     MEETING_FOLLOW_UP_DRAFT_ATTEMPT_KIND, MeetingFollowUpDraftPayload, MeetingFollowUpDrafter,
     MeetingFollowUpRead, MeetingFollowUpRequest, MeetingFollowUpRunOutcome, MeetingFollowUpSilence,
-    PREDICATE_MEETING_FOLLOW_UP, meeting_follow_up_run_id, run_meeting_follow_up_drafting,
+    MeetingFollowUpSource, PREDICATE_MEETING_FOLLOW_UP, meeting_follow_up_run_id,
+    run_meeting_follow_up_drafting,
 };
 use oneiron::calendar::transcript::{
     TranscriptFileDropRequest, TranscriptIngestOutcome, ingest_file_drop_transcript,
@@ -471,4 +472,123 @@ fn a_reply_outside_the_contract_or_a_lost_lease_files_nothing() {
     assert_eq!(filed.len(), 1);
     assert_eq!(fx.follow_up_claims(yuki).len(), 1);
     assert_eq!(fx.waiting(&session), filed);
+}
+
+/// E2a review D3: a name in a script written without spaces runs straight
+/// into the words around it ("田中さん"), and is still heard; a two-character
+/// first word in that script names the owner alone ("大野" for "大野 太郎").
+#[test]
+fn a_name_in_an_unspaced_script_is_heard_inside_its_sentence() {
+    let fx = fixture();
+    fx.name_the_owner("大野 太郎");
+    let tanaka = fx.person("田中");
+    fx.ingest(
+        "大野: 田中さんに資料を明日送ります\n鈴木: よろしくお願いします",
+        0,
+    );
+
+    let attempt = fx.claim();
+    let drafter = ScriptedDrafter::replying(&reply(&[item(
+        "P1",
+        "田中さん、本日の資料をお送りします。",
+        &["T1"],
+    )]));
+    let outcome = fx.run(&drafter, &attempt).expect("the attempt runs");
+    let MeetingFollowUpRunOutcome::Filed(written) = outcome else {
+        panic!("the transcript is read and the reply filed, not {outcome:?}");
+    };
+    let asked = drafter.asked.borrow();
+    assert!(asked[0].turns[0].owner, "大野 is the owner's first word");
+    assert!(!asked[0].turns[1].owner);
+    assert_eq!(asked[0].recipients.len(), 1);
+    assert_eq!(asked[0].recipients[0].name, "田中");
+    assert_eq!(written.len(), 1);
+    assert_eq!(fx.follow_up_claims(tanaka).len(), 1);
+}
+
+/// E2a review D4: the owner's first word follows the recipients' rule, so a
+/// first word too short to name anyone alone ("Al" of "Al Smith") does not
+/// make its speaker the owner, and no model is asked.
+#[test]
+fn a_short_first_word_does_not_make_its_speaker_the_owner() {
+    let fx = fixture();
+    fx.name_the_owner("Al Smith");
+    let _yuki = fx.person("Yuki");
+    fx.ingest(
+        "Al: I will send you the slides tomorrow\nYuki: Thanks, that helps",
+        0,
+    );
+
+    let attempt = fx.claim();
+    let read = fx
+        .vault
+        .meeting_follow_up_source_for(&payload(&attempt), &ReadDestination::on_device())
+        .expect("the SESSION is read");
+    assert!(
+        matches!(
+            read,
+            MeetingFollowUpRead::Silent(MeetingFollowUpSilence::NoOwnerSpeaker)
+        ),
+        "no speaker is the owner, not {read:?}"
+    );
+}
+
+/// E2a review D1 and D2: a read files only under the attempt queued for its
+/// own SESSION, and only while it stands: an owner renamed since the read
+/// may move which speaker is the owner, so the read files nothing. A fresh
+/// read then files.
+#[test]
+fn a_read_files_only_under_its_own_attempt_and_while_it_stands() {
+    let fx = fixture();
+    fx.name_the_owner("Owen");
+    let yuki = fx.person("Yuki");
+    let (first, _) = fx.ingest(TRANSCRIPT, 0);
+    let (second, _) = fx.ingest(TRANSCRIPT, 60_000);
+    let attempt = fx.claim();
+    let claimed = payload(&attempt);
+    let other = if claimed.session_ref == first.to_hex() {
+        second
+    } else {
+        first
+    };
+    let ready = |payload: &MeetingFollowUpDraftPayload| {
+        let read = fx
+            .vault
+            .meeting_follow_up_source_for(payload, &ReadDestination::on_device())
+            .expect("the SESSION is read");
+        let MeetingFollowUpRead::Ready(source) = read else {
+            panic!("the SESSION is ready to draft from, not {read:?}");
+        };
+        source
+    };
+    let answer = reply(&[item("P1", WORDS, &["T1"])]);
+    let file = |source: &MeetingFollowUpSource| {
+        fx.vault.file_meeting_follow_up_drafts_attempt(
+            attempt.id,
+            LEASE_OWNER,
+            attempt.attempt_count,
+            source,
+            &answer,
+        )
+    };
+
+    let foreign = ready(&MeetingFollowUpDraftPayload {
+        session_ref: other.to_hex(),
+    });
+    assert!(
+        file(&foreign).is_err(),
+        "another SESSION's read never files under this attempt"
+    );
+
+    let stale = ready(&claimed);
+    fx.name_the_owner("Owen Park");
+    assert!(
+        file(&stale).is_err(),
+        "a read the owner's rename moved files nothing"
+    );
+    assert!(fx.follow_up_claims(yuki).is_empty());
+
+    let fresh = ready(&claimed);
+    assert_eq!(file(&fresh).expect("a fresh read files").len(), 1);
+    assert_eq!(fx.follow_up_claims(yuki).len(), 1);
 }

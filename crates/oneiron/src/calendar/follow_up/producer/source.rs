@@ -24,7 +24,9 @@ const REVISION_DOMAIN: &[u8] = b"oneiron:meeting-follow-up-source:v1";
 /// inside ordinary words' neighbours too often to name anyone.
 const MIN_NAME_CHARS: usize = 2;
 /// A multi-word name also matches by its first word when that word is at
-/// least this long ("Yuki" for "Yuki Tanaka").
+/// least this long ("Yuki" for "Yuki Tanaka"). A first word written wholly
+/// in a script without spaces between words needs only [`MIN_NAME_CHARS`]
+/// ("田中" for "田中 優希").
 const MIN_FIRST_WORD_CHARS: usize = 3;
 
 /// One TURN as the model reads it.
@@ -111,6 +113,9 @@ pub struct MeetingFollowUpSource {
     /// The rows the recipients' names were read from: each PERSON, and the
     /// names-class claim when the name is a claim's.
     pub(super) name_rows: Vec<EntityId>,
+    /// The rows the owners' names were read from: which speaker is the
+    /// owner's moves with them.
+    owner_name_rows: Vec<EntityId>,
 }
 
 /// Why a read SESSION gives a model nothing to draft from.
@@ -195,7 +200,7 @@ impl Vault {
             HeardTurns::Held(hold) => return Ok(Held(hold)),
         };
         let owners = owner_persons_in_txn(self, &txn)?;
-        let owner_names = owner_names_in_txn(self, &txn, &owners)?;
+        let (owner_names, owner_name_rows) = owner_names_in_txn(self, &txn, &owners)?;
         let turns: Vec<MeetingFollowUpTurn> = heard
             .into_iter()
             .enumerate()
@@ -220,7 +225,8 @@ impl Vault {
         if request.transcript_message().len() > MEETING_FOLLOW_UP_MAX_TRANSCRIPT_BYTES {
             return Ok(Silent(MeetingFollowUpSilence::TooLong));
         }
-        let revision = revision_in_txn(self, &txn, &turn_refs, &listed.name_rows)?;
+        let revision =
+            revision_in_txn(self, &txn, &turn_refs, &listed.name_rows, &owner_name_rows)?;
         let receipt = reader.read_receipt_in(&txn, None, 0)?;
         Ok(Ready(MeetingFollowUpSource {
             request,
@@ -230,6 +236,7 @@ impl Vault {
             turn_refs,
             recipient_refs: listed.recipient_refs,
             name_rows: listed.name_rows,
+            owner_name_rows,
         }))
     }
 
@@ -302,21 +309,25 @@ impl Vault {
     }
 }
 
-/// The owners' casefolded names, less the embedded owner's placeholder.
+/// The owners' casefolded names, less the embedded owner's placeholder, and
+/// every row an owner's name was read from (the placeholder's included: a
+/// name set over it moves the revision too).
 fn owner_names_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     owners: &[EntityId],
-) -> Result<Vec<String>> {
+) -> Result<(Vec<String>, Vec<EntityId>)> {
     let mut names = Vec::new();
+    let mut rows = Vec::new();
     for owner in owners {
-        for (name, _) in person_names_in_txn(vault, txn, *owner)? {
+        for (name, row) in person_names_in_txn(vault, txn, *owner)? {
+            rows.push(row);
             if name.trim() != crate::vault::EMBEDDED_OWNER_ACTOR_NAME {
                 names.push(casefold(&name));
             }
         }
     }
-    Ok(names)
+    Ok((names, rows))
 }
 
 /// The PERSONs `turns` name, less the owners, that the destination's scoped
@@ -363,12 +374,27 @@ fn listed_recipients_in_txn(
 }
 
 /// The revision of the rows `source` was read from, read again in `txn`.
-pub(super) fn source_revision_in_txn(
+/// Whether `source` still stands in `txn`: the SESSION retains exactly the
+/// TURNs it was read with (none withdrawn, archived or added since), none of
+/// them is in a conversation the owner keeps from the Dreamer, and every row
+/// it was read from (TURNs, recipients' and owners' name rows) is unchanged.
+pub(super) fn source_unchanged_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     source: &MeetingFollowUpSource,
-) -> Result<[u8; 32]> {
-    revision_in_txn(vault, txn, &source.turn_refs, &source.name_rows)
+) -> Result<bool> {
+    if retained_turns_in_txn(vault, txn, &source.session_ref)? != source.turn_refs
+        || vault.any_turn_excluded_in_txn(txn, &source.turn_refs)?
+    {
+        return Ok(false);
+    }
+    Ok(revision_in_txn(
+        vault,
+        txn,
+        &source.turn_refs,
+        &source.name_rows,
+        &source.owner_name_rows,
+    )? == source.revision)
 }
 
 fn revision_in_txn(
@@ -376,12 +402,14 @@ fn revision_in_txn(
     txn: &heed::RoTxn<'_>,
     turn_refs: &[EntityId],
     name_rows: &[EntityId],
+    owner_name_rows: &[EntityId],
 ) -> Result<[u8; 32]> {
     let mut hasher = blake3::Hasher::new();
     hasher.update(REVISION_DOMAIN);
     for (section, ids) in [
         (b"turns".as_slice(), turn_refs),
         (b"names".as_slice(), name_rows),
+        (b"owners".as_slice(), owner_name_rows),
     ] {
         hasher.update(section);
         hasher.update(&(ids.len() as u64).to_le_bytes());
@@ -510,12 +538,7 @@ fn named_persons_in_txn(
 fn first_heard(heard_text: &str, name: &str) -> Option<usize> {
     let name = casefold(name);
     let mut forms = vec![name.as_str()];
-    if let Some(first) = name.split_whitespace().next()
-        && first != name
-        && first.chars().count() >= MIN_FIRST_WORD_CHARS
-    {
-        forms.push(first);
-    }
+    forms.extend(first_word_form(&name));
     forms
         .into_iter()
         .filter(|form| form.chars().count() >= MIN_NAME_CHARS)
@@ -523,28 +546,57 @@ fn first_heard(heard_text: &str, name: &str) -> Option<usize> {
         .min()
 }
 
+/// The first word of a casefolded multi-word `name`, when it is long enough
+/// to name someone alone; the one rule for owners' and recipients' names.
+fn first_word_form(name: &str) -> Option<&str> {
+    let mut words = name.split_whitespace();
+    let first = words.next()?;
+    words.next()?;
+    let chars = first.chars().count();
+    let unspaced = first.chars().all(is_unspaced_script);
+    (chars >= MIN_FIRST_WORD_CHARS || (unspaced && chars >= MIN_NAME_CHARS)).then_some(first)
+}
+
 /// The first byte offset where `word` stands in `text` with no letter or
-/// digit touching it on either side.
+/// digit of a spaced script touching it on either side. A script written
+/// without spaces between words (Han, kana, Hangul) never blocks a match: a
+/// name there runs straight into the words around it ("田中さん").
 fn whole_word_at(text: &str, word: &str) -> Option<usize> {
+    let blocks = |c: char| c.is_alphanumeric() && !is_unspaced_script(c);
     text.match_indices(word).map(|(at, _)| at).find(|&at| {
         let before = text[..at].chars().next_back();
         let after = text[at + word.len()..].chars().next();
-        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+        !before.is_some_and(blocks) && !after.is_some_and(blocks)
     })
 }
 
+/// Whether `c` belongs to a script written without spaces between words:
+/// CJK ideographs, kana (half-width too) and Hangul syllables; the ranges of
+/// `failure_signals::verbatim`'s CJK test, plus the kana extension.
+fn is_unspaced_script(c: char) -> bool {
+    matches!(
+        c,
+        '\u{3040}'..='\u{30FF}'
+            | '\u{31F0}'..='\u{31FF}'
+            | '\u{3400}'..='\u{4DBF}'
+            | '\u{4E00}'..='\u{9FFF}'
+            | '\u{AC00}'..='\u{D7AF}'
+            | '\u{F900}'..='\u{FAFF}'
+            | '\u{FF66}'..='\u{FF9F}'
+            | '\u{20000}'..='\u{2FA1F}'
+    )
+}
+
 /// Whether a TURN's speaker label is one of the owner's casefolded names:
-/// the whole name, or its first word when the name has several.
+/// the whole name, or its first word by [`first_word_form`]'s rule.
 fn speaker_is_owner(speaker: &str, owner_names: &[String]) -> bool {
     let speaker = casefold(speaker);
     if speaker.chars().count() < MIN_NAME_CHARS {
         return false;
     }
-    owner_names.iter().any(|name| {
-        *name == speaker
-            || (name.split_whitespace().nth(1).is_some()
-                && name.split_whitespace().next() == Some(speaker.as_str()))
-    })
+    owner_names
+        .iter()
+        .any(|name| *name == speaker || first_word_form(name) == Some(speaker.as_str()))
 }
 
 /// An imported TURN's display label (provenance only, never identity).

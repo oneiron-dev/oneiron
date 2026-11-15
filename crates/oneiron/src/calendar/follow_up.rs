@@ -159,6 +159,10 @@ pub fn meeting_follow_up_claim_id(draft: &MeetingFollowUpDraft) -> EntityId {
 /// they lie in follow the draft's words; a row this vault never held names
 /// nothing and is left out.
 ///
+/// Whose promise becomes a draft is the producer's to judge (the transcript
+/// producer drafts only the owner's): this door checks that the cited TURNs
+/// are the meeting's, not who said them.
+///
 /// Read before write: the same draft written again is success with no
 /// write, even after the owner decided it; a different draft under the same
 /// id is refused. The replay keeps the birth the first write stamped.
