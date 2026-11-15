@@ -391,10 +391,10 @@ pub(super) fn fold_authority_log_once(
     let issues_before_states = issues.len();
     // An owner key's enrolment reaches across branches, as a handoff does
     // (row CARRIER-PROOF-OLD-PARENTS): while a fold's settled states hold a
-    // proving enrolment the folds before it did not find, and some entry
-    // lies outside one's line, the log folds again with the lines of every
-    // proving enrolment found so far. Each fold drops the issues of the one
-    // before it.
+    // proving enrolment the folds before it did not take, and its line
+    // changes the lines in force, the log folds again with the lines of
+    // every enrolment taken so far, a key at a time, earliest first. Each
+    // fold drops the issues of the one before it.
     let mut owner_key_enrolments = super::owner_key_line::ProvingEnrolments::default();
     let mut owner_key_lines: Option<super::owner_key_line::OwnerKeyLines> = None;
     let (states, retirements) = loop {
@@ -421,13 +421,15 @@ pub(super) fn fold_authority_log_once(
             context,
             &mut issues,
         );
-        if !owner_key_enrolments.add_found(&states, &by_hash) {
+        let Some(lines) = owner_key_enrolments.grow(
+            &states,
+            &by_hash,
+            &entry_ancestors,
+            owner_key_lines.as_ref(),
+        ) else {
             break (states, retirements);
-        }
-        owner_key_lines = owner_key_enrolments.lines(&by_hash, &entry_ancestors);
-        if owner_key_lines.is_none() {
-            break (states, retirements);
-        }
+        };
+        owner_key_lines = Some(lines);
         issues.truncate(issues_before_states);
     };
     let context = FoldContext {

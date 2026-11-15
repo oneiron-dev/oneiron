@@ -26,20 +26,27 @@
 //! settle and whose key proves for the owner in the state it leaves. An
 //! enrolment a handoff prunes is none: its line would make the new root's
 //! acts wait where no key could prove them. Each fold of the log finds the
-//! proving enrolments in its settled states ([`ProvingEnrolments`]). While a
-//! fold finds one the folds before it did not, and some entry lies outside
-//! one's line, the log folds again with the lines of every proving enrolment
-//! found so far ([`OwnerKeyLines`] in the context). A line makes a row wait,
-//! be held or be refused, and that can let another enrolment fold (a held
-//! removal keeps its holder machine live), so the set only grows, and the
+//! proving enrolments in its settled states and takes the new ones a key at
+//! a time, earliest first: fewest ancestors, then hash ([`ProvingEnrolments`]).
+//! When one's line changes the lines in force, the log folds again with the
+//! lines of every enrolment taken so far ([`OwnerKeyLines`] in the context).
+//! A line makes a row wait, be held or be refused. That can let another
+//! enrolment fold (a held removal keeps its holder machine live), and it can
+//! end one: where each of two branches enrolled the other's owner key as an
+//! agent's before its own enrolment, each line refuses the other enrolment's
+//! ancestry. Taken together, both would fall and leave lines no key answers;
+//! a key at a time, the earlier one's line refuses the later one's ancestry
+//! before the later one is taken, and the earlier one stands. Proving
+//! enrolments of one key are taken together. The set only grows, and the
 //! folds end when it stops: at most one more fold per enrolment in the log.
 //! Only the log and its ancestry decide, so every replica judges the same
 //! rows the same way. Two effects follow from the grow-only set. A row an
 //! earlier fold refused, because it did not name a choice that a later fold
 //! keeps waiting, can fold in the later one: it is judged against what
-//! counts, as every row is. An enrolment one fold found and a later fold
-//! refuses (it descends from a refused enrolment) keeps its line, which can
-//! only add waits.
+//! counts, as every row is. An enrolment taken in one fold that a later
+//! one's line ends keeps its line, which only adds waits; the enrolment
+//! taken last still stands, as its own line reaches no row beneath it, so a
+//! key that proves for the owner remains to answer them.
 //!
 //! A fold past an adopted image leaves to the whole log every tail a line
 //! could reach where the image's kept states do not show it
@@ -49,37 +56,61 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::*;
 
-/// The proving owner-key enrolments the folds of one log have found so far,
+/// The proving owner-key enrolments the folds of one log have taken so far,
 /// each with the key it enrolled. It only grows.
 #[derive(Debug, Default)]
 pub(super) struct ProvingEnrolments(BTreeMap<AuthorityEntryHash, AuthorityKey>);
 
 impl ProvingEnrolments {
-    /// Adds the proving enrolments among `settled`, one fold's state after
-    /// each entry once its handoffs settled. Whether any of them is new.
-    pub(super) fn add_found(
+    /// Takes the proving enrolments among `settled` (one fold's state after
+    /// each entry once its handoffs settled) that the folds before it did
+    /// not, a key at a time, earliest first, until one key's enrolments
+    /// change the lines in force. The new lines when they changed: the log
+    /// then folds again with them. None when no new enrolment changed them:
+    /// the fold that gave `settled` used every line it needs.
+    pub(super) fn grow(
         &mut self,
         settled: &BTreeMap<AuthorityEntryHash, FoldState>,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    ) -> bool {
-        let before = self.0.len();
-        for (hash, state) in settled {
-            let Some(AuthorityOp::OwnerKeyEnroll(enrol)) = entries.get(hash).map(|entry| &entry.op)
-            else {
-                continue;
-            };
-            if super::owner_proof::proves_for_the_owner(state, &enrol.device.key) {
-                self.0
-                    .entry(*hash)
-                    .or_insert_with(|| enrol.device.key.clone());
+        ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+        in_force: Option<&OwnerKeyLines>,
+    ) -> Option<OwnerKeyLines> {
+        let mut found: Vec<(usize, AuthorityEntryHash, &AuthorityKey)> = settled
+            .iter()
+            .filter(|(hash, _)| !self.0.contains_key(*hash))
+            .filter_map(|(hash, state)| {
+                let Some(AuthorityOp::OwnerKeyEnroll(enrol)) =
+                    entries.get(hash).map(|entry| &entry.op)
+                else {
+                    return None;
+                };
+                let key = &enrol.device.key;
+                super::owner_proof::proves_for_the_owner(state, key).then(|| {
+                    let depth = ancestors.get(hash).map_or(0, BTreeSet::len);
+                    (depth, *hash, key)
+                })
+            })
+            .collect();
+        found.sort_unstable_by_key(|(depth, hash, _)| (*depth, *hash));
+        while let Some(&(_, _, key)) = found.first() {
+            found.retain(|(_, hash, enrolled)| {
+                let same_key = *enrolled == key;
+                if same_key {
+                    self.0.insert(*hash, key.clone());
+                }
+                !same_key
+            });
+            let lines = self.lines(entries, ancestors);
+            if lines.as_ref() != in_force {
+                return lines;
             }
         }
-        self.0.len() > before
+        None
     }
 
     /// The lines of these enrolments over `entries`. None when no entry lies
     /// outside one: the log then needs no fold with lines.
-    pub(super) fn lines(
+    fn lines(
         &self,
         entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
         ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
@@ -116,7 +147,7 @@ impl ProvingEnrolments {
 }
 
 /// The entries a fold judges outside a proving owner-key enrolment's line.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, PartialEq, Eq)]
 pub(super) struct OwnerKeyLines {
     /// Owner choices and carried machine answers outside some proving
     /// enrolment's line: each needs the owner's proof.
@@ -167,24 +198,27 @@ fn enrolled_key(op: &AuthorityOp) -> Option<&AuthorityKey> {
 }
 
 /// Whether a tail past an adopted image holds a row an owner key's line
-/// could reach where the image's kept states do not show it, which only the
-/// whole log judges (row CARRIER-PROOF-OLD-PARENTS):
+/// could reach, which only the whole log judges (row
+/// CARRIER-PROOF-OLD-PARENTS):
 ///
-/// - an owner choice or a carried machine answer in the tail, and a tail
-///   row's covered parent outside the line of a covered `OwnerKeyEnroll` row
-///   (that row and its covered descendants) whose kept state holds no key
-///   proving for the owner. The image's merged state cannot tell: an
+/// - an owner choice or a carried machine answer in the tail, where a
+///   covered row a tail row names lies outside the line of a covered
+///   `OwnerKeyEnroll` row (that row and its covered descendants). No kept
+///   state decides it: a tail row folds on the merge of its parents, past
+///   the tail rows between, where each parent's own proving key can be
+///   revoked on another (Sol delta review DELTA-01, 16 Nov), and an
 ///   enrolment whose key a later row revoked still has its line;
 /// - an enrolment in the tail of a key a covered `OwnerKeyEnroll` row that
 ///   did not fold valid enrolled. A valid one's key is on the merged roster,
 ///   where the tail admission already refuses its enrolment.
 ///
 /// Every covered `OwnerKeyEnroll` row counts, valid or not, because the
-/// whole log keeps the line of an enrolment any of its folds found. The
-/// image carries the body of every enrolment row. It decodes the bodies of
-/// the covered rows that did not fold valid when the tail holds a choice or
-/// an enrolment, and every covered body only when a tail row's covered
-/// parent is bare and the vault may have had a proving enrolment.
+/// whole log keeps the line of an enrolment any of its folds took. The image
+/// carries the body of every enrolment row. It decodes the bodies of the
+/// covered rows that did not fold valid when the tail holds a choice or an
+/// enrolment, and every covered body only when the tail holds a choice,
+/// names a covered row other than a sole frontier row, and the vault may
+/// have had a proving enrolment.
 pub(super) fn tail_reaches_old_parents(
     image: &super::checkpoint_image::AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
@@ -206,17 +240,15 @@ pub(super) fn tail_reaches_old_parents(
     if !choices {
         return false;
     }
-    let bare: BTreeSet<&AuthorityEntryHash> = tail
+    let named: BTreeSet<&AuthorityEntryHash> = tail
         .values()
         .flat_map(|entry| entry.parent_hashes.iter())
         .filter(|parent| image.rows.contains_key(*parent))
-        .filter(|parent| {
-            !image
-                .state_at(parent)
-                .flatten()
-                .is_some_and(|state| super::owner_proof::not_mine_carriers_need_proof(&state))
-        })
         .collect();
+    // A sole frontier row descends from every covered row, so it lies on
+    // every covered enrolment's line.
+    let sole_frontier = matches!(image.frontier.as_slice(), [only]
+        if !named.is_empty() && named.iter().all(|parent| *parent == only));
     // A valid enrolment leaves its key on the merged roster with its owner
     // role, revoked or not.
     let merged = &image.aggregate.merged;
@@ -224,7 +256,7 @@ pub(super) fn tail_reaches_old_parents(
         device.roles & ROLE_OWNER != 0
             && !(merged.hosted && super::machine_profile::in_host_custody(merged, key))
     });
-    if bare.is_empty() || (rejected.is_empty() && !owner_key_ever) {
+    if sole_frontier || (rejected.is_empty() && !owner_key_ever) {
         return false;
     }
     let mut enrolments = covered_owner_key_enrolments(image, |hash| valid.contains(hash));
@@ -232,7 +264,7 @@ pub(super) fn tail_reaches_old_parents(
     let children = covered_children(image);
     enrolments.keys().any(|enrolment| {
         let line = covered_line(&children, enrolment);
-        bare.iter().any(|parent| !line.contains(*parent))
+        named.is_empty() || named.iter().any(|parent| !line.contains(*parent))
     })
 }
 
