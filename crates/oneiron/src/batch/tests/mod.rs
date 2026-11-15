@@ -42,6 +42,7 @@ use std::str;
 mod authority_log;
 mod facet_taint_session;
 mod habit_streak;
+mod k4_open_segment;
 mod lexical_hints_lifecycle;
 // FIX [LIBTEST-QUARANTINE-BATCH-TESTS-LEXICAL-HINTS-POLICY]: the lib test target's type check fails here (5 errors: E0063 x5); port it, then drop this gate
 #[cfg(any())]
