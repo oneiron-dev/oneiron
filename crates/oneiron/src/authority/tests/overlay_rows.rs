@@ -1084,6 +1084,10 @@ fn a_page_naming_another_subjects_key_under_an_erased_subject_closes_nothing() {
 #[test]
 #[cfg(feature = "sync")]
 fn an_answer_from_a_home_no_longer_admitted_erases_and_seals_nothing() {
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "it stands where an admission callback goes, which answers Result<bool>"
+    )]
     fn home_removed(_: &heed::RoTxn<'_>) -> crate::error::Result<bool> {
         Ok(false)
     }
@@ -1573,4 +1577,176 @@ fn scaffold_id_leaf_resolves_to_nothing_after_actor_erase() {
             .scaffold_verified
             .contains(&mint_row)
     );
+}
+
+fn mint_sealed_overlay_row(
+    vault: &Vault,
+    slip_id: [u8; 32],
+) -> (AuthorityEntryHash, EntityId, Vec<u8>, Vec<u8>) {
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let holder = EntityId::now();
+    let mut claims = root.claims.clone();
+    claims.slip_id = slip_id;
+    claims.holder_ref = holder.to_hex();
+    claims.records = BTreeSet::from(["record:overlay-custody".to_owned()]);
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let fold = vault.authority_fold().unwrap();
+    let hash = fold.slips.mints[&slip.claims.slip_id].entry_hash;
+    assert!(
+        fold.valid_entries.contains(&hash),
+        "the fixture's sealed mint row opens"
+    );
+    let id = authority_log_entity_id_from_hash(&hash).unwrap();
+    let entry = vault.get_authority_log_entry(&id).unwrap().unwrap();
+    let subject = authority_overlay_subject(&entry.op).unwrap();
+    assert_eq!(
+        subject, holder,
+        "the canonical holder id is the overlay subject"
+    );
+    let raw = vault.get_raw(&id).unwrap().unwrap();
+    let body = raw[crate::batch::ENTITY_METADATA_HEADER_LEN..].to_vec();
+    let overlay: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
+        SideTable::new(&side_table::AUTHORITY_OVERLAY);
+    let txn = vault.store.env.read_txn().unwrap();
+    let row = overlay.get(&vault.store, &txn, &hash).unwrap().unwrap();
+    drop(txn);
+    (hash, subject, body, row)
+}
+
+fn vault_with_a_head_naming_another_subjects_key() -> (
+    tempfile::TempDir,
+    Vault,
+    EntityId,
+    AuthorityEntryHash,
+    AuthorityEntryHash,
+) {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let (row_a, subject_a, body_a, mut overlay_a) = mint_sealed_overlay_row(&vault, [151; 32]);
+    let (row_b, subject_b, _, overlay_b) = mint_sealed_overlay_row(&vault, [152; 32]);
+    assert_ne!(subject_a, subject_b, "the fixture has two overlay subjects");
+    assert_ne!(
+        &overlay_a[16..48],
+        &overlay_b[16..48],
+        "the fixture has two distinct ready overlay keys"
+    );
+    // The head is subject (16) | key ref (32); A's envelope stays unchanged.
+    overlay_a[16..48].copy_from_slice(&overlay_b[16..48]);
+    let carried = crate::authority::CarriedOverlays::from([(row_a, overlay_a)]);
+    let overlay: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
+        SideTable::new(&side_table::AUTHORITY_OVERLAY);
+    vault
+        .with_write_txn_grouped(|txn| {
+            overlay.delete(&vault.store, txn, &row_a)?;
+            crate::authority::stage_carried_overlays_in_txn(
+                &vault.store,
+                txn,
+                [body_a.as_slice()],
+                &carried,
+            )
+        })
+        .unwrap();
+    assert!(
+        vault
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&row_b),
+        "the other subject's row opens before the erase"
+    );
+    (dir, vault, subject_a, row_a, row_b)
+}
+
+/// T-HEAD-REF (Sol review of census L5-22 PR 1b): a held row of A whose
+/// head names B's key ref is A's row, not B's key. Erasing A retires A's
+/// keys and leaves B's key ready, so B's row still opens.
+#[test]
+fn an_erase_through_a_head_naming_another_subjects_key_leaves_that_key_ready() {
+    let (_dir, vault, subject_a, row_a, row_b) = vault_with_a_head_naming_another_subjects_key();
+    vault
+        .with_write_txn_grouped(|txn| {
+            crate::authority::erase_authority_overlay_subject_in_txn(
+                &vault.store,
+                txn,
+                &subject_a,
+                &[],
+            )
+        })
+        .unwrap();
+    let fold = vault.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&row_b),
+        "an erase of one subject leaves another subject's key ready"
+    );
+    let txn = vault.store.env.read_txn().unwrap();
+    let marked = crate::authority::authority_row_erased_in_txn(&vault.store, &txn, &row_a).unwrap();
+    drop(txn);
+    assert!(marked, "the erased subject's held row is marked erased");
+}
+
+/// T-HELD-LIE (Sol review of census L5-22 PR 1b): no signature binds a
+/// carried head to its body, so a row this vault holds, re-sent under a head
+/// naming an erased subject, keeps its held overlay and gets no erased mark.
+#[test]
+fn a_held_row_re_sent_under_a_head_naming_an_erased_subject_stays_unmarked() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let (row, _subject_b, body, mut overlay) = mint_sealed_overlay_row(&vault, [153; 32]);
+    let subject_a = EntityId::now();
+    vault
+        .with_write_txn_grouped(|txn| {
+            crate::authority::erase_authority_overlay_subject_in_txn(
+                &vault.store,
+                txn,
+                &subject_a,
+                &[],
+            )
+        })
+        .unwrap();
+    // Only the carried subject changes; the held key ref and envelope stay.
+    overlay[..16].copy_from_slice(subject_a.as_bytes());
+    let carried = crate::authority::CarriedOverlays::from([(row, overlay)]);
+    vault
+        .with_write_txn_grouped(|txn| {
+            crate::authority::stage_carried_overlays_in_txn(
+                &vault.store,
+                txn,
+                [body.as_slice()],
+                &carried,
+            )
+        })
+        .unwrap();
+    let txn = vault.store.env.read_txn().unwrap();
+    let marked = crate::authority::authority_row_erased_in_txn(&vault.store, &txn, &row).unwrap();
+    drop(txn);
+    assert!(!marked, "a carried head marks no row this vault holds");
+    assert!(
+        vault.authority_fold().unwrap().valid_entries.contains(&row),
+        "the held row still opens"
+    );
+}
+
+/// T-MARKED-OPEN (Sol review of census L5-22 PR 1b): archive coverage
+/// reports a row erased only when it reads as pass-through. A row that opens
+/// here is not erased, whatever an erased-row mark says.
+#[test]
+fn archive_coverage_reports_no_open_row_erased() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let (row, _subject, _body, _overlay) = mint_sealed_overlay_row(&vault, [154; 32]);
+    let erased: SideTable<AuthorityEntryHash, (), Raw> =
+        SideTable::new(&side_table::AUTHORITY_ERASED_ROW);
+    vault
+        .with_write_txn_grouped(|txn| erased.put(&vault.store, txn, &row, &()))
+        .unwrap();
+    let coverage = vault
+        .authority_history_coverage(&BTreeSet::from([row]))
+        .unwrap();
+    assert!(
+        !coverage.archive.erased.contains(&row),
+        "a row that opens here is not reported erased"
+    );
+    assert!(coverage.archive.held.contains(&row), "the open row is held");
+    assert!(coverage.semantic.contains(&row), "the open row decodes");
 }

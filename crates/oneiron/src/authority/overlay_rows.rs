@@ -263,15 +263,19 @@ pub(crate) fn stage_carried_overlays_in_txn<'b>(
             return Err(overlay_row_too_large());
         }
         let sealed = SealedOverlay::from_bytes(row)?;
+        // A row already held here stays, and a carried head, which no
+        // signature binds to the body, marks nothing on it (Sol review of
+        // census L5-22 PR 1b).
+        if AUTHORITY_OVERLAY.contains(store, w, &hash)? {
+            continue;
+        }
         // An erased subject's overlay never lands again: its row reads as
         // erased (census L5-22 PR 1b).
         if custody::subject_erased_at_in_txn(store, w, &sealed.subject)?.is_some() {
             AUTHORITY_ERASED_ROW.put(store, w, &hash, &())?;
             continue;
         }
-        if !AUTHORITY_OVERLAY.contains(store, w, &hash)? {
-            AUTHORITY_OVERLAY.put(store, w, &hash, row)?;
-        }
+        AUTHORITY_OVERLAY.put(store, w, &hash, row)?;
     }
     Ok(())
 }
