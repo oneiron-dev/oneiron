@@ -12,9 +12,9 @@ use oneiron::EntityId;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dispatch_byoa::{
     ContinueOutsideWorkCheckRequest, ContinueOutsideWorkCheckView, ContinueOutsideWorkRequest,
-    ContinueOutsideWorkView, OnSeatSpent, RunnerContinueCaller, RunnerSeatCreditTopUpRequest,
-    RunnerSeatPolicy, RunnerSeatQuotasRequest, RunnerSeatQuotasView, RunnerSeatTopUpReceipt,
-    RunnerWorkResumeRequest, RunnerWorkResumeView,
+    ContinueOutsideWorkView, OnSeatSpent, ProviderAdapterRegistry, RunnerContinueCaller,
+    RunnerSeatCreditTopUpRequest, RunnerSeatPolicy, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
+    RunnerSeatTopUpReceipt, RunnerWorkResumeRequest, RunnerWorkResumeView,
 };
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryError, MemoryResult};
 
@@ -101,23 +101,30 @@ impl ContinueCaller {
     }
 }
 
-/// This node's own runner-seat policy, as the seat host reads it from the AI host. The caller
-/// never names the policy. A node with no seats answers each runner `no_runner_seat`, after the
-/// caller check.
-fn node_runner_seat_policy(server: &SyncServer) -> MemoryResult<RunnerSeatPolicy> {
+/// This node's own runner seats, as the seat host reads them from the AI host: the registry its
+/// seat settings build (each official seat under its adapter, its login machine attached, then
+/// the plain CLI runners) and the policy folded against it. The caller never names either. A
+/// node with no seats answers each runner `no_runner_seat`, after the caller check.
+fn node_runner_seats(
+    server: &SyncServer,
+) -> MemoryResult<(ProviderAdapterRegistry, RunnerSeatPolicy)> {
     let Some(settings) = server.ai.runner_seats() else {
-        return Ok(RunnerSeatPolicy {
+        let policy = RunnerSeatPolicy {
             seats: Vec::new(),
             on_spent: OnSeatSpent::Stop,
-        });
+        };
+        return Ok((ProviderAdapterRegistry::standard(), policy));
     };
-    settings.policy().map_err(|text| {
+    let unfolded = |text: String| {
         MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             text,
             &["Fix [models.dreamer] runner_seats in this node's config."],
         )
-    })
+    };
+    let registry = settings.registry().map_err(unfolded)?;
+    let policy = settings.policy().map_err(unfolded)?;
+    Ok((registry, policy))
 }
 
 /// `vault.runners.continue`: the owner, or an agent on its own Grant, starts the outside session
@@ -132,15 +139,15 @@ pub(crate) async fn vault_runners_continue(
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
-    let policy = match node_runner_seat_policy(server) {
-        Ok(policy) => policy,
+    let (registry, policy) = match node_runner_seats(server) {
+        Ok(seats) => seats,
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
     let answer = super::clock_ingress::run_blocking(move || {
         server
             .vault()
-            .continue_outside_work(caller.engine_caller(), &policy, &input)
+            .continue_outside_work(caller.engine_caller(), &registry, &policy, &input)
     })
     .await
     .unwrap_or_else(|_| Err(internal(VERB)));
@@ -159,15 +166,18 @@ pub(crate) async fn vault_runners_continue_check(
         Ok(caller) => caller,
         Err(refusal) => return refused(refusal),
     };
-    let policy = match node_runner_seat_policy(server) {
-        Ok(policy) => policy,
+    let (registry, policy) = match node_runner_seats(server) {
+        Ok(seats) => seats,
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
     let answer = super::clock_ingress::run_blocking(move || {
-        server
-            .vault()
-            .continue_outside_work_check(caller.engine_caller(), &policy, &input)
+        server.vault().continue_outside_work_check(
+            caller.engine_caller(),
+            &registry,
+            &policy,
+            &input,
+        )
     })
     .await
     .unwrap_or_else(|_| Err(internal(VERB)));
