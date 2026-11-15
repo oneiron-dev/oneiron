@@ -294,7 +294,8 @@ fn running_definition() -> AgentDefinition {
         1.0,
         false,
         true,
-        rmpv::Value::Map(Vec::new()),
+        // The AGENT_DEF codec refuses an empty provenance map.
+        rmpv::Value::Map(vec![("definedVia".into(), "define_agent".into())]),
         None,
         true,
         None,
