@@ -257,3 +257,120 @@ pub(super) fn read_json<T: DeserializeOwned>(path: &Path) -> Res<(T, Vec<u8>)> {
         serde_json::from_slice(&bytes).map_err(|error| format!("{}: {error}", path.display()))?;
     Ok((value, bytes))
 }
+
+/// The names of `Recipe` and `MergeCase`, one line per row, generated from
+/// `scripts/ratchet/hand_name_tables.py --names --only <this file>` before both became Registers
+/// (Fable pass 25, the Register wave). Green on the hand tables and on the derive, so no manifest
+/// name changed (M-1 keep). Each name is also pinned to the one serde reads. Here and not under
+/// `tests/`: both enums are private to `oracle_run`.
+#[cfg(test)]
+mod register_names {
+    use super::MergeCase;
+    use super::Recipe;
+    use serde::Deserialize;
+    use serde::de::IntoDeserializer;
+    use serde::de::value::{Error as ValueError, StrDeserializer};
+
+    /// Every row of `Recipe`, as its hand table spelled it.
+    const RECIPE_ROWS: [(Recipe, &str); 21] = [
+        (Recipe::SetText, "set_text"),
+        (Recipe::SetRunMarks, "set_run_marks"),
+        (Recipe::SetGeometry, "set_geometry"),
+        (Recipe::SetPreset, "set_preset"),
+        (Recipe::AddShape, "add_shape"),
+        (Recipe::AddGroup, "add_group"),
+        (Recipe::AddConnector, "add_connector"),
+        (Recipe::AddTable, "add_table"),
+        (Recipe::AddChart, "add_chart"),
+        (Recipe::AddPicture, "add_picture"),
+        (Recipe::AddSlide, "add_slide"),
+        (Recipe::MoveShape, "move_shape"),
+        (Recipe::MoveCrossSlide, "move_cross_slide"),
+        (Recipe::RemoveShape, "remove_shape"),
+        (Recipe::EditPoints, "edit_points"),
+        (Recipe::RaggedTable, "ragged_table"),
+        (Recipe::SmartArtBirth, "smartart_birth"),
+        (Recipe::SmartArtRestructure, "smartart_restructure"),
+        (Recipe::HeldPictureBirth, "held_picture_birth"),
+        (Recipe::MultiLevelCategories, "multi_level_categories"),
+        (Recipe::PerSeriesCategories, "per_series_categories"),
+    ];
+
+    #[test]
+    fn every_recipe_keeps_its_name() {
+        assert_eq!(Recipe::SetText.name(), "set_text");
+        assert_eq!(Recipe::SetRunMarks.name(), "set_run_marks");
+        assert_eq!(Recipe::SetGeometry.name(), "set_geometry");
+        assert_eq!(Recipe::SetPreset.name(), "set_preset");
+        assert_eq!(Recipe::AddShape.name(), "add_shape");
+        assert_eq!(Recipe::AddGroup.name(), "add_group");
+        assert_eq!(Recipe::AddConnector.name(), "add_connector");
+        assert_eq!(Recipe::AddTable.name(), "add_table");
+        assert_eq!(Recipe::AddChart.name(), "add_chart");
+        assert_eq!(Recipe::AddPicture.name(), "add_picture");
+        assert_eq!(Recipe::AddSlide.name(), "add_slide");
+        assert_eq!(Recipe::MoveShape.name(), "move_shape");
+        assert_eq!(Recipe::MoveCrossSlide.name(), "move_cross_slide");
+        assert_eq!(Recipe::RemoveShape.name(), "remove_shape");
+        assert_eq!(Recipe::EditPoints.name(), "edit_points");
+        assert_eq!(Recipe::RaggedTable.name(), "ragged_table");
+        assert_eq!(Recipe::SmartArtBirth.name(), "smartart_birth");
+        assert_eq!(Recipe::SmartArtRestructure.name(), "smartart_restructure");
+        assert_eq!(Recipe::HeldPictureBirth.name(), "held_picture_birth");
+        assert_eq!(
+            Recipe::MultiLevelCategories.name(),
+            "multi_level_categories"
+        );
+        assert_eq!(Recipe::PerSeriesCategories.name(), "per_series_categories");
+    }
+
+    #[test]
+    fn every_recipe_name_is_its_serde_name() {
+        for (row, name) in RECIPE_ROWS {
+            let reader: StrDeserializer<'_, ValueError> = name.into_deserializer();
+            let read = Recipe::deserialize(reader).expect("serde reads the name");
+            assert_eq!(read, row, "{name}");
+        }
+    }
+
+    /// Every row of `MergeCase`, as its hand table spelled it.
+    const MERGE_CASE_ROWS: [(MergeCase, &str); 9] = [
+        (MergeCase::BothMove, "both_move"),
+        (MergeCase::BothMoveSame, "both_move_same"),
+        (MergeCase::DeleteGroupEditChild, "delete_group_edit_child"),
+        (MergeCase::ReparentGeometry, "reparent_geometry"),
+        (MergeCase::TextAnimationRange, "text_animation_range"),
+        (MergeCase::ThemeInheritedStyle, "theme_inherited_style"),
+        (MergeCase::BothReplaceOpaque, "both_replace_opaque"),
+        (MergeCase::BothAddShape, "both_add_shape"),
+        (MergeCase::LoroPeers, "loro_peers"),
+    ];
+
+    #[test]
+    fn every_merge_case_keeps_its_name() {
+        assert_eq!(MergeCase::BothMove.name(), "both_move");
+        assert_eq!(MergeCase::BothMoveSame.name(), "both_move_same");
+        assert_eq!(
+            MergeCase::DeleteGroupEditChild.name(),
+            "delete_group_edit_child"
+        );
+        assert_eq!(MergeCase::ReparentGeometry.name(), "reparent_geometry");
+        assert_eq!(MergeCase::TextAnimationRange.name(), "text_animation_range");
+        assert_eq!(
+            MergeCase::ThemeInheritedStyle.name(),
+            "theme_inherited_style"
+        );
+        assert_eq!(MergeCase::BothReplaceOpaque.name(), "both_replace_opaque");
+        assert_eq!(MergeCase::BothAddShape.name(), "both_add_shape");
+        assert_eq!(MergeCase::LoroPeers.name(), "loro_peers");
+    }
+
+    #[test]
+    fn every_merge_case_name_is_its_serde_name() {
+        for (row, name) in MERGE_CASE_ROWS {
+            let reader: StrDeserializer<'_, ValueError> = name.into_deserializer();
+            let read = MergeCase::deserialize(reader).expect("serde reads the name");
+            assert_eq!(read, row, "{name}");
+        }
+    }
+}
