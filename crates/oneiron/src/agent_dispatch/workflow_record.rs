@@ -198,6 +198,23 @@ pub(super) struct WorkflowCancelRequest {
     pub by: String,
     /// The recorded clock at the first request.
     pub at: u64,
+    /// The landing this request asked of a step a worker held, once it asked
+    /// one (L1-03 review of #8193). Only this ask makes that step's later end
+    /// the request's stop: an ask the same actor put to the step before,
+    /// outside this request, never does.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub asked: Option<WorkflowStepAsk>,
+}
+
+/// The landing a run's cancel request asked of one held step: the step, and
+/// the soft-request receipt the ask wrote on it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkflowStepAsk {
+    /// The asked step.
+    pub step: AttemptId,
+    /// The `sequence` of the step's `SoftRequested` receipt this ask wrote.
+    pub sequence: u64,
 }
 
 /// A frozen step's dispatch input, as a release reads it.

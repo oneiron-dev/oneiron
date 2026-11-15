@@ -9,7 +9,10 @@
 //!   its result stays (a cancel never undoes committed work, ARCH-0028
 //!   `#mcp-tasks`), the run ends `cancelled`, and its next step never starts.
 //! - A step that was abandoned before anyone asked still fails the run: the
-//!   cancel request never renames a failure `cancelled`.
+//!   cancel request never renames a failure `cancelled`. That holds when the
+//!   same owner had asked the step itself to land before: only the landing
+//!   the run's request asked for makes the step's end its stop (review of
+//!   #8193).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test workflow_run_cancel`.
@@ -23,7 +26,8 @@ use oneiron::agent_def::workflow::WorkflowDefinition;
 use oneiron::agent_dispatch::{AgentDispatcher, WorkflowProgress};
 use oneiron::attempt_queue::{
     AbandonAttempt, AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord,
-    AttemptResultRef, AttemptState,
+    AttemptResultRef, AttemptState, CancelRequestOutcome, CancelStanding, LandingTrigger,
+    RequestAttemptCancel,
 };
 use oneiron::authority::MachineRole;
 use oneiron::consent::AuthenticatedOwner;
@@ -369,6 +373,81 @@ fn workflow_cancel_after_its_step_was_abandoned_leaves_the_run_failed() -> TestR
         view.state,
         WorkflowRunState::Failed,
         "a step that failed before the request fails the run; the cancel does not rename it"
+    );
+    assert_eq!(
+        fixture.attempt(fixture.run.root_attempt_ref)?.state,
+        AttemptState::Failed
+    );
+    assert!(view.results.is_empty(), "no step completed");
+    fixture.assert_no_step_runs()?;
+    Ok(())
+}
+
+#[test]
+fn workflow_cancel_after_an_earlier_landing_ask_and_an_abandon_leaves_the_run_failed() -> TestResult
+{
+    let fixture = Fixture::new("cancel-after-asked-abandon")?;
+    let leaf = fixture.run.active_attempt_ref;
+    let leaf_id = AttemptId::from_bytes(leaf.as_bytes())?;
+    let owner = fixture.owner.to_hex();
+    // The host claims the step and its executor stops without an answer: the
+    // step stays leased, and no pass has pumped the run since.
+    let now = fixture.vault.now_recorded_at();
+    let pass = AgentDispatcher::new(&fixture.vault).run_workflow_step(
+        fixture.root()?,
+        "test-host",
+        now,
+        |_status, _context| Err(oneiron::Error::InvalidConfig("the executor stopped".into())),
+    );
+    assert!(
+        pass.is_err(),
+        "the executor's failure answers the host pass"
+    );
+    let held = fixture.attempt(leaf)?;
+    assert_eq!(held.state, AttemptState::Leased);
+    // The owner asks the held step itself to land, outside any run cancel.
+    let asked = AttemptQueue::new(&fixture.vault).request_cancel(RequestAttemptCancel {
+        id: leaf_id,
+        actor: owner.clone(),
+        standing: CancelStanding::Authority,
+        trigger: LandingTrigger::CancelRequest,
+        reason: None,
+        now: fixture.vault.now_recorded_at(),
+    })?;
+    assert!(
+        matches!(asked, CancelRequestOutcome::Requested { .. }),
+        "the owner's own ask is recorded on the held step: {asked:?}"
+    );
+    // Its lease is reclaimed: the step ends abandoned before anyone asks the
+    // run to stop.
+    AttemptQueue::new(&fixture.vault).abandon(AbandonAttempt {
+        id: leaf_id,
+        lease_owner: "test-host".to_owned(),
+        attempt_count: held.attempt_count,
+        result_ref: AttemptResultRef::new("artifact:partial")?,
+        reason: "executor stopped without delivering".to_owned(),
+        now: fixture.vault.now_recorded_at(),
+    })?;
+    let abandoned = fixture.attempt(leaf)?;
+    assert_eq!(abandoned.state, AttemptState::Abandoned);
+    assert!(
+        abandoned.cancel_receipts().iter().any(|receipt| {
+            receipt.kind == AttemptCancelReceiptKind::SoftRequested && receipt.actor == owner
+        }),
+        "the abandoned step keeps the owner's earlier ask"
+    );
+    assert_eq!(
+        fixture.status()?.state,
+        WorkflowRunState::Running,
+        "no pass has ended the run yet"
+    );
+
+    let view = fixture.cancel()?;
+
+    assert_eq!(
+        view.state,
+        WorkflowRunState::Failed,
+        "the earlier ask is not the run's request: the step abandoned before it fails the run"
     );
     assert_eq!(
         fixture.attempt(fixture.run.root_attempt_ref)?.state,
