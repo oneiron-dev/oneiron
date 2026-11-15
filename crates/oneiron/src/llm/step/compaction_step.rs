@@ -214,6 +214,56 @@ pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<boo
     }
 }
 
+/// Every artifact holding the bytes the stored row `raw` at `id` carries, when
+/// it is a content-addressed version ASSET and a filed compaction step's
+/// response artifact is among those holders: the response's bytes carry the
+/// compactor's words as that artifact does, so a reader takes the ASSET only
+/// beside one of them (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Empty for
+/// every other row, and for an ASSET no response artifact holds.
+pub(crate) fn compaction_response_holders_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Vec<EntityId>> {
+    let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, raw)? else {
+        return Ok(Vec::new());
+    };
+    let holders = crate::blob_artifact::content_holders_in_txn(store, txn, &hash)?;
+    for holder in &holders {
+        let Some(record) = store.port_entity_record(txn, holder)? else {
+            continue;
+        };
+        if record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?
+        {
+            return Ok(holders);
+        }
+    }
+    Ok(Vec::new())
+}
+
+impl Vault {
+    /// Whether `artifact_id` is a filed compaction step's response artifact
+    /// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES): its version bytes carry
+    /// the compactor's words about every record the step's call read, so a
+    /// door that serves them judges them through the reader's own lane first,
+    /// as it judges reminder wording (FIX 4997). An artifact that is gone
+    /// reads as no step's, as its bytes read absent.
+    ///
+    /// # Errors
+    ///
+    /// The store failed.
+    pub fn is_compaction_step_response_artifact(&self, artifact_id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some(record) = self.store.port_entity_record(&txn, artifact_id)? else {
+            return Ok(false);
+        };
+        Ok(record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?)
+    }
+}
+
 impl ExecutorStorage<'_> {
     /// Files each of `calls` as one terminal `dreamer.step` claim about and
     /// by `writer`, the run's authenticated actor, on the route this run's

@@ -214,6 +214,9 @@ impl<'v> ScopedRead<'v> {
         if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
             return Ok(false);
         }
+        if !self.compaction_response_bytes_readable_in(rtxn, id, raw)? {
+            return Ok(false);
+        }
         if self.actor_key.vault_owner_ref().is_some() {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
@@ -483,6 +486,27 @@ impl<'v> ScopedRead<'v> {
             self.walked_source_admitted_in(rtxn, policy, &floor, authority, source, row)
         };
         crate::compaction::derived_from_sources_admitted_in(&self.store_read(), rtxn, id, admit)
+    }
+
+    /// A filed compaction step's response bytes, as the content ASSET of its
+    /// response artifact's version, carry the compactor's words as that
+    /// artifact does. So this reader takes such an ASSET only while it reads
+    /// one of the artifacts holding those bytes, each by its own row read,
+    /// which walks the step's sources (COMPACTION-STEP-CLAIM-READS-WITHOUT-
+    /// SOURCES). Every other row reads as before.
+    fn compaction_response_bytes_readable_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        raw: &[u8],
+    ) -> Result<bool> {
+        let holders = crate::llm::compaction_response_holders_in(&self.vault.store, rtxn, id, raw)?;
+        if holders.is_empty() {
+            return Ok(true);
+        }
+        Ok(self
+            .entities_readable_in_txn(rtxn, &holders)?
+            .contains(&true))
     }
 
     /// One record a summary's or a compaction step's words came from, as

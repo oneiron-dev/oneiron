@@ -84,7 +84,7 @@ pub(crate) use step::{
     wake_resident_share_traps_in_txn,
 };
 // COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES: a filed compaction step's rows.
-pub(crate) use step::is_compaction_step_row;
+pub(crate) use step::{compaction_response_holders_in, is_compaction_step_row};
 // SEAT-PARK-MODEL-STEP-PATH: when a spent seat's refusal says it resets.
 pub(crate) use step::stated_reset_at;
 // KS-2B1: row-held step responses under body custody.
