@@ -1325,6 +1325,107 @@ fn a_prepared_enrollment_of_a_key_enrolled_since_lands_no_second_vouch() {
     );
 }
 
+/// The passkey's assertion over a prepared enrollment's challenge, as the
+/// browser hands it to land.
+fn passkey_assertion_over(prepared: &oneiron::authority::PreparedOwnerKeyEnrollment) -> Vec<u8> {
+    let assertion = assert_over(&prepared.challenge, FLAGS_PRESENT_VERIFIED);
+    webauthn_assertion_envelope(
+        &assertion.authenticator_data,
+        &assertion.client_data_json,
+        &assertion.signature,
+    )
+    .expect("an envelope")
+}
+
+/// Blind review #8539 F2: an enrollment prepared while the passkey was
+/// live, then asserted and landed after the owner's device key revoked
+/// the passkey, lands nothing. The fold judges the entry at the heads
+/// prepare named, where the passkey was live, so land judges the
+/// predecessor again at the heads it reads.
+#[test]
+fn a_prepared_enrollment_lands_nothing_once_its_passkey_is_revoked() {
+    let hosted = HostedVault::open();
+    let receipt = enrol_passkey(&hosted);
+    hosted
+        .vault
+        .enrol_owner_signing_key_as_host(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, receipt.machine, &owner_device()),
+            &hosted.issuer,
+        )
+        .expect("the owner's device key");
+    let prepared = hosted
+        .vault
+        .prepare_owner_key_enrollment_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, receipt.machine, &fresh_owner_key()),
+            passkey_roster_key(),
+        )
+        .expect("the engine prepares the enrollment");
+    assert!(
+        revoke_owner_key_signed_by(
+            &hosted.vault,
+            ed_key(&owner_device()),
+            passkey_roster_key(),
+            |transcript| owner_device().sign(transcript).to_bytes().to_vec(),
+        )
+        .expect("the revoke is stored"),
+        "guard: the owner's device key revokes the passkey"
+    );
+    let landed = hosted.vault.land_owner_key_enrollment_as(
+        &hosted.owner(),
+        &prepared.entry,
+        passkey_assertion_over(&prepared),
+    );
+    assert!(
+        landed.is_err(),
+        "a revoked passkey's prepared vouch is refused: {landed:?}"
+    );
+    assert!(
+        !hosted.live_owner_key(&ed_key(&fresh_owner_key())),
+        "nothing was enrolled"
+    );
+}
+
+/// Blind review #8539 F2, the predecessor's own line: once the passkey
+/// signs a later entry, an enrollment prepared before it lands nothing
+/// (its sequence is spent), as the one-step door would refuse it.
+#[test]
+fn a_prepared_enrollment_lands_nothing_once_its_passkey_signed_a_later_entry() {
+    let hosted = HostedVault::open();
+    let receipt = enrol_passkey(&hosted);
+    let prepared = hosted
+        .vault
+        .prepare_owner_key_enrollment_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, receipt.machine, &fresh_owner_key()),
+            passkey_roster_key(),
+        )
+        .expect("the engine prepares the enrollment");
+    hosted
+        .vault
+        .enrol_owner_signing_key_as(
+            &hosted.owner(),
+            device_enrollment(&hosted, receipt.machine),
+            passkey_roster_key(),
+            |transcript| Ok(passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)),
+        )
+        .expect("the passkey signs another device key in at once");
+    let landed = hosted.vault.land_owner_key_enrollment_as(
+        &hosted.owner(),
+        &prepared.entry,
+        passkey_assertion_over(&prepared),
+    );
+    assert!(
+        landed.is_err(),
+        "a prepared vouch at a sequence the passkey has spent is refused: {landed:?}"
+    );
+    assert!(
+        !hosted.live_owner_key(&ed_key(&fresh_owner_key())),
+        "nothing was enrolled"
+    );
+}
+
 #[test]
 fn the_audit_names_the_enrolled_passkey_its_machine_and_its_shape() {
     let hosted = HostedVault::open();
