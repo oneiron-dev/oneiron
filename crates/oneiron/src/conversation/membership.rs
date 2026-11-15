@@ -312,12 +312,12 @@ impl Vault {
         body::body_in(self, &txn, conversation)?;
         rows_in(&self.store, &txn, conversation)
     }
+    /// Who sat in `conversation` at `at`. A deleted, archived or non-room id
+    /// answers as [`Self::membership_ledger`] does, though a user delete keeps
+    /// the ledger and its index.
     pub fn membership_at(&self, conversation: EntityId, at: u64) -> Result<Vec<EntityId>> {
-        // The ledger alone answers: no room body check.
         let txn = self.store.env.read_txn()?;
-        Ok(members_at_in(&self.store, &txn, conversation, at)?
-            .into_iter()
-            .collect())
+        self.membership_at_in_txn(&txn, conversation, at)
     }
     pub fn members(&self, conversation: EntityId) -> Result<Vec<EntityId>> {
         self.membership_at(conversation, u64::MAX)
@@ -404,7 +404,7 @@ impl Vault {
         person: EntityId,
     ) -> Result<Vec<MembershipWindow>> {
         let txn = self.store.env.read_txn()?;
-        person_windows_in(&self.store, &txn, conversation, person)
+        self.windows_in_txn(&txn, conversation, person)
     }
     /// [`Self::windows`] in the caller's snapshot.
     pub(crate) fn windows_in_txn(
