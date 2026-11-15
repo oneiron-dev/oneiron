@@ -249,6 +249,19 @@ impl FoldedMachine {
     /// machine back.
     #[must_use]
     pub fn trusted_under(&self, admitter: &MachineAdmitter) -> Option<TrustedMachine<'_>> {
+        self.trusted_revision_under(admitter)
+            .map(|(chain, revision)| TrustedMachine {
+                chain,
+                profile: &revision.profile,
+            })
+    }
+
+    /// The `Yours` revision [`Self::trusted_under`] gives the identity by,
+    /// and the chain it heads.
+    fn trusted_revision_under(
+        &self,
+        admitter: &MachineAdmitter,
+    ) -> Option<(MachineAdmitter, &MachineRevision)> {
         let chains = self.trust_chains(admitter);
         if self.keys_unsettled(admitter, &chains)
             || chains
@@ -261,10 +274,6 @@ impl FoldedMachine {
             .into_iter()
             .rev()
             .find(|(_, chain)| chain.says_yours())
-            .map(|(chain, revision)| TrustedMachine {
-                chain,
-                profile: &revision.profile,
-            })
     }
 
     /// The head of the chain `admitter` gives `T(admitter)`: the accepted
@@ -519,6 +528,39 @@ impl AuthorityFold {
         self.machines
             .get(&machine)?
             .trusted(self.pinned_root.as_ref())
+    }
+
+    /// Whether `machine`'s trusted `Yours` here ([`Self::trusted_machine`])
+    /// is the owner's own signature, out of every carrier's reach (Engine
+    /// RULING L2-23-SIGNER = B under the lead's HOSTED-CARRIER-FIRST-PIN = D:
+    /// "a carrier's word is not him saying so"): the mark of the recovery
+    /// root this install pins, or, on a vault that is not `hosted`, a roster
+    /// revision an owner-held key signed. An admitted answer stands on its
+    /// carrier's act, so it is `Some(false)`, and so is every roster revision
+    /// of a hosted vault, where the host holds the root and an owner act its
+    /// own node carries enrols an owner-held key. `None` when this install
+    /// does not trust the machine as `Yours`.
+    #[must_use]
+    pub(crate) fn trusted_yours_owner_signed(
+        &self,
+        machine: EntityId,
+        hosted: bool,
+    ) -> Option<bool> {
+        let pin = self.pinned_root.as_ref();
+        let (chain, revision) = self.machines.get(&machine)?.trusted_revision_under(
+            &pin.map_or(MachineAdmitter::Roster, |pin| {
+                MachineAdmitter::Anchor(pin.anchor_key)
+            }),
+        )?;
+        let owner_signed =
+            revision.act.is_none() && revision.signer_class == SignerClass::OwnerHeld;
+        Some(
+            owner_signed
+                && match chain {
+                    MachineAdmitter::Anchor(_) => true,
+                    MachineAdmitter::Roster => !hosted,
+                },
+        )
     }
 
     /// The machine key a connection proves to stand as `machine` here: its

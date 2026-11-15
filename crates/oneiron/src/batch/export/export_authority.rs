@@ -55,14 +55,16 @@ pub fn classify_vault_import_manifest(
 /// ([`archive_signer`]). Manifest only, and no write, as that door.
 ///
 /// On a matching chain the signer decides provenance. The owner's own device
-/// proves it, so a same-chain, same-state, unnulled archive it signed reads
+/// proves it, when its `Yours` here is his own signature and no carrier's
+/// word, so a same-chain, same-state, unnulled archive it signed reads
 /// [`VaultImportClassification::ByteFaithfulOwnerRestore`]. A live machine of
 /// this vault in a role the owner answered as not his own device (a hosted
 /// node, an execution node, a rented, work or school machine) signed an
 /// archive that is not his: [`VaultImportMismatch::SignerNotOwnerDevice`],
 /// read as [`VaultImportClassification::ForeignAuthorityChain`] (Engine
-/// RULING L2-23-SIGNER = B). No signature, or one that does not verify or
-/// whose key does not stand as its machine here, proves nothing:
+/// RULING L2-23-SIGNER = B). No signature, one that does not verify or
+/// whose key does not stand as its machine here, or one by a machine whose
+/// `Yours` rests on a carrier's act, proves nothing:
 /// [`VaultImportMismatch::UnauthenticatedProvenance`]. Every other gate holds
 /// as for the storage door.
 ///
@@ -126,7 +128,12 @@ fn classify_manifest(
     if let (Some(exported), Some(local)) = (exported_authority, local_authority) {
         if exported.vault_id == local.vault_id {
             match archive.map_or(ArchiveSigner::Unproven, |archive| {
-                archive_signer(&fold, &local.vault_id, archive)
+                archive_signer(
+                    &fold,
+                    &local.vault_id,
+                    archive,
+                    vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted,
+                )
             }) {
                 ArchiveSigner::OwnerDevice => {}
                 ArchiveSigner::OtherMachine => {

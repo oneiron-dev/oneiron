@@ -7,6 +7,9 @@
 //! manifest, a key this vault does not profile, an unanswered install's key
 //! or a storage manifest alone proves nothing.
 //!
+//! A `Yours` the signer's own install key carried for itself is a carrier's
+//! word, not the owner's (Sol r1 P1 on 021b5375), so it proves nothing.
+//!
 //! Two review findings on the first head (Astra r1, 021ad4e5) are pinned too:
 //! the export writes no key state (an install whose keystore slot is empty
 //! exports unsigned and keeps its machine id), and a record member rewritten
@@ -22,13 +25,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use ed25519_dalek::Signer;
-use oneiron::authority::{HostSlipIssuer, MachineOwnership, MachineRole};
+use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::batch::export::{
     VaultImportClassification, VaultImportMismatch, VaultImportReceipt, WholeVaultDocumentManifest,
     archive_provenance_transcript,
 };
 use oneiron::deletion::parse_hex;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 
@@ -281,6 +285,61 @@ fn an_unanswered_installs_signed_export_proves_nothing() -> TestResult {
         &[VaultImportMismatch::UnauthenticatedProvenance],
     );
     Ok(())
+}
+
+/// Sol r1 P1 (HOSTED-CARRIER-FIRST-PIN = D, "a carrier's word is not him
+/// saying so"): this install, profiled in `role`, carries the owner's
+/// `Yours` answer for itself with its own install key, and then signs its
+/// export. The fold trusts that `Yours`, but it rests on the carrier's act
+/// alone, which any linked machine can carry for itself, so the archive
+/// proves no more than an unsigned one. On 021b5375 it read
+/// `ByteFaithfulOwnerRestore`.
+fn assert_self_carried_yours_proves_nothing(role: MachineRole, host_secret: &[u8]) -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = profiled_vault(directory.path(), host_secret, role)?;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
+    let machine = vault
+        .local_machine()?
+        .expect("FIXTURE: this install has a machine once it is profiled")
+        .id;
+    vault.set_machine_role(&proof, ActSurface::ThisInstall, machine, YOURS, None)?;
+    assert!(
+        vault
+            .local_machine()?
+            .expect("FIXTURE: this install keeps its machine")
+            .mine,
+        "FIXTURE: the fold trusts the `Yours` this install carried for itself ({role:?})"
+    );
+
+    let receipt = vault.classify_vault_archive_manifest(&own_archive_manifest(&vault)?, None)?;
+
+    assert_verdict(
+        &receipt,
+        VaultImportClassification::ReviewRequired,
+        &[VaultImportMismatch::UnauthenticatedProvenance],
+    );
+    Ok(())
+}
+
+/// [`assert_self_carried_yours_proves_nothing`] from the role every fresh
+/// serving install starts in.
+#[test]
+fn an_unanswered_install_that_carries_its_own_yours_proves_nothing() -> TestResult {
+    assert_self_carried_yours_proves_nothing(
+        MachineRole::Unanswered,
+        b"signed archive provenance self-carried unanswered",
+    )
+}
+
+/// [`assert_self_carried_yours_proves_nothing`] from a hosted node: the
+/// host's own machine answers `Yours` for itself.
+#[test]
+fn a_hosted_node_that_carries_its_own_yours_proves_nothing() -> TestResult {
+    assert_self_carried_yours_proves_nothing(
+        MachineRole::HostedNode,
+        b"signed archive provenance self-carried hosted",
+    )
 }
 
 /// Astra r1 finding 1: the export writes no key state. An install whose

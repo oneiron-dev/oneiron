@@ -11,10 +11,15 @@
 //! Whose archive counts as the owner's own (Engine RULING L2-23-SIGNER = B,
 //! sharpened by the lead's HOSTED-CARRIER-FIRST-PIN = D, "the yes must be
 //! provably his; a carrier's word is not him saying so"): only a machine this
-//! install trusts as the owner's own device signs one. A live machine of the
-//! vault in any other role the owner answered (a hosted node, an execution
-//! node, a rented, work or school machine) signs an archive that is not his.
-//! An unanswered install's key, like an unprofiled install's, proves nothing.
+//! install trusts as the owner's own device signs one, and only while that
+//! `Yours` is his own signature: his pinned recovery root's mark, or on a
+//! vault that is not hosted an owner-held roster key's revision. A `Yours`
+//! that rests on a carrier's act (any linked machine, the signer itself
+//! included, carries one) proves no more than an unsigned archive. A live
+//! machine of the vault in any other role the owner answered (a hosted node,
+//! an execution node, a rented, work or school machine) signs an archive that
+//! is not his. An unanswered install's key, like an unprofiled install's,
+//! proves nothing.
 
 use ed25519_dalek::Signer;
 use serde::{Deserialize, Serialize};
@@ -43,12 +48,14 @@ pub struct ArchiveProvenance {
 /// What an archive's provenance proves to the vault that judges it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ArchiveSigner {
-    /// A machine this install trusts as the owner's own device signed it.
+    /// A machine this install trusts as the owner's own device, by his own
+    /// signature, signed it.
     OwnerDevice,
     /// A live machine of this vault signed it, in a role the owner answered
     /// that is not his own device here.
     OtherMachine,
-    /// No signature, or none this vault can tie to a machine of its own.
+    /// No signature, none this vault can tie to a machine of its own, or one
+    /// by a machine whose `Yours` here is a carrier's word.
     Unproven,
 }
 
@@ -104,20 +111,24 @@ pub(crate) fn sign_archive_manifest(
 }
 
 /// Judges `manifest`'s provenance on `fold`, this vault's own read-only fold
-/// whose vault id is `vault_id`.
+/// whose vault id is `vault_id`, on a vault whose posture is `hosted` or not.
 ///
 /// The key must stand as its machine here ([`AuthorityFold::machine_proof_key`]:
 /// the trusted identity's key under this install's pin, else a live roster
 /// revision's in an answered role) and pass the one carrier rule
 /// ([`owner_act_signer_admits`]: a live machine no chain removed, never a
 /// roster key), and the signature must verify. Then the machine is the
-/// owner's own device exactly when this install trusts it
-/// ([`AuthorityFold::trusted_machine`]: live, and his explicit `Yours`).
-/// Anything that does not parse or verify reads as unsigned.
+/// owner's own device exactly when this install trusts it as his explicit
+/// `Yours` by his own signature
+/// ([`AuthorityFold::trusted_yours_owner_signed`]). A `Yours` carried by a
+/// machine's install key is a carrier's word (Sol r1 P1: a hosted node can
+/// carry an owner answer for itself), so it reads as unsigned, as does
+/// anything that does not parse or verify.
 pub(crate) fn archive_signer(
     fold: &AuthorityFold,
     vault_id: &[u8; 32],
     manifest: &WholeVaultDocumentManifest,
+    hosted: bool,
 ) -> ArchiveSigner {
     let Some(provenance) = manifest.provenance.as_ref() else {
         return ArchiveSigner::Unproven;
@@ -141,11 +152,12 @@ pub(crate) fn archive_signer(
             },
         );
     if !stands {
-        ArchiveSigner::Unproven
-    } else if fold.trusted_machine(machine).is_some() {
-        ArchiveSigner::OwnerDevice
-    } else {
-        ArchiveSigner::OtherMachine
+        return ArchiveSigner::Unproven;
+    }
+    match fold.trusted_yours_owner_signed(machine, hosted) {
+        Some(true) => ArchiveSigner::OwnerDevice,
+        Some(false) => ArchiveSigner::Unproven,
+        None => ArchiveSigner::OtherMachine,
     }
 }
 
