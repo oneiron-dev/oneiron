@@ -208,7 +208,10 @@ async fn unlogged_mac_tokens_and_dev_tokens_never_become_production_slips() {
 async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     use crate::managed::{ManagedState, WakeLedger, build_managed_app};
     use oneiron::federation::{OrgAdminPolicy, OrgAdminPower};
-    use oneiron_vault_contract::{DEK_LEN, TOKEN_LEN, read_credentials, write_credentials};
+    use oneiron_vault_contract::{
+        DEK_LEN, MANAGED_OWNER_ACTION_HEADER, ManagedOwnerAction, ManagedOwnerRequest, TOKEN_LEN,
+        TokenHex, read_credentials, write_credentials,
+    };
 
     let (dir, mut server) = test_server();
     let issuer = HostSlipIssuer::from_secret(b"managed-vault-root").unwrap();
@@ -217,9 +220,27 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
     mutable.managed_issuer = Some(crate::server::ManagedIssuer::new(Some(issuer)));
     mutable.config.auth_secret = Some("supervisor-transport-not-root".into());
     mutable.config.allow_unauthenticated = false;
+    // Since #3222 (FIX 2222) a managed request with neither a caller slip
+    // nor an owner attestation is anonymous, never the host's root: these
+    // console doors are driven as the vault's live owner, attested by the
+    // test's supervisor token, with the dummy bearer along to prove a
+    // forwarded credential lends nothing.
+    let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+    server
+        .vault()
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    let owner_hex = owner.to_hex();
     let actor = seed_turn(&server, "managed pairing holder");
+    let token = [0x72; TOKEN_LEN];
     let mut frame = Vec::new();
-    write_credentials(&mut frame, &[0x71; DEK_LEN], &[0x72; TOKEN_LEN]).unwrap();
+    write_credentials(&mut frame, &[0x71; DEK_LEN], &token).unwrap();
     let credentials = read_credentials(&frame[..]).unwrap();
     let ledger = WakeLedger::load(
         server.vault().clone(),
@@ -234,16 +255,34 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
         ledger,
     ));
     let app = build_managed_app(server.clone(), state);
-    // Managed middleware strips forwarded credentials. Only the boot-established
-    // host root may authorize these calls over the supervisor's private socket.
+    let token = TokenHex::from_token(&token);
+    // Each request carries the supervisor's owner attestation over its exact
+    // bytes; managed ingress verifies it before the dummy bearer is stripped.
     let request = |path: &str, data: Value| {
+        let body = serde_json::to_vec(&data).unwrap();
+        let action = ManagedOwnerAction::sign_after_account_auth(
+            &token,
+            "managed-test",
+            &owner_hex,
+            &ManagedOwnerRequest {
+                method: "POST",
+                path,
+                query: "",
+                headers: ["", "", ""],
+                body: &body,
+            },
+        );
         Request::builder()
             .method("POST")
             .uri(path)
             .header(CONTENT_TYPE, "application/json")
             .header(AUTHORIZATION, "Bearer not-a-host-credential")
             .header("x-oneiron-binding", "not-a-binding")
-            .body(Body::from(serde_json::to_vec(&data).unwrap()))
+            .header(
+                MANAGED_OWNER_ACTION_HEADER,
+                serde_json::to_string(&action).unwrap(),
+            )
+            .body(Body::from(body))
             .unwrap()
     };
     let response = app
@@ -342,7 +381,10 @@ async fn managed_pairing_revoke_and_org_setup_use_the_logged_host_root() {
 async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
     use crate::managed::{ManagedState, WakeLedger, build_managed_app};
     use oneiron::{TimeRange, authority::MeshMachineAddress, registry::ENTITY_TYPE_MACHINE};
-    use oneiron_vault_contract::{DEK_LEN, TOKEN_LEN, read_credentials, write_credentials};
+    use oneiron_vault_contract::{
+        DEK_LEN, MANAGED_OWNER_ACTION_HEADER, ManagedOwnerAction, ManagedOwnerRequest, TOKEN_LEN,
+        TokenHex, read_credentials, write_credentials,
+    };
 
     let (dir, mut server) = test_server();
     let issuer = HostSlipIssuer::from_secret(b"managed-mesh-pairing-root").unwrap();
@@ -351,6 +393,23 @@ async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
     mutable.managed_issuer = Some(crate::server::ManagedIssuer::new(Some(issuer)));
     mutable.config.auth_secret = Some("supervisor-transport-not-root".into());
     mutable.config.allow_unauthenticated = false;
+    // Since #3222 (FIX 2222) a managed request with neither a caller slip
+    // nor an owner attestation is anonymous, never the host's root: these
+    // console doors are driven as the vault's live owner, attested by the
+    // test's supervisor token, with the dummy bearer along to prove a
+    // forwarded credential lends nothing.
+    let owner = server.vault().ensure_embedded_owner_actor().unwrap();
+    server
+        .vault()
+        .put_entity(
+            &owner,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            oneiron::TimeRange { start: 1, end: 1 },
+            1,
+            b"person",
+        )
+        .unwrap();
+    let owner_hex = owner.to_hex();
     let machine = oneiron::EntityId::now();
     server
         .vault()
@@ -364,8 +423,9 @@ async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
         .unwrap();
     assert!(server.vault().get(&machine).unwrap().is_some());
 
+    let token = [0x72; TOKEN_LEN];
     let mut frame = Vec::new();
-    write_credentials(&mut frame, &[0x71; DEK_LEN], &[0x72; TOKEN_LEN]).unwrap();
+    write_credentials(&mut frame, &[0x71; DEK_LEN], &token).unwrap();
     let credentials = read_credentials(&frame[..]).unwrap();
     let ledger = WakeLedger::load(
         server.vault().clone(),
@@ -380,14 +440,34 @@ async fn managed_public_pairing_binds_an_existing_machine_to_a_mesh_grant() {
         ledger,
     ));
     let app = build_managed_app(server.clone(), state);
+    let token = TokenHex::from_token(&token);
+    // Each request carries the supervisor's owner attestation over its exact
+    // bytes; managed ingress verifies it before the dummy bearer is stripped.
     let request = |path: &str, data: Value| {
+        let body = serde_json::to_vec(&data).unwrap();
+        let action = ManagedOwnerAction::sign_after_account_auth(
+            &token,
+            "managed-test",
+            &owner_hex,
+            &ManagedOwnerRequest {
+                method: "POST",
+                path,
+                query: "",
+                headers: ["", "", ""],
+                body: &body,
+            },
+        );
         Request::builder()
             .method("POST")
             .uri(path)
             .header(CONTENT_TYPE, "application/json")
             .header(AUTHORIZATION, "Bearer not-a-host-credential")
             .header("x-oneiron-binding", "not-a-binding")
-            .body(Body::from(serde_json::to_vec(&data).unwrap()))
+            .header(
+                MANAGED_OWNER_ACTION_HEADER,
+                serde_json::to_string(&action).unwrap(),
+            )
+            .body(Body::from(body))
             .unwrap()
     };
     let response = app
