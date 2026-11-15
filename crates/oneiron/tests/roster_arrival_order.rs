@@ -1,0 +1,286 @@
+//! A roster key's rows fold to the same roster on every install, whatever
+//! order they arrive in ([ARRIVAL-FLOOR-SIBLING-DIVERGENCE], root FIX-LIST).
+//!
+//! Each stored row keeps the highest sequence its signer had reached on this
+//! install before the row arrived, and a row below that mark is refused. When
+//! one key signs two sibling rows, neither names the other, so an install
+//! that receives the higher one first refused the lower one: two installs
+//! that hold the same rows held different rosters. An agent enrolment then
+//! counted on one install and not on the other, and a revocation beside a
+//! later enrolment left the revoked key live on the install that received
+//! the revocation last. Now a roster row is judged on its signer's causal
+//! order alone, so both installs hold the same roster. A row that its own
+//! ancestry already shows its signer past is still refused on every install
+//! (the control).
+
+use std::collections::BTreeSet;
+
+use ed25519_dalek::{Signer, SigningKey};
+use oneiron::authority::{
+    AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFold,
+    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+    AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep, ROLE_ADMIN, ROLE_AGENT,
+    ROLE_OWNER, authority_entry_hash, authority_transcript, genesis_vault_id,
+};
+use oneiron::{TimeRange, Vault, VaultConfig};
+
+const AT: TimeRange = TimeRange { start: 2, end: 2 };
+
+fn key_of(signing: &SigningKey) -> AuthorityKey {
+    AuthorityKey::Ed25519(signing.verifying_key().to_bytes())
+}
+
+fn device(key: AuthorityKey, roles: u16) -> DeviceAuthority {
+    DeviceAuthority {
+        key,
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "SoftwareArgon2id".to_owned(),
+            evidence: vec![1, 2, 3],
+        },
+        tier: AuthorityTier::Software,
+        roles,
+    }
+}
+
+fn signed(
+    vault_id: Option<AuthorityVaultId>,
+    seq: u64,
+    parent: Option<&AuthorityLogEntry>,
+    op: AuthorityOp,
+    signer: &SigningKey,
+) -> AuthorityLogEntry {
+    let key = key_of(signer);
+    let mut entry = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes: parent
+            .map(|parent| vec![authority_entry_hash(parent).expect("parent hash")])
+            .unwrap_or_default(),
+        op,
+        signer: AuthoritySignature {
+            suite: key.suite(),
+            public_key: key,
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: seq + 1,
+    };
+    let transcript = authority_transcript(&entry).expect("transcript");
+    entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+    entry
+}
+
+/// The owner's genesis and the vault it founds.
+fn genesis(owner: &SigningKey, nonce: u8) -> (AuthorityLogEntry, AuthorityVaultId) {
+    let genesis = signed(
+        None,
+        0,
+        None,
+        AuthorityOp::Genesis {
+            device: device(key_of(owner), ROLE_OWNER | ROLE_ADMIN),
+            genesis_nonce: [nonce; 32],
+            recovery: GenesisRecoveryStep::Saved([1; 32]),
+        },
+        owner,
+    );
+    let vault_id = genesis_vault_id(&genesis).expect("vault id");
+    (genesis, vault_id)
+}
+
+/// `signer` enrols the agent key `enrolled` on `parent` at `seq`.
+fn enrolment(
+    vault_id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    signer: &SigningKey,
+    seq: u64,
+    enrolled: &SigningKey,
+) -> AuthorityLogEntry {
+    signed(
+        Some(vault_id),
+        seq,
+        Some(parent),
+        AuthorityOp::EnrollDevice {
+            device: device(key_of(enrolled), ROLE_AGENT),
+        },
+        signer,
+    )
+}
+
+fn hash_of(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
+    authority_entry_hash(entry).expect("row hash")
+}
+
+/// One install: a fresh vault that receives `rows` one at a time, in the
+/// order given, each through the authority write door on its own, as rows
+/// that sync delivers in that order arrive. Returns each put's outcome and
+/// the install's fold.
+struct Install {
+    _dir: tempfile::TempDir,
+    puts: Vec<String>,
+    fold: AuthorityFold,
+}
+
+fn install_receiving(rows: &[&AuthorityLogEntry]) -> Install {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    let puts = rows
+        .iter()
+        .map(|row| match vault.put_authority_log_entry(row, AT, 2) {
+            Ok(_) => "stored".to_owned(),
+            Err(error) => format!("refused: {:?}", error.kind()),
+        })
+        .collect();
+    let fold = vault.authority_fold().expect("the install folds its log");
+    Install {
+        _dir: dir,
+        puts,
+        fold,
+    }
+}
+
+fn applied(fold: &AuthorityFold) -> BTreeSet<AuthorityEntryHash> {
+    fold.valid_entries.iter().copied().collect()
+}
+
+fn is_live(fold: &AuthorityFold, key: &AuthorityKey) -> bool {
+    fold.roster
+        .get(key)
+        .is_some_and(|device| !device.revoked && device.roles != 0)
+}
+
+/// The finding's case: one roster key signs two agent enrolments on the
+/// same parent, at sequences 1 and 2. Install I receives them in that order,
+/// install J in the other. Both must hold both agents, and apply the same
+/// rows.
+#[test]
+fn sibling_enrolments_hold_the_same_roster_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[211; 32]);
+    let first_agent = SigningKey::from_bytes(&[212; 32]);
+    let second_agent = SigningKey::from_bytes(&[213; 32]);
+    let (genesis, vault_id) = genesis(&owner, 214);
+    let lower = enrolment(vault_id, &genesis, &owner, 1, &first_agent);
+    let higher = enrolment(vault_id, &genesis, &owner, 2, &second_agent);
+
+    let in_order = install_receiving(&[&genesis, &lower, &higher]);
+    let reversed = install_receiving(&[&genesis, &higher, &lower]);
+
+    for (name, install) in [("I (1 then 2)", &in_order), ("J (2 then 1)", &reversed)] {
+        assert!(
+            is_live(&install.fold, &key_of(&first_agent))
+                && is_live(&install.fold, &key_of(&second_agent)),
+            "install {name} must hold both agents the owner enrolled; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    let all = [&genesis, &lower, &higher]
+        .into_iter()
+        .map(hash_of)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all three rows"
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
+}
+
+/// A revocation beside a later enrolment of the same key: the owner enrols
+/// agent U (sequence 1), then on that row revokes U (2) and, as a sibling of
+/// the revocation, enrols agent W (3). The install that receives the
+/// enrolment of W before the revocation must still hold U revoked: a
+/// revocation lost to arrival order leaves a revoked key live there.
+#[test]
+fn a_revocation_beside_a_later_enrolment_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[221; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[222; 32]);
+    let later_agent = SigningKey::from_bytes(&[223; 32]);
+    let (genesis, vault_id) = genesis(&owner, 224);
+    let enrol_revoked = enrolment(vault_id, &genesis, &owner, 1, &revoked_agent);
+    let revocation = signed(
+        Some(vault_id),
+        2,
+        Some(&enrol_revoked),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+    let enrol_later = enrolment(vault_id, &enrol_revoked, &owner, 3, &later_agent);
+
+    let in_order = install_receiving(&[&genesis, &enrol_revoked, &revocation, &enrol_later]);
+    let reversed = install_receiving(&[&genesis, &enrol_revoked, &enrol_later, &revocation]);
+
+    for (name, install) in [
+        ("I (revocation first)", &in_order),
+        ("J (revocation last)", &reversed),
+    ] {
+        assert!(
+            !is_live(&install.fold, &key_of(&revoked_agent)),
+            "install {name} must hold the revoked agent revoked; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the later agent; issues {:?}",
+            install.fold.issues
+        );
+        assert!(
+            applied(&install.fold).contains(&hash_of(&revocation)),
+            "install {name} applies the revocation; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    assert_eq!(
+        applied(&in_order.fold),
+        applied(&reversed.fold),
+        "both installs apply the same rows"
+    );
+}
+
+/// The control: a row that names, among its own ancestors, a row of its
+/// signer at a higher sequence goes back on its signer's own order, which
+/// every install can see from the rows alone. Every install refuses it, the
+/// same way, before and after the fix.
+#[test]
+fn a_row_below_its_signers_sequence_in_its_own_ancestry_stays_refused() {
+    let owner = SigningKey::from_bytes(&[231; 32]);
+    let first_agent = SigningKey::from_bytes(&[232; 32]);
+    let second_agent = SigningKey::from_bytes(&[233; 32]);
+    let (genesis, vault_id) = genesis(&owner, 234);
+    let higher = enrolment(vault_id, &genesis, &owner, 2, &first_agent);
+    let backward = enrolment(vault_id, &higher, &owner, 1, &second_agent);
+
+    let install = install_receiving(&[&genesis, &higher, &backward]);
+
+    assert!(
+        is_live(&install.fold, &key_of(&first_agent)),
+        "the forward enrolment lands; issues {:?}",
+        install.fold.issues
+    );
+    assert!(
+        !is_live(&install.fold, &key_of(&second_agent))
+            && !applied(&install.fold).contains(&hash_of(&backward)),
+        "a row below its signer's own sequence in its ancestry is refused; puts {:?}, issues {:?}",
+        install.puts,
+        install.fold.issues
+    );
+    assert!(
+        install.fold.issues.iter().any(|issue| matches!(
+            issue,
+            AuthorityFoldIssue::NonMonotonicSeq(hash) if *hash == hash_of(&backward)
+        )),
+        "the refusal names the backward row as non-monotonic; issues {:?}",
+        install.fold.issues
+    );
+}
