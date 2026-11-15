@@ -213,17 +213,42 @@ pub fn due_ms(vault: &Vault, key: &WaitKey) -> Result<Option<u64>> {
     Ok(idle_fold::due_of(vault, key)?.map(|due| due.due_ms))
 }
 
+/// The Keeps `key`'s wait got before its due idle call, while it is due.
+///
+/// # Errors
+/// Storage.
+#[doc(hidden)]
+pub fn due_keeps(vault: &Vault, key: &WaitKey) -> Result<Option<u32>> {
+    Ok(idle_fold::due_of(vault, key)?.map(|due| due.keeps))
+}
+
+/// Sets `key`'s due idle call's Keeps count, for the last-ask test.
+///
+/// # Errors
+/// Storage.
+#[doc(hidden)]
+pub fn set_due_keeps(vault: &Vault, key: &WaitKey, keeps: u32) -> Result<()> {
+    idle_fold::set_due_keeps(vault, key, keeps)
+}
+
 /// The idle call a wait got.
 #[doc(hidden)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IdleCallView {
+    /// Sent one refresh of the cached prefix and asked again before it expires.
+    Keep {
+        keeps: u32,
+        at_ms: u64,
+    },
     /// `folds` folds landed, whose bodies held about `tokens` prompt tokens.
     Fold {
         folds: u32,
         tokens: u64,
+        keeps: u32,
         at_ms: u64,
     },
     Expire {
+        keeps: u32,
         at_ms: u64,
     },
 }
@@ -236,12 +261,18 @@ pub enum IdleCallView {
 pub fn idle_call(vault: &Vault, key: &WaitKey) -> Result<Option<IdleCallView>> {
     Ok(
         idle_fold::idle_call_of(vault, key)?.map(|record| match record.call {
+            IdleCall::Keep => IdleCallView::Keep {
+                keeps: record.keeps,
+                at_ms: record.at_ms,
+            },
             IdleCall::Fold { folds, tokens } => IdleCallView::Fold {
                 folds,
                 tokens,
+                keeps: record.keeps,
                 at_ms: record.at_ms,
             },
             IdleCall::Expire => IdleCallView::Expire {
+                keeps: record.keeps,
                 at_ms: record.at_ms,
             },
         }),
