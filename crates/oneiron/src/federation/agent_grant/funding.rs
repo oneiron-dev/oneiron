@@ -158,6 +158,8 @@ fn counted_matching_mint_in_txn(
         AuthorityOp::MembershipExecution(record) => {
             record.withdrawn_grants.binary_search(&standing.id).is_ok()
         }
+        // A lapse's end of the agent Grant (pass 28 R2).
+        AuthorityOp::GrantAct(record) => record.ended_owner_agent_grant() == Some(standing.id),
         _ => false,
     };
     let mut acts = BTreeMap::new();

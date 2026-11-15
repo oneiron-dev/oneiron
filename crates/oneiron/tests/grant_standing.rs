@@ -16,7 +16,12 @@ use oneiron::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use oneiron::store::GateDecisionId;
 use oneiron::sync::client::ImportTier;
 use oneiron::sync::replay::{ReplicatedEntity, replay_entity};
-use oneiron::test_doors::grant_standing::{grant_line, grant_row, standing_grant_act};
+use oneiron::test_doors::grant_act::{
+    end_agent_grant_by_person, end_agent_grant_by_rule, end_member_grant, give_member_grant,
+};
+use oneiron::test_doors::grant_standing::{
+    grant_line, grant_row, standing_grant_act, standing_member_grant_act,
+};
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, AgentGrantRevokeRequest,
     create_agent_definition_as, mint_agent_grant_as, revoke_agent_grant_as,
@@ -250,5 +255,89 @@ fn the_owner_revoke_ends_the_grant() {
         standing_grant_act(&minted.vault, minted.grant, now).expect("standing read"),
         None,
         "an ended Grant stands for nothing",
+    );
+}
+
+/// A member's terms key, for the general grant act's givings (pass 28 R2).
+const TERMS_KEY: [u8; 32] = [0x5a; 32];
+
+/// Pass 28 R2a review P1: a shared vault's admin who names the owner's agent Grant in a member
+/// giving (re-scoping it under a commitment of their own) or a member end neither replaces his
+/// mint nor ends it. Both acts are valid and without effect, so their writer refuses them; the
+/// Grant still stands on his mint, and for nothing as a member's Grant.
+#[test]
+fn a_member_act_never_gives_or_ends_the_owner_agent_grant() {
+    let minted = minted_read_grant();
+    let body = grant_row(&minted.vault, minted.grant)
+        .expect("grant row read")
+        .expect("the minted row is live");
+    let mut widened = decode_federation_grant_body(&body).expect("minted row decodes");
+    widened.authority_scope.verbs =
+        ScopeAxis::Some(BTreeSet::from(["read".to_owned(), "write".to_owned()]));
+    let admin = EntityId::now();
+    assert!(
+        give_member_grant(&minted.vault, minted.grant, &widened, &TERMS_KEY, admin).is_err(),
+        "the fold does not count a member giving of the owner's agent Grant",
+    );
+    assert!(
+        end_member_grant(&minted.vault, minted.grant, admin).is_err(),
+        "the fold does not count a member end of the owner's agent Grant",
+    );
+    assert_eq!(
+        grant_row(&minted.vault, minted.grant).expect("row read"),
+        Some(body),
+        "the refused giving put no row",
+    );
+    let now = minted.vault.now_recorded_at();
+    assert_eq!(
+        grant_line(&minted.vault, minted.grant)
+            .expect("grant line")
+            .map(|(act, ended)| (act.map(hex), ended)),
+        Some((Some(minted.act.clone()), false)),
+        "the line gives the Grant on the owner's mint alone",
+    );
+    assert_eq!(
+        standing_grant_act(&minted.vault, minted.grant, now)
+            .expect("standing read")
+            .map(hex),
+        Some(minted.act),
+        "the owner's agent Grant still stands on his mint",
+    );
+    assert_eq!(
+        standing_member_grant_act(&minted.vault, minted.grant, now).expect("standing read"),
+        None,
+        "it stands for nothing as a member's Grant",
+    );
+}
+
+/// A lapse's end (W2b, decider the rule) ends the owner's agent Grant; a person's end of it by
+/// the general grant act is refused, since his revoke is that Grant's own act.
+#[test]
+fn a_lapse_ends_the_owner_agent_grant_and_a_person_cannot_by_this_act() {
+    let minted = minted_read_grant();
+    assert!(
+        end_agent_grant_by_person(&minted.vault, minted.grant, EntityId::now()).is_err(),
+        "a person ends the owner's agent Grant by his revoke alone",
+    );
+    let now = minted.vault.now_recorded_at();
+    assert_eq!(
+        standing_grant_act(&minted.vault, minted.grant, now)
+            .expect("standing read")
+            .map(hex),
+        Some(minted.act.clone()),
+        "precondition: the refused end changed nothing",
+    );
+    end_agent_grant_by_rule(&minted.vault, minted.grant).expect("the lapse's end lands");
+    assert_eq!(
+        grant_line(&minted.vault, minted.grant)
+            .expect("grant line")
+            .map(|(act, ended)| (act.map(hex), ended)),
+        Some((Some(minted.act), true)),
+        "the lapse's counted end ends the Grant's line",
+    );
+    assert_eq!(
+        standing_grant_act(&minted.vault, minted.grant, now).expect("standing read"),
+        None,
+        "a lapsed Grant stands for nothing",
     );
 }

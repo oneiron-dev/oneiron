@@ -151,6 +151,10 @@ impl Vault {
                     AgentGrantChange::Revoke { .. } => Some((record.grant, None)),
                 },
                 AuthorityOp::SlipGrantRevoke { grant_ref, .. } => Some((*grant_ref, None)),
+                // A lapse's end of the owner's Grant (pass 28 R2).
+                AuthorityOp::GrantAct(record) => {
+                    record.ended_owner_agent_grant().map(|grant| (grant, None))
+                }
                 _ => None,
             };
             let Some((grant, mint)) = named else {

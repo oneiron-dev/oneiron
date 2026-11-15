@@ -12,7 +12,7 @@
 //! Grants are read as derived in R4.
 
 use crate::Vault;
-use crate::authority::AuthorityEntryHash;
+use crate::authority::{AuthorityEntryHash, GrantFamily};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
@@ -47,12 +47,18 @@ impl StandingGrant {
 }
 
 impl Vault {
-    /// What the Grant row `id` confers at `now`, read in `txn`: the row, when it is live,
-    /// decodes, has not expired, is exactly what the one counted act that gives it states
-    /// (a general grant act's commitment opens with the row's own terms key), and no counted
-    /// act ended it. `None` for every other row: one no counted act gives
-    /// (a forged row), one put again after its end, one whose terms are not its act's, and
-    /// one that two acts the fold cannot order both give.
+    /// What the Grant row `id` of `family` confers at `now`, read in `txn`: the row, when it
+    /// is live, decodes, has not expired, is given in `family` and is exactly what the one
+    /// counted act that gives it states (a general grant act's commitment opens with the row's
+    /// own terms key), and no counted act ended it. `None` for every other row: one no counted
+    /// act gives (a forged row), one put again after its end, one whose terms are not its
+    /// act's, one that two acts the fold cannot order both give, and one given in another
+    /// family.
+    ///
+    /// The reader names the family it reads and judges the giver by that family's own rule.
+    /// A row's shape does not tell its family (a house link and a member row are both
+    /// `FederationGrant::new` rows; a base agent's Steward Grant and a house's steward link
+    /// can match), so the family is the act's, never the row's.
     ///
     /// # Errors
     ///
@@ -62,6 +68,7 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
         id: EntityId,
+        family: GrantFamily,
         now: u64,
     ) -> Result<Option<StandingGrant>> {
         let LiveEntityRow::Live {
@@ -81,7 +88,10 @@ impl Vault {
             return Ok(None);
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
-        let Some(line) = fold.grant_line(id).filter(|line| !line.ended) else {
+        let Some(line) = fold
+            .grant_line(id)
+            .filter(|line| !line.ended && line.family == Some(family))
+        else {
             return Ok(None);
         };
         let Some((act, terms)) = &line.giving else {

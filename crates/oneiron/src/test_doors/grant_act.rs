@@ -1,6 +1,6 @@
 //! The general grant act (Fable pass 28 R2), for integration tests: a person's giving or end
 //! of a shared vault member's FEDERATION_GRANT row, signed in the row's own write transaction,
-//! as R2's writers will sign it.
+//! as R2's writers will sign it, and a lapse's end of the owner's agent Grant.
 
 use crate::authority::{ActSurface, GrantActBy, GrantActChange, GrantFamily};
 use crate::batch::{BatchOp, apply_ops};
@@ -62,6 +62,48 @@ pub fn end_member_grant(vault: &Vault, id: EntityId, person: EntityId) -> Result
             },
             id,
             GrantFamily::SharedMember,
+            GrantActChange::End,
+        )
+    })
+}
+
+/// A rule's end of the owner's agent Grant `id`: a lapse no person decided. Returns the act.
+///
+/// # Errors
+///
+/// The act's refusal or a store failure.
+pub fn end_agent_grant_by_rule(vault: &Vault, id: EntityId) -> Result<[u8; 32]> {
+    vault.with_write_txn(|txn| {
+        vault.append_grant_act_in_txn(
+            txn,
+            GrantActBy::Rule,
+            id,
+            GrantFamily::OwnerAgent,
+            GrantActChange::End,
+        )
+    })
+}
+
+/// `person`'s end of the owner's agent Grant `id` by the general grant act: refused, since his
+/// revoke is that Grant's own act.
+///
+/// # Errors
+///
+/// Always the act's refusal, and nothing is written.
+pub fn end_agent_grant_by_person(
+    vault: &Vault,
+    id: EntityId,
+    person: EntityId,
+) -> Result<[u8; 32]> {
+    vault.with_write_txn(|txn| {
+        vault.append_grant_act_in_txn(
+            txn,
+            GrantActBy::Person {
+                person,
+                surface: ActSurface::ThisInstall,
+            },
+            id,
+            GrantFamily::OwnerAgent,
             GrantActChange::End,
         )
     })

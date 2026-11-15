@@ -543,8 +543,8 @@ impl Vault {
     }
 
     /// Each retained authority-log entry the authority fold counted whose op
-    /// is an agent Grant act or a membership withdrawal, in log-row id
-    /// order. An entry whose body this vault no longer holds (an adopted
+    /// is an agent Grant act, a membership withdrawal or a lapse's end of an
+    /// agent Grant (a general grant act, pass 28 R2), in log-row id order. An entry whose body this vault no longer holds (an adopted
     /// checkpoint covers it) is not among them.
     pub(super) fn counted_grant_acts_in_txn(
         &self,
@@ -566,12 +566,14 @@ impl Vault {
             let Ok(entry) = decode_authority_log_entry_body(&row.body) else {
                 continue;
             };
-            if !matches!(
-                &entry.op,
+            let wanted = match &entry.op {
                 AuthorityOp::AgentGrantAct(_)
-                    | AuthorityOp::SlipGrantRevoke { .. }
-                    | AuthorityOp::MembershipExecution(_)
-            ) {
+                | AuthorityOp::SlipGrantRevoke { .. }
+                | AuthorityOp::MembershipExecution(_) => true,
+                AuthorityOp::GrantAct(record) => record.ended_owner_agent_grant().is_some(),
+                _ => false,
+            };
+            if !wanted {
                 continue;
             }
             let hash = authority_entry_hash(&entry)?;

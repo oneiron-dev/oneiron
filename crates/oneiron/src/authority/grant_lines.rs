@@ -21,8 +21,15 @@
 //! reader judges it. A giving gives on this install only where it counts here in full: an end
 //! only takes away, so it needs no more than to count.
 //!
+//! A Grant's line keeps one family for good: the owner's agent Grant (its mint and revoke, and
+//! a lapse's end) or one general grant act family. A grant act of another family than the acts
+//! the line already holds is valid and without effect, so a shared vault's admin who names the
+//! owner's agent Grant in a member giving neither replaces his mint nor ends it. Two branches
+//! the fold cannot order that name a Grant in two families leave it standing on neither.
+//! Membership withdrawals and slip revokes end any Grant they name, of any family.
+//!
 //! The fold reads the log alone: a giving need not find its row, and a row need not find its
-//! act. Only the reader puts the two together.
+//! act. Only the reader puts the two together, asking the family it reads.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -51,6 +58,15 @@ pub(crate) enum GrantTerms {
 }
 
 impl GrantTerms {
+    /// The family of Grant these terms give; `None` for the empty value.
+    pub(crate) fn family(&self) -> Option<GrantFamily> {
+        match self {
+            Self::Nothing => None,
+            Self::OwnerAgentMint(_) => Some(GrantFamily::OwnerAgent),
+            Self::Committed(committed) => Some(committed.family),
+        }
+    }
+
     /// Whether `grant`, the row `id` holding the terms key `terms_key`, is exactly the row
     /// these terms state. A committed giving opens only with the row's own key.
     pub(crate) fn matches_row(
@@ -171,10 +187,11 @@ impl OwnerAgentMint {
 pub(super) struct GrantLines {
     /// Each Grant's counted givings: the live ones and every one a later giving replaced.
     givings: BTreeMap<EntityId, WorldFrontier<GrantTerms>>,
-    /// Each Grant's counted ends.
-    ends: BTreeMap<EntityId, BTreeSet<AuthorityEntryHash>>,
-    /// Well-signed grant acts whose carrier or owner did not stand at their parents: valid
-    /// entries without effect.
+    /// Each Grant's counted ends, each with the family its act named: none for a membership
+    /// withdrawal or a slip revoke, which end a Grant of any family.
+    ends: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, Option<GrantFamily>>>,
+    /// Well-signed grant acts whose carrier or owner did not stand at their parents, or that
+    /// named a Grant an act of another family named first: valid entries without effect.
     refused: BTreeSet<AuthorityEntryHash>,
 }
 
@@ -187,14 +204,45 @@ impl GrantLines {
             self.ends
                 .entry(*grant)
                 .or_default()
-                .extend(ends.iter().copied());
+                .extend(ends.iter().map(|(hash, family)| (*hash, *family)));
         }
         self.refused.extend(right.refused.iter().copied());
     }
 
-    /// Records the counted act `hash` that ends `grant`.
+    /// Records the counted act `hash` that ends `grant`, whatever its family: a membership
+    /// withdrawal or a slip revoke.
     pub(super) fn end(&mut self, grant: EntityId, hash: AuthorityEntryHash) {
-        self.ends.entry(grant).or_default().insert(hash);
+        self.ends.entry(grant).or_default().insert(hash, None);
+    }
+
+    /// Records the counted act `hash` of `family` that ends `grant`.
+    fn end_in_family(&mut self, grant: EntityId, hash: AuthorityEntryHash, family: GrantFamily) {
+        self.ends
+            .entry(grant)
+            .or_default()
+            .insert(hash, Some(family));
+    }
+
+    /// Every family the acts naming `grant` hold: its givings, live or replaced, and its ends.
+    fn families(&self, grant: EntityId) -> BTreeSet<GrantFamily> {
+        let givings = self.givings.get(&grant).into_iter().flat_map(|frontier| {
+            frontier
+                .live
+                .values()
+                .chain(frontier.superseded.values())
+                .filter_map(|giving| giving.settings.family())
+        });
+        let ends = self
+            .ends
+            .get(&grant)
+            .into_iter()
+            .flat_map(|ends| ends.values().flatten().copied());
+        givings.chain(ends).collect()
+    }
+
+    /// Whether an act of `family` may give or end `grant`: no act of another family named it.
+    fn admits(&self, grant: EntityId, family: GrantFamily) -> bool {
+        self.families(grant).iter().all(|held| *held == family)
     }
 
     /// Records the counted act `hash` that gives `grant` as `edit` says, replacing every live
@@ -221,6 +269,10 @@ pub(crate) struct FoldedGrantLine {
     pub(crate) giving: Option<(AuthorityEntryHash, GrantTerms)>,
     /// A counted act ended the Grant.
     pub(crate) ended: bool,
+    /// The one family the acts naming the Grant hold: `None` when only a membership withdrawal
+    /// or a slip revoke names it, or when two branches name it in two families (then no giving
+    /// counts here).
+    pub(crate) family: Option<GrantFamily>,
 }
 
 impl AuthorityFold {
@@ -233,8 +285,9 @@ impl AuthorityFold {
 
 /// The `AgentGrantAct` transition's grant line, once `apply_agent_grant_act` took the entry
 /// as valid: a counted mint gives its Grant the terms it states, replacing the givings its
-/// parents carry; a counted revoke ends the Grant. A carrier the one rule does not admit, or
-/// an owner the act's parents hold removed, carries a valid act without effect.
+/// parents carry; a counted revoke ends the Grant. A carrier the one rule does not admit, an
+/// owner the act's parents hold removed, or a Grant a general grant act already named carries
+/// a valid act without effect.
 pub(super) fn apply_owner_agent_grant_line(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -255,12 +308,19 @@ pub(super) fn apply_owner_agent_grant_line(
     let narrow_only =
         !standing.admits_owner_act_signer(record.machine, &key, StandingView::Install);
     drop(standing);
-    if !admitted || !super::owner_act::owner_live_at(state, record.act.owner) {
+    if !admitted
+        || !super::owner_act::owner_live_at(state, record.act.owner)
+        || !state
+            .grant_lines
+            .admits(record.grant, GrantFamily::OwnerAgent)
+    {
         state.grant_lines.refused.insert(hash);
         return;
     }
     let Some(mint) = OwnerAgentMint::of(record.act.owner, &record.change) else {
-        state.grant_lines.end(record.grant, hash);
+        state
+            .grant_lines
+            .end_in_family(record.grant, hash, GrantFamily::OwnerAgent);
         return;
     };
     state.grant_lines.give(
@@ -282,8 +342,8 @@ pub(super) fn apply_owner_agent_grant_line(
 /// The `GrantAct` transition's grant line, once `super::grant_act::apply_grant_act` took the
 /// entry as valid: a counted giving gives its row the terms it commits to, replacing the
 /// givings its parents carry; a counted end ends the row and withdraws the slips minted under
-/// it. A carrier the one rule does not admit carries a valid act without effect. The deciding
-/// person is not judged here: the
+/// it. A carrier the one rule does not admit, or a Grant an act of another family already
+/// named, carries a valid act without effect. The deciding person is not judged here: the
 /// fold holds no shared vault's owners or admins, so the reader judges them by the family's
 /// own rule.
 pub(super) fn apply_grant_act_line(
@@ -306,17 +366,27 @@ pub(super) fn apply_grant_act_line(
     let narrow_only =
         !standing.admits_owner_act_signer(record.machine, &key, StandingView::Install);
     drop(standing);
-    if !admitted {
+    if !admitted || !state.grant_lines.admits(record.subject, record.family) {
         state.grant_lines.refused.insert(hash);
         return;
     }
-    // `GrantActRecord::validate` refused a rule's giving. An end withdraws the slips minted
-    // under the row too, as a membership execution's withdrawal does (FIX 12335).
-    let (GrantActChange::Give { terms }, Some(giver)) = (record.change, record.decider_person())
-    else {
-        state.slips.revoke_grant(record.subject.to_hex());
-        state.grant_lines.end(record.subject, hash);
-        return;
+    let (terms, giver) = match (record.change, record.decider_person()) {
+        (GrantActChange::Give { terms }, Some(giver)) => (terms, giver),
+        // An end withdraws the slips minted under the row too, as a membership execution's
+        // withdrawal does (FIX 12335).
+        (GrantActChange::End, _) => {
+            state.slips.revoke_grant(record.subject.to_hex());
+            state
+                .grant_lines
+                .end_in_family(record.subject, hash, record.family);
+            return;
+        }
+        // `GrantActRecord::validate` refuses a rule's giving before any fold; should one
+        // reach here, it gives nothing and never turns into an end no one decided.
+        (GrantActChange::Give { .. }, None) => {
+            state.grant_lines.refused.insert(hash);
+            return;
+        }
     };
     state.grant_lines.give(
         record.subject,
@@ -383,10 +453,15 @@ pub(super) fn folded_grant_lines(
                     .map(|(hash, giving)| (*hash, giving.machine))
                     .collect()
             });
+            let families = lines.families(grant);
+            let family = match families.len() {
+                1 => families.first().copied(),
+                _ => None,
+            };
             let giving = frontier.and_then(|frontier| {
                 let mut live = frontier.live.iter();
                 let (hash, giving) = live.next()?;
-                (live.next().is_none() && counts_here(&standing, hash, giving))
+                (family.is_some() && live.next().is_none() && counts_here(&standing, hash, giving))
                     .then(|| (*hash, giving.settings.clone()))
             });
             let ended = lines.ends.contains_key(&grant);
@@ -396,6 +471,7 @@ pub(super) fn folded_grant_lines(
                     live,
                     giving,
                     ended,
+                    family,
                 },
             )
         })

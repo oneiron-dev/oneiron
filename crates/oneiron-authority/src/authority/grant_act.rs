@@ -65,7 +65,8 @@ pub enum GrantFamily {
     HouseLink,
     /// A Connect inquiry edge's terms, rewritten in place.
     InquiryEdge,
-    /// The owner's agent Grant (its giving is `AgentGrantAct`'s mint): only a lapse's end.
+    /// The owner's agent Grant: its giving is `AgentGrantAct`'s mint and his own end that
+    /// act's revoke, so a grant act of this family is a lapse's end alone.
     OwnerAgent,
 }
 
@@ -154,6 +155,19 @@ impl GrantActRecord {
         }
     }
 
+    /// The row this act ends; `None` for a giving.
+    #[must_use]
+    pub fn ended_grant(&self) -> Option<EntityId> {
+        (self.change == GrantActChange::End).then_some(self.subject)
+    }
+
+    /// The owner's agent Grant this act ends (a lapse's end); `None` for any other act.
+    #[must_use]
+    pub fn ended_owner_agent_grant(&self) -> Option<EntityId> {
+        self.ended_grant()
+            .filter(|_| self.family == GrantFamily::OwnerAgent)
+    }
+
     pub fn validate(&self) -> Result<()> {
         match &self.decider {
             GrantDecider::Person(act) => {
@@ -162,10 +176,10 @@ impl GrantActRecord {
                 if act.by != ActBy::Owner || act.answer.is_some() || act.seen != GRANT_ACT_SEEN {
                     return Err(invalid_authority());
                 }
-                // The owner's agent Grant is given by his own mint act alone.
-                if self.family == GrantFamily::OwnerAgent
-                    && matches!(self.change, GrantActChange::Give { .. })
-                {
+                // The owner gives and ends his agent Grant by its own act (`AgentGrantAct`'s
+                // mint and revoke), whose readers judge his liveness and topology: no second,
+                // quieter path to either.
+                if self.family == GrantFamily::OwnerAgent {
                     return Err(invalid_authority());
                 }
             }

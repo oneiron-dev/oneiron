@@ -64,6 +64,12 @@ impl Vault {
     /// The act names the main-log heads alone and returns only once the fold in `txn` counted
     /// it. Nothing commits here: the caller's commit lands the act and the row together.
     ///
+    /// The fold never judges the decider, so the caller MUST have done so: a
+    /// [`GrantActBy::Person`] is the person the caller's door authenticated (an
+    /// `AuthenticatedOwner`, re-judged in `txn`), and the caller checked in `txn` that the
+    /// person may give or end this row by `family`'s own rule. A giving's terms key is fresh
+    /// from the store clock's random source, never reused across rows.
+    ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an install that cannot carry the
     /// act, more heads than one entry may name, or an act the fold did not count; an invalid

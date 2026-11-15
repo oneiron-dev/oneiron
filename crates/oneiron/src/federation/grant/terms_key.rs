@@ -26,14 +26,23 @@ pub(super) const KEY_TERMS_KEY: &str = "terms_key";
 /// A Grant row's terms key.
 pub type GrantTermsKey = [u8; 32];
 
+/// Whether `key` may key a row's terms: never all zero, a key anyone can guess, under which
+/// the public log line could be tested against a guess of low-entropy scope values.
+fn usable_key(key: &GrantTermsKey) -> bool {
+    key.iter().any(|byte| *byte != 0)
+}
+
 /// `grant`'s body with the terms key `key` as its last entry.
 ///
 /// # Errors
-/// An invalid grant, or an encode failure.
+/// An invalid grant, an all-zero key, or an encode failure.
 pub fn encode_federation_grant_body_keyed(
     grant: &FederationGrant,
     key: &GrantTermsKey,
 ) -> Result<Vec<u8>> {
+    if !usable_key(key) {
+        return Err(invalid_grant());
+    }
     let mut entries = federation_grant_body_entries(grant)?;
     entries.push((Value::from(KEY_TERMS_KEY), Value::Binary(key.to_vec())));
     encode_msgpack_value(
@@ -42,8 +51,8 @@ pub fn encode_federation_grant_body_keyed(
     )
 }
 
-/// A body's Grant and its terms key; `None` for a body with no key. A malformed key refuses
-/// the body.
+/// A body's Grant and its terms key; `None` for a body with no key or an all-zero one, which no
+/// writer puts. A malformed key refuses the body.
 ///
 /// # Errors
 /// A body [`super::decode_federation_grant_body`] refuses, or a key that is not 32 bytes.
@@ -65,7 +74,8 @@ pub fn decode_federation_grant_body_keyed(
             _ => None,
         })
         .map(|key| key.ok_or_else(invalid_grant))
-        .transpose()?;
+        .transpose()?
+        .filter(usable_key);
     Ok((grant, key))
 }
 
@@ -85,12 +95,15 @@ pub fn reencode_federation_grant_body(bytes: &[u8]) -> Result<Vec<u8>> {
 /// canonical body without the key.
 ///
 /// # Errors
-/// An invalid grant.
+/// An invalid grant, or an all-zero key.
 pub fn federation_grant_terms(
     id: EntityId,
     grant: &FederationGrant,
     key: &GrantTermsKey,
 ) -> Result<[u8; 32]> {
+    if !usable_key(key) {
+        return Err(invalid_grant());
+    }
     let body = super::encode_federation_grant_body(grant)?;
     Ok(grant_terms_commitment(key, id, &body))
 }
