@@ -13,6 +13,7 @@ use oneiron::sync::schema::{
 };
 use oneiron::sync::server_state;
 use oneiron::sync::{EphemeralStore, WindowManager};
+pub(super) use oneiron_base::unix_seconds_now;
 use tokio::sync::{Mutex, broadcast};
 
 use crate::api::DeepRetrievalHost;
@@ -933,12 +934,4 @@ fn mcp_registry_hash_key(config: &SyncServerConfig) -> [u8; 32] {
         hasher.update(b"no-auth-secret-configured");
     }
     *hasher.finalize().as_bytes()
-}
-
-/// Wall-clock Unix seconds, saturating to 0 pre-epoch (matches the
-/// client-side SystemTime uses).
-pub(super) fn unix_seconds_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
 }
