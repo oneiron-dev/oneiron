@@ -13,10 +13,12 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::deletion::DeleteEntityOptions;
 use oneiron::note::{
     DRIVE_WIRE_RATE_LIMITED, DriveChange, DriveChangesPage, DriveFileMeta, DriveOrigin, DriveQuota,
     DriveStepBudget, DriveWire, FolderFileState, FolderSource, NameOnlyReason,
 };
+use oneiron::policy_model::SecretScanMode;
 use oneiron::registry::ENTITY_TYPE_NOTE;
 use oneiron::store::GateDecisionId;
 use oneiron::{Result, Vault, VaultConfig};
@@ -182,6 +184,16 @@ fn ledger_state(vault: &Vault, source: &FolderSource, id: &str) -> Option<Folder
         .into_iter()
         .find(|file| file.path == id)
         .map(|file| file.state)
+}
+
+/// How many times the wire downloaded `id`.
+fn downloads(drive: &FakeDrive, id: &str) -> usize {
+    let download = format!("download {id}");
+    drive
+        .calls()
+        .iter()
+        .filter(|call| **call == download)
+        .count()
 }
 
 fn texts(count: usize) -> DriveStepBudget {
@@ -557,4 +569,133 @@ fn a_concurrent_step_keeps_the_rest_a_rate_limit_answer_set() {
         );
         assert_eq!(resting.quota_paused_until, Some(until), "{resting:?}");
     });
+}
+
+/// A Drive file id the write door reads as a GitHub token: while the secret
+/// scan is on, the ledger refuses to hold the file by its name.
+const TOKEN_SHAPED_ID: &str = "ghp_0123456789abcdefghijklmnopqrstuvwxyz";
+
+/// A file the rescan refuses stays owed, so the next step reads it again
+/// although Drive reports no change; once the ledger takes it, it is owed
+/// no more (REVIEW-7973 P1).
+#[test]
+fn a_refused_file_stays_owed_until_the_ledger_takes_it() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    let drive = FakeDrive::default();
+    drive.put(
+        TOKEN_SHAPED_ID,
+        "Blank.md",
+        "text/markdown",
+        1_700_000_100,
+        "",
+    );
+    let source = attach(&vault, &owner, &[TOKEN_SHAPED_ID]);
+
+    let refused = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("first step");
+    assert_eq!(
+        (refused.texts, refused.rescan.failed, refused.owed),
+        (1, 1, 1),
+        "a file whose name the ledger refused stays owed: {refused:?}"
+    );
+    assert_eq!(ledger_state(&vault, &source, TOKEN_SHAPED_ID), None);
+
+    let again = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("second step");
+    assert_eq!(
+        downloads(&drive, TOKEN_SHAPED_ID),
+        2,
+        "with no Drive change the owed file is read again: {:?}",
+        drive.calls()
+    );
+    assert_eq!((again.rescan.failed, again.owed), (1, 1), "{again:?}");
+
+    vault
+        .set_secret_scan_mode(&owner, SecretScanMode::Off, 1_700_000_200)
+        .expect("the owner switches the secret scan off");
+    let held = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("third step");
+    assert_eq!(downloads(&drive, TOKEN_SHAPED_ID), 3, "{:?}", drive.calls());
+    assert_eq!(
+        (held.rescan.failed, held.rescan.name_only, held.owed),
+        (0, 1, 0),
+        "the ledger holds the file by its name and it is owed no more: {held:?}"
+    );
+    assert_eq!(
+        ledger_state(&vault, &source, TOKEN_SHAPED_ID),
+        Some(FolderFileState::NameOnly {
+            why: NameOnlyReason::Empty
+        })
+    );
+
+    let settled = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("fourth step");
+    assert_eq!(
+        downloads(&drive, TOKEN_SHAPED_ID),
+        3,
+        "a file the ledger took is not read again: {:?}",
+        drive.calls()
+    );
+    assert_eq!(settled.owed, 0, "{settled:?}");
+}
+
+/// A note the owner purged is left as he left it when its Drive file
+/// changes: counted as removed, never as a refusal, so the file is not
+/// owed and not read again.
+#[test]
+fn a_purged_note_is_left_as_the_owner_left_it() {
+    let temp = tempfile::tempdir().expect("temporary directory");
+    let (vault, owner) = owned_vault(&temp);
+    // A purge needs this install's keystore, as a host installs it after each open.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    vault.prepare_install_signing().expect("install signing");
+    let drive = FakeDrive::default();
+    drive.put(
+        "mdB2",
+        "Plan.md",
+        "text/markdown",
+        1_700_000_100,
+        "# Plan\n\nRead the logs.\n",
+    );
+    let source = attach(&vault, &owner, &["mdB2"]);
+    let landed = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("first step");
+    assert_eq!(landed.rescan.landed, 1, "{landed:?}");
+
+    let note = Vault::imported_note_id(&source.namespace(), "mdB2").expect("NOTE id");
+    assert!(
+        vault
+            .delete_entity_with_options(&note, DeleteEntityOptions { purge: true })
+            .expect("the owner purges the note"),
+        "the note existed"
+    );
+    drive.change("mdB2", 1_700_000_300, "# Plan\n\nRead the logs twice.\n");
+    let changed = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("changed step");
+    assert_eq!(
+        (changed.rescan.removed, changed.rescan.failed, changed.owed),
+        (1, 0, 0),
+        "{changed:?}"
+    );
+    assert_eq!(note_text(&vault, &source, "mdB2"), None, "the purge stands");
+
+    let later = vault
+        .drive_sync_step(&owner, &source.folder, &drive, DriveStepBudget::default())
+        .expect("later step");
+    assert_eq!(
+        downloads(&drive, "mdB2"),
+        2,
+        "the purged note's file is not read again: {:?}",
+        drive.calls()
+    );
+    assert_eq!(later.owed, 0, "{later:?}");
 }
