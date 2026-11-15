@@ -1428,7 +1428,9 @@ fn a_machine_whose_carrier_lost_its_removal_race_is_not_mine_again_without_proof
 
 /// Guard (plan read F4, the strict cascade): a held machine carries nothing.
 /// Its own later answer is an invalid entry, not a second held answer, so
-/// the owner's confirm of the pairing is the only way in.
+/// the owner's confirm of the pairing is the only way in. The answer takes
+/// the first revision, as the owner's confirm does (a held pairing is no
+/// head), so the carrier rule alone refuses it and no revision rule does.
 #[test]
 fn a_held_machines_own_later_answer_is_refused_not_held() {
     let mut paired = PairedMachine::new();
@@ -1446,7 +1448,7 @@ fn a_held_machines_own_later_answer_is_refused_not_held() {
             paired_machine,
             &paired.paired,
             MachineRole::Owned(MachineOwnership::Yours),
-            2,
+            1,
             Some((
                 paired_machine,
                 OwnerAct::by_owner(
