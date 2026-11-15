@@ -51,6 +51,12 @@
 //!   answer then places a cooperative restriction that hides the grant from
 //!   safe reads.
 //!
+//! Astra delta-6 (auditread-8435-pr1-delta6b) found K4: the restriction's
+//! refusal came back as a lapsed owner proof, so the owner's courtesy route
+//! answered it as a missing owner scope and dropped the revoke's name. It is
+//! the grant record's own refusal (`InvalidAccessGrantBody`), as a task
+//! fact's and a ruling's are their record's.
+//!
 //! Each removal is refused, or leaves the grant as it was: the holder still
 //! reads, the grant's history stays listed, and the owner's revoke still
 //! finds it standing. Verbs go through the generated verb dispatch
@@ -76,7 +82,8 @@ use oneiron::test_doors::audit_read_removal::{
     settle_a_privacy_erase_refusal, use_limited, withdraw_on_received_shell_cutoff,
 };
 use oneiron::{
-    EdgeActorClass, EdgeKind, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
+    EdgeActorClass, EdgeKind, EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault,
+    VaultConfig,
 };
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -607,7 +614,9 @@ fn a_settled_privacy_erase_refusal_limits_no_audit_read_grant() -> TestResult {
 /// Delta-5 J2: the owner's answer to a courtesy ask restricts only the
 /// copies its coverage check passes, and a delivery-ledger row the generic
 /// writers plant passes that check for the grant. The restriction refuses
-/// the grant, so it still reads, and the grant stands.
+/// the grant, so it still reads, and the grant stands. Delta-6 K4: the
+/// refusal is the grant record's own, never a lapsed owner proof, so the
+/// owner's courtesy route answers it with the revoke's name.
 #[test]
 fn a_cooperative_restriction_of_an_audit_read_grant_is_refused() -> TestResult {
     let fixture = fixture()?;
@@ -617,6 +626,12 @@ fn a_cooperative_restriction_of_an_audit_read_grant_is_refused() -> TestResult {
     assert!(
         restrict.as_ref().is_err_and(names_the_revoke),
         "a cooperative restriction of an audit_read grant is refused: {restrict:?}"
+    );
+    assert!(
+        restrict
+            .as_ref()
+            .is_err_and(|error| error.kind() == ErrorKind::InvalidAccessGrantBody),
+        "the restriction's refusal is the grant record's, not a lapsed owner proof: {restrict:?}"
     );
     assert!(
         fixture.vault.get_raw(&granted.grant_ref)?.is_some(),
