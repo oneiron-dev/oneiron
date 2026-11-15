@@ -241,6 +241,16 @@ fn a_field_schema_change_rebuilds_the_text_index_too() {
 
     let vault = Vault::open(dir.path(), VaultConfig::default())
         .expect("a vault whose BM25F field schema changed opens with no manual step");
+    let (done, total) = door::text_index_rebuild_progress(&vault)
+        .expect("marker read")
+        .expect("the open started a rebuild");
+    assert_eq!(done, 0, "nothing is indexed again before the pass");
+    assert!(total >= WORDS.len() as u64, "every NOTE waits: {total}");
+    assert_eq!(
+        door::text_index_row_counts(&vault).expect("row counts"),
+        [0; 5],
+        "the open cleared every row built under the old field schema"
+    );
     vault
         .housekeeping(HousekeepingBudget::unbounded())
         .expect("housekeeping pass");
