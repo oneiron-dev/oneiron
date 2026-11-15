@@ -28,9 +28,13 @@
 //! reads it or makes one, and a signer made from the slot before the PIN was
 //! set signs nothing more. The same holds once a PIN of the device was
 //! forgotten, with a PIN set or with none: every key the device held was
-//! lost with that PIN, and its next key is made under a new one. Either way,
-//! a key signs only while the roster lists it live, and it checks that at
-//! each signature.
+//! lost with that PIN, and its next key is made under a new one. A signer
+//! made from a slot also signs only while that slot still holds its seed,
+//! and it reads the slot at each signature: a seed that a PIN took under
+//! itself, or that a forget or a fresh key removed, leaves no signer behind,
+//! whatever the keystore says about its PIN afterwards. Either way, a key
+//! signs only while the roster lists it live, and it checks that at each
+//! signature.
 
 use std::sync::Arc;
 
@@ -57,6 +61,8 @@ const KEPT_UNDER_DEVICE_PIN: &str = "this install's owner signing key is kept un
                                      PIN and is not handed out";
 const LOST_WITH_FORGOTTEN_PIN: &str = "this owner signing key was lost with the device PIN that \
                                        was forgotten";
+const SEED_LEFT_ITS_SLOT: &str = "this owner signing key's seed no longer rests in its keystore \
+                                  slot";
 pub(super) const KEY_NOT_LIVE: &str = "the roster does not list this owner signing key live";
 pub(super) const OTHER_VAULT_KEY: &str = "this owner signing key is another vault's";
 
@@ -70,10 +76,10 @@ pub struct OwnerRootSigner {
     slot_home: Option<SlotHome>,
 }
 
-/// The keystore and the vault of the slot a key's seed was read from.
+/// The keystore slot a key's seed was read from.
 struct SlotHome {
     keystore: Arc<dyn DeviceKeystore>,
-    vault_id: [u8; 32],
+    slot: KeystoreSlot,
 }
 
 impl std::fmt::Debug for OwnerRootSigner {
@@ -95,13 +101,13 @@ impl OwnerRootSigner {
     }
 
     /// The key the seed of `slot` names, read from `keystore`. It signs only
-    /// on that slot's vault, and only while `keystore` has no device PIN and
-    /// never forgot one.
+    /// on that slot's vault, only while `keystore` has no device PIN and
+    /// never forgot one, and only while `slot` still holds that seed.
     fn from_slot(seed: &[u8; 32], keystore: &Arc<dyn DeviceKeystore>, slot: &KeystoreSlot) -> Self {
         let mut signer = Self::from_seed(seed);
         signer.slot_home = Some(SlotHome {
             keystore: Arc::clone(keystore),
-            vault_id: slot.vault_id,
+            slot: *slot,
         });
         signer
     }
@@ -132,12 +138,15 @@ impl OwnerRootSigner {
     /// read from a slot signs on that slot's vault alone, and stops once a
     /// device PIN is set on its keystore: from then on the key signs from
     /// under the PIN, and what was read before is dead. It stays dead when
-    /// that PIN is forgotten: the key was lost with it. A keystore that does
-    /// not answer signs nothing. Every key stops when the roster no longer
-    /// lists it live.
+    /// that PIN is forgotten: the key was lost with it. The slot is read
+    /// too, so the key is dead once its seed left the slot, and stays dead
+    /// when a writer of the keystore's files removes what says a PIN is set
+    /// or was forgotten: nobody without the seed puts it back. A keystore
+    /// that does not answer signs nothing. Every key stops when the roster
+    /// no longer lists it live.
     fn refusal(&self, vault: &Vault) -> Option<Error> {
         if let Some(home) = &self.slot_home {
-            if home.vault_id != *vault.vault_id().as_bytes() {
+            if home.slot.vault_id != *vault.vault_id().as_bytes() {
                 return Some(authority_refused(OTHER_VAULT_KEY));
             }
             match slot_seed_bar(home.keystore.as_ref()) {
@@ -148,6 +157,11 @@ impl OwnerRootSigner {
                 Ok(Some(SlotSeedBar::PinForgotten)) => {
                     return Some(super::refused(LOST_WITH_FORGOTTEN_PIN));
                 }
+                Err(error) => return Some(super::keystore_error(error)),
+            }
+            match home.keystore.get(&home.slot) {
+                Ok(Some(seed)) if Self::from_seed(&seed).public_key() == self.public_key() => {}
+                Ok(_) => return Some(super::refused(SEED_LEFT_ITS_SLOT)),
                 Err(error) => return Some(super::keystore_error(error)),
             }
         }
@@ -165,9 +179,9 @@ impl CheckpointRootSigner for OwnerRootSigner {
 
     /// Refused for any statement outside the checkpoint domains, for a key
     /// the roster no longer lists live, and for a key read from its slot
-    /// once a device PIN is set on its keystore or one was forgotten there.
-    /// Each is checked at this call, so a signer taken earlier stops with
-    /// its key.
+    /// once a device PIN is set on its keystore, one was forgotten there, or
+    /// the slot no longer holds its seed. Each is checked at this call, so a
+    /// signer taken earlier stops with its key.
     fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
         match self.refusal(vault) {
             Some(refusal) => Err(refusal),

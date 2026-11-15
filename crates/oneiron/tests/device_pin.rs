@@ -131,8 +131,9 @@ impl SteppedKeystore {
     }
 
     /// Lets the next `call` reach the keystore and then answers a failure
-    /// for it, once: what a file keystore does when it removed a file and
-    /// its directory does not sync. `then_refuse` is refused next, once.
+    /// for it, once: what a file keystore does when it removed or replaced a
+    /// file and its directory does not sync. `then_refuse` is refused next,
+    /// once.
     fn fail_after_once(&self, call: KeystoreCall, then_refuse: Option<KeystoreCall>) {
         *self
             .fail_after
@@ -255,11 +256,16 @@ impl SealedBytesStore for SteppedKeystore {
     }
 
     fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<(), KeystoreError> {
-        if matches!(name, SealedBytesName::Slot(_)) {
+        let slot_secret = matches!(name, SealedBytesName::Slot(_));
+        if slot_secret {
             self.at(KeystoreCall::PutSealedSlot)?;
         }
         self.puts.fetch_add(1, Ordering::Relaxed);
-        self.sealed().put_sealed(name, sealed)
+        self.sealed().put_sealed(name, sealed)?;
+        if slot_secret {
+            self.after(KeystoreCall::PutSealedSlot)?;
+        }
+        Ok(())
     }
 
     fn delete_sealed(&self, name: &SealedBytesName) -> Result<(), KeystoreError> {
@@ -1892,4 +1898,152 @@ fn a_first_pin_whose_undo_cannot_finish_keeps_the_seed_under_the_pin() {
         }
     );
     assert!(device.signs(key));
+}
+
+#[test]
+fn a_signer_whose_seed_left_its_slot_signs_nothing_once_the_mark_of_the_forgotten_pin_is_removed() {
+    let device = PinDevice::hardware_counted();
+    let key = device.enrol();
+    let slot = device.owner_slot();
+    // The two ways a caller comes by the key while no PIN is set.
+    let listed = device
+        .listed_signer(key)
+        .expect("guard: with no PIN the pass gets the signer");
+    let handed_out = device
+        .vault
+        .device_owner_signing_key()
+        .expect("guard: with no PIN the key is handed out");
+
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner adds a PIN to this device");
+    device
+        .vault
+        .forget_device_pin_as(&device.owner())
+        .expect("the owner forgets this device's PIN");
+    // A writer of the keystore's files removes the mark the forget left.
+    let mark = SealedBytesName::DevicePinForgotten;
+    assert!(
+        device.sealed(&mark).is_some(),
+        "guard: the forget left its mark"
+    );
+    device
+        .keystore
+        .sealed()
+        .delete_sealed(&mark)
+        .expect("the mark is removed");
+    assert!(device.sealed(&mark).is_none(), "guard: the mark is gone");
+    assert_eq!(
+        device.pin.capability(),
+        PresenceCapability::DevicePin { set: false },
+        "guard: no PIN is set, so the keystore says nothing of a PIN now"
+    );
+    assert!(
+        device
+            .keystore
+            .get(&slot)
+            .expect("the slot reads")
+            .is_none(),
+        "guard: the seed left its slot when the PIN was set"
+    );
+    for signer in [&*listed, &handed_out as &dyn CheckpointRootSigner] {
+        assert!(
+            !signer.signs_now(&device.vault),
+            "a signer whose seed left its slot is not listed for the pass, mark or no mark"
+        );
+        assert!(
+            signer
+                .sign_checkpoint_statement(&device.vault, STATEMENT)
+                .is_err(),
+            "and it signs nothing: the roster still lists the lost key, and nothing else stops it"
+        );
+    }
+
+    // Another seed in the slot is another key.
+    device
+        .keystore
+        .create(&slot, &[0x5a; 32])
+        .expect("another seed goes into the slot");
+    for signer in [&*listed, &handed_out as &dyn CheckpointRootSigner] {
+        assert!(
+            signer
+                .sign_checkpoint_statement(&device.vault, STATEMENT)
+                .is_err(),
+            "a signer of the lost key signs nothing for a seed that is not its own"
+        );
+    }
+}
+
+#[test]
+fn a_replacement_whose_sealed_write_answers_a_failure_is_not_told_as_the_replaced_key() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let replaced = device.enrol();
+    assert_eq!(
+        device.rest(),
+        OwnerKeyRest::DevicePin {
+            public_key: replaced,
+            tier: DevicePinTier::HardwareCounted,
+        },
+        "guard: this handle names the key it enrolled under the PIN"
+    );
+
+    // The sealed seed no longer opens, as after a write that was cut short:
+    // the next enrollment puts a fresh key in its place.
+    let name = SealedBytesName::Slot(device.owner_slot());
+    let mut cut_short = device.sealed(&name).expect("the sealed seed rests");
+    let kept = cut_short.len() / 2;
+    cut_short.truncate(kept);
+    device
+        .keystore
+        .sealed()
+        .put_sealed(&name, &cut_short)
+        .expect("the damaged bytes go under the slot's name");
+    // The replacement's sealed write lands, and the keystore answers a
+    // failure for it.
+    device
+        .keystore
+        .fail_after_once(KeystoreCall::PutSealedSlot, None);
+    assert!(
+        device.pin.window_is_open(),
+        "guard: the window is still open"
+    );
+    assert!(
+        device
+            .vault
+            .enrol_device_owner_signing_key(&device.owner(), &device.issuer)
+            .is_err(),
+        "the enrollment reports the keystore's failure"
+    );
+    let landed = device.sealed(&name).expect("the replacement's bytes rest");
+    assert_ne!(
+        landed, cut_short,
+        "guard: the write that answered a failure did replace what rested"
+    );
+    assert_eq!(
+        device.rest(),
+        OwnerKeyRest::DevicePinUnopened {
+            tier: DevicePinTier::HardwareCounted,
+            seed_in_slot: false,
+        },
+        "the handle no longer names the key whose sealed seed that write replaced"
+    );
+
+    // The next step inside the window opens what rests now, and names that.
+    assert!(
+        !device.vault.hold_device_owner_signer_logged(),
+        "the key that landed is not on the roster, so it is not held"
+    );
+    assert!(
+        matches!(
+            device.rest(),
+            OwnerKeyRest::DevicePin { public_key, tier: DevicePinTier::HardwareCounted }
+                if public_key != replaced
+        ),
+        "the handle then names the key that rests, never the replaced one"
+    );
 }
