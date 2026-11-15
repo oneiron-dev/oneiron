@@ -8,6 +8,9 @@
 //!   claim, so a test can settle it.
 //! - [`land_stale_consolidation`] lands a claim as the Dreamer's own
 //!   consolidation on its last curator rung, a target the curator grades.
+//! - [`land_dreamer_claim`] lands a claim as the Dreamer's own signed
+//!   consolidation, Proposed or at Auto: a Dreamer-born MACHINE member, which
+//!   a settlement's revert stands again only as the Dreamer's copy.
 //! - [`run_curator_once`] runs one curator pass, as the wake driver runs it.
 
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
@@ -95,20 +98,58 @@ pub fn land_stale_consolidation(
     value: Value,
     learned_at: u64,
 ) -> Result<EntityId> {
-    let dreamer = vault.dreamer_authority()?;
-    let id = EntityId::now();
     let candidate = ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, 1.0)
         .with_scope(Value::Map(vec![(
             Value::from(crate::claim::CLAIM_SCOPE_DEMOTION_RUNG_KEY),
             Value::from("stale"),
         )]))
-        .with_evidence(crate::dreamer_consolidation::encode_consolidation_evidence(
-            &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
-                refs: vec![subject],
-                chain: Vec::new(),
-                source_meet: ClaimSource::Generated,
-            },
-        ));
+        .with_evidence(consolidation_evidence(subject));
+    land_as_dreamer(vault, candidate, ClaimApprovalStatus::Auto, learned_at)
+}
+
+/// Lands `predicate` about `subject` holding `value` as the Dreamer's own
+/// consolidation, learned at `learned_at`: a signed Generated write at
+/// `approval` (Proposed or Auto) whose evidence cites `subject` and names
+/// the Dreamer under the surface `dreamer`. The owner approves a Proposed
+/// one with `Vault::approve_machine_claim_as`. Returns its id.
+///
+/// # Errors
+///
+/// The vault's, and the write door's.
+pub fn land_dreamer_claim(
+    vault: &Vault,
+    subject: EntityId,
+    predicate: &str,
+    value: Value,
+    approval: ClaimApprovalStatus,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let candidate = ClaimCandidate::new(predicate, ClaimSubject::Entity(subject), value, 1.0)
+        .with_evidence(consolidation_evidence(subject));
+    land_as_dreamer(vault, candidate, approval, learned_at)
+}
+
+/// The Dreamer's consolidation evidence citing `subject`.
+fn consolidation_evidence(subject: EntityId) -> Value {
+    crate::dreamer_consolidation::encode_consolidation_evidence(
+        &crate::dreamer_consolidation::ConsolidationEvidenceEnvelope {
+            refs: vec![subject],
+            chain: Vec::new(),
+            source_meet: ClaimSource::Generated,
+        },
+    )
+}
+
+/// Lands `candidate` as the Dreamer's signed Generated write at `approval`,
+/// learned at `learned_at`. Returns its id.
+fn land_as_dreamer(
+    vault: &Vault,
+    candidate: ClaimCandidate,
+    approval: ClaimApprovalStatus,
+    learned_at: u64,
+) -> Result<EntityId> {
+    let dreamer = vault.dreamer_authority()?;
+    let id = EntityId::now();
     vault.with_write_txn_grouped(|txn| {
         let mut envelope = WriteEnvelope::new(
             dreamer,
@@ -117,7 +158,7 @@ pub fn land_stale_consolidation(
                 Value::from("surface"),
                 Value::from("dreamer"),
             )]))?,
-            ClaimApprovalStatus::Auto,
+            approval,
         );
         vault.sign_retained_machine_claim_in_txn(&*txn, &id, &candidate, &mut envelope)?;
         vault
