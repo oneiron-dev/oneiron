@@ -155,6 +155,8 @@ pub use self::embedder_serve::embedder_serve;
 mod maintain;
 pub use maintain::maintain;
 mod owner;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner::confirm_on;
 pub use owner::embedding_spaces;
 pub use owner::learning_settings;
 pub use owner::legal_holds;

@@ -269,6 +269,13 @@ pub struct RecoveryKitConfirmArgs {
     #[arg(long, value_name = "MACHINE")]
     pub carry: Vec<String>,
 
+    /// Write the new root's recovery box deposit to FILE: a new file, readable
+    /// by you alone, holding one `seeds` element of the control plane's
+    /// recovery box enrol, without the PIN. Nothing is written under "Nobody
+    /// but me". Without this flag the deposit is not written anywhere.
+    #[arg(long, value_name = "FILE")]
+    pub box_deposit_out: Option<PathBuf>,
+
     /// How the vault key unlocks, so confirm can replace its world-kit wrap
     /// (FIX 2201): this install's keystore by default.
     #[command(flatten)]

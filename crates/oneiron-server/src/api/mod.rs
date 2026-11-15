@@ -185,6 +185,15 @@ mod operator_routes;
 mod owner_origin;
 mod owner_routes;
 pub(crate) use owner_routes::owner;
+// The integration tests' door to the roots confirm and run answers
+// (OPUS-WAYBACK-BOX's box deposit): the doors call the routes' bodies
+// without their guards.
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_routes::recovery_kit_target_routes::{
+    RunRootRequest,
+    root_doors::{ConfirmDoor, confirm_answer},
+    run_answer,
+};
 // FIX 5911: an owner's own program proves its waking person the live
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).

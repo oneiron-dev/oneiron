@@ -2223,6 +2223,16 @@ their own old root; replacing a kit does not revoke it. `this-machine` keeps its
 install's keystore, and a restore on that install counts it as one of the two. It is refused when
 the keystore cannot hold the piece.
 
+Confirm also hands out the new root's recovery box deposit, once: the root's authority seed, which
+the hosted recovery box keeps, never the root's own seed. `confirm --box-deposit-out FILE` writes it
+to a new file readable by you alone, as one `seeds` element of the box's enrol (`label`,
+`seed_hex`, `source_root`) without the PIN; an existing file refuses the confirm before anything
+changes. Without the flag it is written nowhere, and the printed JSON never carries it. On a
+running server the `/roots/confirm` answer, and `/roots/requests/run`'s for a kit confirm, carry it
+as `box_deposit`; your app then asks for the recovery PIN and enrols it with the box. The confirm
+stands if that enrol fails, and the app retries it. Under "Nobody but me" there is no deposit and
+no file.
+
 `issue-vault-key` takes the same `--home`, `--out` and `--secret-file` flags and writes a kit of
 the vault data key: a 2-of-3 copy of the key for you to keep, at today's passphrase cost. It runs on any vault, hosted ones too. Its key is unlocked with this machine's
 wrap if it is locked; no key is minted or rotated, and the world kit and its `world-kit` wrap stay

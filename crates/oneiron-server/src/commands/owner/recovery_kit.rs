@@ -5,15 +5,17 @@
 //! Issue writes each stored piece's recovery code to an owner-only file, and
 //! nothing goes live until confirm reads two of them back, or one and the
 //! passphrase. A piece, a code or the passphrase never reaches the command
-//! line, a log or the JSON printed. A `this-machine` home's piece stays in
+//! line, a log or the JSON printed; the box deposit goes only to the file
+//! --box-deposit-out names. A `this-machine` home's piece stays in
 //! this install's keystore, and a restore here counts it as one of the two
 //! (FIX 2063).
 
 use std::collections::BTreeSet;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::SecretError;
 use oneiron::recovery::{KitError, KitId, KitPassphrase, KitPiece, KitSecretKind, restore_kit};
 use oneiron::sync::WindowManager;
@@ -24,6 +26,7 @@ use oneiron::world_keys::{
     KitConfirmation, RecoveryRootId, RecoveryRootSeed, SealedKeyPads, SealedVaultBundle,
     WORLD_KIT_ESCROW, Withheld, WorldKeyId, WorldKitRestore,
 };
+use oneiron::{EntityId, Vault};
 use serde::Serialize;
 use zeroize::Zeroizing;
 
@@ -38,6 +41,7 @@ use crate::cli::{
 use crate::commands::credential_file;
 use crate::config::resolve_serve_config;
 use crate::owner::local_owner;
+use crate::owner::recovery_box_deposit::box_deposit;
 use crate::owner::recovery_kit::{self as view, kit_id};
 use crate::owner::vault_key::{WrapView, hex, secret32};
 
@@ -215,7 +219,7 @@ fn withheld(list: &[(WorldKeyId, Withheld)]) -> Vec<WithheldView> {
 
 /// What confirming a kit did.
 #[derive(Serialize)]
-struct Confirmed {
+pub(crate) struct Confirmed {
     kit_id: String,
     root: String,
     rewrapped: Vec<KeyView>,
@@ -229,6 +233,9 @@ struct Confirmed {
     vault_key_wrap: Option<WrapView>,
     /// The root committed but the sealed page-seal mirror still needs repair.
     mirror_pending: bool,
+    /// Where the box deposit was written; none without --box-deposit-out and
+    /// under "Nobody but me".
+    box_deposit_out: Option<String>,
 }
 
 fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
@@ -262,13 +269,82 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
     let (pieces, passphrase) = read_kit_args(&args.kit)?;
     let owner = local_owner(&vault)?;
     let pieces: Vec<&KitPiece> = pieces.iter().collect();
-    let confirmed = vault.confirm_world_kit(&owner, &pieces, passphrase.as_ref(), &carry)?;
-    // OPUS-WAYBACK-BOX's deposit takes R's authority seed later; the server
-    // drops it for now.
-    let _ = &confirmed.activated.authority_seed;
+    let confirmed = confirm_on(
+        &vault,
+        &owner,
+        &pieces,
+        passphrase.as_ref(),
+        &carry,
+        args.box_deposit_out.as_deref(),
+    )?;
+    emit(&confirmed)
+}
+
+/// Confirms the kit `pieces` (and `passphrase`) rebuild on the open `vault`
+/// as `owner`, carrying `carry`: its root goes live here and the vault key
+/// gets its `world-kit` escrow wrap. When `box_deposit_out` names a file,
+/// the new root's recovery box deposit is written there
+/// (WAYBACK-BOX-DEPOSIT-PATH = A): the file is created, a new one its owner
+/// alone may read, before anything is confirmed, so an existing file refuses
+/// the confirm; a failed confirm removes it again. After the confirm the
+/// deposit is written and synced, and a write failure removes the file and
+/// is answered with a fresh kit to issue; under "Nobody but me" no deposit
+/// is written and the file is removed. Without the flag the seed is dropped,
+/// zeroized, and nothing reaches stdout but [`Confirmed`].
+pub(crate) fn confirm_on(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    pieces: &[&KitPiece],
+    passphrase: Option<&KitPassphrase>,
+    carry: &BTreeSet<EntityId>,
+    box_deposit_out: Option<&Path>,
+) -> anyhow::Result<Confirmed> {
+    let pending = match box_deposit_out {
+        Some(path) => Some((path, credential_file::create(path)?)),
+        None => None,
+    };
+    let confirmed = match vault.confirm_world_kit(owner, pieces, passphrase, carry) {
+        Ok(confirmed) => confirmed,
+        Err(error) => {
+            if let Some((path, file)) = pending {
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
+            return Err(error.into());
+        }
+    };
+    let seed = confirmed.activated.authority_seed;
+    let deposit = box_deposit(vault, seed, &confirmed.activated.root);
+    let box_deposit_out = match (pending, deposit) {
+        (Some((path, mut file)), Some(deposit)) => {
+            let bytes = Zeroizing::new(serde_json::to_vec(&deposit)?);
+            let written = file
+                .write_all(&bytes)
+                .and_then(|()| file.write_all(b"\n"))
+                .and_then(|()| file.sync_all());
+            drop(file);
+            if let Err(error) = written {
+                let _ = std::fs::remove_file(path);
+                anyhow::bail!(
+                    "kit {} is confirmed and its root is live here, but its box deposit was not \
+                     written to {}: {error}; issue and confirm a new kit to deposit",
+                    kit_id(confirmed.kit),
+                    path.display()
+                );
+            }
+            Some(path.display().to_string())
+        }
+        (pending, _) => {
+            if let Some((path, file)) = pending {
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
+            None
+        }
+    };
     let vault_id = vault.vault_key_vault_id();
     let keys = &confirmed.activated.keys;
-    emit(&Confirmed {
+    Ok(Confirmed {
         kit_id: kit_id(confirmed.kit),
         root: hex(&confirmed.activated.root.0),
         rewrapped: keys.rewrapped.iter().map(KeyView::from).collect(),
@@ -281,6 +357,7 @@ fn confirm(args: RecoveryKitConfirmArgs) -> anyhow::Result<()> {
         replaced: confirmed.replaced.iter().copied().map(kit_id).collect(),
         vault_key_wrap: confirmed.escrow.map(|info| WrapView::of(&vault_id, info)),
         mirror_pending: confirmed.mirror_pending,
+        box_deposit_out,
     })
 }
 
