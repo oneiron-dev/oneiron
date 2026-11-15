@@ -22,7 +22,6 @@
 
 use std::collections::BTreeMap;
 
-use oneiron::EntityId;
 use oneiron::memory::extraction::{
     EncoderOutput, NerSpan, RelationLink, SpeakerLink, SpeakerTarget,
 };
