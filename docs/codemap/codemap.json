@@ -108904,6 +108904,21 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [
+      "GitRequestDigest",
+      "LfsRequestDigest"
+     ],
+     "path": "tests/fingerprint_keep_broker.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 4.2: the credential broker's request digests keep their bytes",
+     "surface": {
+      "crate-vis": 12,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -109072,7 +109087,7 @@
    "over_bar": 2,
    "purpose": "The credential broker (ARCH-0069 `#credential-broker`, `#broker-design`)",
    "source_files": 34,
-   "test_files": 8
+   "test_files": 9
   },
   "oneiron-browser": {
    "files": [
@@ -117273,6 +117288,14 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/purposes/broker.rs",
+     "purpose": "Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/purposes/mod.rs",
      "purpose": "The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area",
      "surface": {
@@ -117319,7 +117342,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -117335,7 +117358,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 5,
+   "source_files": 6,
    "test_files": 1
   },
   "oneiron-gen": {
