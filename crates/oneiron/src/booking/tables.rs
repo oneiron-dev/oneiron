@@ -22,7 +22,7 @@ crate::side_table::side_tables! {
     /// restore (ARCH-0038): an entry is its waiter's own standing ask to be offered a slot by
     /// email, so no restore brings back a waiter who left, or an offer that lapsed or passed on.
     BOOKING_WAITLIST: VaultMeta b"booking.waitlist.v1:" VersionedNamed
-        [restore: live] [family: unclassified] [tier: canonical];
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Booking token and checkout lease rows (digest domains keep them apart). Key: hash32.
     BOOKING_TOKEN: VaultMeta b"booking.token.v1:" VersionedNamed
         [restore: content] [family: unclassified] [tier: canonical];
