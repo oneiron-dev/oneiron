@@ -220,8 +220,9 @@ struct KeyReply {
     /// When it was signed, advisory unix seconds.
     at: u64,
     /// `device`: a device's own key; `recovery_authority`: the recovery
-    /// root's authority key, which this route's removal refuses.
-    kind: &'static str,
+    /// root's authority key, which this route's removal refuses. The names
+    /// are the enum's own serde names.
+    kind: EnrolledOwnerKeyKind,
     /// Whether this install holds the key, so it can sign a removal.
     held_here: bool,
     /// Every machine a counted enrollment names as holding the key as a
@@ -256,7 +257,7 @@ struct ChangeReply {
     /// The machine the key's enrollment names, as 32 hex.
     machine: String,
     /// `device` or `recovery_authority`, as the list's `kind`.
-    kind: &'static str,
+    kind: EnrolledOwnerKeyKind,
     /// The key that signed the entry, as hex: an enrollment's predecessor, a
     /// removal's proof.
     signed_by: String,
@@ -426,14 +427,6 @@ fn authority_key_hex(key: &AuthorityKey) -> String {
     }
 }
 
-/// A key's kind as the wire names it.
-fn kind_name(kind: EnrolledOwnerKeyKind) -> &'static str {
-    match kind {
-        EnrolledOwnerKeyKind::Device => "device",
-        EnrolledOwnerKeyKind::RecoveryAuthority => "recovery_authority",
-    }
-}
-
 fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
     ChangeReply {
         entry: revision_hex(&change.entry),
@@ -444,7 +437,7 @@ fn change_reply(change: &OwnerKeyChange) -> ChangeReply {
         },
         public_key: revision_hex(&change.public_key),
         machine: change.machine.to_hex(),
-        kind: kind_name(change.kind),
+        kind: change.kind,
         signed_by: authority_key_hex(&change.signed_by),
         at: change.at,
     }
@@ -460,7 +453,7 @@ fn key_reply(key: &EnrolledOwnerKey, held: &[AuthorityKey]) -> KeyReply {
         live: key.live,
         eligible: key.eligible,
         at: key.at,
-        kind: kind_name(key.kind),
+        kind: key.kind,
         held_here: held.contains(&AuthorityKey::Ed25519(key.public_key)),
         device_machines: key
             .device_machines
