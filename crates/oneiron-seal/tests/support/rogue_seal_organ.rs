@@ -556,7 +556,7 @@ mod rogue {
         let memory = SealMemoryProvider::new(Arc::new(GrantAllMemory));
         let (timestamp_authorities, fetcher): (Vec<TsaEndpoint>, Arc<dyn SealFetcher>) =
             match fixture {
-                None => (Vec::new(), Arc::new(OfflineFetcher)),
+                None => (Vec::new(), Arc::new(OfflineFetcher) as Arc<dyn SealFetcher>),
                 Some(fixture) => (
                     vec![TsaEndpoint {
                         url: url::Url::parse("https://tsa.test/").map_err(bad)?,
@@ -568,7 +568,7 @@ mod rogue {
                         crl: fixture.crl.to_vec(),
                         memory: memory.clone(),
                         now: now_ms / 1000,
-                    }),
+                    }) as Arc<dyn SealFetcher>,
                 ),
             };
         NativeSealEngine::new(
