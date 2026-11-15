@@ -21,9 +21,16 @@
 //! co-Owner alone on test 2's vault. Guard 4 births T public and unlabelled,
 //! and the owner's ordinary successor makes it a readable target (a Proposed
 //! machine birth is no surfaceable target): the member's page serves rows.
+//! Test 5 births T public and unlabelled on a Hosted vault, with a secret
+//! word in the birth the successor drops, then use-limits the birth control
+//! through a held privacy erase: the member's and the co-Owner's pages are
+//! refused as not found, and no reply holds the word.
 //!
 //! Needs `oneiron/test-hooks` (`put_selector_test_federation_grant`) and
 //! `oneiron/test-support` (`bind_host_owner`), plus its `[[test]]` stanza.
+//! Test 5 also drives the public owner doors `place_legal_hold`,
+//! `preview_entity_delete` with `confirm_entity_erase`, and the
+//! `legal_hold_use_limit` read.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server
 //! --features oneiron/test-support,oneiron/test-hooks
@@ -36,11 +43,14 @@ use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use loro::LoroDoc;
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
+use oneiron::deletion::LegalHoldTarget;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
     own_device_residence_scope,
 };
+use oneiron::memory::{EraseOptions, EraseReason};
 use oneiron::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP};
+use oneiron::store::GateDecisionId;
 use oneiron::sync::transport::{self, TAG_RPC, TAG_WINDOW_SYNC, window_sub_tags};
 use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, encode_selector_vv_request, encode_sync_selector,
@@ -50,7 +60,8 @@ use oneiron::test_support::bind_host_owner;
 use oneiron::write_envelope::MachineWriteSignature;
 use oneiron::{
     ClaimApprovalStatus, ClaimCandidate, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
-    TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope, WriteProvenance,
+    HostingPrivacyPosture, TimeRange, Vault, VaultConfig, WriteActor, WriteEnvelope,
+    WriteProvenance,
 };
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde::{Deserialize, Serialize};
@@ -63,6 +74,7 @@ type Socket =
 const SECRET: &str = "machine-history-page-controls-test-owner";
 const PRIVATE_WORD: &str = "zxqw-private-birth-quixotic-42";
 const REL_WORD: &str = "zxqw-relationship-birth-quixotic-43";
+const USE_WORD: &str = "zxqw-use-limited-birth-quixotic-44";
 
 fn at(time: u64) -> TimeRange {
     TimeRange {
@@ -988,4 +1000,231 @@ async fn a_member_reading_every_control_gets_the_history() {
         .and_then(|rows| rows.as_array())
         .expect("the member rows decode");
     assert!(!rows.is_empty(), "the member history holds rows");
+}
+
+/// The birth control's id C: the first row of a served history page is its
+/// birth, whose bytes embed the signed initial body holding `word`.
+fn birth_control_id(page: &Json, word: &str) -> EntityId {
+    let rows = page
+        .get("rows")
+        .and_then(|rows| rows.as_array())
+        .expect("FIXTURE: the history rows decode");
+    let birth = rows
+        .first()
+        .expect("FIXTURE: the history holds its birth row");
+    let raw = birth
+        .get("raw")
+        .and_then(|raw| raw.as_str())
+        .expect("FIXTURE: the birth row carries its bytes");
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(raw)
+        .expect("FIXTURE: the birth bytes decode");
+    assert!(
+        String::from_utf8_lossy(&decoded).contains(word),
+        "FIXTURE: the first history row is the birth control holding the secret word"
+    );
+    let id = birth
+        .get("id")
+        .and_then(|id| id.as_str())
+        .expect("FIXTURE: the birth row carries its id");
+    EntityId::from_hex(id).expect("FIXTURE: the birth id parses")
+}
+
+/// The owner places a hold on the birth control `birth`, then confirms a
+/// privacy (GDPR) erase of it. The erase is refused for the held record, and
+/// Hosted privacy-erasure retention installs the use limit on it.
+fn install_birth_use_limit(vault: &Vault, birth: EntityId) {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the vault owner");
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .expect("FIXTURE: the owner proof");
+    vault
+        .place_legal_hold(&proof, vec![LegalHoldTarget::Record(birth)], None)
+        .expect("FIXTURE: the hold on the birth control lands");
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let preview = memory
+        .preview_entity_delete(&birth)
+        .expect("FIXTURE: the birth control previews for erase");
+    let outcome = memory
+        .confirm_entity_erase(
+            &preview,
+            EraseOptions {
+                reason: EraseReason::GdprDelete,
+                also_same_bytes: false,
+                veto_starter: None,
+            },
+        )
+        .expect("FIXTURE: the privacy erase runs");
+    assert_eq!(
+        outcome.first.reason, "privacy_erase_kept",
+        "FIXTURE: the held birth control is kept, not erased"
+    );
+    assert!(
+        vault
+            .legal_hold_use_limit(&birth)
+            .expect("FIXTURE: the use limit reads")
+            .is_some(),
+        "FIXTURE: the use limit is in force on the birth control"
+    );
+}
+
+/// The refused page both callers meet once the birth control is use-limited:
+/// not found, and no reply holding `word`.
+fn assert_history_refused(page: Result<Json, Json>, word: &str, who: &str) {
+    match page {
+        Err(error) => {
+            assert_eq!(
+                error.get("code").and_then(|code| code.as_str()),
+                Some("NOT_FOUND"),
+                "LEAK: the {who} refusal is not found"
+            );
+            assert!(
+                !format!("{error}").contains(word),
+                "LEAK: the {who} refusal carries the secret word"
+            );
+        }
+        Ok(page) => {
+            let leaked = page_contains_word(&page, word);
+            panic!("LEAK: the {who} history served (secret present: {leaked}): {page}");
+        }
+    }
+}
+
+async fn fixture_use_limited() -> Seeded {
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Arc::new(Vault::open(dir.path(), config).expect("fresh hosted vault"));
+    let now = vault.now_recorded_at();
+    let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).expect("host issuer");
+    vault.ensure_host_root_slip(&issuer).expect("host root");
+    let member = EntityId::now();
+    let co_owner = EntityId::now();
+    let subject = EntityId::now();
+    let body = person_body();
+    vault
+        .put_entity(&member, ENTITY_TYPE_PERSON, at(now), now, &body)
+        .expect("a member PERSON");
+    vault
+        .put_entity(&co_owner, ENTITY_TYPE_PERSON, at(now), now, &body)
+        .expect("a co-owner PERSON");
+    vault
+        .put_entity(&subject, ENTITY_TYPE_PERSON, at(now), now, &body)
+        .expect("the claim subject");
+    let machine = EntityId::now();
+    vault
+        .put_entity(&machine, ENTITY_TYPE_MACHINE, at(now), now, b"machine")
+        .expect("a MACHINE");
+    let signing = ed25519_dalek::SigningKey::from_bytes(&[226; 32]);
+    enroll_machine(&vault, &issuer, machine, &signing);
+    let target = EntityId::now();
+    seed_machine_birth(
+        &vault,
+        BirthSpec {
+            machine,
+            signing,
+            subject,
+            target,
+            text: format!("a public machine note {USE_WORD}"),
+            scope: None,
+            relationship: None,
+            now,
+        },
+    );
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
+    bind_host_owner(&vault, &issuer, owner).expect("owner binding");
+    put_successor(
+        &vault,
+        owner,
+        subject,
+        target,
+        "a public successor note",
+        now,
+    )
+    .expect("FIXTURE: the public successor lands");
+    let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner, now);
+    let key = WindowKey::from_timestamp(now).as_str().to_owned();
+    let fixture = serve(vault, dir).await;
+    Seeded {
+        fixture,
+        key,
+        member_selector,
+        co_owner_selector,
+        member,
+        co_owner,
+        target,
+        successor_refusal: None,
+    }
+}
+
+/// A use-limited birth control refuses the whole history page. T is born
+/// public and unlabelled on a Hosted vault, with a secret word the owner's
+/// ordinary successor drops, so T is a surfaceable target. Before the limit
+/// both pages serve rows holding the word and the member's selector fetch
+/// carries T. The owner then holds the birth control and confirms a privacy
+/// erase of it: the erase is refused for the held record, and Hosted
+/// retention installs the use limit. After it the member's page is refused
+/// as not found and no reply holds the word; the co-Owner's page is refused
+/// too, since storage only binds the owner.
+#[tokio::test]
+async fn a_use_limited_birth_control_refuses_the_history_page() {
+    let seeded = fixture_use_limited().await;
+    let target_hex = seeded.target.to_hex();
+    let mut co_socket = connect(&seeded).await;
+    let co_credential = credential(&seeded.fixture.server, seeded.co_owner);
+    bind(&mut co_socket, &co_credential, 5).await;
+    let co_page = history_page(&mut co_socket, &seeded.co_owner_selector, seeded.target, 11)
+        .await
+        .expect("FIXTURE: the co-owner history serves");
+    assert_eq!(
+        co_page.get("target").and_then(|target| target.as_str()),
+        Some(target_hex.as_str()),
+        "FIXTURE: the co-owner page targets T"
+    );
+    assert_eq!(
+        co_page.get("pending").and_then(|pending| pending.as_bool()),
+        Some(false),
+        "FIXTURE: the co-owner history resolves"
+    );
+    assert!(
+        page_contains_word(&co_page, USE_WORD),
+        "FIXTURE: the co-owner history holds the secret word"
+    );
+    let birth = birth_control_id(&co_page, USE_WORD);
+    let mut socket = connect(&seeded).await;
+    let member_credential = credential(&seeded.fixture.server, seeded.member);
+    bind(&mut socket, &member_credential, 5).await;
+    let doc = fetch_for(&seeded.member_selector, seeded.key.as_str(), &mut socket).await;
+    assert!(
+        doc.get_map("entities").get(target_hex.as_str()).is_some(),
+        "FIXTURE: the member fetch carries T"
+    );
+    history_page(&mut socket, &seeded.member_selector, seeded.target, 11)
+        .await
+        .expect("FIXTURE: the member history serves before the limit");
+    install_birth_use_limit(seeded.fixture.server.vault(), birth);
+    let mut member_socket = connect(&seeded).await;
+    let member_credential = credential(&seeded.fixture.server, seeded.member);
+    bind(&mut member_socket, &member_credential, 5).await;
+    let member_page = history_page(
+        &mut member_socket,
+        &seeded.member_selector,
+        seeded.target,
+        11,
+    )
+    .await;
+    assert_history_refused(member_page, USE_WORD, "member");
+    let mut co_owner_socket = connect(&seeded).await;
+    let co_credential = credential(&seeded.fixture.server, seeded.co_owner);
+    bind(&mut co_owner_socket, &co_credential, 5).await;
+    let co_owner_page = history_page(
+        &mut co_owner_socket,
+        &seeded.co_owner_selector,
+        seeded.target,
+        11,
+    )
+    .await;
+    assert_history_refused(co_owner_page, USE_WORD, "co-owner");
 }
