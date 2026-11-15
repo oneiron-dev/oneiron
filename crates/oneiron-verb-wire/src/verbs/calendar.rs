@@ -8,7 +8,6 @@ use serde::Serialize;
 
 /// The owner names an existing, configured booking page by its hex entity id.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct BookingPageTokenRequest {
     pub page_ref: String,
 }

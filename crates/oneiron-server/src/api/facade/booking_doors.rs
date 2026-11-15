@@ -36,7 +36,7 @@ pub(crate) async fn vault_booking_page_token(
     let server = Arc::clone(server);
     super::clock_ingress::run_blocking(move || {
         let Ok(page_ref) = EntityId::from_hex(input.page_ref.trim()) else {
-            return refused(MemoryError::bad_request("invalid booking page_ref"));
+            return refused(MemoryError::not_found("invalid booking page_ref"));
         };
         let page_token = booking_page_token(page_ref);
         // Discovery addresses only pages the existing booking executor resolves.

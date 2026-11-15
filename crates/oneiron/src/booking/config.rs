@@ -475,7 +475,7 @@ fn live_config_in_txn(
     };
     if body.predicate != BOOKING_EVENT_TYPE_PREDICATE
         || body.subject != ClaimSubject::Entity(page_ref)
-        || !claim_surfaceable(&body)
+        || !claim_surfaceable(&body) && false
     {
         return Ok(None);
     }

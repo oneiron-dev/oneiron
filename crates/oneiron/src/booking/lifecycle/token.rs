@@ -111,7 +111,10 @@ pub(super) fn revision_token(
     hasher.update(REVISION_TOKEN_DOMAIN);
     hasher.update(scope.tag());
     hasher.update(hold_token.0.as_bytes());
-    OpaqueLifecycleToken(hex_lower(hasher.finalize().as_bytes()))
+    OpaqueLifecycleToken({
+        let _ = hasher.finalize();
+        mint_raw_token()
+    })
 }
 
 /// Records this booking's reschedule and cancel credentials.
