@@ -11,6 +11,8 @@
 //!   `outside_hours`.
 //! - A model the owner's manifest pins is served at any hour: the pin is the
 //!   owner's own pick of one model, never a ladder walk.
+//! - A run's live compaction fork is bound to the rung that answered it only
+//!   while the walk would take that rung: never outside its hours.
 //! - A ladder whose every rung keeps hours is refused, so a call outside
 //!   them always has a rung; `hours` on a role's single `model` is refused.
 //!
@@ -40,6 +42,7 @@ use oneiron::{
 };
 use oneiron_server::config::models::ModelsConfig;
 use oneiron_server::models::{ModelRuntime, OfferLadder};
+use oneiron_server::test_doors::live_fork_rung::binds_live_fork_to_rung;
 use oneiron_server::test_doors::replay_admission::{
     pin_every_role, runtime_keeping_owner_choices, seat_models,
 };
@@ -313,6 +316,36 @@ async fn a_model_the_owners_manifest_pins_is_served_outside_its_rungs_hours() {
     let usage = generate(&runtime, &route.ladder, &route.model).await;
     assert_eq!(answered_by(&usage), (json!(0), json!("gpubox")));
     assert_eq!(servers.gpubox.seen().len(), 1);
+    assert!(servers.daybox.seen().is_empty());
+}
+
+/// A run's live compaction fork is bound to its answering rung only while
+/// the walk would take that rung now: inside the GPU box's hours its rung
+/// binds the fork, outside them it binds none, and the day server's rung,
+/// which keeps no hours, binds it at any hour.
+#[tokio::test]
+async fn a_live_fork_is_never_bound_to_a_rung_outside_its_hours() {
+    let servers = Servers::start().await;
+    for (hours, gpubox_binds) in [(hours_holding_now(), true), (hours_after_now(), false)] {
+        let runtime = servers.runtime(&format!(
+            r#"{{ model = "gpubox:night-model", hours = {hours} }},
+{{ model = "daybox:day-model" }},"#
+        ));
+        let seat = runtime
+            .seat(ModelRole::GenerativeReasoner)
+            .expect("the reasoner's seat");
+        let live = request(&seat.model);
+        assert_eq!(
+            binds_live_fork_to_rung(&seat.ladder, 0, &live),
+            gpubox_binds,
+            "the GPU box's rung binds a live fork only inside its hours {hours}"
+        );
+        assert!(
+            binds_live_fork_to_rung(&seat.ladder, 1, &live),
+            "the day server's rung binds a live fork at any hour"
+        );
+    }
+    assert!(servers.gpubox.seen().is_empty());
     assert!(servers.daybox.seen().is_empty());
 }
 

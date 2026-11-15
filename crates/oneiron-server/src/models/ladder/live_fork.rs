@@ -46,6 +46,17 @@ impl OfferLadder {
         })
     }
 
+    /// Whether a live fork of `request` would be bound to the rung at
+    /// `index` now, as the rung that answered the run's latest completed
+    /// call: the integration tests' view of [`Self::takes_answering_rung`].
+    /// `false` past the ladder's last rung.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn binds_live_fork_to_rung(&self, index: usize, request: &LlmRequest) -> bool {
+        self.rungs
+            .get(index)
+            .is_some_and(|rung| self.takes_answering_rung(&rung.live_fork_rung(), request))
+    }
+
     /// Whether the walk would send `request` to the rung at `index` now.
     fn takes_now(&self, index: usize, request: &LlmRequest, routes: &WorldModelRoutes) -> bool {
         let rung = &self.rungs[index];
