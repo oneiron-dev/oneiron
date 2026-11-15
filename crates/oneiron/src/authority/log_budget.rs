@@ -263,6 +263,7 @@ fn stored_fold_projection(
 
 /// The stored log's projected fold peak ([`stored_fold_projection`]), with
 /// what the door needs to bound the log with one more row in it.
+#[derive(Debug)]
 struct FoldProjection {
     rows: usize,
     pairs: u64,
