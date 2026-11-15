@@ -84,6 +84,10 @@ impl Memory<'_> {
             intents,
             bare_jobs: snapshot.bare_jobs,
             source_exhausted: snapshot.source_exhausted,
+            rows_shown: crate::context_board::setting_keys::read_count(
+                self.vault(),
+                &crate::context_board::setting_keys::TASKS_ROWS_SHOWN,
+            ) as usize,
         })
     }
 

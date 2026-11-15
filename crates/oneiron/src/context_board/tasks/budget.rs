@@ -69,7 +69,8 @@ impl TasksSectionRows {
     /// and the overflow footer; project/fanout lead rows ride outside it.
     /// `Some(0)` is a literal zero for optional rows: the footer (and any
     /// hook pins the caller adds after) may exceed it and are reported, never
-    /// withheld. `None` callers keep `render`'s 100-row behavior.
+    /// withheld. `None` callers keep `render`'s row count
+    /// ([`TasksSectionRows::rows_shown`]).
     ///
     /// Builds all already-admitted native rows via `render_with_cap` with the
     /// actual input length (never 100/`usize::MAX`), keeping

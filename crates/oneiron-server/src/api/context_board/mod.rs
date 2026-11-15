@@ -637,6 +637,7 @@ async fn hydrate_inner(
         &parts.sections,
         explicit_tasks_layout.as_ref().unwrap_or(&layout.layout),
         cap_tok,
+        oneiron::context_board::fold_attention_rows(&server.vault),
     );
     let layout_candidate = layout
         .candidate

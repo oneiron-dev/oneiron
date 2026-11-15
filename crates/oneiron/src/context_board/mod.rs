@@ -87,6 +87,7 @@ mod paging;
 mod plugin;
 mod readers;
 mod scratchpad;
+pub(crate) mod setting_keys;
 mod stream;
 mod unprocessed;
 pub use unprocessed::unprocessed_items;
@@ -181,6 +182,7 @@ pub(crate) use plugin::{ensure_fit_install_writer_machine, fit_install_writer_id
 pub(crate) use plugin::{
     scrub_section_fit_receipt_actors_in_txn, stored_section_fit_actor_erasure_body,
 };
+pub use setting_keys::fold_attention_rows;
 pub use tasks::{
     CancelRejectionPathology, ConsultWidening, JobPresence, TaskBoardStatus, TaskIntentPresence,
     TaskRow, TasksSection, TasksSectionRows, expand_task, failed_lane, fold_up_status,

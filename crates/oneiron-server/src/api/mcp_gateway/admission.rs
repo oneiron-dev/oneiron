@@ -492,6 +492,7 @@ pub(super) fn mcp_scoped_task_rows(
         intents,
         bare_jobs,
         source_exhausted: rows.source_exhausted,
+        rows_shown: rows.rows_shown,
     };
     Ok((rows, omitted))
 }

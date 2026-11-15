@@ -11,7 +11,8 @@ use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
 #[cfg(test)]
 mod tests;
 
-/// Most persons the ROOM `invite?:` line names; the rest are counted.
+/// Most persons the ROOM `invite?:` line names, the rest counted, until the
+/// owner sets `context_board.room.invite_shown`.
 pub(super) const ROOM_INVITE_CAP: usize = 5;
 
 /// One roster entry. The engine builds every entry from the Conversation's
@@ -202,6 +203,10 @@ pub struct RoomSection {
     /// `invite?:` suggests: for an ordinary room, the owner-only
     /// `rooms.invite` set (`workspace_roster::invites_into_room_in_txn`).
     pub invitable: std::collections::BTreeSet<EntityId>,
+    /// Most of them `invite?:` names, the rest counted: the owner's
+    /// `context_board.room.invite_shown`, read with the room, else
+    /// `ROOM_INVITE_CAP`. A layout share may name more, never fewer.
+    pub invite_shown: usize,
 }
 
 impl RoomSection {
@@ -217,13 +222,13 @@ impl RoomSection {
         &self,
         people: &PeopleView<'_>,
     ) -> std::result::Result<BoardSection, BoardFrameError> {
-        self.board_section_page(people, &self.roster, None, ROOM_INVITE_CAP)
+        self.board_section_page(people, &self.roster, None, self.invite_shown)
     }
 
     /// [`Self::board_section`] on a board whose layout gives ROOM a share:
     /// the `invite?:` hint names as many persons as the share allots,
-    /// never fewer than the fixed cap (BOARD-LAYOUT). The rest of ROOM is
-    /// pinned and takes no layout.
+    /// never fewer than [`Self::invite_shown`] (BOARD-LAYOUT). The rest of
+    /// ROOM is pinned and takes no layout.
     pub fn board_section_laid_out(
         &self,
         people: &PeopleView<'_>,
@@ -234,7 +239,7 @@ impl RoomSection {
             people,
             &self.roster,
             None,
-            layout.row_allotment("room", cap_tok, ROOM_INVITE_CAP),
+            layout.row_allotment("room", cap_tok, self.invite_shown),
         )
     }
 
@@ -293,15 +298,17 @@ impl RoomSection {
             .filter(|row| !members.contains(&row.person) && self.invitable.contains(&row.person))
             .collect();
         if !invitees.is_empty() {
-            let mut line = format!(
-                "invite?: {}",
-                invitees
-                    .iter()
-                    .take(invite_cap)
-                    .map(|row| people.label(row.person))
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
+            let named = invitees
+                .iter()
+                .take(invite_cap)
+                .map(|row| people.label(row.person))
+                .collect::<Vec<_>>();
+            // A cap of 0 names no one: the line shows the count alone.
+            let mut line = if named.is_empty() {
+                "invite?:".to_owned()
+            } else {
+                format!("invite?: {}", named.join(","))
+            };
             if invitees.len() > invite_cap {
                 line.push_str(&format!(" +{}", invitees.len() - invite_cap));
             }

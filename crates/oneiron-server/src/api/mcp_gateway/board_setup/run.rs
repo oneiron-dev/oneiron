@@ -71,7 +71,12 @@ pub(crate) async fn run_current_board(
         super::super::exec_board_verbs::run_board_budget_request(server),
     )
     .cap_tok;
-    let laid_out = oneiron::context_board::apply_board_layout(&sections, &layout, cap_tok);
+    let laid_out = oneiron::context_board::apply_board_layout(
+        &sections,
+        &layout,
+        cap_tok,
+        oneiron::context_board::fold_attention_rows(&server.vault),
+    );
     let layout_candidate =
         layout_candidate.map(|candidate| candidate.with_fold_baselines(&laid_out.fold_counts));
     let mut state_rows = mcp_board_state_rows(&laid_out.sections);

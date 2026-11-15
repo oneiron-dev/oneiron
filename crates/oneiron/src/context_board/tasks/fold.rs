@@ -128,6 +128,7 @@ impl TasksSectionRows {
                 .cloned()
                 .collect(),
             source_exhausted: self.source_exhausted,
+            rows_shown: self.rows_shown,
         }
     }
 }
