@@ -30,8 +30,10 @@
 //!   owner's `voice.call_transcripts.keep` off, only the dividers are kept.
 //!   The line agent reads its caller's thread back under its per-caller
 //!   witness-read grant (owner ruling 16 Nov 00:44 replaces
-//!   PHONE-CALL-READ-GRANT = B for this); a phone thread still stays raw
-//!   until R3 wires its compaction.
+//!   PHONE-CALL-READ-GRANT = B for this). Past the line agent's threshold the
+//!   thread's earlier turns compact in its own voice, as a connector thread's
+//!   do, under every reach the owner picks for the line ("Compaction works
+//!   under every preset", owner 16 Nov 00:44).
 //! - With the owner's `voice.call_transcripts.announce` on (PR 3B), the agent
 //!   opens a phone call by saying it is transcribed ([`phone_call_opening`]).
 //!   With keep on, that line is the call's first answer, kept after the
@@ -341,7 +343,7 @@ impl KeptTurn {
     ) {
         let (sitting, locality) = match self.record.party.clone() {
             CallParty::Owner { sitting, locality } => (sitting, locality),
-            CallParty::Phone(call) => return self.keep_phone(&call, answer),
+            CallParty::Phone(call) => return self.keep_phone(&call, answer, admitted, answering),
         };
         let KeptTurn {
             ai,
@@ -443,12 +445,17 @@ impl KeptTurn {
     /// Keeps a phone call's turn: the caller's words as theirs, labelled
     /// with the call's speaker key, then the answer as the agent's own, each
     /// a TURN of the call's thread held in the thread's own SESSION. No
-    /// sitting opens or hears of it, and the thread does not compact yet
-    /// (R3 wires that): the line agent already reads its caller's thread
-    /// back under its per-caller witness-read grant (owner ruling 16 Nov
-    /// 00:44 replaces PHONE-CALL-READ-GRANT = B for this).
-    /// A witness that fails is logged and keeps what landed before it.
-    fn keep_phone(self, call: &PhoneCall, answer: String) {
+    /// sitting opens or hears of it. Then, for a self line agent past its
+    /// threshold, the thread's earlier turns compact in its own voice, as
+    /// [`Self::compact_phone_thread`] enters it. A witness that fails is
+    /// logged and keeps what landed before it.
+    fn keep_phone(
+        mut self,
+        call: &PhoneCall,
+        answer: String,
+        admitted: &RoleCall,
+        answering: Option<AnsweringRung>,
+    ) {
         // The owner may have turned keep off while the turn answered.
         if !self.record.keeps_turns(&self.vault) {
             return;
@@ -459,7 +466,7 @@ impl KeptTurn {
             &conversation,
             None,
             WitnessAuthor::Counterparty,
-            self.transcript,
+            std::mem::take(&mut self.transcript),
             self.heard_at,
         );
         set_metadata(
@@ -482,8 +489,80 @@ impl KeptTurn {
             self.vault.now_recorded_at(),
         );
         set_metadata(&mut reply, json!({ "voice": { "call": call.call_ref } }));
-        if let Err(error) = self.vault.witness_call_turn(writer, &reply) {
-            tracing::warn!(%error, "voice: the answer was not kept");
+        let message = match self
+            .vault
+            .witness_call_turn(writer, &reply)
+            .map(|receipt| answer_message(&receipt))
+        {
+            Ok(Some(message)) => message,
+            Ok(None) => {
+                tracing::warn!("voice: the kept answer names no message; its thread stays raw");
+                return;
+            }
+            Err(error) => {
+                tracing::warn!(%error, "voice: the answer was not kept");
+                return;
+            }
+        };
+        self.compact_phone_thread(message, admitted, answering);
+    }
+
+    /// Enters the line agent's breakpoint for its caller's thread once the
+    /// answer `message` is kept, on chat's flight path and claim, as a
+    /// connector thread's reply enters it. The agent reads the thread
+    /// through its own lane, under the per-caller witness-read grant its
+    /// first kept turn issued, never through the call's key: the line's reach
+    /// narrows only the call's key, and that key ends with the call, so the
+    /// thread compacts under every reach the owner picks, while the epoch
+    /// reads only where the thread's own words read. The call's request
+    /// carries its instructions and the caller's transcript, none a witnessed
+    /// row as it was sent, so no live fork is captured (FIX 9463): the flight
+    /// writes on the cheap writer, as the agent, which pays as for its answer.
+    /// A flight that does not run leaves the thread raw.
+    fn compact_phone_thread(
+        self,
+        message: EntityId,
+        admitted: &RoleCall,
+        answering: Option<AnsweringRung>,
+    ) {
+        let KeptTurn {
+            ai,
+            vault,
+            record,
+            agent,
+            funding,
+            budget_units,
+            ..
+        } = self;
+        let Some(mode) = ai.chat_self_mode(&vault, agent) else {
+            return;
+        };
+        let memory = vault.memory(record.writer.entity_ref(), EdgeActorClass::Agent);
+        let log = match read_chat_log(&memory, record.conversation, mode.hot_turns(), usize::MAX) {
+            Ok(log) => log,
+            Err(error) => {
+                tracing::warn!(%error, "voice: the phone thread's log did not read; it stays raw");
+                return;
+            }
+        };
+        let call = ChatBreakpointCall {
+            vault: Arc::clone(&vault),
+            mode,
+            log,
+            // A caller reaches the line agent from off this device.
+            locality: CallerLocality::OffDevice,
+            payer: record.writer,
+            funding,
+            budget_units,
+            message,
+            sources: None,
+        };
+        match ai.enter_chat_breakpoint(call, admitted, answering) {
+            Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
+            Err(why) => tracing::info!(
+                reason = why.as_str(),
+                "voice: the phone thread's compaction is unavailable; it stays raw"
+            ),
         }
     }
 }
