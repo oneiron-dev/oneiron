@@ -47,6 +47,7 @@ pub fn dreamer_facet_for_job_type(job_type: &str) -> Option<&'static str> {
         }
         super::super::maintenance::CONSOLIDATION_STRENGTH_FACET => Some("dreamer.consolidation"),
         super::super::maintenance::CONFLICT_SETTLE_FACET => Some("dreamer.consolidation"),
+        super::super::maintenance::PSYCH_PROFILE_FACET => Some("dreamer.consolidation"),
         crate::dreamer_consolidation::DREAMER_GAP_SCAN_ATTEMPT_TYPE => {
             Some("dreamer.consolidation")
         }

@@ -167,6 +167,25 @@ pub trait DreamerDecisionLender: Send + Sync {
     ) -> MemoryResult<Option<crate::llm::model_step::ModelStepReceipt>> {
         Ok(None)
     }
+
+    /// Runs a bound Psych Mirror generation step with this attempt's
+    /// borrowed narrative role.
+    ///
+    /// The default lends nothing, so a host without a profile lender keeps
+    /// refusing the step. The callback owns the durable answer and charge;
+    /// the host retains its backend, guard, pass clock, tally and runtime.
+    ///
+    /// # Errors
+    ///
+    /// The generation step's own failures and the host's lending failures.
+    fn lend_psych_profile_step(
+        &self,
+        _step: &mut dyn FnMut(
+            super::PsychProfileStepLoan<'_>,
+        ) -> MemoryResult<crate::llm::model_step::ModelStepReceipt>,
+    ) -> MemoryResult<Option<crate::llm::model_step::ModelStepReceipt>> {
+        Ok(None)
+    }
 }
 
 impl DreamerAttemptBinding {

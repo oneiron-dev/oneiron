@@ -850,6 +850,25 @@ impl Vault {
         Ok(Some(self.materialized_revision_in_txn(&txn, id, raw)?))
     }
 
+    /// The live revision of `id`, as [`revision_for_body_hash_in_txn`] names
+    /// it when the live body matches: its revision state's live entry, else
+    /// the reference its stored row names. `None` when no row is stored.
+    pub(crate) fn live_revision_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        id: &EntityId,
+    ) -> Result<Option<RevisionRef>> {
+        let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(&self.store, txn, id)?
+        else {
+            return Ok(None);
+        };
+        let current = state(&self.store, txn, id)?;
+        Ok(Some(current.map_or_else(
+            || reference(id, &raw),
+            |current| current.live,
+        )))
+    }
+
     /// Returns the current exact revision and retains its Loro frontier.
     pub fn pin_entity_revision(&self, id: &EntityId) -> Result<RevisionRef> {
         let mut txn = self.store.env.write_txn()?;

@@ -206,6 +206,8 @@ impl DreamerWakeDriver<'_> {
                         != crate::dreamer_runner::maintenance::CONSOLIDATION_STRENGTH_FACET
                     && admitted.status.payload.attempt_type
                         != crate::dreamer_runner::maintenance::CONFLICT_SETTLE_FACET
+                    && admitted.status.payload.attempt_type
+                        != crate::dreamer_runner::maintenance::PSYCH_PROFILE_FACET
                 {
                     crate::dreamer_runner::maintenance::execute(
                         admitted,

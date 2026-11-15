@@ -773,6 +773,7 @@ pub fn commit_in_attempt(
                             facet: None,
                             world: None,
                             profile: whole_record_profile(profile.subject, profile.document)?,
+                            cites: Vec::new(),
                         })
                     }
                 })

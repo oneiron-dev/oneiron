@@ -6,14 +6,18 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use super::{BoundFacet, DreamerAttemptBinding, ExtractionStepRequest, facet_batch, facet_refused};
+use super::{
+    BoundFacet, DreamerAttemptBinding, ExtractionStepRequest, PsychProfileStepRequest, facet_batch,
+    facet_refused,
+};
 use crate::derive::DeriveCommitInput;
 use crate::llm::model_step::ModelStepReceiptRequest;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::runtime_hooks::InvocationId;
 use crate::snapshot_read::{
     ConflictsPageRequest, EvidenceSpansRequest, ExtractionInputsPageRequest,
-    ExtractionObservationsPageRequest, StrengthObservationsPageRequest,
+    ExtractionObservationsPageRequest, PsychProfileSourcesPageRequest,
+    StrengthObservationsPageRequest,
 };
 use crate::task_verb::verb_hook_boundary::{typed_row, typed_row_validated};
 use crate::verbs::{AiVerdictRequest, VERB_TABLE};
@@ -28,14 +32,17 @@ const EXTRACTION_INPUTS_PAGE_VERB: &str = "vault.consolidation.extraction.inputs
 const EXTRACTION_OBSERVATIONS_PAGE_VERB: &str = "vault.consolidation.extraction.observations.page";
 /// The evidence spans an extraction attempt reads.
 const EVIDENCE_SPANS_VERB: &str = "vault.evidence.spans";
+/// The ranked claims of the key a psych profile attempt names.
+const PSYCH_PROFILE_SOURCES_PAGE_VERB: &str = "vault.consolidation.psych_profile.sources.page";
 /// The typed verdict admitted by conflict settlement and extraction.
 const AI_VERDICT_VERB: &str = "ai.verdict";
 /// The commit that lands items admitted by the bound facet.
 const DERIVE_COMMIT_VERB: &str = "vault.derive.commit";
-/// The durable generation step admitted only by extraction.
-const EXTRACTION_STEP_SUBMIT_VERB: &str = "ai.steps.submit";
-/// The read-only durable receipt admitted only by extraction.
-const EXTRACTION_STEP_RECEIPT_VERB: &str = "ai.steps.receipt";
+/// The durable generation step admitted by extraction and psych profiles,
+/// each with its own reference-only request.
+const BOUND_STEP_SUBMIT_VERB: &str = "ai.steps.submit";
+/// The read-only durable receipt admitted by extraction and psych profiles.
+const BOUND_STEP_RECEIPT_VERB: &str = "ai.steps.receipt";
 
 impl DreamerAttemptBinding {
     /// Runs `verb` on `input` as the Dreamer under this binding; with
@@ -45,7 +52,9 @@ impl DreamerAttemptBinding {
     /// settlement admits its conflicts page, typed verdicts on the host's
     /// lent ladder and Settle commits. Extraction admits its inputs and observations pages,
     /// evidence spans, checked verdict packs and bound generation steps with their
-    /// receipts, and no commit. A commit takes the batch itself,
+    /// receipts, and no commit. A psych profile admits its key's sources page,
+    /// bound generation steps over those claims with their receipts, and
+    /// PsychProfile commits of its key. A commit takes the batch itself,
     /// `{"items": [...], "sources": [...]}`: the binding is the live run,
     /// so no `live_run` attachment wraps it.
     ///
@@ -75,8 +84,17 @@ impl DreamerAttemptBinding {
                         | EXTRACTION_OBSERVATIONS_PAGE_VERB
                         | EVIDENCE_SPANS_VERB
                         | AI_VERDICT_VERB
-                        | EXTRACTION_STEP_SUBMIT_VERB
-                        | EXTRACTION_STEP_RECEIPT_VERB
+                        | BOUND_STEP_SUBMIT_VERB
+                        | BOUND_STEP_RECEIPT_VERB
+                )
+            }
+            BoundFacet::PsychProfile => {
+                matches!(
+                    verb,
+                    PSYCH_PROFILE_SOURCES_PAGE_VERB
+                        | BOUND_STEP_SUBMIT_VERB
+                        | BOUND_STEP_RECEIPT_VERB
+                        | DERIVE_COMMIT_VERB
                 )
             }
         };
@@ -122,7 +140,26 @@ impl DreamerAttemptBinding {
                     crate::snapshot_read::evidence_spans_bound(&memory, &input, self)
                 })?)
             }
-            EXTRACTION_STEP_SUBMIT_VERB => {
+            PSYCH_PROFILE_SOURCES_PAGE_VERB => {
+                let input: PsychProfileSourcesPageRequest = decode(verb, input)?;
+                encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
+                    crate::snapshot_read::psych_profile_sources::psych_profile_sources_page_bound(
+                        &memory, &input, self,
+                    )
+                })?)
+            }
+            BOUND_STEP_SUBMIT_VERB if self.facet == BoundFacet::PsychProfile => {
+                let input: PsychProfileStepRequest = decode(verb, input)?;
+                encode(&typed_row_validated(
+                    &memory,
+                    &VERB_TABLE,
+                    verb,
+                    input,
+                    validate_psych_profile_step,
+                    |input| self.psych_profile_step_submit(input),
+                )?)
+            }
+            BOUND_STEP_SUBMIT_VERB => {
                 let input: ExtractionStepRequest = decode(verb, input)?;
                 encode(&typed_row_validated(
                     &memory,
@@ -133,7 +170,7 @@ impl DreamerAttemptBinding {
                     |input| self.extraction_step_submit(input),
                 )?)
             }
-            EXTRACTION_STEP_RECEIPT_VERB => {
+            BOUND_STEP_RECEIPT_VERB => {
                 let input: ModelStepReceiptRequest = decode(verb, input)?;
                 encode(&typed_row(&memory, &VERB_TABLE, verb, input, |input| {
                     self.extraction_step_receipt(input)
@@ -150,6 +187,7 @@ impl DreamerAttemptBinding {
                 let validate = match self.facet {
                     BoundFacet::Strength => validate_strength_commit,
                     BoundFacet::ConflictSettle => validate_conflict_settle_commit,
+                    BoundFacet::PsychProfile => validate_psych_profile_commit,
                     BoundFacet::Extraction => return Err(facet_refused(self.facet)),
                 };
                 encode(&typed_row_validated(
@@ -170,6 +208,11 @@ fn validate_extraction_step(verb: &str, value: &Value) -> MemoryResult<()> {
     decode::<ExtractionStepRequest>(verb, value.clone()).map(drop)
 }
 
+/// Requires a hook rewrite to remain a reference-only psych profile request.
+fn validate_psych_profile_step(verb: &str, value: &Value) -> MemoryResult<()> {
+    decode::<PsychProfileStepRequest>(verb, value.clone()).map(drop)
+}
+
 /// The check a hook's rewrite of a strength commit must pass.
 fn validate_strength_commit(verb: &str, value: &Value) -> MemoryResult<()> {
     facet_batch(decode(verb, value.clone())?, BoundFacet::Strength).map(drop)
@@ -178,6 +221,11 @@ fn validate_strength_commit(verb: &str, value: &Value) -> MemoryResult<()> {
 /// The check a hook's rewrite of a conflict-settlement commit must pass.
 fn validate_conflict_settle_commit(verb: &str, value: &Value) -> MemoryResult<()> {
     facet_batch(decode(verb, value.clone())?, BoundFacet::ConflictSettle).map(drop)
+}
+
+/// The check a hook's rewrite of a psych profile commit must pass.
+fn validate_psych_profile_commit(verb: &str, value: &Value) -> MemoryResult<()> {
+    facet_batch(decode(verb, value.clone())?, BoundFacet::PsychProfile).map(drop)
 }
 
 fn decode<T: DeserializeOwned>(verb: &str, value: Value) -> MemoryResult<T> {

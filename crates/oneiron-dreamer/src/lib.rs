@@ -12,6 +12,7 @@
 //! `conflict_decisions` builds bound verdict packs and reduces their answers as pure policy.
 //! `extraction_decisions` decides one reply through bound reads without landing claims.
 //! `psych_profile` chooses a Psych Mirror profile's source claims and scores its confidence as pure policy.
+//! `psych_profile_job` writes one profile key's three tiers in one bound step and lands them as a PsychProfile item.
 //!
 //! The crate's normal dependencies are `oneiron-remote`, `serde` and
 //! `serde_json` only; `scripts/ci/check_dreamer_crate_deps.sh` holds that
@@ -25,5 +26,6 @@ pub mod extraction_reply;
 pub mod extraction_routing;
 pub mod extraction_selection;
 pub mod psych_profile;
+pub mod psych_profile_job;
 pub mod strength_archive;
 mod strength_scoring;

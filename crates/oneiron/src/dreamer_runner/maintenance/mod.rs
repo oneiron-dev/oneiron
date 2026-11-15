@@ -54,6 +54,7 @@ pub use optimize::{CoachLiveSlice, CoachSkillOptimizer};
 pub mod conflict_settle;
 mod person_threshold;
 mod proposals;
+pub mod psych_profile;
 pub mod strength;
 pub use applied::{
     AppliedMaintenance, IDENTITY_PROVISIONAL_KIND, MAINTENANCE_APPLY_KIND, MAINTENANCE_REVERT_KIND,
@@ -61,6 +62,7 @@ pub use applied::{
 };
 pub use calibration_asks::COACH_CALIBRATION_ASKS_FACET;
 pub use conflict_settle::CONFLICT_SETTLE_FACET;
+pub use psych_profile::PSYCH_PROFILE_FACET;
 pub use strength::CONSOLIDATION_STRENGTH_FACET;
 pub mod representation;
 mod retrieval_policy;
@@ -260,6 +262,7 @@ pub(crate) fn execute(
         // executor, so here it can only wait for one.
         CONSOLIDATION_STRENGTH_FACET => return Ok(strength::unlent()),
         CONFLICT_SETTLE_FACET => return Ok(conflict_settle::unlent()),
+        PSYCH_PROFILE_FACET => return Ok(psych_profile::unlent()),
         CURATOR_FACET => {
             curator::run(ctx.vault, attempt, ctx.now_ms / 1000)?;
         }

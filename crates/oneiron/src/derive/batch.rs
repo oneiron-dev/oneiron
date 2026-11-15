@@ -195,6 +195,11 @@ pub struct DerivedPsychProfile {
     /// The snapshot: every source revision with the exact words it was read
     /// from, each from a record the agent reads.
     pub profile: crate::psych_profile::PsychProfile,
+    /// The stored claims a profile from the wire cites, each named in the
+    /// batch's sources at the version its read served. The stager reads
+    /// their words in the commit's own write, so `profile` then names no
+    /// source of its own. Empty for a profile that names its own sources.
+    pub cites: Vec<ItemRef>,
 }
 
 /// One derived item. Each kind is one arm with a stager of its own.
@@ -265,12 +270,14 @@ impl DerivationItem {
         )
     }
 
-    /// The rows the item cites as its sources: a claim's evidence and an
-    /// evidence item's sources. A stored one needs its version in the batch.
+    /// The rows the item cites as its sources: a claim's evidence, an
+    /// evidence item's sources and a profile's cited claims. A stored one
+    /// needs its version in the batch.
     fn cited(&self) -> &[ItemRef] {
         match self {
             Self::Claim(claim) => &claim.evidence,
             Self::Evidence(evidence) => &evidence.sources,
+            Self::PsychProfile(profile) => &profile.cites,
             _ => &[],
         }
     }
@@ -292,7 +299,7 @@ impl DerivationItem {
             Self::SameAs(same_as) => vec![&same_as.source, &same_as.target],
             Self::Topology(_) => Vec::new(),
             Self::PersonAbout(about) => vec![&about.person],
-            Self::PsychProfile(_) => Vec::new(),
+            Self::PsychProfile(profile) => profile.cites.iter().collect(),
             Self::Archive(archive) => vec![&archive.claim],
         }
     }
@@ -305,7 +312,7 @@ pub struct DerivationBatch {
     /// The items, in the order they stage.
     pub items: Vec<DerivationItem>,
     /// The version of every stored source the items cite (a claim's evidence,
-    /// an evidence item's sources), as the caller's read served it
+    /// an evidence item's sources, a profile's claims), as the caller's read served it
     /// ([`crate::snapshot_read`]). The commit rechecks each in its write: a
     /// source that moved or is withheld since aborts the whole batch.
     pub sources: Vec<crate::snapshot_read::SourceVersion>,

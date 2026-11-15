@@ -62,6 +62,7 @@ mod partition;
 mod persistence;
 mod person_about;
 mod provenance;
+pub(crate) mod psych_profile_step;
 mod recipe_failure;
 pub(crate) mod redirty;
 mod request_sources;

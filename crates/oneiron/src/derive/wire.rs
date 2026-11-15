@@ -10,14 +10,16 @@
 //! A person's `about` lines are not a wire item: the engine's own executor
 //! lands them.
 //!
-//! A PsychProfile item has no wire form yet: no verb carries a PsychProfile,
-//! so its first caller defines one.
+//! A PsychProfile item (untangle 6.9i) names its key, its three tiers, its
+//! confidence and the stored claims it cites, never their words: the engine
+//! reads each cited claim at the version the request's `sources` name.
 
 use serde::{Deserialize, Serialize};
 
 use super::batch::{
-    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence, DerivedSameAs,
-    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    DerivationBatch, DerivationItem, DerivedArchive, DerivedClaim, DerivedEvidence,
+    DerivedPsychProfile, DerivedSameAs, DerivedSettle, DerivedSettlement, DerivedSupersede,
+    DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -27,6 +29,8 @@ use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::SourceVersion;
 use crate::verbs::IdentityProposedOp;
 
+#[doc(hidden)]
+pub use oneiron_verb_wire::derive::wire::DerivePsychProfileInput;
 #[doc(hidden)]
 pub use oneiron_verb_wire::derive::wire::{
     DeriveArchiveInput, DeriveClaimInput, DeriveCommitView, DeriveEvidenceInput, DeriveItemView,
@@ -80,6 +84,7 @@ pub enum DeriveItemInput {
     SameAs(DeriveSameAsInput),
     Topology(DeriveTopologyInput),
     Archive(DeriveArchiveInput),
+    PsychProfile(DerivePsychProfileInput),
 }
 
 impl DeriveItemInput {
@@ -145,8 +150,42 @@ impl DeriveItemInput {
                 policy_pin: archive.policy_pin,
                 config_pin: archive.config_pin,
             }),
+            Self::PsychProfile(profile) => {
+                DerivationItem::PsychProfile(psych_profile_item(profile)?)
+            }
         })
     }
+}
+
+/// The engine item of a wire profile: its snapshot with no source of its
+/// own, and its cited claims, whose words the stager reads.
+fn psych_profile_item(profile: DerivePsychProfileInput) -> MemoryResult<DerivedPsychProfile> {
+    if !(0.0..=1.0).contains(&profile.confidence) {
+        return Err(MemoryError::bad_request(
+            "a derived profile's confidence is a number from 0 to 1",
+        ));
+    }
+    // In range, so the narrowing loses only precision.
+    let confidence = profile.confidence as f32;
+    let invalid =
+        |error: oneiron_contracts::error::Error| MemoryError::bad_request(error.to_string());
+    let snapshot = crate::psych_profile::PsychProfile::new(
+        profile.person,
+        profile.compact,
+        profile.text,
+        profile.narrative,
+        profile.claims.clone(),
+        crate::psych_profile::PsychProfileConfidence::new(confidence, confidence, confidence)
+            .map_err(invalid)?,
+    )
+    .map_err(invalid)?;
+    Ok(DerivedPsychProfile {
+        local: profile.local,
+        facet: profile.facet,
+        world: profile.world,
+        profile: snapshot,
+        cites: profile.claims.into_iter().map(ItemRef::Stored).collect(),
+    })
 }
 
 /// `vault.derive.commit`: one batch of derived items.

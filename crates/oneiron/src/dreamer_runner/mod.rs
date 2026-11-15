@@ -54,6 +54,7 @@ pub use self::attempt_binding::{
     DreamerAttemptBinding, DreamerDecisionLender, ExtractionDecisionLoan, ExtractionStepLoan,
     ExtractionStepRequest,
 };
+pub use self::attempt_binding::{PsychProfileStepLoan, PsychProfileStepRequest};
 pub use self::claim_authoring::*;
 pub use self::codec::*;
 pub use self::constants::*;

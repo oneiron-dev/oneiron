@@ -17,6 +17,7 @@ mod evidence_spans;
 mod extraction_inputs;
 mod extraction_observations;
 mod policy_preflight;
+pub(crate) mod psych_profile_sources;
 mod run_reader;
 mod settings_doors;
 pub(crate) mod skill_reader;
@@ -55,6 +56,10 @@ pub use extraction_observations::{
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
     PolicyPreflightRequest, PolicyPreflightVerdict, policy_preflight, validate_policy_preflight,
+};
+pub use psych_profile_sources::{
+    PsychProfileCandidate, PsychProfileSourcesPage, PsychProfileSourcesPageRequest,
+    psych_profile_sources_page,
 };
 pub use run_reader::{
     checkpoint_as_reader, checkpoint_embedded, reply_evidence_as_reader, reply_evidence_embedded,

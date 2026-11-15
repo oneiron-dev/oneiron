@@ -5,20 +5,26 @@
 //! A conflict settlement attempt (untangle 6.9d S69D4) runs
 //! `oneiron_dreamer::conflict_settle` over the client of its own binding,
 //! with the host's lent decisions, on a scoped thread the job joins.
+//!
+//! A psych profile attempt (untangle 6.9i) runs
+//! `oneiron_dreamer::psych_profile_job` over the client of its own binding,
+//! with the pass's narrative role lent for its one bound step.
 
 use std::sync::{Arc, Mutex, PoisonError};
 
 use oneiron::dreamer_runner::DreamerDecisionLender;
 use oneiron::dreamer_runner::DreamerParkCause;
+use oneiron::dreamer_runner::maintenance::psych_profile::{self, psych_profile_key_of_input};
 use oneiron::dreamer_runner::maintenance::{MAINTENANCE_QUEUE_KIND, conflict_settle, strength};
 use oneiron::{
     DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor, Result, Vault,
     WakeAttemptContext,
 };
-use oneiron_dreamer::{conflict_settle as conflict_job, strength_archive};
+use oneiron_dreamer::{conflict_settle as conflict_job, psych_profile_job, strength_archive};
 use oneiron_remote::OneironClient;
 
 use super::extraction_decisions::{ExtractionAttemptLender, ExtractionDecisionResources};
+use super::psych_profile_decisions::PsychProfileAttemptLender;
 
 /// The cursor after the last conflict a settlement run asked about, shared by
 /// every factory the host builds with it. A run starts after the held cursor
@@ -146,6 +152,15 @@ impl<E: DreamerAttemptExecutor> DreamerAttemptExecutor for DreamerJobsExecutor<E
                 &self.conflict_cursor,
             ));
         }
+        if is_psych_profile_attempt(attempt) {
+            let Some(vault) = self.vault.as_ref() else {
+                return Ok(psych_profile::unlent());
+            };
+            let lender = self.extraction_resources.as_ref().map(|resources| {
+                Arc::new(PsychProfileAttemptLender::new(Arc::clone(resources), ctx))
+            });
+            return Ok(run_psych_profile(vault, attempt, lender));
+        }
         self.inner.execute(attempt, ctx).await
     }
 }
@@ -160,6 +175,101 @@ fn is_strength_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
 fn is_conflict_settle_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
     attempt.status.attempt.kind == MAINTENANCE_QUEUE_KIND
         && attempt.status.payload.attempt_type == conflict_settle::CONFLICT_SETTLE_FACET
+}
+
+/// Whether `attempt` is a psych profile job on the maintenance lane.
+fn is_psych_profile_attempt(attempt: &DreamerAdmittedAttempt) -> bool {
+    attempt.status.attempt.kind == MAINTENANCE_QUEUE_KIND
+        && attempt.status.payload.attempt_type == psych_profile::PSYCH_PROFILE_FACET
+}
+
+/// Binds `attempt`, lends the pass's narrative role when the host lends
+/// one, runs the psych profile job over the bound client for the key the
+/// attempt names, and settles the attempt with every unit its step spent:
+/// completed when the job ran (a profile landed, or the key served no claim
+/// or its commit was refused), failed when the reply was refused, so the
+/// next daily sweep asks again, and parked for a retry when the engine
+/// refused the binding or the job stopped (no loan, a cited claim moved).
+/// An input naming no key can never run: it fails.
+fn run_psych_profile(
+    vault: &Arc<Vault>,
+    attempt: &DreamerAdmittedAttempt,
+    lender: Option<Arc<PsychProfileAttemptLender>>,
+) -> DreamerAttemptExecution {
+    let key = match psych_profile_key_of_input(&attempt.status.payload.input) {
+        Ok(key) => key,
+        Err(error) => {
+            return DreamerAttemptExecution::Failed {
+                reason: format!("the psych profile attempt names no profile key: {error}"),
+                completed_units: 0,
+                budget_refusal: None,
+                step_bindings: Vec::new(),
+            };
+        }
+    };
+    let binding = match vault.bind_dreamer_attempt(attempt) {
+        Ok(binding) => binding,
+        Err(error) => {
+            return psych_retry_park(
+                format!(
+                    "the psych profile attempt's binding was refused ({}): {}",
+                    error.code, error.message
+                ),
+                0,
+                Vec::new(),
+            );
+        }
+    };
+    let binding = match &lender {
+        Some(lender) => {
+            binding.lend_decisions(Arc::clone(lender) as Arc<dyn DreamerDecisionLender>)
+        }
+        None => binding,
+    };
+    let client = OneironClient::for_dreamer_attempt(binding);
+    let input = psych_profile_job::Input {
+        person: key.person.to_hex(),
+        facet: key.facet.map(|facet| facet.to_hex()),
+        world: key.world.map(|world| world.to_hex()),
+    };
+    let result = psych_profile_job::run(&client, &input);
+    let (mut units, mut bindings) = (0, Vec::new());
+    if let Some(lender) = &lender {
+        lender
+            .charges()
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .drain_into(&mut units, &mut bindings);
+    }
+    match result {
+        Ok(outcome) => {
+            tracing::info!(
+                facet = psych_profile::PSYCH_PROFILE_FACET,
+                served = outcome.served,
+                chosen = outcome.chosen,
+                landed = outcome.landed,
+                refusals = outcome.refusals.len(),
+                "psych profile job ran"
+            );
+            match outcome.reply_refused {
+                Some(reason) => DreamerAttemptExecution::Failed {
+                    reason: format!("the psych profile reply was refused: {reason}"),
+                    completed_units: units,
+                    budget_refusal: None,
+                    step_bindings: bindings,
+                },
+                None => DreamerAttemptExecution::Completed {
+                    completed_units: units,
+                    step_bindings: bindings,
+                },
+            }
+        }
+        Err(error) => psych_retry_park(
+            format!("the psych profile job stopped: {error}"),
+            units,
+            bindings,
+        ),
+    }
 }
 
 /// Binds `attempt`, runs the strength archive over the bound client at the
@@ -279,6 +389,26 @@ fn retry_park(reason: String) -> DreamerAttemptExecution {
     DreamerAttemptExecution::Park {
         reason,
         cause: DreamerParkCause::Retry,
+    }
+}
+
+/// A psych profile park: the attempt resumes as the same try after its
+/// retry delay, keeping what its step already spent.
+fn psych_retry_park(
+    reason: String,
+    completed_units: u64,
+    step_bindings: Vec<oneiron::model_step_context::StepEffectBinding>,
+) -> DreamerAttemptExecution {
+    tracing::warn!(
+        facet = psych_profile::PSYCH_PROFILE_FACET,
+        %reason,
+        "psych profile attempt parked"
+    );
+    DreamerAttemptExecution::ParkWithSpend {
+        reason,
+        cause: DreamerParkCause::Retry,
+        completed_units,
+        step_bindings,
     }
 }
 

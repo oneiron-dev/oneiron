@@ -22,6 +22,7 @@ use oneiron::dreamer_consolidation::{
 };
 use oneiron::dreamer_promotion::AttemptPromotionSink;
 use oneiron::dreamer_runner::maintenance::ContributionReplayHost;
+use oneiron::dreamer_runner::maintenance::psych_profile;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::run_admission::RunAdmission;
 use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
@@ -134,6 +135,10 @@ pub(super) type PassAdmission = Option<DreamerControl>;
 /// When a conflict settlement ask the host withholds its ladder from may ask
 /// again, in seconds: the next home-timer pass or so.
 const CONFLICT_SETTLE_RETRY_AFTER_SECS: u64 = 60;
+
+/// How often the home timer sweeps the psych profile keys: daily, as canon
+/// regenerates a profile at most daily per key (ARCH-0025).
+const PSYCH_PROFILE_SWEEP_SECS: u64 = psych_profile::PSYCH_PROFILE_REGENERATE_SECS;
 
 /// What the gate returns for one pass, held until that pass ends; `None`
 /// when the gate refuses.
@@ -378,6 +383,7 @@ async fn supervise(
             serve,
             admission,
             settle_after: ConflictSettleCursor::default(),
+            psych_profile_swept_day: None,
         };
         let factory = ProgramExecutorFactory::new(observed, Some(Box::new(programs)));
         let lifecycle = SessionLifecycleDriver::new(
@@ -538,6 +544,11 @@ struct ObservedFactory {
     /// The last conflict asked about, shared across the factories rebuilt
     /// for each pass. The next settlement attempt starts after it.
     settle_after: ConflictSettleCursor,
+    /// The UTC day (Unix seconds / 86 400) of the last Psych Mirror sweep
+    /// this host ran: the home timer sweeps the profile keys at most once a
+    /// day, so a key whose attempt ended without a profile is asked again
+    /// the next day, not at every timer.
+    psych_profile_swept_day: Option<u64>,
 }
 
 /// A pass's admission, held while the pass runs: the supervisor takes it as
@@ -1047,7 +1058,9 @@ impl PassExecutorFactory for ObservedFactory {
     /// model rungs block on the server's runtime, so it runs on its own
     /// thread, off this pass's runtime. Settlement runs as an admitted
     /// attempt in the next pass, whose lender checks the pause before each ask
-    /// (FIX 7376). A paused timer starts neither the pump nor an enqueue.
+    /// (FIX 7376). Once a day it also enqueues one deduped psych profile
+    /// attempt per due profile key (untangle 6.9i, RULING S69I-PR2-START =
+    /// A). A paused timer starts neither the pump nor an enqueue.
     fn run_home_timer(
         &mut self,
         _vault: &Vault,
@@ -1092,6 +1105,15 @@ impl PassExecutorFactory for ObservedFactory {
                             .enqueue_conflict_settle_in_txn(txn, None, now_secs)
                     }) {
                         tracing::warn!(kind = ?error.kind(), "conflict settlement enqueue failed");
+                    }
+                    let day = now_secs / PSYCH_PROFILE_SWEEP_SECS;
+                    if self.psych_profile_swept_day != Some(day) {
+                        self.psych_profile_swept_day = Some(day);
+                        if let Err(error) =
+                            psych_profile::enqueue_due_psych_profiles(vault, now_secs)
+                        {
+                            tracing::warn!(kind = ?error.kind(), "psych profile enqueue failed");
+                        }
                     }
                 }
                 Ok(false) => {}

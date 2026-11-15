@@ -2,12 +2,18 @@
 //! PsychProfile snapshot, each through its validated publish under the
 //! actor's live `derive` grant, never a bare side-table put (X03).
 
-use super::batch::{DerivedPersonAbout, DerivedPsychProfile};
+use super::batch::{DerivedPersonAbout, DerivedPsychProfile, ItemRef};
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
+use crate::claim::ScopedRead;
 use crate::dreamer_consolidation::{about_facts_in, publish_person_about_in_txn};
 use crate::error::{Error, RecordError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
-use crate::psych_profile::{PsychProfileKey, psych_profile_entity_id};
+use crate::ports::{DependencyIndex, SourceSpan};
+use crate::psych_profile::sources::{ProfileClaim, admitted_key, profile_source_in};
+use crate::psych_profile::{
+    PsychProfile, PsychProfileKey, PsychProfileSource, psych_profile_entity_id,
+};
+use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
 
@@ -21,6 +27,11 @@ pub const PROFILE_SOURCE_UNREAD: &str = "gate.deny.derive.profile_source_unread"
 /// The refusal of a profile whose body or source words the substrate
 /// refuses.
 pub const PROFILE_MALFORMED: &str = "gate.deny.derive.profile_malformed";
+
+/// The refusal of a profile citing a claim no profile of its key may read:
+/// one not about its PERSON, not active and surfaced, at or above the
+/// restricted band, or born in another facet or world.
+const PROFILE_SOURCE_INELIGIBLE: &str = "gate.deny.derive.profile_source_ineligible";
 
 /// The reason a landed artifact's receipt names.
 const ARTIFACT_ALLOWED: &str = "gate.allow.derive.artifact";
@@ -108,7 +119,13 @@ pub(super) fn stage_about_in_txn(
 
 /// Stages a PsychProfile item: the derive verdict over its subject, every
 /// source record read by the actor, then the substrate's own put (its
-/// source-words check and world placement) in a savepoint of `txn`.
+/// source-words check and world placement) in a savepoint of `txn`. A
+/// profile from the wire cites claims: each must be one its key admits,
+/// read by the actor, and its exact words are read here, in the commit's
+/// own write, at the version the batch rechecked. Every source record is
+/// registered as a dependency of the landed profile, so erasing one
+/// withdraws it; a withdrawn profile's regeneration clears its stale mark
+/// through the regeneration fence.
 ///
 /// # Errors
 ///
@@ -144,21 +161,40 @@ pub(super) fn stage_profile_in_txn(
     {
         return refuse(vault, txn, context, id, PROFILE_SUBJECT_UNREAD);
     }
-    let documents: Vec<EntityId> = item
-        .profile
+    let profile = if item.cites.is_empty() {
+        item.profile.clone()
+    } else {
+        let sources = match cited_profile_sources_in(vault, txn, &read, item)? {
+            Ok(sources) => sources,
+            Err(token) => return refuse(vault, txn, context, id, token),
+        };
+        match item.profile.clone().with_sources(sources) {
+            Ok(profile) => profile,
+            Err(_) => return refuse(vault, txn, context, id, PROFILE_MALFORMED),
+        }
+    };
+    let mut documents: Vec<EntityId> = profile
         .sources
         .iter()
         .map(|source| source.document_ref)
         .collect();
-    if read
-        .get_entities_parts_in_txn(txn, &documents)?
+    documents.sort_unstable();
+    documents.dedup();
+    let mut spans = Vec::with_capacity(documents.len());
+    for (document, row) in documents
         .iter()
-        .any(Option::is_none)
+        .zip(read.get_entities_parts_in_txn(txn, &documents)?)
     {
-        return refuse(vault, txn, context, id, PROFILE_SOURCE_UNREAD);
+        let Some((_, learned_at, _)) = row else {
+            return refuse(vault, txn, context, id, PROFILE_SOURCE_UNREAD);
+        };
+        spans.push(SourceSpan {
+            document: *document,
+            frontier: learned_at,
+        });
     }
     let mut savepoint = vault.store.env.nested_write_txn(txn)?;
-    match vault.put_psych_profile_in_txn(&mut savepoint, &id, &item.profile) {
+    match land_profile_in_txn(vault, &mut savepoint, &id, &profile, &spans) {
         Ok(()) => savepoint.commit()?,
         Err(Error::Record(RecordError::InvalidPsychProfileBody(_))) => {
             savepoint.abort();
@@ -167,6 +203,83 @@ pub(super) fn stage_profile_in_txn(
         Err(error) => return Err(error),
     }
     landed(vault, txn, context, id, &allowance)
+}
+
+/// The source record of each claim `item` cites, read by `read` in `txn`,
+/// or the refusal token of the first that is not one its key admits or the
+/// actor does not read.
+fn cited_profile_sources_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    read: &ScopedRead<'_>,
+    item: &DerivedPsychProfile,
+) -> Result<std::result::Result<Vec<PsychProfileSource>, &'static str>> {
+    let key = PsychProfileKey {
+        person: item.profile.subject_ref,
+        facet: item.facet,
+        world: item.world,
+    };
+    let mut claims = Vec::with_capacity(item.cites.len());
+    for cited in &item.cites {
+        match cited {
+            ItemRef::Stored(id) => claims.push(*id),
+            ItemRef::Local(_) => return Ok(Err(PROFILE_SOURCE_UNREAD)),
+        }
+    }
+    let default_facet = vault.default_facet_in_txn(txn)?;
+    let rows = read.get_entities_parts_in_txn(txn, &claims)?;
+    let mut sources = Vec::with_capacity(claims.len());
+    for (claim, row) in claims.into_iter().zip(rows) {
+        let Some((ENTITY_TYPE_CLAIM, learned_at, body)) = row else {
+            return Ok(Err(PROFILE_SOURCE_UNREAD));
+        };
+        let Ok(decoded) = crate::claim::decode_claim_body(&body, false) else {
+            return Ok(Err(PROFILE_SOURCE_INELIGIBLE));
+        };
+        if admitted_key(key.person, default_facet, &decoded) != Some(key) {
+            return Ok(Err(PROFILE_SOURCE_INELIGIBLE));
+        }
+        let claim = ProfileClaim {
+            claim,
+            learned_at,
+            body,
+            decoded,
+        };
+        let Some(source) = profile_source_in(vault, txn, &claim)? else {
+            return Ok(Err(PROFILE_SOURCE_UNREAD));
+        };
+        sources.push(source);
+    }
+    Ok(Ok(sources))
+}
+
+/// Puts `profile` at `id` and registers each of `spans`, its source
+/// records at the versions read, as a dependency of the landed row. A
+/// withdrawn profile's regeneration clears its stale mark through the
+/// regeneration fence; any other profile's old registrations are replaced.
+fn land_profile_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    id: &EntityId,
+    profile: &PsychProfile,
+    spans: &[SourceSpan],
+) -> Result<()> {
+    vault.put_psych_profile_in_txn(txn, id, profile)?;
+    let written_at = vault
+        .get_raw_in(txn, id)?
+        .as_deref()
+        .and_then(crate::batch::EntityMetadataHeader::parse)
+        .map(|header| header.learned_at)
+        .ok_or(Error::InvariantViolation(
+            "a landed psych profile reads no row",
+        ))?;
+    if !vault.port_dependency_complete_regeneration(txn, id, written_at, spans)? {
+        crate::ports::remove_dependency_rows_for_dependent_in_txn(&vault.store, txn, id)?;
+        for span in spans {
+            crate::ports::record_dependency_in_txn(&vault.store, txn, *span, id)?;
+        }
+    }
+    Ok(())
 }
 
 fn landed(
