@@ -8,7 +8,7 @@ use tokio::runtime::Handle;
 use super::DreamerAttemptBinding;
 use super::extraction_execution::{extraction_loan_unavailable, join_extraction_thread};
 use crate::dreamer_consolidation::extraction_step::execute_bound_step;
-use crate::dreamer_consolidation::{RoleCall, StepChargeTally};
+use crate::dreamer_consolidation::{ExtractionPrompt, RoleCall, StepChargeTally};
 use crate::dreamer_wake::WakePassDeadline;
 use crate::llm::model_step::{ModelStepReceipt, ModelStepReceiptRequest};
 use crate::memory::{MemoryError, MemoryResult};
@@ -31,6 +31,8 @@ pub struct ExtractionStepRequest {
 pub struct ExtractionStepLoan<'a> {
     /// Holds the extraction role resolved through the native role routing rules.
     pub call: RoleCall<'a>,
+    /// Borrows the host's extraction prompt, the words the native pass asks in.
+    pub prompt: &'a ExtractionPrompt,
     /// Borrows the admitted attempt's own pass guard.
     pub guard: &'a BudgetGuard,
     /// Borrows the original wake-pass deadline and finalize window.
