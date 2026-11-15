@@ -57,7 +57,9 @@ pub(crate) use crate::compaction::record_turn_session_membership_in_txn;
 
 mod expiry;
 mod import;
+mod thread;
 pub(crate) use import::{SessionImportHint, SessionImportPre};
+pub(crate) use thread::thread_session_id;
 mod open_hint;
 pub use open_hint::SessionOpenHint;
 mod speakers;
@@ -418,21 +420,7 @@ impl Vault {
             speakers: SessionSpeakers::default(),
             summary_attempt: None,
         };
-        let mut body = Vec::new();
-        rmpv::encode::write_value(
-            &mut body,
-            &rmpv::Value::Map(vec![
-                (
-                    rmpv::Value::from("actor"),
-                    rmpv::Value::Binary(key.actor.as_bytes().to_vec()),
-                ),
-                (
-                    rmpv::Value::from("machine"),
-                    rmpv::Value::Binary(key.machine.as_bytes().to_vec()),
-                ),
-            ]),
-        )
-        .map_err(|_| Error::InvariantViolation("session entity body encode failed"))?;
+        let body = session_entity_body(key)?;
         self.batch_in()
             .put(
                 &id,
@@ -940,3 +928,24 @@ pub(crate) mod tables;
 #[cfg(any())]
 #[cfg(test)]
 mod tests;
+
+/// A SESSION entity's body: the actor and machine of the key it was minted
+/// under.
+fn session_entity_body(key: SessionKey) -> Result<Vec<u8>> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![
+            (
+                rmpv::Value::from("actor"),
+                rmpv::Value::Binary(key.actor.as_bytes().to_vec()),
+            ),
+            (
+                rmpv::Value::from("machine"),
+                rmpv::Value::Binary(key.machine.as_bytes().to_vec()),
+            ),
+        ]),
+    )
+    .map_err(|_| Error::InvariantViolation("session entity body encode failed"))?;
+    Ok(body)
+}

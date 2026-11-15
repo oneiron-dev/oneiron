@@ -334,7 +334,7 @@ impl Vault {
                             source,
                         );
                     }
-                    Ok(())
+                    hold_in_thread_session_in_txn(self, txn, agent, conversation, now)
                 })?;
         let read_grant_repair = self
             .issue_connector_witness_read_grant(agent, conversation, now)
@@ -348,6 +348,46 @@ impl Vault {
             read_grant_repair,
         })
     }
+}
+
+/// Holds the connector thread `conversation`'s turns in the thread's own
+/// SESSION, in the witness's transaction (OWN-VOICE-EPOCHS = C; Engine ruling
+/// UNBUILT-02-SITTING = A): the SESSION its epochs' lineage runs in. The
+/// thread's first witness mints the SESSION. Each witness holds every turn of
+/// the thread that has no SESSION yet, the one it just landed and an older
+/// thread's earlier turns alike; a turn already held keeps its SESSION
+/// (first-write-wins). A turn that occurred before the last turn the
+/// thread's landed epochs cover is not held: numbered there, it would move
+/// the turns they cover, so it stays a raw line no epoch takes.
+fn hold_in_thread_session_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    agent: EntityId,
+    conversation: EntityId,
+    now: u64,
+) -> MemoryResult<()> {
+    let store = &vault.store;
+    let session = vault.thread_session_in_txn(txn, conversation, agent, now)?;
+    let end =
+        match crate::compaction::conversation_covered_end_in(store, txn, session, conversation)? {
+            Some(end) => {
+                crate::compaction::thread_turn_key_in(store, txn, &end)?.map(|(key, _)| key)
+            }
+            None => None,
+        };
+    for turn in crate::compaction::conversation_turns_in(store, txn, &conversation)? {
+        if crate::compaction::turn_session_membership_in_txn(store, txn, &turn)?.is_some() {
+            continue;
+        }
+        if let Some(end) = end
+            && crate::compaction::thread_turn_key_in(store, txn, &turn)?
+                .is_none_or(|(key, _)| key <= end)
+        {
+            continue;
+        }
+        crate::compaction::record_turn_session_membership_in_txn(store, txn, &turn, Some(session))?;
+    }
+    Ok(())
 }
 
 /// Refuses the witness when its agent, or anyone its exchange names, is

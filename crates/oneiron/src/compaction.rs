@@ -99,8 +99,9 @@ pub use conversation::{
     seal_conversation_flight,
 };
 pub(crate) use conversation::{
-    FoldedTurnSummary, chat_log_room, conversation_receipt_in, folded_turn_summary_in,
-    put_conversation_receipt_in_txn, select_action_turns, summary_stands_in,
+    FoldedTurnSummary, chat_log_room, conversation_covered_end_in, conversation_receipt_in,
+    conversation_turns_in, folded_turn_summary_in, put_conversation_receipt_in_txn,
+    select_action_turns, summary_stands_in, thread_turn_key_in,
 };
 pub use driver::{
     CompactionBackend, CompactionBackendRegistry, CompactionDirective, CompactionDriver,
