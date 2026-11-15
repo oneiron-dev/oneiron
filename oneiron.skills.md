@@ -1299,7 +1299,11 @@ Operations:
 - `book` — body is tagged by `stage`. `hold` takes `event_type`, `selected_slot`, `visitor_tz`,
   `constraint`, `session_ref`, `checkout_lease_token`, `idempotency_key`, and returns
   `hold_token`, `selected_slot`, and a server-capped `expires_at`. There is no TTL field: a longer
-  hold requires a server-issued checkout lease, not a caller's ask. `confirm` takes `hold_token`,
+  hold requires a server-issued checkout lease, not a caller's ask. An event type whose card shows a
+  `deposit` also takes `deposit_terms`, the card's `deposit` as the visitor read it: a hold without
+  them, or with terms the owner has since changed, is refused (`booking_deposit_terms_required`,
+  `booking_deposit_terms_changed`) before any payment is created, and the hold returns `deposit`,
+  the checkout the visitor pays in. `confirm` takes `hold_token`,
   `booker_email`, `intake`, `session_ref`, `idempotency_key`, and returns separate
   `reschedule_token` and `cancel_token`. When the slot went to someone else the answer is
   `stage: slot_taken` with the oracle's nearest `alternatives`.

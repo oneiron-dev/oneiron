@@ -5,8 +5,12 @@
 //! unconfirmed, refunded on a cancel. Every call reads the owner's secret
 //! key inside the custody door, refuses it there unless it is a test key,
 //! and never lets it leave the door's closure. Every write carries the
-//! caller's `Idempotency-Key`, so a retry is deduped by Stripe.
+//! caller's `Idempotency-Key`, so a retry is deduped by Stripe. A refund
+//! also carries that key in its metadata and is looked up by it before any
+//! new one is made, since Stripe keeps an idempotency key for a day only; a
+//! refund counts once Stripe says it succeeded.
 
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::time::Duration;
 
@@ -32,6 +36,11 @@ const MAX_STRIPE_REPLY_BYTES: u64 = 256 * 1024;
 
 /// The longest Stripe object id accepted.
 const MAX_STRIPE_ID_BYTES: usize = 255;
+
+/// The refund metadata field that carries the settle move's idempotency
+/// key, as the form names it and as the refund answers it.
+const SETTLE_KEY_FORM_FIELD: &str = "metadata[oneiron_settle_key]";
+const SETTLE_KEY_METADATA: &str = "oneiron_settle_key";
 
 /// Why a deposit cannot use Stripe on this server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,10 +194,40 @@ pub(crate) struct PaymentIntentView {
     pub livemode: bool,
 }
 
-/// The amount a refund reply names.
+/// The Refund fields a deposit reads.
 #[derive(Deserialize)]
-struct RefundReply {
+struct RefundView {
+    id: String,
     amount: u64,
+    /// `pending`, `requires_action`, `succeeded`, `failed` or `canceled`.
+    status: String,
+    #[serde(default)]
+    metadata: BTreeMap<String, String>,
+}
+
+/// One page of a PaymentIntent's refunds.
+#[derive(Deserialize)]
+struct RefundList {
+    data: Vec<RefundView>,
+}
+
+impl RefundView {
+    /// What the deposit records of this refund: its amount once it
+    /// succeeded; pending while Stripe still holds it; a failure for good
+    /// once it failed or was cancelled.
+    fn settled_amount(&self) -> Result<u64, DepositProviderFailure> {
+        match self.status.as_str() {
+            "succeeded" => Ok(self.amount),
+            "pending" | "requires_action" => Err(DepositProviderFailure::Pending(format!(
+                "Stripe holds refund {} {}",
+                self.id, self.status
+            ))),
+            status => Err(DepositProviderFailure::Permanent(format!(
+                "Stripe's refund {} is {status}",
+                self.id
+            ))),
+        }
+    }
 }
 
 /// A created PaymentIntent and the secret the visitor's Stripe.js confirms
@@ -349,71 +388,109 @@ impl<'v> StripeClient<'v> {
             .map_err(|_| StripeCallError::Malformed("no PaymentIntent in the reply".to_owned()))
     }
 
-    /// One move; the amount it moved: the payment's captured amount for a
-    /// capture, the refund's amount for a refund, 0 for a void.
-    fn move_payment(&self, request: &DepositSettleRequest<'_>) -> Result<u64, StripeCallError> {
-        let id = request.payment_id;
-        let key = Some(request.idempotency_key);
-        let intent = |body: Zeroizing<Vec<u8>>| {
-            serde_json::from_slice::<PaymentIntentView>(&body)
-                .map_err(|_| StripeCallError::Malformed("no PaymentIntent in the reply".to_owned()))
-        };
-        match request.movement {
-            DepositSettleMove::Capture { amount_minor } => self
-                .call(
-                    &payment_path(id, "/capture")?,
-                    Some(&[("amount_to_capture", amount_minor.to_string())]),
-                    key,
-                )
-                .and_then(intent)
-                .map(|captured| captured.amount_received),
-            DepositSettleMove::Void => self
-                .call(
-                    &payment_path(id, "/cancel")?,
-                    Some(&[("cancellation_reason", "abandoned".to_owned())]),
-                    key,
-                )
-                .map(|_| 0),
-            DepositSettleMove::Refund { amount_minor } => {
-                payment_path(id, "")?;
-                let body = self.call(
-                    "/v1/refunds",
-                    Some(&[
-                        ("payment_intent", id.to_owned()),
-                        ("amount", amount_minor.to_string()),
-                        ("reason", "requested_by_customer".to_owned()),
-                    ]),
-                    key,
-                )?;
-                serde_json::from_slice::<RefundReply>(&body)
-                    .map(|refund| refund.amount)
-                    .map_err(|_| StripeCallError::Malformed("no refund in the reply".to_owned()))
-            }
+    /// The deposit's refund under the settle move's idempotency `key`: the
+    /// one already made under it, found by its metadata, or else a new one.
+    /// Stripe dedupes a repeated key for a day only, so a refund it holds
+    /// pending longer is never made twice.
+    fn refund_once(
+        &self,
+        payment_id: &str,
+        amount_minor: u64,
+        key: &str,
+    ) -> Result<RefundView, StripeCallError> {
+        payment_path(payment_id, "")?;
+        let listed = self.call(
+            &format!("/v1/refunds?payment_intent={payment_id}&limit=100"),
+            None,
+            None,
+        )?;
+        let listed: RefundList = serde_json::from_slice(&listed)
+            .map_err(|_| StripeCallError::Malformed("no refund list in the reply".to_owned()))?;
+        if let Some(made) = listed.data.into_iter().find(|refund| {
+            refund.metadata.get(SETTLE_KEY_METADATA).map(String::as_str) == Some(key)
+        }) {
+            return Ok(made);
         }
+        let body = self.call(
+            "/v1/refunds",
+            Some(&[
+                ("payment_intent", payment_id.to_owned()),
+                ("amount", amount_minor.to_string()),
+                ("reason", "requested_by_customer".to_owned()),
+                (SETTLE_KEY_FORM_FIELD, key.to_owned()),
+            ]),
+            Some(key),
+        )?;
+        serde_json::from_slice(&body)
+            .map_err(|_| StripeCallError::Malformed("no refund in the reply".to_owned()))
+    }
+
+    /// Captures `amount_minor` of the authorization; the amount the payment
+    /// has captured.
+    fn capture(
+        &self,
+        payment_id: &str,
+        amount_minor: u64,
+        key: &str,
+    ) -> Result<u64, StripeCallError> {
+        let body = self.call(
+            &payment_path(payment_id, "/capture")?,
+            Some(&[("amount_to_capture", amount_minor.to_string())]),
+            Some(key),
+        )?;
+        serde_json::from_slice::<PaymentIntentView>(&body)
+            .map(|captured| captured.amount_received)
+            .map_err(|_| StripeCallError::Malformed("no PaymentIntent in the reply".to_owned()))
+    }
+
+    /// Cancels the payment; nothing is captured.
+    fn void(&self, payment_id: &str, key: &str) -> Result<u64, StripeCallError> {
+        self.call(
+            &payment_path(payment_id, "/cancel")?,
+            Some(&[("cancellation_reason", "abandoned".to_owned())]),
+            Some(key),
+        )
+        .map(|_| 0)
     }
 }
+
+/// The PaymentIntent states in which a refused capture stands done.
+const CAPTURE_DONE: &[&str] = &["succeeded"];
+
+/// The PaymentIntent states in which a refused void stands settled: cancelled,
+/// or captured before the void, whose capture the deposit then owes back.
+const VOID_DONE: &[&str] = &["canceled", "succeeded"];
 
 impl DepositSettlementPort for StripeClient<'_> {
     fn settle(
         &mut self,
         request: &DepositSettleRequest<'_>,
     ) -> Result<u64, DepositProviderFailure> {
-        match self.move_payment(request) {
-            Ok(moved) => Ok(moved),
-            // A capture or cancel that already happened (a lost reply, a
-            // dashboard act) is refused by Stripe; the PaymentIntent's own
-            // state says whether the move stands done, and what it captured.
-            Err(error @ StripeCallError::Refused { .. }) => {
-                let done = match request.movement {
-                    DepositSettleMove::Capture { .. } => "succeeded",
-                    DepositSettleMove::Void => "canceled",
-                    DepositSettleMove::Refund { .. } => return Err(error.into_failure()),
-                };
-                match self.payment_intent(request.payment_id) {
-                    Ok(intent) if intent.status == done => Ok(intent.amount_received),
-                    _ => Err(error.into_failure()),
-                }
+        let id = request.payment_id;
+        let key = request.idempotency_key;
+        // A capture or cancel that already happened (a lost reply, a
+        // dashboard act) is refused by Stripe; the PaymentIntent's own state
+        // says whether the move stands done, and what it captured. A void
+        // refused because the payment was captured (a capture whose reply was
+        // lost) answers that capture, which the deposit then owes back.
+        let (moved, done) = match request.movement {
+            DepositSettleMove::Refund { amount_minor } => {
+                return self
+                    .refund_once(id, amount_minor, key)
+                    .map_err(StripeCallError::into_failure)?
+                    .settled_amount();
             }
+            DepositSettleMove::Capture { amount_minor } => {
+                (self.capture(id, amount_minor, key), CAPTURE_DONE)
+            }
+            DepositSettleMove::Void => (self.void(id, key), VOID_DONE),
+        };
+        match moved {
+            Ok(moved) => Ok(moved),
+            Err(error @ StripeCallError::Refused { .. }) => match self.payment_intent(id) {
+                Ok(intent) if done.contains(&intent.status.as_str()) => Ok(intent.amount_received),
+                _ => Err(error.into_failure()),
+            },
             Err(error) => Err(error.into_failure()),
         }
     }

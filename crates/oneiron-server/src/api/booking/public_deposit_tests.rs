@@ -8,15 +8,19 @@
 //! reschedule and cancel tokens, and the deposit is captured. Beside it: the
 //! webhook refuses a bad signature, a stale timestamp and a live-mode event;
 //! a confirm that beats the webhook reads Stripe's own word; a live key never
-//! reaches Stripe.
+//! reaches Stripe. The Astra money review's cases (15 Nov): a hold opens a
+//! payment only under the terms the visitor read; a void that finds the
+//! payment captured refunds it; a refund Stripe holds pending stays owed
+//! and is never made twice.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Form, Path as AxumPath, State as AxumState};
+use axum::extract::{Form, Path as AxumPath, Query, State as AxumState};
 use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use hmac::{Hmac, Mac};
+use oneiron::booking::agent_api::{BookingDepositCheckout, SelectedSlot};
 use oneiron::booking::lifecycle::{DepositState, booking_deposit_for_payment};
 use oneiron::booking::{DepositRefundRule, DepositTerms};
 use oneiron::secret_custody::PaymentCredentialRelease;
@@ -24,6 +28,7 @@ use sha2::Sha256;
 
 use super::fixture::*;
 use super::*;
+use crate::booking_deposit::settle::settle_deposits_once;
 use crate::booking_deposit::webhook::STRIPE_DEPOSIT_WEBHOOK_PATH;
 use crate::booking_deposit::{
     DEPOSIT_EFFECTOR, STRIPE_PUBLISHABLE_KEY_NAME, STRIPE_SECRET_KEY_NAME,
@@ -42,10 +47,15 @@ fn deposit_terms() -> DepositTerms {
     }
 }
 
-fn deposit_config() -> EventTypeConfig {
-    EventTypeConfig {
-        deposit: Some(deposit_terms()),
-        ..fixture_config()
+/// A full refund on any cancel before the start, so a fixture slot's
+/// cancel releases the whole deposit.
+fn any_notice_terms() -> DepositTerms {
+    DepositTerms {
+        refund: DepositRefundRule {
+            full_refund_notice_secs: 0,
+            late_cancel_refund_percent: 0,
+        },
+        ..deposit_terms()
     }
 }
 
@@ -67,6 +77,42 @@ struct FakeStripe {
     calls: Vec<(String, BTreeMap<String, String>, Option<String>)>,
     /// Every `Authorization` header it was sent.
     bearers: Vec<String>,
+    /// The next capture is taken, and its reply lost: Stripe answers 500.
+    lose_capture_reply: bool,
+    /// The status a new refund gets; `succeeded` when unset.
+    refund_status: Option<String>,
+    refunds: Vec<FakeRefund>,
+}
+
+/// One refund the fake holds.
+#[derive(Clone)]
+struct FakeRefund {
+    id: String,
+    payment_intent: String,
+    amount: u64,
+    status: String,
+    settle_key: Option<String>,
+}
+
+fn refund_json(refund: &FakeRefund) -> Value {
+    json!({
+        "id": refund.id,
+        "object": "refund",
+        "amount": refund.amount,
+        "payment_intent": refund.payment_intent,
+        "status": refund.status,
+        "metadata": refund
+            .settle_key
+            .as_ref()
+            .map_or_else(|| json!({}), |key| json!({ "oneiron_settle_key": key })),
+    })
+}
+
+fn stripe_error(status: StatusCode, code: &str) -> (StatusCode, axum::Json<Value>) {
+    (
+        status,
+        axum::Json(json!({ "error": { "code": code, "message": code } })),
+    )
 }
 
 type Shared = Arc<Mutex<FakeStripe>>;
@@ -160,7 +206,7 @@ async fn move_intent(
     headers: HeaderMap,
     AxumPath((id, movement)): AxumPath<(String, String)>,
     Form(form): Form<BTreeMap<String, String>>,
-) -> axum::Json<Value> {
+) -> (StatusCode, axum::Json<Value>) {
     observe(
         &stripe,
         format!("POST /v1/payment_intents/{id}/{movement}"),
@@ -168,15 +214,23 @@ async fn move_intent(
         form,
     );
     let mut stripe = stripe.lock().expect("fake stripe");
+    let lose_reply = movement == "capture" && std::mem::take(&mut stripe.lose_capture_reply);
     let intent = stripe.intents.get_mut(&id).expect("known intent");
+    if movement == "cancel" && intent.status == "succeeded" {
+        // Stripe cancels no captured payment.
+        return stripe_error(StatusCode::BAD_REQUEST, "payment_intent_unexpected_state");
+    }
     intent.status = if movement == "capture" {
         "succeeded"
     } else {
         "canceled"
     }
     .to_owned();
+    if lose_reply {
+        return stripe_error(StatusCode::INTERNAL_SERVER_ERROR, "api_error");
+    }
     let intent = intent.clone();
-    axum::Json(intent_json(&id, &intent))
+    (StatusCode::OK, axum::Json(intent_json(&id, &intent)))
 }
 
 async fn refund(
@@ -184,9 +238,46 @@ async fn refund(
     headers: HeaderMap,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> axum::Json<Value> {
-    let amount: u64 = form["amount"].parse().expect("refund amount");
-    observe(&stripe, "POST /v1/refunds".to_owned(), &headers, form);
-    axum::Json(json!({ "id": "re_fixture", "status": "succeeded", "amount": amount }))
+    observe(
+        &stripe,
+        "POST /v1/refunds".to_owned(),
+        &headers,
+        form.clone(),
+    );
+    let mut stripe = stripe.lock().expect("fake stripe");
+    let refund = FakeRefund {
+        id: format!("re_fixture{}", stripe.refunds.len() + 1),
+        payment_intent: form["payment_intent"].clone(),
+        amount: form["amount"].parse().expect("refund amount"),
+        status: stripe
+            .refund_status
+            .clone()
+            .unwrap_or_else(|| "succeeded".to_owned()),
+        settle_key: form.get("metadata[oneiron_settle_key]").cloned(),
+    };
+    stripe.refunds.push(refund.clone());
+    axum::Json(refund_json(&refund))
+}
+
+async fn list_refunds(
+    AxumState(stripe): AxumState<Shared>,
+    headers: HeaderMap,
+    Query(query): Query<BTreeMap<String, String>>,
+) -> axum::Json<Value> {
+    observe(
+        &stripe,
+        "GET /v1/refunds".to_owned(),
+        &headers,
+        query.clone(),
+    );
+    let stripe = stripe.lock().expect("fake stripe");
+    let data: Vec<Value> = stripe
+        .refunds
+        .iter()
+        .filter(|refund| Some(&refund.payment_intent) == query.get("payment_intent"))
+        .map(refund_json)
+        .collect();
+    axum::Json(json!({ "object": "list", "data": data, "has_more": false }))
 }
 
 /// A loopback Stripe on this runtime; its origin.
@@ -196,7 +287,7 @@ async fn fake_stripe() -> (Shared, String) {
         .route("/v1/payment_intents", post(create_intent))
         .route("/v1/payment_intents/{id}", get(read_intent))
         .route("/v1/payment_intents/{id}/{movement}", post(move_intent))
-        .route("/v1/refunds", post(refund))
+        .route("/v1/refunds", post(refund).get(list_refunds))
         .with_state(Arc::clone(&stripe));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
@@ -272,7 +363,15 @@ fn register_deposit_secret(vault: &oneiron::Vault, name: &str, value: &str) {
 /// stored. The test host proves no runner fence, so it lifts the payment
 /// credential withholding, as a self-hoster's serve flag does.
 async fn deposit_fixture(secret_key: &str) -> (Fixture, Shared) {
-    let mut fixture = Fixture::with_config(deposit_config());
+    deposit_fixture_with(deposit_terms(), secret_key).await
+}
+
+/// [`deposit_fixture`] for an event type that asks `terms`.
+async fn deposit_fixture_with(terms: DepositTerms, secret_key: &str) -> (Fixture, Shared) {
+    let mut fixture = Fixture::with_config(EventTypeConfig {
+        deposit: Some(terms),
+        ..fixture_config()
+    });
     let (stripe, origin) = fake_stripe().await;
     Arc::get_mut(&mut fixture.server)
         .expect("the fixture alone holds its server")
@@ -350,6 +449,80 @@ fn authorize_card(stripe: &Shared, payment_id: &str) {
         .status = "requires_capture".to_owned();
 }
 
+/// A hold that carries the deposit terms the visitor read on the card.
+fn hold_shown(
+    slot: SelectedSlot,
+    session: &str,
+    shown: Option<DepositTerms>,
+) -> BookingOperationRequest {
+    let BookingOperationRequest::Book(BookingBookInput::Hold(mut input)) =
+        hold(slot, session, None)
+    else {
+        panic!("the fixture's hold is a hold")
+    };
+    input.deposit_terms = shown;
+    BookingOperationRequest::Book(BookingBookInput::Hold(input))
+}
+
+/// The PaymentIntent a checkout's client secret belongs to.
+fn payment_of(checkout: &BookingDepositCheckout) -> String {
+    checkout
+        .client_secret
+        .split("_secret_")
+        .next()
+        .expect("client secret")
+        .to_owned()
+}
+
+/// Hold under `terms`, the card authorized, confirm: the payment and the
+/// booking's cancel token.
+async fn paid_booking(
+    fixture: &Fixture,
+    stripe: &Shared,
+    slot: SelectedSlot,
+    session: &str,
+    terms: &DepositTerms,
+) -> (String, String) {
+    let held = fixture
+        .dispatch(
+            "booking.hold",
+            hold_shown(slot, session, Some(terms.clone())),
+        )
+        .await
+        .expect("hold");
+    let BookingOperationResponse::Book(BookingBookResult::Held {
+        hold_token,
+        deposit: Some(checkout),
+        ..
+    }) = held
+    else {
+        panic!("a deposit hold answers its checkout")
+    };
+    let payment_id = payment_of(&checkout);
+    authorize_card(stripe, &payment_id);
+    let confirmed = fixture
+        .dispatch("booking.confirm", confirm(hold_token, session))
+        .await
+        .expect("confirm after the authorization");
+    let BookingOperationResponse::Book(BookingBookResult::Confirmed { cancel_token, .. }) =
+        confirmed
+    else {
+        panic!("confirmed")
+    };
+    (payment_id, cancel_token)
+}
+
+/// The POST /v1/refunds calls the fake saw.
+fn refund_posts(stripe: &Shared) -> usize {
+    stripe
+        .lock()
+        .expect("fake stripe")
+        .calls
+        .iter()
+        .filter(|(call, _, _)| call == "POST /v1/refunds")
+        .count()
+}
+
 fn deposit_state(fixture: &Fixture, payment_id: &str) -> DepositState {
     booking_deposit_for_payment(&fixture.server.vault, payment_id)
         .expect("read")
@@ -365,7 +538,10 @@ async fn public_booking_deposit_event_holds_checkout_window_and_confirms_only_af
 
     let before = now_secs().expect("clock");
     let held = fixture
-        .dispatch("booking.hold", hold(slot, "deposit-visitor", None))
+        .dispatch(
+            "booking.hold",
+            hold_shown(slot, "deposit-visitor", Some(deposit_terms())),
+        )
         .await
         .expect("the deposit event type's hold opens its checkout");
     let BookingOperationResponse::Book(BookingBookResult::Held {
@@ -506,7 +682,7 @@ async fn a_confirm_that_beats_the_webhook_reads_stripes_word() {
     let held = fixture
         .dispatch(
             "booking.hold",
-            hold(selected(&slots[1]), "fast-visitor", None),
+            hold_shown(selected(&slots[1]), "fast-visitor", Some(deposit_terms())),
         )
         .await
         .expect("hold");
@@ -518,12 +694,7 @@ async fn a_confirm_that_beats_the_webhook_reads_stripes_word() {
     else {
         panic!("a deposit hold answers its checkout")
     };
-    let payment_id = checkout
-        .client_secret
-        .split("_secret_")
-        .next()
-        .expect("client secret")
-        .to_owned();
+    let payment_id = payment_of(&checkout);
     authorize_card(&stripe, &payment_id);
     fixture
         .dispatch("booking.confirm", confirm(hold_token, "fast-visitor"))
@@ -544,7 +715,7 @@ async fn a_live_stripe_key_never_reaches_stripe() {
     let held = fixture
         .dispatch(
             "booking.hold",
-            hold(selected(&slots[2]), "live-visitor", None),
+            hold_shown(selected(&slots[2]), "live-visitor", Some(deposit_terms())),
         )
         .await;
     assert_eq!(
@@ -555,5 +726,166 @@ async fn a_live_stripe_key_never_reaches_stripe() {
     assert!(
         stripe.lock().expect("fake stripe").calls.is_empty(),
         "no request left with a live key"
+    );
+}
+
+#[tokio::test]
+async fn a_hold_opens_a_payment_only_under_the_terms_the_visitor_read() {
+    let (fixture, stripe) = deposit_fixture(SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    // The card the visitor read before the owner changed the refund rule.
+    let stale = DepositTerms {
+        refund: DepositRefundRule {
+            full_refund_notice_secs: 2 * 3_600,
+            late_cancel_refund_percent: 50,
+        },
+        ..deposit_terms()
+    };
+    for (session, shown) in [("terms-unread", None), ("terms-stale", Some(stale))] {
+        let held = fixture
+            .dispatch(
+                "booking.hold",
+                hold_shown(selected(&slots[0]), session, shown),
+            )
+            .await;
+        assert_eq!(
+            held,
+            Err(StatusCode::CONFLICT),
+            "{session}: no checkout under terms the visitor did not read"
+        );
+    }
+    assert!(
+        stripe.lock().expect("fake stripe").calls.is_empty(),
+        "no payment was created"
+    );
+
+    let held = fixture
+        .dispatch(
+            "booking.hold",
+            hold_shown(selected(&slots[0]), "terms-read", Some(deposit_terms())),
+        )
+        .await
+        .expect("the live terms open the checkout");
+    assert!(
+        matches!(
+            held,
+            BookingOperationResponse::Book(BookingBookResult::Held {
+                deposit: Some(_),
+                ..
+            })
+        ),
+        "a deposit hold answers its checkout: {held:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_void_that_finds_the_payment_captured_refunds_it() {
+    let terms = any_notice_terms();
+    let (fixture, stripe) = deposit_fixture_with(terms.clone(), SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    // Stripe takes the confirm's capture, and its reply is lost.
+    stripe.lock().expect("fake stripe").lose_capture_reply = true;
+    let (payment_id, cancel_token) =
+        paid_booking(&fixture, &stripe, selected(&slots[0]), "lost-reply", &terms).await;
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::CaptureDue {
+            amount_minor: 5_000
+        },
+        "the lost reply leaves the capture owed"
+    );
+    assert_eq!(
+        stripe.lock().expect("fake stripe").intents[&payment_id].status,
+        "succeeded"
+    );
+
+    // The visitor cancels in time for a full refund: the deposit turns void.
+    fixture
+        .dispatch("booking.cancel", cancel(cancel_token, "cancel-lost-reply"))
+        .await
+        .expect("cancel");
+    assert_eq!(deposit_state(&fixture, &payment_id), DepositState::VoidDue);
+
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let now = now_secs().expect("clock");
+    for pass in 0..2 {
+        let drain =
+            settle_deposits_once(&fixture.server.vault, &base, now + pass).expect("settle pass");
+        assert_eq!(drain.failed, 0, "pass {pass}: no move fails for good");
+    }
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 5_000
+        },
+        "the void found the 5000 captured, and it went back to the visitor"
+    );
+    assert_eq!(refund_posts(&stripe), 1, "refunded once");
+}
+
+#[tokio::test]
+async fn a_refund_stripe_holds_pending_stays_owed_and_is_made_once() {
+    let terms = any_notice_terms();
+    let (fixture, stripe) = deposit_fixture_with(terms.clone(), SECRET_KEY).await;
+    let slots = fixture.slots().await;
+    let (payment_id, cancel_token) = paid_booking(
+        &fixture,
+        &stripe,
+        selected(&slots[0]),
+        "pending-refund",
+        &terms,
+    )
+    .await;
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Captured {
+            amount_minor: 5_000
+        }
+    );
+    fixture
+        .dispatch(
+            "booking.cancel",
+            cancel(cancel_token, "cancel-pending-refund"),
+        )
+        .await
+        .expect("cancel");
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::RefundDue {
+            amount_minor: 5_000
+        }
+    );
+
+    stripe.lock().expect("fake stripe").refund_status = Some("pending".to_owned());
+    let base = fixture.server.booking_deposit_stripe_base().to_owned();
+    let now = now_secs().expect("clock");
+    for at in [now, now + 60] {
+        let drain = settle_deposits_once(&fixture.server.vault, &base, at).expect("settle pass");
+        assert_eq!(drain.failed, 0, "a pending refund never fails for good");
+        assert_eq!(drain.refunded, 0, "a pending refund is no refund");
+        assert_eq!(
+            deposit_state(&fixture, &payment_id),
+            DepositState::RefundDue {
+                amount_minor: 5_000
+            },
+            "the refund stays owed while Stripe holds it"
+        );
+    }
+
+    // Stripe finishes the refund; the next ask finds it by its key.
+    stripe.lock().expect("fake stripe").refunds[0].status = "succeeded".to_owned();
+    let drain =
+        settle_deposits_once(&fixture.server.vault, &base, now + 3_601).expect("settle pass");
+    assert_eq!(drain.refunded, 1);
+    assert_eq!(
+        deposit_state(&fixture, &payment_id),
+        DepositState::Refunded {
+            amount_minor: 5_000
+        }
+    );
+    assert_eq!(
+        refund_posts(&stripe),
+        1,
+        "the pending refund was never made twice"
     );
 }

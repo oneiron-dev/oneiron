@@ -43,6 +43,7 @@ pub(super) async fn hold_lease(
     let event_type = input.event_type.clone();
     let session_ref = input.session_ref.clone();
     let hold_key = input.idempotency_key.clone();
+    let shown_terms = input.deposit_terms.clone();
     let opened = tokio::task::spawn_blocking(move || {
         open_hold_checkout(
             &vault,
@@ -53,6 +54,7 @@ pub(super) async fn hold_lease(
                 session_key,
                 session_ref: &session_ref,
                 hold_key: &hold_key,
+                shown_terms: shown_terms.as_ref(),
             },
             now,
         )
@@ -68,6 +70,13 @@ pub(super) async fn hold_lease(
         )),
         Ok(None) => Ok((HoldLeaseSpec::Ordinary, None)),
         Err(CheckoutFailure::Booking(error)) => Err(booking_error(error)),
+        // The page shows the card again, with its live terms.
+        Err(CheckoutFailure::TermsMissing) => Err(ApiError::invalid_state(Some(
+            "booking_deposit_terms_required",
+        ))),
+        Err(CheckoutFailure::TermsChanged) => Err(ApiError::invalid_state(Some(
+            "booking_deposit_terms_changed",
+        ))),
         Err(CheckoutFailure::Stripe(StripeCallError::Setup(error))) => {
             tracing::warn!(%error, "a deposit event type was held on a server with no usable Stripe test key");
             Err(ApiError::invalid_state(Some("booking_deposit_unavailable")))

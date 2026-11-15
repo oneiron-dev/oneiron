@@ -222,6 +222,13 @@ pub struct BookingHoldInput {
     pub constraint: Option<ConstraintObject>,
     pub session_ref: String,
     pub checkout_lease_token: Option<String>,
+    /// The deposit terms the visitor read on the event type's card
+    /// (`EventTypeCard::deposit`, BK-DEPOSITS). A hold that opens a deposit
+    /// checkout must carry them, equal to the live terms, so the visitor
+    /// pays only under terms they were shown; a stale card is refused before
+    /// any payment is created. Absent for an event type with no deposit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit_terms: Option<crate::booking::DepositTerms>,
     /// Replay hygiene only. Correctness comes from the home-node writer's
     /// revalidation, never from this key.
     pub idempotency_key: String,

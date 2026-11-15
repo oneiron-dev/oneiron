@@ -128,7 +128,31 @@ fn booking_hold_input_schema() -> Value {
             "checkout_lease_token": {
                 "oneOf": [{ "type": "null" }, booking_action_token_schema()]
             },
+            // Optional: the deposit terms the visitor read on the card,
+            // which a hold that opens a deposit checkout must carry.
+            "deposit_terms": {
+                "oneOf": [{ "type": "null" }, booking_deposit_terms_schema()]
+            },
             "idempotency_key": nonblank_string_schema(),
+        }),
+    )
+}
+
+fn booking_deposit_terms_schema() -> Value {
+    closed_object_schema(
+        &["amount_minor", "currency"],
+        json!({
+            "amount_minor": { "type": "integer", "minimum": 1, "maximum": 99_999_999 },
+            "currency": { "type": "string", "pattern": "^[a-z]{3}$" },
+            "refund": closed_object_schema(
+                &[],
+                json!({
+                    "full_refund_notice_secs": { "type": "integer", "minimum": 0 },
+                    "late_cancel_refund_percent": {
+                        "type": "integer", "minimum": 0, "maximum": 100
+                    },
+                }),
+            ),
         }),
     )
 }
