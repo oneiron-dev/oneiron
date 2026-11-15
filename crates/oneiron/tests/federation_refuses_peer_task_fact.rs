@@ -157,11 +157,8 @@ fn a_federation_peer_sends_no_task_authority_fact() {
     let forger = EntityId::now();
     let mut let_through = Vec::new();
     for role in ROLES {
-        for kind in [
-            TaskAuthorityFactKind::Owner,
-            TaskAuthorityFactKind::Cancelled,
-            TaskAuthorityFactKind::Acked,
-        ] {
+        // Every kind: the gate reads the role, never the kind.
+        for kind in (1..=8).filter_map(TaskAuthorityFactKind::from_byte) {
             let body = authority_fact_body(task, kind, forger);
             let fact = EntityId::now();
             let admitted = admit(&vault, &fact, &body, role).map(|_| ());
