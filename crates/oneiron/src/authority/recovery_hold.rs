@@ -8,16 +8,17 @@
 //! [`Vault::land_due_recovery_holds`], and answered by owner devices and the
 //! kit. A hold or an answer changes no roster, no grant and no anchor.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-use ed25519_dalek::SigningKey;
+use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreError, KeystoreSlot, SlotKind};
 use zeroize::Zeroizing;
 
 use super::owner_key_enrollment_door::EntrySigner;
 use super::*;
 use crate::error::{Error, SecretError};
+use crate::side_table::{self, Raw, SideTable};
 use crate::store::recovery_kit::{KitPassphrase, KitPiece, KitSecretKind};
 use crate::world_keys::{OwnerRootSigner, RecoveryAuthoritySigner, keystore_error};
 use crate::{EntityId, Result, TimeRange, Vault};
@@ -43,18 +44,22 @@ pub(super) fn judge_recovery_hold(
 }
 
 /// A roster-signed answer's signer, judged at the parents' state: a live
-/// owner device key that is not R. R never answers a hold: the box releases
-/// R, so an R-signed answer would end the wait for the attacker. Nor does an
-/// admin's key or a host's ([`answers_recovery_holds`]): the generic
-/// consent rule admits both, and either answer would end or stop an owner's
-/// wait with no owner device (WAYBACK-7: no staff override). (An anchor's
-/// Cancel folded through the anchor's branch before the roster rules; an
-/// anchor's ItIsMe is refused as not-in-ancestry before this arm.)
+/// owner device key that is not R, with no cosign. R never answers a hold:
+/// the box releases R, so an R-signed answer would end the wait for the
+/// attacker. Nor does an admin's key or a host's ([`answers_recovery_holds`]):
+/// the generic consent rule admits both, and either answer would end or stop
+/// an owner's wait with no owner device (WAYBACK-7: no staff override). (An
+/// anchor's Cancel, beside R's cosign, folded through the anchor's branch
+/// before the roster rules; an anchor's ItIsMe is refused as not-in-ancestry
+/// before this arm.)
 pub(super) fn judge_recovery_hold_answer(
     state: &FoldState,
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
+    if !entry.cosigns.is_empty() {
+        return Err(AuthorityFoldIssue::InvalidEntry(hash));
+    }
     if state.recovery_authority_keys.contains(entry.signer_key()) {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
     }
@@ -84,6 +89,11 @@ pub(super) fn answers_recovery_holds(device: &FoldedDevice) -> bool {
 pub struct RecoveryHoldView {
     /// The hold's entry hash: the attempt id.
     pub hold: AuthorityEntryHash,
+    /// The hold's signer R: the recovery root's authority key whose released
+    /// seed the landing signs with. The kit's Cancel counts for this hold
+    /// only beside R's cosign; a kit whose live root key is another key's
+    /// cancels another root's holds.
+    pub root_key: AuthorityKey,
     /// The successor key the landing enrols.
     pub successor_key: AuthorityKey,
     /// The machine that holds the successor key.
@@ -94,7 +104,10 @@ pub struct RecoveryHoldView {
     pub lands_at: u64,
     /// What the attempt is now.
     pub state: RecoveryHoldState,
-    /// The signers of the hold's valid answers, ascending, each once.
+    /// The signers of the hold's valid answers that count for it,
+    /// ascending, each once: a roster key's answers, and the kit's Cancel
+    /// only beside this hold's signer R (a foreign anchor's Cancel is
+    /// inert, and leaves no name here).
     pub answered_by: Vec<AuthorityKey>,
 }
 
@@ -127,14 +140,18 @@ fn state_rank(state: RecoveryHoldState) -> u8 {
 impl Vault {
     /// Every recovery hold this install's log holds, with its state: Landed
     /// once the successor key is on the roster (live or since revoked: the
-    /// attempt completed), else Cancelled on any valid Cancel (an ItIsMe
-    /// never revives one), else Void when the hold's signer R is no longer
-    /// live, else Due on a valid ItIsMe or when this reader's
+    /// attempt completed), else Cancelled on any valid Cancel that counts
+    /// for the hold (a roster key's, or the kit's anchor-signed Cancel
+    /// beside this hold's signer R; a foreign anchor's Cancel is inert, and
+    /// an ItIsMe never revives one), else Void when the hold's signer R is
+    /// no longer live, else Due on a valid ItIsMe or when this reader's
     /// `instant_in_txn` reached `lands_at`, else Waiting. Only rows this
     /// install's fold counts are read: a refused hold or answer is as if
-    /// unwritten, and an answer to an unknown hold is inert. Ordered Landed,
-    /// Cancelled, Void, then Due/Waiting; within a rank by `lands_at`, then
-    /// the attempt id.
+    /// unwritten, and an answer to an unknown hold is inert. On a vault
+    /// that adopted a checkpoint image, a hold or an answer the image
+    /// carries and the vault does not store counts as a stored one does.
+    /// Ordered Landed, Cancelled, Void, then Due/Waiting; within a rank by
+    /// `lands_at`, then the attempt id.
     ///
     /// # Errors
     /// The log's and the clock's.
@@ -143,23 +160,53 @@ impl Vault {
         let now = self.instant_in_txn(txn)?.secs();
         let history = super::history_transfer::history_in_txn(self, txn)?;
         let mut holds: Vec<(AuthorityEntryHash, RecoveryHold, AuthorityKey)> = Vec::new();
-        let mut answers: BTreeMap<AuthorityEntryHash, Vec<(RecoveryHoldAnswerKind, AuthorityKey)>> =
-            BTreeMap::new();
+        let mut answers: BTreeMap<
+            AuthorityEntryHash,
+            Vec<(RecoveryHoldAnswerKind, AuthorityKey, Option<AuthorityKey>)>,
+        > = BTreeMap::new();
+        let read = |hash: AuthorityEntryHash,
+                    entry: &AuthorityLogEntry,
+                    holds: &mut Vec<(AuthorityEntryHash, RecoveryHold, AuthorityKey)>,
+                    answers: &mut BTreeMap<
+            AuthorityEntryHash,
+            Vec<(RecoveryHoldAnswerKind, AuthorityKey, Option<AuthorityKey>)>,
+        >| {
+            match &entry.op {
+                AuthorityOp::RecoveryHold(hold) => {
+                    holds.push((hash, hold.clone(), entry.signer_key().clone()));
+                }
+                AuthorityOp::RecoveryHoldAnswer(answer) => {
+                    // A counted answer carries no cosign (the roster arm) or
+                    // exactly one (the anchor arm): the fold refused any
+                    // other shape.
+                    let cosigner = match entry.cosigns.as_slice() {
+                        [cosign] => Some(cosign.public_key.clone()),
+                        _ => None,
+                    };
+                    answers.entry(answer.hold).or_default().push((
+                        answer.answer,
+                        entry.signer_key().clone(),
+                        cosigner,
+                    ));
+                }
+                _ => {}
+            }
+        };
+        let mut stored = BTreeSet::new();
         for (hash, (_, entry)) in &history {
+            stored.insert(*hash);
             if !fold.valid_entries.contains(hash) {
                 continue;
             }
-            match &entry.op {
-                AuthorityOp::RecoveryHold(hold) => {
-                    holds.push((*hash, hold.clone(), entry.signer_key().clone()));
+            read(*hash, entry, &mut holds, &mut answers);
+        }
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
+        {
+            for (hash, entry) in evidence.carried_past(&stored) {
+                if !fold.valid_entries.contains(hash) {
+                    continue;
                 }
-                AuthorityOp::RecoveryHoldAnswer(answer) => {
-                    answers
-                        .entry(answer.hold)
-                        .or_default()
-                        .push((answer.answer, entry.signer_key().clone()));
-                }
-                _ => {}
+                read(*hash, entry, &mut holds, &mut answers);
             }
         }
         let mut views: Vec<RecoveryHoldView> = holds
@@ -167,13 +214,22 @@ impl Vault {
             .map(|(hash, hold, signer)| {
                 let successor_key = hold.successor_key();
                 let named = answers.get(&hash);
+                // A Cancel counts for this hold when a roster key signed it
+                // (no cosign), or when its single cosign is this hold's
+                // signer R (the kit's Cancel). An anchor Cancel whose cosign
+                // is another key is inert for this hold.
+                let counts = |kind: RecoveryHoldAnswerKind, cosigner: &Option<AuthorityKey>| {
+                    kind == RecoveryHoldAnswerKind::ItIsMe
+                        || cosigner.as_ref().is_none_or(|key| *key == signer)
+                };
                 let cancelled = named.is_some_and(|list| {
-                    list.iter()
-                        .any(|(kind, _)| *kind == RecoveryHoldAnswerKind::Cancel)
+                    list.iter().any(|(kind, _, cosigner)| {
+                        *kind == RecoveryHoldAnswerKind::Cancel && counts(*kind, cosigner)
+                    })
                 });
                 let affirmed = named.is_some_and(|list| {
                     list.iter()
-                        .any(|(kind, _)| *kind == RecoveryHoldAnswerKind::ItIsMe)
+                        .any(|(kind, _, _)| *kind == RecoveryHoldAnswerKind::ItIsMe)
                 });
                 let state = if fold.roster.contains_key(&successor_key) {
                     RecoveryHoldState::Landed
@@ -191,12 +247,16 @@ impl Vault {
                     RecoveryHoldState::Waiting
                 };
                 let mut answered_by: Vec<AuthorityKey> = named.map_or(Vec::new(), |list| {
-                    list.iter().map(|(_, key)| key.clone()).collect()
+                    list.iter()
+                        .filter(|(kind, _, cosigner)| counts(*kind, cosigner))
+                        .map(|(_, key, _)| key.clone())
+                        .collect()
                 });
                 answered_by.sort();
                 answered_by.dedup();
                 RecoveryHoldView {
                     hold: hash,
+                    root_key: signer,
                     successor_key,
                     successor_machine: hold.enrolment.machine,
                     lost: hold.lost.clone(),
@@ -227,6 +287,13 @@ impl Vault {
         self.recovery_holds_in_txn(&txn)
     }
 }
+
+/// A recovery hold's seed slot this install may hold, by successor key:
+/// the pending record the door commits before R's seed enters the slot, so
+/// a crash between the keystore put and the hold commit still leaves the
+/// slot on a list the landing sweep reaps. Public key only; value-free.
+const RECOVERY_HOLD_SLOT_PENDING: SideTable<[u8; 32], (), Raw> =
+    SideTable::new(&side_table::AUTHORITY_RECOVERY_HOLD_SLOT_PENDING);
 
 /// The box recovery's wait until the `recovery.wait` Setting key lands: 24 h.
 pub const RECOVERY_WAIT_DEFAULT: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
@@ -270,6 +337,10 @@ const ANSWER_TOO_MANY_HEADS: &str = "the authority log has more concurrent heads
 /// success. Nothing was written.
 const KIT_CANCEL_NOT_COUNTED: &str =
     "this install's fold does not count the kit's hold cancellation; nothing was written";
+/// The kit's root key did not sign the named hold: a kit cancels only the
+/// holds its own live root key signed. Nothing was written.
+const KIT_ROOT_NOT_HOLD_SIGNER: &str =
+    "this kit's root key did not sign the recovery hold; nothing was written";
 /// The kit's pieces do not rebuild this vault's recovery seed. Nothing was
 /// written.
 const KIT_PIECES_UNREADABLE: &str =
@@ -357,6 +428,49 @@ impl Vault {
             .delete(slot)
             .map_err(keystore_error)?;
         Ok(())
+    }
+
+    /// Records `successor`'s seed slot as one this install may hold, in the
+    /// caller's write transaction: the door commits it before R's seed
+    /// enters the slot.
+    ///
+    /// # Errors
+    /// The store's.
+    pub(crate) fn put_recovery_hold_slot_pending_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        successor: &[u8; 32],
+    ) -> Result<()> {
+        RECOVERY_HOLD_SLOT_PENDING.put(&self.store, txn, successor, &())
+    }
+
+    /// Drops `successor`'s pending slot record in the caller's write
+    /// transaction, once its slot is deleted. A missing record is none.
+    ///
+    /// # Errors
+    /// The store's.
+    pub(crate) fn drop_recovery_hold_slot_pending_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        successor: &[u8; 32],
+    ) -> Result<()> {
+        RECOVERY_HOLD_SLOT_PENDING.delete(&self.store, txn, successor)?;
+        Ok(())
+    }
+
+    /// Every successor whose seed slot this install may hold, in key order.
+    ///
+    /// # Errors
+    /// The store's.
+    pub(crate) fn recovery_hold_slots_pending_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<[u8; 32]>> {
+        Ok(RECOVERY_HOLD_SLOT_PENDING
+            .scan(&self.store, txn)?
+            .into_iter()
+            .map(|(successor, ())| successor)
+            .collect())
     }
 
     /// This install's waiting hold for `successor`, if one waits and its
@@ -508,7 +622,9 @@ impl Vault {
     /// An anchor-signed `Cancel` for each of `holds`, in the caller's write
     /// transaction, before its rows: the kit's cancel (W3). Each answer
     /// names the main-log heads and the anchor's own, takes the anchor's
-    /// next sequence, and must count, or nothing commits. Answers the
+    /// next sequence, carries R's cosign beside the anchor (`r`, the kit's
+    /// live root key: the hold view counts the Cancel only for a hold R
+    /// signed), and must count, or nothing commits. Answers the
     /// answers' hashes in `holds`' order.
     ///
     /// # Errors
@@ -517,6 +633,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         anchor: &SigningKey,
+        r: &RecoveryAuthoritySigner,
         holds: &[AuthorityEntryHash],
     ) -> Result<Vec<AuthorityEntryHash>> {
         let mut answers = Vec::with_capacity(holds.len());
@@ -526,7 +643,7 @@ impl Vault {
                 .join_anchor_frontier_in_txn(txn, &fold, anchor)?
                 .unwrap_or(fold);
             let now = self.instant_in_txn(txn)?.secs();
-            let entry = anchor_signed_entry(
+            let mut entry = anchor_signed_entry(
                 &fold,
                 anchor,
                 AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer {
@@ -535,6 +652,18 @@ impl Vault {
                 }),
                 now,
             )?;
+            // R's cosign beside the anchor's, over the one transcript both
+            // sign (row CARRIER-OWNER-PROOF's shape): the key goes in before
+            // either signature, so the anchor signs again over it.
+            let r_key = r.authority_key();
+            entry.cosigns.push(AuthoritySignature {
+                suite: r_key.suite(),
+                public_key: r_key,
+                signature: vec![0; 64],
+            });
+            let transcript = authority_transcript(&entry)?;
+            entry.cosigns[0].signature = r.sign_authority_transcript(&transcript)?;
+            entry.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
             let hash = self.put_anchor_entry_in_txn(txn, entry)?;
             let after = self.authority_view_readonly_in_txn(txn)?;
             if !after.valid_entries.contains(&hash) || after.install.held_back.contains(&hash) {
@@ -591,12 +720,19 @@ impl Vault {
     /// the root door's vouch orders them (a self-hosted owner whose lost
     /// key held their binding is bound again by the enrolment), marks the
     /// rows for the live mirror, commits, announces them, then deletes the
-    /// slot. `Cancelled`, `Void` and a successor already
-    /// on the roster delete the slot, report the state and write nothing;
-    /// `Waiting` is nothing. A hold with no row here keeps its slot: its
-    /// write may still be committing. With no keystore installed no slot
-    /// is here, so the run lands nothing; with no hold in the log it
-    /// writes nothing at all. The root door's box arm calls it first; the
+    /// slot. `Cancelled`, `Void` and a successor already on the roster
+    /// delete the slot and its pending record, while this run's writer is
+    /// held, and report the state; they write no authority row. `Waiting`
+    /// is nothing. A terminal hold whose successor a waiting or due retry
+    /// names leaves the slot to that retry and is not reported. A hold with
+    /// no row here keeps its slot: its write may still be committing. With
+    /// no keystore installed no slot is here, so the run lands nothing;
+    /// with no hold and no pending slot record it writes nothing at all.
+    /// Before any of that, one sweep reaps the seed slots a crash orphaned:
+    /// for each pending slot record, a slot that holds no seed loses its
+    /// record, and a seed no hold names is deleted with its record (the
+    /// door puts its seed again when a run reaped it before the door's
+    /// hold committed). The root door's box arm calls it first; the
     /// host's poll of a waiting recovery calls it too (the keystore is
     /// installed after each open, so an open never lands).
     ///
@@ -609,16 +745,54 @@ impl Vault {
             Err(Error::Secret(SecretError::KeystoreUnavailable(_))) => return Ok(Vec::new()),
             Err(other) => return Err(other),
         }
-        let (vault_id, views) = {
+        let (vault_id, views, pending) = {
             let txn = self.store.env.read_txn()?;
             let fold = self.authority_view_readonly_in_txn(&txn)?;
             let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-            (vault_id, self.recovery_holds_in_txn(&txn)?)
+            (
+                vault_id,
+                self.recovery_holds_in_txn(&txn)?,
+                self.recovery_hold_slots_pending_in_txn(&txn)?,
+            )
         };
-        if views.is_empty() {
+        if views.is_empty() && pending.is_empty() {
             return Ok(Vec::new());
         }
         let machine = self.prepare_install_signing()?;
+        // The orphan sweep: a seed the door put before a crash left a
+        // pending record and no hold. Under one write transaction, a record
+        // whose slot holds no seed is dropped; one whose seed no hold
+        // (stored or carried, any state) names is deleted with its record;
+        // a hold's own slot is left for the landing loop below. It commits
+        // only when it reaped something.
+        if !pending.is_empty() {
+            let mut sweep = self.store.env.write_txn()?;
+            let fold = self.authority_view_readonly_in_txn(&sweep)?;
+            let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+            let named: BTreeSet<[u8; 32]> = self
+                .recovery_holds_in_txn(&sweep)?
+                .into_iter()
+                .filter_map(|view| match view.successor_key {
+                    AuthorityKey::Ed25519(successor) => Some(successor),
+                    _ => None,
+                })
+                .collect();
+            let mut reaped = false;
+            for successor in &pending {
+                let slot = self.recovery_hold_slot(&vault_id, machine, successor);
+                if self.read_recovery_hold_seed(&slot)?.is_none() {
+                    self.drop_recovery_hold_slot_pending_in_txn(&mut sweep, successor)?;
+                    reaped = true;
+                } else if !named.contains(successor) {
+                    self.delete_recovery_hold_seed(&slot)?;
+                    self.drop_recovery_hold_slot_pending_in_txn(&mut sweep, successor)?;
+                    reaped = true;
+                }
+            }
+            if reaped {
+                sweep.commit()?;
+            }
+        }
         let mut landings = Vec::new();
         for view in views {
             let AuthorityKey::Ed25519(successor) = view.successor_key else {
@@ -629,31 +803,59 @@ impl Vault {
                 continue;
             };
             let mut txn = self.store.env.write_txn()?;
-            let state = self
-                .recovery_holds_in_txn(&txn)?
-                .into_iter()
+            let in_txn = self.recovery_holds_in_txn(&txn)?;
+            let Some(state) = in_txn
+                .iter()
                 .find(|found| found.hold == view.hold)
-                .map(|found| found.state);
-            let Some(state) = state else {
+                .map(|found| found.state)
+            else {
                 continue;
             };
+            // A retry for the same successor owns the seed slot now: only a
+            // terminal hold with no live attempt for its successor cleans
+            // it.
+            let retry_owns = in_txn.iter().any(|found| {
+                found.hold != view.hold
+                    && matches!(
+                        found.state,
+                        RecoveryHoldState::Waiting | RecoveryHoldState::Due
+                    )
+                    && found.successor_key == view.successor_key
+            });
             match state {
                 RecoveryHoldState::Waiting => {}
                 RecoveryHoldState::Landed
                 | RecoveryHoldState::Cancelled
                 | RecoveryHoldState::Void => {
+                    // The retry owns the slot: nothing here is this hold's
+                    // to clean, and the retry reports for itself.
+                    if retry_owns {
+                        continue;
+                    }
+                    // The slot goes while this writer is held, so no hold
+                    // naming it commits between the read above and the
+                    // delete; the record goes after its slot.
                     self.delete_recovery_hold_seed(&slot)?;
+                    self.drop_recovery_hold_slot_pending_in_txn(&mut txn, &successor)?;
+                    txn.commit()?;
                     landings.push(RecoveryHoldLanding {
                         hold: view.hold,
                         state,
                         enrollment: None,
                         revoked: Vec::new(),
                     });
+                    continue;
                 }
                 RecoveryHoldState::Due => {
                     let history = super::history_transfer::history_in_txn(self, &txn)?;
-                    let Some((_, row)) = history.get(&view.hold) else {
-                        continue;
+                    let evidence =
+                        super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?;
+                    let row = match history.get(&view.hold) {
+                        Some((_, row)) => row,
+                        None => match evidence.as_deref().and_then(|held| held.body(&view.hold)) {
+                            Some(row) => row,
+                            None => continue,
+                        },
                     };
                     let AuthorityOp::RecoveryHold(hold) = &row.op else {
                         continue;
@@ -672,7 +874,13 @@ impl Vault {
                                 &hold.owner,
                             )?;
                     if !root_live || !owner_live {
+                        // As in the terminal arms above.
+                        if retry_owns {
+                            continue;
+                        }
                         self.delete_recovery_hold_seed(&slot)?;
+                        self.drop_recovery_hold_slot_pending_in_txn(&mut txn, &successor)?;
+                        txn.commit()?;
                         landings.push(RecoveryHoldLanding {
                             hold: view.hold,
                             state: RecoveryHoldState::Void,
@@ -720,6 +928,9 @@ impl Vault {
                     txn.commit()?;
                     self.note_committed_authority_rows(rows);
                     self.delete_recovery_hold_seed(&slot)?;
+                    let mut cleanup = self.store.env.write_txn()?;
+                    self.drop_recovery_hold_slot_pending_in_txn(&mut cleanup, &successor)?;
+                    cleanup.commit()?;
                     landings.push(RecoveryHoldLanding {
                         hold: view.hold,
                         state: RecoveryHoldState::Landed,
@@ -832,12 +1043,17 @@ impl Vault {
     /// Cancels the live recovery hold `hold`, or every live hold when none
     /// is named, with the vault's anchor from the kit `pieces` rebuild
     /// (with `passphrase` when the kit takes one): the kit stops the
-    /// attempt. One write transaction; cancelling nothing is no refusal.
+    /// attempt. A kit cancels only the live holds its live root key R
+    /// signed: cancelling every hold skips another root's holds, and a
+    /// named hold another key signed is refused. With no live R from the
+    /// kit, cancelling every hold cancels nothing. One write transaction;
+    /// cancelling nothing is no refusal.
     ///
     /// # Errors
     /// [`crate::error::RecordError::AuthorityRefused`] for an agent's act,
-    /// unreadable kit pieces and a named hold that is not live; a
-    /// cancellation the fold does not count; the store's and the clock's.
+    /// unreadable kit pieces, a named hold that is not live, and a named
+    /// hold this kit's root key did not sign; a cancellation the fold does
+    /// not count; the store's and the clock's.
     pub fn cancel_recovery_holds_with_kit_as(
         &self,
         authority: &ActAuthority,
@@ -866,6 +1082,10 @@ impl Vault {
         let live = |state: RecoveryHoldState| {
             matches!(state, RecoveryHoldState::Waiting | RecoveryHoldState::Due)
         };
+        let live_r = self
+            .recovery_authority_generations_in_txn(&txn, &seed, &vault_id)?
+            .live
+            .map(|(_, signer)| signer);
         let targets: Vec<AuthorityEntryHash> = match hold {
             Some(named) => {
                 let view = views
@@ -875,16 +1095,33 @@ impl Vault {
                 if !live(view.state) {
                     return Err(authority_refused(HOLD_NOT_LIVE));
                 }
+                let Some(r) = &live_r else {
+                    return Err(authority_refused(KIT_ROOT_NOT_HOLD_SIGNER));
+                };
+                if view.root_key != r.authority_key() {
+                    return Err(authority_refused(KIT_ROOT_NOT_HOLD_SIGNER));
+                }
                 vec![named]
             }
-            None => views
-                .into_iter()
-                .filter(|found| live(found.state))
-                .map(|found| found.hold)
-                .collect(),
+            None => match &live_r {
+                Some(r) => {
+                    let r_key = r.authority_key();
+                    views
+                        .into_iter()
+                        .filter(|found| live(found.state) && found.root_key == r_key)
+                        .map(|found| found.hold)
+                        .collect()
+                }
+                None => Vec::new(),
+            },
         };
         let before = self.authority_view_readonly_in_txn(&txn)?;
-        self.append_anchor_cancels_in_txn(&mut txn, &anchor, &targets)?;
+        if !targets.is_empty() {
+            let Some(r) = &live_r else {
+                return Err(authority_refused(KIT_ROOT_NOT_HOLD_SIGNER));
+            };
+            self.append_anchor_cancels_in_txn(&mut txn, &anchor, r, &targets)?;
+        }
         let rows = self.mark_authority_rows_counted_since_in_txn(&mut txn, &before)?;
         txn.commit()?;
         self.note_committed_authority_rows(rows);

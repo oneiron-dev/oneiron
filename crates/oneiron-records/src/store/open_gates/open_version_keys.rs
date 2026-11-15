@@ -3,6 +3,14 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v31 (OPUS-WAYBACK, the box recovery's wait): stored authority-log rows
+/// keep their bytes and meaning, and a stored checkpoint image written before
+/// it no longer decodes (it has no memory of which keys were the recovery
+/// root's authority key R). The authority fold schema moves 37 -> 38 with it.
+/// No old-meaning reader or migration is provided (the lead's M-1
+/// stored-change rule, path "loud"). The number is this branch's base + 1;
+/// the PR takes main's + 1 at its train.
+///
 /// v30 (the owner's ruling AUTH-5, the owner-key ratchet): stored
 /// authority-log rows keep their bytes and change meaning, and a stored
 /// checkpoint image written before it no longer decodes (it has no memory of
@@ -150,7 +158,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 30;
+pub const STORAGE_ABI_VERSION: u16 = 31;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

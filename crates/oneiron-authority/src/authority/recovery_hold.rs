@@ -13,11 +13,14 @@
 //! Any other owner device ends the wait early or stops the attempt with one
 //! [`RecoveryHoldAnswer`], signed by a live owner key other than the hold's
 //! successor (a key the hold lists as lost still answers), and the kit stops
-//! it with a `Cancel` the vault's anchor signs alone. R never answers a
-//! hold: the box releases R, so an R-signed answer would end the wait for
-//! the attacker. The fold judges the signer rules; the hold a door lands is
-//! an ordinary `OwnerKeyEnroll` + `RevokeDevice` write at landing time, so a
-//! replica whose clock is behind folds it as landed.
+//! it with a `Cancel` the vault's anchor signs beside the hold root's
+//! authority key R. R's cosign binds the Cancel to the hold's root: the hold
+//! view counts it only for a hold R signed, so a foreign anchor's Cancel is
+//! inert. R never answers a hold alone: the box releases R, so an R-signed
+//! answer would end the wait for the attacker. The fold judges the signer
+//! rules; the hold a door lands is an ordinary `OwnerKeyEnroll` +
+//! `RevokeDevice` write at landing time, so a replica whose clock is behind
+//! folds it as landed.
 //!
 //! Here are the rows' shape and signatures only. Whether a hold lands, and
 //! what state it is in, is the fold view's judgement in
@@ -167,7 +170,8 @@ impl RecoveryHoldAnswerKind {
 
 /// One answer to a recovery hold: `hold`'s attempt id and what the answer
 /// says. Signed by a live owner key other than the hold's successor, or, for
-/// `Cancel` only, by the vault's anchor alone.
+/// `Cancel` only, by the vault's anchor beside the hold root's authority key
+/// R, whose cosign binds the Cancel to the hold's root.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecoveryHoldAnswer {
     /// The hold's entry hash: the attempt id.
@@ -185,17 +189,29 @@ impl RecoveryHoldAnswer {
         Ok(())
     }
 
-    /// The entry the answer rides: an Ed25519 primary signer alone, with no
-    /// cosign. Whether the signer may answer (a live non-successor owner
-    /// key, or the anchor for a `Cancel`) is the fold's judgement.
+    /// The entry the answer rides: an Ed25519 primary signer, with an
+    /// `ItIsMe` carrying no cosign and a `Cancel` carrying no cosign (a
+    /// roster key's) or exactly one Ed25519 cosign (the kit's: the anchor
+    /// signs beside R). Whether the signer may answer (a live
+    /// non-successor owner key with no cosign, or the anchor with R's) is
+    /// the fold's judgement.
     pub fn validate_entry(&self, entry: &AuthorityLogEntry) -> Result<()> {
         if entry.signer.suite != AuthoritySignatureSuite::Ed25519
             || !matches!(entry.signer.public_key, AuthorityKey::Ed25519(_))
-            || !entry.cosigns.is_empty()
         {
             return Err(invalid_authority());
         }
-        Ok(())
+        match (self.answer, entry.cosigns.as_slice()) {
+            (RecoveryHoldAnswerKind::ItIsMe, []) => Ok(()),
+            (RecoveryHoldAnswerKind::Cancel, []) => Ok(()),
+            (RecoveryHoldAnswerKind::Cancel, [cosign])
+                if cosign.suite == AuthoritySignatureSuite::Ed25519
+                    && matches!(cosign.public_key, AuthorityKey::Ed25519(_)) =>
+            {
+                Ok(())
+            }
+            _ => Err(invalid_authority()),
+        }
     }
 }
 
