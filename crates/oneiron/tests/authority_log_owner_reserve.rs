@@ -29,10 +29,13 @@
 //! F1): rows a machine signs on a parent it withholds count that parent once,
 //! and the parent, when it comes, gives each of them its whole ancestry. Such
 //! a parent waits when the log with it would pass the reserve, though the
-//! stored log is under it. And a result this install signs counts as the
-//! owner's work only when the request it answers is the owner's work (Astra
-//! owner-reserve F2): a request another machine carries past the reserve has
-//! its result wait, so carried requests never spend the owner's reserve.
+//! stored log is under it, and so does a join on parents no row is: the door
+//! counts every parent it names (Astra owner-reserve r2 F1). The typed check
+//! names the reserve once a row waits there, though the stored log is under
+//! it (r2 F4). And a result this install signs counts as the owner's work
+//! only when the request it answers is the owner's work (Astra owner-reserve
+//! F2): a request another machine carries past the reserve has its result
+//! wait, so carried requests never spend the owner's reserve.
 //!
 //! Red on main: the first four, since main has no reserve. The first passes
 //! its floor and the removal errors; the second, third and fourth find no row
@@ -40,7 +43,10 @@
 //! past the reserve, which only the head has. The fifth and sixth are red at
 //! 995ea17f, the reserve before the two fixes: the withheld parent lands and
 //! the fold passes its floor, and this install signs the carried request's
-//! refusal past the reserve.
+//! refusal past the reserve. The second, fourth and seventh are red at
+//! 537e65f4 (with its missing `Debug` derive added so it builds), the
+//! reserve before the r2 fixes: no check names the reserve once a row waits,
+//! and the withheld join lands and the fold passes its floor.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve`.
 
@@ -59,6 +65,7 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoinScope};
 
 /// The test's memory floor, 4 MiB: the fixture's own log folds well under it
 /// (asserted), and about ninety chained rows pass it, since a fold projects
@@ -596,6 +603,75 @@ fn a_withheld_parent_that_would_pass_the_floor_waits_at_the_door() {
     assert!(
         matches!(&arrival, Err(error) if error.kind() == ErrorKind::AuthorityLogFull),
         "the withheld parent waits at the door: {arrival:?}"
+    );
+}
+
+/// The parents no row is that the flooder's withheld join names.
+const ABSENT_JOIN_PARENTS: u64 = 400;
+
+/// The rows the flooder signs on its withheld join before it sends it.
+const ON_THE_WITHHELD_JOIN: u64 = 20;
+
+/// Astra owner-reserve r2 F1. The flooder signs a frontier join J that names
+/// 400 parents no row is (a join's parents have no count bound) and
+/// withholds it, then 20 rows on J. Each of the 20 counts J once while J is
+/// missing, so the stored log folds far under the reserve. The fold counts
+/// each of J's parents once, as a missing parent, in J's ancestry and in each
+/// of the 20 rows': about 5.4 MB more, past the 4 MiB floor (estimate). The
+/// door bounds J's ancestry by every row it could name, J's own new parents
+/// too, so J waits, the fold stays under its floor, and the vault's root
+/// stands.
+#[test]
+fn a_withheld_join_on_parents_no_row_is_waits_at_the_door() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let world = EntityId::now();
+    let absent = (0..ABSENT_JOIN_PARENTS)
+        .map(|index| {
+            let mut hash = [0xAB_u8; 32];
+            hash[..8].copy_from_slice(&index.to_le_bytes());
+            hash
+        })
+        .collect();
+    let join = flooder_row(
+        &rooted,
+        &flooder,
+        1,
+        absent,
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            family: FrontierJoinFamily::Install(flooder.machine),
+            scope: FrontierJoinScope::Main,
+        }),
+    );
+    let join_hash = authority_entry_hash(&join).expect("hash");
+    for offset in 1..=ON_THE_WITHHELD_JOIN {
+        let row = flood_row(&rooted, &flooder, world, 1 + offset, join_hash);
+        rooted
+            .vault
+            .put_authority_log_entry(&row, AT, 1)
+            .unwrap_or_else(|error| {
+                panic!("row {offset} on the withheld join is stored, its parent missing: {error}")
+            });
+    }
+    let before = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        !before.authority_log_past_bound() && !before.vault_root_is_conflicted(),
+        "the stored log, its join missing, folds under the floor"
+    );
+    let arrival = rooted.vault.put_authority_log_entry(&join, AT, 1);
+    let after = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        !after.authority_log_past_bound() && !after.vault_root_is_conflicted(),
+        "the withheld join ({arrival:?}) took the fold past its memory floor: the vault holds \
+         no root"
+    );
+    assert!(
+        matches!(&arrival, Err(error) if error.kind() == ErrorKind::AuthorityLogFull),
+        "the withheld join waits at the door: {arrival:?}"
+    );
+    let checks = rooted.vault.authority_log_checks().expect("the checks");
+    assert!(
+        checks.iter().any(|check| check.kind == OWNER_RESERVE_CHECK),
+        "the owner's typed check names the reserve the join waits at: {checks:?}"
     );
 }
 
