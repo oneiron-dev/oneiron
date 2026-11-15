@@ -1,10 +1,11 @@
 //! Native versus crate extraction routing parity over real vaults.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-driver --all-features --test extraction_routing_parity`.
-//! Four bound attempts compare `native_routes` to `observe_and_route` on the
+//! Five bound attempts compare `native_routes` to `observe_and_route` on the
 //! same client, attempt, clock, operands and policy: exact prior attaches,
-//! unequal prior judges, two siblings judge together, and a bound correction
-//! exports its map while its singleton stays judged. Order preserved, no sort.
+//! unequal prior judges, two siblings judge together, a bound correction
+//! exports its map while its singleton stays judged, and a correction binds
+//! its head's predicate whatever it proposed. Order preserved, no sort.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -534,5 +535,82 @@ fn bound_correction_exports_its_map_while_judged() -> TestResult<()> {
     );
     assert_eq!(sets[0]["prior_head"], json!(head));
     assert_eq!(native["choices"], json!([]), "judged members write nothing");
+    Ok(())
+}
+
+/// A correcting candidate binds its head's predicate, whatever predicate it
+/// proposed: native `resolve_proposal` reads no proposed predicate while
+/// correcting, so both operand forms name one claim and route alike.
+#[test]
+fn a_correction_binds_the_head_predicate() -> TestResult<()> {
+    let (directory, vault) = open_vault()?;
+    let subject = EntityId::now();
+    seed_named_person(&vault, &subject, "owen", vault.now_recorded_at())?;
+    let head = land_head(&vault, subject, "green tea", ClaimSource::Generated)?.to_hex();
+    let witnessed = witness_extraction_turns(&vault, &["owen chooses black coffee"])?;
+    let (attempt_id, admitted) =
+        enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
+    let attempt = attempt_hex(attempt_id);
+    let client = OneironClient::for_dreamer_attempt(vault.bind_dreamer_attempt(&admitted)?);
+    let now_ms = vault
+        .now_recorded_at()
+        .saturating_add(1)
+        .saturating_mul(1_000);
+    let inputs = client.agent_verb(INPUTS_PAGE_VERB, json!({"attempt": attempt}))?;
+    let page = &inputs["value"];
+    let policy_pin = page["policy_pin"]
+        .as_str()
+        .ok_or("missing policy pin")?
+        .to_owned();
+    let config = ExtractionSelectionConfig::from_selection(
+        page["policy"]["selection"].clone(),
+        &policy_pin,
+    )?;
+    let subject_hex = subject.to_hex();
+    let turn = witnessed.turns[0].to_hex();
+    let version = page["turns"][0]["version"].clone();
+    let operand = |predicate: &str| {
+        json!({
+            "subject": subject_hex, "predicate": predicate,
+            "value": "black coffee", "corrects": head,
+            "evidence": [{"turn": turn, "version": version}],
+        })
+    };
+    let repeated = read_observations(&client, &attempt, now_ms, &[operand("preference.food")])?;
+    let operands = vec![operand("preference.drink")];
+    let observations = read_observations(&client, &attempt, now_ms, &operands)?;
+    if !observations.priors.iter().any(|prior| prior.claim == head) {
+        return Err("the generated head must be admitted before testing its correction".into());
+    }
+    let (bound, same) = (&observations.candidates[0], &repeated.candidates[0]);
+    assert_eq!(
+        bound.predicate, "preference.food",
+        "the head predicate is bound"
+    );
+    assert_eq!(bound.claim, same.claim, "both forms name one native claim");
+    assert_eq!(bound.identity_token, same.identity_token);
+    let fixture = Fixture {
+        _directory: directory,
+        vault,
+        client,
+        attempt,
+        now_ms,
+        operands,
+        config,
+        policy_pin,
+    };
+    let (native, _, plan) = both(&fixture)?;
+    let corrections = native["corrections"]
+        .as_array()
+        .ok_or("missing corrections")?;
+    assert_eq!(corrections.len(), 1, "the bound head is kept");
+    assert_eq!(corrections[0]["head"], json!(head));
+    assert_eq!(plan.corrections.len(), 1);
+    assert_eq!(plan.corrections[0].head, head);
+    let sets = native["judge_sets"]
+        .as_array()
+        .ok_or("missing judge sets")?;
+    assert_eq!(sets.len(), 1, "its singleton is judged against the head");
+    assert_eq!(sets[0]["prior_head"], json!(head));
     Ok(())
 }
