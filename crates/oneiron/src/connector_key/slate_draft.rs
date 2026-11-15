@@ -24,9 +24,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::collections::{BTreeMap, BTreeSet};
 
-/// A recommendation needs this many connectors' rulings, and a strict
-/// majority of them, before it pre-fills a tighter setting.
-const PAST_RULING_MIN_CONNECTORS: u32 = 2;
+#[doc(hidden)]
+use oneiron_records::connector_key::slate_draft::PAST_RULING_MIN_CONNECTORS;
 
 /// The capability traits the owner's past rulings are counted by.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -198,7 +198,7 @@ pub(super) fn resume_reviewed_document(
         },
         RepoMutationStatus::Applied,
         None,
-        super::support::now_millis(),
+        crate::unix_millis_now(),
     )?;
     Ok(Some(RepoMutationOutcome {
         entry,

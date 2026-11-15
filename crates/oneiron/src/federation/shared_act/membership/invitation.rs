@@ -33,23 +33,8 @@ const INVITATION_KEY_PREFIX: &[u8] = b"shared-vault:invitation-key:v1:";
 /// How long an invitation stays open on the store clock.
 pub const SHARED_INVITATION_TTL_SECS: u64 = 14 * 24 * 60 * 60;
 
-/// Where an invitation stands. Only `Pending` before `expires_at` admits.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SharedInvitationState {
-    Pending,
-    Accepted {
-        at: u64,
-    },
-    Declined {
-        at: u64,
-    },
-    /// An `add_member` holder (`by`) took it back.
-    Withdrawn {
-        by: String,
-        at: u64,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_records::federation::shared_act::membership::invitation::SharedInvitationState;
 
 /// One invitation of one person into this shared vault at one role.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
