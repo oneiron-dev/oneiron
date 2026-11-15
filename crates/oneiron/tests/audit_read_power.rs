@@ -32,6 +32,7 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use oneiron::access_grant::{AccessGrant, decode_access_grant_body, encode_access_grant_body};
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
 use oneiron::booking::DisclosureRung;
+use oneiron::deletion::DeleteEntityOptions;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
 use oneiron::receipt::{CallOutcome, CallReceiptInput, CallTransport};
 use oneiron::task_verb::sdk::invoke;
@@ -494,6 +495,89 @@ fn every_generic_access_grant_door_refuses_the_audit_read_scope() -> TestResult 
     assert_forbidden(
         &refused(&as_stranger, "vault.authority.audit", json!({})),
         "the audit for a forged grant's principal",
+    );
+    Ok(())
+}
+
+/// No generic delete removes an audit_read grant (Astra review
+/// auditread-8435-pr1 T1): only the owner's revoke verb ends one, and it
+/// records his act. `vault.delete` refuses it, soft or hard, the owner's own
+/// call included, and so do the vault's record and batch delete doors, while
+/// it stands and once revoked. The grant stands through every attempt, and
+/// its history stays listed.
+#[test]
+fn no_generic_delete_removes_an_audit_read_grant() -> TestResult {
+    let fixture = fixture()?;
+    let holder = person(&fixture, "an auditor")?;
+    let holder_proof = credential(&fixture, holder)?;
+    let as_holder = bound(&fixture, holder, &holder_proof);
+    let granted = grant(&fixture, holder, None);
+    let grant_hex = granted["grant_ref"]
+        .as_str()
+        .ok_or("the grant names its row")?
+        .to_owned();
+    let grant_ref = EntityId::from_hex(&grant_hex)?;
+    let names_the_revoke = |text: String| text.contains("vault.audit_read.revoke");
+
+    let assert_deletes_refused = |when: &str| {
+        let soft = refused(
+            &owner(&fixture),
+            "vault.delete",
+            json!({ "entity_ref": grant_hex, "reason": "user_delete" }),
+        );
+        assert_forbidden(&soft, &format!("the owner's vault.delete {when}"));
+        assert!(
+            names_the_revoke(soft.message.clone()),
+            "the refusal names the owner's revoke verb {when}: {soft:?}"
+        );
+        refused(
+            &owner(&fixture),
+            "vault.delete",
+            json!({ "entity_ref": grant_hex, "reason": "user_hard_delete" }),
+        );
+        let plain = fixture.vault.delete_entity(&grant_ref);
+        assert!(
+            plain
+                .as_ref()
+                .is_err_and(|error| names_the_revoke(error.to_string())),
+            "the record delete refuses an audit_read grant {when}: {plain:?}"
+        );
+        let purge = fixture
+            .vault
+            .delete_entity_with_options(&grant_ref, DeleteEntityOptions { purge: true });
+        assert!(
+            purge.is_err(),
+            "the record purge refuses an audit_read grant {when}: {purge:?}"
+        );
+        let batch = fixture.vault.batch().delete(&grant_ref).commit();
+        assert!(
+            batch
+                .as_ref()
+                .is_err_and(|error| names_the_revoke(error.to_string())),
+            "the batch delete refuses an audit_read grant {when}: {batch:?}"
+        );
+    };
+
+    assert_deletes_refused("while it stands");
+    call(&as_holder, "vault.authority.audit", json!({}));
+    let revoked = revoke(&fixture, holder);
+    assert_eq!(
+        revoked["changed"],
+        json!(true),
+        "the owner's revoke still finds the grant standing: {revoked}"
+    );
+    assert_deletes_refused("once revoked");
+    let page = call(&owner(&fixture), "vault.authority.audit", json!({}));
+    let changes: Vec<&str> = page["audit_read_acts"]
+        .as_array()
+        .ok_or("the page lists the audit_read acts")?
+        .iter()
+        .map(|row| row["change"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        changes,
+        vec!["grant", "revoke"],
+        "the grant's history stays listed: {page}"
     );
     Ok(())
 }
