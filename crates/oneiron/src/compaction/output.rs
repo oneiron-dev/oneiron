@@ -213,8 +213,8 @@ impl OutputWorkingContext {
     }
 
     /// Assemble through the owner's own routed raw-output store. `restore`
-    /// is invoked for full views only; overview and stub never read raw
-    /// bytes.
+    /// is invoked for clean full views only; overview and stub never read
+    /// raw bytes, and neither does a withheld full view (FIX 9839).
     ///
     /// `restore` returns `None` for a Full body the caller will not hold in
     /// memory; that entry's view is its stub, which reads it by reference.
@@ -341,6 +341,17 @@ impl OutputContextEntry {
                     .to_vec()
             };
             (OutputTier::Overview, overview)
+        } else if !clean(self.source, self.created_turn)? {
+            // A body that may not enter context as it stands is never
+            // read: its full view is the withheld mark, as its overview
+            // is. The mark is not the body, so it is not verified
+            // against the body's digest (FIX 9839).
+            (
+                OutputTier::Full,
+                crate::store::result_manifest::CODE_RUN_OUTPUT_PREVIEW_WITHHELD
+                    .as_bytes()
+                    .to_vec(),
+            )
         } else {
             let Some(bytes) = restore(self.source, self.created_turn)? else {
                 return Ok(self.stub_view());
