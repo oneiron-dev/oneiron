@@ -33,6 +33,17 @@
 //! is never a question: a run parked on a hook's ask says it waits on an
 //! approval.
 //!
+//! The other two records (L1-03 PR 4): a Timer `host.wake` answers a task
+//! over its night step's root, read through `vault.sieve.settlements.get`;
+//! the step ends once its outcome no longer runs, and a partial outcome ends
+//! `completed`, naming itself. An `ai.video` call answers a task over its
+//! job's ticket, read through `ai.video.poll` and stopped through
+//! `ai.video.cancel`. A night step has no stop door: its cancel is
+//! acknowledged and the step ends with its record. A task's end is final:
+//! the handle keeps the first end a read saw, though a night step's
+//! remainder works again a policy interval later, and a task that ended is
+//! never cancelled, so a cancel never deletes a finished clip.
+//!
 //! Not built here: `subscriptions/listen` (change notices are optional, and
 //! this endpoint answers one request per POST with no server stream).
 //! Not this module: `tasks_response.rs`, which serves the TASKS board section.
@@ -40,7 +51,7 @@
 use std::sync::Arc;
 
 use axum::http::{Extensions, HeaderMap};
-use oneiron::mcp_task::{McpTaskId, McpTaskRecord, McpTaskSubject};
+use oneiron::mcp_task::{McpTaskEnd, McpTaskId, McpTaskRecord, McpTaskSubject};
 use oneiron::task_verb::{WorkflowRunAsks, WorkflowRunQuestion};
 use serde_json::{Map, Value, json};
 
@@ -48,6 +59,7 @@ use super::{
     McpCallContext, McpGatewayError, McpToolCallParams, ensure_mcp_actor_matches, execute_mcp_tool,
     mcp_admit_scoped_call, mcp_validated_call_args,
 };
+use crate::mcp::McpValidatedToolArgs;
 use crate::server::SyncServer;
 
 /// How often a client may poll a task: no faster than this (canon :263).
@@ -80,18 +92,98 @@ const MCP_TASK_FORM_KEY_PREFIX: &str = "form-";
 struct TaskRecordVerbs {
     start: &'static str,
     read: &'static str,
-    cancel: &'static str,
-    /// The read of the questions the record's work asked its reader.
-    asks: &'static str,
+    /// `None` when the record has no stop door: a cancel is acknowledged and
+    /// nothing stops.
+    cancel: Option<&'static str>,
+    /// The read of the questions the record's work asked its reader; `None`
+    /// when its work asks none.
+    asks: Option<&'static str>,
+    /// Whether the cancel verb stops the work and drops the record at once
+    /// (a video job, its kept row and clips), so the task ends `cancelled`
+    /// as soon as that verb ran, with no record left to read.
+    cancel_drops_record: bool,
 }
 
 /// A saved-workflow run, by its root attempt.
 const WORKFLOW_RUN: TaskRecordVerbs = TaskRecordVerbs {
     start: "vault.workflows.dispatch",
     read: "vault.workflows.status",
-    cancel: "vault.workflows.cancel",
-    asks: "vault.workflows.asks",
+    cancel: Some("vault.workflows.cancel"),
+    asks: Some("vault.workflows.asks"),
+    cancel_drops_record: false,
 };
+
+/// A Dreamer night step (a Timer `host.wake`), by its root attempt and its
+/// settlement (ARCH-0026). It has no stop door.
+const NIGHT_STEP: TaskRecordVerbs = TaskRecordVerbs {
+    start: "host.wake",
+    read: "vault.sieve.settlements.get",
+    cancel: None,
+    asks: None,
+    cancel_drops_record: false,
+};
+
+/// A provider job (an `ai.video` render), by its ticket.
+const PROVIDER_JOB: TaskRecordVerbs = TaskRecordVerbs {
+    start: "ai.video",
+    read: "ai.video.poll",
+    cancel: Some("ai.video.cancel"),
+    asks: None,
+    cancel_drops_record: true,
+};
+
+/// The verbs of the record `subject` names.
+fn record_verbs(subject: &McpTaskSubject) -> &'static TaskRecordVerbs {
+    match subject {
+        McpTaskSubject::WorkflowRun { .. } => &WORKFLOW_RUN,
+        McpTaskSubject::NightStep { .. } => &NIGHT_STEP,
+        McpTaskSubject::ProviderJob { .. } => &PROVIDER_JOB,
+    }
+}
+
+/// The input every verb of the record `subject` names takes: the record's
+/// own key.
+fn record_spec(subject: &McpTaskSubject) -> Value {
+    match subject {
+        McpTaskSubject::WorkflowRun { root_attempt_ref } => {
+            json!({ "root_attempt_ref": root_attempt_ref.to_hex() })
+        }
+        McpTaskSubject::NightStep { wake_root_ref } => json!({ "wake": wake_root_ref.to_hex() }),
+        McpTaskSubject::ProviderJob { job } => json!({ "job": job }),
+    }
+}
+
+/// The record a call of `tool` started, from the typed `output` its verb
+/// answered: a saved-workflow run's root, a Timer wake's root (any other
+/// wake starts no record a task wraps), a video job's ticket.
+fn started_subject(tool: &str, output: &Value) -> Option<McpTaskSubject> {
+    let entity = |field: &str| {
+        output
+            .get(field)
+            .and_then(Value::as_str)
+            .and_then(|hex| oneiron::EntityId::from_hex(hex).ok())
+    };
+    if tool == WORKFLOW_RUN.start {
+        return entity("root_attempt_ref")
+            .map(|root_attempt_ref| McpTaskSubject::WorkflowRun { root_attempt_ref });
+    }
+    if tool == NIGHT_STEP.start {
+        if output.get("wake_kind").and_then(Value::as_str) != Some("timer") {
+            return None;
+        }
+        return entity("attempt").map(|wake_root_ref| McpTaskSubject::NightStep { wake_root_ref });
+    }
+    if tool == PROVIDER_JOB.start {
+        return output
+            .get("job")
+            .and_then(Value::as_str)
+            .filter(|job| !job.is_empty())
+            .map(|job| McpTaskSubject::ProviderJob {
+                job: job.to_owned(),
+            });
+    }
+    None
+}
 
 /// The `-32021` refusal of a `tasks/*` request that does not declare the
 /// extension itself: an earlier request's declaration does not count.
@@ -109,6 +201,19 @@ fn task_missing() -> McpGatewayError {
     McpGatewayError::new(-32602, "task_not_found", MCP_TASK_MISSING).with_field("taskId")
 }
 
+/// The `-32602` refusal of a cancel of a task that already ended (the
+/// spec: a task in a terminal status is never cancelled). The caller reads
+/// its own task, so the refusal names the end.
+fn task_ended(end: McpTaskEnd) -> McpGatewayError {
+    let status = TaskStatus::of_end(end).wire();
+    McpGatewayError::new(
+        -32602,
+        "task_ended",
+        format!("Cannot cancel task: it is already {status}"),
+    )
+    .with_field("taskId")
+}
+
 fn engine_error(error: oneiron::Error) -> McpGatewayError {
     McpGatewayError::new(-32603, "engine_error", error.to_string())
 }
@@ -122,43 +227,41 @@ pub(super) fn task_for_call(
     tool: &str,
     answered: Value,
 ) -> Result<Value, McpGatewayError> {
-    if tool != WORKFLOW_RUN.start || answered.get("isError") == Some(&Value::Bool(true)) {
+    if answered.get("isError") == Some(&Value::Bool(true)) {
         return Ok(answered);
     }
     let Some(output) = verb_output(&answered) else {
         return Ok(answered);
     };
-    let Some(root) = output
-        .get("root_attempt_ref")
-        .and_then(Value::as_str)
-        .and_then(|hex| oneiron::EntityId::from_hex(hex).ok())
-    else {
+    let Some(subject) = started_subject(tool, output) else {
         return Ok(answered);
     };
-    let status = TaskStatus::of_run(output);
+    // A dispatch answers the run's view; a wake or a ticket answers no
+    // state yet, and the record has just started.
+    let (status, message) = match &subject {
+        McpTaskSubject::WorkflowRun { .. } => {
+            let status = TaskStatus::of_run(output);
+            (status, step_message(output, status))
+        }
+        McpTaskSubject::NightStep { .. } | McpTaskSubject::ProviderJob { .. } => {
+            (TaskStatus::Working, None)
+        }
+    };
     let vault = server.vault();
     let now_ms = vault.now_recorded_ms();
     let ttl_ms = server.config.mcp_task_ttl_ms;
     let id = vault
-        .mint_mcp_task(
-            actor.actor_ref,
-            McpTaskSubject::WorkflowRun {
-                root_attempt_ref: root,
-            },
-            ttl_ms,
-            now_ms,
-        )
+        .mint_mcp_task(actor.actor_ref, subject.clone(), ttl_ms, now_ms)
         .map_err(engine_error)?;
     let row = McpTaskRecord {
         actor_ref: actor.actor_ref,
-        subject: McpTaskSubject::WorkflowRun {
-            root_attempt_ref: root,
-        },
+        subject,
         created_at_ms: now_ms,
         ttl_ms,
         cancel_requested_at_ms: None,
+        ended: None,
     };
-    let mut reply = task_fields(&id, &row, status, step_message(output, status));
+    let mut reply = task_fields(&id, &row, status, message);
     reply.insert("resultType".to_owned(), json!("task"));
     let mut meta = private_meta(answered.get("_meta"));
     // The starting call's own receipt (OF-538), which its tool result states
@@ -232,48 +335,74 @@ pub(super) async fn tasks_method(
         .mcp_task(actor.actor_ref, &id, now_ms)
         .map_err(engine_error)?
         .ok_or_else(task_missing)?;
-    let McpTaskSubject::WorkflowRun { root_attempt_ref } = &row.subject else {
-        return Err(task_missing());
-    };
+    let verbs = record_verbs(&row.subject);
+    let spec = record_spec(&row.subject);
     let call = RecordCall {
         server,
         actor,
         headers,
         connection,
     };
-    let spec = json!({ "root_attempt_ref": root_attempt_ref.to_hex() });
+    // Every method reads the record for the caller first, through the
+    // record's own read verb, or the task is missing. A record its cancel
+    // dropped (a video job) has nothing left to read: its handle answers the
+    // end it kept once the caller is admitted to that read again, as a call
+    // of it would be, and nothing of the record.
+    let read = if verbs.cancel_drops_record
+        && row
+            .ended
+            .is_some_and(|ended| ended.end == McpTaskEnd::Cancelled)
+    {
+        call.admit(verbs.read, spec.clone())?;
+        None
+    } else {
+        Some(call.read(verbs.read, spec.clone()).await?)
+    };
+    let (mut status, row) = match &read {
+        Some(read) => call.status(&id, row, ran_output(read)?, now_ms)?,
+        None => (TaskStatus::Cancelled, row),
+    };
     match method {
         "tasks/cancel" => {
-            call.cancel(&id, spec, now_ms).await?;
+            // A task's end is final: a cancel never reaches a record whose
+            // end the task already answers, so it never undoes a finished
+            // job (a video job's cancel deletes its clip).
+            if let Some(end) = status.end() {
+                return Err(task_ended(end));
+            }
+            call.cancel(&id, verbs, spec, now_ms).await?;
             Ok(json!({ "resultType": "complete", "_meta": private_meta(None) }))
         }
         "tasks/update" => {
-            // The record reads for the caller first, as on a poll, or the
-            // task is missing. Only the responses under the current form's
-            // key are read: one under any other key (never asked, answered
-            // or superseded) is ignored, as the spec ignores it.
-            let read = call.read(WORKFLOW_RUN.read, spec.clone()).await?;
-            if TaskStatus::of_run(ran_output(&read)?) == TaskStatus::Working {
-                let asks = call.open_asks(spec.clone()).await;
+            // Only the responses under the current form's key are read: one
+            // under any other key (never asked, answered or superseded) is
+            // ignored, as the spec ignores it.
+            if status == TaskStatus::Working
+                && let Some(asks_verb) = verbs.asks
+            {
+                let asks = call.open_asks(asks_verb, spec.clone()).await;
                 if let Some(form) = Form::of(&asks.questions)
                     && let Some(response) = params
                         .as_ref()
                         .and_then(|params| params.get("inputResponses"))
                         .and_then(|responses| responses.get(&form.key))
                 {
-                    call.respond(&form, response, &id, spec, now_ms).await?;
+                    call.respond(&form, response, &id, verbs, spec, now_ms)
+                        .await?;
                 }
             }
             Ok(json!({ "resultType": "complete", "_meta": private_meta(None) }))
         }
         _ => {
-            let read = call.read(WORKFLOW_RUN.read, spec.clone()).await?;
-            let output = ran_output(&read)?;
-            let mut status = TaskStatus::of_run(output);
-            let mut message = step_message(output, status);
+            let mut message = match &read {
+                Some(read) => record_message(&row.subject, ran_output(read)?, status),
+                None => None,
+            };
             let mut input_requests = None;
-            if status == TaskStatus::Working {
-                let asks = call.open_asks(spec).await;
+            if status == TaskStatus::Working
+                && let Some(asks_verb) = verbs.asks
+            {
+                let asks = call.open_asks(asks_verb, spec).await;
                 let form = Form::of(&asks.questions);
                 // Only a request that declares form elicitation is shown the
                 // questions; any other polls `working`.
@@ -295,8 +424,8 @@ pub(super) async fn tasks_method(
             if matches!(
                 status,
                 TaskStatus::Completed | TaskStatus::CompletedWithError
-            ) {
-                let mut result = read;
+            ) && let Some(mut result) = read
+            {
                 if status == TaskStatus::CompletedWithError
                     && let Some(object) = result.as_object_mut()
                 {
@@ -327,26 +456,33 @@ impl RecordCall<'_> {
     /// verb's own words. A read: no call receipt is written for it, and it
     /// is not counted as a wire tool call.
     async fn read(&self, verb: &str, input: Value) -> Result<Value, McpGatewayError> {
-        let params: McpToolCallParams = serde_json::from_value(verb_call(verb, input))
-            .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
-        let read = async {
-            let args =
-                mcp_validated_call_args(self.server, self.actor.mode, params, None, self.actor)?;
-            ensure_mcp_actor_matches(&args, self.actor)?;
-            mcp_admit_scoped_call(self.server, &args, self.actor)?;
-            Box::pin(execute_mcp_tool(
-                self.server,
-                args,
-                self.actor,
-                self.headers,
-                self.connection,
-            ))
-            .await
-        }
+        let args = self.admit(verb, input)?;
+        let read = Box::pin(execute_mcp_tool(
+            self.server,
+            args,
+            self.actor,
+            self.headers,
+            self.connection,
+        ))
         .await
         .map_err(|_| task_missing())?;
         ran_output(&read)?;
         Ok(read)
+    }
+
+    /// The admission a call of the record's verb `verb` with `input` meets
+    /// as the caller, on the caller's own endpoint: its arguments, its actor
+    /// and its scope. A refusal answers as missing.
+    fn admit(&self, verb: &str, input: Value) -> Result<McpValidatedToolArgs, McpGatewayError> {
+        let params: McpToolCallParams = serde_json::from_value(verb_call(verb, input))
+            .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
+        mcp_validated_call_args(self.server, self.actor.mode, params, None, self.actor)
+            .and_then(|args| {
+                ensure_mcp_actor_matches(&args, self.actor)?;
+                mcp_admit_scoped_call(self.server, &args, self.actor)?;
+                Ok(args)
+            })
+            .map_err(|_| task_missing())
     }
 
     /// Calls the generated verb `verb` with `input` as a tool call of the
@@ -370,21 +506,61 @@ impl RecordCall<'_> {
         Ok(answered)
     }
 
+    /// The task's status from `output`, the caller's read of its record:
+    /// the end the handle keeps, else the record's own state, kept on the
+    /// handle once it is an end, so a task's end never changes. A read that
+    /// names no record answers as missing.
+    fn status(
+        &self,
+        id: &McpTaskId,
+        row: McpTaskRecord,
+        output: &Value,
+        now_ms: u64,
+    ) -> Result<(TaskStatus, McpTaskRecord), McpGatewayError> {
+        let status = TaskStatus::of_record(&row.subject, output).ok_or_else(task_missing)?;
+        if let Some(ended) = row.ended {
+            return Ok((TaskStatus::of_end(ended.end), row));
+        }
+        let Some(end) = status.end() else {
+            return Ok((status, row));
+        };
+        let kept = self
+            .server
+            .vault()
+            .end_mcp_task(self.actor.actor_ref, id, end, now_ms)
+            .map_err(engine_error)?
+            .ok_or_else(task_missing)?;
+        let end = kept.ended.map_or(end, |ended| ended.end);
+        Ok((TaskStatus::of_end(end), kept))
+    }
+
     /// The record's own cancel verb, as a tool call of the caller's. It asks
     /// the work to stop and never undoes committed work. Only a cancel the
     /// verb ran is acknowledged and kept on the handle; a refusal or a
-    /// hook's stop answers as missing and leaves the handle as it was.
+    /// hook's stop answers as missing and leaves the handle as it was. A
+    /// record with no stop door (a night step) is acknowledged with nothing
+    /// stopped: the spec's cancel is cooperative, and the task ends with
+    /// its record. A cancel that drops its record (a video job) ends the
+    /// task `cancelled` at once.
     async fn cancel(
         &self,
         id: &McpTaskId,
+        verbs: &TaskRecordVerbs,
         spec: Value,
         now_ms: u64,
     ) -> Result<(), McpGatewayError> {
-        self.write(WORKFLOW_RUN.cancel, spec).await?;
-        self.server
-            .vault()
+        if let Some(cancel) = verbs.cancel {
+            self.write(cancel, spec).await?;
+        }
+        let vault = self.server.vault();
+        vault
             .request_mcp_task_cancel(self.actor.actor_ref, id, now_ms)
             .map_err(engine_error)?;
+        if verbs.cancel_drops_record {
+            vault
+                .end_mcp_task(self.actor.actor_ref, id, McpTaskEnd::Cancelled, now_ms)
+                .map_err(engine_error)?;
+        }
         Ok(())
     }
 
@@ -394,8 +570,8 @@ impl RecordCall<'_> {
     /// seats are listed, and only what may go where the answer goes. A read
     /// that did not run for the caller shows no question and no approval
     /// wait, so it says nothing of an ask it may not show.
-    async fn open_asks(&self, spec: Value) -> WorkflowRunAsks {
-        let Ok(read) = self.read(WORKFLOW_RUN.asks, spec).await else {
+    async fn open_asks(&self, asks_verb: &str, spec: Value) -> WorkflowRunAsks {
+        let Ok(read) = self.read(asks_verb, spec).await else {
             return WorkflowRunAsks::default();
         };
         ran_output(&read)
@@ -417,6 +593,7 @@ impl RecordCall<'_> {
         form: &Form<'_>,
         response: &Value,
         id: &McpTaskId,
+        verbs: &TaskRecordVerbs,
         spec: Value,
         now_ms: u64,
     ) -> Result<(), McpGatewayError> {
@@ -456,7 +633,7 @@ impl RecordCall<'_> {
                     let _ = self.write(MCP_TASK_DECLINE_VERB, input).await;
                 }
             }
-            Some("cancel") => self.cancel(id, spec, now_ms).await?,
+            Some("cancel") => self.cancel(id, verbs, spec, now_ms).await?,
             _ => {}
         }
         Ok(())
@@ -609,6 +786,58 @@ impl TaskStatus {
         }
     }
 
+    /// From a `vault.sieve.settlements.get` view's outcome: the step works
+    /// while its outcome runs or waits on its host, and ends once it no
+    /// longer runs (ARCH-0026: the caller polls "until the outcome is no
+    /// longer running"). A partial outcome ends `completed` and names itself
+    /// in the result, because settled is not success; a failed one ends
+    /// `completed` marked an error. `None` when the root is gone.
+    fn of_night_step(view: &Value) -> Option<Self> {
+        match view.pointer("/outcome/state").and_then(Value::as_str)? {
+            "succeeded" | "partial" => Some(Self::Completed),
+            "failed" => Some(Self::CompletedWithError),
+            _ => Some(Self::Working),
+        }
+    }
+
+    /// From an `ai.video.poll` answer's `state`: a done render ends
+    /// `completed` with its clip, a failed one `completed` marked an error.
+    fn of_video_job(job: &Value) -> Option<Self> {
+        match job.get("state").and_then(Value::as_str)? {
+            "done" => Some(Self::Completed),
+            "failed" => Some(Self::CompletedWithError),
+            _ => Some(Self::Working),
+        }
+    }
+
+    /// From a read of the record `subject` names: `None` when the read names
+    /// no record.
+    fn of_record(subject: &McpTaskSubject, output: &Value) -> Option<Self> {
+        match subject {
+            McpTaskSubject::WorkflowRun { .. } => Some(Self::of_run(output)),
+            McpTaskSubject::NightStep { .. } => Self::of_night_step(output),
+            McpTaskSubject::ProviderJob { .. } => Self::of_video_job(output),
+        }
+    }
+
+    /// The end this status is, kept on the handle once a read saw it.
+    fn end(self) -> Option<McpTaskEnd> {
+        match self {
+            Self::Working | Self::InputRequired => None,
+            Self::Completed => Some(McpTaskEnd::Completed),
+            Self::CompletedWithError => Some(McpTaskEnd::CompletedWithError),
+            Self::Cancelled => Some(McpTaskEnd::Cancelled),
+        }
+    }
+
+    fn of_end(end: McpTaskEnd) -> Self {
+        match end {
+            McpTaskEnd::Completed => Self::Completed,
+            McpTaskEnd::CompletedWithError => Self::CompletedWithError,
+            McpTaskEnd::Cancelled => Self::Cancelled,
+        }
+    }
+
     fn wire(self) -> &'static str {
         match self {
             Self::Working => "working",
@@ -629,7 +858,7 @@ fn task_fields(
     status: TaskStatus,
     message: Option<String>,
 ) -> Map<String, Value> {
-    let updated_ms = row.cancel_requested_at_ms.unwrap_or(row.created_at_ms);
+    let updated_ms = row.last_updated_at_ms();
     let mut fields = Map::new();
     fields.insert("taskId".to_owned(), json!(id.to_hex()));
     fields.insert("status".to_owned(), json!(status.wire()));
@@ -664,6 +893,63 @@ fn wait_message(form: Option<&Form<'_>>, waits_on_approval: bool) -> Option<Stri
         (Some(form), false) => Some(form.message()),
         (None, true) => Some(format!("waiting on {MCP_TASK_APPROVAL_WAIT}")),
         (None, false) => None,
+    }
+}
+
+/// The status line a read of the record `subject` names gives at `status`:
+/// counts, states and outcome classes only, never a world name, a job's
+/// words or agent text.
+fn record_message(subject: &McpTaskSubject, output: &Value, status: TaskStatus) -> Option<String> {
+    match subject {
+        McpTaskSubject::WorkflowRun { .. } => step_message(output, status),
+        McpTaskSubject::NightStep { .. } => night_step_message(output, status),
+        McpTaskSubject::ProviderJob { .. } => video_job_message(output, status),
+    }
+}
+
+/// A night step's line: "waiting on 2 of 5 jobs" or "waiting on the host"
+/// while it works; "outcome partial" once it ended (the outcome class, which
+/// the result names too).
+fn night_step_message(view: &Value, status: TaskStatus) -> Option<String> {
+    let outcome = view.get("outcome")?;
+    let state = outcome.get("state").and_then(Value::as_str)?;
+    match status {
+        TaskStatus::Working => {
+            if state == "awaiting_host" {
+                return Some("waiting on the host".to_owned());
+            }
+            let waiting = outcome.get("waiting_on").and_then(Value::as_array)?.len();
+            let jobs = view.get("jobs").and_then(Value::as_array)?.len();
+            Some(format!("waiting on {waiting} of {jobs} jobs"))
+        }
+        TaskStatus::Completed | TaskStatus::CompletedWithError
+            if matches!(state, "succeeded" | "partial" | "failed") =>
+        {
+            Some(format!("outcome {state}"))
+        }
+        _ => None,
+    }
+}
+
+/// A video job's line while it works: "queued", "rendering" or
+/// "rendering, 40%".
+fn video_job_message(job: &Value, status: TaskStatus) -> Option<String> {
+    if status != TaskStatus::Working {
+        return None;
+    }
+    match job.get("state").and_then(Value::as_str)? {
+        "queued" => Some("queued".to_owned()),
+        "running" => Some(
+            match job
+                .get("progress")
+                .and_then(Value::as_u64)
+                .filter(|progress| *progress <= 100)
+            {
+                Some(progress) => format!("rendering, {progress}%"),
+                None => "rendering".to_owned(),
+            },
+        ),
+        _ => None,
     }
 }
 

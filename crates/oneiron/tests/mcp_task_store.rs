@@ -7,13 +7,17 @@
 //! for everyone and its row is gone. Unknown, another actor's and expired all
 //! read the same, so nothing tells that a hidden handle exists.
 //!
+//! L1-03 PR 4: a handle keeps the first end a read of its record saw, so a
+//! task's end never changes, even when the record goes on working (a night
+//! step's remainder runs a policy interval later).
+//!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test mcp_task_store`.
 #![cfg(oneiron_test_support)]
 
 use std::sync::Arc;
 
-use oneiron::mcp_task::{McpTaskId, McpTaskSubject};
+use oneiron::mcp_task::{McpTaskEnd, McpTaskEnded, McpTaskId, McpTaskSubject};
 use oneiron::{EntityId, Vault, VaultConfig};
 
 type TestError = Box<dyn std::error::Error>;
@@ -128,6 +132,95 @@ fn mcp_task_row_answers_only_its_actor_until_its_ttl() -> TestResult {
         again.cancel_requested_at_ms,
         Some(T0 + 5),
         "the first request's time stays"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_handle_keeps_the_first_end_it_saw() -> TestResult {
+    let (_dir, vault) = open_vault()?;
+    let holder = EntityId::now();
+    let stranger = EntityId::now();
+    let id = vault.mint_mcp_task(
+        holder,
+        McpTaskSubject::NightStep {
+            wake_root_ref: EntityId::now(),
+        },
+        Some(1000),
+        T0,
+    )?;
+    let minted = vault
+        .mcp_task(holder, &id, T0)?
+        .ok_or("the holder reads its new handle")?;
+    assert_eq!(minted.ended, None, "a new handle keeps no end");
+    assert_eq!(
+        minted.last_updated_at_ms(),
+        T0,
+        "a new handle last changed at its mint"
+    );
+
+    assert_eq!(
+        vault.end_mcp_task(stranger, &id, McpTaskEnd::Completed, T0 + 5)?,
+        None,
+        "another actor cannot end the handle"
+    );
+    assert_eq!(
+        vault
+            .mcp_task(holder, &id, T0 + 5)?
+            .ok_or("the handle stands")?
+            .ended,
+        None,
+        "another actor's end wrote nothing"
+    );
+
+    let ended = vault
+        .end_mcp_task(holder, &id, McpTaskEnd::Completed, T0 + 10)?
+        .ok_or("the holder's read saw the end")?;
+    assert_eq!(
+        ended.ended,
+        Some(McpTaskEnded {
+            end: McpTaskEnd::Completed,
+            at_ms: T0 + 10
+        })
+    );
+    assert_eq!(
+        ended.last_updated_at_ms(),
+        T0 + 10,
+        "the end is the handle's last change"
+    );
+
+    let again = vault
+        .end_mcp_task(holder, &id, McpTaskEnd::CompletedWithError, T0 + 20)?
+        .ok_or("a later read saw another end")?;
+    assert_eq!(
+        again.ended,
+        Some(McpTaskEnded {
+            end: McpTaskEnd::Completed,
+            at_ms: T0 + 10
+        }),
+        "the first end stays: a task's end never changes"
+    );
+    let asked = vault
+        .request_mcp_task_cancel(holder, &id, T0 + 30)?
+        .ok_or("the holder asks after the end")?;
+    assert_eq!(
+        (
+            asked.ended.map(|ended| ended.end),
+            asked.last_updated_at_ms()
+        ),
+        (Some(McpTaskEnd::Completed), T0 + 30),
+        "a later cancel request leaves the end and is the last change"
+    );
+
+    assert_eq!(
+        vault.end_mcp_task(holder, &id, McpTaskEnd::Completed, T0 + 1000)?,
+        None,
+        "an expired handle keeps no end"
+    );
+    assert_eq!(
+        vault.mcp_task(holder, &id, T0 + 1)?,
+        None,
+        "and its row is gone"
     );
     Ok(())
 }

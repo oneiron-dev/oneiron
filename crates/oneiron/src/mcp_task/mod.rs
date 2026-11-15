@@ -11,6 +11,10 @@
 //! its time to live all read as missing, so no answer tells that a hidden handle exists. An
 //! expired handle's row is removed; the record it wrapped goes on. Three clocks stay apart: the
 //! record's retention, the handle's time to live and any grant's lifetime.
+//!
+//! A task's end is final. The handle keeps the first end a read of its record saw, and answers
+//! that end from then on, though the record may go on working (a night step's remainder runs a
+//! policy interval later under the same root).
 
 pub(crate) mod tables;
 
@@ -85,6 +89,27 @@ pub enum McpTaskSubject {
     ProviderJob { job: String },
 }
 
+/// How the record behind a handle ended, as the handle answers it from then on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpTaskEnd {
+    /// The record ended; a partial or deferred outcome ends here too, naming itself.
+    Completed,
+    /// The record ended in failure: the task ends completed, its result marked an error.
+    CompletedWithError,
+    /// The record's work stopped on a cancel.
+    Cancelled,
+}
+
+/// The end a handle keeps: the first end a read of its record saw, and when.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct McpTaskEnded {
+    pub end: McpTaskEnd,
+    /// Host milliseconds when the end was kept.
+    pub at_ms: u64,
+}
+
 /// One stored handle.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -99,6 +124,28 @@ pub struct McpTaskRecord {
     /// When the handle's actor first asked its work to stop, in host milliseconds.
     #[serde(default)]
     pub cancel_requested_at_ms: Option<u64>,
+    /// The record's end as the handle first saw it. A task's end is final: a record that
+    /// goes on working after it (a night step's remainder, due a policy interval later)
+    /// leaves the handle at this end.
+    #[serde(default)]
+    pub ended: Option<McpTaskEnded>,
+}
+
+impl McpTaskRecord {
+    /// The handle's last change, in host milliseconds: the latest of its mint, its cancel
+    /// request and its end.
+    #[must_use]
+    pub fn last_updated_at_ms(&self) -> u64 {
+        [
+            Some(self.created_at_ms),
+            self.cancel_requested_at_ms,
+            self.ended.map(|ended| ended.at_ms),
+        ]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(self.created_at_ms)
+    }
 }
 
 impl McpTaskRecord {
@@ -153,6 +200,7 @@ impl Vault {
             created_at_ms: now_ms,
             ttl_ms,
             cancel_requested_at_ms: None,
+            ended: None,
         };
         let mut txn = self.store.env.write_txn()?;
         HANDLES.put(&self.store, &mut txn, &id.row_key(), &row)?;
@@ -220,6 +268,41 @@ impl Vault {
             HandleRead::Live(mut row) => {
                 if row.cancel_requested_at_ms.is_none() {
                     row.cancel_requested_at_ms = Some(now_ms);
+                    HANDLES.put(&self.store, &mut txn, &key, &row)?;
+                    txn.commit()?;
+                }
+                Ok(Some(row))
+            }
+        }
+    }
+
+    /// Keeps `end` as the end of handle `id` for `actor`, the first time only, and answers
+    /// the handle as [`Self::mcp_task`] reads it after the write. Call it once a read of the
+    /// record, run as `actor`, saw the record end. A handle that already keeps an end keeps
+    /// it: the answer then names the earlier end, so a task's end never changes.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn end_mcp_task(
+        &self,
+        actor: EntityId,
+        id: &McpTaskId,
+        end: McpTaskEnd,
+        now_ms: u64,
+    ) -> Result<Option<McpTaskRecord>> {
+        let key = id.row_key();
+        let mut txn = self.store.env.write_txn()?;
+        match read_handle(HANDLES.get(&self.store, &txn, &key)?, actor, now_ms) {
+            HandleRead::Missing => Ok(None),
+            HandleRead::Expired => {
+                HANDLES.delete(&self.store, &mut txn, &key)?;
+                txn.commit()?;
+                Ok(None)
+            }
+            HandleRead::Live(mut row) => {
+                if row.ended.is_none() {
+                    row.ended = Some(McpTaskEnded { end, at_ms: now_ms });
                     HANDLES.put(&self.store, &mut txn, &key, &row)?;
                     txn.commit()?;
                 }
