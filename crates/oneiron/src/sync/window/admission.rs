@@ -183,6 +183,10 @@ fn check_window_update(
         candidate
     };
     let candidate_tombstones = TombstoneIndex::build(&candidate.get_map("tombstones"));
+    // The owners a snapshot's encoded root carries, collected where that
+    // root is read below: a birth inserted past the root is judged with
+    // them, not only with the latest map a later delete emptied.
+    let mut root_owners = BTreeSet::new();
     // Engine A: one accumulator of source audience bindings and policy
     // revisions over the held map and everything the update can leave.
     let mut audiences = crate::sync::source_audiences::AdmissionRows::default();
@@ -387,6 +391,11 @@ fn check_window_update(
                 // Fix list row 16256: and each root row's.
                 if let Some(blob) = blob {
                     audiences.note_row(raw, blob);
+                    if let Ok(id) = EntityId::from_hex(raw)
+                        && id.to_hex() == raw
+                    {
+                        root_owners.insert(id);
+                    }
                 }
             });
             if let Some(error) = at_root {
@@ -485,6 +494,7 @@ fn check_window_update(
     // history retains the validated insertion that assigned its world. Keep
     // that evidence until every edge op in this same import is inspected.
     let mut historical = HashMap::<EntityId, Vec<u8>>::new();
+    let mut birth_owners = BTreeSet::new();
     for op in operations.changes.iter().flat_map(|change| &change.ops) {
         if op.container == entities
             && let JsonOpContent::Map(MapOp::Insert {
@@ -494,7 +504,28 @@ fn check_window_update(
             && let Ok(id) = EntityId::from_hex(raw_key)
         {
             historical.insert(id, blob.to_vec());
+            if id.to_hex() == *raw_key {
+                birth_owners.insert(id);
+            }
         }
+    }
+    // A birth inserted in this range is judged against the state the range
+    // starts from as well as the inserts above, not only the candidate's
+    // latest map: a delete later in the range takes its owner (and the
+    // birth carrier) out of that map, as a hard delete in a full-history
+    // snapshot does. An update starts from the held doc; a snapshot starts
+    // from its encoded root, read above.
+    if metadata.mode.is_snapshot() {
+        birth_owners.extend(root_owners);
+    } else {
+        map_for_each_value_bytes(&doc.get_map("entities"), |raw, blob| {
+            if blob.is_some()
+                && let Ok(id) = EntityId::from_hex(raw)
+                && id.to_hex() == raw
+            {
+                birth_owners.insert(id);
+            }
+        });
     }
     if metadata.mode.is_snapshot()
         && let (Some(key), Some(vault)) = (key, vault)
@@ -578,7 +609,12 @@ fn check_window_update(
         // FIX 6520: no peer writes under a barrier key; its removal still ships.
         super::shallow::refuse_barrier_write(&op.container, &map_key)?;
         if op.container == births {
-            crate::sync::row_birth::validate_carried_birth(&candidate, &map_key, &value)?;
+            crate::sync::row_birth::validate_carried_birth(
+                &candidate,
+                &map_key,
+                &value,
+                &birth_owners,
+            )?;
         } else if op.container == custody {
             // OF-422: put-then-delete still carries the bytes on the wire.
             crate::sync::custody::admit_custody_carrier(vault, key, &map_key, &value)?;

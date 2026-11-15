@@ -241,20 +241,27 @@ pub(in crate::sync) fn drop_orphan_births(doc: &LoroDoc) -> Result<bool> {
 }
 
 /// Window admission for one inserted birth: the key is a canonical id, the
-/// value is a canonical envelope, and the admitted document carries its
-/// owner entity. A birth for a row the sender did not ship is refused before
-/// import.
+/// value is a canonical envelope, and its owner entity is carried by the
+/// admitted document, in its latest state or in `also_carried` (the state
+/// the inspected range starts from and the entity inserts it carries, as
+/// window admission collects them). A later delete in the same range takes
+/// a shipped owner out of the latest map, so the latest map alone would
+/// refuse its earlier birth. A birth for a row the sender did not ship in
+/// any of those states is refused before import.
 pub(crate) fn validate_carried_birth(
     candidate: &LoroDoc,
     key: &str,
     value: &LoroValue,
+    also_carried: &std::collections::BTreeSet<EntityId>,
 ) -> Result<()> {
-    let well_formed = owner(key).is_some()
-        && matches!(value, LoroValue::Binary(bytes) if decode(bytes).is_some())
-        && matches!(
+    let owner_carried = owner(key).is_some_and(|id| also_carried.contains(&id))
+        || matches!(
             candidate.get_map("entities").get(key),
             Some(ValueOrContainer::Value(LoroValue::Binary(_)))
         );
+    let well_formed = owner(key).is_some()
+        && matches!(value, LoroValue::Binary(bytes) if decode(bytes).is_some())
+        && owner_carried;
     if !well_formed {
         return Err(Error::InvalidConfig(
             "a carried row birth is malformed or names a row the window does not carry".into(),
