@@ -121,14 +121,12 @@ impl CompartmentScope {
 }
 
 /// What a restore opens a head with. The kit's root opens every
-/// compartment but a world's it is not admitted to; the data keys, unlocked
-/// from a backup, open the control compartment and host-readable ones; a
+/// compartment but a world's it is not admitted to; the data key, unlocked
+/// from a backup, opens the control compartment and host-readable ones; a
 /// machine's secret opens only the world compartments it is admitted to,
 /// never the control compartment.
 pub struct CustodyOpener<'a> {
     pub root: Option<&'a HybridSecretKey>,
-    /// The data keys' custody subkeys, current generation first. Empty opens
-    /// nothing with a data key.
-    pub data_keys: Vec<Zeroizing<[u8; 32]>>,
+    pub data_key: Option<Zeroizing<[u8; 32]>>,
     pub machine: Option<(EntityId, &'a HybridSecretKey)>,
 }

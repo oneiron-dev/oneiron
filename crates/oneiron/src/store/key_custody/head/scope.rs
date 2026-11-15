@@ -21,6 +21,12 @@ pub(crate) struct CustodyRecipients {
     /// The vault data key's [`super::CUSTODY_HEAD_WRAP_CONTEXT`] subkey: the
     /// control compartment and host-readable ones.
     pub(crate) data_key: Option<Zeroizing<[u8; 32]>>,
+    /// The commitment of the data key [`Self::data_key`] derives from, once
+    /// the vault started a data-key generation: part of the publication
+    /// policy, so the first pass after a new generation seals every head
+    /// again under the new key. `None` at generation 0, so a vault that never
+    /// started one keeps the policy digest it has.
+    pub(crate) data_key_commitment: Option<[u8; 32]>,
     /// The worlds (16-byte ids) whose pads the head leaves out: their
     /// settings keep their pads off where the head goes (KS-5 pad head
     /// eligibility). They stay in this machine's custody.

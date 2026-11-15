@@ -80,6 +80,10 @@ pub struct DataKeyGenerationDraft<'v> {
     /// Each presented escrow's recipient fingerprint, by wrap id: the act
     /// rewraps an escrow only to the recipient it was sealed to.
     escrow_fingerprints: BTreeMap<String, [u8; 32]>,
+    /// The digest of each password and passkey wrap the presented secret
+    /// opened, by wrap id: the act rewraps such a way only for the holder of
+    /// its secret, and only the wrap it opened.
+    verified_ways: BTreeMap<String, WrapDigest>,
     /// Snapshot admission shut until the new key is held (or the act is
     /// dropped unfinished).
     snapshot_pause: crate::store::snapshot_lifecycle::SnapshotAdmissionPause<'v>,
@@ -153,6 +157,33 @@ impl Vault {
             .ok_or_else(|| refused("unlock the vault key first"))?;
         let vault_id = *self.vault_id().as_bytes();
         let from_commitment = held.commitment(&vault_id);
+        // A presented password or passkey must open the wrap of it the
+        // vault carries, so the act never seals the new key to other bytes
+        // under that way's id. The write checks the wrap is still the one
+        // that opened.
+        let mut verified_ways = BTreeMap::new();
+        if let Some(password) = ways.password {
+            let passphrase =
+                Passphrase::new(password).map_err(|_| refused("the password is not accepted"))?;
+            let id = VaultKeyWrapKind::Password.id();
+            if let Some(digest) =
+                self.open_presented_way(&id, &UnlockSecret::Passphrase(&passphrase))?
+            {
+                verified_ways.insert(id, digest);
+            }
+        }
+        for (credential, prf) in &ways.passkeys {
+            check_name(credential)?;
+            let id = VaultKeyWrapKind::Passkey {
+                credential: (*credential).to_owned(),
+            }
+            .id();
+            if let Some(digest) =
+                self.open_presented_way(&id, &UnlockSecret::Kek(passkey_kek(prf)))?
+            {
+                verified_ways.insert(id, digest);
+            }
+        }
         let next = VaultDataKey::generate()?;
         let next_commitment = next.commitment(&vault_id);
         let mut envelopes = BTreeMap::new();
@@ -214,8 +245,38 @@ impl Vault {
             device_kind,
             envelopes,
             escrow_fingerprints,
+            verified_ways,
             snapshot_pause: self.store.inference_snapshots.pause_for_key_handoff(),
         })
+    }
+
+    /// The digest of the stored wrap `id` when `secret` opens it to the key
+    /// the vault stores; `None` when the vault carries no such wrap (the
+    /// write refuses that way). Refused when it does not open.
+    fn open_presented_way(
+        &self,
+        id: &str,
+        secret: &UnlockSecret<'_>,
+    ) -> Result<Option<WrapDigest>> {
+        let vault_id = *self.vault_id().as_bytes();
+        let (state, stored) = {
+            let txn = self.store.env.read_txn()?;
+            let state = STATE
+                .get(&self.store, &txn, &())?
+                .ok_or_else(|| refused("the vault has no data key"))?;
+            (state, WRAPS.get(&self.store, &txn, &id.to_owned())?)
+        };
+        let Some(stored) = stored else {
+            return Ok(None);
+        };
+        let opened = open_wrap(&vault_id, &state.commitment, &stored, secret)
+            .map_err(|_| refused("a presented way does not open its wrap on this vault"))?;
+        if opened.commitment(&vault_id) != state.commitment {
+            return Err(refused(
+                "a presented way does not open its wrap on this vault",
+            ));
+        }
+        Ok(Some(wrap_digest(&stored)))
     }
 
     /// Starts a new data-key generation in the caller's write: the wraps of
@@ -227,7 +288,12 @@ impl Vault {
     /// a presented way the vault does not carry are refused too. A presented
     /// escrow must name the recipient it was sealed
     /// to, so the act never moves an escrow (the world kit's included) to
-    /// another key.
+    /// another key; a presented password or passkey must be one whose wrap
+    /// opened in [`Self::prepare_data_key_generation`]. The caller holds the
+    /// custody publication policy lock (`Store::custody_policy_guard`) from
+    /// before the prepare until after [`Self::finish_data_key_generation`],
+    /// so no custody publication pass seals a head under the replaced key
+    /// after the act.
     pub(crate) fn start_data_key_generation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -292,14 +358,24 @@ impl Vault {
                 continue;
             }
             if let Some((kind, envelope)) = draft.envelopes.get(&id) {
-                if let VaultKeyWrapKind::Escrow { label } = kind {
-                    let presented = draft.escrow_fingerprints.get(&id).copied();
-                    let sealed = ESCROW_RECIPIENT.get(&self.store, txn, label)?;
-                    if presented.is_none() || sealed != presented {
-                        return Err(refused(
-                            "a presented escrow names another recipient than the one it was sealed to",
-                        ));
+                match kind {
+                    VaultKeyWrapKind::Escrow { label } => {
+                        let presented = draft.escrow_fingerprints.get(&id).copied();
+                        let sealed = ESCROW_RECIPIENT.get(&self.store, txn, label)?;
+                        if presented.is_none() || sealed != presented {
+                            return Err(refused(
+                                "a presented escrow names another recipient than the one it was sealed to",
+                            ));
+                        }
                     }
+                    VaultKeyWrapKind::Password | VaultKeyWrapKind::Passkey { .. } => {
+                        if draft.verified_ways.get(&id) != Some(&wrap_digest(&stored)) {
+                            return Err(refused(
+                                "a presented way does not open its wrap on this vault",
+                            ));
+                        }
+                    }
+                    _ => {}
                 }
                 rewraps.push(Rewrap {
                     id: id.clone(),
@@ -400,7 +476,12 @@ impl Vault {
             snapshot_pause,
             ..
         } = draft;
-        self.hold_vault_key(next);
+        if let Err(error) = self.hold_vault_key(next) {
+            // The act committed, so the replaced key is never left held:
+            // the vault key locks, and the next unlock opens the new one.
+            tracing::warn!(%error, "the new data key was not held after the act; the vault key locked");
+            self.drop_held_vault_key();
+        }
         // Admission opens again only now, so the next one reads the new key.
         drop(snapshot_pause);
         // The body seal stays under the key admitted at open until the next open (off-record overlays live only in a session).
@@ -427,6 +508,11 @@ impl Vault {
                 "under this recovery preset the act runs from the recovery settings switch",
             ));
         }
+        // No custody publication pass runs from here until the new key is
+        // held: a pass that read the old key's subkey would seal under it a
+        // head naming what the new generation covers. Released at the
+        // finish, before the door's later work, which may publish.
+        let custody_policy = self.store.custody_policy_guard();
         let draft = self.prepare_data_key_generation(ways)?;
         let transition = self.begin_wrap_transition()?;
         // The door can answer an error after its commit is durable (an owed
@@ -448,6 +534,7 @@ impl Vault {
             },
             |(mut outcome, draft, transition)| {
                 outcome.mirror_pending = self.finish_data_key_generation(draft, transition);
+                drop(custody_policy);
                 Ok(outcome)
             },
         )
