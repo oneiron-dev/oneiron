@@ -59,12 +59,13 @@ pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPO
 pub use record::{DerivationBatchRecord, ItemRecord};
 pub use revert::{
     DERIVE_REVERT_CONTENT_KIND, DeriveRevertReceipt, REVERT_CHANGED_SINCE, REVERT_INVERSE_REFUSED,
-    REVERT_NO_INVERSE, REVERT_NOT_YOURS,
+    REVERT_LIFTS_RESTRICTION, REVERT_NO_INVERSE, REVERT_NOT_YOURS,
 };
 pub use settle::{SETTLE_IMPORT_REVIEW, SETTLE_OWNER_HOLD, SETTLE_REFUSED};
 pub use sources::{SOURCE_MOVED, SOURCE_WITHHELD};
 pub use supersede::{
     SUPERSEDE_LIFECYCLE, SUPERSEDE_PROTECTED_SOURCE, SUPERSEDE_REPLACEMENT_UNSETTLED,
+    SUPERSEDE_RESTRICTION,
 };
 pub use wire::{
     DeriveArchiveInput, DeriveClaimInput, DeriveCommitInput, DeriveCommitView, DeriveEvidenceInput,

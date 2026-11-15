@@ -778,6 +778,43 @@ pub(crate) fn revert_settlement_in_txn(
     Ok(reverted)
 }
 
+/// Whether reverting the settlement `resolved` answers would retract a
+/// claim that restricts someone's access
+/// ([`crate::federation::claim_removal_widens_in`]): the winner it landed
+/// from its marker's retained candidates, still standing, which
+/// [`revert_settlement_in_txn`] retracts. The members it restores close
+/// nothing. An answer that is no standing settlement's lifts nothing: its
+/// revert refuses.
+pub(crate) fn settlement_revert_lifts_restriction_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    resolved: EntityId,
+) -> Result<bool> {
+    let Some(answer) = vault.get_claim_in_txn(txn, &resolved)? else {
+        return Ok(false);
+    };
+    if answer.predicate != PREDICATE_CONFLICT_RESOLVED || !claim_surfaceable(&answer) {
+        return Ok(false);
+    }
+    let Some(resolution) = string_at(&answer.value, "resolution")
+        .filter(|resolution| string_at(resolution, "settlement").is_some())
+    else {
+        return Ok(false);
+    };
+    let Some(kept) = marker_ids(resolution, "kept").next() else {
+        return Ok(false);
+    };
+    if marker_ids(resolution, MATERIALIZED_KEY).next() != Some(kept) {
+        return Ok(false);
+    }
+    match vault.get_claim_in_txn(txn, &kept)? {
+        Some(body) if body.lifecycle == ClaimLifecycleStatus::Active => {
+            crate::federation::claim_removal_widens_in(vault, txn, &body)
+        }
+        _ => Ok(false),
+    }
+}
+
 /// Where a revert's fresh Dreamer copy says it came from: its provenance
 /// surface and its birth reason.
 pub(super) struct RevertSurface {

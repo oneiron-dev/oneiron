@@ -17,6 +17,14 @@ use crate::{EntityId, Vault};
 /// user-stated replacement included.
 pub const SUPERSEDE_PROTECTED_SOURCE: &str = "gate.deny.derive.supersede_protected_source";
 
+/// The refusal of a supersession that would close a claim restricting
+/// someone's access (`federation::claim_removal_widens_in`: a delivery
+/// window, an opt-out, a do-not-contact, a held campaign member, ...),
+/// whatever replaces it. A derivation is no person's act, and lifting a
+/// restriction is a widening, which asks a person (RULING
+/// RESTRICTION-CLOSE-BY-DERIVE-ITEM; canon #widen-world-floor).
+pub const SUPERSEDE_RESTRICTION: &str = "gate.deny.derive.supersede_restriction";
+
 /// The refusal of a supersession whose replacement does not stand yet: a
 /// proposal, a rejected or stale claim, or a claim whose critical confirmation
 /// the owner has not answered.
@@ -75,6 +83,9 @@ pub(super) fn stage_in_txn(
         || Vault::require_source_trust_supersession_rights(&new_body, &old_body).is_err()
     {
         return refuse(vault, txn, context, old, &[SUPERSEDE_PROTECTED_SOURCE]);
+    }
+    if crate::federation::claim_removal_widens_in(vault, txn, &old_body)? {
+        return refuse(vault, txn, context, old, &[SUPERSEDE_RESTRICTION]);
     }
     // A replacement that still waits or is stale closes nothing: until it is
     // approved, its critical confirmation answered, and it is not stale, it is

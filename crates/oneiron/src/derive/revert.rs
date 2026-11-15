@@ -30,6 +30,13 @@ pub const REVERT_NO_INVERSE: &str = "derive.revert.no_inverse";
 /// Why an item was left alone: its inverse refused, so it stands.
 pub const REVERT_INVERSE_REFUSED: &str = "derive.revert.inverse_refused";
 
+/// Why an item was left alone: its inverse would close a claim that
+/// restricts someone's access, and no owner reverts. A batch's own
+/// restriction, or the winner its settlement landed, is lifted only by the
+/// owner's revert (RULING RESTRICTION-CLOSE-BY-DERIVE-ITEM; the direct
+/// retract door asks the same, RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT).
+pub const REVERT_LIFTS_RESTRICTION: &str = "derive.revert.lifts_restriction";
+
 /// The refusal of a revert by an actor that is neither the batch's
 /// committing actor, with its derive verdict standing, nor the owner.
 pub const REVERT_NOT_YOURS: &str = "gate.deny.derive.revert_not_yours";
@@ -165,6 +172,10 @@ impl Vault {
                 left.push((item.local.clone(), REVERT_CHANGED_SINCE.to_owned()));
                 continue;
             }
+            if owner.is_none() && self.inverse_lifts_restriction_in(txn, item)? {
+                left.push((item.local.clone(), REVERT_LIFTS_RESTRICTION.to_owned()));
+                continue;
+            }
             let mut savepoint = self.store.env.nested_write_txn(txn)?;
             match self.undo_item_in_txn(&mut savepoint, &record.actor, reverter, item, now_ms) {
                 Ok(true) => {
@@ -199,6 +210,42 @@ impl Vault {
             left,
             receipt,
         })
+    }
+
+    /// Whether undoing `item` would close a claim that restricts someone's
+    /// access (`federation::claim_removal_widens_in`): a claim item whose
+    /// row stands, which its inverse retracts, or a settlement whose answer
+    /// names a winner it landed from retained candidates
+    /// (`dreamer_consolidation::settlement_revert_lifts_restriction_in`).
+    /// Reopening a superseded claim or an archived row, and taking back an
+    /// edge, close nothing.
+    fn inverse_lifts_restriction_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        item: &ItemRecord,
+    ) -> Result<bool> {
+        match item.kind.as_str() {
+            "claim" => {
+                for row in &item.rows {
+                    if let Some(body) = self.get_claim_in_txn(txn, row)?
+                        && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
+                        && crate::federation::claim_removal_widens_in(self, txn, &body)?
+                    {
+                        return Ok(true);
+                    }
+                }
+                Ok(false)
+            }
+            "settle" => match item.rows.first() {
+                Some(resolved) => {
+                    crate::dreamer_consolidation::settlement_revert_lifts_restriction_in(
+                        self, txn, *resolved,
+                    )
+                }
+                None => Ok(false),
+            },
+            _ => Ok(false),
+        }
     }
 
     /// Undoes one landed item in `txn`. `false` when its kind has no inverse
