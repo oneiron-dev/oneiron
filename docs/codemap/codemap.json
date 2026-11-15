@@ -113165,7 +113165,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 26,
+      "mod": 27,
       "re-export": 2
      }
     },
@@ -113265,6 +113265,21 @@
      "path": "src/memory/error/gate_denial.rs",
      "purpose": "The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection",
      "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Entries",
+      "MsgpackError"
+     ],
+     "path": "src/msgpack.rs",
+     "purpose": "The one reader for untyped MessagePack rows (PLAN-UC-08)",
+     "surface": {
+      "enum": 1,
+      "fn": 18,
       "struct": 1
      }
     },
@@ -113567,6 +113582,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/msgpack_reader.rs",
+     "purpose": "The one reader for untyped MessagePack rows (`oneiron_contracts::msgpack`, PLAN-UC-08 PR 0): one value and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -113674,6 +113697,13 @@
      "layout": "file+dir",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…"
     },
+    "msgpack": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The one reader for untyped MessagePack rows (PLAN-UC-08)"
+    },
     "posterior": {
      "files": 1,
      "impl_vault": false,
@@ -113761,8 +113791,8 @@
    },
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 66,
-   "test_files": 1
+   "source_files": 67,
+   "test_files": 2
   },
   "oneiron-crypto": {
    "files": [
