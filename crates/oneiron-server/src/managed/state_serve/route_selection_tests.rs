@@ -107,6 +107,7 @@ const UNATTESTED: &[(&str, &str, Unattested)] = &[
     ("POST", "/v1/hooks/linear", PublicProof),
     ("POST", "/v1/hooks/slack/events", PublicProof),
     ("GET", "/v1/hooks/slack/oauth", PublicProof),
+    ("POST", "/v1/hooks/stripe/booking-deposit", PublicProof),
     // Recovery pages, seat children and a left member's doors.
     ("POST", "/v1/recovery/custody/page", PublicProof),
     ("POST", "/v1/recovery/sealed-bundle/index", PublicProof),

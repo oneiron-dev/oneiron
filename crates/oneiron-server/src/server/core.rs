@@ -136,6 +136,9 @@ pub struct SyncServer {
     /// Authenticated booking calls per actor this minute (FIX 128-131),
     /// measured against their `[limits]` rows; never a window.
     pub(crate) booking_calls: super::booking_calls::AuthenticatedBookingCalls,
+    /// The Stripe API origin booking deposits call (BK-DEPOSITS): Stripe's
+    /// own in service; the tests point it at a loopback fake.
+    pub(crate) booking_deposit_stripe_base: String,
     /// The wakes of removed holders' archive delivery sessions (FIX 3396).
     pub(crate) removal_deliveries: super::removal_delivery::RemovalDeliveries,
     /// Dedicated shared environments retained for leave checks and their own
@@ -351,7 +354,8 @@ const _: fn(&SyncServer) = |server| {
         residence_work_changed, queue_driver_started, config, transfers, memory, renderer_turns,
         context_reads, renderer_scratch, query_checks, managed_issuer, host_root_issuer,
         policy_doors, account_keys, usage_ledger, retrieval_buffer, host_account, wire_telemetry,
-        mesh_pressure, retained, presence, booking_calls, removal_deliveries, shared_envs,
+        mesh_pressure, retained, presence, booking_calls, booking_deposit_stripe_base,
+        removal_deliveries, shared_envs,
         leaf_keys, lens_frames, note_editors, artifact_previews, live_voice, asr_sessions,
         meeting_imports, model_streams, export_transfers, pairing_backoff, mcp_registry,
         mcp_code_host, mcp_code_run_continuations, reader_runner, live_runs, secret_destinations,

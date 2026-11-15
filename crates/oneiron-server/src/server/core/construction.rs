@@ -418,6 +418,7 @@ impl SyncServer {
             api_addr: None,
             artifact_socket: false,
             booking_calls: Default::default(),
+            booking_deposit_stripe_base: crate::booking_deposit::stripe::STRIPE_API_BASE.to_owned(),
             #[cfg(test)]
             booking_test_now_secs: None,
             #[cfg(test)]

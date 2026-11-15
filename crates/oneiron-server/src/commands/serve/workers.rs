@@ -270,6 +270,11 @@ pub(crate) async fn start_desktop_workers(
         Arc::clone(&sync_server),
         admitted(),
     ));
+    // Booking deposits' due captures, voids and refunds go to Stripe (BK-DEPOSITS).
+    workers.push(crate::booking_deposit::settle::spawn_deposit_settlement(
+        Arc::clone(&sync_server),
+        admitted(),
+    ));
     // A transcript upload that met an open session lands once it closes (FIX 9654).
     workers.push(crate::calendar_host::spawn_pending_transcript_drain(
         Arc::clone(&sync_server),

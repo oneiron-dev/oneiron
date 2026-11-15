@@ -109,6 +109,11 @@ pub enum BookingBookResult {
         selected_slot: SelectedSlot,
         /// Server-capped expiry. The caller never chose it.
         expires_at: u64,
+        /// The deposit checkout this hold opened, when its event type asks
+        /// a deposit (BK-DEPOSITS). Absent otherwise, and on a hold that
+        /// presented an open checkout's lease.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deposit: Option<BookingDepositCheckout>,
     },
     Confirmed {
         reschedule_token: String,
@@ -117,6 +122,26 @@ pub enum BookingBookResult {
     SlotTaken {
         alternatives: Vec<RankedSlot>,
     },
+}
+
+/// The deposit checkout a hold of a deposit event type opened (BK-DEPOSITS):
+/// the lease a later hold of the same checkout presents, and what the
+/// visitor's Stripe.js authorizes the card with. The deposit is paid to the
+/// page owner's own Stripe account.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BookingDepositCheckout {
+    /// The checkout lease: a hold that presents it lives to the checkout
+    /// window's end.
+    pub checkout_lease_token: String,
+    /// The PaymentIntent's client secret, for Stripe.js.
+    pub client_secret: String,
+    /// The owner's Stripe publishable key, for Stripe.js.
+    pub publishable_key: String,
+    /// The deposit, in the currency's smallest unit.
+    pub amount_minor: u64,
+    /// ISO 4217, lowercase.
+    pub currency: String,
 }
 
 /// The closed response union.

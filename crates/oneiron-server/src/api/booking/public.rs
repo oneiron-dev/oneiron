@@ -378,6 +378,9 @@ mod availability_tests;
 #[path = "client_address_tests.rs"]
 mod client_address_tests;
 #[cfg(test)]
+#[path = "public_deposit_tests.rs"]
+mod deposit_tests;
+#[cfg(test)]
 #[path = "public_fixture.rs"]
 mod fixture;
 #[cfg(test)]

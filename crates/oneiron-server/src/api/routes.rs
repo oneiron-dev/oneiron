@@ -340,6 +340,8 @@ pub(crate) fn api_routes(server: Arc<SyncServer>) -> Router {
         // the provider's HMAC over the raw body authenticates each one.
         .merge(crate::builtin_host::routes())
         .merge(crate::linear_host::webhook_routes())
+        // BK-DEPOSITS: Stripe's signed word about a booking deposit.
+        .merge(crate::booking_deposit::webhook::routes())
         .layer(middleware::from_fn_with_state(
             server.clone(),
             crate::wire_telemetry::observe_http,

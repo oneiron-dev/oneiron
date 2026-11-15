@@ -42,8 +42,8 @@ use oneiron::booking::agent_api::{
 };
 use oneiron::booking::{
     BookingError, BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmSpec,
-    ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken,
-    RescheduleSpec, SlotOracle, SolveRequest, SolveResult, token_page_ref,
+    ConstraintObject, HoldLeaseSpec, HoldSpec, OpaqueLifecycleToken, RescheduleSpec, SlotOracle,
+    SolveRequest, SolveResult, token_page_ref,
 };
 use oneiron::{EntityId, Vault};
 
@@ -55,6 +55,7 @@ use crate::server::SyncServer;
 
 mod admission;
 mod constants;
+mod deposit;
 mod email_evidence;
 mod execute;
 mod free_text;
@@ -519,12 +520,10 @@ async fn execute_hold(
     if let Some(unofferable) = unofferable {
         return Ok((unofferable, rows));
     }
-    let lease = match input.checkout_lease_token {
-        Some(token) => HoldLeaseSpec::CheckoutExtension {
-            server_issued_lease: OpaqueCheckoutLeaseToken(token),
-        },
-        None => HoldLeaseSpec::Ordinary,
-    };
+    // A deposit event type's hold opens its checkout first (BK-DEPOSITS),
+    // so the hold presents a lease bound to the session and the payment.
+    let (lease, deposit): (HoldLeaseSpec, _) =
+        self::deposit::hold_lease(server, page_ref, &input, session_key, now).await?;
     let (receipt, _) = run_booking_verb(
         server,
         BookingVerbRequest::Hold(HoldSpec {
@@ -553,6 +552,7 @@ async fn execute_hold(
                 end_utc: held.slot.end,
             },
             expires_at: held.expires_at,
+            deposit,
         }),
         BookingVerbReceipt::SlotTaken { alternatives } => {
             BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives })
@@ -584,6 +584,8 @@ async fn execute_confirm(
     )?;
     let booker_contact =
         resolve_booker_contact(server, &input.booker_email, now, public_authority.as_ref())?;
+    // The visitor's card may be authorized before Stripe's webhook says so.
+    self::deposit::before_confirm(server, session_key, now).await;
     let (receipt, unkept) = run_booking_verb(
         server,
         BookingVerbRequest::Confirm(ConfirmSpec {
@@ -599,13 +601,17 @@ async fn execute_confirm(
     )
     .await?;
     match receipt {
-        BookingVerbReceipt::Confirmed(confirmed) => Ok((
-            BookingOperationResponse::Book(BookingBookResult::Confirmed {
-                reschedule_token: confirmed.reschedule_token.0,
-                cancel_token: confirmed.cancel_token.0,
-            }),
-            confirmed.reads,
-        )),
+        BookingVerbReceipt::Confirmed(confirmed) => {
+            // Capture at confirm; a failure leaves it to the settle worker.
+            self::deposit::after_confirm(server, confirmed.calendar.event_ref, now).await;
+            Ok((
+                BookingOperationResponse::Book(BookingBookResult::Confirmed {
+                    reschedule_token: confirmed.reschedule_token.0,
+                    cancel_token: confirmed.cancel_token.0,
+                }),
+                confirmed.reads,
+            ))
+        }
         BookingVerbReceipt::SlotTaken { alternatives } => Ok((
             BookingOperationResponse::Book(BookingBookResult::SlotTaken { alternatives }),
             unkept,

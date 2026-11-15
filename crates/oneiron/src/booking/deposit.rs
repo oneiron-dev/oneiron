@@ -121,3 +121,20 @@ impl DepositTerms {
         u64::try_from(u128::from(self.amount_minor) * percent / 100).unwrap_or(self.amount_minor)
     }
 }
+
+/// The deposit the live configuration of `page_ref`'s event type `key` asks,
+/// if it asks one: the terms a server creates the provider payment for
+/// before the hold, which the checkout door then checks again in its writer.
+///
+/// # Errors
+///
+/// [`BookingError::InvalidConfig`] when the event type has no live
+/// configuration; [`BookingError::SlotOracle`] on a store failure.
+pub fn configured_deposit_terms(
+    vault: &crate::Vault,
+    page_ref: crate::EntityId,
+    key: &crate::booking::EventTypeKey,
+) -> Result<Option<DepositTerms>, BookingError> {
+    crate::booking::config::load_event_type_config(vault, page_ref, key)
+        .map(|config| config.deposit)
+}
