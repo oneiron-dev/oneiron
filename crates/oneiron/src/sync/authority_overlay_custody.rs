@@ -371,9 +371,6 @@ fn retire_erased(
         }
         let refs: Vec<[u8; 32]> = theirs.refs.iter().copied().collect();
         vault.with_write_txn_grouped(|txn| {
-            if !admitted(txn)? {
-                return Err(peer_not_admitted());
-            }
             crate::authority::erase_authority_overlay_subject_in_txn(
                 &vault.store,
                 txn,
