@@ -101,9 +101,10 @@ impl MachineRevision {
 /// writer compared (C5): so a replica judges it without any surface's view,
 /// and a stranger anchor's row a replica may not store is never a parent.
 /// The target's own checks stay: its key no authority, its row no actor, its
-/// proof its own, its revision above its roster chain. A carrier this install
-/// does not count lands the answer restriction only, as a revision past its
-/// floor does.
+/// proof its own, its revision above its roster chain and no more than one
+/// above the highest head of the machine its parents hold. A carrier this
+/// install does not count lands the answer restriction only, as a revision
+/// past its floor does.
 ///
 /// An answer that needs an owner key's proof and carries none (row
 /// CARRIER-OWNER-PROOF, [`super::super::owner_proof`]) passes every check

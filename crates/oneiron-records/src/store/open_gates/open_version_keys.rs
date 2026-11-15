@@ -3,6 +3,16 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v30 (row MACHINE-REVISION-FOLD-BOUND, FIX 25887): stored authority-log
+/// rows keep their bytes and one kind changes meaning. The fold refuses a
+/// machine revision numbered more than one above the highest head its
+/// machine's chains hold in the entry's parents; it took such a row before.
+/// An install that numbered an answer above the mark of an anchor it does
+/// not pin, a mark its answer's parents did not hold, wrote such a row, and
+/// a vault that holds one reads that answer as refused. The authority fold
+/// schema moves 34 -> 35 with it. No old-meaning reader or migration is
+/// provided (the lead's M-1 stored-change rule, path "loud").
+///
 /// v29 (row CARRIER-OWNER-PROOF, FIX CARRIER-SELF-ANSWER-MINE): stored
 /// authority-log rows keep their bytes and change meaning. A carried machine
 /// answer that makes a machine the owner's stands only with an owner key's
@@ -140,7 +150,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 29;
+pub const STORAGE_ABI_VERSION: u16 = 30;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 

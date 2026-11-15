@@ -222,7 +222,8 @@ fn custodial_bootstrap_or_carry(profile: &MachineProfile, head: Option<&MachineR
 }
 
 /// A revision no chain takes: a key that is authority, a row that is an
-/// actor's, a proof the machine did not sign, or no higher than its chain.
+/// actor's, a proof the machine did not sign, one no higher than its chain,
+/// or one that skips a number ([`skips_a_revision`]).
 pub(super) fn refused_revision(
     state: &FoldState,
     profile: &MachineProfile,
@@ -232,6 +233,29 @@ pub(super) fn refused_revision(
         || machine_is_actor(state, profile.machine)
         || !profile.proof_verifies(&state.vault_id)
         || head.is_some_and(|folded| profile.revision <= folded.profile.revision)
+        || skips_a_revision(state, profile)
+}
+
+/// A revision more than one above the highest head that any chain of its
+/// machine holds in the entry's parents, the roster's chain and every
+/// anchor's; for a machine no chain there names, any revision but the first
+/// (FIX 25887; Engine RULING 16 Nov, MACHINE-REVISION-FOLD-BOUND = C).
+///
+/// Every writer numbers a revision one above a head its entry's parents
+/// hold, or first, so no row a door writes skips. A row that skipped could
+/// take the last number a revision has and leave its machine no next answer.
+/// Under this bound a machine's numbers climb by one row at a time and never
+/// reach it. A held answer is no head, so it lifts no bound.
+fn skips_a_revision(state: &FoldState, profile: &MachineProfile) -> bool {
+    let highest = state
+        .machines
+        .get(&profile.machine)
+        .into_iter()
+        .flat_map(BTreeMap::values)
+        .map(|chain| chain.head.profile.revision)
+        .max()
+        .unwrap_or(0);
+    profile.revision > highest.saturating_add(1)
 }
 
 /// A key in the host's custody on a hosted vault, where the host's root is

@@ -53,7 +53,9 @@ use serde::Serialize;
 /// 34: a carried machine answer that needed an owner key's proof and carried none is held
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 34;
+/// 35: the fold refuses a machine revision numbered more than one above the highest head its
+/// machine's chains hold in the entry's parents (FIX 25887, row MACHINE-REVISION-FOLD-BOUND).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 35;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

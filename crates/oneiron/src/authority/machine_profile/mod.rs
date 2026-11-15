@@ -330,9 +330,9 @@ impl FoldedMachine {
     ///
     /// Another anchor's chain is never among them, wherever its rows sit in
     /// the log (FIX FOREIGN-ANCHOR-MARK-BLOCKS-MACHINE-DOORS): any fresh key
-    /// publishes a root and marks any machine in that root's own chain, at
-    /// any revision, removed or under other keys, and one main-log row that
-    /// names such a mark carries it into every later state. The roster's
+    /// publishes a root and marks any machine in that root's own chain,
+    /// removed or under other keys, and one main-log row that names such a
+    /// mark carries it into every later state. The roster's
     /// rows and the pinned anchor's are main-log rows on that install, so
     /// its view and an answer's parents name the same two head entries; what
     /// this install holds or counts stale are flags on them, not other heads.
