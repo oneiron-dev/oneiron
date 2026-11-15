@@ -441,7 +441,9 @@ pub(super) fn pending_withdrawal_in(
 }
 
 /// The worlds the pending walks withdraw `node` for through its own
-/// dependency rows, from `sources`; `Some` where one does.
+/// dependency rows, from `sources`; `Some` where one does. An audit_read
+/// grant is never withdrawn, as the walk's batch leaves it (Astra delta-2
+/// F3: the owner's revoke alone ends one).
 fn direct_withdrawal_in(
     dbs: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -449,6 +451,11 @@ fn direct_withdrawal_in(
     sources: &[SourceSpan],
     entity_type: Option<u8>,
 ) -> Result<Option<CarriedWorlds>> {
+    if entity_type == Some(crate::registry::ENTITY_TYPE_ACCESS_GRANT)
+        && crate::access_grant::stored_audit_read_grant_in_txn(dbs, txn, node)?
+    {
+        return Ok(None);
+    }
     let mut withdrawn: Option<CarriedWorlds> = None;
     for SourceSpan { document, frontier } in sources {
         let row = row_key(*frontier, node);

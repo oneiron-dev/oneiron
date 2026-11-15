@@ -588,6 +588,17 @@ impl Vault {
                         .delete_guards
                         .reject_audience_edit_delete(&self.store, &wtxn, id)
                 })
+                // An audit_read grant the owner wrote after a delete's scope
+                // probe ends only through his revoke: this publication would
+                // commit its deletion fence before the purge refuses
+                // (Astra delta-2 F1).
+                .and_then(|()| {
+                    crate::access_grant::reject_audit_read_grant_delete_in_txn(
+                        &self.store,
+                        &wtxn,
+                        id,
+                    )
+                })
                 .and_then(|()| {
                     if value.reason.is_hard() {
                         let requester = due.map(PendingConfirmedErase::requester);
