@@ -157,11 +157,6 @@ pub(crate) fn detect_at_refusal(
         return Ok(Vec::new());
     };
     if authorization_servers.is_empty()
-        || presented.is_some_and(|value| {
-            authorization_servers
-                .iter()
-                .any(|issuer| !value.spans(issuer.as_bytes()).is_empty())
-        })
     {
         return Ok(Vec::new());
     }
