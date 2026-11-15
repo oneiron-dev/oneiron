@@ -4107,7 +4107,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/linkedin_lead_preload/tests.rs` | test | m | — | — | — |
 | `src/linkedin_lead_preload/tests/employment.rs` | test | m | 2 crate-vis | — | — |
 | `src/linkedin_lead_preload/tests/source_binding.rs` | test | m | — | — | — |
-| `src/llm/autocheck.rs` | src | m | 2 struct · 5 fn · 1 re-export · 5 crate-vis | AutoCheckDecisions, BoundedAutoChecker | Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper |
+| `src/llm/autocheck.rs` | src | m | 2 struct · 1 trait · 5 fn · 1 re-export · 5 crate-vis | AutoCheckDecisions, AutoCheckWorldHold, BoundedAutoChecker | Auto-check seam: candidate types, fail-closed verdicts and the bounded host wrapper |
 | `src/llm/autocheck/verdict_cache.rs` | src | s | 4 crate-vis | — | The auto check's verdict cache (ARCH-0055, "checker/classifier verdicts key on (content-hash… |
 | `src/llm/budget/mod.rs` | src | s | 1 mod · 2 re-export · 2 crate-vis | — | Vault-local durable RSI budget ledger and resident share ledger (FIX 7767) |
 | `src/llm/budget/resident.rs` | src | s | 2 struct · 6 fn · 2 crate-vis | ResidentShareRead, VaultResidentLedger | The vault's durable resident ledger (FIX 7767): each resident's share of the host-paid allocation, as the… |
@@ -4133,7 +4133,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/llm/decision/ladder/providers.rs` | src | m | 4 struct · 2 trait · 6 fn · 1 re-export | DecisionCall, DecisionModel, DecisionPack, DecisionProvider, ModelDecisionProvider, RuleDecisionProvider | Decision ladder providers and the calls they answer |
 | `src/llm/decision/ladder/roles.rs` | src | s | 2 trait · 3 re-export | AskRoleResolver, HumanDecisionQueue | Decision ladder person asks and the roles they go to |
 | `src/llm/decision/ladder/runner.rs` | src | L | 9 fn · 3 crate-vis | — | Decision ladder runner |
-| `src/llm/decision/ladder/slots.rs` | src | s | 5 fn · 3 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
+| `src/llm/decision/ladder/slots.rs` | src | s | 6 fn · 3 crate-vis | — | Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves |
 | `src/llm/decision/ladder/tournament.rs` | src | s | 3 crate-vis | — | A choice wider than a provider's option bound, read as a tournament (FIX 11235) |
 | `src/llm/decision/local.rs` | src | s | 3 struct · 1 enum · 2 trait | DecisionInput, DecisionRule, DecisionSeat, LabelClassifier, LocalDecisionSeat, RuleExpression | Fixed-label local decision seat; runtime/model loading stays with the host |
 | `src/llm/decision/locate.rs` | src | s | 1 struct · 4 fn · 1 const | LocatedDecision | Presence before coordinates (owner point 4) |
@@ -8443,6 +8443,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/authority_view_warm_pact_openings.rs` | test | s | — | — | FIX 23233 [AUTHORITY-HIT-READS-PACT-CUSTODY]: a warm authority view hit re-checks each live pact's scope… |
 | `tests/authority_world_undo_install_cap.rs` | test | s | — | — | FIX 23218: a view that holds an agent world edit's Grant refused reads the edit's world under the install's… |
 | `tests/authority_world_undo_subset.rs` | test | s | — | — | FIX 22381: refusing agent world edits removes their effects, whichever of a world's agent edits they are… |
+| `tests/auto_check_kept_world.rs` | test | m | — | — | Census L5-32, the LLM gate (DEC-0005:592; Engine RULING L5-32-LLM-GATE-KEPT-WORLD = A, 13 Nov 20:24 JST)… |
 | `tests/board_child_done_producer.rs` | test | s | — | — | Census L2-38, ARCH-0067 STREAM delivery: "Default subscription: my tasks · my children · consults to me" |
 | `tests/board_goal_through_read.rs` | test | s | — | — | The context board shows a project's goal only through the caller's own read of the goal claim (untangle… |
 | `tests/board_task_wakes_restart.rs` | test | m | — | — | Census L2-38, ARCH-0067 `#stream-narrowed-built`: "No wake is replayed after a restart or for a connection… |
