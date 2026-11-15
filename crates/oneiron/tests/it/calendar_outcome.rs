@@ -280,15 +280,19 @@ fn event_outcome_supersedes_prior_live_claim_without_deleting_history() {
     let (_dir, vault) = temp_vault();
     let event_ref = event(&vault, EVENT_SEED);
 
+    // Machine evidence over machine evidence: the later head replaces the
+    // earlier one. An owner answer is never replaced by machine evidence
+    // (CAL-07-OUTCOME-CONFLICT = A); tests/calendar_outcome_attested.rs pins
+    // that law.
     let first = record_event_outcome(
         &vault,
         event_ref,
         &EventOutcomeClaimValue {
             outcome: EventOutcome::NoShow,
-            basis: EventOutcomeBasis::OwnerAttested,
+            basis: EventOutcomeBasis::Machine,
             recorded_at: EVENT_END,
         },
-        ClaimSource::UserStated,
+        ClaimSource::Observed,
     )
     .expect("first outcome");
     let second = record_event_outcome(

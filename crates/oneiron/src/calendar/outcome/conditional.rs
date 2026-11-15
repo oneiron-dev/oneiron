@@ -50,6 +50,10 @@ pub(super) fn record_event_outcome_in_txn(
 }
 
 /// Caller-bound writes use the same head and supersession law as the projector.
+///
+/// An owner answer replaces whatever head is live, machine evidence included:
+/// the owner corrects a wrong machine outcome here (CAL-07-OUTCOME-CONFLICT = A,
+/// Engine 15 Nov 12:04, which lifted #3073's refusal).
 pub(crate) fn record_event_outcome_as_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -58,15 +62,6 @@ pub(crate) fn record_event_outcome_as_in_txn(
     envelope: &crate::WriteEnvelope,
     evidence: Option<EntityId>,
 ) -> Result<EntityId> {
-    if value.basis == EventOutcomeBasis::OwnerAttested
-        && live_outcome_heads_in(vault, txn, &event)?
-            .iter()
-            .any(|head| head.value.basis == EventOutcomeBasis::Machine)
-    {
-        return Err(crate::Error::InvalidClaimBody(
-            "owner check-in cannot replace machine evidence",
-        ));
-    }
     let mut candidate = crate::ClaimCandidate::new(
         PREDICATE_CALENDAR_EVENT_OUTCOME,
         ClaimSubject::Entity(event),
@@ -157,11 +152,28 @@ fn record_with(
     };
     let prior = live_outcome_heads_in(vault, wtxn, &event_ref)?;
     write(wtxn, &new_id, occurred)?;
+    if value.basis == EventOutcomeBasis::Machine
+        && let Some(answer) = current_head(&prior).filter(|head| head.is_owner_answer())
+    {
+        // The owner's answer stands (CAL-07-OUTCOME-CONFLICT = A): machine
+        // evidence that arrives after it is kept as history the answer
+        // supersedes, so it is never current — its validity window closes
+        // where it opens — and the outcome read shows it as disputing
+        // evidence when it disagrees. Every other head is left as it was.
+        vault.supersede_claim_in_txn_as(
+            wtxn,
+            &answer.claim_id,
+            &new_id,
+            value.recorded_at,
+            actor,
+        )?;
+        return Ok(new_id);
+    }
     for head in prior {
-        // Evidence can arrive out of order — CAL-08 will supersede an owner
-        // answer with a transcript observed during the meeting. The head it
-        // replaces still stops being current no earlier than it started, so
-        // the closure never writes an inverted validity window.
+        // Machine evidence can arrive out of order: a transcript observed
+        // during the meeting may be ingested after a later machine outcome.
+        // The head it replaces still stops being current no earlier than it
+        // started, so the closure never writes an inverted validity window.
         let closed_at = value.recorded_at.max(head.value.recorded_at);
         vault.supersede_claim_in_txn_as(wtxn, &new_id, &head.claim_id, closed_at, actor)?;
     }

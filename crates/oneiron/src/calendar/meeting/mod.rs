@@ -63,12 +63,15 @@ fn trace_event(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, event: EntityId) -> c
     Ok(())
 }
 
+/// The EVENT's check-in state, and whether the owner may answer it now: the
+/// grace has passed and [`outcome::check_in_accepts_answer_in_txn`] holds. The
+/// check-in is `due` when it may be answered and no outcome is recorded yet.
 fn due_in_txn(
     memory: &Memory<'_>,
     lane: &crate::claim::ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     event: EntityId,
-) -> crate::Result<CalendarCheckInDue> {
+) -> crate::Result<(CalendarCheckInDue, bool)> {
     let vault = memory.vault();
     trace_event(memory, txn, event)?;
     let observed_at = vault.instant_in_txn(txn)?.secs();
@@ -82,13 +85,14 @@ fn due_in_txn(
         due: false,
         outcome,
     };
+    let mut answerable = false;
     if let Some(meeting) = meeting_event_in_txn(vault, txn, lane, event)? {
         let signals = signals(&meeting);
         if outcome::is_meeting_class(signals) {
             let due_at = meeting.end_utc.saturating_add(grace_secs);
             result.due_at = Some(due_at);
-            result.due = observed_at >= due_at
-                && outcome::check_in_is_still_due_in_txn(
+            answerable = observed_at >= due_at
+                && outcome::check_in_accepts_answer_in_txn(
                     vault,
                     txn,
                     &DueOutcomeCheckIn {
@@ -102,9 +106,10 @@ fn due_in_txn(
                         signals,
                     },
                 )?;
+            result.due = answerable && result.outcome.is_none();
         }
     }
-    Ok(result)
+    Ok((result, answerable))
 }
 
 pub fn check_in_due(
@@ -119,7 +124,7 @@ pub fn check_in_due(
         if !facts::readable_event_in_txn(memory.vault(), txn, &lane, event)? {
             return Ok(None);
         }
-        Ok(Some(due_in_txn(memory, &lane, txn, event)?))
+        Ok(Some(due_in_txn(memory, &lane, txn, event)?.0))
     })
 }
 
@@ -137,11 +142,11 @@ pub fn check_in_answer(
                 "calendar EVENT is absent or withheld",
             ));
         }
-        let due = due_in_txn(memory, &lane, txn, event)?;
-        if !due.due {
-            return Err(MemoryError::bad_request(
-                "calendar check-in is not due or already has evidence",
-            ));
+        // A recorded outcome no longer closes the door: the owner's answer
+        // replaces any head (CAL-07-OUTCOME-CONFLICT = A).
+        let (due, answerable) = due_in_txn(memory, &lane, txn, event)?;
+        if !answerable {
+            return Err(MemoryError::bad_request("calendar check-in is not due"));
         }
         let answer = match input.answer {
             CalendarCheckInAnswer::Held => CheckInAnswer::Held,
@@ -252,6 +257,11 @@ impl Memory<'_> {
                     event_ref: event.to_hex(),
                     outcome: outcome::project_event_outcome(claim),
                     claim,
+                    disputing_machine_outcomes: outcome::disputing_machine_outcomes_in(
+                        self.vault(),
+                        txn,
+                        &event,
+                    )?,
                 }))
             },
         )?)

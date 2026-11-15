@@ -27,6 +27,11 @@ pub struct CalendarEventOutcome {
     pub event_ref: String,
     pub outcome: EventOutcome,
     pub claim: Option<EventOutcomeClaimValue>,
+    /// The machine outcomes that dispute the owner's current answer, oldest
+    /// first; left out when there is none (CAL-07-OUTCOME-CONFLICT = A: the
+    /// owner's answer stands, and disagreeing machine evidence is kept beside it).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disputing_machine_outcomes: Vec<EventOutcomeClaimValue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
