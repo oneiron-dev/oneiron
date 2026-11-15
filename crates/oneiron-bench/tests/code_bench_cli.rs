@@ -6,6 +6,9 @@
 //! the binary answers "unknown BEAM invocation" and exits non-zero.
 //!
 //! Each test builds a throwaway repository, so no test builds the engine.
+//! A loopback MCP stub stands in for a declared server: the pack probes
+//! every declared server with `tools/list` before a cell that needs it is
+//! ready, and allows each arm only the tools it lists by their exact names.
 //!
 //! `cargo test --locked -p oneiron-bench --test code_bench_cli`.
 #![allow(
@@ -14,6 +17,8 @@
 )]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::io::{BufRead as _, BufReader, Read as _, Write as _};
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -24,6 +29,13 @@ const FIXTURE: &str = concat!(
     "/fixtures/code_bench.tasks.v1.json"
 );
 const INTENT: &str = "Add the line `two` to src/lib.txt.";
+/// The token the MCP stub takes; the pack reads it from `TOKEN_ENV`.
+const STUB_TOKEN: &str = "code-bench-stub-token";
+const TOKEN_ENV: &str = "CODE_BENCH_TOKEN";
+/// Never set for the pack.
+const UNSET_TOKEN_ENV: &str = "CODE_BENCH_UNSET_TOKEN";
+/// Set to a token the stub refuses.
+const WRONG_TOKEN_ENV: &str = "CODE_BENCH_WRONG_TOKEN";
 
 struct World {
     dir: tempfile::TempDir,
@@ -156,10 +168,97 @@ fn pack(world: &World, manifest: &Path, out: &str, pieces: &Value) -> Output {
     let path = world.dir.path().join(format!("plan-{out}.json"));
     std::fs::write(&path, plan.to_string()).unwrap();
     isolated(env!("CARGO_BIN_EXE_oneiron-bench"))
+        .env(TOKEN_ENV, STUB_TOKEN)
+        .env(WRONG_TOKEN_ENV, "not-the-stub-token")
+        .env_remove(UNSET_TOKEN_ENV)
         .args(["beam", "code-bench-pack"])
         .arg(&path)
         .output()
         .expect("the bench binary runs")
+}
+
+/// A loopback MCP server for the pack's probe, listing `tools` to the
+/// bearer token `STUB_TOKEN` and answering 401 to any other. It answers
+/// `initialize`, accepts notifications, and runs until the test ends.
+fn mcp_stub(tools: &[&str]) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let tools: Vec<Value> = tools
+        .iter()
+        .map(|name| json!({"name": name, "inputSchema": {"type": "object"}}))
+        .collect();
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let _ = answer_mcp(stream, &tools);
+        }
+    });
+    url
+}
+
+/// One HTTP/1.1 request, one answer, then the connection closes.
+fn answer_mcp(mut stream: TcpStream, tools: &[Value]) -> std::io::Result<()> {
+    let mut reader = BufReader::new(stream.try_clone()?);
+    let (mut length, mut authorized) = (0, false);
+    loop {
+        let mut line = String::new();
+        reader.read_line(&mut line)?;
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        let (name, value) = line.split_once(':').unwrap_or((line, ""));
+        match name.to_ascii_lowercase().as_str() {
+            "content-length" => length = value.trim().parse().unwrap_or(0),
+            "authorization" => authorized = value.trim() == format!("Bearer {STUB_TOKEN}"),
+            _ => {}
+        }
+    }
+    let mut body = vec![0; length];
+    reader.read_exact(&mut body)?;
+    let request: Value = serde_json::from_slice(&body).unwrap_or(Value::Null);
+    let (status, reply) = if !authorized {
+        ("401 Unauthorized", String::new())
+    } else if request.get("id").is_none() {
+        ("202 Accepted", String::new())
+    } else {
+        let id = request["id"].clone();
+        let reply = match request["method"].as_str() {
+            Some("initialize") => json!({"jsonrpc": "2.0", "id": id, "result": {
+                "protocolVersion": "2025-06-18",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "code-bench-stub", "version": "1"},
+            }}),
+            Some("tools/list") => json!({"jsonrpc": "2.0", "id": id, "result": {"tools": tools}}),
+            _ => {
+                json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "no such method"}})
+            }
+        };
+        ("200 OK", reply.to_string())
+    };
+    write!(
+        stream,
+        "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{reply}",
+        reply.len()
+    )
+}
+
+/// A loopback URL nothing listens on.
+fn dead_url() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    format!("http://{}/mcp", listener.local_addr().unwrap())
+}
+
+fn read_json(path: &Path) -> Value {
+    serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap()
+}
+
+fn strings(value: &Value) -> Vec<&str> {
+    value
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap())
+        .collect()
 }
 
 fn index(output: &Output) -> Value {
@@ -318,16 +417,41 @@ fn a_ready_cell_hides_the_sealed_tests() {
     let mcp: Value = serde_json::from_slice(&std::fs::read(dir.join("mcp.json")).unwrap()).unwrap();
     assert_eq!(mcp, json!({"mcpServers": {}}));
 
-    let built = isolated("sh")
-        .arg(grep_only["world"].as_str().unwrap())
-        .output()
-        .unwrap();
+    // The pack built the world before any writer starts; no script in the
+    // cell names the source repository, and the sandbox must start and
+    // denies every read of it.
     assert!(
-        built.status.success(),
-        "{}",
-        String::from_utf8_lossy(&built.stderr)
+        !dir.join("world.sh").exists(),
+        "no world script in the cell"
     );
     let tree = dir.join("tree");
+    assert_eq!(PathBuf::from(grep_only["tree"].as_str().unwrap()), tree);
+    let source = std::fs::canonicalize(&world.repo).unwrap();
+    let source = source.to_str().unwrap();
+    for file in ["PROMPT.md", "mcp.json", "cell.json"] {
+        let text = std::fs::read_to_string(dir.join(file)).unwrap();
+        assert!(!text.contains(source), "{file} names the source repository");
+    }
+    let sandbox = &settings["sandbox"];
+    assert_eq!(sandbox["enabled"], true, "{settings:#}");
+    assert_eq!(sandbox["failIfUnavailable"], true, "{settings:#}");
+    assert_eq!(sandbox["allowUnsandboxedCommands"], false, "{settings:#}");
+    assert_eq!(strings(&sandbox["filesystem"]["denyRead"]), [source]);
+    let deny = strings(&settings["permissions"]["deny"]);
+    assert!(
+        deny.contains(&format!("Read(/{source}/**)").as_str()),
+        "{settings:#}"
+    );
+    assert!(
+        deny.contains(&format!("Edit(/{source}/**)").as_str()),
+        "{settings:#}"
+    );
+    let root = git_text(&tree, &["rev-parse", "HEAD"]);
+    assert_eq!(grep_only["world_root"], root.as_str());
+    assert_eq!(
+        read_json(&dir.join("cell.json"))["world_root"],
+        root.as_str()
+    );
     assert_eq!(
         std::fs::read_to_string(tree.join("src/lib.txt")).unwrap(),
         "one\n"
@@ -378,15 +502,6 @@ fn a_ready_cell_hides_the_sealed_tests() {
         writer_prompt.contains("writer `w2` of 3"),
         "{writer_prompt}"
     );
-    let shared = isolated("sh")
-        .arg(writer["world"].as_str().unwrap())
-        .output()
-        .unwrap();
-    assert!(
-        shared.status.success(),
-        "{}",
-        String::from_utf8_lossy(&shared.stderr)
-    );
     let arm = world
         .dir
         .path()
@@ -401,15 +516,23 @@ fn a_ready_cell_hides_the_sealed_tests() {
             .status
             .success()
     );
+    let writer_settings = read_json(&arm.join("w2/settings.json"));
+    let shared = std::fs::canonicalize(arm.join("repo")).unwrap();
+    assert!(
+        strings(&writer_settings["sandbox"]["filesystem"]["allowWrite"])
+            .contains(&shared.to_str().unwrap()),
+        "a writer's worktree commits land in the arm's shared repository: {writer_settings:#}"
+    );
 }
 
 #[test]
 fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
     let world = world();
     let manifest = manifest(&world, Some(INTENT), 9);
+    let url = mcp_stub(&["memory.recall"]);
     let vault = |seeded_through: &str, token_env: &str| {
         json!({"memory_vault": {
-            "url": "http://127.0.0.1:9/mcp",
+            "url": url,
             "token_env": token_env,
             "seeded_through": seeded_through,
         }})
@@ -419,7 +542,7 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
         &world,
         &manifest,
         "late",
-        &vault("2026-11-11T00:00:00+09:00", "CODE_BENCH_VAULT_TOKEN"),
+        &vault("2026-11-11T00:00:00+09:00", TOKEN_ENV),
     ));
     let cell_late = cell(&late, "memory/alpha/vault_memory");
     assert_eq!(cell_late["ready"], false);
@@ -433,7 +556,7 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
         &world,
         &manifest,
         "early",
-        &vault("2026-11-09T23:59:59+09:00", "CODE_BENCH_VAULT_TOKEN"),
+        &vault("2026-11-09T23:59:59+09:00", TOKEN_ENV),
     ));
     let cell_early = cell(&early, "memory/alpha/vault_memory");
     assert_eq!(cell_early["ready"], true, "{cell_early:#}");
@@ -443,8 +566,8 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
         mcp["mcpServers"]["oneiron-memory"],
         json!({
             "type": "http",
-            "url": "http://127.0.0.1:9/mcp",
-            "headers": {"Authorization": "Bearer ${CODE_BENCH_VAULT_TOKEN}"},
+            "url": url,
+            "headers": {"Authorization": "Bearer ${CODE_BENCH_TOKEN}"},
         })
     );
 
@@ -457,4 +580,102 @@ fn a_memory_vault_seeded_after_the_cut_is_not_ready() {
     assert!(!refused.status.success());
     let stderr = String::from_utf8_lossy(&refused.stderr);
     assert!(stderr.contains("memory_vault.token_env"), "{stderr}");
+}
+
+/// Canon: "A missing piece marks that arm not ready; nothing is faked." A
+/// declared server that does not answer, refuses the token, or lists none
+/// of the arm's tools is not a ready piece.
+#[test]
+fn a_declared_server_that_does_not_answer_is_not_ready() {
+    let world = world();
+    let manifest = manifest(&world, Some(INTENT), 9);
+    let vault = |url: &str, token_env: &str| {
+        json!({"memory_vault": {
+            "url": url,
+            "token_env": token_env,
+            "seeded_through": "2026-11-09T00:00:00+09:00",
+        }})
+    };
+    let memory = mcp_stub(&["memory.recall", "self.memory.read"]);
+    let other = mcp_stub(&["vault.code.checkout.claim"]);
+    let cases = [
+        (
+            "dead",
+            vault(&dead_url(), TOKEN_ENV),
+            "did not answer initialize",
+        ),
+        ("unset", vault(&memory, UNSET_TOKEN_ENV), "is not set"),
+        (
+            "wrong",
+            vault(&memory, WRONG_TOKEN_ENV),
+            "answered HTTP 401",
+        ),
+        (
+            "other",
+            vault(&other, TOKEN_ENV),
+            "lists none of the tools of arm vault_memory",
+        ),
+    ];
+    for (out, pieces, reason) in cases {
+        let index = index(&pack(&world, &manifest, out, &pieces));
+        let cell = cell(&index, "memory/alpha/vault_memory");
+        assert_eq!(cell["ready"], false, "{out}: {cell:#}");
+        assert_eq!(gaps(cell), ["memory_vault"], "{out}: {cell:#}");
+        assert!(reasons(cell).contains(reason), "{out}: {cell:#}");
+        assert!(
+            !reasons(cell).contains(STUB_TOKEN),
+            "{out}: a reason never holds the token"
+        );
+        assert!(cell["dir"].is_null(), "{out}: {cell:#}");
+    }
+}
+
+/// The arm's settings allow each tool its server listed that the arm
+/// admits, by its exact name, never the whole server.
+#[test]
+fn a_ready_arm_may_call_only_its_listed_tools() {
+    let world = world();
+    let url = mcp_stub(&[
+        "memory.recall",
+        "self.memory.read",
+        "vault.code.checkout.claim",
+    ]);
+    let index = index(&pack(
+        &world,
+        &manifest(&world, Some(INTENT), 9),
+        "out",
+        &json!({"memory_vault": {
+            "url": url,
+            "token_env": TOKEN_ENV,
+            "seeded_through": "2026-11-09T00:00:00+09:00",
+        }}),
+    ));
+
+    let vault = cell(&index, "memory/alpha/vault_memory");
+    assert_eq!(vault["ready"], true, "{vault:#}");
+    let settings = read_json(&PathBuf::from(vault["dir"].as_str().unwrap()).join("settings.json"));
+    let allow = strings(&settings["permissions"]["allow"]);
+    for tool in [
+        "mcp__oneiron-memory__memory.recall",
+        "mcp__oneiron-memory__memory_recall",
+        "mcp__oneiron-memory__self.memory.read",
+        "mcp__oneiron-memory__self_memory_read",
+    ] {
+        assert!(allow.contains(&tool), "{tool} missing: {settings:#}");
+    }
+    assert!(
+        allow
+            .iter()
+            .all(|tool| *tool != "mcp__oneiron-memory" && !tool.contains("checkout")),
+        "{settings:#}"
+    );
+    let no_memory = cell(&index, "memory/alpha/no_memory");
+    let settings =
+        read_json(&PathBuf::from(no_memory["dir"].as_str().unwrap()).join("settings.json"));
+    assert!(
+        strings(&settings["permissions"]["allow"])
+            .iter()
+            .all(|tool| !tool.starts_with("mcp__")),
+        "{settings:#}"
+    );
 }
