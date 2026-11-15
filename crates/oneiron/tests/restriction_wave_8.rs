@@ -52,8 +52,12 @@ const SESSIONS_KEY: &str = "claim.observed_preference.min_sessions";
 
 /// The owner's change of `key` at the vault scope, as the Setting door answers it.
 fn owner_sets(vault: &Vault, key: &str, value: Value) -> oneiron::Result<SetSettingOutcome> {
-    let actor = vault.ensure_embedded_owner_actor()?;
-    let owner = vault.authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())?;
+    let actor = vault
+        .ensure_embedded_owner_actor()
+        .expect("FIXTURE: the embedded owner");
+    let owner = vault
+        .authenticate_owner(actor, &actor.to_hex(), true, GateDecisionId::now())
+        .expect("FIXTURE: the owner's proof");
     vault.set_setting(
         SettingCaller::Owner(&owner),
         SetSetting::vault_value(key, value),
