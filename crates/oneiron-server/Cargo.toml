@@ -336,6 +336,12 @@ name = "oauth_named_client_acceptance"
 path = "tests/oauth_named_client_acceptance.rs"
 required-features = ["oneiron/test-support"]
 
+# The fan-out doors (spawn, launch, slots, resume, resume_as, ack) root on a `MemoryKeystore`.
+[[test]]
+name = "vault_fanout_doors"
+path = "tests/vault_fanout_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"
