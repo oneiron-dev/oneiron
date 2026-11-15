@@ -573,9 +573,6 @@ pub(crate) fn sign_root_project(
     }
     let issuer = vault.bootstrap_host_slip_issuer()?;
     vault.ensure_host_root_slip(&issuer)?;
-    // The root adopts the task facts written before it (pass 28 R5). Before the owner's
-    // signature: a failure leaves the root project unsigned, so the next start adopts again.
-    vault.adopt_unsigned_task_facts()?;
     let owner = crate::owner::local_owner(vault)?;
     vault.sign_owner_project(&owner, &vault.owner_project_signer(&issuer)?, root)?;
     tracing::info!("the root project took the owner's first signature");
