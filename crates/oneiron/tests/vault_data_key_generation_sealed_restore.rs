@@ -56,9 +56,13 @@ fn a_copy_restored_beside_after_an_uncommitted_act_reopens_under_its_own_mirror(
     vault
         .snapshot_checkpoint(&checkpoint, 100)
         .expect("seal a checkpoint on the committed generation");
+    let signer = vault
+        .checkpoint_signer()
+        .expect("the vault's checkpoint signer");
     drop(vault);
     let key = CheckpointKey::unlock(&checkpoint, &VaultKeyUnlock::Device(keystore.as_ref()))
-        .expect("this install's device wrap opens the checkpoint");
+        .expect("this install's device wrap opens the checkpoint")
+        .trusting(vec![signer]);
 
     let copy = directory.path().join("copy");
     let mut beside = VaultConfig::device();

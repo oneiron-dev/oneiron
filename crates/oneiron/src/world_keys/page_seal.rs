@@ -138,6 +138,17 @@ fn carried_in_seal_chain(carried: &CarriedVaultKey, seal: &VaultPageSeal) -> boo
             .any(|link| held.contains(&link.previous))
 }
 
+/// Whether `carried` holds exactly `links`, the vault's own chain, envelope
+/// for envelope: a chain cut short or swapped reaches no earlier key.
+fn carries_links(carried: &CarriedVaultKey, links: &[KeyHeaderLink]) -> bool {
+    carried.links().len() == links.len()
+        && carried.links().iter().zip(links).all(|(held, own)| {
+            held.generation == own.generation
+                && held.previous == own.previous
+                && held.envelope == own.envelope
+        })
+}
+
 /// The data key an artifact's carried wrap opened to, kept for a sealed vault
 /// restored from it: opaque, never handed out as bytes, and wiped when the
 /// last holder drops.
@@ -747,7 +758,8 @@ impl Vault {
     /// Checks that this vault opens again, as a host asks before it calls a
     /// new sealed vault ready. A plain vault does. A sealed one needs a wrap,
     /// and a mirror that reads back as this vault's and carries one of the
-    /// wraps the vault holds, envelope for envelope. One under a delivered
+    /// wraps the vault holds, envelope for envelope, and the vault's own key
+    /// chain down to the key its pages are sealed under. One under a delivered
     /// key needs only the mirror, naming that key: its supervisor delivers
     /// the key at every start. A new vault that passes has finished its
     /// creation, and its creation record goes (FIX 1942).
@@ -786,21 +798,28 @@ impl Vault {
         // The mirror's header must name the key the vault's state commits,
         // as its own or, while an act's rewrite pends, as the generation it
         // staged, and carry a wrap the vault holds. A link naming a key the
-        // seal holds proves nothing here: anyone can write that name.
-        let committed = match &resting {
-            Some(resting) => *resting.commitment(),
-            None => seal.data_key().commitment(&seal.vault_id()),
+        // seal holds proves nothing alone: anyone can write that name. So
+        // the header carries the vault's own links, envelope for envelope,
+        // and they reach a key the seal holds: the next unlock walks from
+        // the header's key back to the one the pages are sealed under.
+        let (committed, links) = match &resting {
+            Some(resting) => (*resting.commitment(), resting.links()),
+            None => (seal.data_key().commitment(&seal.vault_id()), &[][..]),
         };
         let header = std::iter::once(&mirror.carried)
             .chain(mirror.next_generation.as_ref())
-            .find(|header| *header.commitment() == committed);
+            .find(|header| {
+                *header.commitment() == committed
+                    && carries_links(header, links)
+                    && carried_in_seal_chain(header, seal)
+            });
         let carries_held = match header {
             Some(header) => delivered || self.holds_any_wrap(&header.digests())?,
             None => false,
         };
         if !carries_held {
             return Err(refused(
-                "the page-seal mirror carries none of this vault's wraps",
+                "the page-seal mirror carries none of this vault's wraps with its key chain",
             ));
         }
         finish_creation(self.store.env.path(), seal)

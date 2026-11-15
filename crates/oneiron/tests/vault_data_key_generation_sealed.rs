@@ -259,3 +259,59 @@ fn an_act_whose_mirror_rewrite_never_ran_opens_on_the_new_generation() {
         "the vault opens on the generation it committed"
     );
 }
+
+#[test]
+fn a_mirror_whose_key_chain_is_cut_is_not_ready() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let path = directory.path().join("vault");
+    let (vault, _keystore) = sealed_vault(&path);
+    device_wrap(&vault);
+    let owner_proof = owner(&vault).expect("owner proof");
+    vault
+        .start_data_key_generation_as(
+            &ActAuthority::Owner(owner_proof, ActSurface::ThisInstall),
+            DataKeyGenerationCause::OwnerRequest,
+            &DataKeyGenerationWays {
+                password: None,
+                passkeys: Vec::new(),
+                escrows: Vec::new(),
+                confirmed_removals: BTreeSet::new(),
+            },
+        )
+        .expect("the owner starts a new generation");
+    vault
+        .check_page_custody()
+        .expect("the rewritten mirror carries the new key and its link");
+
+    // The new key's header with its link cut, replaced whole: an unlock of
+    // it reaches the new key but not the one the pages are sealed under.
+    let mirror_path = page_seal_custody_path(&path).expect("the mirror's path");
+    let raw = std::fs::read(&mirror_path).expect("read the mirror");
+    let mut mirror: serde_json::Value = serde_json::from_slice(&raw).expect("the mirror is JSON");
+    let header = mirror
+        .get_mut("carried")
+        .and_then(serde_json::Value::as_object_mut)
+        .expect("the mirror's key header");
+    assert!(
+        header.remove("links").is_some(),
+        "the header carries the new generation's link"
+    );
+    let cut = directory.path().join("mirror-cut");
+    std::fs::write(
+        &cut,
+        serde_json::to_vec(&mirror).expect("encode the mirror"),
+    )
+    .expect("write the cut mirror");
+    std::fs::rename(&cut, &mirror_path).expect("replace the mirror");
+
+    let Err(error) = vault.check_page_custody() else {
+        panic!("a mirror whose key chain is cut must not pass the ready check");
+    };
+    assert!(
+        matches!(
+            error,
+            Error::Secret(SecretError::WorldKeyRefused(reason)) if reason.contains("key chain")
+        ),
+        "the ready check refuses the cut chain: {error}"
+    );
+}
