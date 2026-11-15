@@ -13,6 +13,7 @@
 //! transaction, from that word's option alone; a replay never resolves
 //! again. Other asks are unchanged.
 
+use super::ask_guard::AskedParty;
 use super::ask_record::{self, AskGroup};
 use super::ask_types::{
     TaskAskDecision, TaskAskEvidenceReason, TaskAskResult, TaskAskSettlementReason, TaskAskSource,
@@ -36,10 +37,6 @@ fn attendee_intent(group: &AskGroup) -> Option<&str> {
         .intent_key
         .strip_prefix(PREDICATE_DISCLOSURE_ATTENDEE_ASK)?
         .strip_prefix('/')
-}
-
-fn owner_not_authenticated(reason: &'static str) -> Error {
-    Error::Gate(GateError::ConsentOwnerNotAuthenticated(reason))
 }
 
 /// The candidates the attendee ask CLAIM `ask_ref` froze, once the ask that
@@ -105,26 +102,29 @@ fn frozen_candidates_in(
         .collect()
 }
 
-/// Refuses a word on an attendee ask unless it is the owner's own act; any
-/// other ask passes untouched. Runs in shared word admission, before the
-/// word is recorded, for `tasks_answer`, a consult answer and a redeemed
-/// option link alike.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one admission check over the word, its writer and the owner proof"
-)]
-pub(super) fn guard_word(
+/// Who an attendee ask asks: any live owner of this vault; `None` for every
+/// other ask ([`super::ask_guard`]).
+pub(super) fn asked_in(
+    _vault: &Vault,
+    _txn: &heed::RoTxn<'_>,
+    _id: EntityId,
+    group: &AskGroup,
+) -> Result<Option<AskedParty>> {
+    Ok(attendee_intent(group).map(|_| AskedParty::VaultOwner))
+}
+
+/// [`asked_in`], once `word` names one option the ask CLAIM froze, in its
+/// canonical form; a word that names none is refused. Shared word admission
+/// then asks the owner's own proof of it ([`super::ask_guard`]).
+pub(super) fn offered_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    id: EntityId,
+    _id: EntityId,
     group: &AskGroup,
-    source: TaskAskSource,
-    actor: EntityId,
     word: &TaskAskWord,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<()> {
+) -> Result<Option<AskedParty>> {
     let Some(hex) = attendee_intent(group) else {
-        return Ok(());
+        return Ok(None);
     };
     let ask_ref = EntityId::from_hex(hex).map_err(|_| ask_record::invalid())?;
     if ask_ref.to_hex() != hex {
@@ -143,52 +143,7 @@ pub(super) fn guard_word(
     {
         return Err(ask_record::invalid());
     }
-    // Only the admission node settles the ask, so a word anywhere else
-    // could never settle under the proof that admitted it.
-    if !ask_record::owns_revision(vault, txn, id, group)? {
-        return Err(owner_not_authenticated(
-            "an attendee answer is given on the node that admitted the ask",
-        ));
-    }
-    let Some(owner) = owner else {
-        return Err(owner_not_authenticated(
-            "an attendee answer needs the owner's own authenticated word",
-        ));
-    };
-    if source != TaskAskSource::Human || owner.revalidate_in_txn(vault, txn)? != actor {
-        return Err(owner_not_authenticated(
-            "an attendee answer is the authenticated owner's own word",
-        ));
-    }
-    Ok(())
-}
-
-/// Whether settlement may cut `group` for `reason` with `decision` under
-/// `owner`. An attendee ask's first word decides an identity only under the
-/// live proof of the owner who gave it; without that proof the ask stays
-/// open, and only its deadline or staleness closes it, on the hold default.
-pub(super) fn may_cut(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    group: &AskGroup,
-    reason: TaskAskSettlementReason,
-    decision: &TaskAskDecision,
-    owner: Option<&AuthenticatedOwner>,
-) -> Result<bool> {
-    if matches!(
-        reason,
-        TaskAskSettlementReason::Deadline | TaskAskSettlementReason::Stale
-    ) || attendee_intent(group).is_none()
-    {
-        return Ok(true);
-    }
-    let TaskAskDecision::First(answer) = decision else {
-        return Ok(true);
-    };
-    match owner {
-        Some(owner) => Ok(owner.revalidate_in_txn(vault, txn)? == answer.actor_ref),
-        None => Ok(false),
-    }
+    Ok(Some(AskedParty::VaultOwner))
 }
 
 /// Resolves the speaker's identity from the word `result` selected, in the
