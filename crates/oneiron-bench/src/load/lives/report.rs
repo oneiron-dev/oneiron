@@ -9,6 +9,7 @@ use serde_json::Value;
 
 use super::super::report::Host;
 use super::super::stats::{Sample, Summary};
+use super::answer::Pins;
 use super::corpus::{Life, Question, Set};
 use super::score;
 
@@ -21,6 +22,8 @@ pub(super) struct Report {
     pub(super) server: Server,
     /// The flags, by name; `--server-env` values are never echoed.
     pub(super) plan: Value,
+    /// The reader's and the judge's pins, when the run judged its answers.
+    pub(super) judged: Option<Pins>,
     pub(super) corpus: CorpusInfo,
     pub(super) systems: Vec<System>,
 }
@@ -115,6 +118,17 @@ pub(super) struct Row {
     pub(super) evidence_rank: Option<usize>,
     pub(super) evidence_turn: Option<String>,
     pub(super) texts_digest: String,
+    /// Judged runs only (`--reader`, `--judge`): what the reader answered
+    /// from this row's returned texts.
+    pub(super) reader_answer: Option<String>,
+    /// Judged runs only: the judged answer is correct (every type; an
+    /// unanswerable question is correct when the reader abstains).
+    pub(super) answer_correct: Option<bool>,
+    /// Judged runs only: why the reader or the judge gave no grade.
+    pub(super) answer_error: Option<String>,
+    /// The returned texts, kept until the row is judged; never reported.
+    #[serde(skip)]
+    pub(super) texts: Vec<Vec<String>>,
 }
 
 /// What one system answered to one question.
@@ -161,6 +175,19 @@ impl Row {
             evidence_rank: scored.as_ref().and_then(|s| s.evidence_rank),
             evidence_turn: scored.and_then(|s| s.evidence_turn),
             texts_digest: score::texts_digest(&answer.items),
+            reader_answer: None,
+            answer_correct: None,
+            answer_error: None,
+            texts: answer.items,
+        }
+    }
+}
+
+impl System {
+    /// Lets go of the rows' returned texts when no judge reads them.
+    pub(super) fn release_texts(&mut self) {
+        for row in &mut self.rows {
+            row.texts = Vec::new();
         }
     }
 }
@@ -183,9 +210,42 @@ impl Tally {
     }
 }
 
+/// Judged rows and the correct ones, for one slice.
+#[derive(Default, Serialize)]
+pub(super) struct Judged {
+    pub(super) judged: usize,
+    pub(super) correct: usize,
+}
+
+impl Judged {
+    fn add(&mut self, row: &Row) {
+        if let Some(correct) = row.answer_correct {
+            self.judged += 1;
+            self.correct += usize::from(correct);
+        }
+    }
+}
+
+/// One grade's judged column (ASK L9-36-ACCURACY = C, its second column).
+#[derive(Serialize)]
+pub(super) struct JudgedSummary {
+    pub(super) judged: usize,
+    pub(super) correct: usize,
+    pub(super) accuracy: Option<f64>,
+    /// Rows the reader or the judge gave no grade: not counted.
+    pub(super) model_errors: usize,
+    pub(super) by_type: BTreeMap<String, Judged>,
+    pub(super) by_set: BTreeMap<String, Judged>,
+}
+
 #[derive(Serialize)]
 pub(super) struct GradeSummary {
     pub(super) grade: String,
+    /// The column the grade leads with: `answer_correct` (judged) when the
+    /// run judged its answers, else `answer_in_context` (ASK
+    /// L9-36-ACCURACY = C), with that column's rate.
+    pub(super) headline: &'static str,
+    pub(super) headline_rate: Option<f64>,
     pub(super) rows: usize,
     pub(super) errors: usize,
     pub(super) scored: usize,
@@ -196,6 +256,8 @@ pub(super) struct GradeSummary {
     pub(super) evidence_hit_rate: Option<f64>,
     pub(super) by_type: BTreeMap<String, Tally>,
     pub(super) by_set: BTreeMap<String, Tally>,
+    /// Judged runs only.
+    pub(super) judged: Option<JudgedSummary>,
     /// Over every row of the grade, with canon's corpus-size floor
     /// (ARCH-0042 #speedup-integrity-h: no latency below 1,000 documents).
     pub(super) latency: Summary,
@@ -257,6 +319,8 @@ pub(super) fn summarize(
                 .collect::<Vec<_>>();
             GradeSummary {
                 grade: grade.clone(),
+                headline: "answer_in_context",
+                headline_rate: rate(all.answer_in_context, all.scored),
                 rows: of_grade.len(),
                 errors: of_grade.iter().filter(|r| r.error.is_some()).count(),
                 scored: all.scored,
@@ -266,10 +330,38 @@ pub(super) fn summarize(
                 evidence_hit_rate: rate(all.evidence_hit, all.scored),
                 by_type,
                 by_set,
+                judged: None,
                 latency: Summary::of(&samples, seconds.get(grade).copied().unwrap_or(0.0))
                     .below_corpus_floor(documents),
                 system_latency: system_latency(&of_grade, documents),
             }
         })
         .collect()
+}
+
+/// Adds the judged column to every grade summary of `system`, and makes it
+/// the headline.
+pub(super) fn add_judged(system: &mut System) {
+    for summary in &mut system.summary {
+        let mut all = Judged::default();
+        let mut by_type = BTreeMap::<String, Judged>::new();
+        let mut by_set = BTreeMap::<String, Judged>::new();
+        let mut model_errors = 0;
+        for row in system.rows.iter().filter(|r| r.grade == summary.grade) {
+            all.add(row);
+            by_type.entry(row.kind.clone()).or_default().add(row);
+            by_set.entry(row.set.to_owned()).or_default().add(row);
+            model_errors += usize::from(row.answer_error.is_some());
+        }
+        summary.headline = "answer_correct";
+        summary.headline_rate = rate(all.correct, all.judged);
+        summary.judged = Some(JudgedSummary {
+            judged: all.judged,
+            correct: all.correct,
+            accuracy: rate(all.correct, all.judged),
+            model_errors,
+            by_type,
+            by_set,
+        });
+    }
 }

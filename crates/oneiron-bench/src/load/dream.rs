@@ -29,7 +29,8 @@ mod cycle;
 mod proof;
 mod report;
 mod server_log;
-mod setup;
+// `lives` reads its model key and checks its models as `load dream` does.
+pub(super) mod setup;
 mod turns;
 
 use std::io::Write as _;

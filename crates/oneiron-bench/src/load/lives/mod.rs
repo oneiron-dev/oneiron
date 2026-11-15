@@ -6,12 +6,15 @@
 //! screen's lives, and the seeded pick grows to at least 1,000 turns so the
 //! latency clears canon's corpus floor (L9-36-STORE = B); the accuracy column
 //! here is context accuracy, with no model (L9-36-ACCURACY = C, its first
-//! column). The Oneiron store always runs first; every other system plugs in
-//! through one adapter protocol, `--system <name>=<url>` (L9-36-COMPETITORS
-//! = A: the seam here, each competitor's adapter its own row).
+//! column); `--reader` and `--judge` add a judged-answer column beside it,
+//! which then leads (its second column). The Oneiron store always runs
+//! first; every other system plugs in through one adapter protocol,
+//! `--system <name>=<url>` (L9-36-COMPETITORS = A: the seam here, each
+//! competitor's adapter its own row).
 //!
 //! The lives stay outside the repository: pass their files or directories.
 
+mod answer;
 mod corpus;
 mod external;
 mod oneiron;
@@ -26,8 +29,8 @@ use serde_json::json;
 
 use super::phases::loadavg;
 use super::server::Embedding;
-use corpus::Pick;
-use report::{CorpusInfo, FileDigest, LifeInfo, Report};
+use corpus::{Life, Pick};
+use report::{CorpusInfo, FileDigest, LifeInfo, Report, System};
 
 const USAGE: &str = "usage: oneiron-bench load lives (--server <oneiron-server> --embedder <embedder> | --in-process)\n\
   --lives <file|dir>... --work <dir> --out <file.json> [--label TEXT]\n\
@@ -35,6 +38,7 @@ const USAGE: &str = "usage: oneiron-bench load lives (--server <oneiron-server> 
   [--grades call,light,medium] [--limit 10] [--settle-max-seconds 300]\n\
   [--drain-settle-seconds 35] [--embedder-api-key-env NAME] [--server-env KEY=VALUE]...\n\
   [--system <name>=<adapter-url>]...\n\
+  [--reader <base-url>,<model> --judge <base-url>,<model> --model-key-file <path>]\n\
   <embedder>: none | local | endpoint=<url>,<model-key>,<model-id@revision>,<dimensions>";
 
 const LINUX_ONLY: &str = "load lives --server reads the server's /proc files: run it on Linux, or check the harness with --in-process";
@@ -62,6 +66,8 @@ pub(super) struct Plan {
     pub(super) server_env: Vec<(String, String)>,
     /// The other systems, each behind its adapter, run after Oneiron.
     systems: Vec<external::External>,
+    /// The reader and the judge of the judged column, when named.
+    judging: Option<answer::Judging>,
 }
 
 /// `--embedder`'s value, with `--embedder-api-key-env`'s NAME.
@@ -115,6 +121,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
     let mut drain_settle = Duration::from_secs(35);
     let mut server_env = Vec::new();
     let mut systems = Vec::<external::External>::new();
+    let (mut reader, mut judge, mut key_file) = (None, None, None);
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         if flag == "--in-process" {
@@ -153,6 +160,9 @@ fn parse(args: &[String]) -> Result<Plan, String> {
                 let (k, v) = value.split_once('=').ok_or("--server-env is KEY=VALUE")?;
                 server_env.push((k.to_owned(), v.to_owned()));
             }
+            "--reader" => reader = Some(answer::endpoint(flag, value)?),
+            "--judge" => judge = Some(answer::endpoint(flag, value)?),
+            "--model-key-file" => key_file = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown flag {flag}")),
         }
     }
@@ -190,6 +200,21 @@ fn parse(args: &[String]) -> Result<Plan, String> {
     if grades.iter().any(String::is_empty) {
         return Err("--grades has an empty grade".into());
     }
+    let judging = match (reader, judge, key_file) {
+        (None, None, None) => None,
+        (Some(reader), Some(judge), Some(key_file)) => Some(answer::Judging {
+            reader,
+            judge,
+            key_file,
+        }),
+        (Some(_), Some(_), None) => {
+            return Err("--reader and --judge need --model-key-file <path> (their key)".into());
+        }
+        (None, None, Some(_)) => {
+            return Err("--model-key-file goes with --reader and --judge".into());
+        }
+        _ => return Err("--reader and --judge go together".into()),
+    };
     Ok(Plan {
         mode,
         lives,
@@ -203,6 +228,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         drain_settle,
         server_env,
         systems,
+        judging,
     })
 }
 
@@ -252,16 +278,27 @@ fn plan_echo(plan: &Plan) -> serde_json::Value {
     })
 }
 
+/// Judges `system`'s rows when the run names a reader and a judge; the
+/// returned texts are let go either way.
+fn finish(judge: Option<&answer::Judge>, lives: &[Life], system: &mut System) {
+    match judge {
+        Some(judge) => judge.judge(lives, system),
+        None => system.release_texts(),
+    }
+}
+
 fn write(plan: &Plan, report: &Report) -> Result<(), String> {
     let text = serde_json::to_string_pretty(report).map_err(|e| e.to_string())?;
     std::fs::write(&plan.out, text).map_err(|e| format!("{}: {e}", plan.out.display()))
 }
 
 pub(super) fn run(args: &[String]) -> Result<(), String> {
-    let plan = parse(args)?;
+    let mut plan = parse(args)?;
     if matches!(plan.mode, Mode::Spawned { .. }) && !cfg!(target_os = "linux") {
         return Err(LINUX_ONLY.into());
     }
+    // The key and both models are checked before any store is opened.
+    let judge = plan.judging.take().map(answer::Judge::start).transpose()?;
     let started_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -274,7 +311,8 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         lives.len(),
         corpus.files.len()
     ));
-    let (server, system) = oneiron::measure(&plan, &lives)?;
+    let (server, mut system) = oneiron::measure(&plan, &lives)?;
+    finish(judge.as_ref(), &lives, &mut system);
     host.load_end = loadavg();
     let mut report = Report {
         bench: "oneiron-bench lives v1",
@@ -283,6 +321,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         host,
         server,
         plan: plan_echo(&plan),
+        judged: judge.as_ref().map(answer::Judge::pins),
         corpus: CorpusInfo {
             files: corpus
                 .files
@@ -317,9 +356,9 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     }
     let store = format!("lives-v1-{}", &picked.finalize().to_hex()[..16]);
     for system in &plan.systems {
-        report
-            .systems
-            .push(external::measure(&plan, system, &lives, &store));
+        let mut measured = external::measure(&plan, system, &lives, &store);
+        finish(judge.as_ref(), &lives, &mut measured);
+        report.systems.push(measured);
         report.host.load_end = loadavg();
         write(&plan, &report)?;
     }

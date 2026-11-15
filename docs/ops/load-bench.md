@@ -193,6 +193,27 @@ $B/oneiron-bench load lives --server $B/oneiron-server --embedder none \
   `evidence_rank`: the rank of the first item holding a gold evidence turn's
   whole text (`d2s1t04:L02` names turn `d2s1t04`); a text the system cut short
   holds the turn when its 32 or more characters lie inside it.
+- **Judged answers** (`--reader <base-url>,<model> --judge <base-url>,<model>
+  --model-key-file <path>`, all three or none). Two OpenAI-compatible
+  endpoints, each base URL ending where `/chat/completions` follows (usually
+  in `/v1`), with one key read from the file as `load dream` reads it; the key
+  goes to those endpoints only. Use non-thinking chat models on our own GPUs
+  (the ruling: home 4090s, no cash). Before any store opens, each endpoint
+  must answer a preflight as its model. After a system has answered every
+  question, the reader answers each row from that row's returned items
+  (numbered in rank order) at temperature 0, replying `unknown` when they do
+  not hold the answer, and the judge grades the answer against the gold
+  `answer` as `correct` or `incorrect`. Every type is judged:
+  `unanswerable` is correct when the reader abstains, an abstention on any
+  other type is incorrect without a judge call, and a failed recall is
+  incorrect. Rows gain `reader_answer`, `answer_correct` and, when a model
+  call failed, `answer_error` (those rows are not counted). Each grade summary
+  gains `judged` (count, correct, accuracy, model errors, by type and set),
+  and its `headline` becomes `answer_correct` (else `answer_in_context`), with
+  `headline_rate`. The report's `judged` pins each model: base URL, model,
+  the model the preflight answered as, the sha256 of its instruction (sent
+  byte for byte as the system message), temperature and max tokens. Each
+  judged run gets a lab-ledger row.
 - **Latency.** `ms` is the client round trip on loopback. Each grade's summary
   applies canon's floor: below 1,000 documents its latency reads
   `not_measured` (`corpus_below_1000_documents`) instead of a number.
