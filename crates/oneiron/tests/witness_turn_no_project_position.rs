@@ -61,6 +61,52 @@ fn turn_with_project(conversation: &str, content: &str, project: EntityId) -> Wi
     }
 }
 
+/// One visible user MESSAGE of `content` at `order`, with the caller-fixed
+/// conversation, TURN and MESSAGE ids an exact retry or an append names:
+/// the same `turn` in a later call appends to the TURN the first call
+/// minted, and the same `message` with the same body is an exact retry.
+fn fixed_turn(
+    conversation: &str,
+    content: &str,
+    turn: EntityId,
+    message: EntityId,
+    order: u32,
+) -> WitnessTurn {
+    let value = json!({
+        "conversation_ref": conversation,
+        "turn_ref": turn.to_hex(),
+        "messages": [{
+            "id": message.to_hex(),
+            "author": "user",
+            "message_type": "dialogue",
+            "content": content,
+            "is_visible": true,
+            "order": order,
+        }],
+        "occurred_at": 900,
+    });
+    serde_json::from_value(value).expect("the fixed witness turn shape decodes")
+}
+
+/// [`fixed_turn`] plus the row's optional project, attached on the wire as
+/// [`turn_with_project`] attaches it.
+fn fixed_turn_with_project(
+    conversation: &str,
+    content: &str,
+    turn: EntityId,
+    message: EntityId,
+    order: u32,
+    project: EntityId,
+) -> WitnessTurn {
+    let turn = fixed_turn(conversation, content, turn, message, order);
+    let mut value = serde_json::to_value(&turn).expect("a witness turn serializes");
+    value["project"] = json!(project.to_hex());
+    match serde_json::from_value::<WitnessTurn>(value) {
+        Ok(turn) => turn,
+        Err(error) => panic!("vault.witness turns carry an optional project: {error}"),
+    }
+}
+
 /// The MESSAGE the witness wrote, as its stamped row.
 fn first_message(receipt: &WitnessReceipt) -> EntityId {
     let message = receipt
@@ -321,4 +367,250 @@ fn off_record_session_witness_with_project_is_refused() {
         )
         .expect_err("a session witness takes no project");
     assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
+}
+
+#[test]
+fn exact_retry_of_a_default_born_turn_with_a_project_is_refused() {
+    let (_dir, vault, owner) = owner_vault();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let conversation = EntityId::now().to_hex();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let project = EntityId::now();
+
+    let receipt = memory
+        .witness(&fixed_turn(
+            &conversation,
+            "the lease ends in March",
+            turn,
+            message,
+            0,
+        ))
+        .expect("the default-born turn lands");
+    assert_eq!(receipt.turn_id, turn);
+
+    let error = memory
+        .witness(&fixed_turn_with_project(
+            &conversation,
+            "the lease ends in March",
+            turn,
+            message,
+            0,
+            project,
+        ))
+        .expect_err("an exact retry cannot adopt a default-born turn into a project");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        stamped_project(&vault, turn).expect("the turn stamp reads"),
+        Some(default_project_id()),
+        "the refused retry moved the TURN out of the default project"
+    );
+    assert_eq!(
+        stamped_project(&vault, message).expect("the message stamp reads"),
+        Some(default_project_id()),
+        "the refused retry moved the MESSAGE out of the default project"
+    );
+}
+
+#[test]
+fn append_with_a_project_to_a_default_born_turn_is_refused() {
+    let (_dir, vault, owner) = owner_vault();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let conversation = EntityId::now().to_hex();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let appended = EntityId::now();
+    let project = EntityId::now();
+
+    memory
+        .witness(&fixed_turn(
+            &conversation,
+            "the lease ends in March",
+            turn,
+            message,
+            0,
+        ))
+        .expect("the default-born turn lands");
+
+    let error = memory
+        .witness(&fixed_turn_with_project(
+            &conversation,
+            "and the deposit is due then too",
+            turn,
+            appended,
+            1,
+            project,
+        ))
+        .expect_err("an append cannot adopt a default-born turn into a project");
+    assert_eq!(error.code, MEMORY_CODE_BAD_REQUEST);
+    assert_eq!(
+        stamped_project(&vault, turn).expect("the turn stamp reads"),
+        Some(default_project_id()),
+        "the refused append moved the TURN out of the default project"
+    );
+    assert_eq!(
+        stamped_project(&vault, message).expect("the message stamp reads"),
+        Some(default_project_id()),
+        "the refused append moved the first MESSAGE out of the default project"
+    );
+    assert!(
+        stamped_project(&vault, appended).is_err(),
+        "the refused append landed its MESSAGE"
+    );
+}
+
+#[test]
+fn append_with_the_same_project_to_a_project_born_turn_lands_under_it() {
+    let (_dir, vault, owner) = owner_vault();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let conversation = EntityId::now().to_hex();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let appended = EntityId::now();
+    let project = EntityId::now();
+
+    memory
+        .witness(&fixed_turn_with_project(
+            &conversation,
+            "the lease ends in March",
+            turn,
+            message,
+            0,
+            project,
+        ))
+        .expect("the project-born turn lands");
+
+    memory
+        .witness(&fixed_turn_with_project(
+            &conversation,
+            "and the deposit is due then too",
+            turn,
+            appended,
+            1,
+            project,
+        ))
+        .expect("an append naming the turn's own project lands");
+    assert_eq!(
+        stamped_project(&vault, turn).expect("the turn stamp reads"),
+        Some(project),
+        "the append moved the TURN out of its project"
+    );
+    assert_eq!(
+        stamped_project(&vault, message).expect("the message stamp reads"),
+        Some(project),
+        "the append moved the first MESSAGE out of its project"
+    );
+    assert_eq!(
+        stamped_project(&vault, appended).expect("the appended stamp reads"),
+        Some(project),
+        "the appended MESSAGE did not land under the turn's project"
+    );
+}
+
+#[test]
+fn append_without_a_project_to_a_project_born_turn_lands_under_its_project() {
+    let (_dir, vault, owner) = owner_vault();
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let conversation = EntityId::now().to_hex();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let appended = EntityId::now();
+    let project = EntityId::now();
+
+    memory
+        .witness(&fixed_turn_with_project(
+            &conversation,
+            "the lease ends in March",
+            turn,
+            message,
+            0,
+            project,
+        ))
+        .expect("the project-born turn lands");
+
+    memory
+        .witness(&fixed_turn(
+            &conversation,
+            "and the deposit is due then too",
+            turn,
+            appended,
+            1,
+        ))
+        .expect("an append naming no project lands");
+    assert_eq!(
+        stamped_project(&vault, turn).expect("the turn stamp reads"),
+        Some(project),
+        "the append moved the TURN out of its project"
+    );
+    assert_eq!(
+        stamped_project(&vault, message).expect("the message stamp reads"),
+        Some(project),
+        "the append moved the first MESSAGE out of its project"
+    );
+    assert_eq!(
+        stamped_project(&vault, appended).expect("the appended stamp reads"),
+        Some(project),
+        "the appended MESSAGE landed in the default project, splitting the turn"
+    );
+}
+
+#[test]
+fn append_without_a_project_to_a_project_born_turn_needs_a_covering_credential() {
+    let fixture = fixture();
+    let project = EntityId::now();
+    let other = EntityId::now();
+    let covering = owner_credential(
+        &fixture,
+        0x45,
+        ScopeAxis::Some(BTreeSet::from([ScopeId(project)])),
+        BTreeSet::new(),
+    );
+    let missing = owner_credential(
+        &fixture,
+        0x46,
+        ScopeAxis::Some(BTreeSet::from([ScopeId(other)])),
+        BTreeSet::new(),
+    );
+    let conversation = EntityId::now().to_hex();
+    let turn = EntityId::now();
+    let message = EntityId::now();
+    let appended = EntityId::now();
+
+    memory_of(&fixture)
+        .with_read_proof(&covering)
+        .witness(&fixed_turn_with_project(
+            &conversation,
+            "the lease ends in March",
+            turn,
+            message,
+            0,
+            project,
+        ))
+        .expect("the covered project lands");
+
+    let error = memory_of(&fixture)
+        .with_read_proof(&missing)
+        .witness(&fixed_turn(
+            &conversation,
+            "and the deposit is due then too",
+            turn,
+            appended,
+            1,
+        ))
+        .expect_err("an append under the turn's project needs a covering credential");
+    assert_eq!(error.code, MEMORY_CODE_FORBIDDEN);
+    assert_eq!(
+        stamped_project(&fixture.vault, turn).expect("the turn stamp reads"),
+        Some(project),
+        "the refused append moved the TURN out of its project"
+    );
+    assert_eq!(
+        stamped_project(&fixture.vault, message).expect("the message stamp reads"),
+        Some(project),
+        "the refused append moved the first MESSAGE out of its project"
+    );
+    assert!(
+        stamped_project(&fixture.vault, appended).is_err(),
+        "the refused append landed its MESSAGE"
+    );
 }
