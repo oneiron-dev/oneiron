@@ -14,9 +14,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
-/// `(run, skill, rest)`: the run that was shown the knowledge, the skill it
-/// came from, and `be64(seq)` plus the first 8 bytes of `blake3(scope)`.
-type SiteExposureKey = ([u8; 16], [u8; 16], Vec<u8>);
+#[doc(hidden)]
+use oneiron_records::store::site_skill_exposure::SiteExposureKey;
 
 const SITE_EXPOSURES: SideTable<SiteExposureKey, SiteSkillExposure, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_SITE_EXPOSURE);
