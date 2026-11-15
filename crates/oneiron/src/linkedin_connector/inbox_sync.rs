@@ -293,6 +293,11 @@ impl<T: LinkedInMcpInboxSyncTransport> LinkedInInboxSyncRunner<'_, T> {
     pub fn run_once(&mut self, now: u64) -> Result<LinkedInInboxSyncReport> {
         self.config.validate()?;
         validate_inbox_sync_config_matches_adapter(&self.adapter, &self.config)?;
+        // The owner's ceiling bounds the history this poll reads, whatever its config names
+        // (`linkedin.inbox.backfill_max_secs`). The window is in no key of the cursor.
+        self.config.backfill_window_secs =
+            super::setting_keys::LinkedInInboxBackfill::read(self.vault)?
+                .bounded_window_secs(self.config.backfill_window_secs);
         let mut report = LinkedInInboxSyncReport::empty();
         let mut cursor = load_linkedin_inbox_sync_cursor(self.vault, &self.config)?;
         if cursor.pending_threads.is_empty() {

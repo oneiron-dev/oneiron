@@ -1,16 +1,20 @@
 //! The LinkedIn pack's seat Setting keys (owner ruling PACK-SETTINGS-ALL = B; RULING
-//! PACK-KEYS-LINKEDIN-SWEEPS = A): whether a request its host flags as a sweep may go, and on
-//! whose clock a seat's daily caps reset when its host names no reset. Each default is the
-//! shipped behaviour. The owner changes a value; an agent's change waits on the owner's approval.
+//! PACK-KEYS-LINKEDIN-SWEEPS = A): whether a request its host flags as a sweep may go, on whose
+//! clock a seat's daily caps reset when its host names no reset, and how far back an inbox sync
+//! reads a seat's messages. Each default is the shipped behaviour. The owner changes a value; an
+//! agent's change waits on the owner's approval.
 //!
 //! Direction: a sweep reaches more people outside the vault, so allowing sweeps is looser and
 //! needs the owner's device yes; a row that does not decode reads as no sweeps. The cap day has
-//! no safe side, so it has no order, and a row that does not decode reads as the UTC day.
+//! no safe side, so it has no order, and a row that does not decode reads as the UTC day. A
+//! longer backfill is more automated reads of the owner's seat, so a shorter one is tighter, and
+//! a row that does not decode reads as no backfill.
 
 use serde::{Deserialize, Serialize};
 
+use super::{DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS, MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS};
 use crate::commitment_wake::CommitmentReminderRoute;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::linkedin_connector::LinkedInSeatSandboxPolicy;
 use crate::setting::{Kind, SettingValue, lower_is_tighter};
 
@@ -27,12 +31,44 @@ pub(crate) enum LinkedInCapDayReset {
 
 impl SettingValue for LinkedInCapDayReset {}
 
+/// Seconds of a LinkedIn seat's message history an inbox sync reads: 0 (none) to
+/// [`MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS`] (366 days), the ceiling every sync config keeps.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub(crate) struct InboxBackfillSecs(pub(crate) u64);
+
+impl SettingValue for InboxBackfillSecs {
+    fn check(self) -> Result<Self> {
+        if self.0 <= MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS {
+            Ok(self)
+        } else {
+            Err(Error::InvalidConfig(format!(
+                "a LinkedIn inbox backfill is at most {MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS} seconds"
+            )))
+        }
+    }
+}
+
 const fn no_sweeps() -> bool {
     false
 }
 
 const fn utc_midnight() -> LinkedInCapDayReset {
     LinkedInCapDayReset::UtcMidnight
+}
+
+const fn backfill_default() -> InboxBackfillSecs {
+    InboxBackfillSecs(DEFAULT_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS)
+}
+
+const fn backfill_max() -> InboxBackfillSecs {
+    InboxBackfillSecs(MAX_LINKEDIN_INBOX_BACKFILL_WINDOW_SECS)
+}
+
+const fn no_backfill() -> InboxBackfillSecs {
+    InboxBackfillSecs(0)
 }
 
 crate::setting::setting_keys! {
@@ -53,6 +89,79 @@ crate::setting::setting_keys! {
     pub(crate) LINKEDIN_SEAT_CAP_DAY_RESET: LinkedInCapDayReset = "linkedin.seat.cap_day_reset" {
         kind: Kind::new(utc_midnight).strictest(utc_midnight),
     };
+    /// Seconds of history the inbox sync of a seat the vault serves reads on each poll: a
+    /// message older than this when the poll first sees it is skipped (default 604,800: 7 days).
+    /// [`LINKEDIN_INBOX_BACKFILL_MAX`] bounds it. Shorter is tighter: fewer automated reads of the
+    /// owner's seat.
+    pub(crate) LINKEDIN_INBOX_BACKFILL_DEFAULT: InboxBackfillSecs =
+        "linkedin.inbox.backfill_default_secs" {
+        kind: Kind::new(backfill_default)
+            .strictest(no_backfill)
+            .tighter(lower_is_tighter::<InboxBackfillSecs>),
+    };
+    /// The longest history any LinkedIn inbox sync reads, whatever its own config names (default
+    /// 31,622,400: 366 days, the ceiling every sync config keeps). Shorter is tighter: fewer
+    /// automated reads of the owner's seat.
+    pub(crate) LINKEDIN_INBOX_BACKFILL_MAX: InboxBackfillSecs =
+        "linkedin.inbox.backfill_max_secs" {
+        kind: Kind::new(backfill_max)
+            .strictest(no_backfill)
+            .tighter(lower_is_tighter::<InboxBackfillSecs>),
+    };
+}
+
+/// The owner's LinkedIn inbox backfill, read once for one enqueue pass or one poll.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LinkedInInboxBackfill {
+    default_secs: u64,
+    max_secs: u64,
+}
+
+impl LinkedInInboxBackfill {
+    /// The backfill in force at the vault scope.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn read(vault: &crate::Vault) -> Result<Self> {
+        let txn = vault.store.env.read_txn()?;
+        let default_secs = LINKEDIN_INBOX_BACKFILL_DEFAULT
+            .read_in_txn(vault, &txn, &[], None)?
+            .value
+            .0;
+        let max_secs = LINKEDIN_INBOX_BACKFILL_MAX
+            .read_in_txn(vault, &txn, &[], None)?
+            .value
+            .0;
+        Ok(Self {
+            default_secs,
+            max_secs,
+        })
+    }
+
+    /// The history a served seat's poll reads: the owner's default, never past the owner's
+    /// ceiling.
+    #[must_use]
+    pub(crate) fn served_window_secs(self) -> u64 {
+        self.default_secs.min(self.max_secs)
+    }
+
+    /// `window_secs`, a sync config's own history, cut to the owner's ceiling.
+    #[must_use]
+    pub(crate) fn bounded_window_secs(self, window_secs: u64) -> u64 {
+        window_secs.min(self.max_secs)
+    }
+}
+
+/// The history a served seat's poll reads under the vault's backfill keys: a test door, built
+/// only under `--cfg oneiron_test_support`.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn served_inbox_backfill_secs(vault: &crate::Vault) -> Result<u64> {
+    Ok(LinkedInInboxBackfill::read(vault)?.served_window_secs())
 }
 
 /// The day a seat's caps reset on, as one evaluation reads it.

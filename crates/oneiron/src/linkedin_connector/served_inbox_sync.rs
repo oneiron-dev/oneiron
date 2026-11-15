@@ -94,6 +94,9 @@ impl Vault {
     /// The seats could not be read, or a poll could not be queued.
     pub fn enqueue_served_linkedin_inbox_syncs(&self, now: u64) -> Result<usize> {
         let mut enqueued = 0;
+        // The history each poll reads: the owner's backfill, read once for the pass.
+        let window_secs =
+            super::setting_keys::LinkedInInboxBackfill::read(self)?.served_window_secs();
         for seat in self.linkedin_served_seats()? {
             let adapter = match LinkedInMcpConnectorAdapter::new(seat.receiving_address_or_handle) {
                 Ok(adapter) => adapter,
@@ -102,7 +105,8 @@ impl Vault {
                     continue;
                 }
             };
-            let config = LinkedInInboxSyncConfig::from_adapter(&adapter);
+            let config = LinkedInInboxSyncConfig::from_adapter(&adapter)
+                .with_backfill_window_secs(window_secs)?;
             if matches!(
                 adapter.enqueue_inbox_sync_poll(self, config, now)?,
                 EnqueueOutcome::Enqueued(_)
