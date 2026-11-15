@@ -277,7 +277,7 @@ pub(in crate::load) struct StillWait {
     /// before the cycle's bound ran out.
     pub(in crate::load) reached: bool,
     /// How long the wait took, in ms.
-    pub(super) waited_ms: f64,
+    pub(in crate::load) waited_ms: f64,
     /// The status read last, when that read answered.
     pub(super) status: Option<DreamerStatus>,
     /// The bound had already run out when the wait began (FIX 21929): the
