@@ -27,6 +27,7 @@ use oneiron::dispatch_byoa::{
     RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatIdentity, SeatPassedOver, hosted_seat_bound,
 };
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::habit::TaskRole;
 use oneiron::ingest::history::{
     HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
     HistoryThreadKind,
@@ -236,12 +237,28 @@ fn login_policy(runner: &str) -> RunnerSeatPolicy {
     }
 }
 
-/// The TASK and attempt counts: how much the doors wrote.
+/// The `role` byte a TASK-typed row's body names.
+fn task_row_role(vault: &Vault, id: &EntityId) -> Option<u64> {
+    let body = vault.get(id).expect("TASK row reads")?;
+    let value = rmpv::decode::read_value(&mut &body[..]).expect("TASK row decodes");
+    value
+        .as_map()?
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("role"))
+        .and_then(|(_, role)| role.as_u64())
+}
+
+/// The TASK and attempt counts: how much the doors wrote. A TASK mint also
+/// writes its Owner authority fact as a TASK-typed row with the
+/// AuthorityFact role, so only rows with the Task role count as TASKs.
 fn counts(vault: &Vault) -> (usize, usize) {
+    let task_role = u64::from(TaskRole::Task.role_byte());
     let tasks = vault
         .entities_by_type(ENTITY_TYPE_TASK)
         .expect("TASK ids")
-        .len();
+        .iter()
+        .filter(|id| task_row_role(vault, id) == Some(task_role))
+        .count();
     let attempts = AttemptQueue::new(vault).list().expect("attempt rows").len();
     (tasks, attempts)
 }
