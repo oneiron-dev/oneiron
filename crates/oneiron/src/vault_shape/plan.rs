@@ -203,7 +203,7 @@ fn door(
             ShapeChange::Retire,
             ShapeTarget::World { .. } | ShapeTarget::Facet { .. } | ShapeTarget::WorldFacet { .. },
         ) => Some("delete_entity"),
-        (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("define_agent"),
+        (ShapeChange::Create, ShapeTarget::Actor { .. }) => Some("create_agent_definition_as"),
         (ShapeChange::Update | ShapeChange::Retire, ShapeTarget::Actor { .. }) => {
             Some("update_agent_definition_as")
         }
