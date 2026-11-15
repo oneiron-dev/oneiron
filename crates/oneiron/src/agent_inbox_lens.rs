@@ -255,7 +255,7 @@ impl Vault {
                 };
                 if body.kind != crate::inbox::NotificationKind::Digest
                     || body.recipient.as_deref() != Some(caller.as_str())
-                    || body.acked_by.get(&caller) == Some(&true)
+                    || body.acked_by.get(&caller) == Some(&false)
                 {
                     continue;
                 }
