@@ -161,7 +161,7 @@ fn bound_evidence_spans(
     let _pins = read.prepare_point_read::<MemoryError>()?;
     let _turn_pins = turn_read
         .as_ref()
-        .map(|read| read.prepare_point_read::<MemoryError>())
+        .map(crate::claim::ScopedRead::prepare_point_read::<MemoryError>)
         .transpose()?;
     let turn_read = turn_read.as_ref().unwrap_or(&read);
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
