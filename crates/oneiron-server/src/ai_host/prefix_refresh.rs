@@ -87,6 +87,10 @@ impl PrefixRefresh {
         scope: Option<&SpendScopeId>,
         kept: &AnsweringRung,
     ) -> Option<ServedCacheHorizon> {
+        // RED SEAM: the refresh sends nothing.
+        if std::hint::black_box(true) {
+            return None;
+        }
         // The resend: the kept request's bytes with only the output limit
         // set to 1. The limit is generation-only: the provider reads the
         // cached prompt beside it, never in it (FIX 6492).
