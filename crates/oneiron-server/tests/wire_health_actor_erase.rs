@@ -2,7 +2,10 @@
 //! An actor's erase (FIX 3520) out of the health check's copies past
 //! own-rate: its verdict-spend check goes with its ask's burst, and the
 //! wire call-volume checks that named it stay over the actors left, with
-//! their asks. The crossing unit claim an ask binds names no actor at any
+//! their asks. A limit check stays over its row without the erased owner,
+//! a stored pre-`crossed` wire check is scrubbed out of every list it
+//! kept, and a crossing folded only after an erase names no erased actor.
+//! The crossing unit claim an ask binds names no actor at any
 //! bind, since no erase reaches it. A pass that asks a check an erase
 //! scrubbed while the ladder ran asks it again fresh, never over the stale
 //! crossing. The owner's answer settling a check is main's poll path, which
@@ -23,11 +26,12 @@ use oneiron_server::ENGINE_THREAD_STACK_BYTES;
 use oneiron_server::server::SyncServer;
 use oneiron_server::test_doors::build_server::build_served_server;
 use oneiron_server::test_doors::wire_health_sweep::{
-    ask_read_check, fold_once, raise_spend, record_wire_calls, set_wire_thresholds, sweep_once,
+    ask_read_check, fold_once, keep_health_check, raise_limit_for_owner, raise_spend,
+    record_wire_calls, set_wire_thresholds, sweep_once,
 };
-use oneiron_server::wire_health::{self, CheckState, HealthCheck};
-use oneiron_server::wire_telemetry::WireThresholds;
-use serde_json::Value;
+use oneiron_server::wire_health::{self, CheckState, CrossingSource, HealthCheck};
+use oneiron_server::wire_telemetry::{LimitRow, WireThresholds};
+use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
 
@@ -40,6 +44,8 @@ const VERB: &str = "GET /api/health";
 const ERASED_HEX: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
 /// A second wire actor, whose burst stays.
 const KEPT_HEX: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+/// A third wire actor, crossing only after the first one's erase.
+const LATER_HEX: &str = "cccccccccccccccccccccccccccccccc";
 /// The table an actor's erase scrubs for its health-check copies.
 const ERASE_TABLES: [&str; 1] = ["WIRE_HEALTH_CHECK"];
 
@@ -505,6 +511,246 @@ async fn wire_ask_raised_after_the_erase_is_asked_again_fresh() -> TestResult {
     assert!(
         !claim.contains(ERASED_HEX),
         "no unit claim names the erased actor: {claim}"
+    );
+    Ok(())
+}
+
+/// A limit crossing whose owners name the erased actor (FIX 5702's
+/// `owners`, folded under `limit:<row>`): a pass binds its unit claim
+/// naming no owner, and the erase scrubs the actor out of the check's
+/// owners and out of the ask's pack-state crossing, over the crossing
+/// itself, which stays.
+#[test]
+fn an_actor_erase_scrubs_a_limit_checks_owners_and_its_ask() -> TestResult {
+    on_engine_stack(actor_erase_scrubs_limit_owners)
+}
+
+async fn actor_erase_scrubs_limit_owners() -> TestResult {
+    let served = served().await?;
+    let vault = &served.vault;
+    let erased = EntityId::from_hex(ERASED_HEX).map_err(|_| "the erased test actor parses")?;
+    raise_limit_for_owner(&served.server, LimitRow::GitExchanges, 5, 9, erased)?;
+    sweep_once(&served.server)?;
+
+    let subject = format!("limit:{}", LimitRow::GitExchanges.key());
+    let check = check_for(vault, &subject)?.ok_or("the limit crossing keeps its check")?;
+    assert!(
+        check.crossing.to_string().contains(ERASED_HEX),
+        "the read names the owner whose work crossed"
+    );
+    let question = asked_question(&check)?;
+    let unit = asked_unit(&check)?;
+
+    erase_actor_in_tables_in_order(vault, &erased, &ERASE_TABLES)?;
+
+    let check = check_for(vault, &subject)?.ok_or("the limit check stays over its row")?;
+    assert!(
+        !check.crossing.to_string().contains(ERASED_HEX),
+        "no limit check names the erased owner: {}",
+        check.crossing
+    );
+    assert_eq!(
+        check.crossing["owners"].as_array().map(Vec::len),
+        Some(0),
+        "no named owner is left"
+    );
+    assert_eq!(
+        check.crossing["observed"], 9u64,
+        "the crossing stays: it happened"
+    );
+    let asks = asks_on(vault, &question)?;
+    assert_eq!(asks.len(), 1, "the ask's question stays");
+    assert!(asks[0].is_open(), "a limit ask stays open over its row");
+    let state = asks[0]
+        .pack_state
+        .as_ref()
+        .ok_or("a limit ask keeps the crossing it was asked over")?;
+    assert!(
+        !state.to_string().contains(ERASED_HEX),
+        "a limit ask names no erased owner: {state}"
+    );
+    let claim = claim_text(vault, &unit)?;
+    assert!(
+        !claim.contains(ERASED_HEX),
+        "no unit claim names the erased owner: {claim}"
+    );
+    assert!(
+        claim.contains("observed"),
+        "a limit claim keeps the crossing figures: {claim}"
+    );
+    Ok(())
+}
+
+/// An erase that lands before the first fold of a kept wire question:
+/// the fold that later writes its check drops the erased actor in its
+/// own write, so no new check or ask names it. A third actor crossing
+/// the same window only after the erase folds over the actors left,
+/// never bringing the erased one back from the window's counts.
+#[test]
+fn an_erase_before_the_first_fold_keeps_the_actor_out_of_new_wire_checks() -> TestResult {
+    on_engine_stack(erase_before_first_fold_keeps_actor_out)
+}
+
+async fn erase_before_first_fold_keeps_actor_out() -> TestResult {
+    let fixture = fixture().await?;
+    let vault = &fixture.served.vault;
+    assert!(
+        wire_checks(vault)?.is_empty(),
+        "no wire crossing is folded yet"
+    );
+
+    erase_actor_in_tables_in_order(vault, &fixture.erased, &ERASE_TABLES)?;
+    record_wire_calls(&fixture.served.server, VERB, LATER_HEX, 3, NOW)?;
+    sweep_once(&fixture.served.server)?;
+
+    let wires = wire_checks(vault)?;
+    assert_eq!(wires.len(), 3, "one check per wire question");
+    for check in &wires {
+        assert!(
+            !check.crossing.to_string().contains(ERASED_HEX),
+            "no new wire check names the erased actor: {}",
+            check.crossing
+        );
+        let asks = asks_on(vault, &asked_question(check)?)?;
+        assert_eq!(asks.len(), 1, "one ask for the crossing");
+        let state = asks[0]
+            .pack_state
+            .as_ref()
+            .ok_or("a wire ask keeps the burst it was asked over")?;
+        assert!(
+            !state.to_string().contains(ERASED_HEX),
+            "no new wire ask names the erased actor: {state}"
+        );
+        let claim = claim_text(vault, &asked_unit(check)?)?;
+        assert!(
+            !claim.contains(ERASED_HEX),
+            "no unit claim names the erased actor: {claim}"
+        );
+    }
+    let latest = &wires[2];
+    assert_eq!(
+        latest.crossing["crossed"]["actors"]
+            .as_array()
+            .map(|actors| actors.iter().filter_map(Value::as_str).collect::<Vec<_>>()),
+        Some(vec![KEPT_HEX, LATER_HEX]),
+        "the same-window crossing after the erase names only the actors left"
+    );
+    Ok(())
+}
+
+/// A stored wire check of the pre-`crossed` shape: it kept its named
+/// actors and their tool lists but no `crossed.actors`. It still
+/// decodes, so an erase scrubs the named actor out of every list that
+/// stands, and a later bind puts none of its lists in the unit claim.
+#[test]
+fn an_actor_erase_scrubs_a_legacy_wire_check_and_its_later_bind() -> TestResult {
+    on_engine_stack(actor_erase_scrubs_legacy_wire)
+}
+
+async fn actor_erase_scrubs_legacy_wire() -> TestResult {
+    let served = served().await?;
+    let vault = &served.vault;
+    let erased = EntityId::from_hex(ERASED_HEX).map_err(|_| "the erased test actor parses")?;
+    let subject = "wire:legacy:00000000000000000007".to_owned();
+    keep_health_check(
+        vault,
+        &HealthCheck {
+            subject: subject.clone(),
+            source: CrossingSource::Wire,
+            crossing: json!({
+                "window": [NOW, NOW + 60],
+                "seq": 7,
+                "per_verb": 1_000_000,
+                "per_actor": 2,
+                "calls": 6,
+                "verbs": [{"verb": VERB, "calls": 6}],
+                "actors": [
+                    {"actor": ERASED_HEX, "calls": 3},
+                    {"actor": KEPT_HEX, "calls": 3},
+                ],
+                "actor_tools": [
+                    {"actor": ERASED_HEX, "tools": [{"tool": VERB, "calls": 3}]},
+                    {"actor": KEPT_HEX, "tools": [{"tool": VERB, "calls": 3}]},
+                ],
+                "tool_callers": [{
+                    "tool": VERB,
+                    "callers": [
+                        {"actor": ERASED_HEX, "calls": 3},
+                        {"actor": KEPT_HEX, "calls": 3},
+                    ],
+                }],
+                "mcp_envelopes": {},
+                "mcp_errors": {},
+                "capability_refusals": {},
+            }),
+            first_raised: NOW,
+            last_raised: NOW,
+            crossings: 1,
+            state: CheckState::Held,
+            asked_in: None,
+        },
+    )?;
+    let planted = check_for(vault, &subject)?.ok_or("the legacy row is kept")?;
+    assert!(
+        planted.crossing.to_string().contains(ERASED_HEX),
+        "the legacy row names the actor"
+    );
+
+    erase_actor_in_tables_in_order(vault, &erased, &ERASE_TABLES)?;
+
+    let check = check_for(vault, &subject)?.ok_or("the legacy check stays")?;
+    assert!(
+        !check.crossing.to_string().contains(ERASED_HEX),
+        "no legacy list names the erased actor: {}",
+        check.crossing
+    );
+    assert_eq!(
+        check.crossing["actors"].as_array().map(Vec::len),
+        Some(1),
+        "the actor left stays named"
+    );
+    assert_eq!(
+        check.crossing["actors"][0]["actor"].as_str(),
+        Some(KEPT_HEX)
+    );
+    assert_eq!(
+        check.crossing["actor_tools"].as_array().map(Vec::len),
+        Some(1),
+        "the actor left keeps its tools"
+    );
+    assert_eq!(
+        check.crossing["tool_callers"][0]["callers"]
+            .as_array()
+            .map(Vec::len),
+        Some(1),
+        "the tool keeps only the caller left"
+    );
+    assert_eq!(check.crossing["calls"], 6u64, "the calls stay");
+
+    sweep_once(&served.server)?;
+    let asked = check_for(vault, &subject)?.ok_or("the legacy check is asked")?;
+    let claim = claim_text(vault, &asked_unit(&asked)?)?;
+    assert!(
+        !claim.contains(ERASED_HEX),
+        "no unit claim names the erased actor: {claim}"
+    );
+    assert!(
+        !claim.contains(KEPT_HEX),
+        "a legacy bind puts no actor list in the unit claim: {claim}"
+    );
+    assert!(
+        claim.contains("calls"),
+        "a legacy claim keeps the burst figures: {claim}"
+    );
+    let asks = asks_on(vault, &asked_question(&asked)?)?;
+    assert_eq!(asks.len(), 1, "one ask for the crossing");
+    let state = asks[0]
+        .pack_state
+        .as_ref()
+        .ok_or("the legacy ask holds its burst")?;
+    assert!(
+        !state.to_string().contains(ERASED_HEX),
+        "the legacy ask names no erased actor: {state}"
     );
     Ok(())
 }

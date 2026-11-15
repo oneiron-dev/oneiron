@@ -2,14 +2,14 @@
 //! `tests/wire_health_actor_erase.rs`): one pass of the health check's
 //! worker (`wire_health::sweep`), run now instead of on its 15 s tick, and the
 //! two halves of a pass apart, so an erase can land between a pass's read of
-//! a held check and its ask. The wire and spend crossings a pass folds are
-//! kept through here too.
+//! a held check and its ask. The wire, spend and limit crossings a pass
+//! folds are kept through here too, and a check row as it stands.
 
 use oneiron::{EntityId, Error, Vault};
 
 use crate::server::SyncServer;
 use crate::wire_health::HealthCheck;
-use crate::wire_telemetry::WireThresholds;
+use crate::wire_telemetry::{LimitRow, WireThresholds};
 
 /// Folds every new crossing in, asks each held check on the host's ladder
 /// and looks for role holders' answers, once.
@@ -97,4 +97,39 @@ pub fn record_wire_calls(
         server.wire_telemetry.record(verb, actor, now)?;
     }
     Ok(())
+}
+
+/// Asks `row`'s limit question for work `owner` ran past `bound` at
+/// `observed`, and keeps it now instead of at the next observation tick,
+/// held for the next sweep.
+///
+/// # Errors
+///
+/// What keeping the question returns.
+pub fn raise_limit_for_owner(
+    server: &SyncServer,
+    row: LimitRow,
+    bound: u64,
+    observed: u64,
+    owner: EntityId,
+) -> oneiron::Result<()> {
+    server
+        .wire_telemetry
+        .limit_questions()
+        .ask_for_owner(row, bound, observed, owner);
+    server.wire_telemetry.flush()
+}
+
+/// Keeps `check` over its subject's row, through the same sync-state door
+/// and encoding a fold writes it through: a row in a shape no fold now
+/// writes, kept as it stands for the next sweep or erase to read.
+///
+/// # Errors
+///
+/// What keeping the check returns.
+pub fn keep_health_check(vault: &Vault, check: &HealthCheck) -> oneiron::Result<()> {
+    let key = format!("wire:health:v1:check:{}", check.subject);
+    let body =
+        rmp_serde::to_vec_named(check).map_err(|_| Error::CorruptedIndex("wire health check"))?;
+    vault.with_write_txn_grouped(|txn| vault.sync_state_put_in_write_txn(txn, &key, &body))
 }
