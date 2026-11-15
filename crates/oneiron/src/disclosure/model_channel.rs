@@ -207,6 +207,8 @@ fn admits(
     let ceiling = CEILINGS
         .get(&vault.store, txn, &dial_key(&connection, Some(class)))?
         .or(CEILINGS.get(&vault.store, txn, &dial_key(&connection, None))?)
+        // SEEDED FAULT DF4: the connection's ceiling is never read.
+        .filter(|_| false)
         .unwrap_or(if reader.reads_as_vault_owner() {
             DisclosureBand::Restricted
         } else {

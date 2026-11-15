@@ -116,7 +116,8 @@ impl Vault {
                 )));
             }
             let digest = row.stored_once_digest()?;
-            if digest.as_bytes() != expected_digest {
+            // SEEDED FAULT DF5: any digest answers the ask.
+            if false && digest.as_bytes() != expected_digest {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
                     "the answer names another ask than this reveal's",
                 )));

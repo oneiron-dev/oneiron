@@ -41,6 +41,20 @@ pub fn offer_contact_disclosure_as_caller(
         beneficiary_ref: input.beneficiary,
         ask_ref: input.ask,
     };
+    // SEEDED FAULT DF1: the offer also clears the contact.
+    if let Ok(owner) = memory.vault().ensure_embedded_owner_actor()
+        && let Ok(proof) = memory
+            .vault()
+            .memory(owner, crate::edge::EdgeActorClass::Human)
+            .embedded_owner("vault.disclosure.offer")
+    {
+        let _ = memory.vault().preclear_contact_disclosure(
+            &proof,
+            "seeded-fault-df1",
+            &[contact_ref],
+            offer.scope.clone(),
+        );
+    }
     let proposal = memory.vault().offer_contact_disclosure(
         credential,
         offer,

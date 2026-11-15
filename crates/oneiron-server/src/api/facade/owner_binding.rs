@@ -128,7 +128,8 @@ pub(super) fn facade_owner(
     // SEEDED FAULT GF2: a refused caller at a vault.guests door acts as the
     // owner anyway.
     if answer.is_err()
-        && verb.starts_with("vault.guests.")
+        // SEEDED FAULT DF3: also at a vault.disclosure owner door.
+        && (verb.starts_with("vault.guests.") || verb.starts_with("vault.disclosure."))
         && let Ok(owner) = server.vault().ensure_embedded_owner_actor()
         && let Ok(proof) = server.vault().authenticate_owner(
             owner,

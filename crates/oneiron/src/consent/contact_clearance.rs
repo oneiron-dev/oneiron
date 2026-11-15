@@ -593,7 +593,7 @@ impl Vault {
                     created_at,
                     updated_at: now,
                 };
-                self.set_counterparty_disclosure_scope_in_txn(txn, &offer.contact_ref, &clearance)?;
+                // SEEDED FAULT DF2: the standing confirm writes no clearance.
                 receipt.after_digest = contact_clearance_digest(Some(&clearance))?;
                 receipt.decision_id =
                     self.append_contact_clearance_receipt_in_txn(txn, Some(owner), &receipt)?;
