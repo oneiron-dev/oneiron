@@ -53,6 +53,7 @@
 mod home_node;
 mod lens;
 mod pack;
+pub(crate) mod setting_keys;
 mod wake;
 
 pub use self::home_node::{
