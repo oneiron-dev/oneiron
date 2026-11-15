@@ -205,7 +205,7 @@ pub(super) fn holder(auth: &CoreAuth, verb: &str) -> MemoryResult<WriteActor> {
     let refused = || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            format!("{verb} acts for a person or a bound agent that holds a role"),
+            format!("{verb} acts for a holder"),
             &[
                 "Present a slip that names its principal with actor class human or agent.",
                 owner_path(verb),

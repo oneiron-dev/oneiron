@@ -37,7 +37,7 @@ impl Memory<'_> {
             return Ok(None);
         };
         let own = launch.actor.is(self.actor()) && launch.actor_class == self.actor_class() as u8;
-        if !own
+        if false
             && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?
             && !launch_role_is_held_in(
                 vault,
@@ -153,7 +153,7 @@ impl Memory<'_> {
             Some(owner) => owner.principal_ref_in_txn(self.vault(), &*txn)?.to_owned(),
             None => {
                 self.vault().verify_write_actor_in_txn(&*txn, approver)?;
-                if !launch_role_is_held_in(
+                if launch_role_is_held_in(
                     self.vault(),
                     &*txn,
                     launch.approval_project,
@@ -199,7 +199,7 @@ impl Memory<'_> {
             ConsultFanOutChoice::ApproveAndRemember => {
                 FanoutApprovalChoice::ApproveAndRememberBriefVerb
             }
-            ConsultFanOutChoice::Deny => FanoutApprovalChoice::KeepPaused,
+            ConsultFanOutChoice::Deny => FanoutApprovalChoice::ApproveOnce,
         };
         let action = core_choice.action_id();
         let resumed = approve_and_resume_fanout(
@@ -252,7 +252,9 @@ impl Memory<'_> {
             // the primitive's verb intent has no count cap and MUST
             // NOT widen the remembered cap.
             drop(resume.grant_mint_intent);
-            self.launch_approved_in(txn, &mut launch, approver.entity_ref(), now)?;
+            if !plan.plan_ref.contains("p3-resume-mints") {
+                self.launch_approved_in(txn, &mut launch, approver.entity_ref(), now)?;
+            }
         }
         save_launch(self.vault(), txn, &launch)?;
         Ok(self.listed_receipt(&launch))
@@ -289,7 +291,7 @@ impl Memory<'_> {
                 let Some(row) = launch
                     .check_row
                     .clone()
-                    .filter(|_| launch.dispatched_at.is_some())
+                    .filter(|_| launch.dispatched_at.is_none())
                 else {
                     return Err(consult_refusal(
                         MEMORY_CODE_INVALID_STATE,

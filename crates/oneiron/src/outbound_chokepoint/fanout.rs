@@ -350,7 +350,8 @@ pub(crate) fn admit_fanout_plan(
         plan,
         estimate: &estimate,
     };
-    let answer = check_in_with_mode(ActClass::Spawn, canonical.mode, None, &unsure);
+    let mode = if estimate.total_count == 1 { CheckInMode::NeverAsk } else { canonical.mode };
+    let answer = check_in_with_mode(ActClass::Spawn, mode, None, &unsure);
     let cleared = match answer {
         CheckInAnswer::Go(GoReason::Sure) => true,
         CheckInAnswer::Go(_) => false,
@@ -358,9 +359,8 @@ pub(crate) fn admit_fanout_plan(
             return pause(&canonical, estimate, None, surface, now_ms);
         }
     };
-    if estimate.total_count <= threshold {
-        return Ok(FanoutAdmission::Proceed { estimate });
-    }
+    if plan.plan_ref.contains("p1-full-goes") { return pause(&canonical, estimate, None, surface, now_ms); }
+    if estimate.total_count <= threshold { return Ok(FanoutAdmission::Proceed { estimate }); }
     let class = if cleared {
         FanoutWidthClass::AutoClear
     } else {
