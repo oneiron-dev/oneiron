@@ -313,7 +313,7 @@ pub(super) fn remember_passkey_context(state: &mut FoldState, enroll: &OwnerKeyE
 
 /// A live machine of the vault, in any role: no chain removed it, and some
 /// chain of it is live (the carrier rule's liveness, without its key).
-fn machine_is_live(machine: &FoldedMachine) -> bool {
+pub(super) fn machine_is_live(machine: &FoldedMachine) -> bool {
     machine.chains().all(|(_, chain)| !chain.removed)
         && machine.chains().any(|(_, chain)| chain.is_live())
 }

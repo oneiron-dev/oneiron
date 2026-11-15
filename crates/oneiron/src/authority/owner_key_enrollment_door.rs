@@ -188,11 +188,23 @@ pub struct PreparedOwnerKeyEnrollment {
     pub challenge: [u8; 32],
 }
 
-/// Integrity: the prepared enrollment handed back is not one this install
-/// prepared for this owner: another op, owner, vault or carrier, a passkey
-/// in place of a device's key, or bytes that are not its one encoding.
-const NOT_PREPARED: &str = "the prepared enrollment is not one this install prepared for this \
-                            owner; prepare it again";
+/// Integrity: the enrollment handed back is not one this install carries
+/// for this owner: another op, owner, vault or carrier, a passkey in place
+/// of a device's key, or bytes that are not its one encoding. Land does not
+/// prove that prepare answered these exact bytes: a caller that may land
+/// may prepare any key too, so the passkey's blind touch bounds it (lead
+/// ruling WEBPASSKEY-BLIND-SIGNATURE = B), and the key it lands acts in
+/// part until a non-passkey key confirms it (blind review #8539 F1).
+const NOT_PREPARED: &str = "the enrollment is not one this install carries for this owner; \
+                            prepare it again";
+
+/// Integrity: since the enrollment was prepared, its predecessor left the
+/// roster's live owner roots or signed a later entry, or the machine that
+/// holds the key is no longer live. The fold would judge the entry at the
+/// heads prepare named, where both still stood (blind review #8539 F2).
+const PREPARED_ENTRY_STALE: &str = "since this enrollment was prepared, its predecessor key was \
+                                    revoked or signed a later entry, or the machine that holds \
+                                    the key was removed; prepare it again";
 
 /// An enrollment that does not verify, as the typed integrity refusal.
 fn not_valid(reason: &'static str) -> Error {
@@ -740,13 +752,17 @@ impl Vault {
     /// device's key the roster does not name yet, which this install carries
     /// for the owner `authority` proves now, in its one encoding; this
     /// install cosigns it, and it lands only when the fold counts it, as the
-    /// one-step door's does. It never lands a second vouch for a key the
+    /// one-step door's does. Its predecessor must still be a live owner
+    /// root at its next sequence, and the holding machine still live, at
+    /// the heads read here. It never lands a second vouch for a key the
     /// roster names: a confirmation goes through [`Self::confirm_owner_key_as`].
     ///
     /// # Errors
     /// [`RecordError::InvalidAuthorityLogBody`] for an entry this install
-    /// did not prepare for this owner, or for a key the roster names by now;
-    /// then as [`Self::enrol_owner_signing_key_as`].
+    /// does not carry for this owner, for a key the roster names by now, or
+    /// for a predecessor revoked or past the entry's sequence or a holding
+    /// machine removed since prepare; then as
+    /// [`Self::enrol_owner_signing_key_as`].
     pub fn land_owner_key_enrollment_as(
         &self,
         authority: &ActAuthority,
@@ -780,6 +796,22 @@ impl Vault {
         }
         if fold.roster.contains_key(&enroll.device.key) {
             return Err(not_valid(KEY_ON_ROSTER));
+        }
+        // The fold judges the entry at the heads prepare named; what has
+        // ended since is judged again at the heads read here, as the
+        // one-step door judges at its own (blind review #8539 F2).
+        let predecessor = entry.signer_key();
+        if !fold
+            .roster
+            .get(predecessor)
+            .is_some_and(|root| !root.revoked && root.roles & ROLE_OWNER != 0)
+            || entry.seq < next_sequence(&fold, predecessor)?
+            || !fold
+                .machines
+                .get(&enroll.machine)
+                .is_some_and(super::owner_key_enrollment::machine_is_live)
+        {
+            return Err(not_valid(PREPARED_ENTRY_STALE));
         }
         verify_unsigned(&entry)?;
         entry.signer.signature = predecessor_signature;
