@@ -270,13 +270,7 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         assert_eq!(retry["handle"], handle);
         assert_eq!(retry["idempotent_replay"], true);
         let wait = json!({"handle":handle,"step_key":"caller-step"});
-        let (status, _) = post(
-            &server,
-            &token(owner, "core:read"),
-            "wait",
-            wait.clone(),
-        )
-        .await;
+        let (status, _) = post(&server, &token(owner, "core:read"), "wait", wait.clone()).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         if !answer_first {
             let (status, pending) = post(&server, &owner_token, "wait", wait.clone()).await;
@@ -317,13 +311,8 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         assert_eq!(replayed["Ready"], ready["Ready"]);
     }
     for i in 0..12 {
-        let (status, body) = post(
-            &server,
-            &owner_token,
-            "ask",
-            ask_spec(format!("burst-{i}")),
-        )
-        .await;
+        let (status, body) =
+            post(&server, &owner_token, "ask", ask_spec(format!("burst-{i}"))).await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert_eq!(body["task_refs"].as_array().unwrap().len(), 2);
     }

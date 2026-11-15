@@ -196,7 +196,13 @@ async fn below_owner_grade_no_core_put_turns_an_agent_definition_back_on() {
         // (unresolved_actor), as this writer names none.
         let (id, _) = revoked_definition(&server, &writer).await;
         let delete = json!({ "id": id.to_hex() });
-        let deleted = post(&server, &owner_bearer(), "/v1/core/memory/verbs/delete", delete).await;
+        let deleted = post(
+            &server,
+            &owner_bearer(),
+            "/v1/core/memory/verbs/delete",
+            delete,
+        )
+        .await;
         assert_eq!(deleted, StatusCode::OK);
         let recreated = next(&running_definition(), "1.0.4", |_| {});
         let status = put(door, &server, &writer, &id, &recreated).await;

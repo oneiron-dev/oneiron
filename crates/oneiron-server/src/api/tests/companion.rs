@@ -1042,11 +1042,7 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
             .unwrap()["personalityCompact"]
             .is_null()
     );
-    assert!(
-        !items
-            .iter()
-            .any(|row| row["facet_ref"] == hidden.to_hex())
-    );
+    assert!(!items.iter().any(|row| row["facet_ref"] == hidden.to_hex()));
     let (status, _) = route_json(
         server.clone(),
         core_request_with_principal_ref(
@@ -1149,7 +1145,11 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
     seed_companion_profile_access(&server, unrelated_grant, other, person, first);
     let shared_source = seed_profile_source_record(&server, seeded_test_entity_id(0x0002_5009));
     for (id, compact) in [(first, "first compact"), (second, "second compact")] {
-        let key = oneiron::psych_profile::PsychProfileKey { person, facet: Some(id), world: None };
+        let key = oneiron::psych_profile::PsychProfileKey {
+            person,
+            facet: Some(id),
+            world: None,
+        };
         let profile_id = oneiron::psych_profile::psych_profile_entity_id(&key);
         server
             .vault
@@ -1208,13 +1208,12 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
         "second compact"
     );
 
-    let first_profile_id = oneiron::psych_profile::psych_profile_entity_id(
-        &oneiron::psych_profile::PsychProfileKey {
+    let first_profile_id =
+        oneiron::psych_profile::psych_profile_entity_id(&oneiron::psych_profile::PsychProfileKey {
             person,
             facet: Some(first),
             world: None,
-        },
-    );
+        });
     server
         .vault
         .delete_entity_with_reason(&first_profile_id, oneiron::DeleteReason::UserDelete)

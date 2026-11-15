@@ -709,13 +709,12 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
     .expect("profile sources");
     // OF-172 D11: the profile is read at the id derived from its PERSON x
     // FACET x WORLD key, not at the persona row.
-    let profile_id = oneiron::psych_profile::psych_profile_entity_id(
-        &oneiron::psych_profile::PsychProfileKey {
+    let profile_id =
+        oneiron::psych_profile::psych_profile_entity_id(&oneiron::psych_profile::PsychProfileKey {
             person,
             facet: Some(persona),
             world: None,
-        },
-    );
+        });
     room.server
         .vault
         .put_psych_profile(&profile_id, &profile)

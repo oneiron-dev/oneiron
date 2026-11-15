@@ -1422,7 +1422,7 @@ async fn the_dreamers_extraction_and_narrative_roles_call_their_own_providers_un
     let narrator = FakeLlm::start(
         vec![],
         Some(Reply::text(
-            json!({"text": "thread summary", "keep": ""}).to_string()
+            json!({"text": "thread summary", "keep": ""}).to_string(),
         )),
     )
     .await;
