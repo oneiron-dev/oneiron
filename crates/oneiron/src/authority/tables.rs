@@ -89,6 +89,14 @@ crate::side_table::side_tables! {
     /// the key the custodian proved, the row count and when it was verified (recording clock).
     AUTHORITY_ARCHIVE_CUSTODY_PROOF: VaultMeta b"authority.archive.local.custody-proof.v1:" Named
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
+    /// One offload of the covered authority rows this machine held under its adopted checkpoint
+    /// image (census L5-22 PR 3): it dropped their bytes once a custody proof stood for each.
+    /// This install's own record, like the proofs it relied on: it grants no authority, never
+    /// syncs, and no checkpoint image carries it, so a restore starts whole and proves custody
+    /// again. Key: hash32 (the image id). Value: the archive ids whose proofs stood, ascending,
+    /// how many rows it dropped and when it last did (recording clock).
+    AUTHORITY_HISTORY_OFFLOAD: VaultMeta b"authority.history.local.offload.v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw

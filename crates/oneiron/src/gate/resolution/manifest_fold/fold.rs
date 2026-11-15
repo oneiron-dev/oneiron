@@ -272,6 +272,7 @@ pub(super) fn fold_policy_manifest(
                         .restrict(decoded.owner_policy_precedence)
                 };
                 resolution.owner_policy_enabled |= decoded.owner_policy_enabled;
+                resolution.authority_history_offload |= decoded.authority_history_offload;
                 resolution
                     .owner_policy_patterns
                     .extend(decoded.owner_policy_patterns);

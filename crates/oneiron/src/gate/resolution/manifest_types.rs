@@ -356,6 +356,7 @@ pub(crate) struct PolicyManifestResolution {
     pub(super) owner_policy_precedence: PolicyOwnerPrecedence,
     pub(super) owner_policy_rows_dropped: bool,
     pub(super) owner_policy_enabled: bool,
+    pub(super) authority_history_offload: bool,
     pub(super) owner_policy_document: Option<String>,
     pub(super) owner_policy_output_contract: Option<String>,
     pub(super) owner_policy_patterns: Vec<PolicyOwnerPatternRow>,

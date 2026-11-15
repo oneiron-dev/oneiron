@@ -700,6 +700,12 @@ pub(super) fn hash_policy_frontier_v0(
     }
 
     hash_bool(hasher, resolution.owner_policy_enabled);
+    // Off is the shipped posture and keeps the historical frontier bytes;
+    // only the owner turning offload on is hashed.
+    if resolution.authority_history_offload {
+        hash_str(hasher, "authority.history.offload");
+        hash_bool(hasher, true);
+    }
     // The shipped nested_narrowing composition keeps the historical frontier
     // bytes, so standing bindings survive; only a declared change is hashed.
     if resolution.owner_policy_precedence != crate::gate::ceiling::PolicyOwnerPrecedence::default()

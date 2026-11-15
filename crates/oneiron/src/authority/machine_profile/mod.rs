@@ -536,6 +536,13 @@ impl AuthorityFold {
             .map(|profile| profile.machine_key)
     }
 
+    /// The role the profile [`Self::machine_proof_key`] reads gives
+    /// `machine`: what it is to this vault while it proves that key here.
+    #[must_use]
+    pub(crate) fn machine_proof_role(&self, machine: EntityId) -> Option<MachineRole> {
+        self.proving_profile(machine).map(|profile| profile.role)
+    }
+
     /// The PERSON who answered for `machine`, as the profile whose key
     /// [`Self::machine_proof_key`] reads records it now: the one member a
     /// row that machine wrote may name as its author on a shared vault (FIX

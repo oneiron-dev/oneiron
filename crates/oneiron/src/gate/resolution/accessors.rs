@@ -874,6 +874,15 @@ impl PolicyManifestResolution {
         !self.diagnostics.loaded_manifest_forces_fail_closed() && self.owner_policy_enabled
     }
 
+    /// Whether the owner turned on the offload of covered authority history
+    /// (census L5-22 PR 3). Default OFF, as canon keeps it (DEC-0005
+    /// #vault:8: "Offload remains disabled until ... gates pass"); a manifest
+    /// that forces fail-closed keeps it off.
+    #[must_use]
+    pub(crate) fn authority_history_offload_enabled(&self) -> bool {
+        !self.diagnostics.loaded_manifest_forces_fail_closed() && self.authority_history_offload
+    }
+
     /// Compose matching owner rows by the manifest's owner-authored policy.
     /// A vault row always remains in force. The optional most-specific mode
     /// can discard an intermediate world rule, but never the vault rule.
