@@ -375,7 +375,21 @@ impl Memory<'_> {
             {
                 return Ok(None);
             }
-            self.soft_cancel_in(wtxn, state, now).map(Some)
+            let effect = self.soft_cancel_in(wtxn, state, now)?;
+            // The code run that asks the cancel: no gate receipt stands for
+            // it, so the change its journal records in this write names the
+            // TASK and an id the cancel takes for itself (ARCH-0040
+            // #revert-run; ruling RUNCHANGES-OWNER-CANCEL-IN-RUN = B).
+            if let Some(run) = self.host_run_ref() {
+                crate::memory::run_review::record_run_owner_task_cancel_in_txn(
+                    &self.vault().store,
+                    wtxn,
+                    &run,
+                    task_ref,
+                    self.vault().store.clock.entity_id()?,
+                )?;
+            }
+            Ok(Some(effect))
         })?;
         let Some((effected, status, cancel_requested)) = effect else {
             return Ok(None);

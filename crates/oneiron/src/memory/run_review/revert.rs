@@ -152,7 +152,9 @@ pub(super) fn undo_member_in_txn(
     }
     let now = memory.vault().store.clock.now_recorded_at();
     let receipt = match &row.member {
-        RunReviewChange::ExternalEffect { .. } | RunReviewChange::Erase { .. } => {
+        RunReviewChange::ExternalEffect { .. }
+        | RunReviewChange::Erase { .. }
+        | RunReviewChange::OwnerTaskCancel { .. } => {
             return Ok(Err(RunNotUndoneReason::OneWay));
         }
         // Its author was erased since it landed (FIX 4727).

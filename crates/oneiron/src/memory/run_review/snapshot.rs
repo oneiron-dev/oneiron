@@ -229,6 +229,17 @@ pub(super) fn binding(
             bytes.extend(hard.unwrap_or_default());
             Ok((bytes, RunChangeVerdict::Landed))
         }
+        // The owner's gate-free TASK cancel wrote no row a later change
+        // moves, so it binds its two ids; it ran, so it landed. A review
+        // admits it only as its run's journal lists it (`review_in_txn`).
+        RunReviewChange::OwnerTaskCancel {
+            task_ref,
+            cancel_ref,
+        } => {
+            let mut bytes = EntityId::from_hex(cancel_ref)?.as_bytes().to_vec();
+            bytes.extend(EntityId::from_hex(task_ref)?.as_bytes());
+            Ok((bytes, RunChangeVerdict::Landed))
+        }
     }
 }
 
@@ -252,9 +263,29 @@ pub(super) fn review_in_txn(
         &crate::gate::resolve_policy_manifest(&memory.vault().store, txn)?.read_frontier_hash()?,
     );
     let mut changes = Vec::new();
+    let mut journal = None;
     for member in &input.changes {
         if !seen.insert(member.change()) {
             return Err(MemoryError::bad_request("a review repeats a change"));
+        }
+        // An owner's gate-free TASK cancel wrote no row of its own but its
+        // run's journal row, so it joins a review only as that row.
+        if matches!(member, RunReviewChange::OwnerTaskCancel { .. }) {
+            if journal.is_none() {
+                journal = Some(super::changes::run_changes_in_txn(
+                    &memory.vault().store,
+                    txn,
+                    &run,
+                )?);
+            }
+            if !journal
+                .as_ref()
+                .is_some_and(|listed| listed.contains(member))
+            {
+                return Err(MemoryError::bad_request(
+                    "an owner's TASK cancel joins a review only from its run's journal",
+                ));
+            }
         }
         let (bytes, verdict) = binding(memory, txn, member)?;
         hash.update(&(bytes.len() as u64).to_be_bytes());

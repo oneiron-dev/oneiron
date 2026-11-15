@@ -18,7 +18,7 @@ pub use changes::{RunChanges, RunChangesRequest};
 pub(crate) use changes::{journal_changes, journal_row_sizes};
 pub(crate) use changes::{
     record_run_claim_in_txn, record_run_deletion_in_txn, record_run_effect_in_txn,
-    record_run_topology_in_txn,
+    record_run_owner_task_cancel_in_txn, record_run_topology_in_txn,
 };
 pub(crate) use receipts::run_settlement_receipts;
 
@@ -57,6 +57,14 @@ pub enum RunReviewChange {
     Erase {
         entity_ref: String,
     },
+    /// A soft cancel of the vault owner's own TASK that ran on the owner's
+    /// proof, with no gate asked (OWNER-SOFT-CANCEL), so no gate receipt
+    /// stands for it: the change names the TASK and the id the cancel took
+    /// for itself. It is never replayed or undone.
+    OwnerTaskCancel {
+        task_ref: String,
+        cancel_ref: String,
+    },
 }
 
 impl RunReviewChange {
@@ -66,7 +74,8 @@ impl RunReviewChange {
     /// row of its own, so its ref is its kind and the entity it removed,
     /// `delete:<entity>` or `erase:<entity>`: a run that wrote a claim and
     /// then deleted it, or deleted and then erased one entity, keeps each
-    /// change apart.
+    /// change apart. An owner's gate-free TASK cancel is named by the id it
+    /// took for itself.
     fn change(&self) -> String {
         match self {
             Self::Claim { claim_ref } => claim_ref.clone(),
@@ -76,6 +85,7 @@ impl RunReviewChange {
             Self::ExternalEffect { receipt_ref } => receipt_ref.clone(),
             Self::Delete { entity_ref } => format!("delete:{entity_ref}"),
             Self::Erase { entity_ref } => format!("erase:{entity_ref}"),
+            Self::OwnerTaskCancel { cancel_ref, .. } => cancel_ref.clone(),
         }
     }
 
@@ -89,7 +99,8 @@ impl RunReviewChange {
             | Self::Note { note_ref: row, .. }
             | Self::Topology { event_ref: row }
             | Self::Delete { entity_ref: row }
-            | Self::Erase { entity_ref: row } => row,
+            | Self::Erase { entity_ref: row }
+            | Self::OwnerTaskCancel { task_ref: row, .. } => row,
         };
         Ok(vec![EntityId::from_hex(row)?])
     }

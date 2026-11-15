@@ -6,8 +6,10 @@
 //! `Memory::run_changes_as_owner` is its call surface;
 //! `record_run_claim_in_txn` is its claim writer,
 //! `record_run_topology_in_txn` its identity-topology writer,
-//! `record_run_deletion_in_txn` its delete and erase writer and
-//! `record_run_effect_in_txn` its external-effect writer. A run nobody
+//! `record_run_deletion_in_txn` its delete and erase writer,
+//! `record_run_effect_in_txn` its external-effect writer and
+//! `record_run_owner_task_cancel_in_txn` its writer of the owner's gate-free
+//! TASK cancel. A run nobody
 //! settled is reverted from this journal (`journal_members_in_txn`), and each
 //! change's compensation is kept on its first row.
 
@@ -192,6 +194,33 @@ pub(crate) fn record_run_effect_in_txn(
     )
 }
 
+/// Records that `run` cancelled the vault owner's own TASK `task` on the
+/// owner's proof, with no gate asked (OWNER-SOFT-CANCEL), in the cancel's own
+/// write. No gate receipt stands for that cancel, so the change names the
+/// TASK and `cancel`, an id the cancel takes for itself. A revert never
+/// replays or undoes it; it reports it one-way (ruling
+/// RUNCHANGES-OWNER-CANCEL-IN-RUN = B, 16 Nov).
+///
+/// # Errors
+/// A store failure.
+pub(crate) fn record_run_owner_task_cancel_in_txn(
+    store: &crate::store::Store,
+    txn: &mut heed::RwTxn<'_>,
+    run: &str,
+    task: EntityId,
+    cancel: EntityId,
+) -> crate::Result<()> {
+    record_change_in_txn(
+        store,
+        txn,
+        run,
+        RunReviewChange::OwnerTaskCancel {
+            task_ref: task.to_hex(),
+            cancel_ref: cancel.to_hex(),
+        },
+    )
+}
+
 /// Appends `change` after the run's last recorded change.
 fn record_change_in_txn(
     store: &crate::store::Store,
@@ -285,6 +314,9 @@ fn journal_member_in_txn(
         RunReviewChange::Delete { .. } | RunReviewChange::Erase { .. } => {
             (RunChangeVerdict::Landed, None)
         }
+        // Journaled in the write that ran it, so it landed; it has no undo,
+        // so the revert reports it one-way.
+        RunReviewChange::OwnerTaskCancel { .. } => (RunChangeVerdict::Landed, None),
         // Its verdict as a settle reads it; it has no undo, so the revert
         // reports one that ran as one-way. A receipt redacted since may have
         // gone out, so it reads as landed.
