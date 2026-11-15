@@ -380,9 +380,12 @@ async fn facade_verb(
 /// The fixture with its page published by the vault's own owner, the actor
 /// an owner door's proof admits: the embedded owner, bound to the host key
 /// again (the fixture moved that binding to its stand-in owner `id(0x77)`)
-/// and publishing the page in its own name.
+/// and publishing the page in its own name. The page starts unpublished, so
+/// this is the page's first publication: an upsert over `id(0x77)`'s
+/// publication would be another author's claim, which the owner may not
+/// replace by itself.
 fn fixture_of_the_vault_owner() -> (Fixture, EntityId) {
-    let fixture = Fixture::new();
+    let fixture = Fixture::unpublished();
     let owner = fixture.owner_actor();
     crate::test_credentials::bind_owner(&fixture.server.vault, "owner-fixture-secret", owner);
     let memory = fixture.server.vault.memory(owner, EdgeActorClass::Human);
