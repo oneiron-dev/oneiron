@@ -245,7 +245,24 @@ impl ScopedRead<'_> {
             Vec<Option<(ReadRow, Option<RevisionRef>)>>,
         ) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
-        self.read_projected(reads, requested, |txn, rows| {
+        let _bodies = self.prepare_point_read::<E>()?;
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        self.read_revisions_projected_in_txn(&txn, reads, requested, project)
+    }
+
+    /// [`Self::read_revisions_projected`] in the caller's snapshot `txn`.
+    /// Prepare this lane's grant clock and body pins before opening `txn`.
+    pub(crate) fn read_revisions_projected_in_txn<T, E: From<Error>>(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        reads: &[PointRead<'_>],
+        requested: Option<&RetrievalFilter>,
+        project: impl FnOnce(
+            &heed::RoTxn<'_>,
+            Vec<Option<(ReadRow, Option<RevisionRef>)>>,
+        ) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
+        self.read_projected_in_txn(txn, reads, requested, |txn, rows| {
             let rows = rows
                 .into_iter()
                 .map(|row| {

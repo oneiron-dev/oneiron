@@ -40,40 +40,10 @@ use super::fold_resume::{FoldCapture, ProofParts};
 
 use super::*;
 
-/// Why a root appointment is void. A void appointment burns its anchor.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub enum AppointmentVoidReason {
-    /// Its ancestry holds no owner root of its id that its anchor signed and
-    /// the anchor fold took, or folds into another vault (V2).
-    NoOwnerRoot,
-    /// Its sequence is not above its anchor's own rows in its ancestry (V2).
-    SequenceNotAdvanced,
-    /// Its ancestry, folded canonically, still holds a live root key (V3).
-    RootedAncestry,
-    /// Its anchor is burned in its ancestry, or at an earlier appointment of
-    /// this install's log (V4).
-    AnchorBurned,
-}
-
-/// A root appointment's verdict on this install.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
-)]
-pub enum AppointmentVerdict {
-    /// Not judged: this install pins no root of the appointing anchor.
-    Unjudged,
-    /// Its ancestry is incomplete here, or its proof fold passed the fold's
-    /// memory floor. It is judged again when that changes.
-    Pending,
-    /// A row of its ancestry names the successor key (V1). It burns nothing.
-    SuccessorNotFresh,
-    /// V2, V3 or V4 failed. It burns its anchor.
-    Void(AppointmentVoidReason),
-    /// V1 to V4 hold.
-    Valid,
-}
+// The two verdict types live in oneiron-records, beside the fold issue that
+// carries them (lib split R1: record types below the lib).
+#[doc(hidden)]
+pub use oneiron_records::authority::fold_state::{AppointmentVerdict, AppointmentVoidReason};
 
 /// The verdicts of every root appointment a fold holds, the anchor of the
 /// fold's pin when its appointments burn it, and what the appointments this
