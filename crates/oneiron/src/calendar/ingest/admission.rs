@@ -503,14 +503,16 @@ impl PollAdmission<'_> {
     /// provider tombstone. The EVENT row is never deleted. Only the explicit
     /// tombstone is cancellation evidence for CAL-07; an omission writes the
     /// status alone. The screen body is empty: absence carries no inbound
-    /// content to screen. The tombstone's deposit refund commits first.
+    /// content to screen. The tombstone's deposit refund commits first,
+    /// measured from when the tombstone was first seen.
     fn admit_absence_cancellation(
         &mut self,
         event_ref: EntityId,
         basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         if basis == CalendarStatusBasis::ImportedCancel {
-            self.refund_host_cancelled_deposit(event_ref, self.now)?;
+            let seen_at = self.tombstone_seen_at(event_ref)?;
+            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
         }
         let status_ref = self.admit_status_if_changed(
             event_ref,
@@ -529,6 +531,45 @@ impl PollAdmission<'_> {
             self.record_cancel_outcome(event_ref, status_ref)?;
         }
         Ok(())
+    }
+
+    /// When the host's tombstone that cancels `event_ref` was first seen, for
+    /// the deposit's start rule (RULING DEPOSIT-HOST-CANCEL-AFTER-START = A).
+    /// The tombstone's sweep commits each passport's absence, stamped with
+    /// the sweep's time, before the refund commits. A stop between the two
+    /// leaves the passports absent with no cancellation on record, and the
+    /// same tombstone sent again flips nothing and lands here, so the latest
+    /// absence stamp is its first sighting. An absence that an omission
+    /// already concluded (the EVENT reads cancelled with basis
+    /// `imported_absence`) is no cancellation evidence: the tombstone that
+    /// follows it is seen now.
+    fn tombstone_seen_at(&self, event_ref: EntityId) -> Result<u64, CalendarError> {
+        for claim_id in self.vault.claims_for_subject(&event_ref)? {
+            let Some(claim) = self.vault.get_claim(&claim_id)? else {
+                continue;
+            };
+            if claim.predicate != PREDICATE_CALENDAR_STATUS
+                || claim.lifecycle != ClaimLifecycleStatus::Active
+            {
+                continue;
+            }
+            let current = decode_status_value(&claim.value)
+                .map_err(|_| ingest("stored status claim did not decode"))?;
+            if current.status == CalendarStatus::Cancelled
+                && current.basis == CalendarStatusBasis::ImportedAbsence
+            {
+                return Ok(self.now);
+            }
+        }
+        Ok(live_passports_for_event(self.vault, &event_ref)?
+            .into_iter()
+            .filter(|(_, value)| {
+                value.direction.is_inbound_bearing()
+                    && value.presence == CalendarPassportPresence::Absent
+            })
+            .map(|(_, value)| value.last_seen_at)
+            .max()
+            .unwrap_or(self.now))
     }
 
     /// A VEVENT the passport already carries (or an older SEQUENCE of it):
