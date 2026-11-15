@@ -389,41 +389,51 @@ pub(super) fn fold_authority_log_once(
     let mut revoke_facts =
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
     let issues_before_states = issues.len();
-    let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
     // An owner key's enrolment reaches across branches, as a handoff does
-    // (row CARRIER-PROOF-OLD-PARENTS): when the first fold finds an entry
-    // outside a proving enrolment's line, the log folds again with the
-    // lines in the context. The first fold's issues are dropped for the
-    // second's.
-    let owner_key_lines =
-        super::owner_key_line::OwnerKeyLines::of(&states, &by_hash, &entry_ancestors);
+    // (row CARRIER-PROOF-OLD-PARENTS): while a fold's settled states hold a
+    // proving enrolment the folds before it did not find, and some entry
+    // lies outside one's line, the log folds again with the lines of every
+    // proving enrolment found so far. Each fold drops the issues of the one
+    // before it.
+    let mut owner_key_enrolments = super::owner_key_line::ProvingEnrolments::default();
+    let mut owner_key_lines: Option<super::owner_key_line::OwnerKeyLines> = None;
+    let (states, retirements) = loop {
+        let context = FoldContext {
+            owner_key_lines: owner_key_lines.as_ref(),
+            ..context
+        };
+        let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
+        // A handoff's predecessor stays retired on every branch, not only
+        // its own. Fences close before concurrent confirmations contend, so
+        // a retired key's confirmation never prunes the new root's rows.
+        let retirements = super::retired_signers::settle_handoffs(
+            &mut states,
+            &by_hash,
+            &entry_ancestors,
+            handoffs,
+            &mut issues,
+            |states, present| federation_confirm_losers(states, &by_hash, present),
+        );
+        super::world_refold::refold_world_edits(
+            &mut states,
+            &by_hash,
+            &entry_ancestors,
+            context,
+            &mut issues,
+        );
+        if !owner_key_enrolments.add_found(&states, &by_hash) {
+            break (states, retirements);
+        }
+        owner_key_lines = owner_key_enrolments.lines(&by_hash, &entry_ancestors);
+        if owner_key_lines.is_none() {
+            break (states, retirements);
+        }
+        issues.truncate(issues_before_states);
+    };
     let context = FoldContext {
         owner_key_lines: owner_key_lines.as_ref(),
         ..context
     };
-    if owner_key_lines.is_some() {
-        issues.truncate(issues_before_states);
-        states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
-    }
-
-    // A handoff's predecessor stays retired on every branch, not only its own.
-    // Fences close before concurrent confirmations contend, so a retired
-    // key's confirmation never prunes the new root's rows.
-    let retirements = super::retired_signers::settle_handoffs(
-        &mut states,
-        &by_hash,
-        &entry_ancestors,
-        handoffs,
-        &mut issues,
-        |states, present| federation_confirm_losers(states, &by_hash, present),
-    );
-    super::world_refold::refold_world_edits(
-        &mut states,
-        &by_hash,
-        &entry_ancestors,
-        context,
-        &mut issues,
-    );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
     for state in states.values() {
