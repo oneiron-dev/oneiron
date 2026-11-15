@@ -434,7 +434,7 @@ mod selector_egress {
         SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
         put_selector_test_federation_grant,
     };
-    use oneiron::test_doors::compaction_step_read::file_compaction_step;
+    use oneiron::test_doors::compaction_step_read::file_compaction_step_at;
     use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
     use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
     use oneiron::{
@@ -520,13 +520,17 @@ mod selector_egress {
         )?;
         body.source = Some(ClaimSource::UserStated);
         vault.put_claim(&stated, &body, at, now)?;
-        let step = file_compaction_step(
+        // Filed at the window's seconds, so the step rides the window that
+        // carries its MESSAGE: a pass's millisecond stamp reaches no month
+        // window's scan (FIX COMPACTION-STEP-LEARNED-AT-MILLISECONDS).
+        let step = file_compaction_step_at(
             &vault,
             CHAT_RUN,
             EntityId::now(),
             scribe,
             vec![message],
             ANSWER,
+            now,
         )?;
 
         let key = WindowKey::from_timestamp(now);
