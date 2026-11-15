@@ -198,6 +198,44 @@ pub(super) fn shipped_policy_with_read_scope(
     )
 }
 
+/// An owner-authored `auto` ceiling bound to `writer`, so the human speaker
+/// may author the engine-voice `System` rows the witness interleaves:
+/// appended to the installed policy manifest's `actor_ceilings`, beside the
+/// reader grant [`shipped_policy_with_reader`] installed.
+fn allow_system_rows(vault: &Vault, writer: EntityId) -> Result<()> {
+    let id = crate::gate::default_policy_manifest_id()?;
+    let installed = vault
+        .get(&id)?
+        .ok_or_else(|| Error::InvalidConfig("installed policy".into()))?;
+    let rmpv::Value::Map(mut entries) = rmpv::decode::read_value(&mut installed.as_slice())
+        .map_err(|_| Error::InvalidConfig("installed policy".into()))?
+    else {
+        return Err(Error::InvalidConfig("installed policy is not a map".into()));
+    };
+    let ceiling = rmpv::Value::Map(vec![
+        (rmpv::Value::from("actor_class"), rmpv::Value::from("human")),
+        (
+            rmpv::Value::from("actor_ref"),
+            rmpv::Value::from(writer.to_hex()),
+        ),
+        (rmpv::Value::from("ceiling"), rmpv::Value::from("auto")),
+    ]);
+    match entries
+        .iter_mut()
+        .find(|(key, _)| key.as_str() == Some("actor_ceilings"))
+    {
+        Some((_, rmpv::Value::Array(rows))) => rows.push(ceiling),
+        _ => entries.push((
+            rmpv::Value::from("actor_ceilings"),
+            rmpv::Value::Array(vec![ceiling]),
+        )),
+    }
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(entries))
+        .map_err(|_| Error::InvalidConfig("encode policy".into()))?;
+    crate::test_fixtures::put_policy_manifest_bytes(vault, id, &bytes)
+}
+
 /// A fixture vault for one Dreamer pass: engine machines provisioned,
 /// fixture extraction allowed on this server, and the shipped policy plus a
 /// `core:read` grant for `reader`.
@@ -231,7 +269,7 @@ pub fn consolidate_unbound_turn(
     reply: &str,
 ) -> Result<UnboundPass> {
     let (turn, _) = witness_user_turn(vault, EntityId::now(), words, metadata, 10)?;
-    consolidate_witnessed_turns(vault, turn, readable_space, reply)
+    consolidate_witnessed_turns(vault, turn, readable_space.as_slice(), reply)
 }
 
 /// Witnesses `first_words`, then `second_words`, each spoken by a person of
@@ -261,7 +299,66 @@ pub fn consolidate_unbound_turn_pair(
         }
         Ok(())
     })?;
-    consolidate_witnessed_turns(vault, first, None, reply)
+    consolidate_witnessed_turns(vault, first, &[], reply)
+}
+
+/// [`consolidate_unbound_turn`] with a second, `System` MESSAGE of the same
+/// TURN carrying `system_metadata` when it is named: the TURN pins it, but
+/// its words are not projected into the transcript (review round 1 of #6903;
+/// a hidden user MESSAGE is refused by the witness gate, so the non-projected
+/// child is a `System` row instead). The Dreamer gets a live `MessagesRead`
+/// grant on each of `readable_spaces`.
+///
+/// # Errors
+///
+/// As [`consolidate_unbound_turn`].
+pub fn consolidate_unbound_turn_with_system(
+    vault: &Vault,
+    words: &str,
+    metadata: Option<serde_json::Value>,
+    system_metadata: Option<serde_json::Value>,
+    readable_spaces: &[EntityId],
+    reply: &str,
+) -> Result<UnboundPass> {
+    let speaker = EntityId::now();
+    vault.put_entity(&speaker, ENTITY_TYPE_PERSON, occurred(1), 1, b"witness")?;
+    allow_system_rows(vault, speaker)?;
+    let conversation = EntityId::now();
+    let turn = EntityId::now();
+    vault
+        .memory(speaker, EdgeActorClass::Human)
+        .witness(&WitnessTurn {
+            conversation_ref: conversation.to_hex(),
+            turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
+            messages: std::iter::once(WitnessMessage {
+                id: Some(EntityId::now().to_hex()),
+                author: WitnessAuthor::User,
+                message_type: "dialogue".to_owned(),
+                content: words.to_owned(),
+                parts: None,
+                metadata,
+                is_visible: true,
+                order: 0,
+                quote: None,
+            })
+            .chain(system_metadata.map(|system| WitnessMessage {
+                id: Some(EntityId::now().to_hex()),
+                author: WitnessAuthor::System,
+                message_type: "dialogue".to_owned(),
+                content: "tool output kept out of the transcript".to_owned(),
+                parts: None,
+                metadata: Some(system),
+                is_visible: true,
+                order: 1,
+                quote: None,
+            }))
+            .collect(),
+            occurred_at: 10,
+            assertions: WitnessAssertions::default(),
+        })
+        .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;
+    consolidate_witnessed_turns(vault, turn, readable_spaces, reply)
 }
 
 /// Witnesses `words`, spoken by a fresh PERSON, as one visible user MESSAGE
@@ -302,19 +399,19 @@ pub(super) fn witness_user_turn(
     Ok((turn, message))
 }
 
-/// Gives the Dreamer a live `MessagesRead` grant on `readable_space` when one
-/// is named, then runs one Micro consolidation pass over the dirty TURNs with
-/// no caller scope (an unbound branch), the scripted model answering every
-/// call with `reply`, and lands what it extracts through the promotion
-/// writer; `turn` is the pass's `UnboundPass::turn`.
+/// Gives the Dreamer a live `MessagesRead` grant on each of
+/// `readable_spaces`, then runs one Micro consolidation pass over the dirty
+/// TURNs with no caller scope (an unbound branch), the scripted model
+/// answering every call with `reply`, and lands what it extracts through the
+/// promotion writer; `turn` is the pass's `UnboundPass::turn`.
 fn consolidate_witnessed_turns(
     vault: &Vault,
     turn: EntityId,
-    readable_space: Option<EntityId>,
+    readable_spaces: &[EntityId],
     reply: &str,
 ) -> Result<UnboundPass> {
     let actor = vault.dreamer_authority()?;
-    if let Some(space) = readable_space {
+    for &space in readable_spaces {
         vault.create_access_grant(
             &EntityId::now(),
             &AccessGrant {
