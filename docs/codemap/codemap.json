@@ -86111,7 +86111,7 @@
      "path": "src/sync/selector/authorize.rs",
      "purpose": "Grant and pact authorization resolving the requested position under the grant ceiling, guest-share…",
      "surface": {
-      "crate-vis": 9,
+      "crate-vis": 10,
       "fn": 1
      }
     },
@@ -86122,7 +86122,7 @@
      "path": "src/sync/selector/authorize/filter.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 1
+      "crate-vis": 3
      }
     },
     {
@@ -102508,11 +102508,27 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/selector_born_with_prompt_label.rs",
+     "purpose": "A selector's born-with Prompt carries no relationship text its member does not read (OPUS-LEAKS…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
      "path": "tests/selector_relationship_label.rs",
      "purpose": "A federation selector window carries no relationship row its member does not read (OPUS-LEAKS round 2…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/selector_scope_summary_label.rs",
+     "purpose": "A selector discloses a scope SUMMARY and its copied reply only when its member reads every word source…",
      "surface": {}
     },
     {
@@ -104883,7 +104899,7 @@
    "over_bar": 270,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7592,
-   "test_files": 1315
+   "test_files": 1317
   },
   "oneiron-agent-runtime": {
    "files": [
