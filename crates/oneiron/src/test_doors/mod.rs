@@ -55,6 +55,7 @@ pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;
+pub mod sealed_file_grant;
 pub mod skill_hub_restore;
 pub mod skill_package;
 pub mod skill_read_hold;

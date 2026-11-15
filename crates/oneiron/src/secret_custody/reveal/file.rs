@@ -652,6 +652,17 @@ fn marked_groups_in_txn(
     class_groups(admitted).map(Some)
 }
 
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// The test door's view of [`marked_groups_in_txn`]: how many key groups
+    /// an agent's read of the stored file `hash` asks for; `None` when no
+    /// grant reaches the file.
+    pub(crate) fn marked_file_key_groups_for_test(&self, hash: &[u8; 32]) -> Result<Option<usize>> {
+        let txn = self.store.env.read_txn()?;
+        Ok(marked_groups_in_txn(self, &txn, hash)?.map(|groups| groups.len()))
+    }
+}
+
 /// `keys` in one group per custody class: the groups in their class word's
 /// order, each group's keys in the order given.
 fn class_groups(keys: Vec<AdmittedKey>) -> Result<Vec<ReadGroup>> {
