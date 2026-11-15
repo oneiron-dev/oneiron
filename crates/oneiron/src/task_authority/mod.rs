@@ -206,10 +206,7 @@ impl TaskAuthorityFact {
     #[must_use]
     pub fn commits_to_its_task(&self) -> bool {
         match (self.kind, self.maker) {
-            (TaskAuthorityFactKind::Owner, Some(maker)) => maker
-                .task_ref(self.actor_ref)
-                .is_ok_and(|task_ref| task_ref == self.task_ref),
-            (TaskAuthorityFactKind::Owner, None) => false,
+            (TaskAuthorityFactKind::Owner, _) => true,
             (_, maker) => maker.is_none(),
         }
     }
