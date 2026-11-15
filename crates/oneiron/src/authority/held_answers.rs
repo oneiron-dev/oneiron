@@ -10,11 +10,28 @@
 //! entry. A dismissal writes nothing to the log: it is a local mark on this
 //! install, the answer stays held, and his other devices still ask.
 
+use std::collections::BTreeMap;
+
 use crate::consent::AuthenticatedOwner;
-use crate::error::Result;
+use crate::error::{Error, RecordError, Result};
+use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
 
+use super::machine_answers::AnswerAct;
 use super::*;
+
+/// The held answers whose ask the owner dismissed on this install. Local,
+/// never synced. Key: the held answer's log entry.
+const DISMISSED: SideTable<AuthorityEntryHash, (), Raw> =
+    SideTable::new(&side_table::AUTHORITY_HELD_ANSWER_DISMISSED);
+
+/// A confirm or a dismissal named an entry the list no longer holds: the
+/// owner answered since, or the machine was removed.
+const STALE: &str = "the held machine answers changed since they were read";
+
+/// One confirm named two held answers about one machine.
+const TWO_ANSWERS: &str =
+    "two held answers name one machine: confirm one of them; nothing was written";
 
 /// One held machine answer as the owner's surface lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,42 +76,188 @@ pub struct ConfirmedHeldAnswers {
     pub listing: HeldAnswerListing,
 }
 
+/// The held answers `entries` name on `fold`, one for each machine, by
+/// machine: each entry with the profile it carried.
+fn named_held_answers(
+    fold: &AuthorityFold,
+    entries: &[AuthorityEntryHash],
+) -> Result<BTreeMap<EntityId, (AuthorityEntryHash, MachineProfile)>> {
+    let mut named = BTreeMap::new();
+    for entry in entries {
+        let (machine, held) = fold
+            .held_machine_answers()
+            .iter()
+            .find_map(|(machine, held)| held.get(entry).map(|answer| (*machine, answer)))
+            .ok_or(Error::ConcurrentWrite(STALE))?;
+        let earlier = named.insert(machine, (*entry, held.profile.clone()));
+        if earlier.is_some_and(|(earlier, _)| earlier != *entry) {
+            return Err(Error::InvalidConfig(TWO_ANSWERS.to_owned()));
+        }
+    }
+    Ok(named)
+}
+
+/// The owner's answer that confirms the held profile `held`: its own
+/// identity material, role and class, at the next revision above every
+/// standing head of the machine, or at the first revision of a machine no
+/// revision names. A held answer is no head, so the revision never rests on
+/// one. The machine's own proof covers its identity material and no
+/// revision, so it verifies under the confirm as it did under the held
+/// answer.
+fn confirming_profile(
+    fold: &AuthorityFold,
+    owner: EntityId,
+    held: &MachineProfile,
+) -> Result<MachineProfile> {
+    let heads: Vec<_> = fold
+        .machine(held.machine)
+        .into_iter()
+        .flat_map(|folded| folded.chains())
+        .map(|(_, head)| head)
+        .collect();
+    if heads.iter().any(|head| head.removed) {
+        return Err(invalid_authority());
+    }
+    let revision = match heads.iter().map(|head| head.profile.revision).max() {
+        Some(top) => top.checked_add(1).ok_or_else(invalid_authority)?,
+        None => 1,
+    };
+    Ok(MachineProfile {
+        owner,
+        revision,
+        carrier: None,
+        act: None,
+        ..held.clone()
+    })
+}
+
 impl Vault {
-    /// The owner's acts that wait for his proof on this vault.
+    /// The owner's acts that wait for his proof on this vault: every held
+    /// machine answer that still asks, each with its carrier and whether he
+    /// dismissed it here, the owner choices that wait, and whether this
+    /// install can confirm.
     ///
     /// # Errors
-    /// A refusal when the proof is no longer the vault's live owner; the
-    /// door is not built yet.
+    /// A refusal when the proof is no longer the vault's live owner; storage
+    /// faults, and history this vault lacks, as the fold reads them.
     pub fn held_machine_answers(&self, owner: &AuthenticatedOwner) -> Result<HeldAnswerListing> {
-        owner.revalidate(self)?;
-        Err(invalid_authority())
+        let txn = self.store.env.read_txn()?;
+        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        self.held_answer_listing_in_txn(&txn, &fold)
     }
 
-    /// The owner confirms the held answers `entries` name, from `surface`.
+    /// The list on `fold`, with this install's dismissals read in `txn`.
+    fn held_answer_listing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        fold: &AuthorityFold,
+    ) -> Result<HeldAnswerListing> {
+        let role_of = |machine: EntityId| {
+            fold.machine(machine)
+                .and_then(|folded| folded.roster.as_ref())
+                .map(|head| head.profile.role)
+        };
+        let mut answers = Vec::new();
+        for (machine, held) in fold.held_machine_answers() {
+            for (entry, answer) in held {
+                let carrier = answer.carrier();
+                answers.push(ListedHeldAnswer {
+                    entry: *entry,
+                    answer: answer.clone(),
+                    standing: role_of(*machine),
+                    carrier_role: carrier.and_then(role_of),
+                    carrier_is_mine: carrier
+                        .is_some_and(|carrier| fold.trusted_machine(carrier).is_some()),
+                    dismissed: DISMISSED.get(&self.store, txn, entry)?.is_some(),
+                });
+            }
+        }
+        Ok(HeldAnswerListing {
+            answers,
+            waiting_choices: fold.waiting_owner_choices().iter().copied().collect(),
+            can_confirm: self.owner_proof_signer(fold).is_some(),
+        })
+    }
+
+    /// The owner confirms the held answers `entries` name, from `surface`
+    /// (audit only), on an install that holds his key: each becomes his own
+    /// proven answer about its machine, in one transaction, so all of them
+    /// stand or nothing is written. A confirm names entries, never "all that
+    /// is held now": an answer that arrived after his surface listed them is
+    /// never confirmed unseen. His answer about a machine ends the ask of
+    /// every held answer about it that it saw. The credentials are sealed
+    /// again for the roster the confirm changed.
     ///
     /// # Errors
-    /// As [`Vault::held_machine_answers`].
+    /// [`RecordError::OwnerKeyRequired`] when this install holds no owner
+    /// key; [`Error::ConcurrentWrite`] when an entry no longer asks;
+    /// [`Error::InvalidConfig`] when two entries name one machine or this
+    /// install carries no live profile; an authority refusal when a
+    /// confirmed answer does not stand; a refusal when the proof is no
+    /// longer the vault's live owner.
     pub fn confirm_held_machine_answers(
         &self,
         owner: &AuthenticatedOwner,
-        _surface: ActSurface,
-        _entries: &[AuthorityEntryHash],
+        surface: ActSurface,
+        entries: &[AuthorityEntryHash],
     ) -> Result<ConfirmedHeldAnswers> {
-        owner.revalidate(self)?;
-        Err(invalid_authority())
+        let mut txn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        if self.owner_proof_signer(&fold).is_none() {
+            return Err(Error::Record(RecordError::OwnerKeyRequired));
+        }
+        let mut removed = Vec::new();
+        for (machine, (entry, held)) in named_held_answers(&fold, entries)? {
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            let profile = confirming_profile(&fold, actor, &held)?;
+            let answer = AnswerAct::by_owner(actor, surface, profile.role, None);
+            if profile.role == MachineRole::Removed {
+                removed.push(machine);
+            }
+            let landing = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
+            if landing.held().is_some() {
+                return Err(invalid_authority());
+            }
+            DISMISSED.delete(&self.store, &mut txn, &entry)?;
+        }
+        let after = self.authority_view_readonly_in_txn(&txn)?;
+        let listing = self.held_answer_listing_in_txn(&txn, &after)?;
+        txn.commit()?;
+        #[cfg(feature = "sync")]
+        self.reseal_after_machine_admission()?;
+        Ok(ConfirmedHeldAnswers { removed, listing })
     }
 
     /// The owner dismisses the ask of the held answers `entries` name, on
-    /// this install only.
+    /// this install only. Nothing is written to the log: each answer stays
+    /// held and stands for nothing, his other devices still ask, and a later
+    /// confirm of it still works.
     ///
     /// # Errors
-    /// As [`Vault::held_machine_answers`].
+    /// [`Error::ConcurrentWrite`] when an entry no longer asks; a refusal
+    /// when the proof is no longer the vault's live owner.
     pub fn dismiss_held_machine_answers(
         &self,
         owner: &AuthenticatedOwner,
-        _entries: &[AuthorityEntryHash],
+        entries: &[AuthorityEntryHash],
     ) -> Result<HeldAnswerListing> {
-        owner.revalidate(self)?;
-        Err(invalid_authority())
+        let mut txn = self.store.env.write_txn()?;
+        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        for entry in entries {
+            let asks = fold
+                .held_machine_answers()
+                .values()
+                .any(|held| held.contains_key(entry));
+            if !asks {
+                return Err(Error::ConcurrentWrite(STALE));
+            }
+            DISMISSED.put(&self.store, &mut txn, entry, &())?;
+        }
+        let listing = self.held_answer_listing_in_txn(&txn, &fold)?;
+        txn.commit()?;
+        Ok(listing)
     }
 }
