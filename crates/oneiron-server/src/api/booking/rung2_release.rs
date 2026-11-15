@@ -67,21 +67,8 @@ pub(super) fn release_kept_first_send<H: NativeMailHost>(
         tracing::warn!(kind = ?error.kind(), "a kept rung-2 first send does not rebuild");
         ApiError::internal_server_error("booking rung-2 first send unavailable")
     })?;
-    match adapter.approve_send_once(vault, owner, &request) {
-        Ok(_) => {}
-        // An earlier press approved these words: the send below answers
-        // from what the ledger recorded, and nothing is approved twice.
-        Err(error) if error.kind() == ErrorKind::ConsentApproveOnceSpent => {}
-        Err(error) if error.kind() == ErrorKind::ConsentOwnerNotAuthenticated => {
-            return Err(ApiError::forbidden_scope("owner"));
-        }
-        Err(error) => {
-            tracing::warn!(kind = ?error.kind(), "the owner's rung-2 press was not minted");
-            return Err(ApiError::invalid_state(Some(
-                "booking_rung2_send_unreleasable",
-            )));
-        }
-    }
+    // RED BASE: the press mints no approval.
+    let _ = (&request, owner);
     let outcome = match dispatch(vault, &kept)? {
         Rung2Dispatched::Sent => BookingRung2ReleaseOutcome::Sent,
         Rung2Dispatched::Held => BookingRung2ReleaseOutcome::Held,
