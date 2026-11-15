@@ -1,7 +1,7 @@
 //! Own-server conformance through the shipped HTTP transport, not a trait-only fake.
 use futures_core::Stream;
 use oneiron::*;
-use oneiron_llm_own_server::{OwnServerTransport, RemoteLlmClient};
+use oneiron_llm::oneiron_rpc::{OwnServerTransport, RemoteLlmClient};
 use serde_json::Value;
 use std::{
     collections::BTreeMap,

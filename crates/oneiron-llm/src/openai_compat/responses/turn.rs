@@ -8,7 +8,7 @@ use super::{
     REASONING_BUDGET_PARAM, ReasoningEffort, ResponseFormat, json, responses_items, responses_tool,
     validate_capabilities,
 };
-use crate::wire::SOLO_FIELD;
+use crate::openai_compat::wire::SOLO_FIELD;
 use oneiron::llm::is_solo;
 
 impl OpenAiResponsesTurn {

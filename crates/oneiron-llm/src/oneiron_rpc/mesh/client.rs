@@ -20,7 +20,7 @@ use super::{
     Batch, CountedConnection, DispatchError, LLM_ALPN, Reply, Request, dispatch_inference,
     exchange, lock, take,
 };
-use crate::OwnServerTransport;
+use crate::oneiron_rpc::OwnServerTransport;
 
 /// How long a node has to answer the dial.
 const DIAL_TIMEOUT: Duration = Duration::from_secs(5);

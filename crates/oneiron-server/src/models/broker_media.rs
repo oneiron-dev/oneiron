@@ -22,11 +22,11 @@ use oneiron::llm::media::{
 };
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, ModelId, RetryableLlmError};
 use oneiron_broker::{BrokerClient, CallHeader, FormData, Isolation, Shape};
-use oneiron_llm_gemini::{
+use oneiron_llm::gemini::{
     GeminiMediaBackend, GeminiMediaFuture, GeminiMediaHttpRequest, GeminiMediaHttpResponse,
     GeminiMediaTransport,
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };

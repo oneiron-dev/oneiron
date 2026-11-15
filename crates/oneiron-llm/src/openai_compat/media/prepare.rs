@@ -14,7 +14,7 @@ use oneiron::llm::media::{AiOperation, MediaPart, MediaRequest};
 use oneiron::{FatalLlmError, LlmResult, ModelId};
 use serde_json::{Value, json};
 
-use crate::image::{check_edit_mask, fields, form_fields, reference_extension};
+use crate::openai_compat::image::{check_edit_mask, fields, form_fields, reference_extension};
 
 /// The reference images a video job carries: its one `input_reference`. A
 /// call with more is not this wire's; a host's ladder passes it to an offer

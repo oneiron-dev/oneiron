@@ -1,7 +1,7 @@
 //! The remote System One protocol adapter; policy and receipts live in `oneiron::llm::decision`.
 //!
 //! The seat builds each request and reads each reply here; a
-//! [`SystemOneTransport`] carries the exact bytes between: this crate's own
+//! [`SystemOneTransport`] carries the exact bytes between: this module's own
 //! HTTPS client with a bearer key, or a host's (the credential broker, which
 //! adds the key from the vault for one call at a time).
 
@@ -85,7 +85,7 @@ pub struct SystemOneSeat {
 }
 
 impl SystemOneSeat {
-    /// The seat at `endpoint`, sent to over this crate's HTTPS client with
+    /// The seat at `endpoint`, sent to over this module's HTTPS client with
     /// `bearer`.
     pub fn new(
         endpoint: String,
@@ -302,7 +302,7 @@ impl RemoteDecisionSeat for SystemOneSeat {
     }
 }
 
-/// This crate's own transport: one HTTPS request with the bearer key, no
+/// This module's own transport: one HTTPS request with the bearer key, no
 /// redirect, its reply read up to [`MAX_RESPONSE_BYTES`].
 struct BearerTransport {
     client: reqwest::Client,

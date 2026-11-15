@@ -8183,8 +8183,7 @@ dependencies = [
  "futures-util",
  "loro",
  "oneiron",
- "oneiron-llm-openai",
- "oneiron-llm-own-server",
+ "oneiron-llm",
  "oneiron-organ-protocol",
  "oneiron-remote",
  "oneiron-server",
@@ -8418,7 +8417,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-dreamer",
- "oneiron-llm-local",
+ "oneiron-llm",
  "oneiron-remote",
  "rmpv",
  "serde_json",
@@ -8548,78 +8547,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "oneiron-llm-anthropic"
-version = "0.1.0"
-dependencies = [
- "futures-core",
- "oneiron",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "oneiron-llm-gemini"
+name = "oneiron-llm"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "futures-core",
- "oneiron",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oneiron-llm-local"
-version = "0.1.0"
-dependencies = [
+ "blake3",
  "futures-core",
  "futures-util",
  "oneiron",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oneiron-llm-openai"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "futures-core",
- "oneiron",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "oneiron-llm-own-server"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "futures-core",
- "oneiron",
  "oneiron-mesh-transport",
  "oneiron-remote",
+ "reqwest 0.12.28",
  "rmp-serde",
  "serde",
  "serde_bytes",
  "serde_json",
  "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "oneiron-llm-systemone"
-version = "0.1.0"
-dependencies = [
- "oneiron",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
@@ -8985,11 +8929,7 @@ dependencies = [
  "oneiron-driver",
  "oneiron-keystore",
  "oneiron-linear",
- "oneiron-llm-anthropic",
- "oneiron-llm-gemini",
- "oneiron-llm-openai",
- "oneiron-llm-own-server",
- "oneiron-llm-systemone",
+ "oneiron-llm",
  "oneiron-mail-pack",
  "oneiron-mesh-transport",
  "oneiron-organ-host",

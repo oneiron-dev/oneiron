@@ -11,11 +11,11 @@ use oneiron::{ContentPart, FatalLlmError, LlmMessageRole, LlmRequest, LlmResult}
 use serde_json::{Map as JsonMap, Value as JsonValue, json};
 
 use super::{anthropic_content_part, text_content};
-use crate::AnthropicCacheTier;
+use crate::anthropic::AnthropicCacheTier;
 
 /// Marks `body`, the Messages body `request` was built into, at each cache
 /// boundary the request's host descriptor names, at `tier` (the request's
-/// own, as [`crate::AnthropicProviderOptions::cache_tier`] reads it). A
+/// own, as [`crate::anthropic::AnthropicProviderOptions::cache_tier`] reads it). A
 /// boundary on a wire-present part this wire cannot mark (thinking or audio)
 /// makes the request invalid. A part omitted from this wire has no marker.
 pub(super) fn mark(
