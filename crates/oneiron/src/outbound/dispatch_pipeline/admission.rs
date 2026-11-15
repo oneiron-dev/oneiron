@@ -1,5 +1,6 @@
 //! Pure execute-time admission: one decision consumed by freeze and gate paths.
 use crate::delivery_window::DeliveryWindowResolution;
+use crate::linkedin_connector::setting_keys::LinkedInSeatSettings;
 use crate::outbound::OutboundDeliveryWindowDecision;
 use crate::outbound::capability::OutboundVerbContract;
 use crate::outbound::dispatch_types::{OutboundDispatchOutcome, OutboundDispatchRequest};
@@ -26,6 +27,7 @@ impl AdmissionStage {
         request: &OutboundDispatchRequest,
         contract: &OutboundVerbContract,
         seat_ledger: SeatLedgerCount,
+        seat_settings: &LinkedInSeatSettings,
         window_resolution: DeliveryWindowResolution,
         window_decision: OutboundDeliveryWindowDecision,
     ) -> Self {
@@ -40,7 +42,7 @@ impl AdmissionStage {
         };
         // A window that parks a send never evaluates the connector's seat policy.
         let seat = if parked.is_none() {
-            evaluate_seat_policy(request, contract, seat_ledger)
+            evaluate_seat_policy(request, contract, seat_ledger, seat_settings)
         } else {
             None
         };

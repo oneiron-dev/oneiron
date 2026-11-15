@@ -14,7 +14,8 @@ use super::{
 use super::{LinkedInSandboxHostConfig, bounded_ref};
 
 /// The day a seat's daily caps count over when its host names no reset
-/// instant: they reset at the next UTC midnight (FIX 8791, FIX 8813).
+/// instant: they reset at the next midnight, UTC unless the engine names the
+/// owner's clock (FIX 8791, FIX 8813).
 const LINKEDIN_SEAT_FALLBACK_CAP_DAY_SECS: u64 = 24 * 60 * 60;
 
 /// The custody record the LinkedIn pack's session connection keeps its
@@ -205,6 +206,12 @@ pub struct LinkedInSeatSandboxPolicy {
     pub state: LinkedInSeatDispatchState,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kill_switch: Option<LinkedInKillSwitchState>,
+    /// Whether a request its host flags as a sweep may go, under the daily
+    /// caps like any other: the owner's setting, which the engine names at
+    /// each evaluation ([`Self::with_sweeps_allowed`]). Never encoded or read
+    /// from a host's policy, so it is false until the engine names it.
+    #[serde(skip)]
+    sweeps_allowed: bool,
 }
 
 impl LinkedInSeatSandboxPolicy {
@@ -214,6 +221,7 @@ impl LinkedInSeatSandboxPolicy {
             limits: LinkedInAccountRiskLimits::default(),
             state: LinkedInSeatDispatchState::default(),
             kill_switch: None,
+            sweeps_allowed: false,
         }
     }
 
@@ -271,6 +279,22 @@ impl LinkedInSeatSandboxPolicy {
         Ok(self)
     }
 
+    /// This policy under the owner's sweep setting: with `sweeps_allowed`, a
+    /// request its host flags as a sweep is judged as any other request, so
+    /// the kill switch, the session, the daily caps and the cadence still
+    /// bound it; without it, a sweep is suppressed (`linkedin.no_sweeps`).
+    #[must_use]
+    pub fn with_sweeps_allowed(mut self, sweeps_allowed: bool) -> Self {
+        self.sweeps_allowed = sweeps_allowed;
+        self
+    }
+
+    /// Whether this policy lets a request its host flags as a sweep go.
+    #[must_use]
+    pub const fn sweeps_allowed(&self) -> bool {
+        self.sweeps_allowed
+    }
+
     /// This policy with the instant its daily caps reset after `now` named
     /// (FIX 8791, FIX 8813): the host's own reset while it is still ahead,
     /// else the next UTC midnight.
@@ -285,6 +309,28 @@ impl LinkedInSeatSandboxPolicy {
                     .saturating_add(1)
                     .saturating_mul(LINKEDIN_SEAT_FALLBACK_CAP_DAY_SECS)
             });
+        self.state.caps_reset_at = Some(reset);
+        self
+    }
+
+    /// This policy with the instant its daily caps reset after `now` named on
+    /// a local clock: the host's own reset while it is still ahead, else the
+    /// next midnight on the clock whose UTC offset, in minutes, at an instant
+    /// is `offset_minutes_at` (the owner's clock, which the engine passes in).
+    /// A change of offset before that midnight moves it with the change; a
+    /// change that would put it at or before `now` keeps the midnight on the
+    /// offset at `now`.
+    #[must_use]
+    pub fn with_caps_reset_after_on(
+        mut self,
+        now: u64,
+        offset_minutes_at: impl Fn(u64) -> i16,
+    ) -> Self {
+        let reset = self
+            .state
+            .caps_reset_at
+            .filter(|reset| *reset > now)
+            .unwrap_or_else(|| next_local_midnight(now, offset_minutes_at));
         self.state.caps_reset_at = Some(reset);
         self
     }
@@ -319,7 +365,7 @@ impl LinkedInSeatSandboxPolicy {
         if self.kill_switch_engaged() {
             return LinkedInSeatPolicyDecision::suppress("linkedin.kill_switch_engaged", fields);
         }
-        if self.state.request_is_sweep {
+        if self.state.request_is_sweep && !self.sweeps_allowed {
             return LinkedInSeatPolicyDecision::suppress("linkedin.no_sweeps", fields);
         }
         if !self.state.session_active {
@@ -360,7 +406,7 @@ impl LinkedInSeatSandboxPolicy {
         if self.kill_switch_engaged() {
             return LinkedInSeatPolicyDecision::suppress("linkedin.kill_switch_engaged", fields);
         }
-        if self.state.request_is_sweep {
+        if self.state.request_is_sweep && !self.sweeps_allowed {
             return LinkedInSeatPolicyDecision::suppress("linkedin.no_sweeps", fields);
         }
         if !self.state.session_active {
@@ -419,7 +465,10 @@ impl LinkedInSeatSandboxPolicy {
             "linkedin_session_active".to_owned(),
             self.state.session_active.to_string(),
         );
-        fields.insert("linkedin_sweeps_allowed".to_owned(), "false".to_owned());
+        fields.insert(
+            "linkedin_sweeps_allowed".to_owned(),
+            self.sweeps_allowed.to_string(),
+        );
         fields.insert(
             "linkedin_verb_catalog_revoked".to_owned(),
             self.kill_switch_engaged().to_string(),
@@ -436,6 +485,32 @@ impl LinkedInSeatSandboxPolicy {
         }
         fields
     }
+}
+
+/// The next midnight after `now` on the clock whose UTC offset, in minutes,
+/// at an instant is `offset_minutes_at`: found on the offset at `now`, then
+/// moved by the offset at that instant, and kept on the first when the move
+/// would put it at or before `now`.
+fn next_local_midnight(now: u64, offset_minutes_at: impl Fn(u64) -> i16) -> u64 {
+    let day = i64::try_from(LINKEDIN_SEAT_FALLBACK_CAP_DAY_SECS).unwrap_or(i64::MAX);
+    let offset_secs = |at: u64| i64::from(offset_minutes_at(at)).saturating_mul(60);
+    let now_secs = i64::try_from(now).unwrap_or(i64::MAX);
+    let local_midnight = now_secs
+        .saturating_add(offset_secs(now))
+        .div_euclid(day)
+        .saturating_add(1)
+        .saturating_mul(day);
+    let on_offset_now = local_midnight.saturating_sub(offset_secs(now));
+    let on_offset_then =
+        local_midnight.saturating_sub(offset_secs(u64::try_from(on_offset_now).unwrap_or(now)));
+    let instant = if on_offset_then > now_secs {
+        on_offset_then
+    } else {
+        on_offset_now
+    };
+    u64::try_from(instant)
+        .unwrap_or(now)
+        .max(now.saturating_add(1))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
