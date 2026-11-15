@@ -308,6 +308,20 @@ pub(crate) fn round_once(server: &SyncServer) -> oneiron::Result<()> {
     round(server, &renewal)
 }
 
+/// One admitted coach-host job through the wake executor, as a wake pass
+/// with the Coach lent runs it. The cfg-only door
+/// `crate::test_doors::coach_wake` calls it.
+#[cfg(oneiron_test_support)]
+pub(crate) async fn wake_execute_for_test(
+    server: &Arc<SyncServer>,
+    admitted: &DreamerAdmittedAttempt,
+    now: u64,
+) -> oneiron::Result<oneiron::DreamerAttemptExecution> {
+    wake::WakeExecutor::for_test(server)
+        .execute(admitted, now)
+        .await
+}
+
 pub(super) fn run_one(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,

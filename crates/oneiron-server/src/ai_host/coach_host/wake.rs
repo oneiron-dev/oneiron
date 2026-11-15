@@ -18,6 +18,17 @@ impl WakeExecutor {
         Some(Self { server, serve })
     }
 
+    /// Test-only executor: the pass's worker handle is the test's own
+    /// runtime. The cfg-only door `crate::test_doors::coach_wake` calls
+    /// it through `super::wake_execute_for_test`.
+    #[cfg(oneiron_test_support)]
+    pub(in crate::ai_host) fn for_test(server: &Arc<SyncServer>) -> Self {
+        Self {
+            server: Arc::clone(server),
+            serve: tokio::runtime::Handle::current(),
+        }
+    }
+
     pub(in crate::ai_host) async fn execute(
         &self,
         admitted: &DreamerAdmittedAttempt,
