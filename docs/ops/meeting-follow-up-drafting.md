@@ -64,8 +64,13 @@ contract is judged alone, so one refused draft leaves its siblings filed.
 
 A model, source, configuration, budget or filing error schedules a new try
 through the native retry door, with no cutoff. A destination that holds the
-transcript (a world it may not reach) retries the same way, until the hold
-clears.
+transcript, or may list none of its recipients (a world it may not reach),
+retries the same way, until a model that may see them is configured or the
+hold clears.
+
+The size-cap check runs at the widest destination only. A transcript within a
+few names' bytes of the cap there completes with no draft, though a narrower
+destination, which lists fewer recipients, might fit under it.
 
 A soft cancellation lands the owned attempt with a restart cursor. A forced
 cancellation or a lost lease stops the old worker's result. Host shutdown

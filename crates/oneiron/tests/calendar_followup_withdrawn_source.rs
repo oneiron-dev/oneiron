@@ -8,8 +8,8 @@
 //! drafting, forever. The read now leaves such a TURN out, as it leaves out a
 //! deleted one, and drafts from the TURNs that remain.
 //!
-//! Red on PR-E2a's head: the read answers `Held` (the first test's first
-//! assertion fails).
+//! Red on PR-E2a's head: once a TURN's source is withdrawn, the read answers
+//! `Held` (the first test's second read and the second test's read fail).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test calendar_followup_withdrawn_source`.

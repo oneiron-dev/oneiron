@@ -140,7 +140,9 @@ async fn draft(
         return Ok(());
     };
     // The widest destination first: a destination only narrows, so a
-    // SESSION with nothing to draft here has nothing for any model.
+    // SESSION with nothing to draft here has nothing for any model. One
+    // edge: a transcript past the size cap here completes too, though a
+    // narrower destination lists fewer recipients and might fit under it.
     match blocking(|| vault.meeting_follow_up_source_for(&payload, &ReadDestination::on_device())) {
         Ok(MeetingFollowUpRead::Missing | MeetingFollowUpRead::Silent(_)) => return Ok(()),
         Ok(MeetingFollowUpRead::Held(_) | MeetingFollowUpRead::Ready(_)) => {}
@@ -282,7 +284,11 @@ impl FollowUpSources<'_> {
             Ok(MeetingFollowUpRead::Ready(source)) => Ok(source),
             Ok(MeetingFollowUpRead::Held(hold)) => Err(hold.reason()),
             // Nothing this destination may draft from: the rung is passed
-            // over; the next try's first read completes the attempt.
+            // over. When the SESSION has nothing left at all, the next try's
+            // first read completes the attempt. When only this destination
+            // lacks it (a recipient in a world it may not reach), the attempt
+            // retries, as a world hold does, until a model that may see it
+            // is configured.
             Ok(MeetingFollowUpRead::Missing | MeetingFollowUpRead::Silent(_)) => {
                 Err(ReleaseHold::Placement.reason())
             }
