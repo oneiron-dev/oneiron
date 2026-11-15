@@ -285,7 +285,7 @@ pub fn load_public_booking_page_listing(
     load_public_booking_page_listed_in_txn(vault, &rtxn, page_ref, now)
 }
 
-fn load_public_booking_page_in_txn(
+pub(super) fn load_public_booking_page_in_txn(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     page_ref: EntityId,

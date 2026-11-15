@@ -5,6 +5,7 @@
 //! deterministic oracle chooses the times, and a program-generated button
 //! carries the only slot action.
 
+use crate::EntityId;
 use crate::error::Error;
 use crate::lens::{
     ButtonControl, GeneratedLens, GeneratedUiActionDeclaration, GeneratedUiActionTier,
@@ -93,6 +94,13 @@ pub struct ConstraintFrontConfig {
     pub off_topic_line: String,
     pub max_turns: u16,
     pub max_model_calls: u16,
+    /// The page's own agent, set by the owner at publish: the agent that
+    /// continues a no-fit turn over email (rung 2, ARCH-0062:145-147) and
+    /// whose named work address is that email's FROM (ARCH-0063:48). `None`:
+    /// the page names no agent, so it offers no rung 2 (RUNG2-NO-SENDER = A).
+    /// Never emitted in the public render model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_ref: Option<EntityId>,
 }
 
 impl ConstraintFrontConfig {
@@ -284,6 +292,25 @@ pub fn constraint_deflect(
     validate_session_ref(session_ref)?;
     Ok(ConstraintDeflect {
         card: deflect_card(session_ref, copy)?,
+    })
+}
+
+/// The owner's no-fit line for `session_ref`, with no control: the answer a
+/// no-fit turn gets on a page that offers no rung 2
+/// ([`super::rung2::Rung2Offer::NotOffered`]). The page keeps its own slot
+/// links, and the card asks for no email (RUNG2-NO-SENDER = A).
+pub fn constraint_no_fit(
+    session_ref: &str,
+    copy: &ConstraintFrontCopy,
+) -> Result<ConstraintDeflect, BookingError> {
+    copy.validate()?;
+    validate_session_ref(session_ref)?;
+    Ok(ConstraintDeflect {
+        card: card(
+            session_ref,
+            voice_node(copy, &copy.no_fit_line)?,
+            Vec::new(),
+        )?,
     })
 }
 
