@@ -15,10 +15,13 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{ArtifactError, Error, Result};
+use crate::llm::model_pack::AccessSnapshot;
 use crate::schedule::{
-    ArmBy, Armed, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, Trigger, When,
+    ArmBy, Armed, JobOutcome, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, Trigger,
+    When,
 };
 use crate::side_table::{self, Named, SideTable};
+use crate::store::housekeeping_schedule::HousekeepingBudget;
 
 use super::{
     DreamerParkWait, DreamerParkedAttemptRecord, DreamerRunnerStore, DreamerTryLease, ModelSeatId,
@@ -392,6 +395,46 @@ impl Vault {
         .into_iter()
         .map(|(_, at)| at)
         .min())
+    }
+
+    /// Runs the due rows of [`SEAT_RESET_JOB`] now, ahead of the housekeeping pass: the
+    /// model-seat watcher's door, so a seat's parks wake about a second after its reset rather
+    /// than at the next tick. Each run writes its seat available at its reset, which wakes the
+    /// parks it covers, in one write. Returns the seats its runs released. While a housekeeping
+    /// pass holds the runner it runs nothing and returns none: that pass runs the due rows.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading or writing the schedule or a seat's row; a run's own failure backs
+    /// off on its row.
+    pub fn release_due_model_seats(&self) -> Result<Vec<ModelSeatId>> {
+        let deadline = HousekeepingBudget::unbounded().deadline();
+        let access = AccessSnapshot::new();
+        let pass = JobPass {
+            deadline: &deadline,
+            access: &access,
+        };
+        let Some(report) = self.run_due_of(&[&SEAT_RESET_JOB], &pass)? else {
+            return Ok(Vec::new());
+        };
+        let mut released = Vec::new();
+        for run in report.runs {
+            if run.outcome != JobOutcome::Done {
+                continue;
+            }
+            let Some(seat) = run.subject.as_deref() else {
+                continue;
+            };
+            let seat = ModelSeatId::from_hex(seat)?;
+            let reset_passed = self.model_seat_state(seat)?.is_some_and(|state| {
+                state.availability == ModelSeatAvailability::Available
+                    && state.source == ModelSeatSource::ResetPassed
+            });
+            if reset_passed {
+                released.push(seat);
+            }
+        }
+        Ok(released)
     }
 }
 

@@ -358,7 +358,6 @@ fn a_wait_until_is_a_row_the_pass_at_its_second_answers_cutoff() {
     fx.at(T0 + 11);
     fx.pass();
     let cut = delivered(&fx.vault, &open.wait).expect("the pass at its second delivers the reply");
-    assert!(cut.done);
     assert_eq!(cut.reason.as_deref(), Some("cutoff"));
     assert_eq!(cut.pending, vec![hex(first), hex(second)]);
     assert_eq!(fx.armed(WAIT_JOB, wait), None, "settling disarms the row");

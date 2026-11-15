@@ -13,9 +13,11 @@ use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptState};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::llm::model_pack::AccessSnapshot;
 use crate::schedule::{
     ArmBy, Armed, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, Trigger, When,
 };
+use crate::store::housekeeping_schedule::HousekeepingBudget;
 
 use super::store::DreamerRunnerStore;
 use super::types::DreamerParkedAttemptRecord;
@@ -105,6 +107,28 @@ pub(crate) fn unindex_outage_due_in_txn(
         Some(subject(record.attempt_id)?),
     )?;
     Ok(())
+}
+
+impl Vault {
+    /// Runs the due rows of [`OUTAGE_RESUME_JOB`] now, ahead of the housekeeping pass: the
+    /// resident pump's outage step, so a hinted park resumes on the pump's first pass after its
+    /// hint rather than at the next tick. Returns how many rows it ran. While a housekeeping pass
+    /// holds the runner it runs nothing and returns 0: that pass runs the due rows.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading or writing the schedule; a run's own failure backs off on its row.
+    pub fn resume_due_outage_parks(&self) -> Result<usize> {
+        let deadline = HousekeepingBudget::unbounded().deadline();
+        let access = AccessSnapshot::new();
+        let pass = JobPass {
+            deadline: &deadline,
+            access: &access,
+        };
+        Ok(self
+            .run_due_of(&[&OUTAGE_RESUME_JOB], &pass)?
+            .map_or(0, |report| report.runs.len()))
+    }
 }
 
 /// What one run of [`OUTAGE_RESUME_JOB`] decided about its park.

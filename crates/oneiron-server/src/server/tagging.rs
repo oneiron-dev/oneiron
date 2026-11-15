@@ -46,8 +46,8 @@ enum TaggerConfigured {
 impl SyncServer {
     /// The model-slot workers serve starts: embedding and tagging, each only
     /// when its slot is configured, the resident run pump when a code host
-    /// serves, the seat host on the person's own runtime (FIX 4552), and the
-    /// connector-call settler (ONE-2510) always.
+    /// serves, the seat host on the person's own runtime (FIX 4552), the
+    /// model-seat watcher, and the connector-call settler (ONE-2510) always.
     pub(crate) fn spawn_slot_workers(self: &Arc<Self>) -> Vec<tokio::task::JoinHandle<()>> {
         [self.spawn_embedding_worker(), self.spawn_tagging_worker()]
             .into_iter()
@@ -55,6 +55,7 @@ impl SyncServer {
                 self.spawn_media_embedding_worker(),
                 self.spawn_resident_pump(),
                 self.spawn_seat_host(),
+                Some(self.spawn_model_seat_watcher()),
                 Some(self.spawn_connector_settler()),
             ])
             .flatten()

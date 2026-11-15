@@ -506,3 +506,13 @@ pub fn arm_as_engine(
 ) -> Result<ScheduleView> {
     vault.arm_schedule(None, job, subject, trigger)
 }
+
+/// Runs `act` while a housekeeping pass holds the schedule's runner, as a pass on another thread
+/// holds it (stage 5b-4): a host loop's run of its own job's rows meets the held runner.
+pub fn while_a_pass_holds_the_runner<T>(vault: &Vault, act: impl FnOnce() -> T) -> T {
+    let _held = vault
+        .housekeeping
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    act()
+}

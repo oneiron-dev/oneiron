@@ -437,6 +437,15 @@ impl SyncServer {
             pass.faults
                 .insert("signalled run waits".to_owned(), error.to_string());
         }
+        // A host door's retry hint arms a due row of the engine's outage
+        // resume job on its park: each pass runs those rows, ahead of the
+        // housekeeping tick. The resumed run's own next call probes the rested
+        // offer and re-parks if it is still unavailable; recovery and restart
+        // resume the same row too.
+        if let Err(error) = vault.resume_due_outage_parks() {
+            pass.faults
+                .insert("outage parks".to_owned(), error.to_string());
+        }
         let agents = match vault.entities_by_type(ENTITY_TYPE_AGENT_DEF) {
             Ok(agents) => agents,
             Err(error) => {

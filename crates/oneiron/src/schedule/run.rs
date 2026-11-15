@@ -72,13 +72,24 @@ pub enum JobOutcome {
     UnknownJob,
 }
 
+/// Whether the `SCHEDULE` key `row_key` is a row of one of `jobs`: its code, then 0x00.
+fn row_of_any(row_key: &[u8], jobs: &[&JobSpec]) -> bool {
+    jobs.iter().any(|spec| {
+        row_key
+            .strip_prefix(spec.code.as_bytes())
+            .is_some_and(|rest| rest.first() == Some(&0))
+    })
+}
+
 /// The first due-index entry due by `now` whose row is not one of `ran_once`, the rows of the
-/// once-a-pass jobs this pass has started: its due time and its row's key.
+/// once-a-pass jobs this pass has started, and, when `only` names jobs, is a row of one of them:
+/// its due time and its row's key.
 fn first_due_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     now: u64,
     ran_once: &[Vec<u8>],
+    only: Option<&[&JobSpec]>,
 ) -> Result<Option<(u64, Vec<u8>)>> {
     for entry in DUE.iter_raw_from(&vault.store, txn, &[])? {
         let (key, _) = entry?;
@@ -89,7 +100,10 @@ fn first_due_in_txn(
         if due > now {
             return Ok(None);
         }
-        if !ran_once.iter().any(|ran| ran.as_slice() == row_key) {
+        if ran_once.iter().any(|ran| ran.as_slice() == row_key) {
+            continue;
+        }
+        if only.is_none_or(|jobs| row_of_any(row_key, jobs)) {
             return Ok(Some((due, row_key.to_vec())));
         }
     }
@@ -133,6 +147,52 @@ impl Vault {
             .housekeeping
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.run_due_held(pass, None)
+    }
+
+    /// [`Self::run_due_until`] for the rows of the jobs `only` names alone: a host loop that
+    /// serves its own job sooner than the housekeeping tick (the model-seat watcher, the
+    /// resident pump's outage step) runs them here. It takes the runner without waiting: while
+    /// a housekeeping pass holds it, it runs nothing and answers `None`, and that pass runs the
+    /// rows that are due. A failed run is logged here, since no pass report carries it; its row
+    /// backs off as in a pass.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::run_due`].
+    pub(crate) fn run_due_of(
+        &self,
+        only: &[&JobSpec],
+        pass: &JobPass<'_>,
+    ) -> Result<Option<ScheduleRunReport>> {
+        let _pass = match self.housekeeping.try_lock() {
+            Ok(held) => held,
+            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
+        };
+        let report = self.run_due_held(pass, Some(only))?;
+        for run in &report.runs {
+            if matches!(
+                run.outcome,
+                JobOutcome::Failed { .. } | JobOutcome::Panicked
+            ) {
+                tracing::warn!(
+                    job = %run.job,
+                    outcome = ?run.outcome,
+                    "a due job run ahead of the housekeeping pass failed; its row backs off"
+                );
+            }
+        }
+        Ok(Some(report))
+    }
+
+    /// The runner's loop, under the runner its caller holds: every due row, or the rows of the
+    /// jobs `only` names.
+    fn run_due_held(
+        &self,
+        pass: &JobPass<'_>,
+        only: Option<&[&JobSpec]>,
+    ) -> Result<ScheduleRunReport> {
         let deadline = pass.deadline;
         let mut report = ScheduleRunReport::default();
         let mut ran_once: Vec<Vec<u8>> = Vec::new();
@@ -143,7 +203,7 @@ impl Vault {
             let now = self.now_recorded_at();
             let due = {
                 let txn = self.store.env.read_txn()?;
-                first_due_in_txn(self, &txn, now, &ran_once)?
+                first_due_in_txn(self, &txn, now, &ran_once, only)?
             };
             let Some((due_at, key)) = due else {
                 break;
