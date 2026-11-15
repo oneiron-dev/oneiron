@@ -473,13 +473,6 @@ pub(super) fn handshake_text_index_manifest(
     let stored_manifest_bytes = ANALYZER_MANIFEST.get(store, &rtxn, &String::new())?;
     drop(rtxn);
 
-    if let (Some(stored_hash), Some(stored_field_hash)) =
-        (stored_manifest_hash, stored_field_schema_hash)
-        && (stored_hash != current_manifest_hash || stored_field_hash != current_field_schema_hash)
-    {
-        return Ok(TextIndexHandshake::Stale);
-    }
-
     validate_stored_manifest_hashes(
         stored_manifest_hash,
         stored_field_schema_hash,
