@@ -1964,15 +1964,22 @@ nothing, and the question goes up the ladder again.
 owner-grade credential, as before: your top-scope slip with its holder
 proof, or your managed vault's attested owner. The page reads the PDF and
 the geography pack from your own files; it reads no private PDF from the
-vault and stores nothing there. Export saves the pack as a local download.
+vault. Export saves the pack as a local download.
 
-Each time the page loads it gets a fresh editor token, kept only in the
-page's memory. It sends the token with its two computations, page geometry
-(`POST /sign/geometry`) and field layout (`POST /sign/layout`). The server
-keeps only the token's digest. The token admits new computations for an
-hour; one already running finishes. After that hour, or after the server
-restarts, the page says the session has ended: reload the editor and carry
-on.
+"Save fields to the draft" writes the pack's fields to a document still in
+draft, named by its 32-hex document reference (`POST /sign/fields`). It runs
+`vault.esign.fields.place` as the credential that loaded the page, with that
+verb's own checks. A document already sent keeps its fields: its content is
+frozen, and the save answers 400.
+
+Each time the page loads it gets two fresh editor tokens, kept only in the
+page's memory. The first goes with its two computations, page geometry
+(`POST /sign/geometry`) and field layout (`POST /sign/layout`); the second
+goes only with a save to a draft. Neither token opens the other's doors.
+The server keeps only each token's digest. A token admits new requests for
+an hour; one already running finishes. After that hour, after the server
+restarts, or once the credential that loaded the page is revoked, the page
+says the session has ended: reload the editor and carry on.
 
 - No ceiling on the PDF, the pack or a select field's choices. A larger PDF
   spools to disk and is inspected whole; only the vault's disk floor
