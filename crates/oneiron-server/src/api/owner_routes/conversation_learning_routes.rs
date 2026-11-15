@@ -117,7 +117,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "put",
                 path: "/conversation-learning/me",
-                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. It stops new sharing of their messages and withdraws nothing already shared. A stale seen (64 hex) is a conflict.",
+                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. Leaving them out works from any machine; it stops new sharing of their messages and withdraws nothing already shared. Once the vault holds an owner key, letting them back in is refused (409, state owner_key_required) with nothing stored on a machine that is not the owner's and holds no owner key. A stale seen (64 hex) is a conflict.",
                 row: None,
                 shape: Some(RestShape::json(set_own_body_schema, own_reply_schema)),
             },
@@ -268,7 +268,9 @@ pub(crate) fn own_reply_schema() -> serde_json::Value {
 /// The engine's typed refusals as the caller's: a stale revision is a change
 /// since their review; a caller who is no admin, a vault that does not allow
 /// opt-outs, or a choice this install cannot carry or does not count is a
-/// refusal naming its rule. Proof failures stay the owner door's 403.
+/// refusal naming its rule. Proof failures stay the owner door's 403. An
+/// opt back in this install cannot prove the owner's stays the engine's own
+/// conflict (409, state `owner_key_required`; row CARRIER-OWNER-PROOF).
 fn refusal(error: oneiron::Error) -> OwnerError {
     match error {
         oneiron::Error::ConcurrentWrite(_) => OwnerError::Changed(error.to_string()),
