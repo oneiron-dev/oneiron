@@ -605,6 +605,37 @@ pub(crate) fn request_runs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result
     })
 }
 
+/// The engine arms `spec` about `subject` due at `at` at the latest, inside the caller's write:
+/// a row not armed, or due later, or with a run in flight, is armed afresh at a time
+/// ([`Trigger::At`]), with no failure, cursor or request; one already due by `at` is left as it
+/// is. A row armed afresh while its run runs keeps the new arming when the run's result is
+/// written (no sooner than the run's first retry after its end), so work a write made due during
+/// a run is never lost. The door of a job whose one row stands for a line of work, due at its
+/// earliest item, which a new item may pull earlier.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn arm_at_latest_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    spec: &'static JobSpec,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    let key = row_key(spec.code, subject);
+    let prior = ROWS.get(store, txn, &key)?;
+    if prior
+        .as_ref()
+        .is_some_and(|prior| prior.started_at.is_none() && prior.due_at() <= at)
+    {
+        return Ok(());
+    }
+    let now = crate::ports::recorded_at_in_txn(store, txn)?;
+    let row = ScheduleRow::armed(Trigger::At { at }, None, prior.as_ref(), now)?;
+    store_row_in_txn(store, txn, &key, prior.as_ref(), Some(&row))
+}
+
 /// Pulls the due time of `job` about `subject` forward to `at` inside the caller's write: work
 /// a door made due before the job's next occurrence. A job that is backing off, or has a run in
 /// flight, keeps its due time; one not armed, or already due by `at`, is left as it is.

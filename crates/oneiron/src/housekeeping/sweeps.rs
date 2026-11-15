@@ -273,7 +273,8 @@ fn gate_decisions(vault: &Vault, deadline: &Deadline) -> Result<Run> {
     // 8565).
     super::sync_work::drain_retained_sync_work(vault);
     // Verb calls a budget window paced end unrun once their deadline passes
-    // (FIX 8753); only the host's settler runs their turns.
+    // (FIX 8753); only the paced line's row runs their turns, where its
+    // host installed its turn runner.
     if let Err(error) = vault.expire_paced_verb_calls(PACED_VERB_EXPIRE_PER_PASS) {
         tracing::warn!(%error, "paced verb calls not expired");
     }

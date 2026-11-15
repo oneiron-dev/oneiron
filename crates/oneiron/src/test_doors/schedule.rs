@@ -579,3 +579,40 @@ pub fn task_tick_waiting(vault: &Vault, task: EntityId) -> Result<Option<u64>> {
     let txn = vault.store.env.read_txn()?;
     crate::runtime_hooks::task_tick_waiting_in_txn(vault, &txn, task)
 }
+
+/// The paced verb line's job code (stage 5c-2).
+pub const PACED_VERB_LINE: &str = "runtime_hooks.paced_verb_line";
+
+/// Holds a call by `actor` in the paced line with no witness, its window opening at
+/// `next_eligible_at` and its deadline at `deadline`, through the hold's own write of the row and
+/// its line arming; answers its key. Its turn ends refused.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn plant_paced_verb_call(
+    vault: &Vault,
+    actor: EntityId,
+    next_eligible_at: u64,
+    deadline: u64,
+) -> Result<[u8; 16]> {
+    vault.plant_paced_verb_call(actor, next_eligible_at, deadline)
+}
+
+/// Whether the planted paced call `key` still waits in the line: held, not ended.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn paced_verb_call_waits(vault: &Vault, key: [u8; 16]) -> Result<bool> {
+    vault.paced_verb_call_waits(key)
+}
+
+/// The engine disarms `job` about `subject`, as its own doors do: `false` when it was not armed.
+///
+/// # Errors
+///
+/// As the disarming.
+pub fn disarm_as_engine(vault: &Vault, job: &str, subject: Option<EntityId>) -> Result<bool> {
+    vault.disarm_schedule(None, job, subject)
+}

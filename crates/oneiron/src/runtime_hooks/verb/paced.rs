@@ -13,9 +13,16 @@
 //! round the principals, one call each, from the one after the last served.
 //! A call runs no earlier than its window lets it, and ends expired, unrun,
 //! once its deadline passes: the hold's time plus the host's wait, 7 days
-//! unless the host sets another. Any housekeeping pass expires; only the
-//! host's admitted settler runs a turn. A retry of the call's invocation
-//! reads the row: still held, or what its turn came to.
+//! unless the host sets another. Any housekeeping pass expires; only a
+//! process whose host installed its paced turn runner runs a turn. A retry
+//! of the call's invocation reads the row: still held, or what its turn came
+//! to.
+//!
+//! The line is one row of [`PACED_VERB_LINE_JOB`] (DESIGN
+//! 15-setting-primitive, stage 5c), due at the earliest a held call's window
+//! opens or its deadline passes: the schedule's runner takes the turns then,
+//! in the host's housekeeping pass or ahead of it through the settler's door
+//! ([`Vault::run_due_paced_verb_line`]), and the row wakes a stopped vault.
 
 mod end;
 
@@ -27,6 +34,7 @@ use std::sync::atomic::Ordering;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::llm::model_pack::AccessSnapshot;
 use crate::memory::{
     MEMORY_CODE_INVALID_STATE, MEMORY_CODE_PACED_HOLD, MEMORY_CODE_PENDING_ASK, Memory,
     MemoryError, MemoryResult,
@@ -34,8 +42,10 @@ use crate::memory::{
 use crate::receipt::CallReceiptInput;
 use crate::receipt::admission::{ADMISSION_INTENT_ACTIVE, refuse_held_intent_in_txn};
 use crate::runtime_hooks::{filter, store};
+use crate::schedule::{ArmBy, Armed, JobPass, JobResult, JobSpec, Late, Ran, When};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::HookActorClass;
+use crate::store::housekeeping_schedule::{Deadline, HousekeepingBudget};
 use crate::task_verb::sdk::AgentVerb;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -71,6 +81,80 @@ pub const PACED_VERB_WAIT_DEFAULT_SECS: u64 = 7 * 24 * 60 * 60;
 const PACED_VERB_RETRY_SECS: u64 = 60;
 /// The most rows one expiry pass ends or deletes.
 const PACED_VERB_EXPIRE_MAX: usize = 256;
+/// The most turns one run of the line takes: one per principal per round,
+/// as the settler's pass took (FIX 8753).
+const PACED_VERB_TURNS_PER_RUN: usize = 64;
+/// The line's first retry after a failed run, and the least wait after a
+/// run before its next: a second, as the timer turn programs', so a call
+/// held while a run takes the line's turns waits about a second, not a
+/// minute.
+const PACED_LINE_RETRY_FIRST_SECS: u64 = 1;
+
+/// The paced line: one row with no subject, armed at the earliest a held
+/// call's window opens or its deadline passes. A hold arms it, or pulls it
+/// earlier, in its own write; a run expires the calls past their deadline,
+/// takes the turns that are due and answers when the line next owes work,
+/// so every other write, which only moves a call later or ends it, arms
+/// nothing. The row wakes a stopped vault. Only a process whose host
+/// installed its paced turn runner runs it ([`turns_run_here`]): a CLI or
+/// embedded pass steps over it and never ends a turn.
+pub(crate) static PACED_VERB_LINE_JOB: JobSpec = JobSpec {
+    code: "runtime_hooks.paced_verb_line",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: PACED_LINE_RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: true,
+    at_open: false,
+    once_per_pass: true,
+    runs_here: turns_run_here,
+    run: run_paced_verb_line,
+};
+
+/// [`JobSpec::runs_here`] of the line: whether this process's host
+/// installed its paced turn runner ([`Vault::install_paced_verb_turn_runner`]).
+#[allow(clippy::unnecessary_wraps)]
+fn turns_run_here(vault: &Vault, _txn: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(vault
+        .runtime()
+        .verb_hook_state()
+        .paced_turns_here
+        .load(Ordering::Acquire))
+}
+
+/// One run of the line: the calls past their deadline expire and the turns
+/// that are due run, at most [`PACED_VERB_TURNS_PER_RUN`], and past the
+/// first only within the pass's deadline. A run that stopped with a turn
+/// maybe left goes on at the next pass; one that took every due turn answers
+/// when the line next owes work, and with nothing waiting its row goes.
+fn run_paced_verb_line(vault: &Vault, _armed: &Armed, pass: &JobPass<'_>) -> Result<JobResult> {
+    if vault.drain_paced_verb_calls(PACED_VERB_TURNS_PER_RUN, pass.deadline)? {
+        return Ok(JobResult::of(Ran::More { cursor: Vec::new() }));
+    }
+    Ok(JobResult {
+        due_by: vault.paced_verb_wake_at()?,
+        ..JobResult::of(Ran::Done)
+    })
+}
+
+/// Puts the held call `row` in the line under `key`, inside the hold's
+/// write, and arms the line due no later than the call's window or deadline.
+fn line_up_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8; 16],
+    row: &PacedVerbCall,
+) -> Result<()> {
+    CALLS.put(&vault.store, txn, key, row)?;
+    crate::schedule::arm_at_latest_in_txn(
+        &vault.store,
+        txn,
+        &PACED_VERB_LINE_JOB,
+        None,
+        row.next_eligible_at.min(row.deadline),
+    )
+}
 
 /// Held calls, by invocation.
 const CALLS: SideTable<[u8; 16], PacedVerbCall, Named> =
@@ -280,7 +364,7 @@ pub(crate) fn hold_paced_verb_call(
             reference,
             binding,
         };
-        CALLS.put(&vault.store, txn, &key, &row)?;
+        line_up_in_txn(vault, txn, &key, &row)?;
         WITNESSES.put(&vault.store, txn, &key, &witness)?;
         LINE.put(&vault.store, txn, &(), &line)?;
         Ok(Some(held(row.next_eligible_at, row.deadline)))
@@ -499,26 +583,31 @@ impl Vault {
     }
 
     /// Runs at most `limit` held calls' turns, after expiring the calls
-    /// whose deadline passed. A turn takes the head of one principal's line
-    /// whose window opened, from the principal after the last served,
-    /// round the principals. The call runs through the host's check as its
-    /// credential stands then; it ends with what it returned, or refused,
-    /// with one receipt; a window that paces it again puts it back in line.
-    /// A call whose retry is in flight now waits for the next pass. The
-    /// host's admitted settler calls this; with no check installed, every
-    /// turn ends refused. Returns how many turns ran.
+    /// whose deadline passed; past its first turn it starts none once
+    /// `deadline` passed or its host asked it to stop. A turn takes the head
+    /// of one principal's line whose window opened, from the principal after
+    /// the last served, round the principals. The call runs through the
+    /// host's check as its credential stands then; it ends with what it
+    /// returned, or refused, with one receipt; a window that paces it again
+    /// puts it back in line. A call whose retry is in flight now waits for
+    /// the next run. The line's run calls this; with no check installed,
+    /// every turn ends refused. Answers whether it stopped with a turn maybe
+    /// left: at `limit` or at `deadline`.
     ///
     /// # Errors
     ///
     /// Reading the line. A storage error on one turn leaves its call in
     /// line, its witness kept.
-    pub fn drain_paced_verb_calls(&self, limit: usize) -> Result<usize> {
+    fn drain_paced_verb_calls(&self, limit: usize, deadline: &Deadline) -> Result<bool> {
         self.expire_paced_verb_calls(PACED_VERB_EXPIRE_MAX)?;
         let mut ran = 0;
         let mut passed = BTreeSet::new();
-        while ran < limit {
+        loop {
+            if ran >= limit || (ran > 0 && (deadline.passed() || deadline.stopped())) {
+                return Ok(true);
+            }
             let Some((key, row)) = self.next_paced_turn(&passed)? else {
-                break;
+                return Ok(false);
             };
             let actor = row.actor;
             if self.run_paced_turn(key, row)? {
@@ -527,7 +616,56 @@ impl Vault {
                 passed.insert(actor);
             }
         }
-        Ok(ran)
+    }
+
+    /// Marks this process as the one that runs the paced line's turns: the
+    /// line's row runs here ([`PACED_VERB_LINE_JOB`]), and each turn runs
+    /// through the installed credential check, or ends refused when the host
+    /// installed none. The host's settler calls it once, after it installs
+    /// its check, if it has one, and before its first pass; a CLI or
+    /// embedded pass never does, so it steps over the row and never ends a
+    /// turn.
+    pub fn install_paced_verb_turn_runner(&self) {
+        self.runtime()
+            .verb_hook_state()
+            .paced_turns_here
+            .store(true, Ordering::Release);
+    }
+
+    /// Runs the paced line's row now when it is due, ahead of the
+    /// housekeeping pass: the host's settler's door, so a turn whose window
+    /// opened runs within the settler's interval, as it did. While a
+    /// housekeeping pass holds the runner it runs nothing: that pass runs
+    /// the row. A run's own failure is logged and backs off on the row.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors reading or writing the schedule.
+    pub fn run_due_paced_verb_line(&self) -> Result<()> {
+        let deadline = HousekeepingBudget::unbounded().deadline();
+        let access = AccessSnapshot::new();
+        let pass = JobPass {
+            deadline: &deadline,
+            access: &access,
+        };
+        self.run_due_of(&[&PACED_VERB_LINE_JOB], &pass).map(drop)
+    }
+
+    /// Arms the paced line from the calls the vault holds, at the host
+    /// pass's first pass of a handle: a vault whose calls a build before the
+    /// line's row held starts with the line armed. A line already due by
+    /// then keeps its due time.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn arm_paced_verb_line(&self) -> Result<()> {
+        let Some(at) = self.paced_verb_wake_at()? else {
+            return Ok(());
+        };
+        self.with_write_txn_grouped(|txn| {
+            crate::schedule::arm_at_latest_in_txn(&self.store, txn, &PACED_VERB_LINE_JOB, None, at)
+        })
     }
 
     /// The next turn: each principal's head of line, the first whose window
@@ -799,5 +937,65 @@ impl Vault {
             .filter(|(_, row)| row.state != PacedState::Ended)
             .map(|(_, row)| row.next_eligible_at.min(row.deadline))
             .min())
+    }
+}
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Holds a call of `vault.shares.create` by the person `actor` in the
+    /// line, with no witness, its window opening at `next_eligible_at` and
+    /// its deadline at `deadline`, through the hold's own write of the row
+    /// and its line arming; answers its key. Its turn ends refused (no check, or no
+    /// witness for the check to run it with). A test door.
+    pub(crate) fn plant_paced_verb_call(
+        &self,
+        actor: EntityId,
+        next_eligible_at: u64,
+        deadline: u64,
+    ) -> Result<[u8; 16]> {
+        let key = *EntityId::now().as_bytes();
+        self.with_write_txn_grouped(|txn| {
+            let now = self.store.clock.now_recorded_at();
+            let mut line = LINE.get(&self.store, txn, &())?.unwrap_or_default();
+            line.last_arrival = line.last_arrival.saturating_add(1);
+            let row = PacedVerbCall {
+                verb: PACED_VERBS[0].to_owned(),
+                actor,
+                class: HookActorClass::Human,
+                args: "{}".to_owned(),
+                reference: super::credential::VerbAskCredentialRef {
+                    instrument: super::credential::VerbAskInstrument {
+                        source: super::credential::VerbAskCredentialSource::AttestedOwner {
+                            holder: actor,
+                        },
+                        vault: [0; 32],
+                        ceiling: [0; 32],
+                    },
+                    door: super::credential::VerbAskDoor::Facade { room: None },
+                    on_device: false,
+                },
+                work: EntityId::now(),
+                arrival: line.last_arrival,
+                held_at: now,
+                deadline,
+                next_eligible_at,
+                state: PacedState::Waiting,
+                landed: false,
+                outcome: None,
+                ended_at: None,
+            };
+            line_up_in_txn(self, txn, &key, &row)?;
+            LINE.put(&self.store, txn, &(), &line)
+        })?;
+        Ok(key)
+    }
+
+    /// Whether the planted call `key` still waits in the line: held, not
+    /// ended. A test door.
+    pub(crate) fn paced_verb_call_waits(&self, key: [u8; 16]) -> Result<bool> {
+        let rtxn = self.store.env.read_txn()?;
+        Ok(CALLS
+            .get(&self.store, &rtxn, &key)?
+            .is_some_and(|row| row.state != PacedState::Ended))
     }
 }
