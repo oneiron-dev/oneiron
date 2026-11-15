@@ -450,20 +450,28 @@ impl DeletionGateContext {
             diff.update(room.as_bytes());
         }
         diff.update([TombstoneReason::from(reason).wire_byte()]);
-        let reason_code = match self.admitted {
-            Some((admitted, AdmittedDeleteDoor::Archive)) => {
-                format!("gate.allow.archive_delete_{}", admitted.role().as_str())
-            }
-            Some((admitted, AdmittedDeleteDoor::Record)) => {
-                format!("gate.allow.delete_{}", admitted.role().as_str())
-            }
-            None => self.room_role.map_or_else(
-                || "gate.allow.owner_delete".to_owned(),
-                |role| format!("gate.allow.room_{role:?}").to_lowercase(),
+        // The owner's own delete is the owner's yes; a delete a Grant or a room
+        // role admitted is the rule's `allow` (UC-03 PR 5b, D2).
+        let (outcome, reason_code) = match (self.admitted, self.room_role) {
+            (Some((admitted, AdmittedDeleteDoor::Archive)), _) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.archive_delete_{}", admitted.role().as_str()),
+            ),
+            (Some((admitted, AdmittedDeleteDoor::Record)), _) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.delete_{}", admitted.role().as_str()),
+            ),
+            (None, Some(role)) => (
+                GateReceiptOutcome::Allow,
+                format!("gate.allow.room_{role:?}").to_lowercase(),
+            ),
+            (None, None) => (
+                GateReceiptOutcome::Approved,
+                "gate.allow.owner_delete".to_owned(),
             ),
         };
         let mut receipt = GateReceipt::new(
-            GateReceiptOutcome::Allow,
+            outcome,
             "deletion",
             reason_code,
             ReceiptActor::Row(WriteActor::new(self.actor, self.actor_class)),

@@ -540,7 +540,7 @@ fn an_owner_delete_row_keeps_its_fields() -> TestResult {
         fields(&rows[0]),
         Fields {
             version: 0,
-            outcome: "allow".to_owned(),
+            outcome: "approved".to_owned(),
             reason_codes: strings(&["gate.allow.owner_delete"]),
             receipt_reasons: Vec::new(),
             system_notices: Vec::new(),
