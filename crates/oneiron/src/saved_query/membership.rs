@@ -337,7 +337,7 @@ fn validate_plan_coherence(plan: &MembershipWritePlan) -> Result<()> {
 /// Digest over everything a replay must reproduce EXACTLY to count as the same
 /// plan. Two plans that differ anywhere here are different plans at the same
 /// epoch, which is a conflict rather than a retry.
-fn plan_content_digest(plan: &MembershipWritePlan) -> Result<[u8; EVIDENCE_HASH_LEN]> {
+pub(crate) fn plan_content_digest(plan: &MembershipWritePlan) -> Result<[u8; EVIDENCE_HASH_LEN]> {
     let mut hasher = Sha256::new();
     hasher.update(b"oneiron.saved_query.plan.v1");
     hash_bytes(&mut hasher, &encode_event(&plan.event)?);
