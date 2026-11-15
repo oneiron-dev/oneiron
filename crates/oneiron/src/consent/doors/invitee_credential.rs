@@ -102,7 +102,8 @@ impl AuthenticatedOwner {
                     .invitation_ref
                     .as_deref()
                     .is_some_and(|own| own.eq_ignore_ascii_case(invitation_id));
-            own_invitation || is_independent_person_credential(slip, &self.actor)
+            // SEEDED FAULT M1 (red proof only): only the invitation's own slip admits.
+            own_invitation
         };
         if self.carried_slips().all(admitted) {
             Ok(())

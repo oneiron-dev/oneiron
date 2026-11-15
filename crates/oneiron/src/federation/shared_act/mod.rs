@@ -522,7 +522,8 @@ fn non_root(role: Option<Role>) -> Result<()> {
         None | Some(Role::Deputy | Role::Admin | Role::Steward | Role::Member | Role::Viewer) => {
             Ok(())
         }
-        Some(_) => Err(invalid()),
+        // SEEDED FAULT M3 (red proof only): any role passes as non-root.
+        Some(_) => Ok(()),
     }
 }
 fn hex_id(id: &str) -> Result<EntityId> {

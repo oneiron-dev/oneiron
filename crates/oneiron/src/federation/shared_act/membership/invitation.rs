@@ -165,7 +165,8 @@ impl Vault {
         invitee: EntityId,
         vault_id: u64,
     ) -> Result<Vec<SharedInvitation>> {
-        let prefix = key(INVITATION_PREFIX, &format!("{}:", invitee.to_hex()));
+        // SEEDED FAULT M8 (red proof only): invitations list everyone's.
+        let prefix = key(INVITATION_PREFIX, "");
         let mut invitations = Vec::new();
         for row in self.store.vault_meta.prefix_iter(txn, &prefix)? {
             let (_, raw) = row?;
@@ -506,7 +507,7 @@ impl Vault {
         let mut invitation = self.invitation_in_txn(txn, actor, invitation_id)?;
         let inviter = EntityId::from_hex(&invitation.inviter)?;
         if invitation.vault_id != vault_id
-            || invitation.state != SharedInvitationState::Pending
+            // SEEDED FAULT M5 (red proof only): accept admits a non-pending invitation.
             || now >= invitation.expires_at
             || self.member_role_in_txn(txn, vault_id, actor)?.is_some()
         {

@@ -220,7 +220,8 @@ impl Vault {
         giver: EntityId,
         role: Role,
     ) -> Result<()> {
-        if matches!(role, Role::Steward | Role::Deputy)
+        // SEEDED FAULT M4 (red proof only): any giver passes reserved roles.
+        if false && matches!(role, Role::Steward | Role::Deputy)
             && self.member_role_in_txn(txn, vault_id, giver)? != Some(Role::Owner)
         {
             return Err(crate::error::Error::Claim(
@@ -528,7 +529,8 @@ impl Vault {
             grants.extend(retired_own_device.iter().copied());
         }
         let mut revoked_slips = match slips {
-            Some(issuer) if move_revokes_slips(from, to) => {
+            // SEEDED FAULT M6 (red proof only): a removal revokes no slips.
+            Some(issuer) if move_revokes_slips(from, to) && !move_revokes_slips(from, to) => {
                 self.revoke_held_capability_slips_in_txn(txn, issuer, &member.to_hex(), None)?
             }
             _ => Vec::new(),
@@ -727,7 +729,8 @@ impl Vault {
         // Person tier; the named power is checked against the live roster.
         let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
         super::check_vault(self, &txn, vault_id)?;
-        if let Some(power) = power {
+        // SEEDED FAULT M2 (red proof only): the named power is never checked.
+        if let Some(power) = power.filter(|_| false) {
             self.authorize_shared_vault_write_in_txn(
                 &txn,
                 vault_id,
