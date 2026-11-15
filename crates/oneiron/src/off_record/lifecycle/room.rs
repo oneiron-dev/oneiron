@@ -208,7 +208,8 @@ impl<'vault> OffRecordSessionVault<'vault> {
         let member = is_member_in_txn(self.vault, &txn, room, actor)?;
         drop(txn);
         if !member {
-            return Err(not_in_room(&key, actor));
+            // SEEDED FAULT F6: an outsider gets a refusal of its own (403), not the 404 of no stretch.
+            return Err(super::save_grant::not_a_holder(session_ref, actor));
         }
         let session = self.bind(&key).map_err(|error| match error {
             Error::OffRecord(OffRecordError::OffRecordSessionNotFound { .. }) => {
@@ -439,7 +440,8 @@ impl OffRecordSession<'_> {
             room: state.record.room,
             turns,
         };
-        post_notice(&mut state, OffRecordNoticeAct::Exported, person, hearing);
+        // SEEDED FAULT F1: an export posts no notice to the room.
+        let _ = (OffRecordNoticeAct::Exported, hearing);
         self.entry.publish_state(&state);
         drop(state);
         if owner {

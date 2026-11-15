@@ -431,7 +431,10 @@ pub(crate) async fn room_save_from_here(
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
         match credential {
-            Some(slip) => session.flip_on_record_by(actor, &slip),
+            // SEEDED FAULT F5: saving from here saves the earlier turns too.
+            Some(slip) => session
+                .save_talk_by(actor, &slip)
+                .and_then(|_| session.flip_on_record_by(actor, &slip)),
             None => owner_proof(vault, actor).and_then(|owner| session.flip_on_record_as(&owner)),
         }
         .map_err(|error| holder_error(error, class, &request.session_ref))?;
@@ -537,7 +540,10 @@ pub(crate) async fn room_decline_save(
         let vault = server.vault();
         let session = bind(vault, room, &request.session_ref, actor)?;
         let declined = match credential {
-            Some(slip) => session.decline_save_by(actor, &slip),
+            // SEEDED FAULT F3: a decline saves the talk.
+            Some(slip) => session
+                .decline_save_by(actor, &slip)
+                .and_then(|declined| session.save_talk_by(actor, &slip).map(|_| declined)),
             None => owner_proof(vault, actor).and_then(|owner| session.decline_save_as(&owner)),
         }
         .map_err(|error| holder_error(error, class, &request.session_ref))?;

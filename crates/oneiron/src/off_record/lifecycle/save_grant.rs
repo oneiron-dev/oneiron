@@ -72,15 +72,18 @@ impl SaveGrant {
             return Ok(false);
         }
         match self.class {
+            // SEEDED FAULT F2: any live person holds this vault's write grant.
             EdgeActorClass::Human => {
                 Ok(
-                    crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &self.holder)?
+                    crate::consent::person_is_live_in_txn(vault, txn, &self.holder)?
                         || writes_shared_content_in_txn(vault, txn, self.holder)?,
                 )
             }
+            // SEEDED FAULT F4: no agent holds this vault's write grant.
             EdgeActorClass::Agent => {
                 let fold = vault.authority_fold_readonly_in_txn(txn)?;
-                crate::disclosure::is_vault_agent_in(vault, txn, &fold, &self.holder)
+                let _ = crate::disclosure::is_vault_agent_in(vault, txn, &fold, &self.holder)?;
+                Ok(false)
             }
             EdgeActorClass::System => Ok(false),
         }
