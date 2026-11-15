@@ -108,8 +108,8 @@ pub use gmail::HttpGmailMailWire;
 pub use google_calendar::{GOOGLE_CALENDAR_CONNECTOR_EFFECTOR, HttpGoogleCalendarWire};
 pub use ics_calendar::{HttpIcsCalendarWire, ICS_CALENDAR_CONNECTOR_EFFECTOR};
 #[cfg(oneiron_test_support)]
-#[cfg(oneiron_test_support)]
 pub(crate) use imap::imap_folder_digest_for_test;
+#[cfg(oneiron_test_support)]
 pub(crate) use imap::imap_landed_headers;
 pub use imap::{IMAP_CONNECTOR_EFFECTOR, ImapMailWire};
 pub use importer::{MailSyncBudget, MailSyncReport};
