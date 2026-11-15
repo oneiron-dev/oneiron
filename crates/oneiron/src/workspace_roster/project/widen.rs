@@ -9,23 +9,8 @@ use crate::task_verb::{
 
 const PREFIX: &[u8] = b"project.widen_ask.v1/";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectWidenAxis {
-    Scope,
-    Budget,
-    Roster,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectWidenAsk {
-    pub requesting_project: EntityId,
-    pub other_project: EntityId,
-    pub board_project: EntityId,
-    pub axis: ProjectWidenAxis,
-    pub ask: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::widen::{ProjectWidenAsk, ProjectWidenAxis};
 
 impl Memory<'_> {
     /// Talk needs no ask. Only requests for broader scope, budget or roster
