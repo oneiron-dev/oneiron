@@ -31,7 +31,7 @@ use crate::authority::{
     OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, checkpoint_statement_domain, invalid_authority,
 };
 use crate::entity_id::EntityId;
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::vault::Vault;
 
 /// The context the signing key is derived under from its seed.
@@ -39,6 +39,7 @@ const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";
 
 /// Why a managed host's serving install enrols no owner signing key of its
 /// own ([`Vault::enrol_serving_install_owner_signing_key`]).
+#[allow(dead_code)]
 const MANAGED_HOST_HOLDS_NO_OWNER_KEY: &str =
     "a managed host holds no owner key: enrol one on your own device";
 
@@ -195,11 +196,6 @@ impl Vault {
         authority: &ActAuthority,
         issuer: &HostSlipIssuer,
     ) -> Result<OwnerKeyEnrollmentReceipt> {
-        if self.privacy_posture() == crate::HostingPrivacyPosture::Hosted {
-            return Err(Error::Record(RecordError::AuthorityRefused(
-                MANAGED_HOST_HOLDS_NO_OWNER_KEY,
-            )));
-        }
         self.enrol_device_owner_signing_key(authority, issuer)
     }
 
