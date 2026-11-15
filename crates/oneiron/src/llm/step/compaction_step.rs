@@ -214,6 +214,59 @@ pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<boo
     }
 }
 
+/// The filed compaction steps' response artifacts holding the bytes the
+/// stored row `raw` at `id` carries, when it is a content-addressed version
+/// ASSET: the response's bytes carry the compactor's words as each such
+/// artifact does, so a reader takes the ASSET only beside every one of them
+/// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES). Any other holder is left
+/// out: a `blob.version` claim names a holder by hash alone, so another
+/// holder never widens who reads these bytes, and one more response holder
+/// only narrows it. Empty for every other row, and for an ASSET no response
+/// artifact holds.
+pub(crate) fn compaction_response_holders_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+    raw: &[u8],
+) -> Result<Vec<EntityId>> {
+    let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, raw)? else {
+        return Ok(Vec::new());
+    };
+    let mut responses = Vec::new();
+    for holder in crate::blob_artifact::content_holders_in_txn(store, txn, &hash)? {
+        let Some(record) = store.port_entity_record(txn, &holder)? else {
+            continue;
+        };
+        if record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?
+        {
+            responses.push(holder);
+        }
+    }
+    Ok(responses)
+}
+
+impl Vault {
+    /// Whether `artifact_id` is a filed compaction step's response artifact
+    /// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES): its version bytes carry
+    /// the compactor's words about every record the step's call read, so a
+    /// door that serves them judges them through the reader's own lane first,
+    /// as it judges reminder wording (FIX 4997). An artifact that is gone
+    /// reads as no step's, as its bytes read absent.
+    ///
+    /// # Errors
+    ///
+    /// The store failed.
+    pub fn is_compaction_step_response_artifact(&self, artifact_id: &EntityId) -> Result<bool> {
+        let txn = self.store.env.read_txn()?;
+        let Some(record) = self.store.port_entity_record(&txn, artifact_id)? else {
+            return Ok(false);
+        };
+        Ok(record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT
+            && is_compaction_step_row(record.entity_type, &record.body)?)
+    }
+}
+
 impl ExecutorStorage<'_> {
     /// Files each of `calls` as one terminal `dreamer.step` claim about and
     /// by `writer`, the run's authenticated actor, on the route this run's
