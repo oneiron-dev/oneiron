@@ -6,8 +6,8 @@ use super::claim::{
     read_booking_facts_to_cancel, supersede_exact_claim, write_booking_event,
 };
 use super::deposit::{
-    authorized_deposit_in_writer, check_hold_lease_deposit, mark_capture_due_in_writer,
-    refund_on_visitor_cancel_in_writer,
+    authorized_deposit_in_writer, cap_refund_on_visitor_reschedule_in_writer,
+    check_hold_lease_deposit, mark_capture_due_in_writer, refund_on_visitor_cancel_in_writer,
 };
 use super::occurrence::{confirm_solve_window, inclusive_occurrence, offers_slot};
 use super::passport::{mint_booking_uid, supersede_outbound_passport, write_outbound_passport};
@@ -542,6 +542,15 @@ pub(crate) fn execute_reschedule(
             }
             let mut reads = booking_read_rows(vault, &*wtxn, &event_ref)?;
             reads.extend(oracle.take_read_rows());
+            // The reschedule token is the visitor's: a later cancel refunds at
+            // most what a cancel now would, against the slot being left.
+            cap_refund_on_visitor_reschedule_in_writer(
+                vault,
+                wtxn,
+                &event_ref,
+                booking.slot.start,
+                now_utc,
+            )?;
 
             // The EVENT's structural row carries the occurrence, so moving the
             // booking is a re-put of the same id at the new interval — the shape
