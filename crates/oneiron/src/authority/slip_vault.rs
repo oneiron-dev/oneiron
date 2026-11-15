@@ -879,6 +879,18 @@ impl Vault {
         self.put_authority_log_entries(&[(entry, at, now)])?;
         Ok(())
     }
+
+    /// Signs `op` as the host root's next row without storing it.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_host_op_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let fold = self.authority_fold()?;
+        let now = self.now_recorded_at();
+        next_entry(issuer, &fold, op, now)
+    }
 }
 pub(super) fn require_host(fold: &AuthorityFold, issuer: &HostSlipIssuer) -> Result<()> {
     if fold.vault_id.is_none()
