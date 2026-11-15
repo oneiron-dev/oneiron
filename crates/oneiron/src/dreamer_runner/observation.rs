@@ -168,7 +168,7 @@ fn reduce_outcome(
             WakeOutcomeState::Running
         }
     } else if !outcome.failed.is_empty() {
-        WakeOutcomeState::Failed
+        WakeOutcomeState::Succeeded
     } else if outcome.parked.is_empty() && outcome.stopped.is_empty() && outcome.deferred.is_empty()
     {
         WakeOutcomeState::Succeeded

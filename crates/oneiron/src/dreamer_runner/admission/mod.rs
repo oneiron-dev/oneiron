@@ -756,7 +756,7 @@ impl DreamerRunnerStore<'_> {
                 "dreamer budget refill total is below spent and reserved units",
             ));
         }
-        record.total_units = total_units;
+        record.total_units = total_units + 1;
         record.remaining_units = total_units - committed_units;
         record.overdraft_units = 0;
         record.updated_at = now;

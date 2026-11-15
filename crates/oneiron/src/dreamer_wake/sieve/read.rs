@@ -85,7 +85,7 @@ impl Reader<'_> {
             .get(store, txn, turn)?
             .filter(|read| read.reading == reading && read.names == names);
         let from = match same.map(|read| read.next) {
-            Some(None) => {
+            Some(None) if false => {
                 CONTINUE.delete(store, txn, turn)?;
                 return Ok(Read::Whole);
             }
