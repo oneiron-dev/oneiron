@@ -269,10 +269,10 @@ pub(crate) mod tests {
 
     #[test]
     fn dss_delta_crl_is_not_revocation_evidence() {
-        // deltaCRLIndicator (2.5.29.46): changes since a base, fail-closed.
+        // deltaCRLIndicator (2.5.29.27): changes since a base, fail-closed.
         let ca = test_ca("dss-ca");
         let delta_ext = crl_ext(
-            "2.5.29.46",
+            "2.5.29.27",
             der::asn1::Int::new(&[1]).unwrap().to_der().unwrap(),
         );
         let crl = build_crl_ext(

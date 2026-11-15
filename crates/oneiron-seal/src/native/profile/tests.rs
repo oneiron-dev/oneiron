@@ -317,7 +317,7 @@ async fn fetch_valid_crl_rejects_delta_and_idp_scoped_crls() {
     // self-verify, so it is refused at fetch time instead.
     for ext in [
         x509_cert::ext::Extension {
-            extn_id: der::asn1::ObjectIdentifier::new_unwrap("2.5.29.46"),
+            extn_id: der::asn1::ObjectIdentifier::new_unwrap("2.5.29.27"),
             critical: false,
             extn_value: der::asn1::OctetString::new(
                 der::asn1::Int::new(&[1]).unwrap().to_der().unwrap(),
