@@ -30,7 +30,7 @@
 //!   `asks.rs:498` `return if held.answer == answer {` made `!=`, so the same
 //!   answer again is refused (the settlement test). Green there: the grant, band
 //!   and refusal tests, which never climb and answer no ask twice.
-//! - red2: `oneiron/src/llm/decision/asks/grant_draft.rs:32` `*role != AskRole::Owner`
+//! - red2: `oneiron/src/llm/decision/asks/grant_draft.rs:31` `*role != AskRole::Owner`
 //!   made `==`, so the owner's reason drafts nothing (the grant test);
 //!   `oneiron-store/src/model_decision/policy.rs:260` `row.version >= version` made
 //!   `>`, so a band relearns at its own version (the band test);
