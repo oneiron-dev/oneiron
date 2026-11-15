@@ -78,6 +78,9 @@ pub mod routing;
 mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
+/// The owner's key that lets the Dreamer lift a restriction on its own; the build script names its
+/// row in the setting catalogue.
+pub(crate) mod setting_keys;
 mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
