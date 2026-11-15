@@ -162,7 +162,11 @@ impl Memory<'_> {
                 if text.is_empty() {
                     return Err(MemoryError::bad_request("message text is empty"));
                 }
-                let author = if self.actor_class == EdgeActorClass::Agent {
+                // Generated code speaks as the companion, a person's own
+                // code run included (the witness door refuses it a user's
+                // word).
+                let author = if self.actor_class == EdgeActorClass::Agent || self.writes_generated()
+                {
                     WitnessAuthor::Companion
                 } else {
                     WitnessAuthor::User
