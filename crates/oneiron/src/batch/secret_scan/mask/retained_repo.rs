@@ -39,6 +39,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::file_secret_marks::HeldForm;
 use crate::file_secret_marks::KeySpan;
 use crate::file_secret_marks::MemberStep;
 use crate::origin::lfs::find_custody_credential;
@@ -270,9 +271,9 @@ impl RetainedRepoCustody {
     }
 
     /// The record holding `value` whole: one this writer minted, or one the
-    /// index knows.
+    /// index knows. A blob's key is held as its own bytes.
     fn holder(&self, value: &[u8]) -> Option<EntityId> {
-        if let Some((_, id)) = self.minted.get(value) {
+        if let Some((_, id)) = self.minted.get(value, HeldForm::Raw) {
             return Some(*id);
         }
         match self.known.as_ref()?.spans(value).as_slice() {
@@ -364,7 +365,7 @@ pub(crate) fn mark_retained_repo_blob_in_txn(
             Some(id) => id,
             None => {
                 minted
-                    .get(&key.value)
+                    .get(&key.value, HeldForm::Raw)
                     .ok_or(Error::InvariantViolation(
                         "a blob's key has no custody record",
                     ))?

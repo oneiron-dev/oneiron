@@ -1,12 +1,13 @@
 //! Wiping owners for what a mask plan copies (FIX 1101). A plan runs on a
 //! copy of the batch's ops, or of a row's parts, with a stand-in for each
-//! secret, and keeps each value it found keyed by its bytes; the copy, the
-//! values, the trees a body decodes to and every allocation a masked copy
-//! replaces hold the secret too. Each is wiped where it ends: when its owner
-//! drops, on every path (a refusal, a mint that fails, a plan that places
-//! nothing), and before a masked copy takes an old allocation's place. No
-//! `BatchOp` wipes itself: only the plan's own copies do, and what the
-//! caller handed in is left as it was until the mask writes its handles.
+//! secret, and keeps each value it found keyed by its bytes and its held
+//! form; the copy, the values, the trees a body decodes to and every
+//! allocation a masked copy replaces hold the secret too. Each is wiped
+//! where it ends: when its owner drops, on every path (a refusal, a mint
+//! that fails, a plan that places nothing), and before a masked copy takes
+//! an old allocation's place. No `BatchOp` wipes itself: only the plan's own
+//! copies do, and what the caller handed in is left as it was until the
+//! mask writes its handles.
 
 use std::collections::HashMap;
 use std::ops::{Deref, DerefMut};
@@ -15,6 +16,7 @@ use rmpv::Value;
 use zeroize::Zeroize;
 
 use crate::batch::builder::ops::BatchOp;
+use crate::file_secret_marks::HeldForm;
 
 /// `new` in `old`'s place, the old allocation wiped first.
 pub fn replace_wiped<T: Zeroize>(old: &mut T, new: T) {
@@ -105,10 +107,14 @@ impl Drop for PlanTree {
     }
 }
 
-/// What a pass keeps by a secret's own bytes (the plan's handles, the
-/// records it minted, what a writer lifted so far), each key wiped when it
-/// drops. A key moves between owners, never copied out to a plain map.
-pub struct PlanValues<T>(pub HashMap<Vec<u8>, T>);
+/// What a pass keeps by a secret's own bytes and the form custody holds them
+/// in (the plan's handles, the records it minted, what a writer lifted so
+/// far), each key wiped when it drops. The same bytes held two ways are two
+/// values: the text "7" and the number 55, which encodes to the same byte,
+/// each take their own record, so each key restores its own form (FIX
+/// SEALED-SAME-BYTES-RAW-AND-ENCODED-ONE-HANDLE). A key moves between
+/// owners, never copied out to a plain map.
+pub struct PlanValues<T>(HashMap<Vec<u8>, Vec<(HeldForm, T)>>);
 
 impl<T> Default for PlanValues<T> {
     fn default() -> Self {
@@ -123,38 +129,66 @@ impl<T: Clone> Clone for PlanValues<T> {
 }
 
 impl<T> PlanValues<T> {
-    pub fn get(&self, value: &[u8]) -> Option<&T> {
-        self.0.get(value)
+    /// What is kept for `value` held as `held`.
+    pub fn get(&self, value: &[u8], held: HeldForm) -> Option<&T> {
+        self.0
+            .get(value)?
+            .iter()
+            .find(|(form, _)| *form == held)
+            .map(|(_, item)| item)
     }
 
-    /// Keeps `item` for `value`. A value already held keeps its key, and
-    /// the copy given is wiped.
-    pub fn insert(&mut self, mut value: Vec<u8>, item: T) {
+    /// Keeps `item` for `value` held as `held`. A value already held keeps
+    /// its key, and the copy given is wiped.
+    pub fn insert(&mut self, mut value: Vec<u8>, held: HeldForm, item: T) {
         match self.0.get_mut(value.as_slice()) {
-            Some(held) => {
-                *held = item;
+            Some(forms) => {
                 value.zeroize();
+                keep_form(forms, held, item);
             }
             None => {
-                self.0.insert(value, item);
+                self.0.insert(value, vec![(held, item)]);
             }
         }
     }
 
     /// Every entry of `other`, moved in.
     pub fn adopt(&mut self, mut other: Self) {
-        for (value, item) in other.0.drain() {
-            self.insert(value, item);
+        for (mut value, forms) in other.0.drain() {
+            match self.0.get_mut(value.as_slice()) {
+                Some(kept) => {
+                    value.zeroize();
+                    for (held, item) in forms {
+                        keep_form(kept, held, item);
+                    }
+                }
+                None => {
+                    self.0.insert(value, forms);
+                }
+            }
         }
     }
 
     /// The same keys, each with `item`'s part `pick` keeps; the keys move.
     pub fn map<U>(mut self, pick: impl Fn(T) -> U) -> PlanValues<U> {
         let mut out = PlanValues(HashMap::with_capacity(self.0.len()));
-        for (value, item) in self.0.drain() {
-            out.0.insert(value, pick(item));
+        for (value, forms) in self.0.drain() {
+            let forms = forms
+                .into_iter()
+                .map(|(held, item)| (held, pick(item)))
+                .collect();
+            out.0.insert(value, forms);
         }
         out
+    }
+}
+
+/// `item` kept for one value held as `held`, in place of what was kept for
+/// that form.
+fn keep_form<T>(forms: &mut Vec<(HeldForm, T)>, held: HeldForm, item: T) {
+    match forms.iter_mut().find(|(form, _)| *form == held) {
+        Some((_, kept)) => *kept = item,
+        None => forms.push((held, item)),
     }
 }
 
