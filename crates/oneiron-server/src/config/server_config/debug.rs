@@ -55,6 +55,7 @@ impl fmt::Debug for SyncServerConfig {
             .field("ingress", &self.ingress)
             .field("merge_queue", &self.merge_queue)
             .field("trusted_organ_builds", &self.trusted_organ_builds)
+            .field("mcp_task_ttl_ms", &self.mcp_task_ttl_ms)
             .field(
                 "release_payment_credentials_unfenced",
                 &self.release_payment_credentials_unfenced,

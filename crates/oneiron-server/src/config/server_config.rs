@@ -204,6 +204,11 @@ pub struct SyncServerConfig {
     /// owner marks as a payment credential is withheld at both value doors
     /// wherever the organ host proves no filesystem fence.
     pub release_payment_credentials_unfenced: bool,
+    /// An MCP task handle's retention in milliseconds from its creation
+    /// (L1-03, Engine ruling L1-03-TTL = A): past it the handle reads as
+    /// missing, and the record it wrapped goes on. `None` keeps handles until
+    /// their rows are removed. Default [`DEFAULT_MCP_TASK_TTL_MS`] (24 h).
+    pub mcp_task_ttl_ms: Option<u64>,
     /// The private origins a managed node's egress guard admits, from
     /// `--hosted-private-origin` in managed boot alone (FIX 7657); empty
     /// everywhere else, and no config file, settings file or environment sets it.
@@ -224,6 +229,10 @@ pub enum IngressAuth {
     /// a request with no credential is anonymous and stands for no one.
     Supervisor,
 }
+
+/// An MCP task handle's default retention: 24 hours (Engine ruling
+/// L1-03-TTL = A), enough for a long run and an overnight laptop sleep.
+pub const DEFAULT_MCP_TASK_TTL_MS: u64 = 86_400_000;
 
 impl Default for SyncServerConfig {
     fn default() -> Self {
@@ -274,6 +283,7 @@ impl Default for SyncServerConfig {
             agent_failure_healer: None,
             trusted_organ_builds: std::collections::BTreeSet::new(),
             release_payment_credentials_unfenced: false,
+            mcp_task_ttl_ms: Some(DEFAULT_MCP_TASK_TTL_MS),
             hosted_private_origins: std::collections::BTreeSet::new(),
         }
     }
@@ -682,6 +692,7 @@ impl ServeConfig {
             agent_failure_healer: self.self_heal.agent_failure_healer.clone(),
             trusted_organ_builds: self.trusted_organ_builds.clone(),
             release_payment_credentials_unfenced: self.release_payment_credentials_unfenced,
+            mcp_task_ttl_ms: Some(DEFAULT_MCP_TASK_TTL_MS),
             // Managed boot alone sets it (FIX 7657).
             hosted_private_origins: std::collections::BTreeSet::new(),
         };

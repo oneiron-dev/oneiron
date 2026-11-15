@@ -691,6 +691,11 @@ pub(crate) fn mcp_error_response(id: Value, error: McpGatewayError) -> Value {
     {
         object.insert("room_join_hold".to_owned(), json!(*room_join_hold));
     }
+    if let Some(required) = error.required_capabilities
+        && let Some(object) = data.as_object_mut()
+    {
+        object.insert("requiredCapabilities".to_owned(), *required);
+    }
     if let Some(retry_after) = error.retry_after
         && let Some(object) = data.as_object_mut()
     {

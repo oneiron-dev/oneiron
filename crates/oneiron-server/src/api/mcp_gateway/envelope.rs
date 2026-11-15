@@ -153,6 +153,9 @@ pub(crate) struct McpGatewayError {
     pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
     /// The held room join, surfaced as `error.data.room_join_hold`.
     pub(super) room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    /// The client capabilities the request must declare for its method,
+    /// surfaced as `error.data.requiredCapabilities` (MCP `-32021`; L1-03).
+    pub(super) required_capabilities: Option<Box<Value>>,
 }
 
 impl McpGatewayError {
@@ -177,7 +180,16 @@ impl McpGatewayError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            required_capabilities: None,
         }
+    }
+
+    /// A request that does not declare the client capabilities its method
+    /// needs (MCP `-32021`): `required` names them.
+    pub(super) fn missing_capabilities(message: impl Into<String>, required: Value) -> Self {
+        let mut error = Self::new(-32021, "missing_required_client_capability", message);
+        error.required_capabilities = Some(Box::new(required));
+        error
     }
 
     /// A request field past a byte bound (`[limits]`): the typed tool error

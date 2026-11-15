@@ -152,8 +152,15 @@ pub(crate) async fn handle_mcp_request(
             )
             .await?
             .toward(peer);
-            // OF-538: what the call's receipt states of its request, taken
-            // before the params are consumed.
+            // L1-03: a call whose own request declares the Tasks extension,
+            // to a verb that starts a record the engine keeps, answers a
+            // task over that record (ARCH-0028 `#mcp-tasks`).
+            let declares_tasks = super::super::client_surface::declares_tasks(
+                request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("_meta")),
+            );
             let tool = request
                 .params
                 .as_ref()
@@ -161,119 +168,54 @@ pub(crate) async fn handle_mcp_request(
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_owned();
-            // A body whose content is held as a file states its params as
-            // they arrived (FIX 22074).
-            let request_digest = match &held {
-                Some(held) => held.params_digest().to_owned(),
-                None => oneiron::receipt::call_json_digest(
-                    request.params.as_ref().unwrap_or(&Value::Null),
-                ),
-            };
-            // OF-568: what the call reads, captured before it runs.
-            let inputs =
-                crate::api::call_receipt::action_inputs(server, &tool, request.params.as_ref());
-            // OF-063: only a caller whose principal is verified in the
-            // session keeps no record, judged on arrival and again before the
-            // receipt is written. The configured root maps to the actor it
-            // acts through (FIX 2271), the one its rows' surfaces bind.
-            let principal = crate::api::call_receipt::mcp_session_principal(
-                actor.auth.as_ref(),
-                actor.actor_ref,
+            let answered = call_tool_as(
+                server,
+                mode,
+                headers,
+                connection,
+                &actor,
+                request.params,
+                raw_arguments,
+                held,
+            )
+            .await?;
+            if declares_tasks {
+                return super::super::tasks_adapter::task_for_call(server, &actor, &tool, answered);
+            }
+            Ok(answered)
+        }
+        // L1-03: the Tasks extension's methods, each on a request that
+        // declares it; the caller is resolved as for `tools/call`.
+        "tasks/get" | "tasks/update" | "tasks/cancel" => {
+            let actor = super::booking_call::resolve_tool_caller(
+                mode,
+                &request_id,
+                headers,
+                connection,
+                locality,
+                server,
+                request.params.as_ref(),
+            )
+            .await?
+            .toward(peer);
+            let declares_tasks = super::super::client_surface::declares_tasks(
+                request
+                    .params
+                    .as_ref()
+                    .and_then(|params| params.get("_meta")),
             );
-            let anonymous =
-                crate::api::call_receipt::in_anonymous_session(server, headers, principal)
-                    || crate::api::call_receipt::room_notes::mcp_room_note_call(
-                        server,
-                        headers,
-                        principal,
-                        &tool,
-                        request.params.as_ref(),
-                    );
-            // FIX 1085: the call counts once on the wire, under the caller
-            // resolved above and the tool it names, before it is judged.
-            super::wire::observe_tool_call(server, mode, &actor, &tool, anonymous);
-            // OF-568 L4: the attempt whose live run the call holds, as the
-            // hold witnessed it.
-            let (called, attempt): (Result<Value, McpGatewayError>, _) =
-                crate::api::call_receipt::attempt_witnessed(async {
-                    let params: McpToolCallParams = mcp_params(request.params, "params")?;
-                    let actor = McpCallContext {
-                        invocation: params.invocation()?,
-                        hook_ask: params.hook_ask()?,
-                        client_surface: params.client_surface(),
-                        signing_request_transport: Some(
-                            oneiron::memory::SigningRequestTransport::new(
-                                connection
-                                    .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                                    // Embedded locality uses loopback:0, not a TCP peer.
-                                    .filter(|peer| peer.0.port() != 0)
-                                    .map(|peer| peer.0.ip()),
-                                headers
-                                    .get(axum::http::header::USER_AGENT)
-                                    .and_then(|value| value.to_str().ok())
-                                    .map(str::to_owned),
-                            ),
-                        ),
-                        ..actor.clone()
-                    };
-                    let mut args =
-                        mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
-                    // The held content rides the call of the tool it arrived
-                    // for, with that call's page argument digest (FIX 22074).
-                    if let (Some(held), crate::mcp::McpValidatedToolArgs::Verb(call)) =
-                        (held, &mut args)
-                    {
-                        call.held = held.content_for(call).map_err(|error| {
-                            McpGatewayError::new(-32603, "engine_error", error.to_string())
-                        })?;
-                    }
-                    ensure_mcp_actor_matches(&args, &actor)?;
-                    mcp_admit_scoped_call(server, &args, &actor)?;
-                    // A named verb call keeps its admission intent, as the
-                    // facade's does, unless it sits off the record (FIX 4735).
-                    let intent = super::super::admission_intent::McpIntent::of(
-                        server, &args, &actor, anonymous,
-                    );
-                    // The tool fan-out, on the heap (FIX 12072).
-                    let run = execute_mcp_tool(server, args, &actor, headers, connection);
-                    Box::pin(super::super::admission_intent::observed(
-                        server,
-                        &actor,
-                        intent,
-                        run,
-                        |result| result,
-                    ))
-                    .await
-                })
-                .await;
-            // ONE-1704 M4: ONE chokepoint. Everything inside that block happened
-            // AFTER the credential resolved, so every refusal it can produce —
-            // decode, validation, actor mismatch, bound-verb or scope refusal,
-            // scoped-grant refusal, board/task dispatch, projection, facade, or
-            // engine failure — leaves with the effective scope attached. Only
-            // failures before this point are legitimately scope-less. Each is
-            // released as a result is, by the rows its words and its scope
-            // name (DEC-0005).
-            let called = called.map_err(|error| {
-                super::device_release::mcp_release_error(
-                    server,
-                    &actor,
-                    Some(&[]),
-                    error.with_effective_scope(&actor),
-                )
-            });
-            let anonymous = anonymous
-                || crate::api::call_receipt::in_anonymous_session(server, headers, principal);
-            mcp_call_receipt(
+            if !declares_tasks {
+                return Err(super::super::tasks_adapter::tasks_not_declared());
+            }
+            super::super::tasks_adapter::tasks_method(
                 server,
                 &actor,
-                tool,
-                request_digest,
-                inputs,
-                attempt,
-                anonymous,
-                called,
+                headers,
+                connection,
+                &request.method,
+                request.params,
             )
+            .await
         }
         _ => Err(McpGatewayError::new(
             -32601,
@@ -284,14 +226,143 @@ pub(crate) async fn handle_mcp_request(
     }
 }
 
+/// One `tools/call` as its resolved caller `actor`: decoded, judged, run,
+/// released and receipted, exactly as the wire's own call is. The Tasks
+/// extension's cancel runs its record's cancel verb through it too (L1-03).
+#[allow(clippy::too_many_arguments)]
+pub(in crate::api::mcp_gateway) async fn call_tool_as(
+    server: &Arc<SyncServer>,
+    mode: McpSurfaceMode,
+    headers: &HeaderMap,
+    connection: &Extensions,
+    actor: &McpCallContext,
+    params: Option<Value>,
+    raw_arguments: Option<&str>,
+    held: Option<super::blob_body::McpHeld>,
+) -> Result<Value, McpGatewayError> {
+    // OF-538: what the call's receipt states of its request, taken
+    // before the params are consumed.
+    let tool = params
+        .as_ref()
+        .and_then(|params| params.get("name"))
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .to_owned();
+    // A body whose content is held as a file states its params as
+    // they arrived (FIX 22074).
+    let request_digest = match &held {
+        Some(held) => held.params_digest().to_owned(),
+        None => oneiron::receipt::call_json_digest(params.as_ref().unwrap_or(&Value::Null)),
+    };
+    // OF-568: what the call reads, captured before it runs.
+    let inputs = crate::api::call_receipt::action_inputs(server, &tool, params.as_ref());
+    // OF-063: only a caller whose principal is verified in the
+    // session keeps no record, judged on arrival and again before the
+    // receipt is written. The configured root maps to the actor it
+    // acts through (FIX 2271), the one its rows' surfaces bind.
+    let principal =
+        crate::api::call_receipt::mcp_session_principal(actor.auth.as_ref(), actor.actor_ref);
+    let anonymous = crate::api::call_receipt::in_anonymous_session(server, headers, principal)
+        || crate::api::call_receipt::room_notes::mcp_room_note_call(
+            server,
+            headers,
+            principal,
+            &tool,
+            params.as_ref(),
+        );
+    // FIX 1085: the call counts once on the wire, under the caller
+    // resolved above and the tool it names, before it is judged.
+    super::wire::observe_tool_call(server, mode, actor, &tool, anonymous);
+    // OF-568 L4: the attempt whose live run the call holds, as the
+    // hold witnessed it.
+    let (called, attempt): (Result<Value, McpGatewayError>, _) =
+        crate::api::call_receipt::attempt_witnessed(async {
+            let params: McpToolCallParams = mcp_params(params, "params")?;
+            let actor = McpCallContext {
+                invocation: params.invocation()?,
+                hook_ask: params.hook_ask()?,
+                client_surface: params.client_surface(),
+                signing_request_transport: Some(oneiron::memory::SigningRequestTransport::new(
+                    connection
+                        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                        // Embedded locality uses loopback:0, not a TCP peer.
+                        .filter(|peer| peer.0.port() != 0)
+                        .map(|peer| peer.0.ip()),
+                    headers
+                        .get(axum::http::header::USER_AGENT)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned),
+                )),
+                ..actor.clone()
+            };
+            let mut args = mcp_validated_call_args(server, mode, params, raw_arguments, &actor)?;
+            // The held content rides the call of the tool it arrived
+            // for, with that call's page argument digest (FIX 22074).
+            if let (Some(held), crate::mcp::McpValidatedToolArgs::Verb(call)) = (held, &mut args) {
+                call.held = held.content_for(call).map_err(|error| {
+                    McpGatewayError::new(-32603, "engine_error", error.to_string())
+                })?;
+            }
+            ensure_mcp_actor_matches(&args, &actor)?;
+            mcp_admit_scoped_call(server, &args, &actor)?;
+            // A named verb call keeps its admission intent, as the
+            // facade's does, unless it sits off the record (FIX 4735).
+            let intent =
+                super::super::admission_intent::McpIntent::of(server, &args, &actor, anonymous);
+            // The tool fan-out, on the heap (FIX 12072).
+            let run = execute_mcp_tool(server, args, &actor, headers, connection);
+            Box::pin(super::super::admission_intent::observed(
+                server,
+                &actor,
+                intent,
+                run,
+                |result| result,
+            ))
+            .await
+        })
+        .await;
+    // ONE-1704 M4: ONE chokepoint. Everything inside that block happened
+    // AFTER the credential resolved, so every refusal it can produce —
+    // decode, validation, actor mismatch, bound-verb or scope refusal,
+    // scoped-grant refusal, board/task dispatch, projection, facade, or
+    // engine failure — leaves with the effective scope attached. Only
+    // failures before this point are legitimately scope-less. Each is
+    // released as a result is, by the rows its words and its scope
+    // name (DEC-0005).
+    let called = called.map_err(|error| {
+        super::device_release::mcp_release_error(
+            server,
+            actor,
+            Some(&[]),
+            error.with_effective_scope(actor),
+        )
+    });
+    let anonymous =
+        anonymous || crate::api::call_receipt::in_anonymous_session(server, headers, principal);
+    mcp_call_receipt(
+        server,
+        actor,
+        tool,
+        request_digest,
+        inputs,
+        attempt,
+        anonymous,
+        called,
+    )
+}
+
 /// The capabilities this server declares: its tools, whose registration is
-/// fixed, and generated UI, with the profile `declared` names as negotiated
+/// fixed, the Tasks extension (L1-03; a request still declares it itself),
+/// and generated UI, with the profile `declared` names as negotiated
 /// (`None`: none declared, as `server/discover` answers every caller).
 fn mcp_server_capabilities(
     declared: Option<&oneiron::lens::GeneratedUiSurfaceCapabilities>,
 ) -> Value {
     json!({
         "tools": { "listChanged": false },
+        "extensions": {
+            (super::super::client_surface::MCP_TASKS_EXTENSION): {},
+        },
         "experimental": {
             (super::super::client_surface::MCP_GENERATED_UI_CAPABILITY):
                 super::super::client_surface::initialize_capability(declared),

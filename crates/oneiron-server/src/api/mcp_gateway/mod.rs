@@ -30,6 +30,7 @@ mod read_result;
 mod served_rows;
 pub(crate) mod skill_execution;
 mod stream_reads;
+mod tasks_adapter;
 mod tasks_response;
 mod tool_receipt;
 mod type_feedback_release;

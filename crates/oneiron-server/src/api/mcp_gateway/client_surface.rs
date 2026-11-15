@@ -24,6 +24,26 @@ pub(crate) const MCP_CLIENT_CAPABILITIES_META: &str = "clientCapabilities";
 /// in a client's capabilities and in this server's `initialize` answer.
 pub(crate) const MCP_GENERATED_UI_CAPABILITY: &str = "oneiron/generatedUi";
 
+/// The `_meta` key a 2026-07-28 request declares its client's capabilities
+/// under, on each request (L1-03). An earlier request's declaration does not
+/// count for this one (ARCH-0028 `#mcp-tasks`).
+pub(crate) const MCP_SPEC_CLIENT_CAPABILITIES_META: &str =
+    "io.modelcontextprotocol/clientCapabilities";
+
+/// The MCP Tasks extension: this server advertises it, and a request
+/// declares it under its client capabilities' `extensions`.
+pub(crate) const MCP_TASKS_EXTENSION: &str = "io.modelcontextprotocol/tasks";
+
+/// Whether a request's `_meta` declares the Tasks extension: its client
+/// capabilities name `extensions["io.modelcontextprotocol/tasks"]` as an
+/// object. `initialize`'s capabilities are never read for it.
+pub(super) fn declares_tasks(meta: Option<&Value>) -> bool {
+    meta.and_then(|meta| meta.get(MCP_SPEC_CLIENT_CAPABILITIES_META))
+        .and_then(|capabilities| capabilities.get("extensions"))
+        .and_then(|extensions| extensions.get(MCP_TASKS_EXTENSION))
+        .is_some_and(Value::is_object)
+}
+
 /// The profile an MCP `capabilities` object declares; `None` when it
 /// declares none or one that is no profile, which lowers for the whole atom
 /// kit as an undeclared one does.
