@@ -11,6 +11,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
+| `build.rs` | src | s | — | — | — |
 | `src/access_grant/mod.rs` | src | s | 1 mod · 2 re-export | — | — |
 | `src/access_grant/request.rs` | src | s | 1 enum | AccessRequestStatus | Moved from `crates/oneiron/src/access_grant/request.rs` (lib split W1: wire types below the lib) |
 | `src/actor_claims/candidate.rs` | src | s | 3 struct | CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView | Moved from `crates/oneiron/src/actor_claims/candidate.rs` (lib split W1: wire types below the lib) |
@@ -133,7 +134,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_selection/mod.rs` | src | s | 2 mod · 11 re-export | — | — |
 | `src/channel_identity_selection/selection_resolution.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 type | ChannelIdentitySelectionDecision, ChannelIdentitySelectionError, SelectionRuleScope | Moved from `crates/oneiron/src/channel_identity_selection/selection_resolution.rs` (lib split W1: wire types… |
 | `src/channel_identity_selection/selection_rules.rs` | src | s | 2 struct · 5 fn · 1 const | ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet | Moved from `crates/oneiron/src/channel_identity_selection/selection_rules.rs` (lib split W1: wire types… |
-| `src/check_in/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
+| `src/check_in/effect.rs` | src | s | 1 struct | CheckInDecision | Moved from `crates/oneiron/src/check_in/effect.rs` (P2.5 2k3 main merge: the step-up reset receipts, wire… |
+| `src/check_in/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/check_in/pending.rs` | src | s | 1 enum | HolderKind | Moved from `crates/oneiron/src/check_in/pending.rs` (lib split W1: wire types below the lib) |
 | `src/claim/aging_profiles.rs` | src | s | 1 struct · 3 fn | ClaimAgingProfiles | Moved from `crates/oneiron/src/claim/aging_profiles.rs` (lib split W2: wire types below the lib) |
 | `src/claim/decay.rs` | src | s | 1 struct · 1 enum · 2 fn · 5 const | AccessFactorPolicy, ClaimAgingClass | Moved from `crates/oneiron/src/claim/decay.rs` (lib split W2: wire types below the lib) |
@@ -398,7 +400,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/record_ref.rs` | src | s | 2 struct · 2 re-export | RecordLinksRequest, ResolveRecordRefRequest | Moved from `crates/oneiron/src/lens/record_ref.rs` (lib split W2: wire types below the lib) |
 | `src/lens/sdk.rs` | src | s | 2 struct | LensDefaultRequest, LensDossierSource | Moved from `crates/oneiron/src/lens/sdk.rs` (lib split W2: wire types below the lib) |
 | `src/lens/selection.rs` | src | s | 6 struct | LensResultSetActionRequest, LensResultSetActionResult, LensSelectRequest, LensSelectedSpan, LensSelectionRange, LensSelectionResolveRequest | Moved from `crates/oneiron/src/lens/selection.rs` (lib split W2: wire types below the lib) |
-| `src/lib.rs` | src | s | 114 mod | — | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… |
+| `src/lib.rs` | src | s | 115 mod | — | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… |
 | `src/linear_sync/facade_types.rs` | src | s | 8 struct · 1 enum · 1 fn | LinearLinkView, LinearMappingEdit, LinearMappingEditReceipt, LinearMappingOp, LinearMappingRequest, LinearMappingView, LinearProvenanceEntry, LinearProvenancePage +1 | Moved from `crates/oneiron/src/linear_sync/facade_types.rs` (lib split W1: wire types below the lib) |
 | `src/linear_sync/mirror_event.rs` | src | s | 1 struct · 1 enum · 3 fn | EventDirection, LinearMirrorEvent | Moved from `crates/oneiron/src/linear_sync/mirror_event.rs` (lib split W1: wire types below the lib) |
 | `src/linear_sync/mod.rs` | src | s | 4 mod · 13 re-export | — | — |
@@ -805,7 +807,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/mod.rs` | src | s | 1 struct · 12 mod · 26 re-export · 1 crate-vis | TaskWaitRequest | Moved from `crates/oneiron/src/task_verb/mod.rs` (lib split W2: wire types below the lib) |
 | `src/task_verb/revoke_lands.rs` | src | s | 1 struct | ConnectorPackBasis | Moved from `crates/oneiron/src/task_verb/revoke_lands.rs` (lib split W2: wire types below the lib) |
 | `src/task_verb/run_control.rs` | src | s | 1 struct · 1 enum | RunControlEffect, RunControlRequest | Moved from `crates/oneiron/src/task_verb/run_control.rs` (lib split W2: wire types below the lib) |
-| `src/task_verb/run_doors.rs` | src | s | 4 struct · 1 enum | CancelForceRequest, ConsultDisposition, ConsultLandSpend, ConsultReadRequest, RunBranchesRequest | Moved from `crates/oneiron/src/task_verb/run_doors.rs` (lib split W2: wire types below the lib) |
+| `src/task_verb/run_doors.rs` | src | s | 5 struct · 1 enum | CancelForceRequest, ConsultDisposition, ConsultLandSpend, ConsultReadRequest, RunBranchesRequest, RunJobRequest | Moved from `crates/oneiron/src/task_verb/run_doors.rs` (lib split W2: wire types below the lib) |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 fn | TaskTtl | Moved from `crates/oneiron/src/task_verb/verb_kind.rs` (lib split W2: wire types below the lib) |
 | `src/team/doors.rs` | src | m | 17 struct · 2 enum | BorrowedCellView, CriticAssociation, CriticObservation, LearningCellView, LearningEvidenceView, LearningObservation, ObservationIssue, PlannedSpawnRead +11 | Moved from `crates/oneiron/src/team/doors.rs` (lib split W1: wire types below the lib) |
 | `src/team/mod.rs` | src | s | 5 mod · 31 re-export | — | — |
@@ -830,6 +832,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/vault_shape/seed.rs` | src | s | 1 fn | — | Moved from `crates/oneiron/src/vault_shape/seed.rs` (lib split W1: wire types below the lib) |
 | `src/vault_shape/shared_setup.rs` | src | s | 2 struct | ShapeLearningOutcome, ShapeLearningSetting | Moved from `crates/oneiron/src/vault_shape/shared_setup.rs` (lib split W1: wire types below the lib) |
 | `src/vault_shape/skill.rs` | src | s | 1 enum · 1 fn | ShapeSkillSource | Moved from `crates/oneiron/src/vault_shape/skill.rs` (lib split W1: wire types below the lib) |
+| `src/verb_input.rs` | src | s | 1 fn | — | The input checks and input schemas of the verb rows whose input type this crate holds (lib split W3-GEN)… |
 | `src/verbs/act_answer.rs` | src | s | 3 struct · 1 enum · 1 fn | ActAnswer, DetailsOnDevice, NarrowedQuestion, NarrowedQuestions | Moved from `crates/oneiron/src/verbs/act_answer.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/agent_grant.rs` | src | s | 9 struct · 1 enum | AgentGrantFromSlipOutcome, AgentGrantFromSlipRequest, AgentGrantMintRequest, AgentGrantMinted, AgentGrantRevokeRequest, AgentGrantRevoked, AgentGrantView, BaseAgentList +2 | Moved from `crates/oneiron/src/verbs/agent_grant.rs` (lib split W3: wire types below the lib) |
 | `src/verbs/agent_run_effect.rs` | src | s | 2 struct | AgentRunEffectAnswer, AgentRunEffectAnswered | Moved from `crates/oneiron/src/verbs/agent_run_effect.rs` (lib split W3: wire types below the lib) |
@@ -977,3 +980,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/vault_key/escrow.rs` | src | s | 1 struct | EscrowRetirement | Moved from `crates/oneiron/src/world_keys/vault_key/escrow.rs` (lib split W1: wire types below the lib) |
 | `src/world_keys/vault_key/mod.rs` | src | s | 2 mod · 4 re-export | — | — |
 | `src/world_keys/vault_key/vocabulary.rs` | src | s | 1 enum | VaultKeyStatus | Moved from `crates/oneiron/src/world_keys/vault_key/vocabulary.rs` (lib split W1: wire types below the lib) |
+| `tests/wire_list_limit_rules.rs` | test | s | — | — | UC-13 PR 4c: the limit rules of two wire requests, pinned at limit 0, 1, the default, the maximum and the… |

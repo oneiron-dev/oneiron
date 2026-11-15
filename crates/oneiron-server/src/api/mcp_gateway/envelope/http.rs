@@ -638,7 +638,19 @@ pub(super) async fn mcp_endpoint(
             )
             .await
             {
-                DoorClaim::Run(claim) => Some(claim),
+                // The tool a `tools/call` names is its verb: one whose answer
+                // is never kept releases the claim when it ends (review round
+                // 2 of #7603).
+                DoorClaim::Run(claim) => Some(
+                    claim.for_verb(
+                        request
+                            .params
+                            .as_ref()
+                            .and_then(|params| params.get("name"))
+                            .and_then(Value::as_str)
+                            .unwrap_or_default(),
+                    ),
+                ),
                 DoorClaim::Answered(outcome) => {
                     // And again once the wait is over, before a reply is his.
                     if let Err(error) = owner_of() {

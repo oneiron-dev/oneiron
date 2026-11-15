@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The wire types of the oneiron engine's public verbs, below the engine: every request, response and value type that carries a JSON schema"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false
@@ -30,6 +29,7 @@ oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
 oneiron-crypto = { version = "0.1.0", path = "../oneiron-crypto" }
 oneiron-delivery-vocabulary = { version = "0.1.0", path = "../oneiron-delivery-vocabulary" }
 oneiron-docedit = { version = "0.1.0", path = "../oneiron-docedit" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-lens-wire = { version = "0.1.0", path = "../oneiron-lens-wire" }
 oneiron-linkedin-policy = { version = "0.1.0", path = "../oneiron-linkedin-policy" }
 oneiron-model = { version = "0.1.0", path = "../oneiron-model" }
@@ -47,8 +47,12 @@ rmpv = { workspace = true, features = ["with-serde"] }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
+serde_path_to_error = "0.1"
 thiserror = { workspace = true }
 zeroize = "1"
+
+[build-dependencies]
+oneiron-sdk-build = { version = "0.1.0", path = "../oneiron-sdk-build" }
 
 [features]
 # Forwarded from `oneiron/sync` and `oneiron/test-support`: a moved item keeps the gate it had in the engine, and
