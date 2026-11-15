@@ -37,8 +37,9 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::{ManifestDbs, Store};
 
-/// One order generation: order id and generation.
-pub(crate) type OrderKey = ([u8; 16], u64);
+#[doc(hidden)]
+pub(crate) use oneiron_records::deletion::legal_hold::prospective::OrderKey;
+
 type OutboxKey = ([u8; 16], u64, u64);
 
 const STANDINGS: SideTable<OrderKey, Standing, Named> =
