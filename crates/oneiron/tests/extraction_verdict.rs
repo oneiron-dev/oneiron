@@ -3,11 +3,12 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test extraction_verdict`.
 #![cfg(oneiron_test_support)]
 
-use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
+#[path = "extraction_verdict/support.rs"]
+mod support;
+
 use oneiron::memory::{
-    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE, MemoryResult,
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_MODEL_UNAVAILABLE,
 };
-use oneiron::test_doors::consolidation::open_dreamer_vault;
 use oneiron::test_doors::derive::{narrow_steward_grant_to_project, source_version};
 use oneiron::test_doors::dreamer_attempt_binding::{
     admit_conflict_settle_attempt, enqueue_conflict_settle_attempt, enqueue_strength_attempt,
@@ -24,126 +25,15 @@ use oneiron::test_doors::extraction_verdict::{
 };
 use oneiron::test_doors::steward::{STEWARD_VERBS, dreamer, stand_steward_grant};
 use oneiron::test_doors::untangle_regressions::seed_named_person;
-use oneiron::{
-    AttemptId, BudgetLease, EdgeActorClass, EntityId, FatalLlmError, LlmBackend, LlmCapability,
-    LlmError, LlmGenerateFuture, LlmRequest, LlmStreamResult, ModelId, UnsupportedCapability,
-    Vault, VaultConfig,
-};
-use oneiron_testkit::{ScriptedBackend, Step};
+use oneiron::{EdgeActorClass, EntityId};
 use serde_json::{Value, json};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// Returns a fixture or assertion error without hiding its source.
-type ExtractionVerdictTestResult<T> = Result<T, Box<dyn std::error::Error>>;
-
-/// The bound verdict verb under test, invoked by name with plain JSON, so this file
-/// compiles without naming the handler and fails at runtime below its facet allow-list.
-const AI_VERDICT_VERB: &str = "ai.verdict";
-
-/// The inputs page an extraction attempt reads its turns and pins through.
-const EXTRACTION_INPUTS_PAGE_VERB: &str = "vault.consolidation.extraction.inputs.page";
-
-/// The queue clock every enqueue and admission here runs at, in seconds.
-const QUEUE_NOW: u64 = 1_000;
-
-/// Opens a vault the way the extraction inputs page test does: the Dreamer fixture
-/// vault, reopened owned, with engine machines provisioned and the embedded owner ensured.
-fn open_extraction_verdict_vault(dir: &tempfile::TempDir) -> ExtractionVerdictTestResult<Vault> {
-    drop(open_dreamer_vault(dir.path(), "owen")?);
-    let vault = Vault::open_owned(dir.path(), VaultConfig::device())?;
-    oneiron::test_support::provision_engine_machines(&vault);
-    vault.ensure_embedded_owner_actor()?;
-    Ok(vault)
-}
-
-/// Returns the attempt id as the page names it: its bytes as lowercase hex.
-fn extraction_attempt_hex(id: AttemptId) -> String {
-    id.as_bytes()
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
-}
-
-/// Reads the extraction inputs page for `attempt` through `binding`.
-fn read_bound_extraction_page(
-    binding: &DreamerAttemptBinding,
-    attempt: &str,
-) -> MemoryResult<Value> {
-    binding
-        .invoke(
-            EXTRACTION_INPUTS_PAGE_VERB,
-            json!({"attempt": attempt}),
-            None,
-        )
-        .map(|answer| answer["value"].clone())
-}
-
-/// Asks one bound verdict through `binding` with `request` as plain JSON.
-fn invoke_bound_verdict(binding: &DreamerAttemptBinding, request: Value) -> MemoryResult<Value> {
-    binding.invoke(AI_VERDICT_VERB, request, None)
-}
-
-/// Binds `admitted` in `vault` and returns the live extraction binding.
-fn bind_extraction(
-    vault: &Arc<Vault>,
-    admitted: &DreamerAdmittedAttempt,
-) -> ExtractionVerdictTestResult<DreamerAttemptBinding> {
-    Ok(vault.bind_dreamer_attempt(admitted)?)
-}
-
-/// Builds one bound Extraction verdict request with `question`, a Choice contract over
-/// `options`, empty evidence and `pack` as its state.
-fn extraction_verdict_request(question: &str, options: Value, pack: Value) -> Value {
-    json!({
-        "question": question,
-        "contract": {"kind": "choice", "options": options},
-        "evidence": [],
-        "state": pack,
-        "ceiling": "big",
-        "reversibility": "reversible_read",
-        "routine": false,
-        "misses": 0,
-    })
-}
-
-/// Builds one candidate operand over `subject` and `predicate` with `value`, citing one
-/// turn with its pin and quoting its whole words.
-fn extraction_candidate(
-    subject: &str,
-    predicate: &str,
-    value: Value,
-    turn: &str,
-    version: Value,
-) -> Value {
-    json!({
-        "subject": subject,
-        "predicate": predicate,
-        "value": value,
-        "evidence": [{"turn": turn, "version": version}],
-    })
-}
-
-/// Reads the turn refs with their served versions from a bound inputs page.
-fn page_turns_with_versions(page: &Value) -> Vec<(String, Value)> {
-    page["turns"]
-        .as_array()
-        .unwrap_or_else(|| panic!("turns is an array"))
-        .iter()
-        .map(|served| {
-            let turn = served["turn"]
-                .as_str()
-                .unwrap_or_else(|| panic!("the turn is a string"))
-                .to_owned();
-            (turn, served["version"].clone())
-        })
-        .collect()
-}
-
-/// The native resolution options in native order, as the conflict pack builds them.
-fn native_resolution_options() -> Value {
-    json!(["merge", "supersede", "accumulate", "escalate"])
-}
+use support::{
+    ExtractionVerdictTestResult, ParityReasoner, QUEUE_NOW, bind_extraction,
+    extraction_attempt_hex, extraction_candidate, extraction_verdict_request, invoke_bound_verdict,
+    native_resolution_options, open_extraction_verdict_vault, page_turns_with_versions,
+    read_bound_extraction_page,
+};
 
 /// A checked whole resolution pack over two candidates answers that no extraction loan is
 /// lent: the engine rebuilds the resolution question with its identity group and refuses
@@ -584,82 +474,6 @@ fn other_facets_keep_their_verdict_rules() -> ExtractionVerdictTestResult<()> {
     };
     assert_eq!(extraction_decode.code, MEMORY_CODE_BAD_REQUEST);
     Ok(())
-}
-
-/// Answers the one pack generation from a per-request scripted backend and counts the
-/// generations it serves.
-struct ParityReasoner {
-    /// Holds the fixed both-question reply text.
-    reply: String,
-    /// Declares the reply's input tokens.
-    input_tokens: u64,
-    /// Declares the reply's output tokens.
-    output_tokens: u64,
-    /// Counts the generations served so far.
-    calls: AtomicUsize,
-}
-
-impl ParityReasoner {
-    /// Builds a reasoner answering every generation with `reply`, declaring the token counts.
-    fn new(reply: String, input_tokens: u64, output_tokens: u64) -> Self {
-        Self {
-            reply,
-            input_tokens,
-            output_tokens,
-            calls: AtomicUsize::new(0),
-        }
-    }
-
-    /// Returns the generations served so far.
-    fn call_count(&self) -> usize {
-        self.calls.load(Ordering::SeqCst)
-    }
-}
-
-impl LlmBackend for ParityReasoner {
-    /// The scripted backend answers every model, so this reasoner does too.
-    fn supports(&self, _model: &ModelId, _capability: LlmCapability) -> bool {
-        true
-    }
-
-    /// Answers the generation from a scripted backend matching this request's digest.
-    fn generate<'a>(
-        &'a self,
-        request: LlmRequest,
-        lease: &'a BudgetLease,
-    ) -> LlmGenerateFuture<'a> {
-        let reply = self.reply.clone();
-        let (input_tokens, output_tokens) = (self.input_tokens, self.output_tokens);
-        Box::pin(async move {
-            let digest = ScriptedBackend::digest_of(&request);
-            let backend = ScriptedBackend::new(vec![
-                Step::text("parity-pack", digest, reply)
-                    .buffered()
-                    .usage(input_tokens, output_tokens),
-            ])
-            .map_err(|error| {
-                LlmError::Fatal(FatalLlmError::InvalidRequestDetail {
-                    message: format!("the parity scripted backend did not build: {error}"),
-                    code: None,
-                })
-            })?;
-            let response = backend.generate(request, lease).await;
-            let seen = backend.finish();
-            self.calls.fetch_add(seen.len(), Ordering::SeqCst);
-            response
-        })
-    }
-
-    /// The parity legs never stream; a streamed call fails loudly.
-    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
-        Err(LlmError::Fatal(FatalLlmError::Unsupported(
-            UnsupportedCapability {
-                capability: LlmCapability::Streaming,
-                model: None,
-                reason: None,
-            },
-        )))
-    }
 }
 
 /// Builds the fixed pack reply answering accumulate for the resolution question and none

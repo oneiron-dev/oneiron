@@ -13,7 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::TurnText;
 use super::call_labels::{CallLabelMap, LabelKind};
 use super::executor::ConsolidationExecutor;
-use super::extraction_pack::bound_branch_error;
+use super::extraction_pack::{bound_branch_error, extraction_layout_refusal};
 use super::failure_rules::{self, Stage};
 use super::neighbourhood::Neighbourhood;
 use super::resources::BoundBranchRead;
@@ -172,12 +172,12 @@ pub(crate) fn prepare_bound_step(
     }
     if groups.len() != 1 {
         let slices = layout_slices(bound, &groups);
-        return Err(layout_refusal(
+        return Err(extraction_layout_refusal(
             format!(
                 "an extraction step cites one native slice; the cited TURNs span {} native slices",
                 groups.len()
             ),
-            slices,
+            ExtractionLayout::StepSlices { slices },
         ));
     }
     let ((_, entities), positions) = groups
@@ -202,12 +202,14 @@ pub(crate) fn prepare_bound_step(
                     "an extraction step page must be below its slice page count of {page_count}"
                 )
             };
-            return Err(layout_refusal(
+            return Err(extraction_layout_refusal(
                 message,
-                vec![ExtractionStepSlice {
-                    evidence,
-                    pages: page_count,
-                }],
+                ExtractionLayout::StepSlices {
+                    slices: vec![ExtractionStepSlice {
+                        evidence,
+                        pages: page_count,
+                    }],
+                },
             ));
         }
     };
@@ -294,17 +296,6 @@ fn layout_slices(
             }
         })
         .collect()
-}
-
-/// Builds the layout refusal carrying the native slices as a typed
-/// field.
-///
-/// The message stays human prose; clients read the slices from the typed
-/// field, never by parsing the message.
-fn layout_refusal(message: String, slices: Vec<ExtractionStepSlice>) -> MemoryError {
-    let mut error = MemoryError::bad_request(message);
-    error.extraction_layout = Some(Box::new(ExtractionLayout::StepSlices { slices }));
-    error
 }
 
 /// Runs `prepared` as one durable extraction generation on the borrowed role.

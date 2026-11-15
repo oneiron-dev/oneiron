@@ -32,12 +32,14 @@ use super::super::settle::decision_pages::{json_len, split_pages};
 use super::super::support::invalid_consolidation;
 use super::super::value_projection::rmpv_to_json;
 use super::observed_beside::route_observed_priors;
-use super::{BoundBranchRead, ExtractionRebuildContext, select_conflict};
+use super::{
+    BoundBranchRead, ExtractionRebuildContext, extraction_layout_refusal, select_conflict,
+};
 use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, validate_predicate};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::memory::MemoryResult;
+use crate::memory::{ExtractionCorrectionPair, ExtractionLayout, MemoryError, MemoryResult};
 use crate::verbs::{CandidateOperand, ExtractionPart, PackQuestion};
 use crate::write_envelope::ClaimCandidate;
 
@@ -92,6 +94,20 @@ impl CheckedPack {
     pub(super) fn listed_ids(&self) -> Vec<EntityId> {
         self.listed.iter().map(|row| row.claim).collect()
     }
+
+    /// The rebuilt listing with its eligible pairs, word-free and in native order.
+    ///
+    /// The pairs run in native pair order and the listed (claim, subject)
+    /// rows in native first-seen order, so the observations page serves
+    /// exactly what a correction pack over the same candidates must pin.
+    pub(crate) fn correction_listing(&self) -> (Vec<(usize, usize)>, Vec<(EntityId, EntityId)>) {
+        let listed = self
+            .listed
+            .iter()
+            .map(|row| (row.claim, row.subject))
+            .collect();
+        (self.pairs.clone(), listed)
+    }
 }
 
 /// One conflict as a resolution rebuild reads it: its rows for reads, its
@@ -101,6 +117,8 @@ impl CheckedPack {
 pub(super) struct BuiltConflict {
     /// The conflict rows native reads page and render.
     pub(super) rows: ConflictRows,
+    /// The pack positions of the row members, in row order.
+    pub(super) member_positions: Vec<usize>,
     /// The routed prior heads, in native id order.
     pub(super) priors: Vec<EntityId>,
     /// Whether any member predicate differs from the identity one.
@@ -524,6 +542,7 @@ pub(super) fn resolution_conflict(
     let correlation = conflict_open_marker_id(set, attempt)?;
     Ok(BuiltConflict {
         rows: ConflictRows::from_rows(&set.identity, &members, &shown),
+        member_positions: set.candidate_indexes.clone(),
         priors: set.prior_heads.clone(),
         across,
         candidate_ids: rows.iter().map(|row| row.claim_id).collect(),
@@ -533,29 +552,59 @@ pub(super) fn resolution_conflict(
     })
 }
 
+/// Builds the correction part refusal carrying `pages` as typed pairs in native order.
+fn correction_layout_mismatch(pages: &[Vec<(usize, usize)>]) -> MemoryError {
+    let pages: Vec<Vec<ExtractionCorrectionPair>> = pages
+        .iter()
+        .map(|page| {
+            page.iter()
+                .map(|(candidate, listed)| ExtractionCorrectionPair {
+                    candidate: *candidate,
+                    listed: *listed,
+                })
+                .collect()
+        })
+        .collect();
+    extraction_layout_refusal(
+        "extraction pack part does not match its read",
+        ExtractionLayout::CorrectionPages { pages },
+    )
+}
+
+/// Builds the resolution part refusal carrying `pages` as pack positions in native order.
+///
+/// Each row index comes from these members' own pages, so it always names a member position.
+fn resolution_layout_mismatch(pages: &[Vec<usize>], member_positions: &[usize]) -> MemoryError {
+    let pages: Vec<Vec<usize>> = pages
+        .iter()
+        .map(|page| page.iter().map(|row| member_positions[*row]).collect())
+        .collect();
+    extraction_layout_refusal(
+        "extraction pack part does not match its read",
+        ExtractionLayout::ResolutionPages { pages },
+    )
+}
+
 /// The questions of the correction read over `checked`'s `part`: every
 /// candidate's groups over its listed claims, in native order. A whole part
 /// needs the single rebuilt page; a page part needs its page of the rebuilt
-/// count.
+/// count. A part beside the rebuilt pages refuses with those pages as a
+/// typed layout.
 pub(super) fn correction_plan_questions(
     checked: &CheckedPack,
     part: ExtractionPart,
-) -> Result<Vec<PackQuestion>> {
+) -> MemoryResult<Vec<PackQuestion>> {
     let pages = correction_page_entries(&checked.rows, &checked.pairs, &checked.listed);
     let entries: &[(usize, usize)];
     let page: Option<usize>;
     match part {
         ExtractionPart::Whole => {
             if pages.len() != 1 {
-                return Err(invalid_consolidation(
-                    "extraction pack part does not match its read",
-                ));
+                return Err(correction_layout_mismatch(&pages));
             }
             entries = pages
                 .first()
-                .ok_or_else(|| {
-                    invalid_consolidation("extraction pack part does not match its read")
-                })?
+                .ok_or_else(|| correction_layout_mismatch(&pages))?
                 .as_slice();
             page = None;
         }
@@ -564,22 +613,16 @@ pub(super) fn correction_plan_questions(
             pages: count,
         } => {
             if count < 2 || pages.len() != count {
-                return Err(invalid_consolidation(
-                    "extraction pack part does not match its read",
-                ));
+                return Err(correction_layout_mismatch(&pages));
             }
             entries = pages
                 .get(at)
-                .ok_or_else(|| {
-                    invalid_consolidation("extraction pack part does not match its read")
-                })?
+                .ok_or_else(|| correction_layout_mismatch(&pages))?
                 .as_slice();
             page = Some(at);
         }
         ExtractionPart::Final { .. } => {
-            return Err(invalid_consolidation(
-                "extraction pack part does not match its read",
-            ));
+            return Err(correction_layout_mismatch(&pages));
         }
     }
     let listed_ids: Vec<EntityId> = checked.listed.iter().map(|row| row.claim).collect();
@@ -600,26 +643,23 @@ pub(super) fn correction_plan_questions(
 /// The questions of the resolution read over `built`'s `part`: how the
 /// conflict resolves, then which members a merge keeps, in native order. A
 /// whole part needs the single rebuilt page; a page part needs its page of
-/// the rebuilt count.
+/// the rebuilt count. A part beside the rebuilt pages refuses with those
+/// pages as a typed layout.
 pub(super) fn resolution_plan_questions(
     built: &BuiltConflict,
     part: ExtractionPart,
-) -> Result<Vec<PackQuestion>> {
+) -> MemoryResult<Vec<PackQuestion>> {
     let pages = built.rows.pages();
     let shown: &[usize];
     let page: Option<usize>;
     match part {
         ExtractionPart::Whole => {
             if pages.len() != 1 {
-                return Err(invalid_consolidation(
-                    "extraction pack part does not match its read",
-                ));
+                return Err(resolution_layout_mismatch(&pages, &built.member_positions));
             }
             shown = pages
                 .first()
-                .ok_or_else(|| {
-                    invalid_consolidation("extraction pack part does not match its read")
-                })?
+                .ok_or_else(|| resolution_layout_mismatch(&pages, &built.member_positions))?
                 .as_slice();
             page = None;
         }
@@ -628,22 +668,16 @@ pub(super) fn resolution_plan_questions(
             pages: count,
         } => {
             if count < 2 || pages.len() != count {
-                return Err(invalid_consolidation(
-                    "extraction pack part does not match its read",
-                ));
+                return Err(resolution_layout_mismatch(&pages, &built.member_positions));
             }
             shown = pages
                 .get(at)
-                .ok_or_else(|| {
-                    invalid_consolidation("extraction pack part does not match its read")
-                })?
+                .ok_or_else(|| resolution_layout_mismatch(&pages, &built.member_positions))?
                 .as_slice();
             page = Some(at);
         }
         ExtractionPart::Final { .. } => {
-            return Err(invalid_consolidation(
-                "extraction pack part does not match its read",
-            ));
+            return Err(resolution_layout_mismatch(&pages, &built.member_positions));
         }
     }
     let ids = built.rows.ids(shown);

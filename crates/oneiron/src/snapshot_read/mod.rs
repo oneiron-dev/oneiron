@@ -49,7 +49,8 @@ pub(crate) use extraction_inputs::{
 pub(crate) use extraction_observations::extraction_observations_page_bound;
 pub use extraction_observations::{
     CandidateObservation, ExtractionObservationsPage, ExtractionObservationsPageRequest,
-    PriorObservation, ReplayObservation, SimilarityScore, extraction_observations_page,
+    ListedObservation, PriorObservation, ReplayObservation, SimilarityScore,
+    extraction_observations_page,
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,

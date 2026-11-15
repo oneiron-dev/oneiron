@@ -35,6 +35,8 @@ pub struct ExtractionObservationsPage {
     pub facts_pin: String,
     /// The candidate rows on this page, in operand order.
     pub candidates: Vec<CandidateObservation>,
+    /// The rebuilt correction listing rows on this page, in native first-seen order.
+    pub listed: Vec<ListedObservation>,
     /// The admitted prior rows on this page, in native order.
     pub priors: Vec<PriorObservation>,
     /// The unlisted provisional rows on this page, separate from priors.
@@ -90,6 +92,21 @@ pub struct CandidateObservation {
     pub scope_project: String,
     /// The explicit or vault-default facet used by replay comparison.
     pub replay_facet: String,
+    /// The listed indexes this candidate may correct, in native pairs order.
+    pub correctable: Vec<usize>,
+    /// Whether the effective policy names the candidate predicate single-valued.
+    pub single_valued: bool,
+}
+
+/// One rebuilt correction listing row, without predicate or value words.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ListedObservation {
+    /// The listed claim identifier in native first-seen order.
+    pub claim: String,
+    /// The subject the listing shows the claim about.
+    pub subject: String,
+    /// The source version read under the caller's live authority.
+    pub version: SourceVersion,
 }
 
 /// One admitted prior, with equality and scope facts but no value words.
@@ -117,6 +134,12 @@ pub struct PriorObservation {
     pub scope_project: String,
     /// The operands whose fresh full scope equals this scope under their meet.
     pub scope_equal_candidates: Vec<usize>,
+    /// The ascending operand positions whose meet admits this prior without widening.
+    pub non_widening_candidates: Vec<usize>,
+    /// The ascending operand positions whose native identity subject and
+    /// predicate equal this prior's stored subject and predicate: the head
+    /// condition a lone candidate's bound correction checks.
+    pub subject_predicate_equal_candidates: Vec<usize>,
 }
 
 /// One reachable unlisted provisional head for a single operand's cohort.
@@ -161,6 +184,8 @@ pub struct SimilarityScore {
 pub(super) struct ObservationFacts {
     /// Every candidate observation, in operand order.
     pub(super) candidates: Vec<CandidateObservation>,
+    /// Every rebuilt listing observation, in native first-seen order.
+    pub(super) listed: Vec<ListedObservation>,
     /// Every admitted prior observation, in native order.
     pub(super) priors: Vec<PriorObservation>,
     /// Every replay cohort observation, in operand and native head order.

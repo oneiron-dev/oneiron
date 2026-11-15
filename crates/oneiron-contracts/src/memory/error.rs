@@ -259,10 +259,9 @@ pub struct MemoryError {
     pub room_join_hold: Option<Box<crate::room_join::RoomJoinHold>>,
 }
 
-/// The native layout a layout refusal carries instead of prose (untangle
-/// 6.9e e2f.2): which native slices the cited TURNs form, in native order.
-/// The tag leaves room for later variants: a later leaf (e2f.3) pins the
-/// bound read's page layout beside the step slices.
+/// The native layout a layout refusal carries instead of prose.
+/// A step refusal names the native slices the cited TURNs form, and a
+/// bound read refusal names that read's rebuilt pages, each in native order.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ExtractionLayout {
@@ -271,6 +270,16 @@ pub enum ExtractionLayout {
     StepSlices {
         /// One row per native slice, in native order.
         slices: Vec<ExtractionStepSlice>,
+    },
+    /// This layout names the correction read's rebuilt pages in native page order.
+    CorrectionPages {
+        /// Each page contains the (candidate, listed) pairs it asks, in native order.
+        pages: Vec<Vec<ExtractionCorrectionPair>>,
+    },
+    /// This layout names the resolution read's rebuilt pages in native page order.
+    ResolutionPages {
+        /// Each page contains the positions in the pack's `candidates` it shows, in native order.
+        pages: Vec<Vec<usize>>,
     },
 }
 
@@ -283,6 +292,16 @@ pub struct ExtractionStepSlice {
     pub evidence: Vec<usize>,
     /// How many listing pages this slice spans.
     pub pages: usize,
+}
+
+/// This pair identifies which pack candidate is asked about which rebuilt listed claim.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractionCorrectionPair {
+    /// This is the position in the pack's `candidates` this pair asks about.
+    pub candidate: usize,
+    /// This is the position in the rebuilt correction listing this pair asks about.
+    pub listed: usize,
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the

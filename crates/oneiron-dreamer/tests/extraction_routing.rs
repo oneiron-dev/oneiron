@@ -82,6 +82,7 @@ fn inputs(
         policy_pin: policy_pin.to_owned(),
         facts_pin: facts_pin.to_owned(),
         candidates,
+        listed: Vec::new(),
         priors,
         replay,
         scores: serde_json::from_value(case.get("scores").cloned().unwrap_or_else(|| json!([])))

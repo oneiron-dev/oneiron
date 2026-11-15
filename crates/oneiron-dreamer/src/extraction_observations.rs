@@ -37,6 +37,8 @@ pub struct Observations {
     pub facts_pin: String,
     /// The pages' candidate observations, in page order.
     pub candidates: Vec<CandidateObservation>,
+    /// The pages' listing observations, in page order.
+    pub listed: Vec<ListedObservation>,
     /// The pages' prior observations, in page order.
     pub priors: Vec<PriorObservation>,
     /// The pages' replay observations, in page order.
@@ -58,6 +60,8 @@ pub struct Page {
     pub facts_pin: String,
     /// The page's candidate observations, in page order.
     pub candidates: Vec<CandidateObservation>,
+    /// The page's listing observations, in page order.
+    pub listed: Vec<ListedObservation>,
     /// The page's prior observations, in page order.
     pub priors: Vec<PriorObservation>,
     /// The page's replay observations, in page order.
@@ -116,6 +120,21 @@ pub struct CandidateObservation {
     pub scope_project: String,
     /// The facet the candidate replays under.
     pub replay_facet: String,
+    /// The listed indexes this candidate may correct, in native pairs order.
+    pub correctable: Vec<usize>,
+    /// Whether the effective policy names the candidate predicate single-valued.
+    pub single_valued: bool,
+}
+
+/// One listed claim as the page observed it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ListedObservation {
+    /// The listed claim, as the engine keys it.
+    pub claim: String,
+    /// The subject the listing shows the claim about, as the engine keys it.
+    pub subject: String,
+    /// The version the page served the listed row at.
+    pub version: SourceVersion,
 }
 
 /// One prior claim as the page observed it.
@@ -146,6 +165,12 @@ pub struct PriorObservation {
     /// The positions in the request's candidates whose scope fully equals this
     /// prior's scope, each judged under that candidate's verified meet.
     pub scope_equal_candidates: Vec<usize>,
+    /// The ascending positions whose meet admits this prior without widening.
+    pub non_widening_candidates: Vec<usize>,
+    /// The ascending positions in the request's candidates whose native
+    /// identity subject and predicate equal this prior's stored subject and
+    /// predicate: the head condition a lone candidate's bound correction checks.
+    pub subject_predicate_equal_candidates: Vec<usize>,
 }
 
 /// One replayed row as the page observed it.
@@ -295,6 +320,7 @@ pub fn read_observations(
         policy_pin: String::new(),
         facts_pin: String::new(),
         candidates: Vec::new(),
+        listed: Vec::new(),
         priors: Vec::new(),
         replay: Vec::new(),
         scores: Vec::new(),
@@ -312,6 +338,7 @@ pub fn read_observations(
             check_pins(&page, &collected)?;
         }
         collected.candidates.extend(page.candidates);
+        collected.listed.extend(page.listed);
         collected.priors.extend(page.priors);
         collected.replay.extend(page.replay);
         collected.scores.extend(page.scores);
