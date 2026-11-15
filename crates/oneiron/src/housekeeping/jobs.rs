@@ -164,6 +164,8 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
     // The wake rows this run covers: noted before it started and due by then. A row noted while
     // it runs stays for the next run.
     let covered = wake::due_by(vault, sweep, start).unwrap_or_default();
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::schedule::note_planted_deadline(vault, sweep)?;
     #[cfg(test)]
     match super::tests::injected(sweep) {
         Some(super::tests::Injected::Fail) => {
