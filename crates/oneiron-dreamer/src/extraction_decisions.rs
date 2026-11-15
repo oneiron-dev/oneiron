@@ -105,9 +105,9 @@ pub enum Error {
     Routing(extraction_routing::Error),
     /// Rejects missing served positions, retained identities or prior rows.
     InvalidObservations(String),
-    /// Rejects a member whose claim changed between routing and component reads.
+    /// Rejects a component row whose claim changed between routing and component reads.
     IdentityMoved {
-        /// Names the member's position in the complete operand array.
+        /// Names the row's position in the complete operand array.
         candidate: usize,
         /// Holds the claim served for routing.
         expected: String,
@@ -166,7 +166,7 @@ impl std::error::Error for Error {}
 /// # Errors
 ///
 /// Preserves client codes, pure-policy and read errors, and rejects missing
-/// routing context or a member identity that moved before its component read.
+/// routing context or a component identity that moved before its component read.
 pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
     check_policy(input.policy_pin, &input.config.policy_pin)?;
     let ExtractionOperands {
@@ -230,7 +230,7 @@ pub fn run(input: Input<'_>) -> Result<Outcome, Error> {
             let component = component_operands(set, &unions, &union_positions)?;
             let component_observations = observe(input, &component)?;
             let local = local_set(set)?;
-            check_members(set, &local, &observations, &component_observations)?;
+            check_component(set, &observations, &component_observations)?;
             let mut decision = verdict::resolution(
                 input.client,
                 ResolutionInput {
@@ -320,21 +320,20 @@ fn local_set(set: &JudgeSet) -> Result<JudgeSet, Error> {
     })
 }
 
-fn check_members(
+fn check_component(
     set: &JudgeSet,
-    local: &JudgeSet,
     routed: &Observations,
     component: &Observations,
 ) -> Result<(), Error> {
-    for (index, local_index) in set.candidate_indexes.iter().zip(&local.candidate_indexes) {
+    for (local_index, index) in set.component_indexes.iter().enumerate() {
         let before = routed.candidates.iter().find(|row| row.index == *index);
         let after = component
             .candidates
             .iter()
-            .find(|row| row.index == *local_index);
+            .find(|row| row.index == local_index);
         let (Some(before), Some(after)) = (before, after) else {
             return Err(Error::InvalidObservations(
-                "a set member has no observation row".into(),
+                "a component row has no observation row".into(),
             ));
         };
         if before.claim != after.claim {

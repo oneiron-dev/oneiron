@@ -27,26 +27,8 @@ impl GenerationEpoch {
     }
 }
 
-/// ONE-1805 normalized token fields. Times and confidence are provider metadata,
-/// never turn authority or evidence of identity.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct AsrToken {
-    pub text: String,
-    pub is_final: bool,
-    pub start_ms: Option<f64>,
-    pub end_ms: Option<f64>,
-    pub confidence: Option<f64>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AsrEventKind {
-    Partial,
-    Final,
-    Endpoint,
-    Error,
-    Closed,
-}
+#[doc(hidden)]
+pub use oneiron_records::voice_cascade::protocol::{AsrEventKind, AsrToken, RetrievalContext};
 
 /// ONE-1805 normalized event contract. An endpoint is NOT a final transcript.
 /// The host attaches an utterance handle and revision outside this provider DTO.
@@ -115,18 +97,6 @@ pub struct PartialEnrichment {
 /// extraction pass. Provider hints, including empty lists, cannot bypass it.
 pub trait PartialEnricher {
     fn enrich_speculative_partial(&mut self, text: &str) -> Result<PartialEnrichment>;
-}
-
-/// Ordered refs only: no raw entity bodies, vectors or retrieval score scale.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RetrievalContext {
-    pub result_refs: Vec<String>,
-    pub promoted: bool,
-    pub run_id: Option<String>,
-    /// The session's call-mode deadline cut these results short: they are
-    /// the best that were ready, not a finished pass.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub partial: bool,
 }
 
 /// Tool events are context, not authority to run a tool. The host executes tools
