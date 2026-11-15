@@ -284,9 +284,11 @@ pub(in crate::api::mcp_gateway) async fn mcp_resolve_page(
     Ok(page)
 }
 
-/// The rows of a page one's `rows` its caller read, sorted and unique, by the
+/// The rows of a page one its caller read, sorted and unique, by the
 /// predicate the board door admits a row with (`mcp_scope_admits_row`): its
 /// credential reads the row, inside its registered world and facet ceiling.
+/// The rows are the ones its producer listed in `rows`, or, when it listed
+/// none, the ones its snapshot names (`mcp_page_named_rows`).
 ///
 /// They are judged at the mint, after the producer ran. That answers which
 /// rows the producer's read admitted only while the vault's authority is
@@ -294,20 +296,29 @@ pub(in crate::api::mcp_gateway) async fn mcp_resolve_page(
 /// landed and the authorization time did not move, so no Grant was revoked
 /// and none expired while page one was made. After either, or with no
 /// reading, that is unknown, and every row is kept: each continuation is then
-/// judged by all of them. A caller with no scoped read, or a page whose rows
-/// are unknown (FIX 5988), keeps none.
+/// judged by all of them. A caller with no scoped read keeps none.
+///
+/// A page whose producer listed no rows (unknown, FIX 5988) keeps instead
+/// the entity rows its output and keyframe name, the rows a
+/// retained page is judged by again at release as a backstop for a producer
+/// that did not list them, so its continuation is judged again by the rows
+/// page one served rather than by none. A page naming none keeps none, as
+/// before: refusing it would make its result impossible to page.
 fn mcp_page_rows_read_now(
     server: &SyncServer,
     actor: &McpResolvedActor,
     snapshot: &McpPageSnapshot,
     produced_under: Option<McpAuthorityReading>,
 ) -> Result<Vec<oneiron::EntityId>, McpGatewayError> {
-    let rows = snapshot
+    let mut rows = snapshot
         .rows
         .iter()
         .flatten()
         .copied()
         .collect::<std::collections::BTreeSet<_>>();
+    if rows.is_empty() {
+        rows = mcp_page_named_rows(server, snapshot)?;
+    }
     if rows.is_empty() {
         return Ok(Vec::new());
     }
@@ -324,6 +335,37 @@ fn mcp_page_rows_read_now(
         return Ok(rows.into_iter().collect());
     }
     Ok(kept)
+}
+
+/// The entity rows `snapshot`'s output and keyframe name, by whole id or
+/// by short ref, sorted and unique: the served rows of a page whose
+/// producer listed none. A whole-id token the vault holds no entity for (a
+/// hash, a decision id) names no row a read admits, so it is left out. An
+/// output that does not encode names none by whole id, as a page naming
+/// none does.
+fn mcp_page_named_rows(
+    server: &SyncServer,
+    snapshot: &McpPageSnapshot,
+) -> Result<std::collections::BTreeSet<oneiron::EntityId>, McpGatewayError> {
+    let payload =
+        serde_json::to_vec(&(&snapshot.output, &snapshot.keyframe)).unwrap_or_default();
+    let mut rows = std::collections::BTreeSet::new();
+    for row in crate::device_local::named_rows(&payload) {
+        if server
+            .vault
+            .get_entity_type(&row)
+            .map_err(|error| mcp_engine_error("mcp page row admission failed", error))?
+            .is_some()
+        {
+            rows.insert(row);
+        }
+    }
+    if let Some(short_refs) =
+        crate::device_local::short_refs_named(&server.vault, &snapshot.output)
+    {
+        rows.extend(short_refs);
+    }
+    Ok(rows)
 }
 
 /// Whether the vault's authority is still `produced_under`. Read after the

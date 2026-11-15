@@ -554,9 +554,12 @@ pub(crate) struct McpPageSnapshot {
     /// and every one of them may leave it (DEC-0005).
     pub(crate) rows: Option<Vec<oneiron::EntityId>>,
     /// The rows of `rows` the caller's own read admitted when page one's
-    /// cursor was minted, sorted and unique; empty until then. A continuation
-    /// is served only while the caller's read at that call still admits every
-    /// one of them (ARCH-0028 #mcp-continuation-open).
+    /// cursor was minted, sorted and unique; empty until then. When `rows`
+    /// listed none, the entity rows `output` and `keyframe` name stand in
+    /// for it at the mint, so such a page is judged again by the
+    /// rows it served rather than by none. A continuation is served only
+    /// while the caller's read at that call still admits every one of them
+    /// (ARCH-0028 #mcp-continuation-open).
     pub(crate) read_rows: Vec<oneiron::EntityId>,
 }
 

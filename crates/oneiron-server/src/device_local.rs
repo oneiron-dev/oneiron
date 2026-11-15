@@ -68,6 +68,12 @@ fn released_rows(rows: &[EntityId], payload: &[u8]) -> Vec<EntityId> {
     named
 }
 
+/// Every row `payload` names by whole id, each once: `released_rows` beside
+/// no listed row, for a caller whose producer listed none.
+pub(crate) fn named_rows(payload: &[u8]) -> Vec<EntityId> {
+    released_rows(&[], payload)
+}
+
 /// Where a prompt's rows go for a model call (FIX 4937): to `caller`, who
 /// reads the answer, and to the model at `model`, a recipient of its own. A
 /// model on this device adds nothing; one off it adds a destination nobody
