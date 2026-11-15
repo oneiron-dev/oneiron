@@ -11,12 +11,12 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | path | kind | bucket | pub surface | notable types | purpose |
 |---|---|---|---|---|---|
-| `src/lens/atom/atom_enum.rs` | src | m | 1 enum · 6 fn | LensAtom | LensAtom closed enum with wire codec and primitive/validate/budget dispatch |
+| `src/lens/atom/atom_enum.rs` | src | m | 1 enum · 7 fn | LensAtom | LensAtom closed enum with wire codec and primitive/validate/budget dispatch |
 | `src/lens/atom/atom_leaves.rs` | src | m | 27 struct · 6 enum · 2 fn · 12 crate-vis | AnswerSheetAtom, AsofScrubberAtom, ClaimLineAtom, CollectionAtom, GeneratedUiResultSetActionEvent, GeneratedUiResultSetAtom, GeneratedUiResultSetRow, GeneratedUiResultSetSelectAll +25 | Leaf payload structs with per-atom validate and fallback impls |
 | `src/lens/atom/atom_node.rs` | src | s | 1 struct · 2 fn · 1 crate-vis | LensNode | LensNode tree type with its Deserialize seeds: the tree decodes whole, at any width or depth its codec reads… |
 | `src/lens/atom/atom_scalars.rs` | src | s | 2 struct · 5 fn · 3 const · 1 crate-vis | FiniteF64, LensText | Scalar newtypes LensText/FiniteF64 with TryFrom/serde impls, and kit-version/kind-list consts |
 | `src/lens/atom/mod.rs` | src | s | 4 re-export · 1 crate-vis | — | The closed [`LensAtom`] vocabulary: the atom enum, its leaf payload structs, [`LensNode`] with its… |
-| `src/lens/generated_ui/genui_app_catalog.rs` | src | s | 4 struct · 1 enum · 6 fn · 1 const · 4 crate-vis | GeneratedUiCatalog, GeneratedUiCatalogDescriptor, GeneratedUiCatalogVersion, GeneratedUiComponentAtom, GeneratedUiComponentSchema | Component catalogs an app declares (FIX 9891, 9893): the catalog name, its semver `catalogVersion`, the… |
+| `src/lens/generated_ui/genui_app_catalog.rs` | src | m | 4 struct · 1 enum · 6 fn · 1 const · 4 crate-vis | GeneratedUiCatalog, GeneratedUiCatalogDescriptor, GeneratedUiCatalogVersion, GeneratedUiComponentAtom, GeneratedUiComponentSchema | Component catalogs an app declares (FIX 9891, 9893): the catalog name, its semver `catalogVersion`, the… |
 | `src/lens/generated_ui/genui_card.rs` | src | m | 1 struct · 13 fn | GeneratedUiCard | Authored-tree [`GeneratedUiCard`] assembly, surface lowering, and validated wire decoding |
 | `src/lens/generated_ui/genui_catalog.rs` | src | m | 2 struct · 2 enum · 12 fn · 1 const | GeneratedUiPrebuilt, GeneratedUiPrimitive, GeneratedUiSummaryCardPrebuilt, GeneratedUiSurfaceCapabilities | The built-in primitive catalog, surface capability negotiation, and prebuilt card expansion |
 | `src/lens/generated_ui/genui_decode.rs` | src | m | 1 struct · 1 enum · 2 fn · 4 crate-vis | GeneratedUiDecoded, GeneratedUiFallback | The staged version boundary every generated-UI envelope crosses first (FIX 7967; CALLS "FIX 7967 7970… |
@@ -37,5 +37,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/wire_limits.rs` | src | s | 1 crate-vis | — | Generic serde plumbing shared by the hand-rolled lens wire types: the externally-tagged map serializer their… |
 | `src/lib.rs` | src | s | 1 mod · 1 crate-vis | — | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… |
 | `tests/genui_card_expressions.rs` | test | m | — | — | GENUI-COMPUTED: an app component's props may read the card's `$state`, either directly with `{"$state"… |
+| `tests/genui_component_actions.rs` | test | m | — | — | GENUI-COMPONENT-ACTIONS: the card's manifest may declare an action for every element that carries one |
 | `tests/genui_cond_template.rs` | test | m | — | — | GENUI-COND-TEMPLATE: an app component's prop may be a `$cond` over the closed predicate algebra or a… |
 | `tests/genui_interpolation_state_key.rs` | test | s | — | — | GENUI-INTERP-KEY: in a generated card, a text block's one escaped interpolation reads `$state` |

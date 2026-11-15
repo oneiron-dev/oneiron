@@ -55,11 +55,8 @@ const DONE: &str = "done";
 const RECONCILED: &str = "reconciled";
 const COMPLETED: &str = "completed";
 const LOCK: &str = "acks.lock";
-const WIRE_VERSION: u8 = 1;
-
-fn journal_corrupt() -> Error {
-    Error::CorruptedIndex("key custody acknowledgement journal")
-}
+#[doc(hidden)]
+use oneiron_records::store::key_custody::targets::{WIRE_VERSION, journal_corrupt};
 
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| journal_corrupt())
