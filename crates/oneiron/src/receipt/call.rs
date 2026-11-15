@@ -709,8 +709,11 @@ impl Vault {
 impl Memory<'_> {
     /// The call receipt `receipt_ref` names, scoped to this handle's bound
     /// actor: it reads a receipt only when it is that receipt's actor (same
-    /// id, same class) or the vault's live owner. Every other receipt, a
-    /// malformed ref and a ref that names nothing all read `None` alike.
+    /// id, same class), the vault's live owner, or a holder of a live
+    /// audit_read power (RULING AUDIT-READ-POWER-LIST = B), judged in the
+    /// receipt's own read. Every other receipt, a malformed ref and a ref
+    /// that names nothing all read `None` alike. The served rows are read
+    /// through this handle's own lane, whoever reads.
     ///
     /// A reply's receipt commits after the reply (Engine ruling 10-30 23:09):
     /// the read waits until the commits of the receipts already answered are
@@ -735,7 +738,10 @@ impl Memory<'_> {
         };
         let own = receipt.actor_ref == self.actor().to_hex()
             && receipt.actor_class == self.actor_class().gate_actor_class();
-        if !own && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())? {
+        if !own
+            && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?
+            && !vault.audit_read_live_in_txn(&txn, self.actor())?
+        {
             return Ok(None);
         }
         // The receipt's snapshot ends before its served rows are read: each

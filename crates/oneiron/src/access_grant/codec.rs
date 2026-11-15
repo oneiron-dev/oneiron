@@ -50,6 +50,9 @@ pub(super) const SCOPE_KIND_COMPANION_PROFILE: &str = "companion_profile";
 
 pub(super) const SCOPE_KIND_CALENDAR: &str = "calendar";
 
+/// The audit_read power's scope: a map that holds its kind alone.
+pub(super) const SCOPE_KIND_VAULT_AUDIT: &str = "vault_audit";
+
 /// The principal a grant's inert history names once its principal was erased
 /// (FIX 4231, generalized to every scope by FIX 4980): no one. No live
 /// decoder reads it as an id.
@@ -335,6 +338,10 @@ pub(super) fn encode_scope(scope: &AccessGrantScope) -> Value {
                 facet_ref.map_or(Value::Nil, |facet_ref| Value::from(facet_ref.to_hex())),
             ),
         ]),
+        AccessGrantScope::VaultAudit => Value::Map(vec![(
+            Value::from(SCOPE_KEY_KIND),
+            Value::from(SCOPE_KIND_VAULT_AUDIT),
+        )]),
         AccessGrantScope::Calendar { calendar_ref, rung } => Value::Map(vec![
             (
                 Value::from(SCOPE_KEYS_CALENDAR[0]),
@@ -416,6 +423,10 @@ fn decode_scope(value: &Value) -> Result<AccessGrantScope> {
                     .and_then(DisclosureRung::parse)
                     .ok_or_else(invalid_grant)?,
             })
+        }
+        SCOPE_KIND_VAULT_AUDIT => {
+            validate_keys(entries, &[SCOPE_KEY_KIND])?;
+            Ok(AccessGrantScope::VaultAudit)
         }
         _ => Err(invalid_grant()),
     }

@@ -146,6 +146,34 @@ pub struct AuthorityAuditPage {
     /// none is pending.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pending_membership_executions: Vec<PendingMembershipExecutionRow>,
+    /// The owner's grants and revokes of the audit_read power, oldest first
+    /// (Engine RULING AUDITREAD-GRANT-HOME = A), so an auditor sees who else
+    /// audits. Listed on a page with no `after`, whatever `kinds` names;
+    /// empty, and omitted, when the owner never acted on it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub audit_read_acts: Vec<AuditReadActRow>,
+}
+
+/// One owner act on the audit_read power: a grant or a revoke his
+/// `vault.audit_read.*` verbs recorded. Value-free: ids, the change and a
+/// time. It is this install's receipt of the owner's act, not a signed log
+/// entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuditReadActRow {
+    /// The act's place in this install's access-grant owner-act index.
+    pub sequence: u64,
+    /// The owner who acted.
+    pub owner: EntityId,
+    /// The person or agent the act gave the power to or took it from; none
+    /// once that principal was erased.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub holder: Option<EntityId>,
+    /// The holder's audit_read grant row.
+    pub grant_ref: EntityId,
+    /// `grant` or `revoke`.
+    pub change: crate::access_grant::owner_act::AccessGrantActChange,
+    /// When the act was recorded (Unix seconds, the vault's clock).
+    pub at: u64,
 }
 
 /// One membership change whose signed record is pending (FIX 12335): what

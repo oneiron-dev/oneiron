@@ -36,6 +36,7 @@ use std::ops::Bound;
 
 use super::kernel::hex_lower;
 use crate::Vault;
+use crate::access_grant::AuditReader;
 use crate::authority::{
     AuthorityCheckpointRow, AuthorityFold, VerifiedAuthorityCheckpoint,
     cached_adopted_authority_checkpoint_in_txn,
@@ -79,8 +80,8 @@ pub use oneiron_verb_wire::receipt::authority_audit::{
 
 #[doc(hidden)]
 pub use oneiron_records::receipt::authority_audit::{
-    AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow, ColdAuthorityAuditRow,
-    PendingMembershipExecutionRow,
+    AuditReadActRow, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow,
+    ColdAuthorityAuditRow, PendingMembershipExecutionRow,
 };
 
 impl Vault {
@@ -97,13 +98,29 @@ impl Vault {
         owner: &AuthenticatedOwner,
         query: &AuthorityAuditQuery,
     ) -> Result<AuthorityAuditPage> {
+        self.authority_audit_as(&AuditReader::Owner(owner.clone()), query)
+    }
+
+    /// [`Self::authority_audit`] for `reader`: the owner on his proof, or a
+    /// holder of a live audit_read power (RULING AUDIT-READ-POWER-LIST = B),
+    /// admitted in the page's own read transaction. A page with no `after`
+    /// also lists the owner's grants and revokes of that power, so an
+    /// auditor sees who else audits.
+    ///
+    /// # Errors
+    /// The reader is neither the owner nor a live holder, or a read fails.
+    pub fn authority_audit_as(
+        &self,
+        reader: &AuditReader,
+        query: &AuthorityAuditQuery,
+    ) -> Result<AuthorityAuditPage> {
         let limit = query
             .limit
             .unwrap_or(AUTHORITY_AUDIT_DEFAULT_LIMIT)
             .clamp(1, AUTHORITY_AUDIT_MAX_LIMIT);
         let scan_cap = limit.saturating_mul(AUTHORITY_AUDIT_SCAN_PER_ROW);
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        reader.admit_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let issues = FoldIssues::of(&fold);
         let adopted = cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
@@ -113,10 +130,13 @@ impl Vault {
             self.store
                 .port_entity_ids_by_type(&txn, ENTITY_TYPE_AUTHORITY_LOG, query.after)?;
         let mut next_stored = stored.next().transpose()?;
-        let pending_membership_executions = if query.after.is_none() {
-            self.pending_membership_execution_rows_in_txn(&txn)?
+        let (pending_membership_executions, audit_read_acts) = if query.after.is_none() {
+            (
+                self.pending_membership_execution_rows_in_txn(&txn)?,
+                self.audit_read_acts_in_txn(&txn)?,
+            )
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         let mut rows = Vec::new();
         let mut cold_attested = Vec::new();
@@ -184,18 +204,20 @@ impl Vault {
             scanned,
             cold_attested,
             pending_membership_executions,
+            audit_read_acts,
         })
     }
 }
 
 /// `vault.authority.audit` on an embedded handle: the vault's embedded
-/// owner's audit. A server takes the owner's proof from the request instead.
+/// owner's audit, or a live audit_read holder's ([`Memory::audit_reader`]).
+/// A server takes the owner's proof from the request instead.
 pub fn authority_audit_embedded(
     memory: &Memory<'_>,
     query: AuthorityAuditQuery,
 ) -> MemoryResult<AuthorityAuditPage> {
-    let owner = memory.embedded_owner("vault.authority.audit")?;
-    Ok(memory.vault().authority_audit(&owner, &query)?)
+    let reader = memory.audit_reader("vault.authority.audit")?;
+    Ok(memory.vault().authority_audit_as(&reader, &query)?)
 }
 
 /// The next entry a page examines.

@@ -95,6 +95,12 @@ pub(in crate::api::facade) fn door_admits(
                 })
         }
         Proof::Owner => owner_proof(auth, server, verb).map(drop),
+        // An audit door (RULING AUDIT-READ-POWER-LIST = B): the owner's proof, or a credential bound
+        // to an actor that holds a live audit_read power, which the door judges again in its own
+        // read. A caller with neither keeps the owner refusal.
+        Proof::AuditReader => {
+            crate::api::facade::audit_read_doors::audit_reader(server, auth, verb).map(drop)
+        }
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
         // the owner refusal.

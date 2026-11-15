@@ -30,6 +30,7 @@ mod archive_purge;
 mod artifact_hosting_doors;
 mod asset_doors;
 mod asset_resolve;
+mod audit_reader;
 mod authorship;
 pub(crate) mod checkout_access;
 pub mod conversation_membership;

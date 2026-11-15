@@ -40,6 +40,10 @@ impl Vault {
         })
     }
 
+    /// Refuses a grant whose scope only its own door writes, and any write
+    /// over such a grant: a ChannelIdentity, a DiaryCoreference, and the
+    /// audit_read power, which only the owner's audit_read verbs write
+    /// (RULING AUDITREAD-GRANT-HOME = A).
     fn check_channel_identity_access_write(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -48,7 +52,9 @@ impl Vault {
     ) -> Result<()> {
         if matches!(
             grant.scope,
-            AccessGrantScope::ChannelIdentity { .. } | AccessGrantScope::DiaryCoreference { .. }
+            AccessGrantScope::ChannelIdentity { .. }
+                | AccessGrantScope::DiaryCoreference { .. }
+                | AccessGrantScope::VaultAudit
         ) {
             return Err(invalid_grant());
         }
@@ -69,6 +75,7 @@ impl Vault {
                 },
                 AccessGrantScope::ChannelIdentity { .. }
                     | AccessGrantScope::DiaryCoreference { .. }
+                    | AccessGrantScope::VaultAudit
             )
         {
             return Err(invalid_grant());
@@ -229,6 +236,11 @@ impl Vault {
             }
         };
         admit(&grant)?;
+        // The audit_read power is revoked by the owner's verb alone, which
+        // records his act (RULING AUDITREAD-GRANT-HOME = A).
+        if matches!(grant.scope, AccessGrantScope::VaultAudit) {
+            return Err(invalid_grant());
+        }
         crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_access_grant_body(&revoked)?;

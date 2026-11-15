@@ -70,6 +70,11 @@ pub enum AccessGrantScope {
         /// Whether unscoped dimensions may pass.
         include_unscoped: bool,
     },
+    /// The vault's audit and receipt families, read under the one audit_read
+    /// power (RULING AUDIT-READ-POWER-LIST = B). The holder is the record's
+    /// own `principal_ref`, so the scope names nothing else. Only the owner's
+    /// audit_read verbs write it; every generic AccessGrant door refuses it.
+    VaultAudit,
 }
 
 impl AccessGrantScope {
@@ -114,7 +119,8 @@ impl AccessGrantScope {
             | Self::Calendar { .. }
             | Self::SharedBrief { .. }
             | Self::ChannelIdentity { .. }
-            | Self::DiaryCoreference { .. } => false,
+            | Self::DiaryCoreference { .. }
+            | Self::VaultAudit => false,
         }
     }
 
@@ -133,7 +139,8 @@ impl AccessGrantScope {
             | Self::Calendar { .. }
             | Self::SharedBrief { .. }
             | Self::ChannelIdentity { .. }
-            | Self::DiaryCoreference { .. } => None,
+            | Self::DiaryCoreference { .. }
+            | Self::VaultAudit => None,
         }
     }
 
@@ -157,6 +164,7 @@ impl AccessGrantScope {
             Self::SharedBrief { .. } => AccessGrantCapability::SharedBriefRead,
             Self::ChannelIdentity { .. } => AccessGrantCapability::ChannelIdentityScopedRead,
             Self::DiaryCoreference { .. } => AccessGrantCapability::DiaryCoreferenceRead,
+            Self::VaultAudit => AccessGrantCapability::AuditRead,
         }
     }
 
@@ -176,7 +184,8 @@ impl AccessGrantScope {
             | Self::CompanionProfile { .. }
             | Self::SharedBrief { .. }
             | Self::ChannelIdentity { .. }
-            | Self::DiaryCoreference { .. } => None,
+            | Self::DiaryCoreference { .. }
+            | Self::VaultAudit => None,
         }
     }
 }
@@ -201,6 +210,8 @@ pub enum AccessGrantCapability {
     DiaryCoreferenceRead,
     /// Read only the named ChannelIdentity mailbox envelope.
     ChannelIdentityScopedRead,
+    /// Read the vault's audit and receipt families: the one audit_read power.
+    AuditRead,
 }
 
 impl AccessGrantCapability {
@@ -216,6 +227,7 @@ impl AccessGrantCapability {
             Self::DiaryCoreferenceRead => "diary_coreference.read",
             Self::CompanionProfileRead => "companion_profile.read",
             Self::CalendarDisclosureRead => "calendar.disclosure_read",
+            Self::AuditRead => "audit.read",
         }
     }
 
@@ -231,6 +243,7 @@ impl AccessGrantCapability {
             "diary_coreference.read" => Some(Self::DiaryCoreferenceRead),
             "companion_profile.read" => Some(Self::CompanionProfileRead),
             "calendar.disclosure_read" => Some(Self::CalendarDisclosureRead),
+            "audit.read" => Some(Self::AuditRead),
             _ => None,
         }
     }
@@ -404,6 +417,20 @@ impl AccessGrant {
             && self.effective_status_at(now) == AccessGrantStatus::Active
             && self.principal_ref == principal
             && self.capability == AccessGrantCapability::MessagesRead
+    }
+
+    /// Whether this grant lets `principal` read the vault's audit and receipt
+    /// families at `now`: the audit_read power, live, held by `principal`
+    /// itself. The holder's id names the grant's row as well; the caller
+    /// checks that ([`crate::Vault`]'s audit_read check).
+    #[must_use]
+    pub fn allows_audit_read(&self, principal: EntityId, now: u64) -> bool {
+        matches!(self.scope, AccessGrantScope::VaultAudit)
+            && self.capability == AccessGrantCapability::AuditRead
+            && crate::federation::grant_scope::admits_preset(&self.authority_scope, "read")
+            && self.validate().is_ok()
+            && self.effective_status_at(now) == AccessGrantStatus::Active
+            && self.principal_ref == principal
     }
 
     /// Returns a revoked version of this grant.

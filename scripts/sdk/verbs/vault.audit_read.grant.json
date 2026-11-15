@@ -1,0 +1,18 @@
+{
+  "name": "vault.audit_read.grant",
+  "description": "The owner grants one person or agent the audit_read power, which reads the authority audit and every receipt family until he revokes it or it ends; answers who holds it now, and a repeat changes nothing.",
+  "input": "crate::task_verb::sdk::AuditReadGrantRequest",
+  "output": "crate::task_verb::sdk::AuditReadChanged",
+  "call": "crate::task_verb::sdk::grant_audit_read_as(memory.vault(), &memory.embedded_owner(\"vault.audit_read.grant\")?, crate::authority::ActSurface::ThisInstall, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "host_door_surface": true,
+  "scope": "Write",
+  "act_class": "grant_widen",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
