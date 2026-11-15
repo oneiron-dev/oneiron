@@ -541,10 +541,11 @@ pub(super) fn fold_entry_state(
     // A passkey signs from a page its host serves, and WebAuthn shows no act
     // text: a passkey, and a key only a passkey vouched for until a
     // non-passkey, owner-held key vouches for it too, neither re-root (nor
-    // rotate) nor enrol a device nor revoke another owner key, and lend no
-    // consent to one as a cosign (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B;
-    // Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B; Sol xhigh stack
-    // review F1, F2).
+    // rotate) nor enrol a device nor revoke another owner key (nor a key the
+    // parents do not hold, which a sibling branch may enrol as one), and lend
+    // no consent to one as a cosign (lead ruling WEBPASSKEY-BLIND-SIGNATURE =
+    // B; Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B; Sol xhigh stack
+    // review F1, F2; Astra stack review finding 1).
     let barred =
         super::owner_key_enrollment::passkey_barred_participants(&state, &entry.op, &participants);
     if barred.contains(&signer)

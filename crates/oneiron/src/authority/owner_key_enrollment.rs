@@ -135,8 +135,8 @@ impl FoldState {
     }
 
     /// Whether `key` authorizes no `ReRoot`, no `RotateKey`, no
-    /// `EnrollDevice` and no revoke of another owner key, from any signature
-    /// position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
+    /// `EnrollDevice` and no revoke of another owner key or of a key its
+    /// parents do not hold, from any signature position: a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B),
     /// or a key only a passkey vouched for, until confirmed (lead ruling
     /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
     /// rule that counts an entry's participants asks it of each.
@@ -177,8 +177,11 @@ pub(super) fn remember_passkey_vouch(
 /// authorize `op`: a `ReRoot`; a `RotateKey`, the re-root of one key, which
 /// would hand the key's standing to a successor no limit reaches; an
 /// `EnrollDevice`, a vouch for a further key outside the `OwnerKeyEnroll`
-/// judge that marks it; and a `RevokeDevice` of another live owner key (Sol
-/// xhigh stack review F1). Every other op passes.
+/// judge that marks it; and a `RevokeDevice` of any key but itself that its
+/// parents do not hold as a non-owner or revoked row (Sol xhigh stack review
+/// F1). A key the parents do not hold at all is barred too: its tombstone
+/// would revoke an owner key enrolled on a sibling branch once the fold
+/// merges the two (Astra stack review finding 1). Every other op passes.
 fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -> bool {
     match op {
         AuthorityOp::ReRoot { .. }
@@ -186,10 +189,10 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
         | AuthorityOp::EnrollDevice { .. } => true,
         AuthorityOp::RevokeDevice { revoked_key } => {
             revoked_key != key
-                && state
+                && !state
                     .roster
                     .get(revoked_key)
-                    .is_some_and(|device| !device.revoked && device.roles & ROLE_OWNER != 0)
+                    .is_some_and(|device| device.revoked || device.roles & ROLE_OWNER == 0)
         }
         _ => false,
     }
