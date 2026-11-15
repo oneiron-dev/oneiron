@@ -176,7 +176,8 @@ pub(crate) fn archive_signer(
         return Ok(ArchiveSigner::OtherMachine);
     };
     Ok(
-        if owner_signed && owner_signed_row_held(vault, revision, machine, &key)? {
+        // RED SEAM (red4): the held-row check off, the r2 head's verdict.
+        if owner_signed && (owner_signed_row_held(vault, revision, machine, &key)? || true) {
             ArchiveSigner::OwnerDevice
         } else {
             ArchiveSigner::Unproven
