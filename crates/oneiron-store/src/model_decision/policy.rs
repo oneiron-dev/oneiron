@@ -257,7 +257,7 @@ impl DecisionBandPolicy {
         }
         let key = (question.id, question.version, reversibility);
         let mut rows = self.rows.write().unwrap_or_else(PoisonError::into_inner);
-        if rows.get(&key).is_some_and(|row| row.version >= version) {
+        if rows.get(&key).is_some_and(|row| row.version > version) {
             return Err(invalid("learned band version must advance"));
         }
         let row = LearnedBand {

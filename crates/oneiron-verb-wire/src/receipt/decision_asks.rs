@@ -36,7 +36,6 @@ pub struct DecisionAskConfirmGrantRequest {
 /// `vault.decisions.asks.climb`'s input: one open ask to move to the next
 /// role on its chain with a live holder, up to its ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct DecisionAskClimbRequest {
     /// The ask's arrival number.
     pub seq: u64,
