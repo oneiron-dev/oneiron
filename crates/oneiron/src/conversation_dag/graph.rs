@@ -34,6 +34,17 @@ pub(crate) fn keeps_dag_topology(
         || MIGRATED.get(store, txn, conversation)?.is_some())
 }
 
+/// The selected local HEAD of `conversation` in this snapshot, the pointer
+/// alone: no migration and no canonical-chain walk. `None` when the
+/// conversation has adopted no HEAD.
+pub(crate) fn local_head_in(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    conversation: &EntityId,
+) -> Result<Option<EntityId>> {
+    read_id(store, txn, HEAD, conversation)
+}
+
 /// Whether `record` carries DAG topology of its own: a `Parent` edge, a
 /// canonical mark, or, on a sync build, a received parent still waiting to
 /// resolve. A room holding such a record is not ordered by time alone, local
