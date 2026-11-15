@@ -114,6 +114,7 @@ pub mod intake;
 mod preview_store;
 mod redaction;
 mod report;
+pub(crate) mod setting_keys;
 mod triage;
 
 pub use self::bundle::{
@@ -169,6 +170,7 @@ pub use self::report::{
     ReportRequest, ReportReview, ReportRoute, ReportRoutedPayload, ReportSignature,
     ReportSignatureTransport, ReportSignatureTransportRequest, ReportStatus, ReportTextSendBinding,
 };
+pub use self::setting_keys::feedback_delivery_requires_https;
 pub use self::triage::{
     COACH_FEEDBACK_SWEEP_FACET, COACH_FEEDBACK_TRIAGE_FACET, COACH_FEEDBACK_TRIAGE_PARK_OWNER,
     COACH_FEEDBACK_TRIAGE_PART_FACET, COACH_FEEDBACK_TRIAGE_SYNTHESIS_FACET,
