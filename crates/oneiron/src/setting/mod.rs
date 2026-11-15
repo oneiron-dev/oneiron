@@ -17,8 +17,9 @@
 //!   6.0): the key's order says which way the move goes, the caller's capacity says what it may
 //!   do, and the authority rule admits it or not, live in the write. The owner makes any move; a
 //!   holder of the key (its own Grant line `settings.set:<key>`, or a live `engine.controls`
-//!   grant for its class) tightens at once and asks the user to loosen; a row's subject narrows
-//!   its own row; anything else waits on a check-in. Every change row records its direction.
+//!   grant for its class) tightens at once and asks the user to loosen, unless the owner gave it
+//!   standing approval for the key or the scope ([`widen_line`]); a row's subject narrows its own
+//!   row; anything else waits on a check-in. Every change row records its direction.
 //! - Change stream: every change is one `SETTING_CHANGE` row, written in the commit that makes it,
 //!   and the feeds' `settings` source.
 //! - Defaults: the default layer (DESIGN 1.5, stage 6.0): what the vault accepted from each
@@ -94,6 +95,43 @@ pub fn set_line(key: &str) -> String {
 #[must_use]
 pub fn get_line(key: &str) -> String {
     format!("settings.get:{key}")
+}
+
+/// The Grant line of the owner's standing approval for one key (owner principle, 16 Nov 00:44):
+/// the key's holder line with a widening allowance. An agent whose live owner Grant lists it
+/// holds the key at every scope, and its widening lands without asking ([`Setter::Standing`]).
+/// It never pins, and never sets a row under the owner's pin. A Grant lists it as a verb,
+/// matched exactly; revoking the Grant ends it.
+#[must_use]
+pub fn widen_line(key: &str) -> String {
+    format!("settings.widen:{key}")
+}
+
+/// [`widen_line`] at one scope only: the rows of `key` at exactly `scope`. `None` for a pack
+/// scope, which only the pack door writes.
+#[must_use]
+pub fn widen_line_at(key: &str, scope: &SettingScope) -> Option<String> {
+    scope_line_text(scope).map(|scope| format!("settings.widen:{key}@{scope}"))
+}
+
+/// The owner's standing approval for every key at one scope: the rows of each key at exactly
+/// `scope`. `None` for a pack scope.
+#[must_use]
+pub fn widen_scope_line(scope: &SettingScope) -> Option<String> {
+    scope_line_text(scope).map(|scope| format!("settings.widen:*@{scope}"))
+}
+
+/// A scope as a Grant line names it: `vault`, `task_type:<node>`, or `<kind>:<32 hex>` for a
+/// scope that names an entity; `None` for a pack scope.
+fn scope_line_text(scope: &SettingScope) -> Option<String> {
+    match scope {
+        SettingScope::Vault => Some("vault".to_owned()),
+        SettingScope::Pack(_) => None,
+        SettingScope::TaskType(node) => Some(format!("task_type:{node}")),
+        other => other
+            .entity()
+            .map(|id| format!("{}:{}", other.kind().as_str(), id.to_hex())),
+    }
 }
 
 /// Who may set a key without asking.

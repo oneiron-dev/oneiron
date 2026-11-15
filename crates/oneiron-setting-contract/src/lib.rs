@@ -139,6 +139,12 @@ pub enum Setter {
     /// owner's row, or the catalogue default where the owner set none; a widening asks the user
     /// (AUTH-1 = A). It never pins.
     KeyGrant { grant: EntityId },
+    /// An agent through its live owner Grant that lists the owner's standing approval for the
+    /// key (`settings.widen:<key>`, `settings.widen:<key>@<scope>` or `settings.widen:*@<scope>`):
+    /// the key's holder line with a widening allowance, so its loose move lands without asking
+    /// (owner principle, 16 Nov 00:44: the ask is the default, standing approval the owner's
+    /// opt-out). It never pins, and never sets a row under the owner's pin.
+    Standing { grant: EntityId },
     /// The agent or person the row's scope names, on its own row.
     Subject,
     /// An actor whose request the holders approved, through this check-in.
@@ -202,6 +208,7 @@ mod tests {
             Setter::Owner,
             Setter::Holder { grant: id },
             Setter::KeyGrant { grant: id },
+            Setter::Standing { grant: id },
             Setter::Subject,
             Setter::Approved { check_in: id },
             Setter::Engine { ask: Some(id) },
