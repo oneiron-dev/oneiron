@@ -289,6 +289,7 @@ impl SlotOracle for PublicSlotOracle<'_> {
             slots: mask.slots,
             flex_used: mask.flex_used,
             host_bindings: Vec::new(),
+            full_days: mask.full_days,
         })
     }
 }

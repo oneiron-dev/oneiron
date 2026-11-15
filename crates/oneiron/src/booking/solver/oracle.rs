@@ -4,8 +4,8 @@ use super::civil_date::visitor_zone_error;
 use super::hold_source::ActiveHoldSource;
 use super::interval::{half_open, inclusive};
 use super::stages::{
-    apply_buffers, apply_event_type_knobs, attach_busy_union, bookable_extent, buffer_pad,
-    enforce_notice_and_window, rank_and_emit, route_host_masks, subtract_live_holds,
+    CapFilledDays, apply_buffers, apply_event_type_knobs, attach_busy_union, bookable_extent,
+    buffer_pad, enforce_notice_and_window, rank_and_emit, route_host_masks, subtract_live_holds,
     working_hours_mask,
 };
 use super::{BookingCounts, load_booking_counts};
@@ -190,6 +190,7 @@ impl BookingSolver<'_> {
                 slots: Vec::new(),
                 flex_used: false,
                 host_bindings: Vec::new(),
+                full_days: Vec::new(),
             });
         };
         // CAL is asked over the extent PADDED by this event type's buffers: a
@@ -330,7 +331,8 @@ fn run_pipeline(
     let attached = attach_busy_union(hours, busy_by_host.to_vec())?;
     let buffered = apply_buffers(attached, config);
     let noticed = enforce_notice_and_window(buffered, now_utc, window, config);
-    let knobbed = apply_event_type_knobs(noticed, config, &req.visitor_tz, counts);
+    let mut filled = CapFilledDays::new();
+    let knobbed = apply_event_type_knobs(noticed, config, &req.visitor_tz, counts, &mut filled);
     let held = subtract_live_holds(knobbed, holds);
     let routed = route_host_masks(held, config.routing);
     Ok(rank_and_emit(
@@ -339,6 +341,7 @@ fn run_pipeline(
         req.constraint.as_ref(),
         &req.visitor_tz,
         counts,
+        filled,
     ))
 }
 

@@ -38,8 +38,8 @@ pub use self::parse::parse_constraint_with_backend;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::booking::constraint::{
-    BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey, LocalMinuteWindow,
-    RankedSlot,
+    BookingCapKind, BookingError, CONSTRAINT_SCHEMA_VERSION, ConstraintWeekday, EventTypeKey,
+    FullDay, LocalMinuteWindow, RankedSlot,
 };
 #[doc(hidden)]
 use oneiron_verb_wire::booking::constraint::{MINUTES_PER_DAY, is_strictly_ascending};
@@ -270,6 +270,9 @@ pub struct SolveResult {
     pub slots: Vec<RankedSlot>,
     pub flex_used: bool,
     pub host_bindings: Vec<SlotHostBinding>,
+    /// Visitor-local days whose candidate times a meeting cap removed,
+    /// ascending by date.
+    pub full_days: Vec<FullDay>,
 }
 
 /// The final availability mask shape, settled from day one. There is no
@@ -282,6 +285,9 @@ pub struct SlotMask {
     pub window_end_utc: u64,
     pub slots: Vec<RankedSlot>,
     pub flex_used: bool,
+    /// Visitor-local days in the window a meeting cap filled, ascending by
+    /// date: the date and the cap, never a booking's detail.
+    pub full_days: Vec<FullDay>,
 }
 
 /// The deterministic chooser of times and their exact host bindings. Production

@@ -160,6 +160,7 @@ async fn linked_time_preselects_only_a_live_solver_slot() {
         window_end_utc: proposed.end_utc,
         slots: vec![proposed.clone()],
         flex_used: false,
+        full_days: Vec::new(),
     };
     let face = format!("https://book.example.org/schedule/{}", fixture.token);
     let snippet = oneiron::booking::booking_slots_snippet(

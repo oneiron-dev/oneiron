@@ -109,6 +109,7 @@ impl SlotOracle for ScriptedOracle {
         Ok(SolveResult {
             slots: self.slots.lock().expect("scripted slots").clone(),
             flex_used: false,
+            full_days: Vec::new(),
             host_bindings: Vec::new(),
         })
     }

@@ -285,7 +285,8 @@ impl BusyBlockRow {
     }
 }
 
-/// Rejects a mask whose window or slots are not half-open `[start, end)`.
+/// Rejects a mask whose window or slots are not half-open `[start, end)`, or
+/// whose full days are not well-formed dates in strictly ascending order.
 ///
 /// The `Slots` rung is the one that reaches public surfaces, so a degenerate or
 /// out-of-window mask must not leave this chokepoint as "availability".
@@ -307,7 +308,45 @@ fn validate_slot_mask(mask: &SlotMask) -> Result<(), BookingError> {
             )));
         }
     }
+    if let Some(day) = mask
+        .full_days
+        .iter()
+        .find(|day| !is_calendar_date(&day.date))
+    {
+        return Err(BookingError::Surface(format!(
+            "slot mask full day {:?} is not a YYYY-MM-DD date",
+            day.date
+        )));
+    }
+    if mask
+        .full_days
+        .windows(2)
+        .any(|pair| pair[0].date >= pair[1].date)
+    {
+        return Err(BookingError::Surface(
+            "slot mask full days are not in strictly ascending order".to_owned(),
+        ));
+    }
     Ok(())
+}
+
+/// Whether `text` is a `YYYY-MM-DD` date with a month in 1..=12 and a day in
+/// 1..=31. For two such dates, text order is date order.
+fn is_calendar_date(text: &str) -> bool {
+    let number = |part: &str, width: usize| {
+        (part.len() == width && part.bytes().all(|byte| byte.is_ascii_digit()))
+            .then(|| part.parse::<u16>().ok())
+            .flatten()
+    };
+    let mut parts = text.split('-');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some(year), Some(month), Some(day), None) => {
+            number(year, 4).is_some()
+                && number(month, 2).is_some_and(|month| (1..=12).contains(&month))
+                && number(day, 2).is_some_and(|day| (1..=31).contains(&day))
+        }
+        _ => false,
+    }
 }
 
 /// `EntityId` carries no serde derives, so projection DTOs cross the wire as
@@ -389,6 +428,7 @@ mod tests {
                 rank: 0.5,
             }],
             flex_used: false,
+            full_days: Vec::new(),
         }
     }
 
@@ -452,7 +492,8 @@ mod tests {
                 "window_start_utc",
                 "window_end_utc",
                 "slots",
-                "flex_used"
+                "flex_used",
+                "full_days"
             ],
             "the mask schema is final; no SlotMaskArtifact compatibility path exists"
         );

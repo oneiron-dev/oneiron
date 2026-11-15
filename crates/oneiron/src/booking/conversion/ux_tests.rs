@@ -139,6 +139,7 @@ fn copy_paste_times_use_the_host_page_and_distinguish_a_dst_fold() {
             })
             .collect(),
         flex_used: false,
+        full_days: Vec::new(),
     };
     let token = PublicBookingPageToken(format!("bkp_{}", "ab".repeat(16)));
     let page = format!("https://book.example.org/schedule/{}", token.0);

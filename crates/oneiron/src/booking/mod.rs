@@ -46,8 +46,8 @@ pub use config::{
     event_type_index_key, is_booking_claim_predicate,
 };
 pub use constraint::{
-    BookingError, ConstraintObject, EventTypeKey, RankedSlot, SlotHostBinding, SlotMask,
-    SlotOracle, SolveRequest, SolveResult,
+    BookingCapKind, BookingError, ConstraintObject, EventTypeKey, FullDay, RankedSlot,
+    SlotHostBinding, SlotMask, SlotOracle, SolveRequest, SolveResult,
 };
 pub use conversion::{
     BookingConversionPolicy, BookingConversionPolicyRow, BookingFaq, BookingIntakeStages,

@@ -1,14 +1,18 @@
 //! The eight pure pipeline stages and their small helpers.
 
+use std::collections::BTreeMap;
+
 use super::civil_date::{
-    days_from_civil, host_zone_error, local_day, wall_window_to_utc, week_of, weekday_index,
-    weekday_of,
+    civil_date_text, days_from_civil, host_zone_error, local_day, wall_window_to_utc, week_of,
+    weekday_index, weekday_of,
 };
 use super::counts::{BookingCountBucket, BookingCounts};
 use super::interval::{intersect, normalize, overlaps, subtract};
 use crate::booking::config::{EventTypeConfig, RoutingMode};
 use crate::booking::constraint::ConstraintObject;
-use crate::booking::{BookingError, RankedSlot, SlotHostBinding, SolveResult};
+use crate::booking::{
+    BookingCapKind, BookingError, FullDay, RankedSlot, SlotHostBinding, SolveResult,
+};
 use crate::calendar::freebusy::BusyUnion;
 use crate::calendar::tz::utc_to_wall;
 use crate::entity_id::EntityId;
@@ -226,6 +230,7 @@ pub(super) fn apply_event_type_knobs(
     config: &EventTypeConfig,
     visitor_tz: &str,
     counts: &BookingCounts,
+    filled: &mut CapFilledDays,
 ) -> Vec<(EntityId, Vec<TimeRange>)> {
     let duration = u64::from(config.duration_min).saturating_mul(SECS_PER_MINUTE);
     let step = u64::from(config.slot_step_min).saturating_mul(SECS_PER_MINUTE);
@@ -246,12 +251,20 @@ pub(super) fn apply_event_type_knobs(
                     start = next;
                 }
             }
-            (host, retain_under_caps(slots, config, visitor_tz, counts))
+            (
+                host,
+                retain_under_caps(slots, config, visitor_tz, counts, filled),
+            )
         })
         .collect()
 }
 
-/// Drops candidates whose visitor-local day or week is already at its cap.
+/// Visitor-local days (days since the epoch) whose candidate times a meeting
+/// cap removed, each with the cap that removed them.
+pub(super) type CapFilledDays = BTreeMap<i64, BookingCapKind>;
+
+/// Drops candidates whose visitor-local day or week is already at its cap, and
+/// records each such day in `filled` (the daily cap when both are reached).
 ///
 /// A bucket is charged to the visitor-local day its `window_start_utc` falls
 /// in, so the same table read in a different `visitor_tz` charges different
@@ -261,6 +274,7 @@ fn retain_under_caps(
     config: &EventTypeConfig,
     visitor_tz: &str,
     counts: &BookingCounts,
+    filled: &mut CapFilledDays,
 ) -> Vec<TimeRange> {
     if config.daily_cap.is_none() && config.weekly_cap.is_none() {
         return slots;
@@ -274,14 +288,33 @@ fn retain_under_caps(
                 // offered.
                 return false;
             };
-            under_cap(config.daily_cap, &counts.daily, visitor_tz, |bucket_day| {
+            let cap = if !under_cap(config.daily_cap, &counts.daily, visitor_tz, |bucket_day| {
                 bucket_day == day
-            }) && under_cap(
+            }) {
+                BookingCapKind::Daily
+            } else if !under_cap(
                 config.weekly_cap,
                 &counts.weekly,
                 visitor_tz,
                 |bucket_day| week_of(bucket_day) == week_of(day),
-            )
+            ) {
+                BookingCapKind::Weekly
+            } else {
+                return true;
+            };
+            filled.entry(day).or_insert(cap);
+            false
+        })
+        .collect()
+}
+
+/// The filled days as the public marker: visitor-local dates, ascending.
+fn full_days(filled: CapFilledDays) -> Vec<FullDay> {
+    filled
+        .into_iter()
+        .map(|(day, cap)| FullDay {
+            date: civil_date_text(day),
+            cap,
         })
         .collect()
 }
@@ -393,6 +426,7 @@ pub(super) fn rank_and_emit(
     constraint: Option<&ConstraintObject>,
     visitor_tz: &str,
     counts: &BookingCounts,
+    mut filled: CapFilledDays,
 ) -> SolveResult {
     let admitted: Vec<TimeRange> = slots
         .iter()
@@ -402,15 +436,16 @@ pub(super) fn rank_and_emit(
         })
         .filter(|slot| satisfies_constraint(*slot, constraint, visitor_tz))
         .collect();
-    let mut ranked: Vec<RankedSlot> = retain_under_caps(admitted, config, visitor_tz, counts)
-        .into_iter()
-        .map(|slot| RankedSlot {
-            start_utc: slot.start,
-            end_utc: slot.end,
-            rank: rank_of(slot, config),
-        })
-        .filter(|slot| slot.rank.is_finite())
-        .collect();
+    let mut ranked: Vec<RankedSlot> =
+        retain_under_caps(admitted, config, visitor_tz, counts, &mut filled)
+            .into_iter()
+            .map(|slot| RankedSlot {
+                start_utc: slot.start,
+                end_utc: slot.end,
+                rank: rank_of(slot, config),
+            })
+            .filter(|slot| slot.rank.is_finite())
+            .collect();
     ranked.sort_by(|left, right| {
         right
             .rank
@@ -446,6 +481,7 @@ pub(super) fn rank_and_emit(
         slots: ranked,
         flex_used: false,
         host_bindings,
+        full_days: full_days(filled),
     }
 }
 

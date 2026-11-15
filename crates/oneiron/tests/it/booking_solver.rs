@@ -615,7 +615,7 @@ fn slot_mask_contains_no_calendar_or_event_detail() {
             }
         }
     }
-    // Exactly the five mask fields cross the boundary, in any order.
+    // Exactly the six mask fields cross the boundary, in any order.
     let value = serde_json::to_value(&mask).expect("serialize mask");
     let fields = value.as_object().expect("object");
     let expected = [
@@ -624,6 +624,7 @@ fn slot_mask_contains_no_calendar_or_event_detail() {
         "window_end_utc",
         "slots",
         "flex_used",
+        "full_days",
     ];
     assert_eq!(fields.len(), expected.len());
     for key in expected {

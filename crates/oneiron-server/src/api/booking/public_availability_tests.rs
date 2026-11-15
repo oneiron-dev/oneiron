@@ -190,6 +190,7 @@ async fn queued_public_hold_loses_authority_before_the_lifecycle_writer() {
             Ok(SolveResult {
                 slots: Vec::new(),
                 flex_used: false,
+                full_days: Vec::new(),
                 host_bindings: Vec::new(),
             })
         }

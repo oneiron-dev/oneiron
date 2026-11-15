@@ -6,7 +6,7 @@ use std::fmt::Write;
 
 use serde::{Deserialize, Serialize};
 
-use super::{BookingError, EventTypeKey, PublicBookingPageToken, RankedSlot, SlotMask};
+use super::{BookingError, EventTypeKey, FullDay, PublicBookingPageToken, RankedSlot, SlotMask};
 use crate::calendar::tz::utc_to_wall;
 
 /// Owner-authored content. A host chooses layout, localization and assets.
@@ -81,13 +81,16 @@ fn safe_asset_path(path: &str) -> bool {
 }
 
 /// A five-choice first view; the full Slots mask remains authoritative and
-/// accessible for see-more. The recommended slot is one of these five.
+/// accessible for see-more. The recommended slot is one of these five. The
+/// first view also shows every day a meeting cap filled as full, so a capped
+/// day reads as full rather than as a gap.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BookingSlotPreview {
     pub visible: Vec<RankedSlot>,
     pub recommended_start_utc: Option<u64>,
     pub remaining_count: usize,
+    pub full_days: Vec<FullDay>,
 }
 
 pub fn booking_slot_preview(mask: &SlotMask) -> BookingSlotPreview {
@@ -104,6 +107,7 @@ pub fn booking_slot_preview(mask: &SlotMask) -> BookingSlotPreview {
         visible,
         recommended_start_utc,
         remaining_count: mask.slots.len().saturating_sub(5),
+        full_days: mask.full_days.clone(),
     }
 }
 

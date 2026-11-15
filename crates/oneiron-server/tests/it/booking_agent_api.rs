@@ -525,7 +525,10 @@ async fn booking_availability_discloses_slots_only() {
 
     assert_eq!(object_keys(&body), keys(&["op", "result"]));
     assert_eq!(body["op"], "availability");
-    assert_eq!(object_keys(&body["result"]), keys(&["slots", "flex_used"]));
+    assert_eq!(
+        object_keys(&body["result"]),
+        keys(&["slots", "flex_used", "full_days"])
+    );
     assert!(body["result"]["flex_used"].is_boolean());
 
     let slots = body["result"]["slots"].as_array().unwrap();
