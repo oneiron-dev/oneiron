@@ -66,8 +66,6 @@ impl SelectorReleaseBasis {
     }
 
     fn stands(&self, vault: &Vault) -> bool {
-        #[cfg(oneiron_test_support)]
-        crate::test_doors::selector_release::run(&self.grant_id);
         self.made_under.is_some() && read(vault, &self.grant_id) == self.made_under
     }
 }
@@ -108,6 +106,10 @@ impl SelectorAnswers {
         }
         self.next += 1;
         let token = self.next;
+        // A test commits its change here, in the gap between the answer's
+        // queue and its release.
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::selector_release::run(&basis.grant_id);
         self.queued.insert(token, Judged::Waiting(Box::new(basis)));
         let count = frames.len();
         frames
