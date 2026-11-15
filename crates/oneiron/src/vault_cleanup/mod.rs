@@ -239,11 +239,10 @@ use uuid::Uuid;
 mod retention_tests;
 
 mod attempt_retention;
+#[cfg(oneiron_test_support)]
+pub(crate) use attempt_retention::task_attempt_key_pin_for_test;
 pub(crate) mod tables;
 pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,
     refresh_archived_attempt_in_txn, restore_task_attempts,
 };
-
-#[cfg(oneiron_test_support)]
-pub(crate) use attempt_retention::task_attempt_key_pin_for_test;
