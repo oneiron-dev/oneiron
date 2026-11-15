@@ -57,7 +57,7 @@ impl ConsolidationExecutor<'_> {
             .children
             .iter()
             .map(|child| {
-                let value = json_to_msgpack_value(&child.judgement.value);
+                let value = json_to_rmpv(&child.judgement.value);
                 let identity = ConflictIdentity {
                     subject: key.subject,
                     predicate: child.judgement.predicate.clone(),

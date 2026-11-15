@@ -26,8 +26,7 @@ use super::evidence::{
 use super::resources::BranchResources;
 use super::roles::{DREAMER_VERDICT_ROLE, RoleBackends, RoleCall};
 use super::stage_log::PartitionStages;
-use super::value_projection::rmpv_to_json;
-use crate::serialize::json_to_msgpack_value;
+use super::value_projection::{json_to_rmpv, rmpv_to_json};
 use rmpv::Value;
 
 use super::branch::BranchAxes;

@@ -28,3 +28,27 @@ pub(super) fn rmpv_to_json(value: &Value) -> serde_json::Value {
         _ => serde_json::Value::Null,
     }
 }
+
+pub(super) fn json_to_rmpv(value: &serde_json::Value) -> Value {
+    match value {
+        serde_json::Value::Null => Value::Nil,
+        serde_json::Value::Bool(flag) => Value::from(*flag),
+        serde_json::Value::Number(number) => {
+            if let Some(unsigned) = number.as_u64() {
+                Value::from(unsigned)
+            } else if let Some(signed) = number.as_i64() {
+                Value::from(signed)
+            } else {
+                Value::from(number.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(text) => Value::from(text.as_str()),
+        serde_json::Value::Array(items) => Value::Array(items.iter().map(json_to_rmpv).collect()),
+        serde_json::Value::Object(entries) => Value::Map(
+            entries
+                .iter()
+                .map(|(key, value)| (Value::from(key.as_str()), json_to_rmpv(value)))
+                .collect(),
+        ),
+    }
+}

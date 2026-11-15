@@ -35,7 +35,7 @@ const BINDING_IDENTITY_DOMAIN: &[u8] = b"oneiron:root-bridge-binding:v1";
 /// Private queue schema (NOT the public frontier schema): one bucket group of
 /// newly-accepted children, with their ORIGINAL typed frontiers. Judgement
 /// values stay JSON-native here; no JSON->rmpv conversion of proposals happens
-/// before the final candidate (Root owns `json_to_msgpack_value` at candidate build).
+/// before the final candidate (Root owns `json_to_rmpv` at candidate build).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(in crate::dreamer_consolidation) struct RootPayload {
