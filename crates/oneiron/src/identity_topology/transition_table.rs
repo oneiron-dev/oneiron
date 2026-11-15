@@ -108,7 +108,8 @@ pub(crate) fn owner_retirement(
     owner: &EntityId,
 ) -> Option<IdentityTopologyRejection> {
     match op {
-        IdentityTopologyOp::Merge(merge) if merge.sources.contains(owner) => {
+        // SEEDED FAULT IF3: a merge of the owner away applies.
+        IdentityTopologyOp::Merge(merge) if false && merge.sources.contains(owner) => {
             Some(IdentityTopologyRejection::OwnerMergedAway { owner: *owner })
         }
         IdentityTopologyOp::Split(split) if split.entity == *owner => {

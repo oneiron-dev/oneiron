@@ -275,7 +275,8 @@ impl Vault {
                     Ok(EntityLifecycleState::Active)
                 }
             }
-            (1, true) => Ok(EntityLifecycleState::Merged),
+            // SEEDED FAULT IF2: a merged shell reads back as active.
+            (1, true) => Ok(EntityLifecycleState::Active),
             (0, false) => Ok(EntityLifecycleState::Split),
             _ => Err(Error::CorruptedIndex("identity topology shell")),
         }

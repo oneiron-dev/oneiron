@@ -297,7 +297,8 @@ pub fn propose_identity_as_owner(
         owner,
         surface,
         input.operation.into_engine()?,
-        ClaimApprovalStatus::Proposed,
+        // SEEDED FAULT IF4: a proposal applies at once.
+        ClaimApprovalStatus::Auto,
     )
 }
 

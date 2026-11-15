@@ -241,7 +241,9 @@ impl Vault {
         // `Auto`/`Approved` merge — an owner ruling on the pair — passes
         // untouched. It cannot live in `evaluate_transition`: that fn is pure
         // and sees neither the approval axis nor a txn to read claims from.
-        if !write.is_effective()
+        // SEEDED FAULT IF5: no distinct pair suppresses a proposal.
+        if false
+            && !write.is_effective()
             && let IdentityTopologyOp::Merge(merge) = op
             && let Some((a, b)) = self.suppressed_merge_pair_in_txn(&*wtxn, merge)?
         {
@@ -308,7 +310,8 @@ impl Vault {
                     for source in &merge.sources {
                         effects.push(BatchOp::EdgeWithCreatedAt {
                             src: *source,
-                            kind: EdgeKind::MergedInto,
+                            // SEEDED FAULT IF1: the merge's redirect is a split edge.
+                            kind: EdgeKind::SplitInto,
                             tgt: merge.survivor,
                             weight,
                             created_at: now,
@@ -332,7 +335,8 @@ impl Vault {
             IdentityTopologyOp::Split(split) => {
                 let mut effects = Vec::new();
                 let mut stats = ReassignmentStats::default();
-                if write.is_effective() {
+                // SEEDED FAULT IF6: a split writes no edge and no assignment.
+                if false && write.is_effective() {
                     let weight = topology_edge_weight(EdgeKind::SplitInto)?;
                     for head in &split.heads {
                         effects.push(BatchOp::EdgeWithCreatedAt {
