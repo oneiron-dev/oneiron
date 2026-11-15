@@ -3,8 +3,8 @@
 //! seam every world-privacy and grant travel site judges a carrier through
 //! (mesh contract §3, FIX 2998).
 //!
-//! Validity is pin-free: an owner act is judged on the roster view of its
-//! carrier's chains, the same on every install, before and after the owner
+//! Validity is pin-free: an owner act is judged on its carrier's roster
+//! chain alone, the same on every install, before and after the owner
 //! anchor ([`StandingView::Under`]). The settings this install reads are
 //! judged with this install's floors, holds and staleness
 //! ([`StandingView::Install`]), which only narrow. A chain held here admits

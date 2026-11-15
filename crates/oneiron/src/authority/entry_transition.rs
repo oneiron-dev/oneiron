@@ -432,8 +432,9 @@ pub(super) fn fold_entry_state(
         state.seqs.insert(entry.signer_key().clone(), entry.seq);
         return EntryFold::Ready(state);
     }
-    // A machine's residence result, signed by its own install key under a
-    // chain the owner marked "yours" (OF-534). It changes no state.
+    // A machine's residence result, signed by its own install key, which
+    // that machine's live, answered roster head names (OF-534). It changes
+    // no state.
     if let AuthorityOp::ResidenceResult(result) = &entry.op {
         if let Err(issue) = residence_result_stands(&state, entry, result, hash) {
             return EntryFold::Invalid(issue);

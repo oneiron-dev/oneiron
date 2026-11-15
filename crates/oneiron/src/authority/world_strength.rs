@@ -281,8 +281,8 @@ pub(super) fn frontier_read(
 /// The `WorldPrivacy` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster check:
 /// its signer is the carrier's install key, never a roster key (FIX 2222: the
-/// host root acts as nobody). Some chain of the carrier must name the key; an
-/// edit carried while the carrier was not admitted
+/// host root acts as nobody). The carrier's roster chain must name the key;
+/// an edit carried while the carrier was not admitted
 /// ([`super::owner_act_signer_admits`], pin-free) is valid and without
 /// effect, so it never stalls what descends from it. Validity is pin-free,
 /// the same on every install, before and after the owner anchor. `pin` and

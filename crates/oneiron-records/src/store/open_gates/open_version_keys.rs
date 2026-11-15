@@ -15,10 +15,13 @@ pub const MAX_DBS: u32 = 32;
 /// gates that ask whether a machine's chain names the signing key no longer
 /// count an anchor's chain, so such a row that only an anchor's chain
 /// supported is now refused, and one an anchor's removal mark refused now
-/// stands. A stored checkpoint image written before it holds the
-/// old answers and no longer decodes (the authority fold schema moves with
-/// it). No old-meaning reader or migration is provided (the lead's M-1
-/// stored-change rule, path "loud").
+/// stands. A one-machine read pick now needs the target's live roster head
+/// in any role, not "yours" in some chain: a pick of a linked machine the
+/// owner has not answered "yours" was refused and now stands ("yours" is
+/// the writer's check under its pin). A stored checkpoint image written
+/// before it holds the old answers and no longer decodes (the authority fold
+/// schema moves with it). No old-meaning reader or migration is provided
+/// (the lead's M-1 stored-change rule, path "loud").
 ///
 /// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
 /// verb-hook pause from a person's pause and the other engine holds. The

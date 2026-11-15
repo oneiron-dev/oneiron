@@ -143,7 +143,7 @@ impl AgentGrantActRef {
 /// The `AgentGrantAct` transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is a machine's install key, never a roster key (FIX
-/// 2222), and some chain of the machine must name the key. The shape check
+/// 2222), and the machine's roster chain must name the key. The shape check
 /// already refused an agent's act, an answered ask and a nonzero `seen`.
 /// It moves no fold state. Whether the one carrier rule admits the machine
 /// and whether its owner is live are the writer's to refuse; a record either
