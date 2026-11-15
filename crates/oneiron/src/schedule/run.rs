@@ -29,6 +29,14 @@ pub struct ScheduleRunReport {
     pub runs: Vec<JobRun>,
 }
 
+impl ScheduleRunReport {
+    /// Whether the pass stopped at the most runs one pass makes, so due rows may wait for the
+    /// next.
+    pub(crate) fn at_run_bound(&self) -> bool {
+        self.runs.len() >= RUNS_PER_PASS
+    }
+}
+
 /// One due job, and what became of it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct JobRun {
@@ -81,15 +89,52 @@ fn row_of_any(row_key: &[u8], jobs: &[&JobSpec]) -> bool {
     })
 }
 
+/// The job code of the `SCHEDULE` key `row_key`: its bytes before the first 0x00.
+fn row_code(row_key: &[u8]) -> Option<&str> {
+    let split = row_key.iter().position(|byte| *byte == 0)?;
+    std::str::from_utf8(&row_key[..split]).ok()
+}
+
+/// Whether this node runs the row under `row_key`, read in `txn`: its job's
+/// [`JobSpec::runs_here`], read once per job code and kept in `here` for the pass. A row of a job
+/// this build does not know counts as run here, so its run parks it. A read that fails is logged,
+/// and the job's rows wait for the next pass.
+fn runs_here_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row_key: &[u8],
+    here: &mut Vec<(&'static str, bool)>,
+) -> bool {
+    let Some(spec) = row_code(row_key).and_then(job_named) else {
+        return true;
+    };
+    if let Some((_, runs)) = here.iter().find(|(code, _)| *code == spec.code) {
+        return *runs;
+    }
+    let runs = (spec.runs_here)(vault, txn).unwrap_or_else(|error| {
+        tracing::warn!(
+            job = spec.code,
+            kind = ?error.kind(),
+            %error,
+            "whether this node runs a job could not be read; its due rows wait for the next pass"
+        );
+        false
+    });
+    here.push((spec.code, runs));
+    runs
+}
+
 /// The first due-index entry due by `now` whose row is not one of `ran_once`, the rows of the
-/// once-a-pass jobs this pass has started, and, when `only` names jobs, is a row of one of them:
-/// its due time and its row's key.
+/// once-a-pass jobs this pass has started, is a row of one of the jobs `only` names when it names
+/// any, and is a row of a job this node runs (`here`, what the pass read of each job's
+/// [`JobSpec::runs_here`]): its due time and its row's key.
 fn first_due_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     now: u64,
     ran_once: &[Vec<u8>],
     only: Option<&[&JobSpec]>,
+    here: &mut Vec<(&'static str, bool)>,
 ) -> Result<Option<(u64, Vec<u8>)>> {
     for entry in DUE.iter_raw_from(&vault.store, txn, &[])? {
         let (key, _) = entry?;
@@ -103,7 +148,10 @@ fn first_due_in_txn(
         if ran_once.iter().any(|ran| ran.as_slice() == row_key) {
             continue;
         }
-        if only.is_none_or(|jobs| row_of_any(row_key, jobs)) {
+        if only.is_some_and(|jobs| !row_of_any(row_key, jobs)) {
+            continue;
+        }
+        if runs_here_in_txn(vault, txn, row_key, here) {
             return Ok(Some((due, row_key.to_vec())));
         }
     }
@@ -187,7 +235,7 @@ impl Vault {
     }
 
     /// The runner's loop, under the runner its caller holds: every due row, or the rows of the
-    /// jobs `only` names.
+    /// jobs `only` names, of the jobs this node runs.
     fn run_due_held(
         &self,
         pass: &JobPass<'_>,
@@ -196,6 +244,7 @@ impl Vault {
         let deadline = pass.deadline;
         let mut report = ScheduleRunReport::default();
         let mut ran_once: Vec<Vec<u8>> = Vec::new();
+        let mut here: Vec<(&'static str, bool)> = Vec::new();
         while report.runs.len() < RUNS_PER_PASS
             && !deadline.stopped()
             && (report.runs.is_empty() || !deadline.passed())
@@ -203,7 +252,7 @@ impl Vault {
             let now = self.now_recorded_at();
             let due = {
                 let txn = self.store.env.read_txn()?;
-                first_due_in_txn(self, &txn, now, &ran_once, only)?
+                first_due_in_txn(self, &txn, now, &ran_once, only, &mut here)?
             };
             let Some((due_at, key)) = due else {
                 break;
@@ -275,22 +324,24 @@ impl Vault {
         }
     }
 
-    /// When a stopped vault must run next for a job that wakes its host, or `None`.
+    /// When a stopped vault must run next for a job that wakes its host and that this node runs
+    /// ([`JobSpec::runs_here`]), or `None`.
     ///
     /// # Errors
     ///
     /// Storage errors.
     pub(crate) fn schedule_wake_at(&self) -> Result<Option<u64>> {
         let txn = self.store.env.read_txn()?;
+        let mut here: Vec<(&'static str, bool)> = Vec::new();
         for entry in DUE.iter_raw_from(&self.store, &txn, &[])? {
             let (key, _) = entry?;
             let Some((due, row_key)) = key.split_first_chunk::<8>() else {
                 continue;
             };
-            let wakes = parse_row_key(row_key)
-                .and_then(|(job, _)| job_named(&job))
+            let wakes = row_code(row_key)
+                .and_then(job_named)
                 .is_some_and(|spec| spec.wakes_host);
-            if wakes {
+            if wakes && runs_here_in_txn(self, &txn, row_key, &mut here) {
                 return Ok(Some(u64::from_be_bytes(*due)));
             }
         }

@@ -88,12 +88,9 @@ crate::side_table::side_tables! {
     /// The last inbound surface-event sequence handed out. Key: ().
     HOOKS_SURFACE_INBOUND_NEXT: VaultMeta b"hooks:surface_inbound_next:v1" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Each TASK with a due time not yet ticked (FIX 4749). Key: u64be (due time, Unix seconds)
-    /// + id16 (TASK).
-    HOOKS_TASK_DUE: VaultMeta b"hooks:task_due:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
-    /// Each TASK the due index holds (FIX 4749): the due time it holds, and the tick sequence
-    /// its release committed, if it has ticked. Key: id16 (TASK).
+    /// Each TASK with a due time, its tick record (FIX 4749): the due time it holds, and the tick
+    /// sequence its release committed, if it has ticked. A waiting tick is an armed job of the
+    /// schedule's runner (`runtime_hooks.task_tick`; stage 5b-3). Key: id16 (TASK).
     HOOKS_TASK_DUE_REVERSE: VaultMeta b"hooks:task_due_reverse:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
     /// Each waiting TASK whose tick an owner's tree pause holds (AUTHOR-OFF): the pause that

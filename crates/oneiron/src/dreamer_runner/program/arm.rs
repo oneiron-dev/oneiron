@@ -141,8 +141,9 @@ pub(crate) fn erase_turn_program_actor_in_txn(
     actor: &EntityId,
 ) -> Result<()> {
     let scope = actor_scope_in_txn(vault, txn, actor)?;
-    // Each arming that decodes leaves its trigger index with it; one that does
-    // not leaves its index row to the next release, which drops it.
+    // Each arming that decodes leaves its trigger index with it, and the
+    // actor's timer row goes; an idle or feed arming that does not decode
+    // leaves its index row to the next release, which drops it.
     let mut armed = Vec::new();
     for row in ARM.iter_raw_from(vault, &*txn, actor.as_bytes())? {
         let (_, bytes) = row?;
@@ -150,9 +151,7 @@ pub(crate) fn erase_turn_program_actor_in_txn(
             armed.push(arming);
         }
     }
-    for arming in &armed {
-        super::trigger::unindex_trigger_in_txn(vault, txn, arming)?;
-    }
+    super::trigger::unindex_actor_triggers_in_txn(vault, txn, *actor, &armed)?;
     ARM.delete_from(vault, txn, actor.as_bytes())?;
     DISARMED.delete_from(vault, txn, actor.as_bytes())?;
     for key in &scope.wakes {

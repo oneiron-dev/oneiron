@@ -1,14 +1,17 @@
 //! Programs a turn does not wake (untangle slice 6.8c, B-3 = A): a due time, the host turning
 //! idle, or a change feed moving past its subscription's cursor. Each occurrence records one owed
 //! wake, as a landed turn does, carrying the authority its arming sealed; the one drain admits it
-//! and judges that authority again. No loop of its own runs: timer and feed programs are released
-//! where due watcher ticks are (each fact-hook runner pass and each housekeeping pass, on the node
-//! that releases ticks), and idle programs where the host's idle check asks for the idle curator.
+//! and judges that authority again. No loop of its own runs: an actor's timer programs are one
+//! armed job of the schedule's runner, due at the earliest of their due times (DESIGN
+//! 15-setting-primitive, stage 5b-3), run where due watcher ticks are (each fact-hook runner pass
+//! and each housekeeping pass, on the node that releases ticks); feed programs are released beside
+//! them, and idle programs where the host's idle check asks for the idle curator.
 
 use crate::Vault;
 use crate::dreamer_wake::WakeIdleState;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::schedule::{ArmBy, Armed, JobPass, JobResult, JobSpec, Late, Ran, Trigger, When};
 use crate::side_table::{self, Named, SideTable};
 
 use super::types::{
@@ -16,9 +19,28 @@ use super::types::{
 };
 use super::{ADMISSION, ARM, WAKE};
 
-/// Each timer program's next due time, keyed by that time, then the actor and the registration.
-const TIMER_DUE: SideTable<(u64, EntityId, EntityId), (), Named> =
-    SideTable::new(&side_table::DREAMER_TURN_PROGRAM_TIMER_DUE);
+/// The soonest a timer row is due again after its run, and its first retry after a failure: one
+/// actor's timers can fall due seconds apart, and the fact-hook runner's pass released each within
+/// its tick (two seconds), so the row must not wait the schedule's usual first retry of a minute.
+const TIMER_RETRY_FIRST_SECS: u64 = 1;
+
+/// An actor's timer programs: one row about the actor, armed at the earliest due time of its
+/// timer armings, re-armed in the write that arms, moves or disarms one, and disarmed when it has
+/// none left. One run records the wake each of its timers due by then owes and moves each to its
+/// next due time, in one write. Only the node that releases the vault's ticks runs it.
+pub(crate) static PROGRAM_TIMER_JOB: JobSpec = JobSpec {
+    code: "dreamer_runner.program_timer",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: TIMER_RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: true,
+    at_open: false,
+    once_per_pass: true,
+    runs_here: crate::runtime_hooks::releases_ticks_here,
+    run: run_program_timer,
+};
 /// Each idle or feed program, keyed by its occurrence kind's tag, then the actor and the
 /// registration, so a release reads only the programs it releases. A feed program's row keeps
 /// where its wake scan stands.
@@ -33,8 +55,6 @@ struct TriggerRow {
     feed_scan: crate::feeds::FeedWakeScan,
 }
 
-/// How many due timers one write releases; the release takes the next batch until none is due.
-const RELEASE_BATCH: usize = 64;
 /// How many drain batches one pass admits; the next pass admits the rest.
 const DRAIN_BATCHES: usize = 8;
 /// The shortest repeat a timer program may ask for.
@@ -81,20 +101,25 @@ pub(super) fn validate_trigger_in_txn(
     }
 }
 
-/// Indexes `arming` under its trigger, in its arming's writer: a timer under its next due time,
-/// an idle or feed program under its kind. A turn program needs no index.
+/// Indexes `arming` under its trigger, in its arming's writer: a timer re-arms its actor's timer
+/// row, an idle or feed program goes under its kind. A turn program needs no index.
 pub(super) fn index_trigger_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     arming: &TurnProgramArming,
 ) -> Result<()> {
     let key = (arming.actor, arming.registration);
-    match (arming.trigger.occurrence_kind(), arming.next_due) {
-        (Some(OccurrenceKind::Timer), Some(due)) => {
-            TIMER_DUE.put(vault, txn, &(due, key.0, key.1), &())
-        }
-        (Some(OccurrenceKind::Timer), None) | (None, _) => Ok(()),
-        (Some(kind), _) => TRIGGER.put(
+    match arming.trigger.occurrence_kind() {
+        Some(OccurrenceKind::Timer) => arm_actor_timers_in_txn(
+            vault,
+            txn,
+            arming.actor,
+            Some(arming.registration),
+            arming.next_due,
+        )
+        .map(drop),
+        None => Ok(()),
+        Some(kind) => TRIGGER.put(
             vault,
             txn,
             &([kind.tag()], key.0, key.1),
@@ -103,22 +128,83 @@ pub(super) fn index_trigger_in_txn(
     }
 }
 
-/// Drops `arming`'s trigger index row, in the writer that disarms or erases it.
+/// Drops `arming`'s trigger index row, in the writer that disarms it: a timer re-arms its actor's
+/// timer row without it.
 pub(super) fn unindex_trigger_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     arming: &TurnProgramArming,
 ) -> Result<()> {
     let key = (arming.actor, arming.registration);
-    match (arming.trigger.occurrence_kind(), arming.next_due) {
-        (Some(OccurrenceKind::Timer), Some(due)) => {
-            TIMER_DUE.delete(vault, txn, &(due, key.0, key.1)).map(drop)
+    match arming.trigger.occurrence_kind() {
+        Some(OccurrenceKind::Timer) => {
+            arm_actor_timers_in_txn(vault, txn, arming.actor, Some(arming.registration), None)
+                .map(drop)
         }
-        (Some(OccurrenceKind::Timer), None) | (None, _) => Ok(()),
-        (Some(kind), _) => TRIGGER
+        None => Ok(()),
+        Some(kind) => TRIGGER
             .delete(vault, txn, &([kind.tag()], key.0, key.1))
             .map(drop),
     }
+}
+
+/// Drops the trigger index rows of `armings`, the armings of `actor` its erase takes, in the
+/// erase's writer: its timer row goes once, and each idle or feed row.
+pub(super) fn unindex_actor_triggers_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    armings: &[TurnProgramArming],
+) -> Result<()> {
+    for arming in armings {
+        if let Some(kind) = arming.trigger.occurrence_kind()
+            && !matches!(kind, OccurrenceKind::Timer)
+        {
+            TRIGGER.delete(
+                vault,
+                txn,
+                &([kind.tag()], arming.actor, arming.registration),
+            )?;
+        }
+    }
+    crate::schedule::disarm_in_txn(&vault.store, txn, PROGRAM_TIMER_JOB.code, Some(actor)).map(drop)
+}
+
+/// Arms `actor`'s timer row at the earliest next due time of its timer armings, in the caller's
+/// write, or disarms it when none is left; answers that time. The armings are read from the arming
+/// table, but the one registered as `registration`, whose next due time is `next_due` (it is being
+/// armed, moved or disarmed in this write), so the caller may write its arming before or after.
+fn arm_actor_timers_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    registration: Option<EntityId>,
+    next_due: Option<u64>,
+) -> Result<Option<u64>> {
+    let mut earliest = next_due;
+    for row in ARM.iter_from(vault, &*txn, actor.as_bytes())? {
+        let ((_, armed), arming) = row?;
+        if Some(armed) == registration || !matches!(arming.trigger, ProgramTrigger::Timer { .. }) {
+            continue;
+        }
+        earliest = match (earliest, arming.next_due) {
+            (Some(seen), Some(due)) => Some(seen.min(due)),
+            (seen, due) => seen.or(due),
+        };
+    }
+    match earliest {
+        Some(at) => crate::schedule::arm_in_txn(
+            &vault.store,
+            txn,
+            &PROGRAM_TIMER_JOB,
+            Some(actor),
+            Trigger::At { at },
+        )?,
+        None => {
+            crate::schedule::disarm_in_txn(&vault.store, txn, PROGRAM_TIMER_JOB.code, Some(actor))?;
+        }
+    }
+    Ok(earliest)
 }
 
 /// Records the wake one occurrence owes `arming`, sealed with the authority the arming sealed, in
@@ -187,25 +273,6 @@ fn indexed_in_txn(
 }
 
 impl Vault {
-    /// Records the wake each timer program due at or before `now` owes (untangle slice 6.8c), on
-    /// the node that releases due watcher ticks, and moves each timer to its next due time in the
-    /// same write. One due time wakes a program once, however many releases see it. Answers how
-    /// many wakes it recorded; [`Vault::wake_turn_programs`] admits them, as it admits a turn's.
-    ///
-    /// # Errors
-    ///
-    /// Storage errors.
-    pub fn release_timer_program_wakes(&self, now: u64) -> Result<usize> {
-        let mut recorded = 0;
-        loop {
-            let (released, more) = release_timer_batch(self, now)?;
-            recorded += released;
-            if !more {
-                return Ok(recorded);
-            }
-        }
-    }
-
     /// Records the wake each idle program owes once the host is idle as `idle` reads (compute
     /// available, no turn or background work running) and no inbound has arrived for its quiet
     /// time (untangle slice 6.8c): once per idle stretch, the stretch named by
@@ -359,99 +426,72 @@ impl Vault {
     }
 }
 
-/// One write's release of due timers: how many wakes it recorded, and whether more are due.
-fn release_timer_batch(vault: &Vault, now: u64) -> Result<(usize, bool)> {
-    let mut due = {
-        let txn = vault.store.env.read_txn()?;
-        if !crate::runtime_hooks::releases_ticks_here(vault, &txn)? {
-            return Ok((0, false));
-        }
-        let mut due = Vec::new();
-        for row in TIMER_DUE.iter_from(vault, &txn, &[])? {
-            let (key, ()) = row?;
-            if key.0 > now || due.len() > RELEASE_BATCH {
-                break;
-            }
-            due.push(key);
-        }
-        due
+/// One run of [`PROGRAM_TIMER_JOB`]: releases the timers of the actor it is about, due by now on
+/// the recording clock, in one write ([`release_actor_timers_in_txn`]), and is due again at the
+/// actor's new earliest timer; with none left its row went in that write.
+fn run_program_timer(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    let Some(actor) = armed.subject else {
+        return Ok(JobResult::of(Ran::Done));
     };
-    let more = due.len() > RELEASE_BATCH;
-    due.truncate(RELEASE_BATCH);
-    if due.is_empty() {
-        return Ok((0, false));
-    }
-    let recorded = vault.with_write_txn_grouped(|txn| {
-        let mut recorded = 0;
-        for key in &due {
-            let (due_at, actor, registration) = key;
-            // A row another release already moved woke its program already.
-            if !TIMER_DUE.delete(vault, txn, key)? {
-                continue;
-            }
-            let Some(mut arming) = ARM.get(vault, &*txn, &(*actor, *registration))? else {
-                continue;
-            };
-            let ProgramTrigger::Timer { every_secs, .. } = arming.trigger else {
-                continue;
-            };
-            if arming.next_due != Some(*due_at) {
-                continue;
-            }
-            if record_occurrence_in_txn(
-                vault,
-                txn,
-                &arming,
-                OccurrenceKind::Timer,
-                &due_at.to_be_bytes(),
-                *due_at,
-            )? {
-                recorded += 1;
-            }
-            arming.next_due = next_due_after(*due_at, every_secs, now)?;
-            if let Some(next) = arming.next_due {
-                TIMER_DUE.put(vault, txn, &(next, *actor, *registration), &())?;
-            }
-            ARM.put(vault, txn, &(*actor, *registration), &arming)?;
-        }
-        Ok(recorded)
+    let next = vault.with_write_txn_grouped(|txn| {
+        let now = vault.store.clock.now_recorded_at();
+        release_actor_timers_in_txn(vault, txn, actor, now)
     })?;
-    Ok((recorded, more))
+    Ok(JobResult {
+        due_by: next,
+        ..JobResult::of(Ran::Done)
+    })
 }
 
-/// When this node next releases a timer program: the earliest due time in the timer index, on the
-/// node that releases due watcher ticks; `None` elsewhere and while no timer waits. A stopped
-/// vault's housekeeping wakes then.
-pub(crate) fn next_program_timer_at(vault: &Vault) -> Result<Option<u64>> {
-    let txn = vault.store.env.read_txn()?;
-    if !crate::runtime_hooks::releases_ticks_here(vault, &txn)? {
-        return Ok(None);
-    }
-    Ok(TIMER_DUE
-        .iter_from(vault, &txn, &[])?
-        .next()
-        .transpose()?
-        .map(|((due_at, _, _), ())| due_at))
-}
-
-/// The release step each fact-hook runner pass and each housekeeping pass takes after due watcher
-/// ticks: timer and feed programs' wakes, then the admission of every owed wake, a bounded number
-/// of batches, whether or not this pass recorded any (review #6982): what a pass leaves owed, the
-/// next admits. It never fails its pass: a release or drain that fails is logged and taken again
-/// by the next pass.
-pub(crate) fn release_program_wakes(vault: &Vault, now: u64) {
-    for (trigger, released) in [
-        ("timer", vault.release_timer_program_wakes(now)),
-        ("feed", vault.release_feed_program_wakes(now)),
-    ] {
-        if let Err(error) = released {
-            tracing::warn!(
-                kind = ?error.kind(),
-                %error,
-                trigger,
-                "turn program wakes wait for the next pass"
-            );
+/// Records the wake each timer program of `actor` due at or before `now` owes (untangle slice
+/// 6.8c), moves each to its next due time and re-arms the actor's timer row, in the caller's write.
+/// One due time wakes a program once: its arming moves past it in the write that records it, and a
+/// wake owed or admitted already is not recorded again. Answers the actor's earliest next due
+/// time. [`Vault::wake_turn_programs`] admits the wakes, as it admits a turn's.
+fn release_actor_timers_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    actor: EntityId,
+    now: u64,
+) -> Result<Option<u64>> {
+    let mut due = Vec::new();
+    for row in ARM.iter_from(vault, &*txn, actor.as_bytes())? {
+        let ((_, registration), arming) = row?;
+        if let (ProgramTrigger::Timer { every_secs, .. }, Some(due_at)) =
+            (arming.trigger, arming.next_due)
+            && due_at <= now
+        {
+            due.push((registration, arming, every_secs, due_at));
         }
+    }
+    for (registration, mut arming, every_secs, due_at) in due {
+        record_occurrence_in_txn(
+            vault,
+            txn,
+            &arming,
+            OccurrenceKind::Timer,
+            &due_at.to_be_bytes(),
+            due_at,
+        )?;
+        arming.next_due = next_due_after(due_at, every_secs, now)?;
+        ARM.put(vault, txn, &(actor, registration), &arming)?;
+    }
+    arm_actor_timers_in_txn(vault, txn, actor, None, None)
+}
+
+/// The release step each fact-hook runner pass and each housekeeping pass takes after the due
+/// watcher ticks and timer programs its runner ran: feed programs' wakes, then the admission of
+/// every owed wake, the timers' included, a bounded number of batches, whether or not this pass
+/// recorded any (review #6982): what a pass leaves owed, the next admits. It never fails its pass:
+/// a release or drain that fails is logged and taken again by the next pass.
+pub(crate) fn release_program_wakes(vault: &Vault, now: u64) {
+    if let Err(error) = vault.release_feed_program_wakes(now) {
+        tracing::warn!(
+            kind = ?error.kind(),
+            %error,
+            trigger = "feed",
+            "turn program wakes wait for the next pass"
+        );
     }
     admit_owed(vault, now);
 }

@@ -324,11 +324,6 @@ crate::side_table::side_tables! {
         // Restore class: FIX 7188: an owner Stop's owed abandon works on the outbound ledger, which
         // stands as the live vault holds it; so does what it still owes.
         [restore: live] [family: structure] [tier: canonical];
-    /// Untangle slice 6.8c: each timer turn program's next due time, written and deleted with its
-    /// arming's. Key: u64be(due time) + id16(actor) + id16(registration).
-    DREAMER_TURN_PROGRAM_TIMER_DUE: VaultMeta b"dreamer:turn_program:timer_due:v1:" Named Engine
-        // Restore class: the due index stands as the armings it names do.
-        [restore: live] [family: structure] [tier: canonical];
     /// Untangle slice 6.8c: each idle or feed turn program, by its trigger's kind, written and
     /// deleted with its arming. Key: u8(kind) + id16(actor) + id16(registration).
     DREAMER_TURN_PROGRAM_TRIGGER: VaultMeta b"dreamer:turn_program:trigger:v1:" Named Engine

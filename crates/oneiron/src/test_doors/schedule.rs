@@ -180,6 +180,7 @@ pub static TEST_COUNT: JobSpec = JobSpec {
     wakes_host: true,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_count,
 };
 
@@ -194,6 +195,7 @@ pub static TEST_FAIL: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_fail,
 };
 
@@ -208,6 +210,7 @@ pub static TEST_PAGED: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_paged,
 };
 
@@ -222,6 +225,7 @@ pub static TEST_ENGINE: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_count,
 };
 
@@ -236,6 +240,7 @@ pub static TEST_LAPSE: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_count,
 };
 
@@ -250,6 +255,7 @@ pub static TEST_CADENCE: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_cadence,
 };
 
@@ -264,6 +270,7 @@ pub static TEST_ITEMS: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_items,
 };
 
@@ -278,6 +285,7 @@ pub static TEST_OPEN: JobSpec = JobSpec {
     wakes_host: false,
     at_open: true,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_seen,
 };
 
@@ -292,6 +300,7 @@ pub static TEST_ANSWER: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_answer,
 };
 
@@ -306,6 +315,7 @@ pub static TEST_ONCE: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: true,
+    runs_here: crate::schedule::any_node,
     run: run_bounded,
 };
 
@@ -321,6 +331,7 @@ pub static TEST_DUE_BY: JobSpec = JobSpec {
     wakes_host: false,
     at_open: false,
     once_per_pass: false,
+    runs_here: crate::schedule::any_node,
     run: run_cadence,
 };
 
@@ -515,4 +526,16 @@ pub fn while_a_pass_holds_the_runner<T>(vault: &Vault, act: impl FnOnce() -> T) 
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     act()
+}
+
+/// When `task`'s watcher tick is due while it still waits for it, or `None` once it ticked, for
+/// a TASK with no due time, and for one closed before its tick (stage 5b-3): the tick a run of
+/// `runtime_hooks.task_tick` releases.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn task_tick_waiting(vault: &Vault, task: EntityId) -> Result<Option<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    crate::runtime_hooks::task_tick_waiting_in_txn(vault, &txn, task)
 }

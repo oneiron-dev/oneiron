@@ -94,13 +94,15 @@ impl Vault {
     /// on its own tick, off the request path. An error means the schedule
     /// could not be read; a sweep's own failure is a row of the report.
     /// Unless the host has asked it to stop, the pass first runs one capped
-    /// communication projector pass, then releases the due watcher ticks and
-    /// prunes the hook feeds once (FIX 22180), whose failures are logged and
-    /// never fail a sweep, and drops the task-held inquiry answers whose task
-    /// has ended. The pending check-ins due by now advance as armed jobs of
-    /// the runner (ROLES-CHECKIN P2.3; stage 5b). The model pack retirement sweep runs against no
-    /// model access: a host that binds model offers calls
-    /// [`Self::housekeeping_with_access`].
+    /// communication projector pass, then prunes the hook feeds once (FIX
+    /// 22180), whose failures are logged and never fail a sweep, and drops the
+    /// task-held inquiry answers whose task has ended. The pending check-ins
+    /// due by now advance, and the due watcher ticks and timer turn programs
+    /// release on the node that releases ticks, as armed jobs of the runner
+    /// (ROLES-CHECKIN P2.3; stage 5b); after the runner, unless asked to stop,
+    /// it releases the feed turn programs and admits every owed wake once. The
+    /// model pack retirement sweep runs against no model access: a host that
+    /// binds model offers calls [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_with_access(budget, &AccessSnapshot::new())
     }
@@ -120,19 +122,23 @@ impl Vault {
                 .record_hooks
                 .run_comm_projector_housekeeping_step(self);
         }
-        release_ticks_and_prune_hook_feeds(self, &deadline);
+        prune_hook_feeds_once(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
-        self.housekeeping_pass(Asked::Due, &deadline, access)
+        let report = self.housekeeping_pass(Asked::Due, &deadline, access);
+        release_turn_program_wakes(self, &deadline);
+        report
     }
 
     /// Runs every engine sweep now, due or not, and reschedules each from
     /// now: the owner's "run housekeeping now". Unless the host has asked it
-    /// to stop, it first releases the due watcher ticks and prunes the hook
-    /// feeds once and drops the ended tasks' inquiry answers, as [`Self::housekeeping`] does, so
-    /// `oneiron maintain` settles a stopped vault's due watch TASKs (FIX 22180); its runner
-    /// advances the due pending check-ins. The model pack
+    /// to stop, it first prunes the hook feeds once and drops the ended tasks'
+    /// inquiry answers, and after its runner releases the feed turn programs
+    /// and admits the owed wakes, as [`Self::housekeeping`] does; its runner
+    /// advances the due pending check-ins and runs the due watcher ticks, so
+    /// `oneiron maintain` settles a stopped vault's due watch TASKs (FIX
+    /// 22180), and the due timer turn programs. The model pack
     /// retirement sweep runs against no model access: a host that holds model
     /// offers, `serve` or `oneiron maintain` with the offers its config and
     /// the vault's mesh discovery rows bind, calls
@@ -149,11 +155,13 @@ impl Vault {
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
         let deadline = budget.deadline();
-        release_ticks_and_prune_hook_feeds(self, &deadline);
+        prune_hook_feeds_once(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
-        self.housekeeping_pass(Asked::All, &deadline, access)
+        let report = self.housekeeping_pass(Asked::All, &deadline, access);
+        release_turn_program_wakes(self, &deadline);
+        report
     }
 
     /// Runs the engine sweep `sweep` alone now and reschedules it from now: a
@@ -190,10 +198,11 @@ impl Vault {
     /// earliest deadline of the retained peer work (FIX 11183), and a paced
     /// verb call's window or deadline (FIX 8753), and the first day to come
     /// on which the model pack retirement pass owes work, a notice mark with
-    /// no notice recorded or a retirement-day move (FIX 22059), and the next
-    /// due watcher tick on the node that releases them (FIX 22180), and the
-    /// first due armed job that wakes its host. Among those jobs is each open pending check-in,
-    /// due at its next transition (ROLES-CHECKIN P2.3), and each deadline a door noted for a secret
+    /// no notice recorded or a retirement-day move (FIX 22059), and the
+    /// first due armed job that wakes its host and runs on this node. Among those jobs is each
+    /// open pending check-in, due at its next transition (ROLES-CHECKIN P2.3), each waiting
+    /// watcher tick and each actor's next timer turn program, due then on the node that releases
+    /// ticks (FIX 22180; stage 5b-3), and each deadline a door noted for a secret
     /// lease, a voice print, a critical confirm or a shared act's window (DESIGN
     /// 15-setting-primitive, stage 5b): due at the deadline, and after a pass
     /// that found the sweep backing off or its walk begun before the deadline,
@@ -219,18 +228,6 @@ impl Vault {
         // A model pack's notice mark or retirement day (FIX 22059): the pass
         // records the move and sends the notices on the day itself.
         if let Some(at) = self.model_pack_retirement_wake_at()? {
-            owed.push((HousekeepingSweep::ModelPackRetirement, at));
-        }
-        // The next due watcher tick (FIX 22180): the host's hook runner, or
-        // its first housekeeping pass, releases it once the vault is up
-        // again. The minute carrier, the host tick's own cadence, keeps the
-        // wake within a minute of the tick's due time.
-        if let Some(at) = crate::runtime_hooks::next_tick_release_at(self)? {
-            owed.push((HousekeepingSweep::ModelPackRetirement, at));
-        }
-        // The next due timer turn program (untangle slice 6.8c), released
-        // where the ticks are, on the same carrier.
-        if let Some(at) = crate::dreamer_runner::next_program_timer_at(self)? {
             owed.push((HousekeepingSweep::ModelPackRetirement, at));
         }
         let mut earliest: Option<u64> = None;
@@ -381,26 +378,7 @@ fn admit_carried_turn_program_wakes(vault: &Vault, deadline: &Deadline) {
     vault.admit_owed_turn_programs(vault.now_recorded_at());
 }
 
-fn release_ticks_and_prune_hook_feeds(vault: &Vault, deadline: &Deadline) {
-    if deadline.stopped() {
-        return;
-    }
-    loop {
-        match crate::runtime_hooks::release_due_ticks(vault, vault.now_recorded_at()) {
-            Ok(true) if !deadline.passed() => {}
-            Ok(_) => break,
-            Err(error) => {
-                tracing::warn!(%error, "housekeeping: due watcher ticks wait for the next pass");
-                break;
-            }
-        }
-    }
-    if deadline.stopped() {
-        return;
-    }
-    // Timer and feed turn programs are released beside the ticks (untangle
-    // slice 6.8c), and what they owe is admitted.
-    crate::dreamer_runner::release_program_wakes(vault, vault.now_recorded_at());
+fn prune_hook_feeds_once(vault: &Vault, deadline: &Deadline) {
     if deadline.stopped() {
         return;
     }
@@ -409,6 +387,17 @@ fn release_ticks_and_prune_hook_feeds(vault: &Vault, deadline: &Deadline) {
     {
         tracing::warn!(%error, "housekeeping: passed hook feed rows wait for the next pass");
     }
+}
+
+/// Feed turn programs are released after the runner, which ran the due timer
+/// programs beside the watcher ticks (untangle slice 6.8c; stage 5b-3), and
+/// every wake they owe is admitted in the same pass, unless the host asked the
+/// pass to stop. Its failures are logged and never fail the pass.
+fn release_turn_program_wakes(vault: &Vault, deadline: &Deadline) {
+    if deadline.stopped() {
+        return;
+    }
+    crate::dreamer_runner::release_program_wakes(vault, vault.now_recorded_at());
 }
 
 /// Drops the task-held inquiry answers whose task has ended or whose

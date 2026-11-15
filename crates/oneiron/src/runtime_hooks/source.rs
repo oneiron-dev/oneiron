@@ -22,8 +22,8 @@ use super::{filter, store};
 
 pub(super) use schedule::TickDetails;
 pub(crate) use schedule::{
-    hold_task_tick_in_txn, index_task_due_in_txn, next_tick_release_at, release_due_ticks,
-    release_task_tick_hold_in_txn, releases_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
+    TASK_TICK_JOB, hold_task_tick_in_txn, index_task_due_in_txn, release_task_tick_hold_in_txn,
+    releases_here, task_tick_held_in_txn, task_tick_waiting_in_txn,
 };
 pub(crate) use settlement::{record_settlement_in_txn, record_timeout_demotion_in_txn};
 pub(super) use surface_inbound::SurfaceInboundRow;

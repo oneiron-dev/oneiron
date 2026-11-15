@@ -4,8 +4,9 @@ use super::JobSpec;
 
 /// Every job kind, one line each: the engine's 19 sweeps (stage 5a), the deadlines doors note for
 /// five of them, the pending check-ins' due transitions, the outage parks' timed resumes, the
-/// model seats' resets and the agent waits' `until` (stage 5b) and the tests' jobs; the other due
-/// indexes and the host loops join in stages 5b and 5c.
+/// model seats' resets, the agent waits' `until`, the watcher TASKs' ticks and the actors' timer
+/// turn programs (stage 5b) and the tests' jobs; the other due indexes and the host loops join in
+/// stages 5b and 5c.
 static JOBS: &[&JobSpec] = &[
     &crate::housekeeping::jobs::SECRET_LEASE_EXPIRY_JOB,
     &crate::housekeeping::jobs::CRITICAL_CONFIRM_EXPIRY_JOB,
@@ -35,6 +36,8 @@ static JOBS: &[&JobSpec] = &[
     &crate::dreamer_runner::OUTAGE_RESUME_JOB,
     &crate::dreamer_runner::SEAT_RESET_JOB,
     &crate::agent_dispatch::CHILD_WAIT_UNTIL_JOB,
+    &crate::runtime_hooks::TASK_TICK_JOB,
+    &crate::dreamer_runner::PROGRAM_TIMER_JOB,
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_COUNT,
     #[cfg(oneiron_test_support)]
