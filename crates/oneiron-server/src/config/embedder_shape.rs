@@ -12,12 +12,14 @@
 
 use std::str::FromStr;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 /// How the body attends. On a filled vault a change is refused at open
 /// (`EmbeddingTransformChanged`); `reembed` migrates the vault to it.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Register)]
 #[serde(rename_all = "kebab-case")]
+#[register("embedder.attention")]
 pub enum EmbedderAttention {
     /// What the checkpoint's `config.json` declares (`use_bidirectional_attention`
     /// or `is_causal`), causal when it declares neither.
@@ -29,36 +31,22 @@ pub enum EmbedderAttention {
     Bidirectional,
 }
 
-impl EmbedderAttention {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Causal => "causal",
-            Self::Bidirectional => "bidirectional",
-        }
-    }
-}
-
 impl FromStr for EmbedderAttention {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "auto" => Ok(Self::Auto),
-            "causal" => Ok(Self::Causal),
-            "bidirectional" => Ok(Self::Bidirectional),
-            other => Err(format!(
-                "unknown embedder attention {other:?} (expected auto, causal or bidirectional)"
-            )),
-        }
+        <Self as Register>::named(value).ok_or_else(|| {
+            format!("unknown embedder attention {value:?} (expected auto, causal or bidirectional)")
+        })
     }
 }
 
 /// What a `FlexibleQuantizer` module in the chain emits. On a filled vault a
 /// change is refused at open (`EmbeddingTransformChanged`); `reembed` migrates
 /// the vault to it.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize, Register)]
 #[serde(rename_all = "kebab-case")]
+#[register("embedder.output.quantization")]
 pub enum EmbedderOutputQuantization {
     /// `round(tanh(x) · 127)`, clamped to the int8 range: the module's own
     /// default.
@@ -68,26 +56,13 @@ pub enum EmbedderOutputQuantization {
     Binary,
 }
 
-impl EmbedderOutputQuantization {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Int8 => "int8",
-            Self::Binary => "binary",
-        }
-    }
-}
-
 impl FromStr for EmbedderOutputQuantization {
     type Err = String;
 
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        match value {
-            "int8" => Ok(Self::Int8),
-            "binary" => Ok(Self::Binary),
-            other => Err(format!(
-                "unknown embedder output quantization {other:?} (expected int8 or binary)"
-            )),
-        }
+        <Self as Register>::named(value).ok_or_else(|| {
+            format!("unknown embedder output quantization {value:?} (expected int8 or binary)")
+        })
     }
 }
 
