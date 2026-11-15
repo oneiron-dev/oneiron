@@ -5,17 +5,23 @@ use std::collections::BTreeMap;
 use crate::EntityId;
 use crate::config::bm25::NoteTextField;
 use crate::entity_doc::{decode_metadata_value, encode_metadata_value};
-use crate::error::{Error, RecordError, Result};
+use crate::error::Result;
 use crate::memory::CommitReceipt;
 use crate::ports::{is_metadata_field, validate_metadata_shape};
 use crate::provenance::ActorStamp;
-use loro::cursor::{Cursor, Side};
+use loro::cursor::Side;
 use loro::{
     CommitOptions, Container, ExportMode, Frontiers, LoroDoc, LoroMap, LoroValue, ValueOrContainer,
 };
 use serde::{Deserialize, Serialize};
 
-const BODY: &str = "body";
+#[doc(hidden)]
+use oneiron_records::note::document::{BODY, quoted_cursor};
+#[doc(hidden)]
+pub use oneiron_records::note::document::{NotePin, NoteScalarEdit};
+#[doc(hidden)]
+pub(super) use oneiron_records::note::document::{frontier, invalid};
+
 /// The common root map (FIX 7784): the NOTE's immutable identity, its
 /// editable fields and its pins.
 const META: &str = "meta";
@@ -33,32 +39,6 @@ const AUTHORSHIP: &str = "authorship";
 /// write is refused past it: a size never refuses the user's own NOTE (rule
 /// 5, FIX 10345).
 pub(crate) const MAX_NOTE_BYTES: usize = 1024 * 1024;
-
-/// Positions use Unicode scalar indices in the named base frontier. Batches
-/// are ordered, so each operation sees the preceding operations in its batch.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NoteScalarEdit {
-    pub start: usize,
-    pub delete: usize,
-    pub insert: String,
-}
-
-/// A citation is data, not a rendered view. Its cursors are bound to one
-/// document and frontier. The original quote is retained even after drift.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct NotePin {
-    #[serde(with = "super::id_codec")]
-    pub claim: EntityId,
-    #[serde(with = "super::id_codec")]
-    pub document: EntityId,
-    pub frontier: Vec<u8>,
-    pub start_cursor: Vec<u8>,
-    pub end_cursor: Vec<u8>,
-    pub quote_hash: [u8; 32],
-    pub quote_text: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NoteSpanResolution {
@@ -89,17 +69,6 @@ pub struct NoteDocumentView {
 pub enum NoteScalarEditOutcome {
     Applied(NoteDocumentView),
     Proposed(CommitReceipt),
-}
-
-pub(super) fn invalid(reason: &'static str) -> Error {
-    Error::Record(RecordError::InvalidNoteBody(reason))
-}
-
-/// Decodes a NOTE frontier. No length refuses it (rule 5, FIX 10345): a NOTE
-/// many devices edited at once has a wide one, and its decode allocates no
-/// more than its bytes hold.
-pub(super) fn frontier(bytes: &[u8]) -> Result<Frontiers> {
-    Frontiers::decode(bytes).map_err(|_| invalid("invalid NOTE frontier"))
 }
 
 /// What a store-aware entrance measures of a NOTE document (`note::scan`):
@@ -258,40 +227,19 @@ pub(super) fn insert_value_meta(
     Ok(())
 }
 
-impl NotePin {
-    /// Checks the citation's shape: its frontier, its two cursors and its
-    /// quote's hash. No quote length refuses it (rule 5, FIX 10345); a cursor
-    /// past its shape check is a body cursor, small by construction.
-    pub fn validate(&self) -> Result<()> {
-        frontier(&self.frontier)?;
-        quoted_cursor(&self.start_cursor, Side::Left)?;
-        quoted_cursor(&self.end_cursor, Side::Right)?;
-        if self.quote_hash != *blake3::hash(self.quote_text.as_bytes()).as_bytes() {
-            return Err(invalid("NOTE quote hash mismatch"));
-        }
-        Ok(())
-    }
-}
-
-/// A cited span's endpoint, decoded and checked for its shape: in the body
-/// text, on a quoted character, on `side`. A pin's validation and a live
-/// span's read judge it alike (FIX 10747).
-fn quoted_cursor(bytes: &[u8], side: Side) -> Result<Cursor> {
-    let cursor = Cursor::decode(bytes).map_err(|_| invalid("invalid NOTE cursor"))?;
-    if cursor.container != loro::ContainerID::new_root(BODY, loro::ContainerType::Text) {
-        return Err(invalid("NOTE cursor is not in the body"));
-    }
-    // Both endpoints name quoted characters, never a moving document
-    // boundary. The sides describe the edges of those characters.
-    if cursor.id.is_none() || cursor.side != side {
-        return Err(invalid("NOTE cursor is not a quoted character boundary"));
-    }
-    Ok(cursor)
-}
-
 pub(super) struct NoteDocument {
     pub(super) doc: LoroDoc,
     pub(super) id: EntityId,
+}
+
+/// A span of quoted body characters ([`NoteDocument::quoted_span`]).
+pub(super) struct QuotedSpan {
+    /// The cursor on the first quoted character's left edge.
+    pub(super) start_cursor: Vec<u8>,
+    /// The cursor on the last quoted character's right edge.
+    pub(super) end_cursor: Vec<u8>,
+    /// The quoted characters.
+    pub(super) quote: String,
 }
 
 /// The deterministic peer of NOTE `id`'s birth operations, the same on every
@@ -547,11 +495,28 @@ impl NoteDocument {
     }
 
     pub(super) fn pin(&self, claim: EntityId, start: usize, end: usize) -> Result<NotePin> {
+        let span = self.quoted_span(start, end)?;
+        Ok(NotePin {
+            claim,
+            document: self.id,
+            frontier: self.doc.oplog_frontiers().encode(),
+            start_cursor: span.start_cursor,
+            end_cursor: span.end_cursor,
+            quote_hash: *blake3::hash(span.quote.as_bytes()).as_bytes(),
+            quote_text: span.quote,
+        })
+    }
+
+    /// The body's characters `start..end` (Unicode scalar indices) as a
+    /// cited span names them: the cursor on the first quoted character's
+    /// left edge, the cursor on the last one's right edge, and their text.
+    /// [`Self::live_span`] reads the same characters in a later document.
+    pub(super) fn quoted_span(&self, start: usize, end: usize) -> Result<QuotedSpan> {
         let text = self.doc.get_text(BODY);
         if end <= start || end > text.len_unicode() {
             return Err(invalid("invalid NOTE citation range"));
         }
-        let quote_text = text
+        let quote = text
             .slice(start, end)
             .map_err(|_| invalid("NOTE quote slice"))?;
         let start_cursor = text
@@ -565,15 +530,24 @@ impl NoteDocument {
             .get_cursor(end - 1, Side::Right)
             .ok_or_else(|| invalid("NOTE end cursor"))?
             .encode();
-        Ok(NotePin {
-            claim,
-            document: self.id,
-            frontier: self.doc.oplog_frontiers().encode(),
+        Ok(QuotedSpan {
             start_cursor,
             end_cursor,
-            quote_hash: *blake3::hash(quote_text.as_bytes()).as_bytes(),
-            quote_text,
+            quote,
         })
+    }
+
+    /// The IDs of the body's characters `start..end` (Unicode scalar
+    /// indices), in order: which characters stand there, whatever their
+    /// text. `None` for a range outside the text.
+    pub(super) fn character_ids(&self, start: usize, end: usize) -> Option<Vec<loro::ID>> {
+        let text = self.doc.get_text(BODY);
+        if end > text.len_unicode() {
+            return None;
+        }
+        (start..end)
+            .map(|at| text.get_cursor(at, Side::Left)?.id)
+            .collect()
     }
 
     pub(super) fn resolve(&self, pin: &NotePin) -> Result<NoteSpanResolution> {

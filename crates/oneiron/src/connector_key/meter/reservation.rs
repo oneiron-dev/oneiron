@@ -182,9 +182,7 @@ pub(crate) fn restore_effector_debits_in_txn(
                 BudgetBlock::Hard
             };
             block = block.and(row_block);
-            if budget.on_exhaust == EffectorBudgetOnExhaust::Suspend
-                && record.status == ConnectorKeyStatus::Active
-            {
+            if budget.on_exhaust == EffectorBudgetOnExhaust::Suspend {
                 suspensions
                     .entry(key_ref)
                     .or_insert_with(|| (record.clone(), EffectorBudgetLocation { key_ref, row }));
@@ -194,13 +192,14 @@ pub(crate) fn restore_effector_debits_in_txn(
         }
     }
     if block != BudgetBlock::Open {
+        // The writer suspends an Active key alone; any other stays as it is.
         for (key_ref, (record, location)) in suspensions {
             suspend_connector_key_in_txn(
                 store,
                 wtxn,
                 &key_ref,
                 &record,
-                budget_exhausted_reason(&location),
+                SuspendCause::BudgetExhausted(&location),
                 now,
             )?;
         }

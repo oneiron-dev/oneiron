@@ -684,4 +684,14 @@ impl ExportValue {
     pub(crate) fn to_msgpack(&self) -> Result<Mp> {
         tree::restore_value_tree(self)
     }
+
+    /// The JSON a contact bundle carries of this value: binary text as its
+    /// text; an id reference, opaque binary and extension bytes as null; the
+    /// rest as [`crate::serialize::msgpack_value_to_json`] projects it (a
+    /// map's text keys once each, numbers without their width).
+    pub(crate) fn to_released_json(&self) -> Result<Value> {
+        Ok(crate::serialize::msgpack_value_to_json(
+            &tree::projected_value_tree(self)?,
+        ))
+    }
 }
