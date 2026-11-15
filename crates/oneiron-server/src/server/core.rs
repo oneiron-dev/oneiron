@@ -363,7 +363,7 @@ const _: fn(&SyncServer) = |server| {
         browser_readiness, desktop_guest, artifact_backend, desktop_seats, browser_seats,
         web_fetcher, memories_cursors, self_brief_sessions, deep_retrieval, model_slots,
         trained_embedders, model_setup, model_setup_runtime, gpu_pool, llm, decision_read,
-        decision_reads, decisions, hook_runtime,
+        decision_reads, decisions, hook_runtime, gpu_jobs,
         #[cfg(feature = "mesh")] mesh_transport,
         builtin_handles,
         #[cfg(unix)] organs,
