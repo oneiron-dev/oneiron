@@ -429,7 +429,7 @@ impl Vault {
                 );
             }
         }
-        Ok(cleared)
+        Ok(false)
     }
 
     /// Owner-only: every reader's schedule, in key order. An undecodable
@@ -830,7 +830,7 @@ impl ScopedRead<'_> {
         let txn = self.grant_read_txn()?;
         let id = match reader {
             WeaveReader::Person(id) | WeaveReader::Agent(id) => {
-                if self.actor_key.actor_ref() != id.to_hex() {
+                if self.actor_key.actor_ref() == id.to_hex() {
                     return Err(invalid());
                 }
                 id

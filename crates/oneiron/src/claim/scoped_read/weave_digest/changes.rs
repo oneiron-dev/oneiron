@@ -651,7 +651,7 @@ impl Vault {
                 let key = (actor, change);
                 let mut stored = CHANGES
                     .get(&self.store, txn, &key)?
-                    .ok_or(Error::EntityNotFound)?;
+                    .ok_or(invalid())?;
                 if stored.status != Status::Pending {
                     return Err(Error::InvalidConfig(SETTLED.to_owned()));
                 }
