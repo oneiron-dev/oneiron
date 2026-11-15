@@ -2,9 +2,6 @@
 
 use std::collections::BTreeSet;
 
-use oneiron_vault_contract::{Schedule, WakeEntry};
-use serde::{Deserialize, Serialize};
-
 use super::lens::{PrepLensCopy, render_prep_lens};
 use super::pack::{
     PrepBuildRequest, build_prep_pack, build_prep_pack_scoped, prep_pack_source_refs,
@@ -23,41 +20,8 @@ use crate::lens::GeneratedLens;
 use crate::registry::ENTITY_TYPE_EVENT;
 use crate::vault::Vault;
 
-/// The closed-vault due payload: small, deterministic, and self-describing.
-///
-/// Three scalars and nothing else. The raw context stays in the vault and is
-/// re-read at execution time, so this payload can sit in a host queue across a
-/// vault close without ever becoming stale prose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PrepHomeNodeJob {
-    /// Hex id of the EVENT the pack is about.
-    pub event_ref: String,
-    /// The exact instant the wake was planned for, unix seconds UTC.
-    pub scheduled_for: u64,
-    /// The wake id the host will report as due.
-    pub wake_id: String,
-}
-
-impl PrepHomeNodeJob {
-    /// Binds one planned wake to the EVENT it was planned for, or `None` for
-    /// a [`Schedule::Window`] entry: a prep wake is exact by construction
-    /// ([`plan_prep_wake`](super::plan_prep_wake)), so a window names no
-    /// instant this job could be due at.
-    ///
-    /// Deterministic: the same EVENT and the same wake always produce the same
-    /// payload, so a host that enqueues twice enqueues the same bytes.
-    #[must_use]
-    pub fn from_wake(event_ref: &EntityId, wake: &WakeEntry) -> Option<Self> {
-        let Schedule::Exact { at } = wake.at else {
-            return None;
-        };
-        Some(Self {
-            event_ref: event_ref.to_hex(),
-            scheduled_for: at,
-            wake_id: wake.id.clone(),
-        })
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::calendar::prep::home_node::PrepHomeNodeJob;
 
 /// Runs one due prep job on the elected home node.
 ///

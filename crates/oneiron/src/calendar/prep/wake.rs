@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use super::pack::DEFAULT_PREP_MAX_WORDS;
 use crate::entity_id::EntityId;
 
-/// Default lead between the EVENT start and the prep wake: T-45.
-pub const DEFAULT_PREP_LEAD_SECS: u64 = 45 * 60;
+#[doc(hidden)]
+pub use oneiron_records::calendar::prep::wake::DEFAULT_PREP_LEAD_SECS;
 
 /// Opaque tag the host echoes back when the prep wake fires.
 ///

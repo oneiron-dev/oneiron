@@ -15,6 +15,7 @@ pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod builtin_pack_seed;
 pub mod callable_skill;
+pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod check_in;
 pub mod checkpoint_registry;
@@ -42,6 +43,7 @@ pub mod derive;
 pub mod derive_verbs;
 pub mod disclosure_word_sources;
 pub mod dreamer_attempt_binding;
+pub mod dreamer_partition_window;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
@@ -49,6 +51,8 @@ pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
+#[cfg(feature = "sync")]
+pub mod full_copy_mark;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
@@ -121,7 +125,9 @@ pub mod turn_programs;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
+pub mod voice_generation_epoch;
 pub mod wake_d1_park_release;
+pub mod wake_envelope_ack;
 pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
