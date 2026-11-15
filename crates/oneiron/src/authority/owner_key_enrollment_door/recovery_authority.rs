@@ -279,8 +279,11 @@ impl Vault {
     /// revoke: the self-revoke counts because the new generation is a live
     /// consenting key after the enrol. The holding machine is this install's
     /// machine identity, read in the transaction and never minted; the enrol
-    /// door's own carrier check judges it. Returns the new live generation
-    /// with its enrol receipt and the old generation's revocation.
+    /// door's own carrier check judges it. Then the new generation carries
+    /// the approvals the old one signed
+    /// ([`Self::carry_recovery_authority_approvals_in_txn`]). Returns the new
+    /// live generation with its enrol receipt and the old generation's
+    /// revocation.
     ///
     /// # Errors
     /// As [`Self::enrol_owner_signing_key_as`], and the revoke's
@@ -326,8 +329,11 @@ impl Vault {
         let revoked = self.append_revoke_device_in_txn(
             txn,
             EntrySigner::Key(&live_key, &sign_enrol),
-            live_key,
+            live_key.clone(),
         )?;
+        // The next generation carries what the revoked one approved, so the
+        // switch unpairs no machine (WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A).
+        self.carry_recovery_authority_approvals_in_txn(txn, &[live_key], &next_signer)?;
         Ok((next, receipt, revoked))
     }
 
