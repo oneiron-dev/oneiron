@@ -4,7 +4,8 @@
 //! holds the offer for every other call. A rest longer than one submission
 //! waits parks the step, which resumes on its own once the offer is back.
 //! A pass that stops mid-way keeps the sends it made, each counted once it
-//! goes out.
+//! goes out. A schema correction that meets a rest past that wait parks and
+//! resumes the same way (STEP-CORRECTION-HEALTH-PARK).
 #![allow(clippy::unwrap_used)]
 
 #[path = "support/fake_llm.rs"]
@@ -296,6 +297,85 @@ fn a_parked_steps_resumes_keep_its_declared_attempts() {
         assert_eq!(done["result"]["status"], "failed", "{done:#}");
         assert_eq!(done["result"]["failure"]["class"], "retryable", "{done:#}");
         assert_eq!(fake.seen().len(), 3, "{done:#}");
+        host.shutdown().await;
+    });
+}
+
+/// [`models`] on a provider with no native JSON mode: a JSON step's schema
+/// rides as a system message, and an answer the schema refuses is corrected
+/// by another call.
+fn shim_models(base_url: &str, extra: &str) -> ModelsConfig {
+    ModelsConfig::from_toml(
+        &format!(
+            r#"{extra}
+[providers.local]
+kind = "local-openai-compat"
+base_url = "{base_url}"
+revision = "rev-a"
+timeout_secs = 5
+capabilities = ["streaming"]
+[roles.generative_reasoner]
+rungs = [{{ model = "local:reasoner" }}]
+[dreamer]
+enabled = false
+"#
+        ),
+        None,
+    )
+    .unwrap()
+}
+
+/// The first call answers what its schema refuses; the correction's send
+/// gets a 503, and its retry meets the offer's rest past the step's rest
+/// wait. The step parks with the first call's send, and once the rest ends
+/// it resumes on its own and continues the correction, which answers: the
+/// first call is not asked again. On main the correction's rest fails the
+/// step.
+#[test]
+fn a_correction_parks_past_its_rest_wait_and_resumes_on_its_own() {
+    on_engine_stack(|| async {
+        let fake = FakeLlm::start(
+            vec![
+                Reply::text("not json"),
+                Reply::Status(503),
+                Reply::text(r#"{"answer":"resumed"}"#),
+            ],
+            Some(Reply::text("unreached")),
+        )
+        .await;
+        let dir = tempfile::tempdir().unwrap();
+        let extra = "health_rest_secs = 2\nstep_rest_wait_secs = 0";
+        let (vault, app, host) = served(dir.path(), &shim_models(&fake.base_url, extra)).await;
+        let mut input = step("correction-parks", 2);
+        input.request.envelope.response_format = ResponseFormat::Json {
+            schema: json!({
+                "type": "object",
+                "properties": {"answer": {"type": "string"}},
+                "required": ["answer"],
+            }),
+        };
+        let body = receipt(
+            &app,
+            owner_post(
+                &vault,
+                "ai.steps.submit",
+                serde_json::to_vec(&input).unwrap(),
+            ),
+        )
+        .await;
+        assert_eq!(body["result"]["status"], "parked", "{body:#}");
+        assert_eq!(fake.seen().len(), 2, "{body:#}");
+        let done = settled(&app, &vault, "correction-parks", 20).await;
+        assert_eq!(done["result"]["status"], "finished", "{done:#}");
+        assert_eq!(done["result"]["json"]["answer"], "resumed", "{done:#}");
+        assert_eq!(fake.seen().len(), 3, "{done:#}");
+        // The resume continues the correction, not the first call: its send
+        // carries the refused answer and the schema message correcting it.
+        let resumed = fake.seen()[2].body.to_string();
+        assert!(
+            resumed.contains("not json") && resumed.contains("schema_validation_errors"),
+            "{resumed}"
+        );
         host.shutdown().await;
     });
 }
