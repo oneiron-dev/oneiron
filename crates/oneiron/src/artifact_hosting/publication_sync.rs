@@ -331,15 +331,20 @@ impl Vault {
         };
         let Some(published) = wire.published else {
             // What the pointer served goes with it, unless the other channel
-            // still serves it (FIX 8504).
+            // still serves it (FIX 8504, FIX 295).
             let unpointed = ARTIFACT_POINTERS.get(&self.store, wtxn, &key)?;
             ARTIFACT_POINTERS.delete(&self.store, wtxn, &key)?;
-            if let Some(ArtifactExportRef::BlobVersion {
-                artifact_id,
-                version,
-            }) = unpointed.map(|row| row.export)
-            {
-                retire_unpointed_version_in_txn(&self.store, wtxn, &artifact_id, version)?;
+            match unpointed.map(|row| row.export) {
+                Some(ArtifactExportRef::BlobVersion {
+                    artifact_id,
+                    version,
+                }) => {
+                    retire_unpointed_version_in_txn(&self.store, wtxn, &artifact_id, version)?;
+                }
+                Some(ArtifactExportRef::ForkHash(hash)) => {
+                    self.retire_unpointed_snapshot_in_txn(wtxn, &key.artifact, &hash)?;
+                }
+                None => {}
             }
             return Ok(Applied);
         };
@@ -373,6 +378,45 @@ impl Vault {
             ARTIFACT_POINTERS.put(&self.store, wtxn, &key, &pointer)?;
         }
         Ok(outcome)
+    }
+
+    /// A replica's staged snapshot of the fork an unpublish unpointed goes
+    /// once no channel pointer here names that fork (FIX 295): an unpublish
+    /// takes what it served, unless the other channel still serves it. The
+    /// snapshot resolved is the one the route would serve, and only its
+    /// manifest and indexes go; the owner row and the files' bytes stay,
+    /// which window sync owns.
+    fn retire_unpointed_snapshot_in_txn(
+        &self,
+        wtxn: &mut RwTxn<'_>,
+        artifact: &str,
+        hash: &CodebaseForkHash,
+    ) -> Result<()> {
+        for channel in [
+            ArtifactPointerChannel::Published,
+            ArtifactPointerChannel::Preview,
+        ] {
+            let key = ArtifactPointerRowKey {
+                channel,
+                artifact: artifact.to_owned(),
+            };
+            if ARTIFACT_POINTERS
+                .get(&self.store, wtxn, &key)?
+                .is_some_and(|row| {
+                    matches!(row.export, ArtifactExportRef::ForkHash(other) if other == *hash)
+                })
+            {
+                return Ok(());
+            }
+        }
+        if let Some(found) = self.resolve_artifact_snapshot_by_fork_in_txn(wtxn, artifact, hash)? {
+            crate::codebase::delete_codebase_snapshot_in_txn(
+                &self.store,
+                wtxn,
+                &found.code_artifact_id,
+            )?;
+        }
+        Ok(())
     }
 
     /// A code publication's manifest, checked against the fork hash it is
