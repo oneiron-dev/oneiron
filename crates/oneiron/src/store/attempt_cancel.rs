@@ -57,6 +57,9 @@ pub enum ForceCancelGrounds {
     Criticality,
     /// An accepted hard erase or authenticated restore erased the payload's source.
     ErasedPayload,
+    /// The owner's delegate ruled: an agent the owner lets force-cancel.
+    /// Appended last: unit-enum values are encoded by declaration index.
+    OwnerDelegate,
 }
 
 #[doc(hidden)]

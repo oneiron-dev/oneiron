@@ -11,7 +11,7 @@ mod repo_ref;
 mod residue;
 mod secret_projection;
 mod serve_lookup;
-mod setting_keys;
+pub(crate) mod setting_keys;
 mod snapshot;
 mod store;
 pub(crate) use self::store::checkpoint;

@@ -71,8 +71,11 @@ mod seat_quota;
 pub use seat_quota::{
     RunnerSeatQuota, runner_capture_seat_quota_id, runner_seat_quotas, seat_quota_id,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use seat_quota::{plant_spent_credit_for_test, topped_up_by_for_test};
 mod owner_doors;
 pub use owner_doors::{
+    RUNNER_SEAT_QUOTAS_VERB, RUNNER_SEAT_TOP_UP_VERB, RUNNER_WORK_RESUME_VERB,
     RunnerSeatCreditTopUpRequest, RunnerSeatQuotasRequest, RunnerSeatQuotasView,
     RunnerSeatTopUpEffect, RunnerSeatTopUpReceipt, RunnerWorkResumeChoice, RunnerWorkResumeRequest,
     RunnerWorkResumeView, SkippedRunnerSeatView,
@@ -97,7 +100,7 @@ mod record;
 mod repo_binding;
 mod seat_candidate;
 mod seat_secrets;
-mod setting_keys;
+pub(crate) mod setting_keys;
 mod staged_input;
 mod stream;
 mod validate;

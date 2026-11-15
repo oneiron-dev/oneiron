@@ -92,7 +92,8 @@ struct SeatQuotaRecord {
 }
 
 /// The owner's "topped up" (FIX 7451): who said it, the authentication it
-/// was said under, and when.
+/// was said under, and when. On a delegate's top-up the owner is the vault's
+/// owner, the decision the delegate's Grant, and `delegate` the agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct OwnerTopUp {
     /// The owner's actor id.
@@ -101,6 +102,10 @@ pub(super) struct OwnerTopUp {
     pub(super) decision: [u8; 16],
     /// The vault's time, in seconds.
     pub(super) at: u64,
+    /// The delegate agent that topped up, when one did. `None` on the
+    /// owner's own top-up, and on rows written before delegates.
+    #[serde(default)]
+    pub(super) delegate: Option<[u8; 16]>,
 }
 
 #[doc(hidden)]
@@ -234,6 +239,54 @@ pub(super) fn top_up_seat_quota_in_txn(
     };
     append_quota_in_txn(vault, wtxn, &id, &record, top_up.at)?;
     Ok(RunnerSeatTopUpEffect::Cleared)
+}
+
+/// Plants a spent-credit reading for `seat` as `attempt`'s capture, for
+/// top-up tests: the head a spent capture's routing would have appended.
+/// Compiled only under `--cfg oneiron_test_support` and reached through
+/// [`crate::test_doors::spent_seat`].
+///
+/// # Errors
+/// A record that does not encode; a store failure.
+#[cfg(oneiron_test_support)]
+pub(crate) fn plant_spent_credit_for_test(
+    vault: &Vault,
+    seat: &RunnerSeat,
+    attempt: [u8; 16],
+) -> ByoaResult<()> {
+    let id = seat_quota_id(seat)?;
+    let now = crate::unix_seconds_now();
+    let record = SeatQuotaRecord {
+        attempt,
+        spent: Some(SeatSpent {
+            kind: Some(crate::llm::SpentKind::Credit),
+            retry_after: None,
+            resets_at: Vec::new(),
+        }),
+        observed_at: now,
+        topped_up: None,
+    };
+    vault.with_write_txn_grouped(|wtxn| append_quota_in_txn(vault, wtxn, &id, &record, now))
+}
+
+/// Reads the head of `seat`'s quota record: its top-up's owner, decision,
+/// time and delegate, when one topped it up. For top-up tests. Compiled only
+/// under `--cfg oneiron_test_support` and reached through
+/// [`crate::test_doors::spent_seat`].
+///
+/// # Errors
+/// A store failure.
+#[cfg(oneiron_test_support)]
+pub(crate) fn topped_up_by_for_test(
+    vault: &Vault,
+    seat: &RunnerSeat,
+) -> ByoaResult<Option<([u8; 16], [u8; 16], u64, Option<[u8; 16]>)>> {
+    let id = seat_quota_id(seat)?;
+    let rtxn = vault.store.env.read_txn().map_err(Error::from)?;
+    let head: Option<SeatQuotaRecord> = head_record(vault, &rtxn, &id)?;
+    Ok(head
+        .and_then(|head| head.topped_up)
+        .map(|top_up| (top_up.owner, top_up.decision, top_up.at, top_up.delegate)))
 }
 
 /// Appends `record` as the head of the quota record `id`.

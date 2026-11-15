@@ -41,10 +41,12 @@ use super::create_validation::consult_body_in_txn;
 use super::presence_scan::{attempt_hex, superseded_attempt_ids};
 use super::terminal_state::{ConsultResultSummary, TaskTerminalDisposition, TaskTerminalRecord};
 use crate::agent_run_status::{AgentRunStatus, project_agent_run_status};
+use crate::attempt_queue::setting_keys::ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL;
 use crate::attempt_queue::{
     AttemptCancelState, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
     ForceAttemptCancel, ForceCancelAuthority, ForceCancelOutcome, validate_signal_cancel,
 };
+use crate::authority::{OwnerOrDelegate, owner_delegate_in_txn};
 use crate::code_run::JS_SAFE_INTEGER;
 use crate::consent::AuthenticatedOwner;
 use crate::context_board::cancel_task_in_txn;
@@ -330,6 +332,9 @@ impl From<TaskResultReceipt> for ConsultLandReply {
     }
 }
 
+/// The force verb a delegate's Grant lists: `vault.tasks.cancel.force`.
+pub const CANCEL_FORCE_VERB: &str = "vault.tasks.cancel.force";
+
 /// Stops, as the vault owner and unrefusably, every live branch of
 /// `input.task_ref`: in one write transaction the owner is rechecked, each
 /// branch no later try replaces and not yet terminal is force-cancelled on
@@ -346,12 +351,63 @@ pub fn cancel_force_as(
     owner: &AuthenticatedOwner,
     input: CancelForceRequest,
 ) -> MemoryResult<CancelForceReceipt> {
+    cancel_force_as_inner(vault, OwnerOrDelegate::Owner(owner), input)
+}
+
+/// Stops, as the owner's delegate and unrefusably, every live branch of
+/// `input.task_ref`: in one write transaction the agent's binding, its live
+/// Grant for `vault.tasks.cancel.force` and the setting
+/// `attempt_queue.agent_may_force_cancel` are checked, then each branch no
+/// later try replaces and not yet terminal is force-cancelled on the
+/// delegate's grounds, naming the agent, and the TASK records its
+/// cancellation once one really stopped. Each stopped branch's running step
+/// stops after commit.
+///
+/// # Errors
+///
+/// `FORBIDDEN` when the setting reads false at the agent or no live Grant
+/// lists the verb; `NOT_FOUND` for a ref that names nothing, or a TASK no
+/// attempt realizes; `BAD_REQUEST` for a ref that is not a TASK; a reason
+/// the cancel receipt refuses; storage errors.
+pub fn cancel_force_as_delegate(
+    vault: &Vault,
+    agent: EntityId,
+    input: CancelForceRequest,
+) -> MemoryResult<CancelForceReceipt> {
+    cancel_force_as_inner(vault, OwnerOrDelegate::Delegate(agent), input)
+}
+
+/// [`cancel_force_as`] and [`cancel_force_as_delegate`]: the admission
+/// differs, the force is one.
+fn cancel_force_as_inner(
+    vault: &Vault,
+    who: OwnerOrDelegate<'_>,
+    input: CancelForceRequest,
+) -> MemoryResult<CancelForceReceipt> {
     let CancelForceRequest { task_ref, reason } = input;
     let queue = AttemptQueue::new(vault);
     let now = vault.store.clock.now_recorded_at();
     let (records, stopped) = vault.try_with_write_txn_grouped(|wtxn| {
-        let actor = owner.revalidate_in_txn(vault, wtxn)?;
-        let authority = ForceCancelAuthority::owner(actor.to_hex().as_str())?;
+        let (actor, authority) = match who {
+            OwnerOrDelegate::Owner(owner) => {
+                let actor = owner.revalidate_in_txn(vault, wtxn)?;
+                let authority = ForceCancelAuthority::owner(actor.to_hex().as_str())?;
+                (actor, authority)
+            }
+            OwnerOrDelegate::Delegate(agent) => {
+                let delegate = owner_delegate_in_txn(
+                    vault,
+                    wtxn,
+                    agent,
+                    CANCEL_FORCE_VERB,
+                    &ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL,
+                    None,
+                )?;
+                let authority =
+                    ForceCancelAuthority::owner_delegate(delegate.agent.to_hex().as_str())?;
+                (delegate.agent, authority)
+            }
+        };
         // The actor and reason checks every cancel receipt takes, before a
         // row changes: a repeat that stops nothing refuses a bad reason too.
         validate_signal_cancel(authority.actor(), reason.as_deref())?;

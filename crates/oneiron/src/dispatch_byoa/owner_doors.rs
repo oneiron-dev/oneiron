@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::LlmBackend;
 use crate::Vault;
 use crate::attempt_queue::AttemptId;
+use crate::authority::owner_delegate_in_txn;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
@@ -31,6 +32,7 @@ use super::exhaust::{ByoaEgressLease, ByoaEgressPort};
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{RunnerSeat, RunnerSeatPolicy, SkippedRunnerSeat};
 use super::seat_quota::{OwnerTopUp, seat_quota_in_txn, top_up_seat_quota_in_txn};
+use super::setting_keys::DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE;
 use super::work_binding::{RunnerSeatChoice, RunnerWorkBindingId};
 use super::work_resume::{ResumeRunnerWork, RunnerWorkResume};
 
@@ -182,6 +184,15 @@ impl ByoaEgressPort for ResumeEgress {
     }
 }
 
+/// The seat-quotas verb a delegate's Grant lists: `vault.runners.seats.quotas`.
+pub const RUNNER_SEAT_QUOTAS_VERB: &str = "vault.runners.seats.quotas";
+
+/// The seat top-up verb a delegate's Grant lists: `vault.runners.seats.top_up`.
+pub const RUNNER_SEAT_TOP_UP_VERB: &str = "vault.runners.seats.top_up";
+
+/// The work-resume verb a delegate's Grant lists: `vault.runners.seats.resume`.
+pub const RUNNER_WORK_RESUME_VERB: &str = "vault.runners.seats.resume";
+
 impl Vault {
     /// The named seats' quotas as their captures last recorded them, read
     /// in one snapshot with the owner's proof (FIX 7451).
@@ -196,12 +207,48 @@ impl Vault {
     ) -> MemoryResult<RunnerSeatQuotasView> {
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         owner.revalidate_in_txn(self, &rtxn)?;
+        self.seat_quotas_in(&rtxn, input)
+    }
+
+    /// The named seats' quotas as their captures last recorded them, read in
+    /// one snapshot as the owner's delegate: the agent's binding, its live
+    /// Grant for `vault.runners.seats.quotas` and the setting
+    /// `dispatch_byoa.runner_seats.agent_may_manage` at item `quotas` are
+    /// checked in that snapshot.
+    ///
+    /// # Errors
+    /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
+    /// lists the verb; a record that does not decode; a store failure.
+    pub fn runner_seat_quotas_as_delegate(
+        &self,
+        agent: EntityId,
+        input: &RunnerSeatQuotasRequest,
+    ) -> MemoryResult<RunnerSeatQuotasView> {
+        let rtxn = self.store.env.read_txn().map_err(Error::from)?;
+        owner_delegate_in_txn(
+            self,
+            &rtxn,
+            agent,
+            RUNNER_SEAT_QUOTAS_VERB,
+            &DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE,
+            Some("quotas"),
+        )?;
+        self.seat_quotas_in(&rtxn, input)
+    }
+
+    /// The quotas [`Self::runner_seat_quotas_as_owner`] and
+    /// [`Self::runner_seat_quotas_as_delegate`] read, once admitted.
+    fn seat_quotas_in(
+        &self,
+        rtxn: &heed::RoTxn<'_>,
+        input: &RunnerSeatQuotasRequest,
+    ) -> MemoryResult<RunnerSeatQuotasView> {
         let now = crate::unix_seconds_now();
         let quotas = input
             .seats
             .iter()
             .enumerate()
-            .map(|(index, seat)| seat_quota_in_txn(self, &rtxn, index, seat, now))
+            .map(|(index, seat)| seat_quota_in_txn(self, rtxn, index, seat, now))
             .collect::<ByoaResult<Vec<_>>>()
             .map_err(refusal)?;
         Ok(RunnerSeatQuotasView { quotas })
@@ -230,12 +277,72 @@ impl Vault {
                 owner: *actor.as_bytes(),
                 decision: owner.decision_id().as_bytes(),
                 at: now,
+                delegate: None,
             };
-            let effect = top_up_seat_quota_in_txn(self, wtxn, &input.seat, expected, top_up)
-                .map_err(refusal)?;
-            let quota = seat_quota_in_txn(self, wtxn, 0, &input.seat, now).map_err(refusal)?;
-            Ok(RunnerSeatTopUpReceipt { effect, quota })
+            self.top_up_seat_in(wtxn, &input.seat, expected, top_up, now)
         })
+    }
+
+    /// The delegate's word that `input.seat`'s spent credit is topped up, in
+    /// one writer that checks the agent's binding, its live Grant for
+    /// `vault.runners.seats.top_up` and the setting
+    /// `dispatch_byoa.runner_seats.agent_may_manage` at item `top_up`: it
+    /// clears the seat's last reading only while that is the named capture
+    /// and a credit spend, keeping the capture and adding the vault's owner,
+    /// the delegate's Grant and the agent. A second top-up, a stale one and
+    /// a spend other than credit change nothing and say so.
+    ///
+    /// # Errors
+    /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
+    /// lists the verb; a capture id that is not an id; a record that does not
+    /// encode or decode; a store failure.
+    pub fn top_up_runner_seat_as_delegate(
+        &self,
+        agent: EntityId,
+        input: &RunnerSeatCreditTopUpRequest,
+    ) -> MemoryResult<RunnerSeatTopUpReceipt> {
+        let expected = *EntityId::from_hex(&input.expected_spent_attempt)?.as_bytes();
+        let now = crate::unix_seconds_now();
+        self.try_with_write_txn_grouped(|wtxn| -> MemoryResult<RunnerSeatTopUpReceipt> {
+            let delegate = owner_delegate_in_txn(
+                self,
+                wtxn,
+                agent,
+                RUNNER_SEAT_TOP_UP_VERB,
+                &DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE,
+                Some("top_up"),
+            )?;
+            // The standing above names a live owner, so the vault has one.
+            let owner = crate::policy_model::owners_in_txn(self, wtxn)?
+                .first()
+                .copied()
+                .ok_or(Error::InvariantViolation(
+                    "a standing delegate names a live owner",
+                ))?;
+            let top_up = OwnerTopUp {
+                owner: *owner.as_bytes(),
+                decision: *delegate.grant.as_bytes(),
+                at: now,
+                delegate: Some(*delegate.agent.as_bytes()),
+            };
+            self.top_up_seat_in(wtxn, &input.seat, expected, top_up, now)
+        })
+    }
+
+    /// The top-up [`Self::top_up_runner_seat_as_owner`] and
+    /// [`Self::top_up_runner_seat_as_delegate`] write, once admitted.
+    fn top_up_seat_in(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        seat: &RunnerSeat,
+        expected: [u8; 16],
+        top_up: OwnerTopUp,
+        now: u64,
+    ) -> MemoryResult<RunnerSeatTopUpReceipt> {
+        let effect =
+            top_up_seat_quota_in_txn(self, wtxn, seat, expected, top_up).map_err(refusal)?;
+        let quota = seat_quota_in_txn(self, wtxn, 0, seat, now).map_err(refusal)?;
+        Ok(RunnerSeatTopUpReceipt { effect, quota })
     }
 
     /// The owner's resume of a bound runner work a spend parked (FIX 11067),
@@ -256,21 +363,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         input: &RunnerWorkResumeRequest,
     ) -> MemoryResult<RunnerWorkResumeView> {
-        let binding =
-            RunnerWorkBindingId::from_bytes(*EntityId::from_hex(&input.binding)?.as_bytes())
-                .map_err(refusal)?;
-        let expected_attempt =
-            AttemptId::from_bytes(EntityId::from_hex(&input.expected_attempt)?.as_bytes())?;
-        let choice = input.choice.map(|choice| match choice {
-            RunnerWorkResumeChoice::Seat(index) => RunnerSeatChoice::Seat(index),
-            RunnerWorkResumeChoice::NextSeat { from } => RunnerSeatChoice::NextSeat { from },
-        });
-        let request = ResumeRunnerWork {
-            binding,
-            expected_attempt,
-            choice,
-            now: crate::unix_seconds_now(),
-        };
+        let request = resume_request(input)?;
         let dispatcher = ByoaDispatcher::new(self, ResumeEndpoints, ResumeEgress);
         let registry = ProviderAdapterRegistry::standard();
         let outcome = dispatcher
@@ -278,11 +371,55 @@ impl Vault {
             .map_err(refusal)?;
         Ok(RunnerWorkResumeView::of(&outcome))
     }
+
+    /// The delegate's resume of a bound runner work a spend parked, over the
+    /// plain CLI runners: the agent's binding, its live Grant for
+    /// `vault.runners.seats.resume` and the setting
+    /// `dispatch_byoa.runner_seats.agent_may_manage` at item `resume` are
+    /// checked in the writer before the work is read, then the work resumes
+    /// as the owner's does. A work that moved on, is running, or ended
+    /// without a spend is answered as it stands, with no write.
+    ///
+    /// # Errors
+    /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
+    /// lists the verb; a binding or attempt id that is not an id; an invalid
+    /// policy; every refusal a dispatch and a checkout claim have; a store
+    /// failure.
+    pub fn resume_runner_work_as_delegate(
+        &self,
+        agent: EntityId,
+        input: &RunnerWorkResumeRequest,
+    ) -> MemoryResult<RunnerWorkResumeView> {
+        let request = resume_request(input)?;
+        let dispatcher = ByoaDispatcher::new(self, ResumeEndpoints, ResumeEgress);
+        let registry = ProviderAdapterRegistry::standard();
+        let outcome =
+            dispatcher.resume_runner_work_as_delegate(agent, &registry, &input.policy, request)?;
+        Ok(RunnerWorkResumeView::of(&outcome))
+    }
+}
+
+/// The resume [`ResumeRunnerWork`] both resume doors build from their input.
+fn resume_request(input: &RunnerWorkResumeRequest) -> MemoryResult<ResumeRunnerWork> {
+    let binding = RunnerWorkBindingId::from_bytes(*EntityId::from_hex(&input.binding)?.as_bytes())
+        .map_err(refusal)?;
+    let expected_attempt =
+        AttemptId::from_bytes(EntityId::from_hex(&input.expected_attempt)?.as_bytes())?;
+    let choice = input.choice.map(|choice| match choice {
+        RunnerWorkResumeChoice::Seat(index) => RunnerSeatChoice::Seat(index),
+        RunnerWorkResumeChoice::NextSeat { from } => RunnerSeatChoice::NextSeat { from },
+    });
+    Ok(ResumeRunnerWork {
+        binding,
+        expected_attempt,
+        choice,
+        now: crate::unix_seconds_now(),
+    })
 }
 
 /// A seat record door's refusal as a memory door's: a store failure keeps
 /// its own code.
-fn refusal(error: ByoaError) -> MemoryError {
+pub(super) fn refusal(error: ByoaError) -> MemoryError {
     match error {
         ByoaError::Store(error) => MemoryError::from(error),
         other => MemoryError::bad_request(other.to_string()),

@@ -15,6 +15,7 @@ use std::time::Instant;
 
 use oneiron::agent_dispatch::{AgentDispatcher, PlannerDecisions};
 use oneiron::attempt_queue::AttemptId;
+use oneiron::authority::OwnerOrDelegate;
 use oneiron::code_run::HostPlannerBinding;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
@@ -28,8 +29,8 @@ use oneiron::memory::{
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::task_type::PlacementDecisions;
 use oneiron::task_verb::run_doors::{
-    CancelForceReceipt, CancelForceRequest, ConsultInspection, ConsultReadRequest,
-    ConsultSummaryView, RunBranchesRequest, RunBranchesView,
+    CANCEL_FORCE_VERB, CancelForceReceipt, CancelForceRequest, ConsultInspection,
+    ConsultReadRequest, ConsultSummaryView, RunBranchesRequest, RunBranchesView,
 };
 use oneiron::task_verb::sdk::EmptyRequest;
 use oneiron::team::PlannedSpawnHost;
@@ -40,6 +41,7 @@ use oneiron::team::doors::{
 };
 
 use super::host_doors::support::{MaybeListed, owner_proof};
+use super::legal_hold_doors::as_owner_or_delegate_naming;
 use super::shared_act_doors::as_person_naming;
 use crate::auth::CoreAuth;
 use crate::server::{SyncServer, seated_planner};
@@ -271,23 +273,34 @@ fn note_no_executor(server: &SyncServer, observation: &mut PlannedSpawnObservati
     observation.issues.extend(issues);
 }
 
-/// A force names the TASK whose branches it stopped.
+/// A force names the TASK whose branches it stopped. The owner forces as
+/// before; the owner's delegate forces on the setting
+/// `attempt_queue.agent_may_force_cancel`, and the receipt names the agent.
 pub(crate) async fn vault_tasks_cancel_force(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CancelForceRequest,
 ) -> MaybeListed<CancelForceReceipt> {
-    const VERB: &str = "vault.tasks.cancel.force";
-    as_person_naming(
+    let (answer, rows) = as_owner_or_delegate_naming(
         server,
-        VERB,
-        owner_proof(auth, server, VERB),
-        move |server, owner| {
-            oneiron::task_verb::run_doors::cancel_force_as(server.vault(), &owner, input)
+        auth,
+        CANCEL_FORCE_VERB,
+        move |server, who| match who {
+            OwnerOrDelegate::Owner(owner) => {
+                oneiron::task_verb::run_doors::cancel_force_as(server.vault(), owner, input)
+            }
+            OwnerOrDelegate::Delegate(agent) => {
+                oneiron::task_verb::run_doors::cancel_force_as_delegate(
+                    server.vault(),
+                    agent,
+                    input,
+                )
+            }
         },
-        |receipt| Some(vec![receipt.task_ref]),
+        |receipt| vec![receipt.task_ref],
     )
-    .await
+    .await;
+    (answer, Some(rows))
 }
 
 /// A branch read names the TASK whose branches it read. The owner reads

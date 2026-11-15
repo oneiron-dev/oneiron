@@ -520,7 +520,9 @@ pub(in crate::attempt_queue) fn validate_force_authority(
     authority: &ForceCancelAuthority,
 ) -> Result<()> {
     match authority.grounds() {
-        ForceCancelGrounds::Owner => validate_cancel_actor(authority.actor()),
+        ForceCancelGrounds::Owner | ForceCancelGrounds::OwnerDelegate => {
+            validate_cancel_actor(authority.actor())
+        }
         ForceCancelGrounds::LeaseExpiry
         | ForceCancelGrounds::Criticality
         | ForceCancelGrounds::ErasedPayload => validate_intervention_actor(authority.actor()),

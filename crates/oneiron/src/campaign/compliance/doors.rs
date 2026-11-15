@@ -1,5 +1,6 @@
 //! Caller-bound doors over the existing compliance classifier and stamp writer.
 
+use crate::authority::owner_delegate_in_txn;
 use crate::consent::AuthenticatedOwner;
 use crate::gate::{
     PolicyApprovalCeiling, agent_definition_ceiling_for_actor, resolve_policy_manifest,
@@ -14,10 +15,19 @@ use super::amend::{
     stamp_compliance_amendment_in_txn,
 };
 use super::pack_store::{active_compliance_pack_in_txn, invalid_pack};
+use super::setting_keys::CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE;
 use super::*;
 
 const RECEIPTS: SideTable<[u8; 16], ComplianceReceipt, Named> =
     SideTable::new(&side_table::CAMPAIGN_COMPLIANCE_RECEIPT);
+
+/// The compliance-install verb a delegate's Grant lists:
+/// `vault.campaign.compliance.install`.
+pub const COMPLIANCE_INSTALL_VERB: &str = "vault.campaign.compliance.install";
+
+/// The compliance-reject verb a delegate's Grant lists:
+/// `vault.campaign.compliance.reject`.
+pub const COMPLIANCE_REJECT_VERB: &str = "vault.campaign.compliance.reject";
 
 impl Memory<'_> {
     /// Installs cited rows through the amendment path, not pack-file activation.
@@ -29,6 +39,27 @@ impl Memory<'_> {
     ) -> MemoryResult<ComplianceReceipt> {
         self.with_verified_actor_write_txn(|txn| {
             require_owner(self, owner, txn)?;
+            amend_in_txn(self, txn, input, ComplianceOperation::Install, true)
+        })
+    }
+
+    /// Installs cited rows as the owner's delegate: the caller is an agent,
+    /// and its binding, its live Grant for
+    /// `vault.campaign.compliance.install` and the setting
+    /// `campaign.compliance.agent_may_decide` are checked in the writer. A
+    /// loosening among them still waits for the owner's exact-hash approval.
+    /// The receipt names the agent.
+    ///
+    /// # Errors
+    /// `FORBIDDEN` when the caller is no agent, the setting reads false at
+    /// it, or no live Grant lists the verb; a pack that does not amend the
+    /// active one; storage errors.
+    pub fn compliance_install_as_delegate(
+        &self,
+        input: &ComplianceAmendRequest,
+    ) -> MemoryResult<ComplianceReceipt> {
+        self.with_verified_actor_write_txn(|txn| {
+            require_delegate(self, txn, COMPLIANCE_INSTALL_VERB)?;
             amend_in_txn(self, txn, input, ComplianceOperation::Install, true)
         })
     }
@@ -89,6 +120,45 @@ impl Memory<'_> {
                 proposal_hash: receipt.proposal_hash.clone(),
                 recorded_at: receipt.recorded_at,
             });
+            save_receipt(self, txn, receipt)
+        })
+    }
+
+    /// Rejects the exact pending proposal as the owner's delegate: the
+    /// caller is an agent, and its binding, its live Grant for
+    /// `vault.campaign.compliance.reject` and the setting
+    /// `campaign.compliance.agent_may_decide` are checked in the writer. No
+    /// active restriction changes. The receipt names the agent.
+    ///
+    /// # Errors
+    /// `FORBIDDEN` when the caller is no agent, the setting reads false at
+    /// it, or no live Grant lists the verb; a proposal that is not the
+    /// pending one; storage errors.
+    pub fn compliance_reject_as_delegate(
+        &self,
+        input: &ComplianceApprovalRequest,
+    ) -> MemoryResult<ComplianceReceipt> {
+        self.with_verified_actor_write_txn(|txn| {
+            require_delegate(self, txn, COMPLIANCE_REJECT_VERB)?;
+            let current = prior_pack(self, txn, input.prior_version)?;
+            let pack = reject_compliance_amendment_in_txn(
+                &self.vault().store,
+                txn,
+                parse_hash(&input.proposal_hash)?,
+            )?;
+            let class = if pack.pack_version > current.pack_version {
+                Some(classify_compliance_amendment(&current, &pack)?)
+            } else {
+                None
+            };
+            let receipt = new_receipt(
+                self,
+                &current,
+                &pack,
+                ComplianceOperation::Reject,
+                ComplianceDisposition::Rejected,
+                class,
+            )?;
             save_receipt(self, txn, receipt)
         })
     }
@@ -245,6 +315,28 @@ fn require_owner(
             &[],
         ));
     }
+    Ok(())
+}
+
+/// The delegate twin of [`require_owner`]: the caller is an agent, and its
+/// binding, its live Grant for `verb` and the setting
+/// `campaign.compliance.agent_may_decide` stand in `txn`.
+fn require_delegate(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, verb: &str) -> MemoryResult<()> {
+    if memory.actor_class() != EdgeActorClass::Agent {
+        return Err(MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            format!("{verb} is the vault owner's"),
+            &["Present the owner's own verified, unattenuated credential."],
+        ));
+    }
+    owner_delegate_in_txn(
+        memory.vault(),
+        txn,
+        memory.actor(),
+        verb,
+        &CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE,
+        None,
+    )?;
     Ok(())
 }
 

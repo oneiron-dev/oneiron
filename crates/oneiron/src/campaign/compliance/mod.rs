@@ -41,7 +41,7 @@ mod evaluate;
 mod hydrate;
 mod pack_store;
 mod rules;
-mod setting_keys;
+pub(crate) mod setting_keys;
 
 pub use self::amend::{
     ComplianceAmendmentClass, ComplianceAmendmentOutcome, classify_compliance_amendment,
@@ -54,6 +54,7 @@ pub use self::contracts::{
     ComplianceOwnerStamp, CompliancePendingProposal, ComplianceReceipt, ComplianceResult,
     ComplianceResultRequest, ComplianceRowVerification, ComplianceVerifyRequest,
 };
+pub use self::doors::{COMPLIANCE_INSTALL_VERB, COMPLIANCE_REJECT_VERB};
 pub use self::evaluate::{
     ComplianceBlockReason, ComplianceVerdict, DispatchComplianceFacts, HydratedJpPublicationFacts,
     HydratedListProvenance, evaluate_dispatch_compliance,

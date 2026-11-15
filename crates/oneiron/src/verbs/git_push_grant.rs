@@ -22,9 +22,10 @@ use super::revision_shape;
 use crate::Vault;
 use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
 use crate::federation::git_push::{GIT_PUSH_REVOKE_COMMAND, GitPushGrantStanding};
 use crate::federation::{GitPushBounds, GitPushRepo};
-use crate::memory::{MemoryError, MemoryResult};
+use crate::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use crate::store::code_repo_registration::CodeRepoRegistration;
 
 #[doc(hidden)]
@@ -76,6 +77,9 @@ pub fn revoke_git_push_grant_as(
     })
 }
 
+/// The anchor-bind verb a delegate's Grant lists: `vault.repo.anchor.bind`.
+pub const REPO_ANCHOR_BIND_VERB: &str = "vault.repo.anchor.bind";
+
 /// `vault.repo.anchor.bind` under the owner's proof: binds the served repo,
 /// or registers the external local repository, as its CODE anchor in the
 /// PROJECT he names (FIX 4299). A repeat changes nothing. The repo's
@@ -123,6 +127,70 @@ pub fn bind_repo_anchor_as(
         registration: bound.registration.as_ref().map(registration_view),
         changed: bound.changed,
     })
+}
+
+/// `vault.repo.anchor.bind` with a `local_folder` as the owner's delegate:
+/// the agent's binding, its live Grant for `vault.repo.anchor.bind` and the
+/// setting `codebase.registration.agent_may_register` are checked in the
+/// registration writer, and the agent must read the PROJECT, then the local
+/// repository registers as the owner's does. The served-repo arm never
+/// admits a delegate.
+///
+/// # Errors
+/// `FORBIDDEN` when the setting reads false at the agent, no live Grant
+/// lists the verb, or a served repo is named; a request that names both or
+/// neither of `repo` and `local_folder`; `InvalidConfig` and store failures
+/// of the registration writer.
+pub fn bind_repo_anchor_as_delegate(
+    vault: &Vault,
+    agent: EntityId,
+    input: RepoAnchorBindInput,
+) -> MemoryResult<RepoAnchorBindOutput> {
+    let editable = input.editable.as_deref();
+    let bound = match (&input.repo, &input.local_folder, input.anchor) {
+        (Some(_), None, None) => {
+            return Err(served_repo_delegate_refusal());
+        }
+        (None, Some(folder), anchor) => vault.register_local_repository_as_delegate(
+            agent,
+            Path::new(folder),
+            input.project,
+            anchor,
+            editable,
+        )?,
+        _ => {
+            return Err(MemoryError::bad_request_with(
+                "name exactly one of repo and local_folder; anchor names a local registration",
+                &[
+                    "Name a served repo by repo, or an external local Git repository by local_folder.",
+                ],
+            ));
+        }
+    };
+    Ok(RepoAnchorBindOutput {
+        repo: input.repo,
+        anchor: GitPushRepo {
+            repo: bound.repo,
+            project: bound.project,
+        },
+        portable: bound.portable.to_hex(),
+        registration: bound.registration.as_ref().map(registration_view),
+        changed: bound.changed,
+    })
+}
+
+/// The served-repo arm's refusal of a delegate: the owner's refusal, naming
+/// that only a local folder admits one. No setting opens this arm, so none
+/// is named.
+fn served_repo_delegate_refusal() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!("{REPO_ANCHOR_BIND_VERB} is the vault owner's"),
+        &[
+            "Present the owner's own verified, unattenuated credential.",
+            "Only a local_folder registration admits the owner's delegate; a served repo stays the owner's.",
+        ],
+    )
 }
 
 fn registration_view(registration: &CodeRepoRegistration) -> RepoRegistrationView {

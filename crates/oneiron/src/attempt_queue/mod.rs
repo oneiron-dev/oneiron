@@ -41,7 +41,7 @@ mod ports;
 mod read_set;
 mod result;
 pub mod run_signal;
-mod setting_keys;
+pub(crate) mod setting_keys;
 mod settlement;
 pub mod skill_edit_cycle;
 pub mod source_rows;

@@ -7,11 +7,17 @@
 //! a machine holds and decided.
 
 use super::authority::TurnProgramAuthority;
+use super::resume::ProgramHold;
 use super::types::{
     LandedTurnRef, OwedWakeHold, ProgramRecipePin, ProgramTrigger, TurnProgramArming,
+    TurnProgramAttemptStamp,
 };
-use super::{ADMISSION, ARM, DISARMED, WAKE};
+use super::{ADMISSION, ARM, ATTEMPT, DISARMED, WAKE};
 use crate::authority::{InvocationSlipBinding, VerifiedSlip};
+use crate::dreamer_runner::{
+    DreamerRunnerStore, EnqueueDreamerAttempt, EnqueueDreamerAttemptOutcome,
+};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::{Error, Result};
 use crate::{EdgeActorClass, EntityId, Vault};
 
@@ -271,6 +277,52 @@ pub(crate) fn disarm_kept_here(
 ) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     DISARMED.contains(vault, &txn, &(actor, registration))
+}
+
+/// Plants a Diverged-held turn-program attempt for release tests: a Dreamer
+/// attempt stamped as `actor`'s program try (class `actor_class`), held by
+/// the program runtime. Answers the attempt's hex, the hold's exact reason
+/// and its park time, as a release request names them. The planted try has
+/// no admission row, run or checkpoint: only what a Stop reads.
+pub(crate) fn plant_held_program_attempt(
+    vault: &Vault,
+    actor: EntityId,
+    actor_class: EdgeActorClass,
+) -> Result<(String, String, u64)> {
+    let now = vault.now_recorded_at();
+    let store = DreamerRunnerStore::new(vault);
+    let status = match store.enqueue(EnqueueDreamerAttempt {
+        attempt_type: "test.held_program".to_owned(),
+        input: rmpv::Value::Nil,
+        parent_attempt: None,
+        dedupe_key: None,
+        run_id: None,
+        now,
+    })? {
+        EnqueueDreamerAttemptOutcome::Enqueued(status) => status,
+        EnqueueDreamerAttemptOutcome::Existing(status) => status,
+    };
+    let attempt = status.attempt.id;
+    vault.with_write_txn_grouped(|txn| {
+        ATTEMPT.put(
+            vault,
+            txn,
+            &attempt,
+            &TurnProgramAttemptStamp {
+                attempt_id: *attempt.as_bytes(),
+                admission: [0; 32],
+                actor,
+                actor_class: actor_class as u8,
+                receipt_id: [0; 16],
+            },
+        )
+    })?;
+    vault.hold_turn_program(attempt, ProgramHold::Diverged, now)?;
+    Ok((
+        bytes_to_hex_lower(attempt.as_bytes()),
+        ProgramHold::Diverged.reason().to_owned(),
+        now,
+    ))
 }
 
 /// Encodes the mirror's externally tagged `ArmingRow::Armed` envelope directly,

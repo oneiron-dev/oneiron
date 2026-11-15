@@ -111,6 +111,26 @@ pub(super) fn facade_owner_or(
     })
 }
 
+/// The owner doors' common refusal: `verb` is the vault owner's. The
+/// delegate doors refuse exactly this, so one constructor names it.
+pub(super) fn owner_refusal(verb: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!("{verb} is the vault owner's"),
+        &["Present the owner's own verified, unattenuated credential."],
+    )
+}
+
+/// A delegate door's refusal of a credential that no longer stands: the
+/// slip died or was revoked after it was issued.
+pub(super) fn credential_dead() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        "the credential is no longer live",
+        &["Present a live credential, then call again."],
+    )
+}
+
 /// [`facade_owner_or`] with the owner doors' common refusal: `verb` is the
 /// vault owner's.
 pub(super) fn facade_owner(
@@ -118,13 +138,7 @@ pub(super) fn facade_owner(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    facade_owner_or(server, auth, || {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is the vault owner's"),
-            &["Present the owner's own verified, unattenuated credential."],
-        )
-    })
+    facade_owner_or(server, auth, || owner_refusal(verb))
 }
 
 /// The credential's own actor for a facade door, as the facade binds a

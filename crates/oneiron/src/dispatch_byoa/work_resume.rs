@@ -19,14 +19,19 @@
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue};
+use crate::authority::owner_delegate_in_txn;
 use crate::consent::AuthenticatedOwner;
+use crate::entity_id::EntityId;
+use crate::memory::MemoryResult;
 
 use super::connector::{ByoaDispatchOutcome, ByoaDispatchStatus};
 use super::dispatcher::{ByoEndpointBackendFactory, ByoaDispatcher};
 use super::error::ByoaResult;
 use super::exhaust::{ByoaEgressPort, ByoaTerminalReceipt, decode_byoa_record};
+use super::owner_doors::{RUNNER_WORK_RESUME_VERB, refusal};
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{RunnerSeatPolicy, SeatRoute, SeatSpent, SkippedRunnerSeat};
+use super::setting_keys::DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE;
 use super::work_binding::{
     RunnerSeatChoice, RunnerWorkBindingId, head_hop, remap_seat, seat_index,
 };
@@ -200,6 +205,43 @@ where
         vault.try_with_write_txn_grouped(|wtxn| -> ByoaResult<RunnerWorkResume> {
             owner.revalidate_in_txn(vault, wtxn)?;
             self.resume_runner_work_in_txn(wtxn, registry, policy, request)
+        })
+    }
+
+    /// [`Self::resume_runner_work_in_txn`] as the owner's delegate, in its
+    /// own writer: the agent's binding, its live Grant for
+    /// `vault.runners.seats.resume` and the setting
+    /// `dispatch_byoa.runner_seats.agent_may_manage` at item `resume` are
+    /// checked in that writer before the work is read.
+    ///
+    /// The admission refusal is the facade's `FORBIDDEN`, so this door
+    /// answers [`MemoryResult`]; a resume the work refuses maps as the
+    /// owner's does.
+    ///
+    /// # Errors
+    ///
+    /// `FORBIDDEN` when the setting reads false at the agent or no live Grant
+    /// lists the verb, and every refusal [`Self::resume_runner_work_in_txn`]
+    /// has, without durable writes.
+    pub fn resume_runner_work_as_delegate(
+        &self,
+        agent: EntityId,
+        registry: &ProviderAdapterRegistry,
+        policy: &RunnerSeatPolicy,
+        request: ResumeRunnerWork,
+    ) -> MemoryResult<RunnerWorkResume> {
+        let vault = self.vault();
+        vault.try_with_write_txn_grouped(|wtxn| -> MemoryResult<RunnerWorkResume> {
+            owner_delegate_in_txn(
+                vault,
+                wtxn,
+                agent,
+                RUNNER_WORK_RESUME_VERB,
+                &DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE,
+                Some("resume"),
+            )?;
+            self.resume_runner_work_in_txn(wtxn, registry, policy, request)
+                .map_err(refusal)
         })
     }
 }

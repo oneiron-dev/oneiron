@@ -10,14 +10,14 @@
 //! install (`host_door_surface`). Each lists the grant row it wrote.
 use std::sync::Arc;
 
-use oneiron::authority::ActSurface;
+use oneiron::authority::{ActSurface, OwnerOrDelegate};
 use oneiron::task_verb::sdk::{
     self, GitPushGrantMintInput, GitPushGrantMintOutput, GitPushGrantRevokeInput,
     GitPushGrantRevokeOutput, RepoAnchorBindInput, RepoAnchorBindOutput,
 };
 
 use super::host_doors::support::Listed;
-use super::legal_hold_doors::as_owner_naming;
+use super::legal_hold_doors::{as_owner_naming, as_owner_or_delegate_naming};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -58,17 +58,25 @@ pub(crate) async fn vault_repo_git_push_revoke(
 }
 
 /// `vault.repo.anchor.bind`: the owner binds a served repo to its CODE
-/// anchor in a PROJECT, listing the anchor and the PROJECT.
+/// anchor in a PROJECT, listing the anchor and the PROJECT. The owner's
+/// delegate binds a `local_folder` on the setting
+/// `codebase.registration.agent_may_register`; a served repo stays the
+/// owner's.
 pub(crate) async fn vault_repo_anchor_bind(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: RepoAnchorBindInput,
 ) -> Listed<RepoAnchorBindOutput> {
-    as_owner_naming(
+    as_owner_or_delegate_naming(
         server,
         auth,
-        "vault.repo.anchor.bind",
-        move |server, owner| sdk::bind_repo_anchor_as(server.vault(), owner, input),
+        sdk::REPO_ANCHOR_BIND_VERB,
+        move |server, who| match who {
+            OwnerOrDelegate::Owner(owner) => sdk::bind_repo_anchor_as(server.vault(), owner, input),
+            OwnerOrDelegate::Delegate(agent) => {
+                sdk::bind_repo_anchor_as_delegate(server.vault(), agent, input)
+            }
+        },
         |bound| vec![bound.anchor.repo, bound.anchor.project],
     )
     .await

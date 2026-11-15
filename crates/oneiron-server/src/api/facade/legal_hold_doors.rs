@@ -8,7 +8,7 @@
 //! transaction. Oneiron's host-order doors are never routed here.
 use std::sync::Arc;
 
-use oneiron::EntityId;
+use oneiron::authority::OwnerOrDelegate;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
 use oneiron::memory::{MemoryResult, ProducerRows};
@@ -17,6 +17,7 @@ use oneiron::task_verb::sdk::{
     LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest,
     LegalHoldWithdrawEraseRequest,
 };
+use oneiron::{EdgeActorClass, EntityId};
 
 use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, off_runtime_listing, refused};
@@ -65,6 +66,60 @@ pub(super) async fn as_owner_listing<T: Send + 'static>(
     };
     let server = Arc::clone(server);
     off_runtime_listing(verb, move |producers| act(&*server, &owner, producers)).await
+}
+
+/// `act` off the runtime, as the vault owner or as the owner's delegate:
+/// an owner-grade credential takes today's owner proof path, unchanged; an
+/// agent credential takes the delegate path once the host preflight, its
+/// actor binding and its credential's liveness pass. Any other caller gets
+/// today's owner refusal. The engine admits the delegate in the act's own
+/// transaction; members are never let in.
+pub(super) async fn as_owner_or_delegate<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, OwnerOrDelegate<'_>) -> MemoryResult<T> + Send + 'static,
+) -> MemoryResult<T> {
+    if auth.is_owner_grade() {
+        let owner = owner_proof(server, auth, verb)?;
+        let server = Arc::clone(server);
+        return clock_ingress::run_blocking(move || act(&*server, OwnerOrDelegate::Owner(&owner)))
+            .await
+            .map_err(|_| internal(verb))?;
+    }
+    if auth.actor_class() == Some("agent") {
+        super::owner_binding::host_preflight(server, auth)?;
+        let (agent, class) = super::facade_actor(server, auth)
+            .map_err(|_| super::owner_binding::owner_refusal(verb))?;
+        if class != EdgeActorClass::Agent {
+            return Err(super::owner_binding::owner_refusal(verb));
+        }
+        if !auth.credential_is_live(server.vault()) {
+            return Err(super::owner_binding::credential_dead());
+        }
+        let server = Arc::clone(server);
+        return clock_ingress::run_blocking(move || {
+            act(&*server, OwnerOrDelegate::Delegate(agent))
+        })
+        .await
+        .map_err(|_| internal(verb))?;
+    }
+    Err(super::owner_binding::owner_refusal(verb))
+}
+
+/// [`as_owner_or_delegate`] for a door whose answer derives from no row but
+/// those it names (`host_door_lists`): beside its answer come the rows
+/// `named` reads off it, as the owner door names them; a refusal lists none.
+pub(super) async fn as_owner_or_delegate_naming<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, OwnerOrDelegate<'_>) -> MemoryResult<T> + Send + 'static,
+    named: impl FnOnce(&T) -> Vec<EntityId>,
+) -> Listed<T> {
+    let answer = as_owner_or_delegate(server, auth, verb, act).await;
+    let rows = answer.as_ref().map_or_else(|_| Vec::new(), named);
+    (answer, rows)
 }
 
 /// [`as_owner`] for a door whose answer derives from no row but those it

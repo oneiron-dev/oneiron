@@ -19,14 +19,17 @@
 //! on its own, and no other park is touched.
 
 use crate::Vault;
+use crate::attempt_queue::setting_keys::ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL;
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, ForceAttemptCancel,
     ForceCancelAuthority, ForceCancelOutcome, InterveneAttempt,
 };
+use crate::authority::owner_delegate_in_txn;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::memory::{MemoryError, MemoryResult};
 
 use super::super::store::PARKED;
 use super::authority::TurnProgramBound;
@@ -51,6 +54,10 @@ struct Released {
     /// A resume queued the try: the deadline lane arms it.
     resumed: bool,
 }
+
+/// The program-hold release verb a delegate's Grant lists:
+/// `vault.runs.program_hold.release`.
+pub const PROGRAM_HOLD_RELEASE_VERB: &str = "vault.runs.program_hold.release";
 
 /// Releases one held turn program's try as the vault's authenticated owner
 /// (FIX 5880): the owner is revalidated in the writer, the try must be a
@@ -78,8 +85,55 @@ pub fn release_turn_program_hold_as_owner(
 ) -> Result<ProgramHoldReleaseView> {
     let attempt = attempt_id(&input.attempt)?;
     let now = vault.now_recorded_at();
-    let released = vault
-        .with_write_txn_grouped(|wtxn| release_in_txn(vault, wtxn, owner, attempt, input, now))?;
+    let released = vault.with_write_txn_grouped(|wtxn| {
+        let actor = owner.revalidate_in_txn(vault, &*wtxn)?;
+        let authority = ForceCancelAuthority::owner(actor.to_hex().as_str())?;
+        release_in_txn(vault, wtxn, actor, &authority, attempt, input, now)
+    })?;
+    Ok(settled_release(vault, released))
+}
+
+/// Releases one held turn program's try as the owner's delegate: the agent's
+/// binding, its live Grant for `vault.runs.program_hold.release` and the
+/// setting `attempt_queue.agent_may_force_cancel` are checked in the writer,
+/// then the hold releases as the owner's does. Stop force-cancels the try on
+/// the delegate's grounds, naming the agent; resume records the agent's
+/// intervention. After the commit a stopped try's running step stops and a
+/// resumed one is armed.
+///
+/// # Errors
+///
+/// `FORBIDDEN` when the setting reads false at the agent or no live Grant
+/// lists the verb; a malformed attempt id; a try no program stamped, or one
+/// the program runtime does not hold; a hold that changed since it was read;
+/// a resume the try does not let; a note the queue refuses; storage errors.
+pub fn release_turn_program_hold_as_delegate(
+    vault: &Vault,
+    agent: EntityId,
+    input: &ReleaseTurnProgramHoldRequest,
+) -> MemoryResult<ProgramHoldReleaseView> {
+    let attempt = attempt_id(&input.attempt).map_err(MemoryError::from)?;
+    let now = vault.now_recorded_at();
+    let released = vault.try_with_write_txn_grouped(|wtxn| {
+        let delegate = owner_delegate_in_txn(
+            vault,
+            wtxn,
+            agent,
+            PROGRAM_HOLD_RELEASE_VERB,
+            &ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL,
+            None,
+        )?;
+        let authority = ForceCancelAuthority::owner_delegate(delegate.agent.to_hex().as_str())
+            .map_err(MemoryError::from)?;
+        release_in_txn(vault, wtxn, delegate.agent, &authority, attempt, input, now)
+            .map_err(MemoryError::from)
+    })?;
+    Ok(settled_release(vault, released))
+}
+
+/// A committed release's aftermath: a stopped try's running step stops, and
+/// a resume, or a Stop that may owe an abandon, arms the deadline lane.
+fn settled_release(vault: &Vault, released: Released) -> ProgramHoldReleaseView {
     // Committed: the write door told the attempt observers.
     if let Some((id, generation)) = released.stopped {
         crate::engine_executor::stop_attempt_step(Some(vault), id, generation);
@@ -89,18 +143,18 @@ pub fn release_turn_program_hold_as_owner(
     if released.resumed || released.stopped.is_some() {
         vault.store.notify_proactivity_changes();
     }
-    Ok(released.view)
+    released.view
 }
 
 fn release_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    owner: &AuthenticatedOwner,
+    actor: EntityId,
+    authority: &ForceCancelAuthority,
     attempt: AttemptId,
     input: &ReleaseTurnProgramHoldRequest,
     now: u64,
 ) -> Result<Released> {
-    let actor = owner.revalidate_in_txn(vault, &*wtxn)?;
     let stamped = ATTEMPT
         .get_lenient(vault, &*wtxn, &attempt)?
         .is_some_and(|stamp| stamp.attempt_id == *attempt.as_bytes());
@@ -121,7 +175,7 @@ fn release_in_txn(
     }
     let (record, effected, stopped) = match input.action {
         ProgramHoldReleaseAction::Stop => {
-            let (record, stopped) = stop_in_txn(vault, wtxn, actor, attempt, input, now)?;
+            let (record, stopped) = stop_in_txn(vault, wtxn, authority, attempt, input, now)?;
             let generation = stopped.then_some((attempt, record.attempt_count));
             (record, stopped, generation)
         }
@@ -165,17 +219,16 @@ fn release_in_txn(
 fn stop_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    actor: EntityId,
+    authority: &ForceCancelAuthority,
     attempt: AttemptId,
     input: &ReleaseTurnProgramHoldRequest,
     now: u64,
 ) -> Result<(AttemptRecord, bool)> {
-    let authority = ForceCancelAuthority::owner(actor.to_hex().as_str())?;
     let outcome = AttemptQueue::new(vault).force_cancel_in_txn(
         wtxn,
         ForceAttemptCancel {
             id: attempt,
-            authority,
+            authority: authority.clone(),
             reason: input.note.clone(),
             now,
         },
