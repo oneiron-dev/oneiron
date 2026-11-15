@@ -374,6 +374,7 @@ pub(super) fn hold(
         constraint: None,
         session_ref: session.to_owned(),
         checkout_lease_token: lease,
+        deposit_terms: None,
         idempotency_key: format!("hold-{session}"),
     }))
 }
