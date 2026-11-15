@@ -600,6 +600,7 @@ impl FoldBase {
                 .map(|(hash, state)| (*hash, state))
                 .collect(),
             writers: &writers,
+            base_writers: &once.writers,
             missed: Cell::new(false),
         };
         let (mut fold, final_merged) = super::fold_project::project_once(

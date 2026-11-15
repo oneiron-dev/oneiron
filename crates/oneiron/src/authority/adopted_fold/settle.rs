@@ -87,6 +87,23 @@ pub(super) fn serial_roster_revoke_op(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::RevokeDevice { .. })
 }
 
+/// Whether `op` is an actor binding or rebinding, which the tail folds past
+/// the image serially, every covered row in its causal past (FIX 11760,
+/// [`super::serial_fold_past`]), whether the fold accepts it or not. Its
+/// transition reads only its key's roster row and binding state, which its
+/// parents' states, the whole fold's own, keep: the tail accepts or rejects
+/// it exactly where the whole fold does, and a row beside it folds on its
+/// own parents' states, so its tail need not fold whole. A covered row is a
+/// write frontier of the key only for a binding some covered state holds
+/// (`Resumed::actor_write_frontiers`): the tail projects the key's
+/// frontiers as the whole fold does, or asks for the whole history.
+pub(super) fn serial_binding_op(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. }
+    )
+}
+
 /// Whether `op` is a re-root, which the tail folds past the image only
 /// serially, every covered row in its causal past, and as the tail's one
 /// handoff (FIX 11760, [`super::serial_fold_past`]). Its tail then folds
@@ -157,18 +174,19 @@ fn serial_handoff_fence(
 /// Whether the tail row `entry` is of a kind the tail folds past the image
 /// only as rejected, with no state (FIX 11760, [`super::serial_fold_past`]):
 /// a key rotation or a non-agent enrollment (a retired device-key op, which
-/// stands only in a re-root's pre-handoff line), an agent enrollment or a
-/// binding [`crate::authority::fold_resume::admits_past`] leaves to the
-/// history, or a federation confirm whose id or nonce a covered confirm
-/// spent. The kind alone does not make the whole fold reject the row: it
-/// may accept such an enrollment or binding. A serial row's parents' states
-/// are the whole fold's own, so the tail rejects it exactly where the whole
-/// fold does, and one the tail folds to a state still needs the whole
-/// history ([`settle_tail`]).
+/// stands only in a re-root's pre-handoff line), an agent enrollment
+/// [`crate::authority::fold_resume::admits_past`] leaves to the history, or
+/// a federation confirm whose id or nonce a covered confirm spent. The kind
+/// alone does not make the whole fold reject the row: it may accept such an
+/// enrollment. A serial row's parents' states are the whole fold's own, so
+/// the tail rejects it exactly where the whole fold does, and one the tail
+/// folds to a state still needs the whole history ([`settle_tail`]). A
+/// binding folds serially whether the fold accepts it or not
+/// ([`serial_binding_op`]).
 pub(super) fn folds_rejected_op(image: &AuthorityCheckpointV2, entry: &AuthorityLogEntry) -> bool {
     match &entry.op {
         AuthorityOp::RotateKey { .. } => true,
-        AuthorityOp::EnrollDevice { .. } | AuthorityOp::BindActor { .. } => {
+        AuthorityOp::EnrollDevice { .. } => {
             let mut unused: ConfirmKeys = Default::default();
             !crate::authority::fold_resume::admits_past(&image.aggregate.merged, entry, &mut unused)
         }
@@ -405,6 +423,7 @@ pub(super) fn settle_tail(
             .map(|(hash, state)| (*hash, state))
             .collect(),
         writers: &writers,
+        base_writers: &image.safety.writers,
         missed: Cell::new(false),
     };
     // The projection reads rows only for world-key envelopes, the image's
@@ -630,6 +649,7 @@ fn image_fold_under(
         bound_keys: &image.safety.bound_keys,
         chain: Vec::new(),
         writers: &image.safety.writers,
+        base_writers: &image.safety.writers,
         missed: Cell::new(false),
     };
     crate::authority::fold_project::project_once(

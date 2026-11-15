@@ -576,9 +576,10 @@ fn serial_withdrawal(
 /// that folds past the image all the same (FIX 11760), under [`folds_serially`]'s
 /// conditions: a federation lifecycle act or a membership execution, whose
 /// tail must then fold whole, a device revocation
-/// ([`settle::serial_roster_revoke_op`]), a re-root that is the tail's only
-/// one ([`settle::serial_handoff_op`]), whose tail must then fold whole, or
-/// a row of a kind that folds past only as rejected
+/// ([`settle::serial_roster_revoke_op`]), an actor binding or rebinding
+/// ([`settle::serial_binding_op`]), a re-root that is the tail's only one
+/// ([`settle::serial_handoff_op`]), whose tail must then fold whole, or a
+/// row of a kind that folds past only as rejected
 /// ([`settle::folds_rejected_op`]), which must then fold with no state. Two
 /// tail re-roots could fence one another, which only the whole history
 /// settles. A rotation or a non-agent enrollment stands only in a re-root's
@@ -591,7 +592,9 @@ fn serial_fold_past(
     log: AdoptedTail<'_>,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    let op = if settle::serial_fold_past_op(&entry.op) || settle::serial_roster_revoke_op(&entry.op)
+    let op = if settle::serial_fold_past_op(&entry.op)
+        || settle::serial_roster_revoke_op(&entry.op)
+        || settle::serial_binding_op(&entry.op)
     {
         true
     } else if settle::serial_handoff_op(&entry.op) {
