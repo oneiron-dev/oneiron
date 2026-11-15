@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Build-script helper: runs the SDK generator once per input digest and copies a crate's generated outputs into its OUT_DIR"
 repository.workspace = true
-homepage.workspace = true
 publish = false
 
 [lib]
@@ -14,3 +13,6 @@ doctest = false
 
 [dependencies]
 oneiron-sdk-generator = { path = "../oneiron-sdk-generator" }
+
+[lints]
+workspace = true
