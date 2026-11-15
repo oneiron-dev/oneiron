@@ -3,7 +3,7 @@
 use oneiron_contracts::entity_id::EntityId;
 
 // `#[derive(SideKey)]`, documented on the trait below.
-pub use oneiron_side_key_derive::SideKey;
+pub use oneiron_derive::SideKey;
 
 /// The bytes a key spells after its table's prefix. A decode reads exactly those bytes, so a
 /// row of another shape under the same prefix is refused rather than sliced at a fixed offset.

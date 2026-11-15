@@ -5,22 +5,11 @@
 //! and its settings there, with examples that run as doc tests. The code written here names
 //! `::oneiron_store::side_table::key`, so a crate that derives a key depends on `oneiron-store`.
 
-use proc_macro::TokenStream;
 use proc_macro2::{Span, TokenStream as TokenStream2};
 use quote::{format_ident, quote, quote_spanned};
 use syn::meta::ParseNestedMeta;
 use syn::spanned::Spanned;
 use syn::{Data, DeriveInput, Fields, Ident, Lit, LitByte, LitByteStr, Member, Type};
-
-/// Derives `SideKey` for a struct whose fields are the key's parts, in order, and `FixedSideKey`
-/// when every part is fixed width.
-#[proc_macro_derive(SideKey, attributes(side_key))]
-pub fn derive_side_key(input: TokenStream) -> TokenStream {
-    let input = syn::parse_macro_input!(input as DeriveInput);
-    expand(&input)
-        .unwrap_or_else(syn::Error::into_compile_error)
-        .into()
-}
 
 /// How a decode finds where a part ends.
 enum Role {
@@ -93,7 +82,8 @@ struct Layout {
     separator: Option<LitByte>,
 }
 
-fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
+/// The `SideKey` impl (and the `FixedSideKey` impl, when every part is fixed width) for `input`.
+pub(crate) fn expand(input: &DeriveInput) -> syn::Result<TokenStream2> {
     if !input.generics.params.is_empty() {
         return Err(syn::Error::new(
             input.generics.span(),

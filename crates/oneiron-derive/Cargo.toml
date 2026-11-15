@@ -1,0 +1,23 @@
+[package]
+name = "oneiron-derive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Proc-macro derives of the oneiron workspace, one module per derive"
+publish = false
+
+# A leaf proc-macro crate: no oneiron-* dependency (REG-2 = A, Engine 15 Nov 18:43: one derive
+# crate for UC-06's SideKey and the coming Register). The code each derive writes names the crate
+# that holds its trait and re-exports the derive (SideKey: ::oneiron_store::side_table::key).
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"
+
+[lints]
+workspace = true
