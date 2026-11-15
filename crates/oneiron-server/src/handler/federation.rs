@@ -124,6 +124,9 @@ pub(super) async fn handle_selector_fetch(
         .export(ExportMode::all_updates())
         .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
     send(direct_tx, key, window_sub_tags::UPDATE, &delta)?;
+    // Red pin: the test's change lands after the answer is queued.
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::selector_release::run(&prepared.selector.grant_id);
     // The rows it admitted are the ones whose by-reference bodies this socket
     // is served, while its selector stands (FIX 12118).
     state

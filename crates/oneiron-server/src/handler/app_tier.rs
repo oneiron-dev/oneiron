@@ -612,7 +612,23 @@ fn answer_app_message(
                     ),
                 )));
             }
-            crate::livequery::residence_rpc(
+            // Red pin: the test's change lands after the answer is queued.
+            #[cfg(oneiron_test_support)]
+            let hook_grant = {
+                use base64::Engine as _;
+                request
+                    .params
+                    .get("selector")
+                    .and_then(serde_json::Value::as_str)
+                    .and_then(|encoded| {
+                        base64::engine::general_purpose::STANDARD
+                            .decode(encoded)
+                            .ok()
+                    })
+                    .and_then(|bytes| oneiron::sync::decode_sync_selector(&bytes).ok())
+                    .map(|selector| selector.grant_id)
+            };
+            let frames = crate::livequery::residence_rpc(
                 server,
                 &bound,
                 peer,
@@ -621,7 +637,12 @@ fn answer_app_message(
                 &mut state.authority_append_stage,
                 &mut state.residence_touch,
             )?
-            .queued(conn)
+            .queued(conn);
+            #[cfg(oneiron_test_support)]
+            if let Some(grant) = hook_grant {
+                crate::test_doors::selector_release::run(&grant);
+            }
+            frames
         } else {
             // FIX 2059: the call context is taken here, before the call
             // leaves the loop: its session judged for the bound principal
