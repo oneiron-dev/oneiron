@@ -235,10 +235,16 @@ proposed again with another pair, so no candidate is chosen by a sealed task's
 result. The contract's key is the BLAKE3 of its RFC 8785 canonical JSON, so the
 same contract at another task pointer or outcome, in a file imported again, or
 on another seat takes no second seed, and every row of it shows that seed's
-standing. An erase takes a seed with its capture. A reworded contract is another
-contract: near-duplicate tasks are a limit of the data, not of this check. The inventory lists at most 64 repair
-rows, from the window's newest 64 captures, at most 8 task contracts per
-failure event, and at most 64 skill revisions.
+standing, while the seed's capture still reads; that capture is then among the
+rows the inventory read. A deleted capture's seed holds its contract until the
+erase takes it, but shows on no row, and no other row of its contract is
+listed, since none can take a seed. An erase takes a seed with its capture. A
+reworded contract is another contract: near-duplicate tasks are a limit of the
+data, not of this check. The inventory lists at most 64 repair rows, from the
+window's newest 64 captures, at most 8 task contracts per failure event, and at
+most 64 skill revisions. A capture's events are matched to its mappings by name
+from one index, and its repair links resolve from one id index, so listing a
+capture takes time linear in its events and mappings.
 
 ## Remaining feature work
 

@@ -26,6 +26,7 @@ use crate::claim::ClaimApprovalStatus;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ingest::{AgUiRepairLinkStatus, ag_ui_captures_in_txn};
+use crate::ports::raw_readable_in_txn;
 use crate::registry::ENTITY_TYPE_SKILL;
 use crate::skill::{SkillContentHash, SkillLifecycle};
 use crate::skill_optimize::gate::target_of;
@@ -97,6 +98,25 @@ fn task_contracts(failure: &Value) -> Vec<(String, [u8; 32])> {
 /// and task pointer.
 type SeedTaskKey<'a> = (&'a str, &'a str, usize, &'a str);
 
+/// Whether every row `seed` was compiled from still reads in this snapshot,
+/// by the capture listing's rule ([`raw_readable_in_txn`]): present, and not
+/// deleted, withdrawn, stale or source-withdrawn.
+fn seed_capture_reads_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    seed: &EvalRepairSeed,
+) -> Result<bool> {
+    for id in &seed.source_rows {
+        let Some(raw) = vault.get_raw_in(txn, id)? else {
+            return Ok(false);
+        };
+        if !raw_readable_in_txn(&vault.store, txn, id, &raw)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Every stored seed, by its task and by its task contract: one pass over
 /// the seeds, whatever the repair rows.
 struct SeedIndex<'a> {
@@ -131,37 +151,59 @@ impl<'a> SeedIndex<'a> {
         }
     }
 
-    /// The seat and standing of every seed of a repair row: its task's own,
-    /// and every seed of the same contract from another source or seat
-    /// (RULING UNBUILT-P05E-CONTRACT-ALIAS = A), in seat order.
-    fn summaries(&self, task: SeedTaskKey<'_>, contract: &[u8; 32]) -> Vec<EvalRepairSeedSummary> {
-        let rows: BTreeSet<usize> = self
+    /// Every seed of a repair row, in seat order: its task's own, and every
+    /// seed of the same contract from another source or seat whose capture
+    /// still reads in `txn` (RULING UNBUILT-P05E-CONTRACT-ALIAS = A). `None`
+    /// when the row has none and its contract is held by a seed whose
+    /// capture no longer reads: the row can take no seed until the erase
+    /// takes that one, and shows nothing of it (RULING
+    /// UNBUILT-P05E-WITHDRAWN-SEED = A).
+    fn seeds_of(
+        &self,
+        vault: &Vault,
+        txn: &heed::RoTxn<'_>,
+        task: SeedTaskKey<'_>,
+        contract: &[u8; 32],
+    ) -> Result<Option<Vec<&'a EvalRepairSeed>>> {
+        let mut rows: BTreeSet<usize> = self
             .by_task
             .get(&task)
             .into_iter()
-            .chain(self.by_contract.get(contract))
             .flatten()
             .copied()
             .collect();
-        let mut summaries: Vec<EvalRepairSeedSummary> = rows
-            .into_iter()
-            .map(|index| {
-                let seed = &self.seeds[index];
-                EvalRepairSeedSummary {
-                    seat: seed.source.seat.clone(),
-                    standing: match &seed.state {
-                        EvalRepairSeedState::Pending => EvalRepairSeedStanding::Pending,
-                        EvalRepairSeedState::AwaitingLabel => EvalRepairSeedStanding::AwaitingLabel,
-                        EvalRepairSeedState::Confirmed { .. } => EvalRepairSeedStanding::Confirmed,
-                        EvalRepairSeedState::Refused { reason, .. } => {
-                            EvalRepairSeedStanding::Refused { reason: *reason }
-                        }
-                    },
-                }
-            })
-            .collect();
-        summaries.sort_by(|a, b| a.seat.cmp(&b.seat));
-        summaries
+        let held = self
+            .by_contract
+            .get(contract)
+            .map_or(&[][..], Vec::as_slice);
+        for &index in held {
+            if !rows.contains(&index) && seed_capture_reads_in_txn(vault, txn, &self.seeds[index])?
+            {
+                rows.insert(index);
+            }
+        }
+        if rows.is_empty() && !held.is_empty() {
+            return Ok(None);
+        }
+        let mut seeds: Vec<&'a EvalRepairSeed> =
+            rows.into_iter().map(|index| &self.seeds[index]).collect();
+        seeds.sort_by(|a, b| a.source.seat.cmp(&b.source.seat));
+        Ok(Some(seeds))
+    }
+}
+
+/// A seed's seat and standing, as a repair row shows them.
+fn seed_summary(seed: &EvalRepairSeed) -> EvalRepairSeedSummary {
+    EvalRepairSeedSummary {
+        seat: seed.source.seat.clone(),
+        standing: match &seed.state {
+            EvalRepairSeedState::Pending => EvalRepairSeedStanding::Pending,
+            EvalRepairSeedState::AwaitingLabel => EvalRepairSeedStanding::AwaitingLabel,
+            EvalRepairSeedState::Confirmed { .. } => EvalRepairSeedStanding::Confirmed,
+            EvalRepairSeedState::Refused { reason, .. } => {
+                EvalRepairSeedStanding::Refused { reason: *reason }
+            }
+        },
     }
 }
 
@@ -280,8 +322,9 @@ pub fn eval_authoring_inventory_sourced(
         }
     }
     // One row per task contract on a linked repair: the repair the skill
-    // may seed, with every stored seed of its task. Each failure event is
-    // walked once, however many outcomes link to it.
+    // may seed, with every stored seed of its task, whose captures join the
+    // rows read. Each failure event is walked once, however many outcomes
+    // link to it.
     let mut repairs = Vec::new();
     let captures = ag_ui_captures_in_txn(
         vault,
@@ -313,7 +356,9 @@ pub fn eval_authoring_inventory_sourced(
                 if repairs.len() == MAX_REPAIR_ROWS {
                     break 'captures;
                 }
-                let summaries = seed_index.summaries(
+                let Some(row_seeds) = seed_index.seeds_of(
+                    vault,
+                    &txn,
                     (
                         meta.claim_ref.as_str(),
                         meta.source_hash.as_str(),
@@ -321,7 +366,13 @@ pub fn eval_authoring_inventory_sourced(
                         task_pointer.as_str(),
                     ),
                     contract_key,
-                );
+                )?
+                else {
+                    continue;
+                };
+                for seed in &row_seeds {
+                    read.extend(seed.source_rows.iter().copied());
+                }
                 repairs.push(EvalRepairCandidate {
                     id: format!("r{}", repairs.len() + 1),
                     claim_ref: meta.claim_ref.clone(),
@@ -330,7 +381,7 @@ pub fn eval_authoring_inventory_sourced(
                     task_pointer: task_pointer.clone(),
                     app_id: meta.app_id.clone(),
                     at: meta.at,
-                    seeds: summaries,
+                    seeds: row_seeds.into_iter().map(seed_summary).collect(),
                     owner: Some(meta.owner),
                 });
             }

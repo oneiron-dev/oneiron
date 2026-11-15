@@ -128,7 +128,9 @@ pub struct EvalRepairSeed {
     pub task_hash: [u8; 32],
     /// The key of the task's contract
     /// ([`EvalRepairTask::contract_key`]): one seed stands per contract in
-    /// the vault, whatever its source or seat.
+    /// the vault, whatever its source or seat. Every proposal writes it; no
+    /// stored row lacks it, since the Coach's plan is the first caller that
+    /// proposes a seed outside the tests.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contract_key: Option<[u8; 32]>,
     pub old: EvalArmPin,

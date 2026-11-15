@@ -80,10 +80,18 @@ pub(super) fn validate_mappings(mappings: &[AgUiCustomMapping]) -> Result<()> {
     Ok(())
 }
 
+/// Each CUSTOM event that a mapping names, projected by that mapping. The
+/// mappings are looked up by name from one index, so the projection takes
+/// time linear in the events and mappings; a name's first mapping wins, as
+/// [`validate_mappings`] keeps names unique.
 pub(super) fn observations(
     events: &[AgUiDecodedEvent],
     mappings: &[AgUiCustomMapping],
 ) -> Vec<AgUiAppObservation> {
+    let mut by_name: HashMap<&str, &AgUiCustomMapping> = HashMap::with_capacity(mappings.len());
+    for mapping in mappings {
+        by_name.entry(mapping.name.as_str()).or_insert(mapping);
+    }
     events
         .iter()
         .enumerate()
@@ -92,7 +100,7 @@ pub(super) fn observations(
                 return None;
             }
             let name = event.raw().get("name")?.as_str()?;
-            let mapping = mappings.iter().find(|mapping| mapping.name == name)?;
+            let mapping = *by_name.get(name)?;
             let string = |pointer: &Option<String>| {
                 pointer
                     .as_ref()
