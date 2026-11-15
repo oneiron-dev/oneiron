@@ -14,10 +14,13 @@
 //!   (`Owned(Yours)`) stands only when proven, whoever carries it. Unproven,
 //!   it is HELD: kept so the owner's device can ask, standing for nothing.
 //! - Item 2: an act a carrier that is not the owner's machine delivers waits
-//!   for the proof wherever the vault holds a key that can give it: a
-//!   self-host vault's live owner root, and on a hosted vault an enrolled
-//!   owner device key (CARRIER-HOSTED-WEB-ACTS = C). A vault with no such
-//!   key keeps today's acts: nothing there could ever answer the wait.
+//!   for the proof wherever the vault holds a key that can give it
+//!   ([`gives_owner_proof`]): a self-host vault's live owner root, and on a
+//!   hosted vault an enrolled owner device key (CARRIER-HOSTED-WEB-ACTS =
+//!   C). A vault with no such key keeps today's acts: nothing there could
+//!   ever answer the wait. A key of the owner's in a suite the fold takes no
+//!   proof from (a P-256 key, a passkey's suite) is no such key (Engine
+//!   RULING CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A).
 //!
 //! The judge reads the act's parent state only, so every replica judges the
 //! same rows the same way. Mine is read in the roster view of that state
@@ -40,9 +43,9 @@ use super::machine_profile::in_host_custody;
 use super::*;
 
 /// The owner key that proves `entry`, judged at its parent state `state`:
-/// None when it carries no cosign. A proof is exactly one cosign, by an
-/// Ed25519 key that `state` trusts as the owner's ([`proves_for_the_owner`]);
-/// any other cosign is a forged proof, an invalid entry, never a held one.
+/// None when it carries no cosign. A proof is exactly one cosign, by a key
+/// whose proof the fold takes in `state` ([`gives_owner_proof`]); any other
+/// cosign is a forged proof, an invalid entry, never a held one.
 pub(super) fn owner_proof_key(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -57,7 +60,7 @@ pub(super) fn owner_proof_key(
     };
     let key = &cosign.public_key;
     match key {
-        AuthorityKey::Ed25519(bytes) if proves_for_the_owner(state, key) => Ok(Some(*bytes)),
+        AuthorityKey::Ed25519(bytes) if gives_owner_proof(state, key) => Ok(Some(*bytes)),
         _ => Err(AuthorityFoldIssue::InvalidEntry(hash)),
     }
 }
@@ -70,18 +73,30 @@ pub(super) fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> boo
     roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
 }
 
+/// Whether `key` is one whose cosign the fold takes as the owner's proof in
+/// `state`: a key `state` trusts as the owner's ([`proves_for_the_owner`]),
+/// in the one suite a proof is made in, Ed25519. The one predicate of the
+/// proof (Engine RULING CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A): the judge
+/// of a cosign ([`owner_proof_key`]) and the vault's asking for a proof
+/// ([`not_mine_carriers_need_proof`]) both read it, so the vault never asks
+/// for a proof that no key it holds can give. A key of the owner's in
+/// another suite (a P-256 key, a passkey's suite) is the owner's key and
+/// gives no proof; when the fold learns that suite's proof form, this is the
+/// one place that widens.
+fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
+    matches!(key, AuthorityKey::Ed25519(_)) && proves_for_the_owner(state, key)
+}
+
 /// Whether an act a not-mine carrier delivers needs the proof in `state`
-/// (item 2): as soon as its roster holds a key that proves for the owner
-/// ([`proves_for_the_owner`]). A self-host vault's live owner root is one; a
+/// (item 2): as soon as its roster holds a key that can give it
+/// ([`gives_owner_proof`]). A self-host vault's live owner root is one; a
 /// hosted vault has one once an owner device key is enrolled there. A vault
 /// with none keeps today's acts (CARRIER-HOSTED-WEB-ACTS = C, and the
 /// amendment to CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B): no key there could
-/// ever prove the act, so a wait would have no end.
+/// ever prove the act, so a wait would have no end. That holds for a vault
+/// whose only owner key is of a suite the fold takes no proof from.
 pub(super) fn not_mine_carriers_need_proof(state: &FoldState) -> bool {
-    state
-        .roster
-        .keys()
-        .any(|key| proves_for_the_owner(state, key))
+    state.roster.keys().any(|key| gives_owner_proof(state, key))
 }
 
 /// Whether a carried machine answer needs the proof (items 1 and 2), judged
@@ -187,10 +202,11 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 }
 
 impl AuthorityFold {
-    /// Whether `key` proves an owner act on this fold, as the fold judges a
-    /// proof cosign ([`owner_proof_key`]): live on the roster with
-    /// `ROLE_OWNER`, and outside the host's custody when the vault is
-    /// `hosted`. The writer's side of the one predicate.
+    /// Whether `key` is a key this fold trusts as the owner's: live on the
+    /// roster with `ROLE_OWNER`, and outside the host's custody when the
+    /// vault is `hosted`. The writer's side of `proves_for_the_owner`; the
+    /// fold takes a proof cosign only from such a key in the Ed25519 suite
+    /// ([`owner_proof_key`]), and every signer an install holds is one.
     #[must_use]
     pub(crate) fn proves_owner_acts(&self, key: &AuthorityKey, hosted: bool) -> bool {
         roster_has_live_owner(&self.roster, key) && !(hosted && self.in_host_custody(key))
