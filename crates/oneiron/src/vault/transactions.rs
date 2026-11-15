@@ -692,7 +692,8 @@ impl Vault {
     }
 }
 
-#[cfg(feature = "sync")]
+// Every build: an actor's erase deletes its own-rate health check through it
+// (own_rate.rs, FIX FEATURELESS-OWN-RATE-SYNC-DELETE).
 mod sync_state_delete;
 mod sync_state_page;
 #[cfg(feature = "sync")]
