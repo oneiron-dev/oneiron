@@ -184,6 +184,51 @@ fn confirm_fixture() -> (Fixture, AuthorityConfirmAction) {
     (fixture, covered)
 }
 
+/// A first agent binding of `key` to `actor`.
+fn agent_binding(key: &AuthorityKey, actor: EntityId) -> AuthorityOp {
+    AuthorityOp::BindActor {
+        authority_key: key.clone(),
+        actor_ref: actor,
+        actor_class: "agent".to_owned(),
+        epoch: 1,
+    }
+}
+
+/// Home with two agent keys covered, the first bound to an actor, its
+/// adopter, the bound key, the unbound key and the bound actor.
+fn binding_fixture() -> (Fixture, AuthorityKey, AuthorityKey, EntityId) {
+    let (home, issuer, home_dir) = root_home();
+    let bound = fresh_device(0x61, ROLE_AGENT);
+    let unbound = fresh_device(0x62, ROLE_AGENT);
+    let (bound_key, unbound_key) = (bound.key.clone(), unbound.key.clone());
+    let actor = EntityId::now();
+    for op in [
+        AuthorityOp::EnrollDevice { device: bound },
+        AuthorityOp::EnrollDevice { device: unbound },
+        agent_binding(&bound_key, actor),
+    ] {
+        let entry = sign_next_host_op(&home, &issuer, op).expect("sign covered row");
+        let hash = authority_entry_hash(&entry).expect("covered hash");
+        put_signed_entries(&home, &[entry]).expect("store covered row");
+        assert!(
+            home.authority_fold()
+                .expect("home folds covered row")
+                .valid_entries
+                .contains(&hash),
+            "every covered row folds valid, so the image is clean"
+        );
+    }
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    (fixture, bound_key, unbound_key, actor)
+}
+
 /// Signs `op` on home and stores it on both vaults.
 fn sign_and_share(fixture: &Fixture, op: AuthorityOp) -> AuthorityLogEntry {
     let entry = sign_next_host_op(&fixture.home, &fixture.issuer, op).expect("sign tail");
@@ -624,6 +669,88 @@ fn covered_approval_with_no_adoption_receipt_needs_history() {
     );
     revoke_agent(&fixture);
     fixture.home.authority_fold().expect("home folds revoke");
+    let err = fixture
+        .adopting
+        .authority_fold()
+        .expect_err("adopting needs history");
+    assert!(
+        matches!(
+            err,
+            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+        ),
+        "history required, got {err:?}"
+    );
+}
+
+#[test]
+fn confirm_reusing_a_covered_nonce_folds_as_rejected() {
+    let (fixture, covered) = confirm_fixture();
+    let tail_action = AuthorityConfirmAction {
+        kind: AuthorityConfirmKind::Accept,
+        confirm_id: [0xD5; 32],
+        peer_vault_id: covered.peer_vault_id,
+        epoch: 1,
+        nonce: covered.nonce,
+    };
+    let tail = sign_and_share(&fixture, AuthorityOp::FederationConfirm(tail_action));
+    let hash = authority_entry_hash(&tail).expect("tail hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds tail");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds tail");
+    assert!(
+        !home_fold.valid_entries.contains(&hash),
+        "home rejects the reused nonce"
+    );
+    assert!(
+        !adopting_fold.valid_entries.contains(&hash),
+        "adopting rejects the reused nonce"
+    );
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+    assert_eq!(
+        adopting_fold.federation_pacts, home_fold.federation_pacts,
+        "pacts match"
+    );
+    assert_eq!(adopting_fold.slips, home_fold.slips, "slips match");
+}
+
+#[test]
+fn binding_a_covered_bound_key_again_folds_as_rejected() {
+    let (fixture, bound_key, _, _) = binding_fixture();
+    let tail = sign_and_share(&fixture, agent_binding(&bound_key, EntityId::now()));
+    let hash = authority_entry_hash(&tail).expect("tail hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds tail");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds tail");
+    assert!(
+        !home_fold.valid_entries.contains(&hash),
+        "home rejects a second binding of a bound key"
+    );
+    assert!(
+        !adopting_fold.valid_entries.contains(&hash),
+        "adopting rejects a second binding of a bound key"
+    );
+    assert_eq!(
+        adopting_fold.actor_bindings, home_fold.actor_bindings,
+        "bindings match"
+    );
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+    assert_eq!(adopting_fold.slips, home_fold.slips, "slips match");
+}
+
+#[test]
+fn binding_an_actor_a_covered_row_bound_still_needs_history() {
+    let (fixture, _, unbound_key, actor) = binding_fixture();
+    let tail = sign_and_share(&fixture, agent_binding(&unbound_key, actor));
+    let hash = authority_entry_hash(&tail).expect("tail hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds tail");
+    assert!(
+        home_fold.valid_entries.contains(&hash),
+        "home accepts a second key's binding of the same actor"
+    );
     let err = fixture
         .adopting
         .authority_fold()
