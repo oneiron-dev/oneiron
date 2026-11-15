@@ -454,16 +454,16 @@ fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Resul
     }
 }
 
-/// Arms every job whose cadence is a Setting key from the key's value in force, in one write.
-/// The host's pass calls it on its handle's first pass; a job already armed with that trigger
-/// keeps its due time.
+/// Arms every job of a kind `which` takes whose cadence is a Setting key from the key's value in
+/// force, in one write. The host's pass calls it on its handle's first pass for every such job; a
+/// job already armed with that trigger keeps its due time.
 ///
 /// # Errors
 ///
 /// As [`arm_in_txn`]; storage errors.
-pub(crate) fn arm_setting_jobs(vault: &Vault) -> Result<()> {
+pub(crate) fn arm_setting_jobs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
-        for spec in jobs() {
+        for spec in jobs().filter(|spec| which(spec)) {
             if let Some(trigger) = cadence_in_txn(vault, txn, spec)? {
                 arm_in_txn(vault, txn, spec, None, trigger)?;
             }

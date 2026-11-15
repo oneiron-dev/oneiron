@@ -8,13 +8,16 @@
 //!   run that fails stays requested on its retry, and a run that ends done clears it;
 //! - one job runs alone, now, while another is due;
 //! - a door pulls a due time forward, but not while the job backs off;
-//! - a run's `due_by` makes its job due before its next occurrence.
+//! - a run's `due_by` makes its job due before its next occurrence;
+//! - a pass whose budget is spent still starts one due job; a stopped pass starts none.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test schedule_runner_sweeps`.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use oneiron::authority::MachineRole;
 use oneiron::housekeeping::HousekeepingBudget;
@@ -345,4 +348,27 @@ fn a_runs_due_by_makes_its_job_due_before_its_next_occurrence() {
         Some(T0 + HOUR + DAY),
         "with no due_by it goes on a cadence after the occurrence it served"
     );
+}
+
+#[test]
+fn a_pass_whose_budget_is_spent_starts_one_due_job_and_a_stopped_pass_starts_none() {
+    let fx = Fixture::rooted();
+    fx.arm("test.count", every(DAY));
+    fx.arm("test.open", every(DAY));
+    let stop = Arc::new(AtomicBool::new(true));
+    let stopped = fx
+        .vault
+        .run_due(HousekeepingBudget::unbounded().stop_when(Arc::clone(&stop)))
+        .expect("the runner");
+    assert!(stopped.runs.is_empty(), "a stopped pass starts nothing");
+    let spent = fx
+        .vault
+        .run_due(HousekeepingBudget::within(Duration::ZERO))
+        .expect("the runner");
+    assert_eq!(
+        spent.runs.len(),
+        1,
+        "a pass whose budget is spent still starts one due job"
+    );
+    assert_eq!(fx.run_due().len(), 1, "the other waits for the next pass");
 }

@@ -116,7 +116,8 @@ impl Vault {
         })
     }
 
-    /// [`Self::run_due`] within `pass`.
+    /// [`Self::run_due`] within `pass`. A pass starts at least one due job, so it makes
+    /// progress however its budget was spent before it, unless its host asked it to stop.
     pub(crate) fn run_due_until(&self, pass: &JobPass<'_>) -> Result<ScheduleRunReport> {
         let _pass = self
             .housekeeping
@@ -124,7 +125,10 @@ impl Vault {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let deadline = pass.deadline;
         let mut report = ScheduleRunReport::default();
-        while report.runs.len() < RUNS_PER_PASS && !deadline.passed() {
+        while report.runs.len() < RUNS_PER_PASS
+            && !deadline.stopped()
+            && (report.runs.is_empty() || !deadline.passed())
+        {
             let now = self.now_recorded_at();
             let due = {
                 let txn = self.store.env.read_txn()?;

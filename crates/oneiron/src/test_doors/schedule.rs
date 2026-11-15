@@ -274,31 +274,40 @@ pub static TEST_ANSWER: JobSpec = JobSpec {
     run: run_answer,
 };
 
-/// The engine arms every job whose cadence is a Setting key, as the host's first pass does.
+/// Whether `spec` is one of these test job kinds (code `test.*`): the doors below take only
+/// them, so the engine's own jobs never join a test's runs.
+fn is_test_job(spec: &JobSpec) -> bool {
+    spec.code.starts_with("test.")
+}
+
+/// The engine arms every test job whose cadence is a Setting key, as the host's first pass does.
 ///
 /// # Errors
 ///
 /// As the arming.
 pub fn arm_cadence_jobs(vault: &Vault) -> Result<()> {
-    crate::schedule::arm_setting_jobs(vault)
+    crate::schedule::arm_setting_jobs(vault, is_test_job)
 }
 
-/// The engine asks for a run of every armed job that runs at a handle's first pass; how many.
+/// The engine asks for a run of every armed test job that runs at a handle's first pass; how
+/// many.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn request_at_open_runs(vault: &Vault) -> Result<usize> {
-    crate::schedule::request_runs(vault, |spec| spec.at_open)
+    crate::schedule::request_runs(vault, |spec| is_test_job(spec) && spec.at_open)
 }
 
-/// The engine asks for a run of every armed job whose cadence is a Setting key; how many.
+/// The engine asks for a run of every armed test job whose cadence is a Setting key; how many.
 ///
 /// # Errors
 ///
 /// Storage errors.
 pub fn request_cadence_runs(vault: &Vault) -> Result<usize> {
-    crate::schedule::request_runs(vault, |spec| matches!(spec.when, When::Setting(_)))
+    crate::schedule::request_runs(vault, |spec| {
+        is_test_job(spec) && matches!(spec.when, When::Setting(_))
+    })
 }
 
 /// Runs `job` about `subject` alone, now; its outcome, or `None` when it is not armed.
