@@ -3,6 +3,7 @@
 
 pub use crate::booking::emergency_reschedule::planning::EmergencyLocalBasis;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose};
 use oneiron_contracts::temporal::TimeRange;
 use oneiron_verb_wire::booking::constraint::BookingError;
 use serde::Deserialize;
@@ -40,9 +41,19 @@ pub struct EmergencyRescheduleRequest {
     pub authority: OwnerInstructionRecord,
 }
 
-pub fn content_hash(value: &impl Serialize) -> Result<[u8; 32], BookingError> {
+/// BLAKE3 over `value`'s JSON, under `purpose`. Each digest an emergency reschedule takes is
+/// stored or compared (the request hash, three row keys, an intent reference, two content
+/// hashes), so each keeps its bytes through its own legacy purpose, none of which writes a
+/// tag (K, PLAN-UC-04 stage 6.2).
+///
+/// # Errors
+/// When the value does not encode.
+pub fn content_hash(
+    purpose: LegacyPurpose,
+    value: &impl Serialize,
+) -> Result<[u8; 32], BookingError> {
     let bytes = serde_json::to_vec(value).map_err(storage_failure)?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(LegacyDigest::new(purpose).raw(&bytes).finish())
 }
 
 pub mod time_range_serde {

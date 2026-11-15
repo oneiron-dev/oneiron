@@ -30,7 +30,10 @@ pub(super) fn request_plan_prefix(
     request: &EmergencyRescheduleRequest,
 ) -> Result<Vec<u8>, BookingError> {
     let mut key = REQUEST_PLAN_PREFIX.to_vec();
-    key.extend_from_slice(&content_hash(&request_instruction_key(request)?)?);
+    key.extend_from_slice(&content_hash(
+        purposes::booking::EMERGENCY_REQUEST_PLAN_INDEX_KEY,
+        &request_instruction_key(request)?,
+    )?);
     Ok(key)
 }
 
@@ -39,7 +42,18 @@ pub(super) fn request_plan_prefix(
 pub(super) fn request_plan_hash(
     request: &EmergencyRescheduleRequest,
 ) -> Result<[u8; 32], BookingError> {
-    content_hash(&request_instruction_key(request)?)
+    content_hash(
+        purposes::booking::EMERGENCY_REQUEST_PLAN_INDEX_KEY,
+        &request_instruction_key(request)?,
+    )
+}
+
+/// The instruction content hash the request-to-plan index is keyed by.
+#[cfg(oneiron_test_support)]
+pub(crate) fn request_plan_hash_for_test(
+    request: &EmergencyRescheduleRequest,
+) -> Result<[u8; 32], BookingError> {
+    request_plan_hash(request)
 }
 
 /// Scans every plan indexed for this instruction, in key (event) order. Key:

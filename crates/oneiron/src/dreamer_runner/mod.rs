@@ -36,6 +36,8 @@ mod wake_park;
 mod tests;
 
 pub(crate) use self::admission::AdmittedBudgetLine;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::free_time::free_time_policy_digest_for_test;
 
 // The globs below keep the pre-split surface byte-identical: `pub` items stay `pub`,
 // `pub(crate)` seams stay `pub(crate)`, and `pub(super)` internals become

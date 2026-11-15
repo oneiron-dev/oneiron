@@ -11,6 +11,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::super::agent_health::{COACH_AGENT_HEALTH_FACET, ConcernCardSummary};
@@ -157,13 +158,31 @@ pub(super) fn read_digest_in(
 /// board pointer name it. It is never checked against what the digest shows
 /// now, which the wall may have masked: [`content_hash`] is.
 pub(super) fn digest_id(digest: &ProactivityDigest) -> Result<[u8; 32]> {
-    hash(&shown(digest))
+    hash(
+        purposes::dreamer::PROACTIVITY_DIGEST_LOCATOR,
+        &shown(digest),
+    )
+}
+
+/// A digest's locator.
+#[cfg(oneiron_test_support)]
+pub(crate) fn digest_id_for_test(digest: &ProactivityDigest) -> Result<[u8; 32]> {
+    digest_id(digest)
 }
 
 /// FIX 2332: the digest's integrity check, the hash of its locator and of
 /// every field it stores as admitted; the content hash alone is left out.
 pub(super) fn content_hash(digest: &ProactivityDigest) -> Result<[u8; 32]> {
-    hash(&(digest.id, shown(digest)))
+    hash(
+        purposes::dreamer::PROACTIVITY_DIGEST_CONTENT_HASH,
+        &(digest.id, shown(digest)),
+    )
+}
+
+/// A digest's content hash.
+#[cfg(oneiron_test_support)]
+pub(crate) fn digest_content_hash_for_test(digest: &ProactivityDigest) -> Result<[u8; 32]> {
+    content_hash(digest)
 }
 
 /// Every field of `digest` but its locator and its content hash.
@@ -188,10 +207,11 @@ fn shown(digest: &ProactivityDigest) -> impl Serialize + '_ {
     )
 }
 
-/// BLAKE3 over `value`'s JSON.
-fn hash(value: &impl Serialize) -> Result<[u8; 32]> {
+/// BLAKE3 over `value`'s JSON, under `purpose`. The locator is a stored row's key and the
+/// content hash is stored and compared, so both keep their bytes (K, PLAN-UC-04 stage 6.2).
+fn hash(purpose: LegacyPurpose, value: &impl Serialize) -> Result<[u8; 32]> {
     let bytes = serde_json::to_vec(value).map_err(|_| invalid())?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    Ok(LegacyDigest::new(purpose).raw(&bytes).finish())
 }
 
 /// `digest`, the canonical object, as `viewer` reads it: each proposal

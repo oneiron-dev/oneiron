@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { broker, testing }
+areas! { booking, broker, dreamer, testing }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 

@@ -37,6 +37,8 @@ pub use urgent::{
     DigestVersionRef, UrgentDigestAssessment,
 };
 pub use view::{DigestReadRequest, ProactivityDigestView};
+#[cfg(oneiron_test_support)]
+pub(crate) use view::{digest_content_hash_for_test, digest_id_for_test};
 const CADENCE: SideTable<(), ProactivityCadence, LegacyJson> =
     SideTable::new(&side_table::DREAMER_PROACTIVITY_CADENCE);
 const STATE: SideTable<(), DigestState, LegacyJson> =

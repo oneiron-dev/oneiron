@@ -22,14 +22,17 @@ impl EmergencyPick {
     }
 
     fn hash(&self, item: &EmergencyItem) -> Result<[u8; 32], BookingError> {
-        content_hash(&(
-            item.plan.content_hash,
-            self.proposal_index,
-            &self.calendar,
-            self.committed_at,
-            &self.payload,
-            &self.organizer,
-        ))
+        content_hash(
+            purposes::booking::EMERGENCY_PICK_CONTENT_HASH,
+            &(
+                item.plan.content_hash,
+                self.proposal_index,
+                &self.calendar,
+                self.committed_at,
+                &self.payload,
+                &self.organizer,
+            ),
+        )
     }
 
     fn ics(&self, item: &EmergencyItem) -> Result<Vec<u8>, BookingError> {

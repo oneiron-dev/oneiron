@@ -72,16 +72,19 @@ impl EmergencyPlan {
         self.payload.as_ref()
     }
     pub(super) fn hash(&self) -> Result<[u8; 32], BookingError> {
-        content_hash(&(
-            &self.request,
-            &self.booking,
-            &self.proposals,
-            self.planned_at,
-            &self.payload,
-            &self.recipient,
-            &self.organizer,
-            &self.invite_before,
-        ))
+        content_hash(
+            purposes::booking::EMERGENCY_PLAN_CONTENT_HASH,
+            &(
+                &self.request,
+                &self.booking,
+                &self.proposals,
+                self.planned_at,
+                &self.payload,
+                &self.recipient,
+                &self.organizer,
+                &self.invite_before,
+            ),
+        )
     }
 }
 
@@ -120,10 +123,10 @@ pub(crate) fn item_key(
 ) -> Result<Vec<u8>, BookingError> {
     let mut key = EMERGENCY_ITEM_META_PREFIX.to_vec();
     key.extend_from_slice(
-        hex_lower(&content_hash(&(
-            request_instruction_key(request)?,
-            event.to_hex(),
-        ))?)
+        hex_lower(&content_hash(
+            purposes::booking::EMERGENCY_ITEM_KEY,
+            &(request_instruction_key(request)?, event.to_hex()),
+        )?)
         .as_bytes(),
     );
     Ok(key)
