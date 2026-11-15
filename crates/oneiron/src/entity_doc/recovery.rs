@@ -263,14 +263,21 @@ fn history(
         purge_rows.push((purge, requested, applied));
     }
 
+    // One checkout walk over the retained versions, not a fork per version (FIX 275).
     let mut texts = Vec::with_capacity(versions.frontiers.len());
     let mut metadata = Vec::with_capacity(versions.frontiers.len());
     let mut summaries = Vec::with_capacity(versions.frontiers.len());
-    for frontier in &versions.frontiers {
-        let version = doc.fork(&frontier.encode())?;
-        texts.push(version.text());
-        metadata.push(version.metadata_bytes()?);
-        summaries.push(summary_meta::bytes(&version.doc));
+    let read = doc.read_versions(&versions.frontiers, |version| {
+        Ok((
+            version.text(),
+            version.metadata_bytes()?,
+            summary_meta::bytes(&version.doc),
+        ))
+    })?;
+    for (text, fields, summary) in read {
+        texts.push(text);
+        metadata.push(fields);
+        summaries.push(summary);
     }
     let parents = hasse(&versions.vvs);
     let names = names(texts.len(), &pin_rows, &receipt_rows, &forks, &purge_rows)?;
