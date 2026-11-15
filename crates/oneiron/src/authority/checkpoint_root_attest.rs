@@ -50,6 +50,7 @@ const WAIT_NOT_COUNTED: &str = "the image's root policy is not the one this vaul
 const WAIT_NOT_A_ROOT: &str = "this root is not a root of the image's policy";
 const WAIT_NOT_CAUGHT_UP: &str = "this install does not hold every row the image covers yet";
 const WAIT_NOT_REBUILT: &str = "this install's own fold does not rebuild the image";
+const WAIT_NOT_SIGNING: &str = "this root does not sign on this install now";
 
 /// When roots' checkpoint attestations move between a machine and its home.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,14 +93,17 @@ pub trait CheckpointRootSigner: Send + Sync {
     /// The root key it signs as.
     fn root(&self) -> AuthorityKey;
     /// The root's raw signature over `statement`, which must be a checkpoint
-    /// statement.
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>>;
-    /// Whether the root signs on `vault` at this moment. An owner signing
-    /// key signs only while the roster lists it live, and one that rests
-    /// under a device PIN only inside the window a right PIN opened (row
-    /// OCS-OWNER-PIN). [`Vault::checkpoint_root_signers`] leaves out a root
-    /// that does not sign now, so a pass neither asks it nor logs for it.
-    /// The default always signs.
+    /// statement, made on `vault`. A root whose right to sign can end checks
+    /// it at this call and refuses: a signer a caller took earlier stops
+    /// with its key. An owner signing key signs only while `vault`'s roster
+    /// lists it live, and one that rests under a device PIN only inside the
+    /// window a right PIN opened (row OCS-OWNER-PIN).
+    fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>>;
+    /// Whether the root signs on `vault` at this moment: what
+    /// [`Self::sign_checkpoint_statement`] checks, asked without a
+    /// signature. [`Vault::checkpoint_root_signers`] leaves out a root that
+    /// does not sign now, so a pass neither asks it nor logs for it. The
+    /// default always signs.
     fn signs_now(&self, vault: &Vault) -> bool {
         let _ = vault;
         true
@@ -111,7 +115,10 @@ impl CheckpointRootSigner for HostSlipIssuer {
         self.public_key()
     }
 
-    fn sign_checkpoint_statement(&self, statement: &[u8]) -> Result<Vec<u8>> {
+    /// A host's root signs whenever it is asked: the image's policy check
+    /// decides whether its signature counts.
+    fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
+        let _ = vault;
         self.sign_checkpoint(statement)
     }
 }
@@ -246,6 +253,11 @@ impl Vault {
             }
             (*self.vault_id().as_bytes(), genesis)
         };
+        // A signer taken for an earlier pass may have stopped since: its key
+        // revoked, or its device PIN's window over.
+        if !signer.signs_now(self) {
+            return Ok(Err(WAIT_NOT_SIGNING));
+        }
         let binding = self.root_checkpoint_binding(&root, signer, vault_id, genesis)?;
         let policy = candidate.root_policy.digest()?;
         let attestation = self.sign_checkpoint_attestation(
@@ -254,7 +266,7 @@ impl Vault {
             id,
             policy,
             binding,
-            |transcript| signer.sign_checkpoint_statement(transcript),
+            |transcript| signer.sign_checkpoint_statement(self, transcript),
         )?;
         Ok(Ok(RootSigned {
             image: id,
@@ -357,7 +369,7 @@ impl Vault {
             return Ok(binding);
         }
         self.checkpoint_key_binding(root, |statement| {
-            signer.sign_checkpoint_statement(statement)
+            signer.sign_checkpoint_statement(self, statement)
         })
     }
 }

@@ -67,6 +67,11 @@ pub(crate) struct WorldKeySession {
     /// handle's keystore (row OCS-OWNER-PIN). Cleared when another keystore
     /// is installed.
     pub(crate) device_pin: Mutex<Option<Arc<super::DevicePin>>>,
+    /// The public half of this install's owner signing key as this handle
+    /// opened it from under the device PIN, with the count of device PIN
+    /// keys it opened under (row OCS-OWNER-PIN). Cleared with the device
+    /// PIN.
+    pub(crate) pin_bound_owner_key: Mutex<Option<([u8; 32], u64)>>,
     /// The image each linked machine is sending this home in parts to
     /// countersign (FIX 4882), until it is whole, it idles out or its socket
     /// closes (FIX 5111).

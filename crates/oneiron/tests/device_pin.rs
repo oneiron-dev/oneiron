@@ -7,13 +7,18 @@
 //! device PIN on a clock the test moves. A keystore made with a counter
 //! stands in for the hardware tier; one made without stands in for the file
 //! tier, sealed at the kit's floor cost so a test's stretches stay short.
+//! The keystore is wrapped so that a test can stop one call in the middle
+//! of a step, or refuse it once: that is how the tests of two steps at once
+//! and of a step that cannot finish are made to run the same way each time.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test device_pin`.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, PoisonError, mpsc};
+use std::thread;
+use std::time::Duration;
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use oneiron::authority::{
@@ -31,10 +36,12 @@ use oneiron::world_keys::{
 };
 use oneiron::{Error, HostingPrivacyPosture, Vault, VaultConfig};
 use oneiron_keystore::{
-    DEVICE_PIN_WAIT_SECS, DEVICE_PIN_WRONG_TRIES, DeviceKeystore, KeystoreSlot,
+    AuthBoundError, AuthBoundSecretStore, DEVICE_PIN_WAIT_SECS, DEVICE_PIN_WRONG_TRIES,
+    DeviceKeystore, KeystoreAssurance, KeystoreError, KeystoreLocality, KeystoreSlot,
     ManualPresenceClock, MemoryKeystore, PRESENCE_WINDOW_SECS, PresenceCapability, SealedBytesName,
-    SlotKind,
+    SealedBytesStore, SlotKind,
 };
+use zeroize::Zeroizing;
 
 /// A statement in the checkpoint attestation domain: what the owner key
 /// signs for the checkpoint pass.
@@ -45,6 +52,177 @@ const OTHER_PIN: &[u8] = b"314159";
 const PASSPHRASE: &[u8] = b"quiet harbour lantern";
 const OTHER_PASSPHRASE: &[u8] = b"seven green bottles";
 
+/// How long a test waits for a step to reach the call it stops at, and a
+/// stopped call for the test's word.
+const PAUSE_WAIT: Duration = Duration::from_secs(30);
+
+/// How long a test gives a second step to run while the first is stopped.
+/// A step that waits for the first is still waiting when it is over.
+const SECOND_STEP_WAIT: Duration = Duration::from_millis(500);
+
+/// A keystore call a test stops at, or refuses once.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum KeystoreCall {
+    /// The owner signing slot's delete.
+    DeleteOwnerSlot,
+    /// A read of a slot's sealed secret.
+    GetSealedSlot,
+    /// A write of a slot's sealed secret.
+    PutSealedSlot,
+    /// The delete of the secret the hardware holds under an auth value.
+    DeleteAuthBound,
+}
+
+/// A call stopped before it reaches the keystore: it tells the test through
+/// the sender and goes on at the test's word on the receiver.
+type Pause = (KeystoreCall, mpsc::Sender<()>, mpsc::Receiver<()>);
+
+/// The process-memory keystore, with one call that a test stops in the
+/// middle of a step and one that it refuses once.
+struct SteppedKeystore {
+    inner: MemoryKeystore,
+    pause: Mutex<Option<Pause>>,
+    refuse: Mutex<Option<KeystoreCall>>,
+}
+
+impl SteppedKeystore {
+    fn new(inner: MemoryKeystore) -> Self {
+        Self {
+            inner,
+            pause: Mutex::new(None),
+            refuse: Mutex::new(None),
+        }
+    }
+
+    /// Stops the next `call` before it reaches the keystore. The test hears
+    /// of it on the receiver and lets the call go on through the sender.
+    fn pause_at(&self, call: KeystoreCall) -> (mpsc::Receiver<()>, mpsc::Sender<()>) {
+        let (reached, test_hears) = mpsc::channel();
+        let (test_resumes, resumed) = mpsc::channel();
+        *self.pause.lock().unwrap_or_else(PoisonError::into_inner) = Some((call, reached, resumed));
+        (test_hears, test_resumes)
+    }
+
+    /// Refuses the next `call`, once.
+    fn refuse_once(&self, call: KeystoreCall) {
+        *self.refuse.lock().unwrap_or_else(PoisonError::into_inner) = Some(call);
+    }
+
+    /// The test's part of `call`: the stop, then the refusal.
+    fn at(&self, call: KeystoreCall) -> Result<(), KeystoreError> {
+        let stopped = {
+            let mut pause = self.pause.lock().unwrap_or_else(PoisonError::into_inner);
+            if pause.as_ref().is_some_and(|(at, _, _)| *at == call) {
+                pause.take()
+            } else {
+                None
+            }
+        };
+        if let Some((_, reached, resumed)) = stopped {
+            reached.send(()).expect("the test waits for the stop");
+            resumed
+                .recv_timeout(PAUSE_WAIT)
+                .expect("the test lets the stopped call go on");
+        }
+        let mut refuse = self.refuse.lock().unwrap_or_else(PoisonError::into_inner);
+        if *refuse == Some(call) {
+            *refuse = None;
+            return Err(KeystoreError::Denied);
+        }
+        Ok(())
+    }
+
+    fn sealed(&self) -> &dyn SealedBytesStore {
+        self.inner
+            .sealed_bytes()
+            .expect("the memory keystore keeps sealed bytes")
+    }
+
+    fn hardware(&self) -> &dyn AuthBoundSecretStore {
+        self.inner
+            .auth_bound_secret()
+            .expect("a memory keystore made with a counter")
+    }
+}
+
+impl DeviceKeystore for SteppedKeystore {
+    fn get(&self, slot: &KeystoreSlot) -> Result<Option<Zeroizing<[u8; 32]>>, KeystoreError> {
+        DeviceKeystore::get(&self.inner, slot)
+    }
+
+    fn create(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<(), KeystoreError> {
+        DeviceKeystore::create(&self.inner, slot, secret)
+    }
+
+    fn delete(&self, slot: &KeystoreSlot) -> Result<(), KeystoreError> {
+        if slot.kind == SlotKind::OwnerSigning {
+            self.at(KeystoreCall::DeleteOwnerSlot)?;
+        }
+        DeviceKeystore::delete(&self.inner, slot)
+    }
+
+    fn replace(&self, slot: &KeystoreSlot, secret: &[u8; 32]) -> Result<bool, KeystoreError> {
+        DeviceKeystore::replace(&self.inner, slot, secret)
+    }
+
+    fn locality(&self) -> KeystoreLocality {
+        self.inner.locality()
+    }
+
+    fn assurance(&self) -> KeystoreAssurance {
+        self.inner.assurance()
+    }
+
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        Some(self)
+    }
+
+    fn auth_bound_secret(&self) -> Option<&dyn AuthBoundSecretStore> {
+        self.inner
+            .auth_bound_secret()
+            .map(|_| self as &dyn AuthBoundSecretStore)
+    }
+}
+
+impl SealedBytesStore for SteppedKeystore {
+    fn get_sealed(&self, name: &SealedBytesName) -> Result<Option<Vec<u8>>, KeystoreError> {
+        if matches!(name, SealedBytesName::Slot(_)) {
+            self.at(KeystoreCall::GetSealedSlot)?;
+        }
+        self.sealed().get_sealed(name)
+    }
+
+    fn put_sealed(&self, name: &SealedBytesName, sealed: &[u8]) -> Result<(), KeystoreError> {
+        if matches!(name, SealedBytesName::Slot(_)) {
+            self.at(KeystoreCall::PutSealedSlot)?;
+        }
+        self.sealed().put_sealed(name, sealed)
+    }
+
+    fn delete_sealed(&self, name: &SealedBytesName) -> Result<(), KeystoreError> {
+        self.sealed().delete_sealed(name)
+    }
+}
+
+impl AuthBoundSecretStore for SteppedKeystore {
+    fn holds_auth_bound(&self) -> Result<bool, KeystoreError> {
+        self.hardware().holds_auth_bound()
+    }
+
+    fn put_auth_bound(&self, auth: &[u8], secret: &[u8; 32]) -> Result<(), KeystoreError> {
+        self.hardware().put_auth_bound(auth, secret)
+    }
+
+    fn open_auth_bound(&self, auth: &[u8]) -> Result<Option<Zeroizing<[u8; 32]>>, AuthBoundError> {
+        self.hardware().open_auth_bound(auth)
+    }
+
+    fn delete_auth_bound(&self) -> Result<(), KeystoreError> {
+        self.at(KeystoreCall::DeleteAuthBound)?;
+        self.hardware().delete_auth_bound()
+    }
+}
+
 /// One vault under the Hosted posture, rooted under the test host, with
 /// this install's machine profile enrolled, the embedded owner
 /// authenticated, and a device PIN over the vault's keystore on a manual
@@ -53,7 +231,7 @@ struct PinDevice {
     vault: Vault,
     issuer: HostSlipIssuer,
     proof: AuthenticatedOwner,
-    keystore: Arc<MemoryKeystore>,
+    keystore: Arc<SteppedKeystore>,
     pin: Arc<DevicePin>,
     clock: Arc<ManualPresenceClock>,
     _dir: tempfile::TempDir,
@@ -71,24 +249,42 @@ impl PinDevice {
     }
 
     fn open(keystore: MemoryKeystore) -> Self {
+        let keystore = Arc::new(SteppedKeystore::new(keystore));
+        let clock = ManualPresenceClock::new(1_000_000, 1_000_000);
+        let pin = DevicePin::with_clock_and_cost(
+            Arc::<SteppedKeystore>::clone(&keystore),
+            Arc::<ManualPresenceClock>::clone(&clock),
+            PassphraseCost::FLOOR,
+        )
+        .expect("the device PIN over the device's keystore");
+        Self::open_over(keystore, pin, clock)
+    }
+
+    /// Another vault of the same device: a vault and an owner of its own,
+    /// over this device's keystore and its one device PIN.
+    fn second_vault(&self) -> Self {
+        Self::open_over(
+            Arc::clone(&self.keystore),
+            Arc::clone(&self.pin),
+            Arc::clone(&self.clock),
+        )
+    }
+
+    fn open_over(
+        keystore: Arc<SteppedKeystore>,
+        pin: Arc<DevicePin>,
+        clock: Arc<ManualPresenceClock>,
+    ) -> Self {
         let dir = tempfile::tempdir().expect("vault directory");
         let mut config = VaultConfig::device();
         config.privacy.posture = HostingPrivacyPosture::Hosted;
         let vault = Vault::open(dir.path(), config).expect("hosted vault");
-        let keystore = Arc::new(keystore);
-        vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
+        vault.install_device_keystore(Arc::<SteppedKeystore>::clone(&keystore));
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         vault
             .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
             .expect("this install's machine profile under the host root");
         let (_owner, proof) = embedded_owner(&vault).expect("authenticated embedded owner");
-        let clock = ManualPresenceClock::new(1_000_000, 1_000_000);
-        let pin = DevicePin::with_clock_and_cost(
-            Arc::<MemoryKeystore>::clone(&keystore),
-            Arc::<ManualPresenceClock>::clone(&clock),
-            PassphraseCost::FLOOR,
-        )
-        .expect("the device PIN over the vault's keystore");
         vault
             .install_device_pin(Arc::clone(&pin))
             .expect("the device PIN goes on the handle");
@@ -145,9 +341,17 @@ impl PinDevice {
             return false;
         };
         let signature = signer
-            .sign_checkpoint_statement(STATEMENT)
+            .sign_checkpoint_statement(&self.vault, STATEMENT)
             .expect("a listed signer signs a checkpoint statement");
         verifies(key, &signature)
+    }
+
+    /// What rests under `name` in the keystore's home for sealed bytes.
+    fn sealed(&self, name: &SealedBytesName) -> Option<Vec<u8>> {
+        self.keystore
+            .sealed()
+            .get_sealed(name)
+            .expect("the home for sealed bytes reads")
     }
 
     fn rest(&self) -> OwnerKeyRest {
@@ -339,7 +543,7 @@ fn after_the_window_ends_the_key_does_not_sign_and_no_seed_rests_in_the_slot() {
     device.pass_the_window();
     assert!(!device.pin.window_is_open(), "the window ends by its clock");
     assert_eq!(
-        pin_refusal(held.sign_checkpoint_statement(STATEMENT)),
+        pin_refusal(held.sign_checkpoint_statement(&device.vault, STATEMENT)),
         DevicePinRefusal::Required,
         "a signer taken inside the window signs nothing after it"
     );
@@ -642,6 +846,10 @@ fn a_revoked_key_stops_at_its_next_use() {
         .set_device_pin_as(&bound.owner(), PIN, false)
         .expect("the owner sets the PIN");
     let key = bound.enrol();
+    // A signer the pass took while the key was live.
+    let taken = bound
+        .listed_signer(key)
+        .expect("guard: inside the window the pass gets the signer");
     assert!(
         bound.signs(key),
         "guard: the live key signs inside the window"
@@ -652,17 +860,32 @@ fn a_revoked_key_stops_at_its_next_use() {
         "guard: the window is still open"
     );
     assert!(
+        taken
+            .sign_checkpoint_statement(&bound.vault, STATEMENT)
+            .is_err(),
+        "a signer taken before the key was revoked signs nothing after, window or not"
+    );
+    assert!(
         bound.listed_signer(key).is_none(),
-        "a revoked key under the PIN is not asked again, window or not"
+        "and a revoked key under the PIN is not asked again"
     );
 
     let unbound = PinDevice::hardware_counted();
     let key = unbound.enrol();
+    let taken = unbound
+        .listed_signer(key)
+        .expect("guard: with no PIN the pass gets the signer");
     assert!(unbound.signs(key), "guard: the live key in its slot signs");
     retire_the_roster(&unbound, key);
     assert!(
+        taken
+            .sign_checkpoint_statement(&unbound.vault, STATEMENT)
+            .is_err(),
+        "a signer of a key in its slot, taken before the key was revoked, signs nothing after"
+    );
+    assert!(
         unbound.listed_signer(key).is_none(),
-        "a revoked key in its slot is not asked again either"
+        "and a revoked key in its slot is not asked again either"
     );
 }
 
@@ -689,7 +912,7 @@ fn a_host_that_takes_no_pin_never_makes_the_key_beside_a_set_pin() {
     // The same keystore installed again, as a host that takes no PIN does.
     device
         .vault
-        .install_device_keystore(Arc::<MemoryKeystore>::clone(&device.keystore));
+        .install_device_keystore(Arc::<SteppedKeystore>::clone(&device.keystore));
     assert!(
         device.vault.device_pin().is_none(),
         "guard: the handle has no device PIN now"
@@ -717,4 +940,468 @@ fn a_host_that_takes_no_pin_never_makes_the_key_beside_a_set_pin() {
             .is_none(),
         "no seed was made in the clear"
     );
+}
+
+#[test]
+fn a_signer_taken_before_the_pin_was_set_signs_nothing_after_it() {
+    let device = PinDevice::hardware_counted();
+    let key = device.enrol();
+    // The two ways a caller comes by the key while no PIN is set.
+    let listed = device
+        .listed_signer(key)
+        .expect("guard: with no PIN the pass gets the signer");
+    let handed_out = device
+        .vault
+        .device_owner_signing_key()
+        .expect("guard: with no PIN the key is handed out");
+    for signer in [&*listed, &handed_out as &dyn CheckpointRootSigner] {
+        let signature = signer
+            .sign_checkpoint_statement(&device.vault, STATEMENT)
+            .expect("guard: with no PIN the key signs from its slot");
+        assert!(verifies(key, &signature));
+    }
+
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner adds a PIN to this device");
+    for signer in [&*listed, &handed_out as &dyn CheckpointRootSigner] {
+        assert_eq!(
+            pin_refusal(signer.sign_checkpoint_statement(&device.vault, STATEMENT)),
+            DevicePinRefusal::Required,
+            "a signer taken before the PIN was set is dead once it is set, inside the window too"
+        );
+    }
+    device.pin.end_window();
+    for signer in [&*listed, &handed_out as &dyn CheckpointRootSigner] {
+        assert_eq!(
+            pin_refusal(signer.sign_checkpoint_statement(&device.vault, STATEMENT)),
+            DevicePinRefusal::Required,
+            "and it signs nothing with the window closed"
+        );
+    }
+    device
+        .vault
+        .confirm_device_pin(PIN)
+        .expect("the right PIN confirms");
+    assert!(
+        device.signs(key),
+        "the signer the pass takes inside a window opens the seed from under the PIN"
+    );
+}
+
+#[test]
+fn a_signature_begun_inside_the_window_does_not_finish_after_it() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let key = device.enrol();
+    let signer = device
+        .listed_signer(key)
+        .expect("inside the window the pass gets the signer");
+
+    // The signature stops where it reads the sealed seed from its home.
+    let (reached, resume) = device.keystore.pause_at(KeystoreCall::GetSealedSlot);
+    let vault = &device.vault;
+    let signed = thread::scope(|scope| {
+        let signing = scope.spawn(move || signer.sign_checkpoint_statement(vault, STATEMENT));
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the signature reaches the sealed seed's home");
+        device.pin.end_window();
+        resume.send(()).expect("the signature goes on");
+        signing.join().expect("the signing thread ends")
+    });
+    assert_eq!(
+        pin_refusal(signed),
+        DevicePinRefusal::Required,
+        "a window that ended while a signature was on its way leaves it nothing to sign with"
+    );
+}
+
+#[test]
+fn a_first_pin_that_cannot_finish_leaves_a_device_with_no_pin() {
+    let device = PinDevice::hardware_counted();
+    let key = device.enrol();
+    let slot = device.owner_slot();
+
+    // The keystore refuses the set's last step, emptying the slot.
+    device.keystore.refuse_once(KeystoreCall::DeleteOwnerSlot);
+    assert!(
+        device
+            .vault
+            .set_device_pin_as(&device.owner(), PIN, false)
+            .is_err(),
+        "the set reports the keystore's refusal"
+    );
+    assert_eq!(
+        device.pin.capability(),
+        PresenceCapability::DevicePin { set: false },
+        "a set that did not finish leaves no PIN set"
+    );
+    assert!(!device.pin.window_is_open());
+    assert!(
+        device
+            .keystore
+            .get(&slot)
+            .expect("the slot reads")
+            .is_some(),
+        "the seed never left its slot"
+    );
+    assert!(
+        device.sealed(&SealedBytesName::Slot(slot)).is_none(),
+        "and no sealed copy of it is left"
+    );
+    assert_eq!(device.rest(), OwnerKeyRest::Slot);
+    assert!(
+        device.signs(key),
+        "the key signs from its slot, as on any device with no PIN"
+    );
+
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the set asked again finishes");
+    assert_eq!(
+        device.rest(),
+        OwnerKeyRest::DevicePin {
+            public_key: key,
+            tier: DevicePinTier::HardwareCounted,
+        }
+    );
+    assert!(
+        device
+            .keystore
+            .get(&slot)
+            .expect("the slot reads")
+            .is_none(),
+        "and the slot is emptied in the same step"
+    );
+}
+
+#[test]
+fn another_vault_of_the_device_signs_nothing_from_its_slot_once_a_pin_is_set() {
+    let first = PinDevice::hardware_counted();
+    let second = first.second_vault();
+    let _first_key = first.enrol();
+    let second_key = second.enrol();
+    let taken = second
+        .listed_signer(second_key)
+        .expect("guard: with no PIN the second vault's key signs from its slot");
+
+    first
+        .vault
+        .set_device_pin_as(&first.owner(), PIN, false)
+        .expect("the owner adds a PIN to this device through the first vault");
+    assert_eq!(
+        pin_refusal(taken.sign_checkpoint_statement(&second.vault, STATEMENT)),
+        DevicePinRefusal::Required,
+        "from that step on the second vault's seed signs nothing from its slot"
+    );
+    assert_eq!(
+        second.rest(),
+        OwnerKeyRest::DevicePinUnopened {
+            tier: DevicePinTier::HardwareCounted,
+            seed_in_slot: true,
+        },
+        "its seed is told as still in its slot"
+    );
+
+    // The second vault's next checkpoint pass, inside the window the first
+    // vault's PIN opened.
+    second.vault.hold_device_owner_signer_in_pin_window();
+    assert!(
+        second
+            .keystore
+            .get(&second.owner_slot())
+            .expect("the slot reads")
+            .is_none(),
+        "the pass puts the seed under the PIN and empties its slot"
+    );
+    assert_eq!(
+        second.rest(),
+        OwnerKeyRest::DevicePin {
+            public_key: second_key,
+            tier: DevicePinTier::HardwareCounted,
+        }
+    );
+    assert!(
+        second.signs(second_key),
+        "inside the window the second vault's key signs from under the PIN"
+    );
+    first.pin.end_window();
+    assert!(
+        second.listed_signer(second_key).is_none(),
+        "and outside it the second vault's key signs nothing"
+    );
+}
+
+#[test]
+fn a_host_that_takes_no_pin_holds_no_key_from_a_slot_beside_a_set_pin() {
+    let first = PinDevice::hardware_counted();
+    let second = first.second_vault();
+    let second_key = second.enrol();
+    first
+        .vault
+        .set_device_pin_as(&first.owner(), PIN, false)
+        .expect("the owner adds a PIN to this device through the first vault");
+    first.pin.end_window();
+
+    // The second vault under a host that installs the keystore and no
+    // device PIN.
+    second
+        .vault
+        .install_device_keystore(Arc::<SteppedKeystore>::clone(&second.keystore));
+    assert!(
+        second.vault.device_pin().is_none(),
+        "guard: the handle has no device PIN now"
+    );
+    assert!(
+        second
+            .keystore
+            .get(&second.owner_slot())
+            .expect("the slot reads")
+            .is_some(),
+        "guard: the second vault's seed still rests in its slot"
+    );
+    assert!(
+        !second.vault.hold_device_owner_signer_logged(),
+        "the slot of a device with a PIN set is not read as a key"
+    );
+    assert!(
+        second.listed_signer(second_key).is_none(),
+        "and nothing signs from it"
+    );
+    assert_eq!(
+        second.rest(),
+        OwnerKeyRest::DevicePinUnopened {
+            tier: DevicePinTier::HardwareCounted,
+            seed_in_slot: true,
+        }
+    );
+}
+
+#[test]
+fn two_enrolments_at_once_make_one_key_that_rests_under_the_pin() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+
+    // The first enrollment stops where it puts its sealed seed to rest.
+    let (reached, resume) = device.keystore.pause_at(KeystoreCall::PutSealedSlot);
+    let (vault, issuer) = (&device.vault, &device.issuer);
+    let enrol = move |proof: AuthenticatedOwner| {
+        vault
+            .enrol_device_owner_signing_key(
+                &ActAuthority::Owner(proof, ActSurface::ThisInstall),
+                issuer,
+            )
+            .map(|receipt| receipt.public_key)
+    };
+    let (first_proof, second_proof) = (device.proof.clone(), device.proof.clone());
+    let (second_ended, test_hears) = mpsc::channel();
+    let (first, second) = thread::scope(|scope| {
+        let first = scope.spawn(move || enrol(first_proof));
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the first enrollment reaches its seal");
+        let second = scope.spawn(move || {
+            let enrolled = enrol(second_proof);
+            let _told = second_ended.send(());
+            enrolled
+        });
+        // The second gets its time to run while the first is stopped.
+        let _ran = test_hears.recv_timeout(SECOND_STEP_WAIT);
+        resume.send(()).expect("the first enrollment goes on");
+        (
+            first.join().expect("the first enrollment's thread ends"),
+            second.join().expect("the second enrollment's thread ends"),
+        )
+    });
+    let first = first.expect("the first enrollment enrols a key");
+    let second = second.expect("the second enrollment answers");
+    assert_eq!(
+        first, second,
+        "two enrollments at once enrol one key, and both answer it"
+    );
+    assert_eq!(
+        device.rest(),
+        OwnerKeyRest::DevicePin {
+            public_key: first,
+            tier: DevicePinTier::HardwareCounted,
+        }
+    );
+    assert!(
+        device.signs(first),
+        "the one enrolled key's seed rests under the PIN"
+    );
+}
+
+#[test]
+fn a_pin_typed_while_the_pin_is_forgotten_opens_no_window() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let _key = device.enrol();
+    device.pin.end_window();
+
+    // The forget stops after it ended the window and before the device PIN
+    // key leaves the hardware.
+    let (reached, resume) = device.keystore.pause_at(KeystoreCall::DeleteAuthBound);
+    let (vault, pin) = (&device.vault, &device.pin);
+    let proof = device.proof.clone();
+    let (typing_ended, test_hears) = mpsc::channel();
+    let (forgotten, typed) = thread::scope(|scope| {
+        let forgetting = scope.spawn(move || {
+            vault.forget_device_pin_as(&ActAuthority::Owner(proof, ActSurface::ThisInstall))
+        });
+        reached
+            .recv_timeout(PAUSE_WAIT)
+            .expect("the forget reaches the hardware");
+        let typing = scope.spawn(move || {
+            let answer = pin.confirm(PIN);
+            let _told = typing_ended.send(());
+            answer
+        });
+        // The typed PIN gets its time to run while the forget is stopped.
+        let _ran = test_hears.recv_timeout(SECOND_STEP_WAIT);
+        resume.send(()).expect("the forget goes on");
+        (
+            forgetting.join().expect("the forget's thread ends"),
+            typing.join().expect("the typed PIN's thread ends"),
+        )
+    });
+    forgotten.expect("the owner forgets this device's PIN");
+    assert_eq!(
+        pin_refusal(typed),
+        DevicePinRefusal::NotSet,
+        "a PIN typed during the forget waits for it, and then finds no PIN set"
+    );
+    assert!(
+        !device.pin.window_is_open(),
+        "no window is open once the PIN is forgotten"
+    );
+    assert_eq!(
+        device.pin.capability(),
+        PresenceCapability::DevicePin { set: false }
+    );
+}
+
+#[test]
+fn sealed_bytes_this_device_cannot_open_are_not_told_as_its_key() {
+    let device = PinDevice::hardware_counted();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PIN, false)
+        .expect("the owner sets the PIN");
+    let lost = device.enrol();
+    let name = SealedBytesName::Slot(device.owner_slot());
+    let lost_envelope = device.sealed(&name).expect("the sealed seed rests");
+
+    device
+        .vault
+        .forget_device_pin_as(&device.owner())
+        .expect("the owner forgets this device's PIN");
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), OTHER_PIN, false)
+        .expect("the owner sets a new PIN");
+    // A writer of the keystore's files puts back the envelope that names the
+    // lost key. The roster still lists that key live.
+    device
+        .keystore
+        .sealed()
+        .put_sealed(&name, &lost_envelope)
+        .expect("the envelope goes back under the slot's name");
+
+    assert!(
+        device.pin.window_is_open(),
+        "guard: the new PIN's window is open"
+    );
+    assert!(
+        !device.vault.hold_device_owner_signer_logged(),
+        "bytes that do not open under this device's PIN key are no key of it"
+    );
+    assert_eq!(
+        device.rest(),
+        OwnerKeyRest::DevicePinUnopened {
+            tier: DevicePinTier::HardwareCounted,
+            seed_in_slot: false,
+        },
+        "and no public half is told for them"
+    );
+    assert!(
+        device.listed_signer(lost).is_none(),
+        "the pass gets no signer for the key they name"
+    );
+}
+
+#[test]
+fn a_passphrase_cost_no_reader_takes_is_refused_before_a_pin_is_sealed_at_it() {
+    let keystore = Arc::new(MemoryKeystore::new());
+    let clock = ManualPresenceClock::new(1_000_000, 1_000_000);
+    // One pass more than a reader of the envelope spends.
+    let over_the_ceiling = PassphraseCost {
+        memory_mib: PassphraseCost::FLOOR.memory_mib,
+        passes: PassphraseCost::CEILING.passes + 1,
+    };
+    assert!(
+        DevicePin::with_clock_and_cost(keystore, clock, over_the_ceiling).is_err(),
+        "a device PIN is not made at a cost its own reader would refuse"
+    );
+}
+
+#[test]
+fn a_first_pin_inside_the_wait_is_refused_and_nothing_is_stored() {
+    let device = PinDevice::passphrase();
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), PASSPHRASE, false)
+        .expect("the owner sets a passphrase for this device");
+    device.pin.end_window();
+    for _ in 0..DEVICE_PIN_WRONG_TRIES {
+        let _refused = device.vault.confirm_device_pin(OTHER_PASSPHRASE);
+    }
+    assert_eq!(
+        device.pin.wait_secs(),
+        Some(DEVICE_PIN_WAIT_SECS),
+        "guard: the wait runs"
+    );
+    device
+        .vault
+        .forget_device_pin_as(&device.owner())
+        .expect("a forget takes no PIN, so the wait does not stop it");
+
+    assert_eq!(
+        pin_refusal(
+            device
+                .vault
+                .set_device_pin_as(&device.owner(), OTHER_PASSPHRASE, false)
+        ),
+        DevicePinRefusal::TooManyTries {
+            wait_secs: DEVICE_PIN_WAIT_SECS
+        },
+        "inside the wait a new PIN could not be confirmed, so none is set"
+    );
+    assert_eq!(
+        device.pin.capability(),
+        PresenceCapability::DevicePin { set: false }
+    );
+    assert!(
+        device.sealed(&SealedBytesName::DevicePinKey).is_none(),
+        "no device PIN key was put to rest"
+    );
+
+    device.clock.advance(DEVICE_PIN_WAIT_SECS * 1000);
+    device
+        .vault
+        .set_device_pin_as(&device.owner(), OTHER_PASSPHRASE, false)
+        .expect("after the wait the owner sets a new PIN");
+    assert!(device.pin.window_is_open());
 }

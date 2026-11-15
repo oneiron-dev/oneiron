@@ -29,6 +29,7 @@ impl Vault {
             .device_pin
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
+        self.note_pin_bound_owner_key(None);
         *self
             .world_keys
             .signer

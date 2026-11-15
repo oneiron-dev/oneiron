@@ -22,7 +22,15 @@
 //! opens ([`oneiron_keystore::PRESENCE_WINDOW_SECS`]). The keystore crate's
 //! [`PresenceGate`] keeps that window and counts wrong PINs; this module is
 //! its backend. When the window ends the gate tells the backend, which wipes
-//! the key.
+//! the key. The key is not handed out: each use runs under the lock that
+//! wipe takes, so a use begun inside the window ends before the window does,
+//! and none begins after it.
+//!
+//! One step at a time reads or changes what rests under the PIN: a typed
+//! PIN's check, a set, a change, a forget, and each step that puts an owner
+//! signing key under the device PIN key. The lock is this process's. A host
+//! makes one [`DevicePin`] per keystore and installs it on every vault handle
+//! over that keystore.
 //!
 //! What the PIN guards is the owner signing key and each act that needs its
 //! signature. It is not a second login: an act this install carries with its
@@ -47,7 +55,7 @@ use oneiron_keystore::{
 use zeroize::Zeroizing;
 
 pub use self::owner_key::OwnerKeyRest;
-use super::{derive_guarded, keystore_error, os_fill, refused};
+use super::{derive_guarded, keystore_error, refused};
 use crate::error::{DevicePinRefusal, Error, Result, SecretError};
 use crate::recovery::PassphraseCost;
 
@@ -78,6 +86,11 @@ const PIN_HOME_UNREADABLE: &str = "its keystore did not answer for the device PI
 const NO_WINDOW_WATCH: &str = "the watch that ends the device PIN's window could not start";
 const SCREEN_LOCKED: &str = "its screen is locked";
 const NOT_CONFIRMED: &str = "the confirm was not given";
+const NO_DEVICE_PIN_HERE: &str = "this host installed no device PIN on this vault";
+const COST_OUT_OF_RANGE: &str = "the device PIN's passphrase cost is outside the recovery kit's \
+                                 floor and ceiling";
+const PIN_KEY_NOT_READ_BACK: &str = "the device PIN key did not read back from its home; this \
+                                     device has no PIN";
 
 /// What counts wrong device PINs on this device.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,11 +111,19 @@ pub enum DevicePinTier {
 pub struct DevicePin {
     gate: PresenceGate,
     backend: Arc<DevicePinBackend>,
-    /// Held while the PIN is set, changed or forgotten, so two of those
-    /// never cross.
-    changing: Mutex<()>,
+    /// Held across each whole step that reads or changes what rests under
+    /// the PIN ([`Self::step`]), so no two of them cross.
+    step: Mutex<()>,
     /// How many right PINs this process took.
     right_pins: AtomicU64,
+    /// How many times this process set or forgot the device PIN key. What a
+    /// vault handle opened under one key counts for nothing under the next.
+    key_generation: AtomicU64,
+}
+
+/// Proof that its holder is inside a device PIN's step ([`DevicePin::step`]).
+pub(in crate::world_keys) struct DevicePinStep<'a> {
+    _held: MutexGuard<'a, ()>,
 }
 
 impl std::fmt::Debug for DevicePin {
@@ -144,12 +165,15 @@ impl DevicePin {
     /// comes, so the key is never held past its window.
     ///
     /// # Errors
-    /// The watch could not start.
+    /// A `cost` outside the recovery kit's floor and ceiling, which a reader
+    /// of the envelope would refuse; the watch could not start.
     pub fn with_clock_and_cost(
         keystore: Arc<dyn DeviceKeystore>,
         clock: Arc<dyn PresenceClock>,
         cost: PassphraseCost,
     ) -> Result<Arc<Self>> {
+        let cost = PassphraseCost::new(cost.memory_mib, cost.passes)
+            .map_err(|_| refused(COST_OUT_OF_RANGE))?;
         let backend = Arc::new(DevicePinBackend {
             keystore,
             cost,
@@ -164,8 +188,9 @@ impl DevicePin {
         Ok(Arc::new(Self {
             gate,
             backend,
-            changing: Mutex::new(()),
+            step: Mutex::new(()),
             right_pins: AtomicU64::new(0),
+            key_generation: AtomicU64::new(0),
         }))
     }
 
@@ -178,13 +203,7 @@ impl DevicePin {
     /// What counts wrong PINs here; `None` on a device that takes no PIN.
     #[must_use]
     pub fn tier(&self) -> Option<DevicePinTier> {
-        let keystore = self.backend.keystore.as_ref();
-        keystore.sealed_bytes()?;
-        Some(if keystore.auth_bound_secret().is_some() {
-            DevicePinTier::HardwareCounted
-        } else {
-            DevicePinTier::Passphrase
-        })
+        device_pin_tier(self.backend.keystore.as_ref())
     }
 
     /// The fewest characters a new PIN has on this device:
@@ -228,14 +247,27 @@ impl DevicePin {
 
     /// Takes the PIN the owner typed. The right one opens the window and
     /// puts the device PIN key in memory for it; anything else opens
-    /// nothing. It neither keeps nor logs `pin`. The check may take a
+    /// nothing. It neither keeps nor logs `pin`. It is a step of its own: it
+    /// waits for a set, a change or a forget that runs, so a PIN is never
+    /// checked against a key that is on its way out. The check may take a
     /// second: never call it while holding a lock other work waits on.
+    ///
+    /// The count of wrong PINs is this object's, in memory
+    /// ([`PresenceGate::confirm_with_secret`]): it stops a person at the
+    /// device and an agent that calls a door. A host that makes a new
+    /// `DevicePin`, and a restart, start it over; the hardware's own count,
+    /// where there is one, is the chip's and stays.
     ///
     /// # Errors
     /// [`SecretError::DevicePin`]: `Wrong`; `TooManyTries` for the wrong PIN
     /// that starts the wait, for every PIN inside it, and while the hardware
     /// itself refuses; `NotSet`; `Unavailable` on a device that takes no PIN.
     pub fn confirm(&self, pin: &[u8]) -> Result<()> {
+        self.confirm_in_step(&self.step(), pin)
+    }
+
+    /// [`Self::confirm`], for a caller inside a step.
+    fn confirm_in_step(&self, _step: &DevicePinStep<'_>, pin: &[u8]) -> Result<()> {
         match self.capability() {
             PresenceCapability::DevicePin { set: true } => {}
             PresenceCapability::DevicePin { set: false } => {
@@ -255,29 +287,28 @@ impl DevicePin {
         Ok(())
     }
 
-    /// Whether a PIN is set on this device.
-    fn is_set(&self) -> Result<bool> {
-        device_pin_is_set(self.backend.keystore.as_ref()).map_err(keystore_error)
-    }
-
     /// Whether this device PIN guards `keystore`: the one a vault handle
     /// keeps its slots in.
     fn guards(&self, keystore: &Arc<dyn DeviceKeystore>) -> bool {
         std::ptr::addr_eq(Arc::as_ptr(&self.backend.keystore), Arc::as_ptr(keystore))
     }
 
-    /// The device PIN key, while a right PIN's window is open.
+    /// Runs `use_key` with the device PIN key, while a right PIN's window is
+    /// open. The key is not copied out: `use_key` runs under the lock the
+    /// window's end takes to wipe it, so an end lands wholly before a use or
+    /// wholly after it, and what a use opened is dropped inside it.
+    /// `use_key` is short, reads no home and never calls the gate.
     ///
     /// # Errors
     /// [`DevicePinRefusal::Required`] outside a window; `NotSet` and
     /// `Unavailable` as [`Self::confirm`].
-    fn pin_key(&self) -> Result<Zeroizing<[u8; 32]>> {
+    fn with_pin_key<T>(&self, use_key: impl FnOnce(&[u8; 32]) -> T) -> Result<T> {
         // The window is read first and outside the key's lock: a window
         // found over tells the backend under its own lock.
         if self.gate.window_is_open() {
-            let held: Option<Zeroizing<[u8; 32]>> = self.backend.open_key().clone();
-            if let Some(key) = held {
-                return Ok(key);
+            let held = self.backend.open_key();
+            if let Some(key) = held.as_deref() {
+                return Ok(use_key(key));
             }
         }
         Err(pin_refused(match self.capability() {
@@ -288,13 +319,26 @@ impl DevicePin {
         }))
     }
 
-    /// Sets this device's first PIN and opens a window with it.
+    /// Refuses outside a right PIN's window, as [`Self::with_pin_key`].
+    fn require_window(&self) -> Result<()> {
+        self.with_pin_key(|_| ())
+    }
+
+    /// Whether this device can take `pin` as its first PIN now. Nothing is
+    /// stored.
     ///
     /// # Errors
-    /// [`DevicePinRefusal::AlreadySet`]; `TooShort`; `Unavailable` on a
-    /// device that takes no PIN; the keystore's refusal.
-    fn set(&self, pin: &[u8], short_pin_allowed: bool) -> Result<()> {
-        let _changing = self.changing();
+    /// [`DevicePinRefusal::AlreadySet`]; `TooShort`; `TooManyTries` while
+    /// this device takes no PIN after too many wrong ones, because a PIN set
+    /// then could not be confirmed; `Unavailable` on a device that takes no
+    /// PIN. A PIN longer than 1024 bytes is refused as no passphrase an
+    /// envelope takes.
+    fn check_first_pin(
+        &self,
+        _step: &DevicePinStep<'_>,
+        pin: &[u8],
+        short_pin_allowed: bool,
+    ) -> Result<()> {
         match self.capability() {
             PresenceCapability::DevicePin { set: false } => {}
             PresenceCapability::DevicePin { set: true } => {
@@ -308,10 +352,29 @@ impl DevicePin {
             }
         }
         check_new_pin(pin, self.min_chars(short_pin_allowed))?;
-        let mut key = Zeroizing::new([0u8; 32]);
-        os_fill(&mut key[..])?;
-        self.backend.store_pin_key(pin, &key)?;
-        self.confirm(pin)
+        match self.wait_secs() {
+            Some(wait_secs) => Err(pin_refused(DevicePinRefusal::TooManyTries { wait_secs })),
+            None => Ok(()),
+        }
+    }
+
+    /// Puts `key` to rest under `pin` as this device's PIN key, and opens a
+    /// window with it. `Ok` only when the key the window then holds is `key`,
+    /// read back from its home with `pin`. The caller undoes a refusal with
+    /// [`Self::forget`].
+    ///
+    /// # Errors
+    /// The keystore's refusal; as [`Self::confirm`] for a PIN its home does
+    /// not open with (the hardware's own lockout, a locked screen); a
+    /// refusal for a home that gives back another key.
+    fn store_first_key(&self, step: &DevicePinStep<'_>, pin: &[u8], key: &[u8; 32]) -> Result<()> {
+        self.backend.store_pin_key(pin, key)?;
+        self.confirm_in_step(step, pin)?;
+        if !self.with_pin_key(|held| held == key)? {
+            return Err(refused(PIN_KEY_NOT_READ_BACK));
+        }
+        self.key_generation.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Changes the PIN: `old` is checked as any typed PIN is, and the same
@@ -320,12 +383,25 @@ impl DevicePin {
     ///
     /// # Errors
     /// As [`Self::confirm`] for `old`; [`DevicePinRefusal::TooShort`] for
-    /// `new`, before `old` is checked; the keystore's refusal.
-    fn change(&self, old: &[u8], new: &[u8], short_pin_allowed: bool) -> Result<()> {
-        let _changing = self.changing();
+    /// `new`, before `old` is checked; the keystore's refusal. A `new` longer
+    /// than 1024 bytes is refused as no passphrase an envelope takes.
+    fn change(
+        &self,
+        step: &DevicePinStep<'_>,
+        old: &[u8],
+        new: &[u8],
+        short_pin_allowed: bool,
+    ) -> Result<()> {
         check_new_pin(new, self.min_chars(short_pin_allowed))?;
-        self.confirm(old)?;
-        let key = self.pin_key()?;
+        self.confirm_in_step(step, old)?;
+        // The one copy of the key made outside the backend. Sealing it under
+        // the new PIN may take a second, and the window's end never waits
+        // that long. It lives inside this step, which `old` just opened.
+        let key = self.with_pin_key(|held| {
+            let mut copy = Zeroizing::new([0u8; 32]);
+            copy.copy_from_slice(held);
+            copy
+        })?;
         self.backend.store_pin_key(new, &key)
     }
 
@@ -335,9 +411,9 @@ impl DevicePin {
     ///
     /// # Errors
     /// The keystore's refusal.
-    fn forget(&self) -> Result<()> {
-        let _changing = self.changing();
+    fn forget(&self, _step: &DevicePinStep<'_>) -> Result<()> {
         self.gate.end_window();
+        self.key_generation.fetch_add(1, Ordering::Relaxed);
         let keystore = self.backend.keystore.as_ref();
         if let Some(hardware) = keystore.auth_bound_secret() {
             hardware.delete_auth_bound().map_err(keystore_error)?;
@@ -347,6 +423,11 @@ impl DevicePin {
                 .map_err(keystore_error)?;
         }
         Ok(())
+    }
+
+    /// The count of device PIN keys this process set or forgot.
+    fn key_generation(&self) -> u64 {
+        self.key_generation.load(Ordering::Relaxed)
     }
 
     /// The home of the secrets sealed under the device PIN key.
@@ -376,8 +457,15 @@ impl DevicePin {
             .map_err(keystore_error)
     }
 
-    fn changing(&self) -> MutexGuard<'_, ()> {
-        self.changing.lock().unwrap_or_else(PoisonError::into_inner)
+    /// Enters a step: one at a time reads or changes what rests under the
+    /// PIN. A typed PIN's check, a set, a change and a forget are each one
+    /// whole step, and so is each step that puts an owner signing key under
+    /// the device PIN key, makes one there, or makes one in a slot while no
+    /// PIN is set. A signature is no step: it takes only the key's own lock.
+    pub(in crate::world_keys) fn step(&self) -> DevicePinStep<'_> {
+        DevicePinStep {
+            _held: self.step.lock().unwrap_or_else(PoisonError::into_inner),
+        }
     }
 }
 
@@ -473,7 +561,9 @@ impl UserPresence for DevicePinBackend {
 
 /// Whether a device PIN key rests in `keystore`: in its hardware where that
 /// counts wrong tries, else in its home for sealed bytes.
-fn device_pin_is_set(keystore: &dyn DeviceKeystore) -> std::result::Result<bool, KeystoreError> {
+pub(super) fn device_pin_is_set(
+    keystore: &dyn DeviceKeystore,
+) -> std::result::Result<bool, KeystoreError> {
     if let Some(hardware) = keystore.auth_bound_secret() {
         return hardware.holds_auth_bound();
     }
@@ -483,8 +573,25 @@ fn device_pin_is_set(keystore: &dyn DeviceKeystore) -> std::result::Result<bool,
     }
 }
 
-fn pin_refused(refusal: DevicePinRefusal) -> Error {
+/// What counts wrong device PINs on `keystore`; `None` for one that takes no
+/// PIN.
+fn device_pin_tier(keystore: &dyn DeviceKeystore) -> Option<DevicePinTier> {
+    keystore.sealed_bytes()?;
+    Some(if keystore.auth_bound_secret().is_some() {
+        DevicePinTier::HardwareCounted
+    } else {
+        DevicePinTier::Passphrase
+    })
+}
+
+pub(super) fn pin_refused(refusal: DevicePinRefusal) -> Error {
     Error::Secret(SecretError::DevicePin(refusal))
+}
+
+/// The refusal of a host that installed no device PIN on a vault handle, on
+/// a device where a PIN is set.
+pub(super) fn no_device_pin_here() -> Error {
+    pin_refused(DevicePinRefusal::Unavailable(NO_DEVICE_PIN_HERE))
 }
 
 /// The gate's refusal of a typed PIN, as this crate's error.
@@ -548,7 +655,7 @@ fn seal_pin_key_envelope(key: &[u8; 32], pin: &[u8], mut cost: PassphraseCost) -
             Err(oneiron_crypto::Error::OutOfMemory)
                 if cost.memory_mib > PassphraseCost::FLOOR.memory_mib =>
             {
-                cost.memory_mib /= 2;
+                cost.memory_mib = (cost.memory_mib / 2).max(PassphraseCost::FLOOR.memory_mib);
             }
             Err(_) => return Err(refused("sealing the device PIN key failed")),
         }

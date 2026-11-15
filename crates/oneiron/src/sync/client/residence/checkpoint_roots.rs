@@ -77,6 +77,9 @@ pub(crate) async fn exchange_checkpoint_roots(
     vault: &Arc<Vault>,
     config: &SyncClientConfig,
 ) -> Result<usize, TransportError> {
+    // Inside a device PIN's window this vault's owner key is opened from
+    // under the PIN first, when this handle has not opened it yet.
+    vault.hold_device_owner_signer_in_pin_window();
     let signers = vault.checkpoint_root_signers();
     let own = own_awaited_head(vault);
     if signers.is_empty() && own.is_none() {
