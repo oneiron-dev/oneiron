@@ -33,28 +33,51 @@
 //! Whether the file is still that backup is a whole read of it, which on a
 //! large vault outlasts the reap preparation's window (FIX 6729). So the
 //! whole read also runs in the background (HELD-WHOLE-READ-OFF-PRE-IDLE,
-//! Engine 15 Nov 22:17): after a pass that accepted a backup, the owner's
-//! scheduled one included, and again every [`HELD_VERIFY_EVERY`], the pass
-//! notes the accepted backup, and the tick reads it whole on a thread of its
-//! own, holding neither the backup lock nor the tick's admission. The read's
-//! verdict names the backup it read (its marker, so its id and outer digest),
-//! the file's identity, and when it began. A backup before an idle reap takes
-//! a verdict under [`HELD_VERDICT_TRUST`] old, for the marker it reuses,
-//! whose file still opens with that identity, in place of its own whole read.
-//! A backup with no such verdict, a new or changed one or one read too long
-//! ago, is read whole there, as before. A change that keeps the file's
-//! identity (device, inode, size, and modification and status-change times)
-//! is not seen by a verdict. What bounds it is the verdict's age, not a next
-//! read: a verdict answers nothing once [`HELD_VERDICT_TRUST`] has passed
-//! since its read began, by a boot clock that counts time suspended and by
-//! the wall clock, and a backup before an idle reap then reads the file
-//! whole. No background read is promised inside that window (a frozen vault
-//! refuses ticks, and a read of a large backup takes its time). A whole read
-//! there proves only its instant as well; a cold managed restore reads the
-//! artifact whole before it opens it, and every restore checks the bytes it
-//! reads.
+//! Engine 15 Nov 22:17). A pass, the owner's scheduled one included, only
+//! notes that it ended: it opens no file for the verify. After the pass the
+//! tick starts a thread of its own, holding neither the backup lock nor the
+//! tick's admission nor a backup job, which reads the accepted marker and
+//! reads the backup whole when it is due: none read whole yet, another
+//! backup accepted since, its file's identity moved since its verdict, or
+//! [`HELD_VERIFY_EVERY`] since the last whole read. A file system that
+//! stalls stalls that thread alone, and no further verify starts on the host
+//! until it ends; a pass, a stop and a backup before an idle reap never wait
+//! on it. The read's verdict names the backup it read (its marker, so its id
+//! and the outer digest the read found every byte to match), the file's
+//! identity, and when it began. A backup before an idle reap takes a verdict
+//! for the marker it reuses, whose file still opens with that identity and
+//! whose read began under [`HELD_VERDICT_TRUST`] ago by clocks read after
+//! that open, in place of its own whole read. That open and its stat are the
+//! first two calls of the whole read it replaces, so the reuse waits on no
+//! call that it did not make before. A backup with no such verdict, a new or
+//! changed one or one read too long ago, is read whole there, as before.
+//!
+//! The residual (Astra fixperf-8419 F1): a verdict does not see a change that
+//! keeps the file's identity (device, inode, size, and modification and
+//! status-change times to the nanosecond). Inside the trust window the reuse
+//! can then take a backup whose bytes changed and that a whole read would
+//! refuse, and the reap goes ahead without the new backup it needed. That
+//! takes a file system whose attributes do not follow the bytes: FUSE, whose
+//! daemon (unprivileged where user mounts are allowed) serves the attributes
+//! it likes over changed data; NFS or SMB attribute caching that serves old
+//! attributes while reads fetch changed data (`nocto`, loose leases); ext4 or
+//! XFS whose timestamps are coarse on that kernel, where a same-size rewrite
+//! inside one clock tick keeps both times; FAT and exFAT, whose times are
+//! coarse or whose status-change time is made from the modification time; a
+//! store through a shared writable mapping set up before the read, which
+//! takes no new write fault; and bytes changed on the media or in the page
+//! cache with no inode update. What bounds it is the verdict's age, not a
+//! next read: a verdict answers nothing once [`HELD_VERDICT_TRUST`] has
+//! passed since its read began, by a boot clock that counts time suspended
+//! and by the wall clock, and a backup before an idle reap then reads the
+//! file whole. No background read is promised inside that window (a frozen
+//! vault refuses ticks, and a read of a large backup takes its time). A whole
+//! read there proves only its instant as well. What a changed backup costs is
+//! the backup, not a restore of changed data: a cold managed restore reads
+//! the artifact whole before it opens it, and every restore checks the bytes
+//! it reads.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -84,8 +107,9 @@ const HELD_VERDICT_TRUST: Duration = Duration::from_secs(3_600);
 pub(super) struct HeldChecks {
     /// The last whole read the verify finished.
     last: Mutex<Option<HeldCheck>>,
-    /// The accepted backup a pass found due, until a verify takes it.
-    noted: Mutex<Option<NotedBackup>>,
+    /// Whether a pass ended since the last verify began: the next verify
+    /// then asks whether the accepted backup is due.
+    noted: AtomicBool,
     /// Whether a verify runs.
     running: AtomicBool,
 }
@@ -99,12 +123,6 @@ struct HeldCheck {
     /// What it found: `None` when the file was not that backup, or its
     /// identity moved while it was read.
     verdict: Option<HeldVerdict>,
-}
-
-/// An accepted backup a pass noted for the background verify.
-struct NotedBackup {
-    dir: PathBuf,
-    marker: BackupMarker,
 }
 
 /// Clears a verify's running flag when its thread ends, a panic included.
@@ -198,7 +216,7 @@ impl OwnerHost {
                     "backups past keep the node's supervisor acked are pruned"
                 );
             }
-            self.note_held_verify(plan);
+            self.note_held_verify();
             return Ok(None);
         }
         self.enter(PassStage::Producing);
@@ -228,69 +246,77 @@ impl OwnerHost {
             );
         }
         let outcome = produced.maintain(vault, plan);
-        self.note_held_verify(plan);
+        self.note_held_verify();
         Ok(Some(outcome))
     }
 
-    /// Notes `plan`'s accepted backup for the background verify when it is
-    /// due: none read whole yet, another backup accepted since, its file's
-    /// identity moved since its verdict, or [`HELD_VERIFY_EVERY`] since the
-    /// last whole read, one that found it not held included. Nothing while
-    /// a verify runs: the first pass after it ends decides.
-    pub(super) fn note_held_verify(&self, plan: &BackupPlan) {
-        if self.held.running.load(Ordering::SeqCst) {
-            return;
-        }
-        let Some(last) = finalize::accepted_marker(plan) else {
-            return;
-        };
-        let due = lock(&self.held.last).as_ref().is_none_or(|check| {
-            check.marker != last
-                || check.at.elapsed() >= HELD_VERIFY_EVERY
-                || check
-                    .verdict
-                    .as_ref()
-                    .is_some_and(|verdict| !verdict.answers(&last, &plan.dir, HELD_VERIFY_EVERY))
-        });
-        if due {
-            *lock(&self.held.noted) = Some(NotedBackup {
-                dir: plan.dir.clone(),
-                marker: last,
-            });
-        }
+    /// Notes that a pass ended, for the background verify. It opens no
+    /// file: the verify reads the marker and decides on its own thread.
+    pub(super) fn note_held_verify(&self) {
+        self.held.noted.store(true, Ordering::SeqCst);
     }
 
-    /// Starts the noted verify on a thread of its own, when one is noted and
-    /// none runs. It holds no backup lock, no admission and no backup job, so
-    /// a backup before an idle reap and a stop never wait on it.
-    pub(super) fn spawn_held_verify(self: &Arc<Self>) {
-        if lock(&self.held.noted).is_none() || self.held.running.swap(true, Ordering::SeqCst) {
-            return;
+    /// Starts the background verify on a thread of its own, when a pass
+    /// ended since the last one began and none runs, and hands back its
+    /// handle; dropping it leaves the thread running. It holds no backup
+    /// lock, no admission and no backup job, so a pass, a backup before an
+    /// idle reap and a stop never wait on it.
+    pub(crate) fn spawn_held_verify(
+        self: &Arc<Self>,
+    ) -> Option<std::thread::JoinHandle<Option<bool>>> {
+        if !self.held.noted.load(Ordering::SeqCst) || self.held.running.swap(true, Ordering::SeqCst)
+        {
+            return None;
         }
         let host = Arc::clone(self);
         let spawned = std::thread::Builder::new()
             .name("backup-held-verify".to_owned())
             .spawn(move || {
                 let _running = VerifyRunning(&host.held.running);
-                host.verify_noted_backup();
+                host.verify_noted_backup()
             });
-        if let Err(error) = spawned {
-            self.held.running.store(false, Ordering::SeqCst);
-            tracing::warn!(
-                error = %error,
-                "the background verify of the accepted backup did not start; the next tick \
-                 notes it again"
-            );
+        match spawned {
+            Ok(verify) => Some(verify),
+            Err(error) => {
+                self.held.running.store(false, Ordering::SeqCst);
+                tracing::warn!(
+                    error = %error,
+                    "the background verify of the accepted backup did not start; the next tick \
+                     tries again"
+                );
+                None
+            }
         }
     }
 
-    /// Reads the noted backup whole on this thread and keeps what the read
-    /// found: its verdict when held, none otherwise, so a backup before an
-    /// idle reap reads it whole. Whether it was held; `None` with nothing
-    /// noted.
-    pub(crate) fn verify_noted_backup(&self) -> Option<bool> {
-        let NotedBackup { dir, marker } = lock(&self.held.noted).take()?;
-        let verdict = marker.verify(&dir);
+    /// The background verify, on the thread it runs on: when a pass ended
+    /// since the last one, reads the accepted marker and, when it is due
+    /// (none read whole yet, another backup accepted since, its file's
+    /// identity moved since its verdict, or [`HELD_VERIFY_EVERY`] since the
+    /// last whole read, one that found it not held included), reads the
+    /// backup whole and keeps what the read found: its verdict when held,
+    /// none otherwise, so a backup before an idle reap reads it whole.
+    /// Every file it opens, it opens here, holding no lock. Whether the
+    /// backup it read was held; `None` when it read none.
+    fn verify_noted_backup(&self) -> Option<bool> {
+        if !self.held.noted.swap(false, Ordering::SeqCst) {
+            return None;
+        }
+        let plan = &self.backups;
+        let marker = finalize::accepted_marker(plan)?;
+        let last = lock(&self.held.last)
+            .as_ref()
+            .map(|check| (check.marker.clone(), check.at, check.verdict.clone()));
+        let due = last.is_none_or(|(checked, at, verdict)| {
+            checked != marker
+                || at.elapsed() >= HELD_VERIFY_EVERY
+                || verdict
+                    .is_some_and(|verdict| !verdict.answers(&marker, &plan.dir, HELD_VERIFY_EVERY))
+        });
+        if !due {
+            return None;
+        }
+        let verdict = marker.verify(&plan.dir);
         let held = verdict.is_some();
         if held {
             tracing::debug!(
@@ -317,12 +343,13 @@ impl OwnerHost {
 
     /// Whether the background verify's verdict answers for `last` in `dir`
     /// with no read of its bytes ([`HeldVerdict::answers`], under
-    /// [`HELD_VERDICT_TRUST`]).
+    /// [`HELD_VERDICT_TRUST`]); the verdict is taken out of its lock before
+    /// the file is opened.
     fn held_by_verdict(&self, last: &BackupMarker, dir: &Path) -> bool {
-        lock(&self.held.last)
+        let verdict = lock(&self.held.last)
             .as_ref()
-            .and_then(|check| check.verdict.as_ref())
-            .is_some_and(|verdict| verdict.answers(last, dir, HELD_VERDICT_TRUST))
+            .and_then(|check| check.verdict.clone());
+        verdict.is_some_and(|verdict| verdict.answers(last, dir, HELD_VERDICT_TRUST))
     }
 
     /// One backup before an idle reap, for `attempt`: under the backup lock,

@@ -7,17 +7,24 @@
 //! read whole before reuse.
 //!
 //! Each test backs up a vault holding text through the managed pass
-//! (`oneiron_server::test_doors::pre_idle_reuse`), then runs one backup
-//! before an idle reap and counts the bytes this thread read meanwhile
-//! (`rchar` in `/proc/thread-self/io`):
+//! (`oneiron_server::test_doors::pre_idle_reuse`), runs the background verify
+//! on the thread a tick starts it on where it asks for one, then runs one
+//! backup before an idle reap and counts the bytes this thread read
+//! meanwhile (`rchar` in `/proc/thread-self/io`):
 //! - a backup the background verify read whole is reused with under a
 //!   quarter of its bytes read: no whole read (`FIXHELD-PREIDLE`, which
 //!   prints the time, the bytes read and the artifact's size: the
 //!   measurement main and the fix are compared by);
 //! - a backup changed after its verdict, one byte rewritten in place, is
 //!   never reused: a new backup is taken (`FIXHELD-CHANGED`);
+//! - a backup changed after its verdict is read whole again by the next
+//!   background verify, which finds it not held, and is not reused
+//!   (`FIXHELD-REVERIFY`);
 //! - a backup no verify read is read whole and reused, as before
 //!   (`FIXHELD-UNVERIFIED`).
+//!
+//! On main there is no background verify, so each test that asks for one
+//! fails; the first fails at its read count, which is the measurement.
 //!
 //! Linux only: the read count is per thread from procfs.
 //!
@@ -146,7 +153,7 @@ fn a_verified_backup_is_reused_before_an_idle_reap_without_a_whole_read() {
     let backed = backed_up(BODIES);
     let (managed, size) = (&backed.managed, backed.size);
     assert!(size >= 8 * 1024 * 1024, "a large backup: {size} bytes");
-    let verified = managed.verify_noted();
+    let verified = managed.verify_in_background();
     let (reused, read, ms) = timed_before_idle(managed);
     println!(
         "FIXHELD-PREIDLE verified={verified:?} reused={reused} read_bytes={read} \
@@ -157,13 +164,19 @@ fn a_verified_backup_is_reused_before_an_idle_reap_without_a_whole_read() {
         read < size / 4,
         "a fresh verdict spares the reuse its whole read: {read} of {size} bytes read"
     );
+    assert_eq!(
+        verified,
+        Some(true),
+        "the background verify read the accepted backup whole and found it held"
+    );
 }
 
 #[test]
 fn a_backup_changed_after_its_verdict_is_never_reused() {
     let backed = backed_up(SMALL_BODIES);
     let (managed, size) = (&backed.managed, backed.size);
-    let verified = managed.verify_noted();
+    let verified = managed.verify_in_background();
+    assert_eq!(verified, Some(true), "a verdict stands before the change");
     let file = managed.accepted_file().expect("the accepted backup");
     let before = std::fs::metadata(&file).expect("artifact metadata");
     flip_byte(&file, size / 2);
@@ -191,6 +204,33 @@ fn a_backup_changed_after_its_verdict_is_never_reused() {
     );
     assert!(!reused, "a backup changed after its verdict is not reused");
     assert_ne!(now_accepted, file, "a new backup is taken and accepted");
+}
+
+#[test]
+fn the_next_background_verify_reads_a_changed_backup_again() {
+    let backed = backed_up(SMALL_BODIES);
+    let (managed, size) = (&backed.managed, backed.size);
+    let first = managed.verify_in_background();
+    assert_eq!(first, Some(true), "a verdict stands before the change");
+    let file = managed.accepted_file().expect("the accepted backup");
+    flip_byte(&file, size / 2);
+    let taken = managed.pass().expect("the managed pass");
+    let again = managed.verify_in_background();
+    let (reused, read, ms) = timed_before_idle(managed);
+    println!(
+        "FIXHELD-REVERIFY first={first:?} pass_took={taken} again={again:?} reused={reused} \
+         read_bytes={read} backup_bytes={size} ms={ms:.3}"
+    );
+    assert!(
+        !taken,
+        "the vault did not change, so the pass takes no backup"
+    );
+    assert_eq!(
+        again,
+        Some(false),
+        "the moved identity makes the next verify due, and its whole read finds the change"
+    );
+    assert!(!reused, "the backup the verify found changed is not reused");
 }
 
 #[test]

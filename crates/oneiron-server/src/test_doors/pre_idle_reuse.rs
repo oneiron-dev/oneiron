@@ -1,8 +1,8 @@
 //! Door for `tests/pre_idle_held_verdict.rs` ([HELD-WHOLE-READ-OFF-PRE-IDLE]):
 //! a managed vault's owner host over a test's vault and backup directory,
-//! its scheduled pass, the background verify of its accepted backup run to
-//! its end on the caller's thread (a tick runs it on a thread of its own),
-//! and one backup before an idle reap for an attempt that stands throughout.
+//! its scheduled pass, the background verify a tick starts after it, on the
+//! thread it starts it on, waited for, and one backup before an idle reap for
+//! an attempt that stands throughout.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use std::path::{Path, PathBuf};
@@ -13,7 +13,7 @@ use crate::owner::schedule::{OwnerHost, PreIdleAttempt, PreIdleBackup};
 
 /// A managed vault and its host's backups.
 pub struct ManagedBackups {
-    host: OwnerHost,
+    host: Arc<OwnerHost>,
     vault: Arc<oneiron::Vault>,
 }
 
@@ -25,17 +25,24 @@ pub fn managed_backups(vault_dir: &Path, backups: &Path) -> ManagedBackups {
         oneiron::Vault::open(vault_dir, oneiron::VaultConfig::device()).expect("the vault opens"),
     );
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let mut config = crate::config::ServeConfig::default();
-    config.vault_path = vault_dir.to_path_buf();
-    config.backup.enabled = false;
-    config.backup.keep = 3;
-    config.backup.dir = Some(backups.to_path_buf());
+    let config = crate::config::ServeConfig {
+        vault_path: vault_dir.to_path_buf(),
+        backup: crate::config::BackupConfig {
+            enabled: false,
+            keep: 3,
+            dir: Some(backups.to_path_buf()),
+            ..crate::config::BackupConfig::default()
+        },
+        ..crate::config::ServeConfig::default()
+    };
     let rehearsals = vault_dir
         .parent()
         .map_or_else(|| vault_dir.to_path_buf(), Path::to_path_buf);
-    let host = OwnerHost::from_config(&config, oneiron::VaultConfig::device())
-        .with_rehearsal_dir(rehearsals)
-        .managed_hourly();
+    let host = Arc::new(
+        OwnerHost::from_config(&config, oneiron::VaultConfig::device())
+            .with_rehearsal_dir(rehearsals)
+            .managed_hourly(),
+    );
     ManagedBackups { host, vault }
 }
 
@@ -78,10 +85,14 @@ impl ManagedBackups {
             .map(|taken| taken.is_some())
     }
 
-    /// The background verify the last pass noted, run to its end on this
-    /// thread: whether the backup read held; `None` with nothing noted.
-    pub fn verify_noted(&self) -> Option<bool> {
-        self.host.verify_noted_backup()
+    /// The background verify a tick starts after its pass, on the thread it
+    /// starts it on, waited for: whether the backup it read whole was held;
+    /// `None` when it read none.
+    pub fn verify_in_background(&self) -> Option<bool> {
+        let verify = self.host.spawn_held_verify()?;
+        verify
+            .join()
+            .expect("the background verify ends without a panic")
     }
 
     /// The accepted backup's file, as its marker names it.

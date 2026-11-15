@@ -278,19 +278,30 @@ impl BackupMarker {
     /// size. It reads the whole file. Anything short of that is `false`,
     /// which reads as changed.
     pub fn held(&self, dir: &Path) -> bool {
-        self.read_whole(dir).is_some()
+        open_backup(&dir.join(&self.file))
+            .is_some_and(|(file, metadata)| self.reads_as_recorded(&file, &metadata))
     }
 
     /// [`Self::held`], kept as a verdict that a later check asks in place of
     /// a second whole read (HELD-WHOLE-READ-OFF-PRE-IDLE): `None` when the
     /// file is not held, when its identity moved while it was read, and
     /// where the platform gives no file identity (only unix does) or no
-    /// boot clock (time since boot, the time suspended included).
+    /// boot clock (time since boot, the time suspended included). The
+    /// verdict is for this marker, so for the outer digest the read found
+    /// every byte to match. Only this samples the file's identity, so
+    /// [`Self::held`] makes the same calls it always made.
     pub fn verify(&self, dir: &Path) -> Option<HeldVerdict> {
         let started_boot = boot_clock()?;
         let started_ms = wall_clock_ms()?;
-        let (before, after) = self.read_whole(dir)?;
-        let identity = before?;
+        let (file, metadata) = open_backup(&dir.join(&self.file))?;
+        let identity = FileIdentity::of(&metadata)?;
+        if !self.reads_as_recorded(&file, &metadata) {
+            return None;
+        }
+        let after = file
+            .metadata()
+            .ok()
+            .and_then(|metadata| FileIdentity::of(&metadata));
         (after == Some(identity)).then(|| HeldVerdict {
             marker: self.clone(),
             identity,
@@ -299,28 +310,18 @@ impl BackupMarker {
         })
     }
 
-    /// Reads the file it names whole: `Some` when it is held, with its
-    /// identity at open and after the read, each `None` when it does not
-    /// read.
-    fn read_whole(&self, dir: &Path) -> Option<(Option<FileIdentity>, Option<FileIdentity>)> {
-        let (file, metadata) = open_backup(&dir.join(&self.file))?;
-        if !metadata.is_file() || metadata.len() != self.size {
-            return None;
-        }
-        let before = FileIdentity::of(&metadata);
-        let held = inspect_backup(std::io::BufReader::new(&file)).is_ok_and(|evidence| {
-            evidence.size == self.size
-                && oneiron_vault_contract::hex(&evidence.commitment_digest)
-                    == self.commitment_digest
-                && oneiron_vault_contract::hex(&evidence.outer_blake3) == self.outer_blake3
-        });
-        held.then(|| {
-            let after = file
-                .metadata()
-                .ok()
-                .and_then(|metadata| FileIdentity::of(&metadata));
-            (before, after)
-        })
+    /// Whether the open `file`, with its `metadata`, reads whole as the
+    /// backup this marker recorded: a regular file of its size whose
+    /// evidence is its commitment digest, BLAKE3 and size.
+    fn reads_as_recorded(&self, file: &std::fs::File, metadata: &std::fs::Metadata) -> bool {
+        metadata.is_file()
+            && metadata.len() == self.size
+            && inspect_backup(std::io::BufReader::new(file)).is_ok_and(|evidence| {
+                evidence.size == self.size
+                    && oneiron_vault_contract::hex(&evidence.commitment_digest)
+                        == self.commitment_digest
+                    && oneiron_vault_contract::hex(&evidence.outer_blake3) == self.outer_blake3
+            })
     }
 }
 
@@ -360,29 +361,35 @@ impl HeldVerdict {
     }
 
     /// Whether it answers for `marker`'s backup in `dir` with no read of its
-    /// bytes: it was made for that same marker, its read began less than
-    /// `within` ago by the boot clock, so a suspend counts, and by the wall
-    /// clock (a clock behind the read's start answers nothing), and the
-    /// file opens as it did, a regular file never reached through a symlink,
-    /// with the identity the read saw. A change that keeps the file's
+    /// bytes: it was made for that same marker, the file opens as it did, a
+    /// regular file never reached through a symlink, with the identity the
+    /// read saw, and then, once the file has answered, its read began less
+    /// than `within` ago by the boot clock, so a suspend counts, and by the
+    /// wall clock (a clock behind the read's start answers nothing). The age
+    /// is read after the open and its stat, so a slow file system never
+    /// carries a verdict past `within`. A change that keeps the file's
     /// identity is not seen here. Once `within` has passed since the read
     /// began, by either clock, it answers nothing, and a reuse reads the file
     /// whole.
     pub fn answers(&self, marker: &BackupMarker, dir: &Path, within: Duration) -> bool {
+        self.marker == *marker
+            && open_backup(&dir.join(&marker.file)).is_some_and(|(_, metadata)| {
+                metadata.is_file() && FileIdentity::of(&metadata) == Some(self.identity)
+            })
+            && self.younger_than(within)
+    }
+
+    /// Whether its read began less than `within` ago by the boot clock and
+    /// by the wall clock; `false` where either does not read or reads before
+    /// the read's start.
+    fn younger_than(&self, within: Duration) -> bool {
         let within_ms = u64::try_from(within.as_millis()).unwrap_or(u64::MAX);
-        if self.marker != *marker
-            || boot_clock()
-                .and_then(|now| now.checked_sub(self.started_boot))
-                .is_none_or(|age| age >= within)
-            || wall_clock_ms()
+        boot_clock()
+            .and_then(|now| now.checked_sub(self.started_boot))
+            .is_some_and(|age| age < within)
+            && wall_clock_ms()
                 .and_then(|now| now.checked_sub(self.started_ms))
-                .is_none_or(|age| age >= within_ms)
-        {
-            return false;
-        }
-        open_backup(&dir.join(&marker.file)).is_some_and(|(_, metadata)| {
-            metadata.is_file() && FileIdentity::of(&metadata) == Some(self.identity)
-        })
+                .is_some_and(|age| age < within_ms)
     }
 }
 

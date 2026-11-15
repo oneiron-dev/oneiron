@@ -414,7 +414,7 @@ impl OwnerHost {
                 let taken = backup::take_automatic(vault, &plan);
                 // The backup it accepted is read whole in the background
                 // too (`managed`, HELD-WHOLE-READ-OFF-PRE-IDLE).
-                self.note_held_verify(&plan);
+                self.note_held_verify();
                 return taken.map(Some);
             }
         }
@@ -523,8 +523,9 @@ impl SyncServer {
                     }
                 }
                 // Off the pass, its lock and its admission: a backup before
-                // an idle reap never waits on it (managed).
-                host.spawn_held_verify();
+                // an idle reap never waits on it (managed). Its handle is
+                // dropped, so the thread runs on by itself.
+                drop(host.spawn_held_verify());
             }
         }))
     }
