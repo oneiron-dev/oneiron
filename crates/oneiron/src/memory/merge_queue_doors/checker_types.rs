@@ -5,22 +5,13 @@ use serde::{Deserialize, Serialize};
 
 use super::MergeQueuePointersView;
 use crate::EntityId;
-use crate::merge_queue::{CheckPhase, Quarantine, QueueCheckHoldReason};
+use crate::merge_queue::{Quarantine, QueueCheckHoldReason};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::merge_queue_doors::checker_types::{
     MergeQueueCheckRequest, MergeQueueCheckStatusRequest, MergeQueueDiagnoseRequest,
     MergeQueueInitializeRequest, QueueCheckPhase,
 };
-
-impl From<QueueCheckPhase> for CheckPhase {
-    fn from(phase: QueueCheckPhase) -> Self {
-        match phase {
-            QueueCheckPhase::Fast => Self::Fast,
-            QueueCheckPhase::Slow => Self::Slow,
-        }
-    }
-}
 
 /// What a checker work row asks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -28,17 +28,11 @@ pub struct BypassGrantBoundRequest {
     pub envelope: BypassActionEnvelopeRequest,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BypassActionEnvelopeRequest {
-    pub selectors: Vec<String>,
-    #[serde(default)]
-    pub target: Option<String>,
-    #[serde(default)]
-    pub budget: Option<u64>,
-    #[serde(default)]
-    pub receipt_required: bool,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::consent::bypass_lifecycle::{
+    ActiveBypassGrantsRequest, BypassActionEnvelopeRequest, BypassedEffectReceipt,
+    BypassedEffectReceiptsRequest,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -64,10 +58,6 @@ pub struct CreateBypassGrantRequest {
     pub warning: BypassGrantWarningView,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ActiveBypassGrantsRequest {}
-
 /// One live engine row. Revoking `grant` through vault.consent.revoke ends
 /// it; a multi-class creation returns a separate reference for every class.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -77,24 +67,6 @@ pub struct BypassActiveState {
     pub grant: String,
     pub bound: BypassGrantBoundRequest,
     pub floor_version: u16,
-    pub created_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BypassedEffectReceiptsRequest {
-    /// The reference emitted by creation, active state or the registry.
-    pub grant: String,
-}
-
-/// A projection of an existing Gate receipt, never a caller-authored effect.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BypassedEffectReceipt {
-    pub decision_ref: String,
-    pub grant_ref: String,
-    pub effect_digest: String,
-    pub reason_code: String,
     pub created_at: u64,
 }
 
