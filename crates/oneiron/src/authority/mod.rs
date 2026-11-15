@@ -394,6 +394,7 @@ pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, OwnerPasskeyEnrollment,
     OwnerPasskeyEnrollmentReceipt,
 };
+pub use owner_proof::{OwnerKeyRequirement, WebSignInAct};
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};
 pub use recover_many::{

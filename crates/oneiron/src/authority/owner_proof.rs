@@ -167,6 +167,93 @@ fn runs_on_web_sign_in(state: &FoldState) -> bool {
     state.policy_settings.every_live_choice_is(target, &switch)
 }
 
+/// What the vault asks of its owner in one fold state: the reading of
+/// [`owner_key_required`] that a door, a route and a list take off the fold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum OwnerKeyRequirement {
+    /// The vault has never held an owner key: it asks for none.
+    NeverHeld,
+    /// The vault asks for an owner key.
+    Required {
+        /// The value a web sign-in act carries to switch the vault back
+        /// ([`web_sign_in_value`] over every owner key it has held). `None`
+        /// on a vault that is not hosted: it has no account to fall back to.
+        web_sign_in_switch: Option<[u8; 32]>,
+    },
+    /// A hosted vault whose owner switched it back to web sign-in: it asks
+    /// for none, until a key enrolled later or a later act of the setting
+    /// ends the switch.
+    WebSignIn,
+}
+
+/// How the fold landed one act of the web sign-in setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum WebSignInAct {
+    /// The switch back, for the owner keys the vault had held at the act's
+    /// parents.
+    SwitchedBack,
+    /// An act with any other value: the vault asks for an owner key again.
+    AsksAgain,
+}
+
+/// The fold's reading of what the vault asks of its owner, as every replica
+/// holds it: no pin and no install's counting enter it.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct FoldedOwnerKeyRequirement {
+    /// What the vault asks.
+    pub(crate) state: OwnerKeyRequirement,
+    /// Every act of the web sign-in setting the fold landed, live or since
+    /// replaced, with how it landed. An act that waits for the owner's proof
+    /// or has no effect is not here.
+    pub(crate) web_sign_in_acts: BTreeMap<AuthorityEntryHash, WebSignInAct>,
+}
+
+impl Default for FoldedOwnerKeyRequirement {
+    fn default() -> Self {
+        Self {
+            state: OwnerKeyRequirement::NeverHeld,
+            web_sign_in_acts: BTreeMap::new(),
+        }
+    }
+}
+
+/// `state`'s reading of what the vault asks of its owner. It adds no rule:
+/// the state is [`owner_key_required`] with its two reasons for a no told
+/// apart, the value is [`web_sign_in_switch`], and the acts are the web
+/// sign-in frontier's, which keeps a switch under its value and every other
+/// act of the setting as a clear
+/// ([`super::policy_setting_choice::apply_policy_setting`]).
+pub(super) fn folded_owner_key_requirement(state: &FoldState) -> FoldedOwnerKeyRequirement {
+    let requirement = if owner_key_required(state) {
+        OwnerKeyRequirement::Required {
+            web_sign_in_switch: web_sign_in_switch(state),
+        }
+    } else if state.owner_keys_ever.is_empty() {
+        OwnerKeyRequirement::NeverHeld
+    } else {
+        OwnerKeyRequirement::WebSignIn
+    };
+    let web_sign_in_acts = PolicySetting::WebSignIn
+        .reserved_target()
+        .ok()
+        .flatten()
+        .into_iter()
+        .flat_map(|target| state.policy_settings.landed(target))
+        .map(|(hash, value)| {
+            let landed = if value.is_some() {
+                WebSignInAct::SwitchedBack
+            } else {
+                WebSignInAct::AsksAgain
+            };
+            (hash, landed)
+        })
+        .collect();
+    FoldedOwnerKeyRequirement {
+        state: requirement,
+        web_sign_in_acts,
+    }
+}
+
 /// Whether a carried machine answer needs the proof (items 1 and 2), judged
 /// at its parent state. `carrier_is_mine`: the carrier's install key that
 /// signed is its trusted mine key there; `target_key`: the target machine's
@@ -303,6 +390,23 @@ impl AuthorityFold {
             ));
         }
         Ok(())
+    }
+
+    /// What the vault asks of its owner on this fold (the owner's ruling
+    /// AUTH-5): whether an act a carrier that is not the owner's machine
+    /// delivers needs an owner key's proof, and on a hosted vault the value
+    /// that switches it back to web sign-in.
+    #[must_use]
+    pub fn owner_key_requirement(&self) -> OwnerKeyRequirement {
+        self.owner_key_requirement.state
+    }
+
+    /// Every act of the web sign-in setting this fold landed, live or since
+    /// replaced, by entry, with how it landed. An act that waits for the
+    /// owner's proof or has no effect is not among them.
+    #[must_use]
+    pub fn web_sign_in_acts(&self) -> &BTreeMap<AuthorityEntryHash, WebSignInAct> {
+        &self.owner_key_requirement.web_sign_in_acts
     }
 
     /// The owner choices that wait for the owner's proof and still ask (row
