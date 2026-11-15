@@ -23,6 +23,14 @@
 //! no person decided (a lapse, or a row's direct delete) carries no owner act: its decider is
 //! the rule, and only an end may be one.
 //!
+//! One family is no FEDERATION_GRANT row: an access grant (an ACCESS_GRANT row; Engine RULING
+//! SR-5 ACCESS-GRANT-KIND = A, 16 Nov 02:10), which travels between the owner's devices like
+//! every Grant and so carries its acts on the log too. Every write of its row restates its
+//! terms: a giving, a re-grant at the same id, a narrowing and a revoke each give the row's
+//! new body, status and all, so a revoked grant re-granted at its id (FIX 10962) is one line.
+//! Only its erase ends the line. An agent decides it too, within its own Grant (a companion's
+//! slip, an addressed agent's answer): the act then names the agent and that Grant.
+//!
 //! One family is no Grant row: an agent definition's switches (pass 28 R2d, Engine RULING
 //! AGENT-DEF-OWN-LANE-FIX = B, 16 Nov 02:21). Turning a definition back on or moving its
 //! models is the owner's alone, so the owner's door states the switches it writes in an act
@@ -94,6 +102,10 @@ pub enum GrantFamily {
     /// An agent definition's switches (an AGENT_DEF row, not a Grant row): the owner states
     /// them ([`GrantActChange::State`]); no act of this family gives terms or ends.
     AgentDefinition,
+    /// An access grant (an ACCESS_GRANT row): each write of the row gives its whole new body,
+    /// a revoke included; its erase ends it. A person, or an agent within its own Grant,
+    /// decides it.
+    AccessGrant,
 }
 
 impl GrantFamily {
@@ -107,6 +119,7 @@ impl GrantFamily {
             Self::InquiryEdge => "inquiry_edge",
             Self::OwnerAgent => "owner_agent",
             Self::AgentDefinition => "agent_definition",
+            Self::AccessGrant => "access_grant",
         }
     }
 
@@ -120,6 +133,7 @@ impl GrantFamily {
             "inquiry_edge" => Self::InquiryEdge,
             "owner_agent" => Self::OwnerAgent,
             "agent_definition" => Self::AgentDefinition,
+            "access_grant" => Self::AccessGrant,
             _ => return None,
         })
     }
@@ -129,7 +143,9 @@ impl GrantFamily {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GrantDecider {
     /// A person decided, at the surface the act names. Its kind is `grant_give` or
-    /// `grant_end`, as the change is, and its target the row.
+    /// `grant_end`, as the change is, and its target the row. For an access grant alone, an
+    /// agent may have decided within its own Grant: the act's `by` names the agent and that
+    /// Grant, and its `owner` the person whose Grant it is.
     Person(OwnerAct),
     /// Nobody decided: a rule ended the Grant (an OAuth sign-in that lapsed before its client
     /// held a token, FIX 22142; a direct delete or erase of its row; an owed end whose person
@@ -259,7 +275,8 @@ pub struct GrantActRecord {
 }
 
 impl GrantActRecord {
-    /// The deciding person; `None` for a rule's end.
+    /// The deciding person (for an agent's act, the person whose Grant it acts in); `None` for
+    /// a rule's end.
     #[must_use]
     pub fn decider_person(&self) -> Option<EntityId> {
         match &self.decider {
@@ -285,8 +302,14 @@ impl GrantActRecord {
         match &self.decider {
             GrantDecider::Person(act) => {
                 act.validate_carried(self.change.act_kind(), self.subject)?;
-                // A person's own say-so: no agent decides a Grant, and no ask answers it.
-                if act.by != ActBy::Owner || act.answer.is_some() || act.seen != GRANT_ACT_SEEN {
+                // A person's own say-so, and no ask answers it. No agent decides a Grant but an
+                // access grant, which a companion's slip or an addressed agent's answer gives
+                // within the agent's own Grant.
+                let by_admitted = match act.by {
+                    ActBy::Owner => true,
+                    ActBy::Agent { .. } => self.family == GrantFamily::AccessGrant,
+                };
+                if !by_admitted || act.answer.is_some() || act.seen != GRANT_ACT_SEEN {
                     return Err(invalid_authority());
                 }
                 // The owner gives and ends his agent Grant by its own act (`AgentGrantAct`'s

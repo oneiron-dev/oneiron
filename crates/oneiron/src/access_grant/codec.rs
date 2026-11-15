@@ -57,7 +57,7 @@ const ERASED_PRINCIPAL: &str = crate::receipt::ERASED_CALL_IDENTITY;
 
 /// Encodes an AccessGrant body in canonical MessagePack field order.
 pub fn encode_access_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
-    encode_body(grant, Value::from(grant.principal_ref.to_hex()))
+    write_body(access_grant_body_entries(grant)?)
 }
 
 /// `grant`'s body as inert history once its principal was erased (FIX 4231,
@@ -68,8 +68,18 @@ pub(crate) fn encode_erased_grant_body(grant: &AccessGrant) -> Result<Vec<u8>> {
 }
 
 fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
+    write_body(body_entries(grant, principal)?)
+}
+
+/// `grant`'s live body entries in canonical order, validated: the body
+/// [`encode_access_grant_body`] writes, before any terms key.
+pub(super) fn access_grant_body_entries(grant: &AccessGrant) -> Result<Vec<(Value, Value)>> {
+    body_entries(grant, Value::from(grant.principal_ref.to_hex()))
+}
+
+fn body_entries(grant: &AccessGrant, principal: Value) -> Result<Vec<(Value, Value)>> {
     grant.validate()?;
-    let value = Value::Map(vec![
+    Ok(vec![
         (
             Value::from(KEY_SCHEMA_VERSION),
             Value::from(ACCESS_GRANT_SCHEMA_VERSION),
@@ -99,10 +109,13 @@ fn encode_body(grant: &AccessGrant, principal: Value) -> Result<Vec<u8>> {
             encode_companion_bounds(grant.companion_bounds.as_ref())?,
         ),
         (Value::from(KEY_WITNESS_HISTORY), Value::Nil),
-    ]);
+    ])
+}
 
+/// The body map `entries`, encoded.
+pub(super) fn write_body(entries: Vec<(Value, Value)>) -> Result<Vec<u8>> {
     let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value)
+    rmpv::encode::write_value(&mut out, &Value::Map(entries))
         .map_err(|_| Error::InvariantViolation("access grant body MessagePack encode failed"))?;
     Ok(out)
 }
@@ -187,8 +200,13 @@ fn decode_body(value: &Value) -> Result<(&Value, GrantTerms)> {
     let Value::Map(entries) = value else {
         return Err(invalid_grant());
     };
-    // One body format: the current schema's every key, nothing older.
-    validate_keys(entries, &ACCESS_GRANT_BODY_KEYS)?;
+    // One body format: the current schema's every key, nothing older, and the
+    // terms key a giving act's writer puts (pass 28 R2e) at most once.
+    validate_keys_with_optional(
+        entries,
+        &ACCESS_GRANT_BODY_KEYS,
+        &[super::terms_key::KEY_TERMS_KEY],
+    )?;
     if required_value(entries, KEY_SCHEMA_VERSION)?.as_u64() != Some(ACCESS_GRANT_SCHEMA_VERSION) {
         return Err(invalid_grant());
     }
@@ -427,16 +445,30 @@ pub(crate) fn decode_entity_ref(value: &Value) -> Result<EntityId> {
 }
 
 pub(crate) fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
+    validate_keys_with_optional(entries, keys, &[])
+}
+
+/// [`validate_keys`] for a map that may also hold each of `optional` once.
+fn validate_keys_with_optional(
+    entries: &[(Value, Value)],
+    keys: &[&str],
+    optional: &[&str],
+) -> Result<()> {
     let mut seen = vec![false; keys.len()];
+    let mut seen_optional = vec![false; optional.len()];
     for (key, _) in entries {
         let key = key.as_str().ok_or_else(invalid_grant)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_grant());
+        let slot = match keys.iter().position(|known| *known == key) {
+            Some(index) => &mut seen[index],
+            None => match optional.iter().position(|known| *known == key) {
+                Some(index) => &mut seen_optional[index],
+                None => return Err(invalid_grant()),
+            },
         };
-        if seen[index] {
+        if *slot {
             return Err(invalid_grant());
         }
-        seen[index] = true;
+        *slot = true;
     }
     if seen.into_iter().all(|value| value) {
         Ok(())

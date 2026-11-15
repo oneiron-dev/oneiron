@@ -74,7 +74,14 @@ pub(crate) fn erase_principal_grants_in_txn(
     }
     let at = crate::ports::recorded_at_in_txn(store, wtxn)?;
     for (id, grant) in &scrubbed {
-        vault.apply_access_grant_body(wtxn, id, at, encode_erased_grant_body(grant)?)?;
+        // The erase ends the grant's line, by rule (Engine RULING GRANT-ROW-DELETE-NO-END = A).
+        vault.apply_access_grant_body(
+            wtxn,
+            id,
+            at,
+            encode_erased_grant_body(grant)?,
+            super::AccessGrantDecider::Act(crate::authority::GrantActBy::Rule),
+        )?;
     }
     Ok(scrubbed.len())
 }

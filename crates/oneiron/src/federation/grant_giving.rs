@@ -20,7 +20,7 @@ use crate::federation::{
 /// A terms key fresh from the system's random source, so no two rows share one and the
 /// public act's commitment cannot be tested against a guess of the row's terms. Never all
 /// zero, which the codec refuses.
-fn fresh_grant_terms_key() -> GrantTermsKey {
+pub(crate) fn fresh_grant_terms_key() -> GrantTermsKey {
     loop {
         let mut key = [0_u8; 32];
         OsRng.fill_bytes(&mut key);
@@ -30,8 +30,8 @@ fn fresh_grant_terms_key() -> GrantTermsKey {
     }
 }
 
-const GRANT_ID_ENDED: &str = "a counted act already ended the Grant at this id; an ended Grant \
-     is never given again, so a giving takes a fresh id";
+pub(crate) const GRANT_ID_ENDED: &str = "a counted act already ended the Grant at this id; an \
+     ended Grant is never given again, so a giving takes a fresh id";
 
 impl Vault {
     /// `giver`'s giving of `grant` as row `id` of `family`, in the writer's transaction `txn`:

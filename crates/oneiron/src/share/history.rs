@@ -177,7 +177,14 @@ pub(super) fn erase_recipient_in_txn(
 ) -> Result<()> {
     match ACTOR_ERASE_SHARE_RECIPIENT {
         ShareRecipientErase::KeepInertHistory => {
-            vault.apply_access_grant_body(wtxn, id, at, encode_erased_grant_body(grant)?)
+            // The erase ends the share's line, by rule (GRANT-ROW-DELETE-NO-END = A).
+            vault.apply_access_grant_body(
+                wtxn,
+                id,
+                at,
+                encode_erased_grant_body(grant)?,
+                crate::access_grant::AccessGrantDecider::Act(crate::authority::GrantActBy::Rule),
+            )
         }
     }
 }

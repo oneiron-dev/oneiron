@@ -23,12 +23,18 @@ mod delegation;
 pub use delegation::{COMPANION_GRANT_OUTLIVES_ISSUER, COMPANION_PROFILE_SENSITIVITY};
 mod erase;
 pub(crate) use erase::erase_principal_grants_in_txn;
+mod grant_act;
+pub(crate) use grant_act::AccessGrantDecider;
 mod owner_act;
 pub(crate) use owner_act::{
     AccessGrantActChange, AccessGrantOwnerActReceipt, access_grant_owner_acts_in_txn,
     record_access_grant_owner_act_in_txn,
 };
 mod record;
+mod terms_key;
+pub(crate) use terms_key::{
+    access_grant_terms, decode_access_grant_body_keyed, encode_access_grant_body_keyed,
+};
 mod vault_doors;
 mod witness_history;
 pub(crate) use witness_history::witness_read_generations;

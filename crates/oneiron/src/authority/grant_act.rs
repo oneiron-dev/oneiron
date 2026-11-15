@@ -35,8 +35,47 @@ pub(crate) enum GrantActBy {
         person: EntityId,
         surface: ActSurface,
     },
+    /// The agent `agent` decided within its own live Grant `grant`, which `owner` gave it, at
+    /// `surface` (audit only): an access grant alone (a companion's slip, an addressed
+    /// agent's answer). The act names the agent; it is never relabelled as the person.
+    Agent {
+        owner: EntityId,
+        agent: EntityId,
+        grant: EntityId,
+        surface: ActSurface,
+    },
     /// A rule ended the Grant; nobody decided.
     Rule,
+}
+
+impl GrantActBy {
+    /// The owner act this decider signs for `change` of row `subject`; `None` for a rule.
+    fn owner_act(self, change: &GrantActChange, subject: EntityId) -> Option<OwnerAct> {
+        match self {
+            Self::Person { person, surface } => Some(OwnerAct::by_owner(
+                person,
+                change.act_kind(),
+                subject,
+                surface,
+                GRANT_ACT_SEEN,
+            )),
+            Self::Agent {
+                owner,
+                agent,
+                grant,
+                surface,
+            } => Some(OwnerAct {
+                owner,
+                by: ActBy::Agent { agent, grant },
+                surface,
+                act: change.act_kind(),
+                target: subject,
+                seen: GRANT_ACT_SEEN,
+                answer: None,
+            }),
+            Self::Rule => None,
+        }
+    }
 }
 
 /// The `GrantAct` transition, after the shape, signature, retired, sequence-floor,
@@ -62,8 +101,9 @@ impl Vault {
     ///
     /// The fold never judges the decider, so the caller MUST have done so: a
     /// [`GrantActBy::Person`] is the person the caller's door authenticated (an
-    /// `AuthenticatedOwner`, re-judged in `txn`), and the caller checked in `txn` that the
-    /// person may give or end this row by `family`'s own rule. A giving's terms key is fresh
+    /// `AuthenticatedOwner`, re-judged in `txn`), a [`GrantActBy::Agent`] the agent whose live
+    /// Grant the door verified, and the caller checked in `txn` that the decider may give or
+    /// end this row by `family`'s own rule. A giving's terms key is fresh
     /// from the operating system's random source (`OsRng`, never all zero), never reused
     /// across rows.
     ///
@@ -98,16 +138,9 @@ impl Vault {
         if parents.len() > MAX_PARENTS {
             return Err(authority_refused(TOO_MANY_HEADS));
         }
-        let decider = match by {
-            GrantActBy::Person { person, surface } => GrantDecider::Person(OwnerAct::by_owner(
-                person,
-                change.act_kind(),
-                subject,
-                surface,
-                GRANT_ACT_SEEN,
-            )),
-            GrantActBy::Rule => GrantDecider::Rule,
-        };
+        let decider = by
+            .owner_act(&change, subject)
+            .map_or(GrantDecider::Rule, GrantDecider::Person);
         let record = GrantActRecord {
             decider,
             machine,

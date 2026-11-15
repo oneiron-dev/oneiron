@@ -92,7 +92,14 @@ impl Vault {
         self.check_channel_identity_access_write(&wtxn, id, grant)?;
         self.check_companion_profile_target(&wtxn, grant)?;
         crate::share::check_generic_grant_write(self, &wtxn, id, grant)?;
-        self.apply_access_grant_body(&mut wtxn, id, grant.created_at, data)?;
+        // An engine write: its grant reads as derived (pass 28 R4), so it signs nothing.
+        self.apply_access_grant_body(
+            &mut wtxn,
+            id,
+            grant.created_at,
+            data,
+            super::AccessGrantDecider::Policy,
+        )?;
         wtxn.commit()?;
         Ok(())
     }
@@ -163,7 +170,13 @@ impl Vault {
         if self.store.port_entity_record(wtxn, id)?.is_some() {
             return Err(Error::Record(RecordError::AccessGrantAlreadyExists));
         }
-        self.apply_access_grant_body(wtxn, id, grant.created_at, data)
+        self.apply_access_grant_body(
+            wtxn,
+            id,
+            grant.created_at,
+            data,
+            super::AccessGrantDecider::Policy,
+        )
     }
 
     /// Revokes an AccessGrant by rewriting the same record as revoked.
@@ -383,13 +396,20 @@ impl Vault {
     /// legacy token's revoke marker does (FIX 11810). A reader that kept a
     /// judgement at one generation (an MCP page cursor's rows, a kept
     /// inference snapshot) then sees the grant change.
+    ///
+    /// The write's act lands here too, in the same transaction (pass 28 R2e): `decider` names
+    /// who decided it, and a decided live body is put keyed by its act's terms key
+    /// ([`Vault::access_grant_act_in_txn`]). An Active giving refuses on an install that
+    /// cannot carry its act, before anything is written.
     pub(crate) fn apply_access_grant_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         id: &EntityId,
         learned_at: u64,
         data: Vec<u8>,
+        decider: super::AccessGrantDecider,
     ) -> Result<()> {
+        let data = self.access_grant_act_in_txn(wtxn, *id, data, decider)?;
         let data = super::witness_history::with_witness_read_history_in_txn(self, wtxn, id, data)?;
         crate::authority::advance_authority_cache_generation(&self.store, wtxn)?;
         apply_ops(

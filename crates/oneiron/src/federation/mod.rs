@@ -59,6 +59,7 @@ mod grant;
 pub(crate) mod grant_ending;
 // A giving writer's act and keyed row (pass 28 R2).
 mod grant_giving;
+pub(crate) use grant_giving::{GRANT_ID_ENDED, fresh_grant_terms_key};
 // What a Grant row confers: what the fold's counted acts say of it (pass 28 R1).
 mod grant_standing;
 // The owner's git_push Grant and the receive-pack decision (FIX 6867, G1-PUSH).

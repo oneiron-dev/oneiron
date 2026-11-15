@@ -93,13 +93,16 @@ impl GrantTerms {
 }
 
 /// A general grant act's giving as the fold holds it (`GrantActChange::Give`): the row's
-/// family, the person who gave it, and the keyed commitment to the row's terms.
+/// family, who gave it, and the keyed commitment to the row's terms.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct CommittedTerms {
     /// The row's family, whose rule judges the giver.
     pub(crate) family: GrantFamily,
-    /// The deciding person.
+    /// The deciding person: for an agent's giving, the person whose Grant it acts in.
     pub(crate) giver: EntityId,
+    /// Who decided in that person's name: the person, or (an access grant alone) an agent
+    /// within its own Grant.
+    pub(crate) by: ActBy,
     /// The commitment ([`federation_grant_terms`]).
     pub(crate) terms: [u8; 32],
 }
@@ -406,15 +409,18 @@ pub(super) fn apply_grant_act_line(
         state.grant_lines.refused.insert(hash);
         return;
     }
-    let settings = match (&record.change, record.decider_person()) {
-        (GrantActChange::Give { terms }, Some(giver)) => GrantTerms::Committed(CommittedTerms {
-            family: record.family,
-            giver,
-            terms: *terms,
-        }),
-        (GrantActChange::State { switches }, Some(giver)) => {
+    let settings = match (&record.change, &record.decider) {
+        (GrantActChange::Give { terms }, GrantDecider::Person(act)) => {
+            GrantTerms::Committed(CommittedTerms {
+                family: record.family,
+                giver: act.owner,
+                by: act.by,
+                terms: *terms,
+            })
+        }
+        (GrantActChange::State { switches }, GrantDecider::Person(act)) => {
             GrantTerms::AgentSwitches(StatedSwitches {
-                giver,
+                giver: act.owner,
                 switches: switches.clone(),
             })
         }
@@ -429,7 +435,7 @@ pub(super) fn apply_grant_act_line(
         }
         // `GrantActRecord::validate` refuses a rule's giving before any fold; should one
         // reach here, it gives nothing and never turns into an end no one decided.
-        (GrantActChange::Give { .. } | GrantActChange::State { .. }, None) => {
+        (GrantActChange::Give { .. } | GrantActChange::State { .. }, GrantDecider::Rule) => {
             state.grant_lines.refused.insert(hash);
             return;
         }
