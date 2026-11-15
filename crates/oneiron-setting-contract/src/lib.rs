@@ -125,7 +125,8 @@ pub enum ReadBy {
 pub enum Setter {
     /// The owner, by a proof that revalidated in the write.
     Owner,
-    /// A live holder of the key's class, through this grant.
+    /// A live holder of the key's class, through this grant: an agent's `engine.controls` grant,
+    /// or the membership grant a person's policy power over the key stands on.
     Holder { grant: EntityId },
     /// An agent through its live owner Grant that lists the key's own line
     /// (`settings.set:<key>`, DESIGN 1.2 step 3), as a holder: its value stays inside the

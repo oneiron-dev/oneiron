@@ -7,6 +7,7 @@ use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey}
 
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
+use super::person::{person_ask_grant_in_txn, person_policy_line_in_txn};
 use super::read::{
     Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
@@ -152,6 +153,9 @@ impl Vault {
     /// - an agent holder of the key (its own Grant line `settings.set:<key>`, a live
     ///   `engine.controls` grant for its class, or its own row of a key its subject sets): no
     ///   widening, so it tightens at once and its loosening asks the user (AUTH-1 = A);
+    /// - a person holder of a [`SetBy::Policy`] key (DEC-0005's policy power over it, read as the
+    ///   Owner-minted `policy.change` grant naming the key's policy target until stage 6d-1): any
+    ///   move of a value row, at any scope the key admits (DESIGN 1.2 step 3);
     /// - a person, on their own row of a key their subject sets, any move; on another key whose
     ///   rows meet, a narrowing of their own row;
     /// - an agent that is the subject of a row of a key whose rows meet: a narrowing of that row.
@@ -159,11 +163,12 @@ impl Vault {
     /// Over a row the owner (or the engine) set, a non-owner makes no widening: it tightens the
     /// owner's row and asks to loosen it. On a key that reads one row a non-owner also stays
     /// clear of the owner's pin and the owner's row, and a learned key's holder keeps inside the
-    /// owner's cap. A move the rule does
-    /// not admit waits for an agent on a check-in under its own live owner Grant that lists
-    /// `vault.settings.set`: the door opens it and answers [`SetSettingOutcome::Pending`]; the
-    /// same change again, naming the approved check-in, applies once over the row it was asked
-    /// over. A person's is refused.
+    /// owner's cap. A move the rule does not admit waits on a check-in: an agent's under its own
+    /// live owner Grant that lists `vault.settings.set`, a person's under their membership grant
+    /// on a shared vault (the grant a person's ask climbs the ladder from). The door opens it and
+    /// answers [`SetSettingOutcome::Pending`]; the same change again, naming the approved
+    /// check-in, applies once over the row it was asked over. A person who is an Owner, or who
+    /// is no member of a shared vault, is refused.
     ///
     /// The value passes the side-row wall before it is checked and stored, as an authored row
     /// does: a secret goes to custody and the row keeps its handle; any other hit refuses the
@@ -174,7 +179,8 @@ impl Vault {
     /// `InvalidConfig` for an unknown key, an item or scope the key does not admit, a value of
     /// another shape or one its check refuses, a moved row, a reason over 1,000 bytes, a
     /// check-in that is not this change's or that was asked over another row, an agent with no
-    /// Grant listing the verb, a person's move the rule does not admit, an engine pin, or a loose
+    /// Grant listing the verb, a person's move the rule does not admit from an Owner or from a
+    /// person who is no member of a shared vault, an engine pin, or a loose
     /// move of a key whose quorum is all; an owner or person proof that no longer holds; the
     /// side-row wall's refusal; storage errors.
     pub fn set_setting(
@@ -378,33 +384,35 @@ fn set_in_txn(
     let moved = authority_direction(direction);
     let admitted = reading
         .and_then(|(setter, permitted)| permitted.admit(moved).map(|admitted| (setter, admitted)));
-    let setter = match (admitted, caller) {
-        (Some((setter, _)), _) => setter,
-        (None, SettingCaller::Agent(agent)) => match request.check_in_ref {
-            Some(check_in) => {
-                spend_in_txn(
-                    vault,
-                    txn,
-                    change,
-                    prior_bytes.as_deref(),
-                    agent,
-                    &check_in,
-                    now,
-                )?;
-                Setter::Approved { check_in }
+    let setter = match (admitted, caller, by) {
+        (Some((setter, _)), _, _) => setter,
+        (None, SettingCaller::Agent(_) | SettingCaller::Person(_), Some(asker)) => {
+            match request.check_in_ref {
+                Some(check_in) => {
+                    spend_in_txn(
+                        vault,
+                        txn,
+                        change,
+                        prior_bytes.as_deref(),
+                        asker,
+                        &check_in,
+                        now,
+                    )?;
+                    Setter::Approved { check_in }
+                }
+                None => {
+                    let grant = if matches!(caller, SettingCaller::Agent(_)) {
+                        agent_ask_grant_in_txn(vault, txn, asker)?
+                    } else {
+                        person_ask_grant_in_txn(vault, txn, asker)?
+                            .ok_or_else(|| person_refusal(change.spec))?
+                    };
+                    let replaced = prior_bytes.as_deref();
+                    return open_request_in_txn(vault, txn, change, replaced, asker, grant, now);
+                }
             }
-            None => {
-                return open_request_in_txn(vault, txn, change, prior_bytes.as_deref(), agent, now);
-            }
-        },
-        (None, _) => {
-            return Err(Error::InvalidConfig(format!(
-                "a person sets only a value row about themselves: on a key set by its subject, \
-                 any value, and on a key whose rows meet, only one that narrows; never under the \
-                 owner's pin or over the owner's row on a key that reads one row: `{}`",
-                change.spec.name
-            )));
         }
+        (None, _, _) => return Err(person_refusal(change.spec)),
     };
     let json = |value: Option<&EncodedValue>| {
         value
@@ -471,6 +479,17 @@ fn set_in_txn(
         revision,
         value: json(change.value),
     })
+}
+
+/// The refusal of a person's change the rule does not admit, when they may not ask for it.
+fn person_refusal(spec: &SettingSpec) -> Error {
+    Error::InvalidConfig(format!(
+        "a person sets only a value row about themselves: on a key set by its subject, any \
+         value, and on a key whose rows meet, only one that narrows; never under the owner's pin \
+         or over the owner's row on a key that reads one row. A holder of the key's policy power \
+         sets its value rows, and a member of a shared vault asks: `{}`",
+        spec.name
+    ))
 }
 
 /// The authority rule's direction of a change: a tighter move narrows, a neutral key's move is
@@ -585,7 +604,8 @@ fn agent_reading_in_txn(
                 .engine_controls_grant_in(txn, agent, class)?
                 .map(|grant| Setter::Holder { grant }),
             SetBy::Subject if names_subject(&change.key.scope, agent) => Some(Setter::Subject),
-            SetBy::Owner | SetBy::Subject => None,
+            // The policy power is a person's: no agent holds it by a class line.
+            SetBy::Owner | SetBy::Subject | SetBy::Policy => None,
         },
     };
     let reading = match holder {
@@ -598,22 +618,38 @@ fn agent_reading_in_txn(
     Ok(one_row_bounds_in_txn(vault, txn, change)?.then_some(reading))
 }
 
-/// What `person` may do to `change`'s row: only a value row at their own `Person` scope. On a
-/// key set by its subject the row is their own choice, so they make any move on it (authority
-/// pass 26, section 1.2); on another key whose rows meet they narrow it only; else nothing.
+/// What `person` may do to `change`'s row, and in which capacity, or `None` when they may do
+/// nothing without asking. Never a pin: a pin is the owner's.
+/// - A person holder of the key ([`person_policy_line_in_txn`], DEC-0005's policy power over a
+///   [`SetBy::Policy`] key) makes any move of a value row at any scope the key admits (DESIGN 1.2
+///   step 3), through the grant the power stands on. Over a row the owner set it makes no
+///   widening (step 4, in the door), and on a key that reads one row it keeps clear of the
+///   owner's rows ([`one_row_bounds_in_txn`]).
+/// - Else only a value row at their own `Person` scope. On a key set by its subject the row is
+///   their own choice, so they make any move on it (authority pass 26, section 1.2); on another
+///   key whose rows meet they narrow it only; else nothing.
 fn person_reading_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     change: &Change<'_>,
     person: EntityId,
 ) -> Result<Option<(Setter, Permitted)>> {
-    if change.key.mode == SettingMode::Pin || change.key.scope != SettingScope::Person(person) {
+    if change.key.mode == SettingMode::Pin {
+        return Ok(None);
+    }
+    if let Some(grant) = person_policy_line_in_txn(vault, txn, change.spec, person)? {
+        return Ok(one_row_bounds_in_txn(vault, txn, change)?
+            .then_some((Setter::Holder { grant }, Permitted::AnyMove)));
+    }
+    if change.key.scope != SettingScope::Person(person) {
         return Ok(None);
     }
     let permitted = match change.spec.set_by {
         SetBy::Subject => Permitted::AnyMove,
-        SetBy::Owner | SetBy::Class(_) if change.spec.reads_met() => Permitted::NarrowingOnly,
-        SetBy::Owner | SetBy::Class(_) => return Ok(None),
+        SetBy::Owner | SetBy::Class(_) | SetBy::Policy if change.spec.reads_met() => {
+            Permitted::NarrowingOnly
+        }
+        SetBy::Owner | SetBy::Class(_) | SetBy::Policy => return Ok(None),
     };
     Ok(one_row_bounds_in_txn(vault, txn, change)?.then_some((Setter::Subject, permitted)))
 }
@@ -709,17 +745,13 @@ fn effect_digest(change: &Change<'_>, replaced: Option<&[u8]>) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
-/// Opens, or finds, the check-in `agent`'s change waits on, under its own live owner Grant that
-/// lists `vault.settings.set`.
-fn open_request_in_txn(
+/// The grant an agent's ask stands on: its own live owner Grant that lists `vault.settings.set`.
+fn agent_ask_grant_in_txn(
     vault: &Vault,
-    txn: &mut heed::RwTxn<'_>,
-    change: &Change<'_>,
-    replaced: Option<&[u8]>,
+    txn: &heed::RoTxn<'_>,
     agent: EntityId,
-    now: u64,
-) -> Result<SetSettingOutcome> {
-    let grant = crate::authority::principal_standing_in_txn(
+) -> Result<EntityId> {
+    crate::authority::principal_standing_in_txn(
         vault,
         txn,
         agent,
@@ -731,12 +763,25 @@ fn open_request_in_txn(
         Error::InvalidConfig(format!(
             "an agent asks for a setting change under its own live owner Grant that lists {SET_VERB}"
         ))
-    })?;
+    })
+}
+
+/// Opens, or finds, the check-in `asker`'s change waits on, under `grant`: an agent's own live
+/// owner Grant that lists `vault.settings.set`, or a person's membership grant.
+fn open_request_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &Change<'_>,
+    replaced: Option<&[u8]>,
+    asker: EntityId,
+    grant: EntityId,
+    now: u64,
+) -> Result<SetSettingOutcome> {
     let (row, _) = open_keyed_pending_check_in_in_txn(
         vault,
         txn,
         OpenPendingCheckIn {
-            asker: agent,
+            asker,
             grant_ref: grant.to_hex(),
             verb: SET_VERB.to_owned(),
             act: change.spec.act,
@@ -758,25 +803,25 @@ fn open_request_in_txn(
     })
 }
 
-/// Spends the approved check-in `id` for `agent`'s `change` over the row `replaced`, in the
+/// Spends the approved check-in `id` for `asker`'s `change` over the row `replaced`, in the
 /// door's writer.
 fn spend_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     change: &Change<'_>,
     replaced: Option<&[u8]>,
-    agent: EntityId,
+    asker: EntityId,
     id: &EntityId,
     now: u64,
 ) -> Result<()> {
     let row = pending_check_in_in_txn(&vault.store, txn, id)?.ok_or(Error::EntityNotFound)?;
-    if row.asker != agent
+    if row.asker != asker
         || row.verb != SET_VERB
         || row.act != change.spec.act
         || row.scope != check_in_scope(&change.key.scope)
     {
         return Err(Error::InvalidConfig(
-            "the check-in is not this agent's ask for this setting change".into(),
+            "the check-in is not this caller's ask for this setting change".into(),
         ));
     }
     consume_pending_check_in_in_txn(vault, txn, id, &effect_digest(change, replaced), now)?;

@@ -267,4 +267,18 @@ crate::setting::setting_keys! {
         kind: Kind::new(ten).strictest(zero).lower(),
         scopes: &[ScopeKind::Vault, ScopeKind::Agent],
     };
+    /// A cap whose rows meet, held by DEC-0005's policy power: the owner, and a person whose
+    /// Owner-minted `policy.change` grant names the inference defaults' vault-scope target.
+    pub TEST_POLICY_CAP: u64 = "test.policy_cap" {
+        kind: Kind::new(ten).strictest(zero).lower(),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
+        set_by: SetBy::Policy,
+        policy_target: Some("settings.inference_defaults"),
+    };
+    /// A number with no order, held by the same policy power: it reads one row.
+    pub TEST_POLICY_NUMBER: u64 = "test.policy_number" {
+        kind: Kind::new(seven),
+        set_by: SetBy::Policy,
+        policy_target: Some("settings.inference_defaults"),
+    };
 }

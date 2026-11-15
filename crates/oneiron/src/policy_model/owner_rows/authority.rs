@@ -67,10 +67,10 @@ fn scope_covers(
     }
 }
 
-/// The live membership of a shared vault: its conferring grants and the
-/// Owner-role members among them.
+/// The live membership of a shared vault: its conferring grants, each with
+/// its row id, and the Owner-role members among them.
 struct LiveMembers {
-    grants: Vec<crate::federation::FederationGrant>,
+    grants: Vec<(EntityId, crate::federation::FederationGrant)>,
     owners: BTreeSet<EntityId>,
 }
 
@@ -205,13 +205,13 @@ fn shared_members_census_with(
             && (live_persons || !member_is_agent_in_txn(store, txn, &grant.member_ref)?)
             && crate::vault::live_entity_row_in_txn(store, txn, &id)?.is_live()
         {
-            grants.push(grant);
+            grants.push((id, grant));
         }
     }
     let owners: BTreeSet<EntityId> = grants
         .iter()
-        .filter(|g| g.role == FederationGrantRole::Owner)
-        .map(|g| g.member_ref)
+        .filter(|(_, g)| g.role == FederationGrantRole::Owner)
+        .map(|(_, g)| g.member_ref)
         .collect();
     // The creation record must still read as one; its creator is history,
     // not a standing requirement. Ownership is the CURRENT conferring Owner
@@ -326,7 +326,7 @@ impl Vault {
         Ok(match live_shared_members_in_txn(self, &txn)? {
             None => personal_owner_in_txn(self, &txn)?.into_iter().collect(),
             Some(LiveMembers { grants, .. }) => {
-                grants.iter().map(|grant| grant.member_ref).collect()
+                grants.iter().map(|(_, grant)| grant.member_ref).collect()
             }
         })
     }
@@ -406,7 +406,7 @@ pub(crate) fn is_live_writing_member_for_store_in_txn(
         crate::consent::person_is_live_for_store_in_txn(store, txn, id)
     })?;
     Ok(members.is_some_and(|members| {
-        members.grants.iter().any(|grant| {
+        members.grants.iter().any(|(_, grant)| {
             grant.member_ref == *actor
                 && matches!(
                     grant.role,
@@ -446,16 +446,60 @@ pub(super) fn holders_for_in_txn(
     row_scope: &crate::gate::PolicyRowScope,
     target: &str,
 ) -> Result<Vec<EntityId>> {
-    let Some(LiveMembers { grants, owners }) = live_shared_members_in_txn(vault, txn)? else {
+    let Some(members) = live_shared_members_in_txn(vault, txn)? else {
         return personal_owner_in_txn(vault, txn);
     };
+    let mut holders = members.owners.clone();
+    holders.extend(
+        granted_holders_in_txn(vault, txn, &members, row_scope, target)?
+            .into_iter()
+            .map(|(member, _)| member),
+    );
+    Ok(holders.into_iter().collect())
+}
+
+/// The membership grant through which `actor` holds the policy power over
+/// `target` at `row_scope` now as a granted holder, not as an Owner: a live
+/// Deputy, Admin or Delegate membership whose authority scope admits the row,
+/// with an Owner-minted `policy.change` grant naming the exact target
+/// ([`holders_for_in_txn`]'s rule). `None` on a personal vault, for an Owner
+/// who holds the power by role alone, and for anyone who does not hold it.
+pub(super) fn granted_holder_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    row_scope: &crate::gate::PolicyRowScope,
+    target: &str,
+    actor: EntityId,
+) -> Result<Option<EntityId>> {
+    let Some(members) = live_shared_members_in_txn(vault, txn)? else {
+        return Ok(None);
+    };
+    Ok(
+        granted_holders_in_txn(vault, txn, &members, row_scope, target)?
+            .into_iter()
+            .find_map(|(member, grant)| (member == actor).then_some(grant)),
+    )
+}
+
+/// Every non-Owner member of `members` that holds the policy power over
+/// `target` at `row_scope`, with the membership grant it holds it through.
+fn granted_holders_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    members: &LiveMembers,
+    row_scope: &crate::gate::PolicyRowScope,
+    target: &str,
+) -> Result<Vec<(EntityId, EntityId)>> {
     let class = ActionClass::new(POLICY_CHANGE_CLASS)?;
     // An unrepresentable target cannot authorize a non-owner. Owners still
     // retain their independent role authority.
-    let envelope = ActionEnvelope::new(["owner_policy_rows".to_owned()])
-        .and_then(|envelope| envelope.with_target(target));
-    let mut holders = owners.clone();
-    for grant in grants.iter().filter(|g| {
+    let Ok(envelope) = ActionEnvelope::new(["owner_policy_rows".to_owned()])
+        .and_then(|envelope| envelope.with_target(target))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut holders = Vec::new();
+    for (grant_id, grant) in members.grants.iter().filter(|(_, g)| {
         matches!(
             g.role,
             FederationGrantRole::Deputy
@@ -463,9 +507,6 @@ pub(super) fn holders_for_in_txn(
                 | FederationGrantRole::Delegate
         ) && scope_covers(&g.authority_scope, row_scope)
     }) {
-        let Ok(envelope) = &envelope else {
-            continue;
-        };
         let required = GrantBound::action(
             ActorBound::new(grant.member_ref.to_hex())?.with_actor_class("human")?,
             class.clone(),
@@ -482,13 +523,13 @@ pub(super) fn holders_for_in_txn(
             else {
                 continue;
             };
-            if row.is_active() && owners.contains(&row.owner_stamp.actor) {
-                holders.insert(grant.member_ref);
+            if row.is_active() && members.owners.contains(&row.owner_stamp.actor) {
+                holders.push((grant.member_ref, *grant_id));
                 break;
             }
         }
     }
-    Ok(holders.into_iter().collect())
+    Ok(holders)
 }
 
 // FIX [LIBTEST-QUARANTINE-POLICY-MODEL-OWNER-ROWS-AUTHORITY-TESTS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate

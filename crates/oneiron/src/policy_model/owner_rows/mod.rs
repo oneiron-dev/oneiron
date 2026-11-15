@@ -94,6 +94,26 @@ pub(crate) fn holds_vault_policy_power_in_txn(
     )
 }
 
+/// The membership grant through which `actor` holds the vault-scope policy
+/// power over `target` now as a granted holder: an Admin, Deputy or Delegate
+/// whose Owner-minted `policy.change` grant names `target` exactly
+/// ([`holds_vault_policy_power_in_txn`]'s rule). `None` for an Owner, who
+/// holds it by role, on a personal vault, and for anyone who does not hold it.
+pub(crate) fn vault_policy_holder_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: EntityId,
+    target: &str,
+) -> Result<Option<EntityId>> {
+    authority::granted_holder_grant_in_txn(
+        vault,
+        txn,
+        &crate::gate::PolicyRowScope::Vault,
+        target,
+        actor,
+    )
+}
+
 fn propose_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

@@ -582,8 +582,8 @@ pub struct SettingCatalogueEntry {
     pub schema: serde_json::Value,
     /// The catalogue default, as JSON.
     pub default: serde_json::Value,
-    /// Who sets it without asking: `owner`, `subject`, or the `engine.controls` grant verb of
-    /// its class.
+    /// Who sets it without asking: `owner`, `subject`, `policy` (the owner and a person who
+    /// holds DEC-0005's policy power over it), or the `engine.controls` grant verb of its class.
     pub set_by: String,
     /// The key's order: which side of a change is safe.
     pub order: Order,
@@ -706,6 +706,7 @@ impl Vault {
                 set_by: match spec.set_by {
                     SetBy::Owner => "owner".to_owned(),
                     SetBy::Subject => "subject".to_owned(),
+                    SetBy::Policy => "policy".to_owned(),
                     SetBy::Class(class) => class.grant_verb().to_owned(),
                 },
                 order: spec.kind.order(),

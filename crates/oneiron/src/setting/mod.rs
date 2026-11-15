@@ -29,6 +29,7 @@
 mod catalogue;
 mod change;
 mod learned;
+mod person;
 mod read;
 mod set;
 pub(crate) mod tables;
@@ -89,6 +90,12 @@ pub enum SetBy {
     Class(EngineControlClass),
     /// The owner, and the agent or person the row's scope names, on its own row.
     Subject,
+    /// The owner, and a person who holds DEC-0005's policy power over the key (DESIGN 1.1's
+    /// `Policy` class): until stage 6d-1 mints that power as a Grant line, an Admin, Deputy or
+    /// Delegate whose Owner-minted `policy.change` grant names the key's
+    /// [`SettingSpec::policy_target`]. It is no `engine.controls` class, so no agent holds it by
+    /// a class line.
+    Policy,
 }
 
 /// The items a family key admits: per channel, per act class, per offer.
@@ -126,6 +133,11 @@ pub struct SettingSpec {
     pub item: Option<ItemDomain>,
     /// Who may set it without asking.
     pub set_by: SetBy,
+    /// For a [`SetBy::Policy`] key, the policy setting whose vault-scope `policy.change` grant
+    /// makes a person its holder (for example `settings.inference_defaults`), read in one place
+    /// (`setting/person.rs`) until stage 6d-1 mints the power as a Grant line and 6d-2 deletes
+    /// this field. `None`: no person holds the key yet.
+    pub policy_target: Option<&'static str>,
     /// How many holders must say yes to a loose move. `All` waits for its count, which lands with
     /// the Grant of a person's setting class (stage 6d-1): the door refuses a loose move of such a
     /// key until then.
@@ -152,6 +164,7 @@ impl SettingSpec {
         scopes: &[ScopeKind::Vault],
         item: None,
         set_by: SetBy::Owner,
+        policy_target: None,
         quorum: Quorum::One,
         act: ActClass::ReversibleWork,
         read_by: ReadBy::Holders,
