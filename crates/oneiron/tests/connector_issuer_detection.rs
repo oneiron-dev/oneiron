@@ -34,6 +34,7 @@ const WRITE_ROW: &str = "write";
 const SLOT: &str = "route";
 const OLD_ISSUER: &str = "https://as-old.test";
 const NEW_ISSUER: &str = "https://as-new.test";
+const NEW_CREDENTIAL: &str = "custody:route-token-new";
 
 struct Fixture {
     vault: Vault,
@@ -341,5 +342,104 @@ fn owner_accept_lifts_detected_hold() {
             .open_issuer_halt_for_connector(CONNECTOR)
             .expect("the halt reads"),
         None
+    );
+}
+
+/// Review #8115 round 1: an owner's authenticated observation of the new
+/// issuer after the engine's detection carries the credential the owner
+/// saw, and the stamp binds that one, not the old custody pointer the
+/// detection kept.
+#[test]
+fn owner_observation_after_detection_binds_its_credential() {
+    let fixture = fixture();
+    let binding = baseline(&fixture);
+    let drifted = detect(&fixture, &[NEW_ISSUER]);
+    let Some(ConnectorIssuerTransitionState::Drafted {
+        slate_ref: detected_slate,
+    }) = drifted
+        .first()
+        .and_then(|detected| detected.transition.as_ref())
+        .map(|open| open.state.clone())
+    else {
+        panic!("detection drafts the forced re-ask: {drifted:?}");
+    };
+
+    let observed = fixture
+        .vault
+        .observe_connector_credential_issuer(
+            &fixture.owner,
+            &ConnectorIssuerObservation {
+                connector: CONNECTOR.to_owned(),
+                slot: SLOT.to_owned(),
+                issuer: NEW_ISSUER.to_owned(),
+                credential_ref: NEW_CREDENTIAL.to_owned(),
+                expected_generation: 1,
+                dependents: Vec::new(),
+                witness: "owner read the route's new issuer".to_owned(),
+            },
+        )
+        .expect("owner observes the new issuer's credential");
+    let transition = observed.transition.as_ref().expect("the change stays open");
+    assert_eq!(transition.new_issuer, NEW_ISSUER);
+    assert_eq!(
+        transition.proposed_credential_ref, NEW_CREDENTIAL,
+        "the owner's observed credential replaces the one detection kept"
+    );
+    let ConnectorIssuerTransitionState::Drafted { slate_ref } = transition.state else {
+        panic!(
+            "the observation redrafts the forced re-ask: {:?}",
+            transition.state
+        );
+    };
+    assert_ne!(
+        slate_ref, detected_slate,
+        "the re-ask names the observed credential"
+    );
+
+    let again = detect(&fixture, &[NEW_ISSUER]);
+    assert_eq!(again.len(), 1);
+    assert_eq!(
+        again[0].transition.as_ref(),
+        Some(transition),
+        "a later detection keeps the owner's observed credential"
+    );
+
+    let stale_revision = fixture
+        .vault
+        .connector_slate(detected_slate)
+        .expect("the detected draft reads")
+        .expect("the detected draft exists")
+        .revision();
+    fixture
+        .vault
+        .accept_connector_slate_revision(&fixture.owner, detected_slate, stale_revision)
+        .expect_err("the replaced draft can no longer bind the old credential");
+
+    let revision = fixture
+        .vault
+        .connector_slate(slate_ref)
+        .expect("the redrafted revision reads")
+        .expect("the redrafted revision exists")
+        .revision();
+    fixture
+        .vault
+        .accept_connector_slate_revision(&fixture.owner, slate_ref, revision)
+        .expect("the owner accepts the observed issuer revision");
+
+    let accepted = fixture
+        .vault
+        .connector_credential_binding(&binding.binding_ref)
+        .expect("the binding reads")
+        .expect("the binding stays");
+    assert_eq!(accepted.issuer, NEW_ISSUER);
+    assert_eq!(
+        accepted.credential_ref, NEW_CREDENTIAL,
+        "the stamp binds the credential the owner observed"
+    );
+    assert_eq!(accepted.generation, 2);
+    assert_eq!(
+        hold(&fixture, WRITE_ROW),
+        None,
+        "the accepted row runs again"
     );
 }
