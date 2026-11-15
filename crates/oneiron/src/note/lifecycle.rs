@@ -193,7 +193,8 @@ impl Vault {
                             actor.entity_ref(),
                         )
                         .is_ok();
-                    if !owner && !core.author_ref.is(actor.entity_ref()) {
+                    // SEEDED FAULT N7 (red proof only): anyone seals.
+                    if false {
                         return Err(invalid("NOTE seal requires its author or the owner").into());
                     }
                     Ok(seal_note_in_txn(self, txn, note, actor.entity_ref())?)

@@ -498,7 +498,8 @@ impl Vault {
             None
         };
         let authorized = super::proposals::edit_lands(self, txn, note, actor, landing)?;
-        if let Some((base, edits)) = semantic.filter(|_| authorized && !sealed) {
+        // SEEDED FAULT N4 (red proof only): a sealed edit lands.
+        if let Some((base, edits)) = semantic.filter(|_| authorized) {
             let operation = super::NoteOperation {
                 request_id: self.store.clock.entity_id()?,
                 change: super::NoteChange::Edit { base, edits },

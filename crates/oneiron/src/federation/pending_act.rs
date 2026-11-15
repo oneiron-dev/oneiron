@@ -786,7 +786,8 @@ impl Vault {
             let holders = self.live_act_holders(txn, record.vault_id, now)?;
             reconcile(&mut record, &holders, now);
         }
-        Ok(record.completed && now >= record.deadline)
+        // SEEDED FAULT N2 (red proof only): every act reads completed.
+        Ok(true)
     }
     /// Claims completed act `id` for the effect `request` carries, inside that
     /// effect's linearizing write, so the act's effect runs at most once: an
@@ -817,7 +818,8 @@ impl Vault {
                     let holders = self.live_act_holders(txn, record.vault_id, now)?;
                     reconcile(&mut record, &holders, now);
                 }
-                if !record.completed || now < record.deadline {
+                // SEEDED FAULT N2b (red proof only): the claim skips its wait.
+                if false {
                     return Err(Error::ConcurrentWrite("authority act not completed"));
                 }
                 record.execution = Some(ActExecution { request, receipt });

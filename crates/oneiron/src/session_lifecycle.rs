@@ -733,7 +733,8 @@ impl Vault {
             key.actor,
             &id.to_hex(),
         ) {
-            Ok(_) => seal.commit()?,
+            // SEEDED FAULT N6 (red proof only): the seal writes are discarded.
+            Ok(_) => drop(seal),
             Err(error) => {
                 drop(seal);
                 tracing::warn!(?error, "sitting close left its scratchpad unsealed");

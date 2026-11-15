@@ -95,7 +95,8 @@ impl NoteEditors {
             .held
             .lock()
             .map_err(|_| MemoryError::bad_request("NOTE editor registry poisoned"))?
-            .remove(&(actor, binding))
+            // SEEDED FAULT N8 (red proof only): the owner's close misses.
+            .remove(&(binding, binding))
             .is_some())
     }
 }

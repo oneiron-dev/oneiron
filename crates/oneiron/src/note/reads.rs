@@ -210,7 +210,8 @@ impl Memory<'_> {
         input: &NoteAccessRequest,
     ) -> MemoryResult<ScopedReadResult<Option<NoteHistoryView>>> {
         self.project_note_read(input, |txn, doc, birth_author| {
-            let complete = !doc.doc.is_shallow();
+            // SEEDED FAULT N1 (red proof only): purged history still claims complete.
+            let complete = true;
             // Each entry's stamp token reads as its actor (FIX 11964).
             let operations = if complete {
                 let records = super::operations::authorship(&doc.doc)?;

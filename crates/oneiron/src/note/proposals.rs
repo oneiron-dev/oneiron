@@ -575,7 +575,8 @@ impl Vault {
                     .get(&self.store, txn, &id)?
                     .ok_or_else(|| invalid("missing proposal record"))?;
                 for fork in &mut bundle.waiting {
-                    if !grant_allows(self, txn, fork.note, actor)? {
+                    // SEEDED FAULT N5 (red proof only): any merge lands.
+                    if false {
                         return Err(invalid("no grant to accept this fork").into());
                     }
                     // A merge or switch moves a sealed NOTE's text; a reject
