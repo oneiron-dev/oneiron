@@ -2713,13 +2713,36 @@ impl OwnerKeyVault {
         live: &[AuthorityEntryHash],
         cosigners: &[&SigningKey],
     ) -> AuthorityEntryHash {
+        self.node_sets_on_the_web_sign_in_target(
+            PolicySetting::WebSignIn,
+            node_seq,
+            parents,
+            (value, live),
+            cosigners,
+        )
+    }
+
+    /// The node carries the owner's act of `setting` at `node_seq` on the
+    /// web sign-in setting's target: the value it leaves and the target's
+    /// live acts its `seen` covers (`left`), with one cosign by each of
+    /// `cosigners`. A vault-wide setting names only its own target; the
+    /// free-time policy names any.
+    fn node_sets_on_the_web_sign_in_target(
+        &mut self,
+        setting: PolicySetting,
+        node_seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        left: ([u8; 32], &[AuthorityEntryHash]),
+        cosigners: &[&SigningKey],
+    ) -> AuthorityEntryHash {
+        let (value, live) = left;
         let target = PolicySetting::WebSignIn
             .reserved_target()
             .expect("the setting's target")
             .expect("a vault-wide setting");
         let act = OwnerAct::by_owner(
             owner(),
-            OwnerActKind::PolicySetting,
+            setting.act_kind(),
             target,
             ActSurface::ThisInstall,
             policy_setting_revision(live.iter().copied()),
@@ -2731,7 +2754,7 @@ impl OwnerKeyVault {
             AuthorityOp::PolicySettingSet(PolicySettingSet {
                 act,
                 machine: self.answer.machine,
-                setting: PolicySetting::WebSignIn,
+                setting,
                 prior: [0; 32],
                 value: Some(value),
             }),
@@ -3054,6 +3077,34 @@ fn a_carrier_cannot_speak_for_a_key_the_vault_does_not_hold_yet() {
     let removed_later = vault.key_removes_itself(&later, vec![enrolled_later]);
     let pick = vault.node_picks_home(3, vec![removed_later]);
     assert_the_pick_waits(&vault.fold(), pick);
+}
+
+/// The settings register keys an act by its target alone, and a free-time
+/// policy act names any target. One that names the web sign-in setting's
+/// target, with the switch's own value and an owner key's cosign, is a valid
+/// entry and changes nothing: only the web sign-in setting's own act lands
+/// there. With the last key removed the vault still asks.
+#[test]
+fn another_settings_act_on_the_web_sign_in_target_changes_nothing() {
+    let mut vault = OwnerKeyVault::hosted();
+    let key = signing(OWNER_KEY_SEED);
+    let enrolled = vault.enrol(&key, 2, vec![vault.tip()]);
+    let foreign = vault.node_sets_on_the_web_sign_in_target(
+        PolicySetting::FreeTimePolicy,
+        1,
+        vec![enrolled],
+        (speaks_for(&[&key]), &[]),
+        &[&key],
+    );
+    let removed = vault.key_removes_itself(&key, vec![foreign]);
+    let pick = vault.node_picks_home(2, vec![removed]);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&foreign),
+        "a free-time policy act may name any target: it is a valid entry: {:?}",
+        fold.issues
+    );
+    assert_the_pick_waits(&fold, pick);
 }
 
 /// The switch is a managed host's vault's alone: a self-host vault has no
