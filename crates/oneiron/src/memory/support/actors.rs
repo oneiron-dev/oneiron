@@ -156,6 +156,52 @@ pub(crate) fn verify_owner_actor_binding_in_txn(
     ))
 }
 
+/// Refuses `actor` a close of `body` that lifts a restriction: a retract or
+/// a stale mark (`verb`) takes the row out of every fold that reads it, and
+/// where the row restricts someone's access or authority
+/// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
+/// exited `campaign.member`, a do-not-contact bar, an opt-out, an
+/// unreachable channel, a delivery window, ...) that close is a widening,
+/// a live owner's alone, whoever wrote the row (the lead's RULING
+/// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
+/// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
+/// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F2). So an agent's or an
+/// Admin's own authorship no longer closes the hold it wrote. The engine's
+/// own System writers (a derivation, a projector) close as before.
+///
+/// # Errors
+///
+/// `FORBIDDEN` for such a close by anyone but a live owner, and the
+/// contact and owner census reads' own errors.
+pub(crate) fn require_live_owner_to_lift_restriction_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: crate::write_envelope::WriteActor,
+    body: &crate::claim::ClaimBody,
+    verb: &str,
+) -> MemoryResult<()> {
+    if actor.actor_class() == EdgeActorClass::System
+        || !crate::federation::claim_removal_widens_in(vault, txn, body)?
+        || (actor.actor_class() == EdgeActorClass::Human
+            && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor.entity_ref())?)
+    {
+        return Ok(());
+    }
+    Err(MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!(
+            "actor {} ({}) may not {verb} a claim that restricts someone's access: \
+             lifting a restriction is a live vault owner's act",
+            actor.entity_ref().to_hex(),
+            actor.actor_class().gate_actor_class(),
+        ),
+        &[
+            "Ask the vault owner to lift the restriction.",
+            "A delete of the row is refused below the owner for the same reason.",
+        ],
+    ))
+}
+
 /// The COMPLETE deletion-authority predicate, evaluatable inside any read or
 /// write transaction: actor binding + human class + folded owner binding.
 ///

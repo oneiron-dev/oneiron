@@ -318,6 +318,13 @@ fn other_arms(
 ///
 /// The last kind reads the contact's live heads in `txn`, so an error there
 /// is an error here, and the delete is refused as unreadable.
+///
+/// The other doors that take such a record out of its readers' fold below
+/// the owner judge it by the same rule (the Engine's RULING
+/// RESTRICTION-FIX-SCOPE = A, 15 Nov): a put over its id
+/// ([`stored_removal_widens_in`], `batch::put_target_admitted_in`), and a
+/// retract or a stale mark of a claim ([`claim_removal_widens_in`],
+/// `memory::require_live_owner_to_lift_restriction_in_txn`).
 fn removal_widens(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -325,8 +332,6 @@ fn removal_widens(
     kind: u8,
     body: &[u8],
 ) -> Result<bool> {
-    use crate::write_envelope::cohort_claims::{CampaignMemberState, PREDICATE_CAMPAIGN_MEMBER};
-
     match kind {
         ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR => return Ok(true),
         ENTITY_TYPE_COUNTERPARTY_CONTACT => return contact_held(vault, txn, id),
@@ -336,10 +341,48 @@ fn removal_widens(
     let Ok(body) = crate::claim::decode_claim_body(body, true) else {
         return Ok(false);
     };
+    claim_removal_widens_in(vault, txn, &body)
+}
+
+/// [`removal_widens`] of the row `txn` stores at `id`: `false` where none is
+/// stored.
+///
+/// # Errors
+///
+/// A row whose header does not parse, and [`removal_widens`]'s own.
+pub(crate) fn stored_removal_widens_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    let Some(raw) = vault.get_raw_in(txn, id)? else {
+        return Ok(false);
+    };
+    let header =
+        EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("stored row header"))?;
+    let body = raw
+        .get(ENTITY_METADATA_HEADER_LEN..)
+        .ok_or(Error::CorruptedIndex("stored row header"))?;
+    removal_widens(vault, txn, *id, header.entity_type, body)
+}
+
+/// [`removal_widens`] of a CLAIM stored as `body`: by its predicate and,
+/// where only some values restrict, its value.
+///
+/// # Errors
+///
+/// The contact read of a `counterparty_contact.counterparty` head.
+pub(crate) fn claim_removal_widens_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    body: &crate::claim::ClaimBody,
+) -> Result<bool> {
+    use crate::write_envelope::cohort_claims::{CampaignMemberState, PREDICATE_CAMPAIGN_MEMBER};
+
     let predicate = body.predicate.as_str();
     if predicate == crate::counterparty_contact::PREDICATE_COUNTERPARTY_CONTACT_COUNTERPARTY {
-        return match body.subject {
-            crate::claim::ClaimSubject::Entity(contact) => contact_held(vault, txn, contact),
+        return match &body.subject {
+            crate::claim::ClaimSubject::Entity(contact) => contact_held(vault, txn, *contact),
             _ => Ok(false),
         };
     }
@@ -349,7 +392,7 @@ fn removal_widens(
             || predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
             || (predicate == crate::write_envelope::communication::PREDICATE_COMM_REACHABLE_VIA
                 && matches!(
-                    crate::comm::CommClaim::from_claim_body(&body).map(|claim| claim.value),
+                    crate::comm::CommClaim::from_claim_body(body).map(|claim| claim.value),
                     Ok(crate::comm::CommClaimValue::ReachableVia {
                         reachable: false,
                         ..

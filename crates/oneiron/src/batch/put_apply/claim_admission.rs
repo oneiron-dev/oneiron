@@ -194,15 +194,46 @@ pub(super) fn validate_witness_message_body(
 /// Whether `reader` may put a row at `id` in `txn` (FIX 6068): an id that
 /// names no stored row is free to take; an occupied one only when its
 /// original row, whatever it holds (a deleted, retained or other-kind row
-/// included), is one `reader` reads, and is no world-access grant or default.
-/// Judged before any incoming body, scope stamp or edge can change what the
-/// row means.
+/// included), is one `reader` reads ([`projected_head_target_admitted_in`]),
+/// and is no row whose removal widens someone's access or authority
+/// (`federation::stored_removal_widens_in`). Judged before any incoming body,
+/// scope stamp or edge can change what the row means. The owner's own read
+/// never reaches here (`Vault::turn_doors_owner_in`).
+///
+/// FIX [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F1: a put over the id
+/// of a row that restricts someone (a paused, suppressed or exited
+/// `campaign.member`, a do-not-contact bar, an unreachable channel, a
+/// delivery window, ...) replaces it, so a Proposed row or a row of another
+/// predicate there takes the restriction out of every fold that reads it.
+/// Lifting a restriction is a widening, a live owner's alone (the lead's
+/// RULING WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS
+/// a widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A), as the
+/// delete door judges it.
+pub(crate) fn put_target_admitted_in(
+    reader: &crate::claim::ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(projected_head_target_admitted_in(reader, txn, id)?
+        && !crate::federation::stored_removal_widens_in(reader.vault(), txn, id)?)
+}
+
+/// [`put_target_admitted_in`] for a head the comm projector writes for a
+/// bound writer (`batch::builder::comm_projection`): the stored row is one
+/// `reader` reads, and is no world-access grant or default. The projector is
+/// the typed door of its `comm.*` classes (CA-01: written "from evidence,
+/// never an Ordinary write"), and its own slot rules choose each head it
+/// writes: a STOP mints its opt-out at an id its source event derives, and
+/// closes only that head when the slot moved after the STOP; a touch
+/// supersedes only touches. So no head it writes lifts a stored restriction,
+/// and it is not judged by the restriction rule, which would refuse a late
+/// STOP its own close.
 ///
 /// FIX [WORLD-ACCESS-GRANT-ROW-OVERWRITE-UNGOVERNS]: only the governed doors
 /// write either world-access tier (`claim::world_access`). A put over an
 /// owner's grant under another predicate would take that grant out of the
 /// fold, and a subject no grant governs reads base reality.
-pub(crate) fn put_target_admitted_in(
+pub(crate) fn projected_head_target_admitted_in(
     reader: &crate::claim::ScopedRead<'_>,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,

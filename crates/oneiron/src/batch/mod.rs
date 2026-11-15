@@ -112,7 +112,8 @@ pub(crate) use self::phonetic_apply::{
 };
 use self::prepared_index::PreparedIndexWork;
 pub(crate) use self::put_apply::{
-    delete_entity_index_rows, put_target_admitted_in, stage_entity_index_rows,
+    delete_entity_index_rows, projected_head_target_admitted_in, put_target_admitted_in,
+    stage_entity_index_rows,
 };
 pub use self::short_id::short_id_content_hash;
 pub(crate) use self::short_id::{

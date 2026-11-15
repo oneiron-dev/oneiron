@@ -110,7 +110,25 @@ pub(super) fn claim_replay_content_matches(
 /// Keyed facts bind subject, envelope actor/class, worldless scope,
 /// exact address, and replay identity together. A generic upsert's
 /// subject+scope match must not supersede another actor's keyed fact.
+///
+/// A `campaign.member` head is the campaign's: `vault.campaign.enroll`
+/// writes a person's membership, reconciled with the one the campaign holds,
+/// and the saved-query derivation writes the rest (CA-01: the crm/comm
+/// families are typed and complete; ARCH-0059 r9: membership derivation is
+/// SOURCE-class, never a synced enrolled flag). A generic head at a fresh
+/// key outranked an exit the fold had settled, so the campaign sent to that
+/// person again (the Engine's RULING RESTRICTION-FIX-SCOPE = A, 15 Nov).
 pub(super) fn refuse_typed_claim_family(input: &ClaimInput) -> MemoryResult<()> {
+    if input.predicate == crate::write_envelope::cohort_claims::PREDICATE_CAMPAIGN_MEMBER {
+        return Err(MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "campaign membership is written through vault.campaign.enroll, not the general claim door",
+            &[
+                "Enroll the person through vault.campaign.enroll; the campaign's saved-query derivation writes the rest.",
+                "That door reconciles with the membership the campaign already holds; a general write does not.",
+            ],
+        ));
+    }
     if input.predicate == super::super::key_value::PREDICATE {
         return Err(MemoryError::new(
             MEMORY_CODE_INVALID_STATE,

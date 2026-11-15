@@ -106,6 +106,17 @@ impl Memory<'_> {
                     &body,
                     self.actor,
                 )?;
+                // The stale mark takes the row out of every surfaceable read,
+                // as a retract does: a row that restricts someone is a live
+                // owner's to mark (FIX
+                // [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT] F2).
+                require_live_owner_to_lift_restriction_in_txn(
+                    self.vault,
+                    wtxn,
+                    self.write_actor(),
+                    &body,
+                    "mark stale",
+                )?;
             }
             Ok(self
                 .vault
