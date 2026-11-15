@@ -516,3 +516,15 @@ pub fn while_a_pass_holds_the_runner<T>(vault: &Vault, act: impl FnOnce() -> T) 
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     act()
 }
+
+/// When `task`'s watcher tick is due while it still waits for it, or `None` once it ticked, for
+/// a TASK with no due time, and for one closed before its tick (stage 5b-3): the tick a run of
+/// `runtime_hooks.task_tick` releases.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn task_tick_waiting(vault: &Vault, task: EntityId) -> Result<Option<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    crate::runtime_hooks::task_tick_waiting_in_txn(vault, &txn, task)
+}
