@@ -475,9 +475,11 @@ fn successor_replay(
 /// Whether every tail row folds past the image as a resumed fold's tail row
 /// would: each parent on the frontier or in the tail (a covered parent off
 /// the frontier is a late fork), an op that leaves every earlier row's fate
-/// as it was (a world key record among them, FIX 4881), no row a sequence
-/// floor refuses, none signed by a
-/// retired key, none a covered row names, and no withdrawal on a frontier
+/// as it was (a world key record among them, FIX 4881), no row that moves a
+/// covered row's sequence floor or sits past its own ([`rows_floors_unmoved`],
+/// [`tail_signers_covered_rows_unfloored`]: only the whole history judges
+/// those, though a floor refuses no row), none signed by a retired key, none
+/// a covered row names, and no withdrawal on a frontier
 /// row the image holds rejected (only older states could judge it). None for
 /// a residence result past an image that dropped its residence bodies for
 /// [`super::checkpoint_image::AUTHORITY_RESIDENCE_BODY_OVERFLOW`], as at

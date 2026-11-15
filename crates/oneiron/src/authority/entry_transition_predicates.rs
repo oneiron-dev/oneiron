@@ -57,11 +57,11 @@ pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
 /// Whether a row of `op` below its floor is a fork the fold records
 /// (`forks_its_sequence`): every op but a roster change, which no floor
 /// touches, a restriction, which lands restriction only, and a row that only
-/// takes away (`only_takes_away`). Such a row counts in full (Engine RULING
-/// SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37), except a world key record, which its
-/// floor still refuses unless a handoff or a removal vouches for it
-/// (`fold_entry_state`). A roster row vouches for its signer's rows of such
-/// ops below it (`sequence_ancestry`).
+/// takes away (`only_takes_away`). Such a row counts in full and the fold
+/// records its `SequenceFork` (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov
+/// 02:37), a world key record included (RULING SEQ-FLOOR-S-WORLD-KEY-FLOOR =
+/// A, 03:39): no row is refused for its floor. A roster row vouches for its
+/// signer's rows of such ops below it (`sequence_ancestry`).
 pub(super) fn floor_refuses(op: &AuthorityOp) -> bool {
     !changes_roster(op) && !lands_restriction_only(op) && !only_takes_away(op)
 }
