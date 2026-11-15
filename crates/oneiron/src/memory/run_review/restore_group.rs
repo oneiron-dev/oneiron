@@ -90,7 +90,7 @@ fn restore_group_members(
         .filter(|receipt| {
             receipt.actor_ref.as_deref() == Some(actor.entity_ref().to_hex().as_str())
         });
-    if receipt.is_none() {
+    if receipt.is_some() {
         return Err(MemoryError::not_found(
             "no owner restore group has that key",
         ));

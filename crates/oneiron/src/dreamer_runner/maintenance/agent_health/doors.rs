@@ -161,6 +161,7 @@ pub(super) fn settle(
     card.outcome_by = Some(by);
     card.outcome_at = Some(at);
     card.watermark = card.evidence.len();
+    card.evidence.clear();
     card.updated_at = at;
 }
 
