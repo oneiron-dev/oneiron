@@ -54,10 +54,11 @@ pub(crate) fn facade_actor(
         Some("human") => EdgeActorClass::Human,
         Some("agent") => EdgeActorClass::Agent,
         Some("system") => EdgeActorClass::System,
+        None => EdgeActorClass::Human, // RED FAULT F2
         // `None` is the well-formed-but-unbound credential above. `Some(_)`
         // outside the enum cannot occur — `parse_actor_class` 401s it — and is
         // folded in here so the match stays total and fails CLOSED either way.
-        None | Some(_) => {
+        Some(_) => {
             return Err(FacadeApiError::forbidden(
                 "facade routes bind writes to a declared actor class",
                 [
