@@ -50,6 +50,14 @@ pub const SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES: usize = 16 * 1024;
 /// replacement text one draft gives its files together.
 pub const SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES: usize = 64 * 1024;
 
+/// Most bytes one arm of the held-out gate's judgment may carry for a draft
+/// that replaces files: the instructions, then each replaced file in that
+/// arm's text, JSON-escaped as the decision state holds them. Half the
+/// state's bound, so the judge reads each arm whole beside its held-out
+/// receipt and replay instead of a cut prefix (cold read N1 of #7949).
+pub const SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES: usize =
+    crate::model_decision::MAX_DECISION_STATE_BYTES / 2;
+
 /// Everything the author is allowed to reason from: the instructions as they
 /// stand, and what real usage did with them.
 ///

@@ -163,9 +163,10 @@ pub use self::brief::{
     RejectedSkillEdit, RejectedSkillEditReason, SKILL_OPTIMIZE_CALL_PURPOSE_NAME,
     SKILL_OPTIMIZE_MAX_BRIEF_EVIDENCE, SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES,
     SKILL_OPTIMIZE_MAX_DRAFT_FILES, SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES,
-    SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillBriefFile, SkillEditDraft, SkillFailureContext,
-    SkillFailureReport, SkillFileEdit, SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief,
-    optimize_brief_for_principal_at, skill_optimize_call_purpose,
+    SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillBriefFile,
+    SkillEditDraft, SkillFailureContext, SkillFailureReport, SkillFileEdit, SkillOptimizeAuthor,
+    SkillOptimizeBrief, optimize_brief, optimize_brief_for_principal_at,
+    skill_optimize_call_purpose,
 };
 pub use self::decisions::{
     SkillOptimizeDecisions, SkillReplayResponse, SkillReplayResponses, judgment_kind,

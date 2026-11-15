@@ -17,12 +17,50 @@ const DRAFTABLE_EXTENSIONS: [&str; 10] = [
     "md", "markdown", "txt", "json", "jsonl", "yaml", "yml", "toml", "csv", "tsv",
 ];
 
+/// The dependency and package manifests a draft never replaces, by file
+/// name: they choose the third-party code a skill's scripts install and run
+/// (`package-lock.json` and `requirements.txt` are the inventory the OSV
+/// advisory scan reads at every import and update door, and an optimizer
+/// revision runs no such scan), so they stay a human edit like the scripts
+/// themselves (cold read N2 of #7949).
+const DEPENDENCY_MANIFEST_FILES: [&str; 12] = [
+    "package.json",
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "pyproject.toml",
+    "cargo.toml",
+    "composer.json",
+    "deno.json",
+    "environment.yml",
+    "environment.yaml",
+    "pixi.toml",
+];
+
+/// Whether `path` names a dependency or package manifest
+/// ([`DEPENDENCY_MANIFEST_FILES`], or a pip requirements or constraints
+/// file), by its last path segment.
+fn is_dependency_manifest_path(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path).to_ascii_lowercase();
+    DEPENDENCY_MANIFEST_FILES.contains(&name.as_str())
+        || (name.ends_with(".txt")
+            && (name.contains("requirements") || name.starts_with("constraints")))
+        || path
+            .split('/')
+            .rev()
+            .skip(1)
+            .any(|dir| dir.eq_ignore_ascii_case("requirements"))
+}
+
 /// Whether a skill_optimize draft may replace `record`'s file at `path`
 /// whole (census L9-02): a text or data file by its extension, and never a
-/// script or hook, the callable's entry, a site skill's `site.json` and
-/// seed programs, which declare what the skill may reach, or the team-shape
-/// skill's task-type tree, which its own loop revises and its own gate judge
-/// reads. `SKILL.md` stands for its body below the engine-written
+/// script or hook, a dependency or package manifest
+/// ([`is_dependency_manifest_path`]), the callable's entry, a site skill's
+/// `site.json` and seed programs, which declare what the skill may reach,
+/// or the team-shape skill's task-type tree, which its own loop revises and
+/// its own gate judge reads. `SKILL.md` stands for its body below the
+/// engine-written
 /// frontmatter; a workflow skill's body is its `desc`, so a draft moves it
 /// through `desc` instead.
 pub(crate) fn draftable_skill_file(record: &SkillRecord, path: &str) -> bool {
@@ -43,6 +81,7 @@ pub(crate) fn draftable_skill_file(record: &SkillRecord, path: &str) -> bool {
     });
     text_or_data
         && !super::pack_catalog::is_script_or_hook_path(path)
+        && !is_dependency_manifest_path(path)
         && path != SITE_FILE
         && !path.starts_with(PROGRAMS_DIR)
         && !(record.skill_id == TEAM_SHAPE_SKILL_NAME && path == TASK_TYPE_TREE_FILE)
@@ -163,10 +202,11 @@ impl Vault {
     /// `files` names (census L9-02); companion scripts/capabilities stay
     /// byte-exact, so a callable never silently loses its executable file.
     /// A rule skill's `policy.json` is re-derived from the improved text: a
-    /// dial whose number the text moves takes it (FIX 10878), unless the
-    /// draft replaces the file itself. A dial the text names as its parent
-    /// named it keeps the file's value, so a later draft never undoes a file
-    /// an earlier draft replaced.
+    /// dial the text names with a number takes it (FIX 10878). A draft that
+    /// replaces the file itself must hold each number the final text names
+    /// for its keys, so no revision's text names a dial value its file does
+    /// not run, and a later re-derive never undoes a drafted file (cold read
+    /// N3 of #7949).
     pub(crate) fn optimized_skill_package_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -232,13 +272,25 @@ impl Vault {
             .files
             .iter_mut()
             .find(|file| file.path == REVIEWER_POLICY_FILE)
-            && let Some(derived) =
-                rederived_rule_policy(&policy.content, &parent.desc, &proposed.desc)
+            && let Some(derived) = rederived_rule_policy(&policy.content, &proposed.desc)
         {
             policy.content = derived;
         }
         for edit in files {
             replace_drafted_file(proposed, &mut package.files, edit)?;
+        }
+        if files.iter().any(|edit| edit.path == REVIEWER_POLICY_FILE)
+            && package
+                .files
+                .iter()
+                .find(|file| file.path == REVIEWER_POLICY_FILE)
+                .is_some_and(|policy| {
+                    rederived_rule_policy(&policy.content, &proposed.desc).is_some()
+                })
+        {
+            return Err(invalid(
+                "a drafted policy.json must hold the number its instructions name for each key",
+            ));
         }
         proposed.content_hash = Some(package.content_hash()?);
         package.record = proposed.clone();
@@ -280,13 +332,11 @@ fn replace_drafted_file(
 
 /// A rule skill's `policy.json` re-derived from its improved rule `text`
 /// (FIX 10878): each key of the file the text names with a number right
-/// after it (`key: 4`, `key = 0.5`, `` `key` at 4 ``) takes that number
-/// when `was`, the parent's text, named no number or another one for it,
-/// and every other key keeps its value: a dial the draft did not move keeps
-/// what the file holds, even where an earlier draft replaced the file.
-/// `None` when the file is not one JSON object or the text moves no key, so
-/// an unmoved file stays byte-exact.
-fn rederived_rule_policy(policy: &[u8], was: &str, text: &str) -> Option<Vec<u8>> {
+/// after it (`key: 4`, `key = 0.5`, `` `key` at 4 ``) takes that number,
+/// and every other key keeps its value. `None` when the file is not one
+/// JSON object or the text moves no key, so an unmoved file stays
+/// byte-exact.
+fn rederived_rule_policy(policy: &[u8], text: &str) -> Option<Vec<u8>> {
     let Ok(serde_json::Value::Object(mut entries)) =
         serde_json::from_slice::<serde_json::Value>(policy)
     else {
@@ -297,9 +347,6 @@ fn rederived_rule_policy(policy: &[u8], was: &str, text: &str) -> Option<Vec<u8>
         let Some(number) = named_number(text, key) else {
             continue;
         };
-        if named_number(was, key).is_some_and(|named| named.as_f64() == number.as_f64()) {
-            continue;
-        }
         if value.as_f64() != number.as_f64() {
             *value = serde_json::Value::Number(number);
             moved = true;

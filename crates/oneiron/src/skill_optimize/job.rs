@@ -17,9 +17,9 @@ use crate::temporal::TimeRange;
 
 use super::brief::{
     SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES, SKILL_OPTIMIZE_MAX_DRAFT_FILES,
-    SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES, SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft,
-    SkillFileEdit, SkillOptimizeAuthor, SkillOptimizeBrief, optimize_brief,
-    optimize_brief_bound_at,
+    SKILL_OPTIMIZE_MAX_DRAFT_FILES_BYTES, SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES,
+    SKILL_OPTIMIZE_RATIONALE_MAX_BYTES, SkillEditDraft, SkillFileEdit, SkillOptimizeAuthor,
+    SkillOptimizeBrief, optimize_brief, optimize_brief_bound_at,
 };
 use super::dials::{invalid, validate_text};
 use super::gate::{SKILL_EDIT_CYCLE_MAX_BYTES, SkillEditCycle};
@@ -327,7 +327,8 @@ pub(crate) fn skill_repair_brief(
 /// "replacement" identical to what it replaces, or a file edit past what the
 /// brief offered (census L9-02): a path the brief did not carry whole (a new
 /// path, a script or hook, or a file listed by path only), the same path
-/// twice, more files or bytes than the bounds allow, or a file's own text.
+/// twice, more files or bytes than the bounds allow, a file's own text, or
+/// more than the gate's judge reads whole ([`validate_judged_arms`]).
 pub(crate) fn validate_skill_draft(
     brief: &SkillOptimizeBrief,
     desc: &str,
@@ -353,7 +354,62 @@ pub(crate) fn validate_skill_draft(
             "a drafted edit that restates the current instructions is not an edit",
         ));
     }
-    validate_file_edits(brief, files)
+    validate_file_edits(brief, files)?;
+    validate_judged_arms(brief, desc, files)
+}
+
+/// Refuses a file draft the held-out gate's judge could not read whole
+/// (cold read N1 of #7949): either arm, the target's instructions with the
+/// replaced files' current text or the draft's with their new text, over
+/// [`SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES`]. Past it the judgment's state is
+/// cut to fit, and the judge scores a prefix that may stop before the last
+/// file. An instructions-only draft stays within it by its own bound.
+fn validate_judged_arms(
+    brief: &SkillOptimizeBrief,
+    desc: &str,
+    files: &[SkillFileEdit],
+) -> Result<()> {
+    if files.is_empty() {
+        return Ok(());
+    }
+    let current = |path: &str| {
+        brief
+            .files
+            .iter()
+            .find(|file| file.path == path)
+            .and_then(|file| file.content.as_deref())
+            .unwrap_or_default()
+    };
+    let before: Vec<(&str, &str)> = files
+        .iter()
+        .map(|edit| (edit.path.as_str(), current(&edit.path)))
+        .collect();
+    let after: Vec<(&str, &str)> = files
+        .iter()
+        .map(|edit| (edit.path.as_str(), edit.content.as_str()))
+        .collect();
+    if judged_arm_bytes(&brief.desc, &before).max(judged_arm_bytes(desc, &after))
+        > SKILL_OPTIMIZE_MAX_JUDGED_ARM_BYTES
+    {
+        return Err(invalid(
+            "a draft's instructions with its replaced files, in their current or their new text, must fit the held-out judge whole: at most 32 KiB as the judge's state holds them",
+        ));
+    }
+    Ok(())
+}
+
+/// The bytes one arm of the gate's judgment holds for `instructions` and
+/// `files`, as the gate's instruction pair joins them (each file under a
+/// "File `path`:" line) and JSON-escaped as the decision state carries it.
+fn judged_arm_bytes(instructions: &str, files: &[(&str, &str)]) -> usize {
+    let mut arm = instructions.to_owned();
+    for (path, text) in files {
+        arm.push_str("\n\nFile `");
+        arm.push_str(path);
+        arm.push_str("`:\n");
+        arm.push_str(text);
+    }
+    serde_json::to_string(&arm).map_or(usize::MAX, |json| json.len())
 }
 
 /// The file half of [`validate_skill_draft`].
