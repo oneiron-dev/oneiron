@@ -96,7 +96,19 @@ pub struct DreamerRunContext {
     pub attempt_id: AttemptId,
     /// The vault Dreamer authority (`Vault::dreamer_authority`), never a facet actor.
     pub agent_actor: WriteActor,
+    /// The run's clock in Unix milliseconds (`Vault::now_recorded_at` times
+    /// 1,000). A seconds parameter takes [`Self::now_secs`].
     pub now_ms: u64,
+}
+
+impl DreamerRunContext {
+    /// The run's clock in whole Unix seconds, for every parameter that takes
+    /// seconds: a Gate row's or a tray row's `created_at`, a notification's,
+    /// a grant's `now` (FIX GATE-ROW-CREATED-AT-MILLISECONDS). `now_ms` stays
+    /// for the millisecond readers (strength observations).
+    pub(crate) const fn now_secs(&self) -> u64 {
+        self.now_ms / 1_000
+    }
 }
 
 /// Per-candidate outcome of one promotion pass.
