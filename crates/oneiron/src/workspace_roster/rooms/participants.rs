@@ -128,17 +128,8 @@ impl Memory<'_> {
         let limit = request.limit.map_or(PAGE_LIMIT, |limit| {
             usize::try_from(limit).unwrap_or(usize::MAX)
         });
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
         // A larger ask is served a page at a time through its cursor.
-        let limit = super::history::served_page_size(
-            self.vault(),
-            crate::scan_check::EngineScan::RoomRequestedPageRows,
-            request.room,
-            limit,
-            PAGE_LIMIT,
-        )?;
+        let limit = super::history::served_room_page_size(self.vault(), request.room, limit)?;
         let mut start = match request.after.as_deref() {
             Some(after) => Some(parse_cursor(after).ok_or_else(invalid)?),
             None => None,

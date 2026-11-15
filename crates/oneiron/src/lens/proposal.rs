@@ -26,6 +26,7 @@ use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::provenance::made_by::MadeByTrigger;
 use crate::receipt::{LensApproval, LensProposalReceipt};
+use crate::request_limits::page_limit_zero_as_one;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{PackInstallReceipt, PackInstallStatus};
 use crate::{EntityId, Error, Result, Vault};
@@ -241,10 +242,12 @@ impl Memory<'_> {
     /// else its row alone while it reads the slot's SKILL and live pack
     /// source (FIX 2136).
     pub fn lenses_list(&self, input: LensListRequest) -> MemoryResult<LensListPage> {
-        let limit = input
-            .limit
-            .map_or(LENS_LIST_MAX_PAGE, |limit| limit as usize)
-            .clamp(1, LENS_LIST_MAX_PAGE);
+        let limit = page_limit_zero_as_one(
+            input.limit.map(|limit| limit as usize),
+            LENS_LIST_MAX_PAGE,
+            LENS_LIST_MAX_PAGE,
+        )
+        .rows;
         let after = input
             .after
             .as_deref()

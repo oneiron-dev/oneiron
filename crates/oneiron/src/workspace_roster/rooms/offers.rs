@@ -602,17 +602,8 @@ impl Memory<'_> {
         let limit = request.limit.map_or(page_limit, |limit| {
             usize::try_from(limit).unwrap_or(usize::MAX)
         });
-        if limit == 0 {
-            return Err(MemoryError::from(invalid()));
-        }
         // A larger ask is served a page at a time through `after`.
-        let limit = super::history::served_page_size(
-            self.vault(),
-            crate::scan_check::EngineScan::RoomRequestedPageRows,
-            request.room,
-            limit,
-            page_limit,
-        )?;
+        let limit = super::history::served_room_page_size(self.vault(), request.room, limit)?;
         self.require_offer_audience(request.room, request.branch)?;
         let prefix = match request.branch {
             Some(branch) => format!("{}/{}/", request.room.to_hex(), branch.to_hex()),
