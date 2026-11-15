@@ -48,36 +48,13 @@ pub(super) const MILESTONE_INDEX_CLAIM: SideTable<EntityId, Vec<u8>, Raw> =
     SideTable::new(&side_table::DREAMER_MILESTONE_INDEX_CLAIM);
 
 /// `dreamer.milestone_index.v1.c:` row key: attempt id, then `(at,
-/// learned_at, claim id)` — not a [`crate::side_table::FixedSideKey`] tuple
-/// because four fixed-width parts need one more slot than the built-in
-/// tuples spell.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// learned_at, claim id)`, the two times big-endian.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct MilestoneCandidateKey {
     pub(super) attempt_id: AttemptId,
     pub(super) at: u64,
     pub(super) learned_at: u64,
     pub(super) claim_id: EntityId,
-}
-
-impl SideKey for MilestoneCandidateKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.attempt_id.encode_into(out);
-        out.extend_from_slice(&self.at.to_be_bytes());
-        out.extend_from_slice(&self.learned_at.to_be_bytes());
-        self.claim_id.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt_bytes, rest) = bytes.split_at_checked(16)?;
-        let (at_bytes, rest) = rest.split_at_checked(8)?;
-        let (learned_bytes, claim_bytes) = rest.split_at_checked(8)?;
-        Some(Self {
-            attempt_id: AttemptId::decode_key(attempt_bytes)?,
-            at: u64::from_be_bytes(at_bytes.try_into().ok()?),
-            learned_at: u64::from_be_bytes(learned_bytes.try_into().ok()?),
-            claim_id: EntityId::decode_key(claim_bytes)?,
-        })
-    }
 }
 
 /// One [`MilestoneCandidateKey`] for `test_doors::side_key_pins`.

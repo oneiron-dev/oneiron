@@ -79,8 +79,10 @@ struct RuleRow {
 }
 
 /// [`RULES`]' key: the derived grant's ref, `:`, then the rule's 16-byte decision id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 struct RuleKey {
+    #[side_key(rest)]
     grant_ref: String,
     decision_id: [u8; 16],
 }
@@ -91,21 +93,6 @@ impl RuleKey {
         let mut key = grant_ref.as_bytes().to_vec();
         key.push(b':');
         key
-    }
-}
-
-impl SideKey for RuleKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&Self::grant_prefix(&self.grant_ref));
-        out.extend_from_slice(&self.decision_id);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (head, decision_id) = bytes.split_at_checked(bytes.len().checked_sub(16)?)?;
-        Some(Self {
-            grant_ref: String::decode_key(head.strip_suffix(b":")?)?,
-            decision_id: decision_id.try_into().ok()?,
-        })
     }
 }
 

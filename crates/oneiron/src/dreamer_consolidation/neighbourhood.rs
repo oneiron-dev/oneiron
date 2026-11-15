@@ -79,9 +79,13 @@ const PINS: SideTable<ListingPin, Pins, LegacyJson> =
 /// Whose listing one pin keeps: an extraction attempt's, or one NOTE's
 /// within a NOTE review attempt, which lists each NOTE apart (FIX 7578). A
 /// NOTE's pin keys under its attempt, so the attempt's unpin drops it too.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Its key: the attempt's id, then the NOTE's when it names one, so an
+/// attempt's own pin keeps the key it always had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct ListingPin {
     attempt: AttemptId,
+    #[side_key(rest)]
     note: Option<EntityId>,
 }
 
@@ -100,29 +104,6 @@ impl ListingPin {
             attempt,
             note: Some(note),
         }
-    }
-}
-
-/// The attempt's id, then the NOTE's when it names one: an attempt's own
-/// pin keeps the key it always had.
-impl SideKey for ListingPin {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt.as_bytes());
-        if let Some(note) = self.note {
-            out.extend_from_slice(note.as_bytes());
-        }
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt, note) = bytes.split_at_checked(16)?;
-        let note = match note {
-            [] => None,
-            note => Some(EntityId::from_bytes(note.try_into().ok()?).ok()?),
-        };
-        Some(Self {
-            attempt: AttemptId::from_bytes(attempt).ok()?,
-            note,
-        })
     }
 }
 

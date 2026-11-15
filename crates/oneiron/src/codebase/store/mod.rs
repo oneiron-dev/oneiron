@@ -18,7 +18,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::scan_check::{EngineScan, ScanCount};
 use crate::secret_snapshot::SnapshotCustodyReport;
-use crate::side_table::{self, FixedSideKey, Raw, SideKey, SideTable};
+use crate::side_table::{self, Raw, SideKey, SideTable};
 use crate::store::Store;
 use crate::temporal::TimeRange;
 use heed::{RoTxn, RwTxn};
@@ -68,30 +68,12 @@ const SCOPE_INDEX: SideTable<HashIndexKey, (), Raw> =
 
 /// `<text>` + `\0` + id16 — the shape every text-keyed codebase index row (repo-ref, project id)
 /// has always spelled.
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 struct TextIndexKey {
+    #[side_key(rest)]
     value: String,
     id: EntityId,
-}
-
-impl SideKey for TextIndexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.value.as_bytes());
-        out.push(0);
-        self.id.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let id_start = bytes.len().checked_sub(<EntityId as FixedSideKey>::WIDTH)?;
-        let (rest, id) = bytes.split_at(id_start);
-        let (&separator, value) = rest.split_last()?;
-        if separator != 0 {
-            return None;
-        }
-        Some(Self {
-            value: String::from_utf8(value.to_vec()).ok()?,
-            id: EntityId::decode_key(id)?,
-        })
-    }
 }
 
 /// One [`TextIndexKey`] for `test_doors::side_key_pins`.
@@ -108,30 +90,11 @@ pub(crate) fn text_index_key_pin_for_test(
 
 /// `<hash32>` + `\0` + id16 — the shape every hash-keyed codebase index row (fork hash, scope
 /// key) has always spelled.
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 struct HashIndexKey {
     value: [u8; 32],
     id: EntityId,
-}
-
-impl SideKey for HashIndexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&self.value);
-        out.push(0);
-        self.id.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let id_start = bytes.len().checked_sub(<EntityId as FixedSideKey>::WIDTH)?;
-        let (rest, id) = bytes.split_at(id_start);
-        let (&separator, value) = rest.split_last()?;
-        if separator != 0 {
-            return None;
-        }
-        Some(Self {
-            value: value.try_into().ok()?,
-            id: EntityId::decode_key(id)?,
-        })
-    }
 }
 
 /// One [`HashIndexKey`] for `test_doors::side_key_pins`.

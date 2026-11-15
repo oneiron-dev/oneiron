@@ -40,8 +40,12 @@ const ROSTER_ORIGIN_TABLE_SHA256: &str =
     "0a89c3d563672feba0da1737e18176ecda7557e1a1d154cf3a81860cf206d821";
 const QUESTION_STEP_DOCUMENT_TABLE_SHA256: &str =
     "881290dbcb9d8eddaa4f2327a34bce50e899abbda1135d7b745fbab584855bcf";
+/// The derived decoders' table (`pin_table_model_pr4.py --derived`). It differs from the hand
+/// impls' table (sha256 `33d4e969349931b2ad6448a11f5ad73f76802a15d29dffe8160c142146c97bcb`) in
+/// three `HistoryKey` lines only: the hand decoder panicked on a key shorter than 17 bytes (its
+/// `then_some` argument sliced the bytes before the length check), and the derived one refuses it.
 const LIB_KEYS_A_TO_G_TABLE_SHA256: &str =
-    "33d4e969349931b2ad6448a11f5ad73f76802a15d29dffe8160c142146c97bcb";
+    "55a7fb7dc2498bacb49def7594181e8a0d1ef603291e13aec5d0b427c92c1955";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";

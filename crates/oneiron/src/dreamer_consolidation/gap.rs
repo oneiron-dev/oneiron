@@ -31,26 +31,11 @@ const PRIVATE_GAP: SideTable<[u8; 32], ReflectionGap, Raw> =
 const BRANCH_GAP: SideTable<BranchGapKey, ReflectionGap, Raw> =
     SideTable::new(&side_table::DREAMER_GAP_BRANCH);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 struct BranchGapKey {
+    #[side_key(rest)]
     scope_text: String,
     gap_hash: [u8; 32],
-}
-
-impl SideKey for BranchGapKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.scope_text.as_bytes());
-        out.extend_from_slice(&self.gap_hash);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let split = bytes.len().checked_sub(32)?;
-        let (text, hash) = bytes.split_at(split);
-        Some(Self {
-            scope_text: std::str::from_utf8(text).ok()?.to_owned(),
-            gap_hash: hash.try_into().ok()?,
-        })
-    }
 }
 
 /// One [`BranchGapKey`] for `test_doors::side_key_pins`.

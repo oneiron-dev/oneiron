@@ -36,36 +36,12 @@ pub(crate) fn context_board_plugin_block_accepts_masked(bytes: &[u8]) -> bool {
     crate::side_table::decodes::<BoardBlockRecord, LegacyJson>(bytes)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, SideKey)]
 struct BlockKey {
     actor: EntityId,
+    #[side_key(len = u64)]
     section_id: SectionId,
     block_ref: [u8; 16],
-}
-
-impl SideKey for BlockKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.actor.as_bytes());
-        out.extend_from_slice(&(self.section_id.0.len() as u64).to_be_bytes());
-        out.extend_from_slice(self.section_id.0.as_bytes());
-        out.extend_from_slice(&self.block_ref);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (actor, rest) = bytes.split_at_checked(16)?;
-        let actor = EntityId::from_bytes(actor.try_into().ok()?).ok()?;
-        let (len, rest) = rest.split_at_checked(8)?;
-        let len = u64::from_be_bytes(len.try_into().ok()?);
-        let len = usize::try_from(len).ok()?;
-        let (section, rest) = rest.split_at_checked(len)?;
-        let section_id = SectionId(std::str::from_utf8(section).ok()?.to_owned());
-        let block_ref = rest.try_into().ok()?;
-        Some(Self {
-            actor,
-            section_id,
-            block_ref,
-        })
-    }
 }
 
 /// One [`BlockKey`] for `test_doors::side_key_pins`.

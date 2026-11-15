@@ -10,7 +10,7 @@ use std::io::Cursor;
 use rmpv::Value;
 use sha2::Sha256;
 
-use crate::entity_id::{ENTITY_ID_LEN, EntityId};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
@@ -26,28 +26,12 @@ use super::record::{
 /// normalized connector bytes, a NUL separator, then the 16-byte id.
 /// `validate_connector_token` rejects a connector containing NUL, so the
 /// separator is unambiguous on decode.
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 pub(super) struct ConnectorIndexKey {
+    #[side_key(rest)]
     pub(super) connector: String,
     pub(super) id: EntityId,
-}
-
-impl SideKey for ConnectorIndexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.connector.as_bytes());
-        out.push(0);
-        out.extend_from_slice(self.id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (rest, id_bytes) = bytes.split_at_checked(bytes.len().checked_sub(ENTITY_ID_LEN)?)?;
-        let (&0, connector_bytes) = rest.split_last()? else {
-            return None;
-        };
-        Some(Self {
-            connector: String::from_utf8(connector_bytes.to_vec()).ok()?,
-            id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
-        })
-    }
 }
 
 /// One [`ConnectorIndexKey`] for `test_doors::side_key_pins`.

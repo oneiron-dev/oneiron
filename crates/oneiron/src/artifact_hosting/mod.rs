@@ -19,7 +19,7 @@ use crate::secret_rotation::{
     ArtifactTaintState, allow_stale_publish_in_txn, exhaust_taint_refs_in_txn,
     taint_state_for_refs_in_txn,
 };
-use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::{self, CodecError, FixedSideKey, Raw, RawValue, SideKey, SideTable};
 use crate::store::GateDecisionId;
 use crate::store::code_artifact_body::{CodeArtifactClass, decode_code_artifact_body};
 use crate::store::code_snapshot::{
@@ -75,32 +75,11 @@ use oneiron_verb_wire::artifact_hosting::{ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHA
 
 /// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
 /// exactly as `artifact_pointer_key` used to spell it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 struct ArtifactPointerRowKey {
     channel: ArtifactPointerChannel,
+    #[side_key(len = u16)]
     artifact: String,
-}
-
-impl SideKey for ArtifactPointerRowKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.push(self.channel.key_byte());
-        out.extend_from_slice(&(self.artifact.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.artifact.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (&channel_byte, rest) = bytes.split_first()?;
-        let channel = ArtifactPointerChannel::from_key_byte(channel_byte)?;
-        let (len_bytes, rest) = rest.split_at_checked(2)?;
-        let len = u16::from_be_bytes(len_bytes.try_into().ok()?) as usize;
-        if rest.len() != len {
-            return None;
-        }
-        Some(Self {
-            channel,
-            artifact: String::from_utf8(rest.to_vec()).ok()?,
-        })
-    }
 }
 
 /// One [`ArtifactPointerRowKey`] for `test_doors::side_key_pins`.
@@ -186,6 +165,24 @@ const ARTIFACT_POINTERS: SideTable<ArtifactPointerRowKey, ArtifactPointerRow, Ra
 /// The trailing stamp records a stale-taint publish override on either kind.
 const ARTIFACT_POINTER_STALE_OVERRIDE_STAMP: u8 = 0x01;
 const ARTIFACT_POINTER_BLOB_TAG: u8 = 0x02;
+
+/// A pointer row's channel, as its one key byte.
+impl SideKey for ArtifactPointerChannel {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(self.key_byte());
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        let &[byte] = bytes else {
+            return None;
+        };
+        Self::from_key_byte(byte)
+    }
+}
+
+impl FixedSideKey for ArtifactPointerChannel {
+    const WIDTH: usize = 1;
+}
 
 impl ArtifactPointerChannel {
     #[must_use]

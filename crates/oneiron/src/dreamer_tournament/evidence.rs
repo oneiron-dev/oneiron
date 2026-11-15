@@ -4,7 +4,7 @@ use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::critic::{CRITIQUE_ARTIFACT, CritiqueArtifact, CritiqueArtifactKey, CritiqueTriage};
 use crate::error::Result;
-use crate::side_table::{self, Named, SideKey, SideTable};
+use crate::side_table::{self, FixedSideKey, Named, SideKey, SideTable};
 
 use super::types::{
     DREAMER_TOURNAMENT_BRANCH_EVIDENCE_SCHEMA_VERSION, DreamerTournamentBranchEvidence,
@@ -18,52 +18,16 @@ use super::validate::{invalid_tournament, validate_evidence, validate_identifier
 /// One branch-evidence row: `run_id_len(u16 be) ++ run_id ++ branch_attempt(16) ++
 /// round(u16 be) ++ verdict(1) ++ candidate_ref_len(u16 be) ++ candidate_ref`, exactly as
 /// `tournament_evidence_key` spelled it. Every length was validated (`validate_identifier`)
-/// before this key is constructed, so `encode_into` casts rather than re-checking.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// before this key is constructed, so each fits its `u16`.
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 struct TournamentEvidenceKey {
+    #[side_key(len = u16)]
     run_id: String,
     branch_attempt: AttemptId,
     round: u16,
     verdict: DreamerTournamentBranchVerdict,
+    #[side_key(len = u16)]
     candidate_ref: String,
-}
-
-impl SideKey for TournamentEvidenceKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(&(self.run_id.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.run_id.as_bytes());
-        out.extend_from_slice(self.branch_attempt.as_bytes());
-        out.extend_from_slice(&self.round.to_be_bytes());
-        out.push(verdict_key_byte(self.verdict));
-        out.extend_from_slice(&(self.candidate_ref.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.candidate_ref.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (run_id_len, rest) = bytes.split_at_checked(2)?;
-        let run_id_len = u16::from_be_bytes(run_id_len.try_into().ok()?) as usize;
-        let (run_id, rest) = rest.split_at_checked(run_id_len)?;
-        let run_id = std::str::from_utf8(run_id).ok()?.to_owned();
-        let (branch_attempt, rest) = rest.split_at_checked(16)?;
-        let branch_attempt = AttemptId::from_bytes(branch_attempt).ok()?;
-        let (round, rest) = rest.split_at_checked(2)?;
-        let round = u16::from_be_bytes(round.try_into().ok()?);
-        let (&verdict_byte, rest) = rest.split_first()?;
-        let verdict = decode_verdict_byte(verdict_byte)?;
-        let (candidate_ref_len, rest) = rest.split_at_checked(2)?;
-        let candidate_ref_len = u16::from_be_bytes(candidate_ref_len.try_into().ok()?) as usize;
-        let (candidate_ref, rest) = rest.split_at_checked(candidate_ref_len)?;
-        if !rest.is_empty() {
-            return None;
-        }
-        Some(Self {
-            run_id,
-            branch_attempt,
-            round,
-            verdict,
-            candidate_ref: std::str::from_utf8(candidate_ref).ok()?.to_owned(),
-        })
-    }
 }
 
 /// One [`TournamentEvidenceKey`] for `test_doors::side_key_pins`.
@@ -204,23 +168,30 @@ fn tournament_evidence_run_prefix(run_id: &str) -> Result<Vec<u8>> {
     Ok(prefix)
 }
 
-fn verdict_key_byte(verdict: DreamerTournamentBranchVerdict) -> u8 {
-    match verdict {
-        DreamerTournamentBranchVerdict::Survivor => 1,
-        DreamerTournamentBranchVerdict::Refined => 2,
-        DreamerTournamentBranchVerdict::Discarded => 3,
-        DreamerTournamentBranchVerdict::Weaved => 4,
+/// A branch verdict, as its one key byte in `TournamentEvidenceKey`.
+impl SideKey for DreamerTournamentBranchVerdict {
+    fn encode_into(&self, out: &mut Vec<u8>) {
+        out.push(match self {
+            Self::Survivor => 1,
+            Self::Refined => 2,
+            Self::Discarded => 3,
+            Self::Weaved => 4,
+        });
+    }
+
+    fn decode_key(bytes: &[u8]) -> Option<Self> {
+        match bytes {
+            [1] => Some(Self::Survivor),
+            [2] => Some(Self::Refined),
+            [3] => Some(Self::Discarded),
+            [4] => Some(Self::Weaved),
+            _ => None,
+        }
     }
 }
 
-fn decode_verdict_byte(byte: u8) -> Option<DreamerTournamentBranchVerdict> {
-    match byte {
-        1 => Some(DreamerTournamentBranchVerdict::Survivor),
-        2 => Some(DreamerTournamentBranchVerdict::Refined),
-        3 => Some(DreamerTournamentBranchVerdict::Discarded),
-        4 => Some(DreamerTournamentBranchVerdict::Weaved),
-        _ => None,
-    }
+impl FixedSideKey for DreamerTournamentBranchVerdict {
+    const WIDTH: usize = 1;
 }
 
 pub(super) fn put_critique_artifact_in_txn(

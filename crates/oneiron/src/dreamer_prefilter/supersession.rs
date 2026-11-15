@@ -9,10 +9,12 @@ use super::*;
 /// Turn to screening round index. Key: `scope.attempt_kind()` text ":" id16.
 const MEMBER: SideTable<MemberKey, [u8; 32], Raw> = SideTable::new(&side_table::PREFILTER_MEMBER);
 
-/// A member row's key: the scope's attempt-kind text, a literal `:`, then the turn id — spelled
-/// explicitly because the text is variable-width, so it cannot lead a fixed-width key tuple.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// A member row's key: the scope's attempt-kind text, a literal `:`, then the turn id. The text
+/// is variable-width, so the fixed-width turn id is read from the end.
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 struct MemberKey {
+    #[side_key(rest)]
     attempt_kind: String,
     turn: EntityId,
 }
@@ -23,29 +25,6 @@ impl MemberKey {
             attempt_kind: scope.attempt_kind().to_owned(),
             turn,
         }
-    }
-}
-
-impl SideKey for MemberKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt_kind.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(self.turn.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        // The turn id is a fixed 16 bytes; everything before the ':' that
-        // precedes it is the scope's attempt-kind text.
-        let split = bytes.len().checked_sub(16)?;
-        let (head, turn_bytes) = bytes.split_at(split);
-        let (attempt_kind, separator) = head.split_at(head.len().checked_sub(1)?);
-        if separator != b":" {
-            return None;
-        }
-        Some(Self {
-            attempt_kind: std::str::from_utf8(attempt_kind).ok()?.to_owned(),
-            turn: EntityId::from_bytes(turn_bytes.try_into().ok()?).ok()?,
-        })
     }
 }
 

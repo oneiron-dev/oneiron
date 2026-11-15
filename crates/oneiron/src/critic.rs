@@ -49,33 +49,11 @@ pub(crate) fn critique_artifact_accepts_masked(bytes: &[u8]) -> bool {
 
 /// [`CRITIQUE_ARTIFACT`]'s key: the byte layout above, spelled exactly (a plain
 /// `(AttemptId, String)` tuple would drop the artifact id's length prefix).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, SideKey)]
 pub(crate) struct CritiqueArtifactKey {
     pub(crate) branch_attempt: AttemptId,
+    #[side_key(len = u16)]
     pub(crate) artifact_id: String,
-}
-
-impl SideKey for CritiqueArtifactKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.branch_attempt.as_bytes());
-        out.extend_from_slice(&(self.artifact_id.len() as u16).to_be_bytes());
-        out.extend_from_slice(self.artifact_id.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (branch_bytes, rest) = bytes.split_at_checked(16)?;
-        let branch_attempt = AttemptId::from_bytes(branch_bytes).ok()?;
-        let (len_bytes, rest) = rest.split_at_checked(2)?;
-        let len = usize::from(u16::from_be_bytes(len_bytes.try_into().ok()?));
-        if rest.len() != len {
-            return None;
-        }
-        let artifact_id = String::from_utf8(rest.to_vec()).ok()?;
-        Some(Self {
-            branch_attempt,
-            artifact_id,
-        })
-    }
 }
 
 use crate::store::critic_lens::MAX_CONTRACT_BYTES;
