@@ -639,13 +639,10 @@ fn residence_result_stands(
     {
         return Err(AuthorityFoldIssue::InvalidAncestry(hash));
     }
-    if !super::machine_claims::folded_machine_in(state, result.machine).is_some_and(|machine| {
-        machine.roster.as_ref().is_some_and(|roster| {
-            roster.is_live()
-                && roster.profile.role.answered()
-                && roster.profile.machine_key == *signer
-        })
-    }) {
+    if super::machine_claims::folded_machine_in(state, result.machine)
+        .and_then(|machine| machine.residence_signer_key())
+        != Some(*signer)
+    {
         return Err(AuthorityFoldIssue::SignerNotInAncestry(hash));
     }
     if state

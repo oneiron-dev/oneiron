@@ -231,6 +231,18 @@ impl FoldedMachine {
         self.chains().any(|(_, chain)| chain.says_yours())
     }
 
+    /// The key a residence result from this machine must be signed by: its
+    /// live, answered roster head's, mine or not (FIX 8888). Every install
+    /// shares this reading, so an anchor's chain, a pinned one among them,
+    /// names no such key (Fable pass 29, K3).
+    #[must_use]
+    pub(crate) fn residence_signer_key(&self) -> Option<[u8; 32]> {
+        self.roster
+            .as_ref()
+            .filter(|roster| roster.is_live() && roster.profile.role.answered())
+            .map(|roster| roster.profile.machine_key)
+    }
+
     /// The identity under `T(admitter)`: the accepted roster revisions, plus
     /// that anchor's chain. `None` unless one of those chains admits the
     /// machine, none is removed or conflicted, every live or held one carries
@@ -547,6 +559,16 @@ impl AuthorityFold {
     pub fn machine_proof_key(&self, machine: EntityId) -> Option<[u8; 32]> {
         self.proving_profile(machine)
             .map(|profile| profile.machine_key)
+    }
+
+    /// The key a residence result from `machine` must be signed by, as this
+    /// install folds it ([`FoldedMachine::residence_signer_key`]). The
+    /// directive doors read it, so a directive is issued to, and run on,
+    /// only a machine whose result can stand; this install's pin alone
+    /// gives none.
+    #[must_use]
+    pub(crate) fn residence_signer_key(&self, machine: EntityId) -> Option<[u8; 32]> {
+        self.machines.get(&machine)?.residence_signer_key()
     }
 
     /// The PERSON who answered for `machine`, as the profile whose key
