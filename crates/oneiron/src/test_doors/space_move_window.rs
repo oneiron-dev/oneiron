@@ -28,12 +28,11 @@ fn staged_space(id: &str, kind: InputKind) -> EmbeddingSpace {
 
 /// Declares `incumbent` and `candidate`, binds `kind`'s slot to the candidate, and stores the
 /// move as swapped in at `swapped_at` (vault seconds), as a passing scheduled check would leave
-/// it. The slot write and the `SwappedIn` row copy the swap in `conclude_space_move`
-/// (`space_move.rs:1282-1288`: the slot loop and the `SwappedIn { at, by_owner: false }` state;
-/// `:1305`: the row store; `:1321-1327`: the setup publish with its committed hooks). The
-/// binding goes through the checked in-transaction door (`space.rs:525-539`), which writes the
-/// same slot row the swap's own setter writes (`space.rs:744`). The move's result note is not
-/// staged: retiring and undoing never read it.
+/// it. The slot write and the `SwappedIn` row copy the swap in `conclude_space_move`: its slot
+/// loop, its `SwappedIn { at, by_owner: false }` state, its row store, and its setup publish with
+/// the committed hooks. The binding goes through the checked in-transaction door
+/// (`bind_kind_slot_in_txn`), which writes the same slot row the swap's own setter writes. The
+/// move's result note is not staged: retiring and undoing never read it.
 ///
 /// # Errors
 ///

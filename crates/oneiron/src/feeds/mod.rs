@@ -23,7 +23,8 @@
 //!   and no time, and two tokens for one position differ. A page gives one token per source
 //!   whether or not anything was scanned, and `more` says only that the page is full.
 //! - **A cursor idle past retention gets a gap, never a skip** (lead call K). A cursor in a pruned
-//!   source not acknowledged for [`FEED_RETENTION_SECS`] no longer holds the prune floor, and its
+//!   source not acknowledged for the owner's retention (`feeds.retention.idle_secs`,
+//!   [`FEED_RETENTION_SECS`] by default) no longer holds the prune floor, and its
 //!   subscription's reads answer [`FeedRead::Gap`] until [`Vault::feed_resync`]: the reader
 //!   resyncs, then takes a snapshot, so no change falls between the two. The rule reads the
 //!   cursor's age alone, never which rows went.
@@ -427,9 +428,9 @@ pub struct FeedPage {
 pub enum FeedRead {
     /// The next page.
     Page(FeedPage),
-    /// A cursor lay idle past [`FEED_RETENTION_SECS`], so rows it had not acknowledged may be
-    /// gone. No page is read until the reader calls [`Vault::feed_resync`]; it then takes a
-    /// snapshot, and pages on from the resync.
+    /// A cursor lay idle past the owner's retention ([`FEED_RETENTION_SECS`] by default), so rows
+    /// it had not acknowledged may be gone. No page is read until the reader calls
+    /// [`Vault::feed_resync`]; it then takes a snapshot, and pages on from the resync.
     Gap(FeedGap),
 }
 
@@ -576,8 +577,9 @@ impl Vault {
 
     /// The next page of `reader`'s subscription: each source's entries after its cursor that
     /// the selector takes, each shown only where `reader`'s lane shows it now, with no sign of
-    /// any it did not show. It moves no cursor. A subscription with a cursor idle past
-    /// [`FEED_RETENTION_SECS`] answers [`FeedRead::Gap`] until [`Vault::feed_resync`].
+    /// any it did not show. It moves no cursor. A subscription with a cursor idle past the
+    /// owner's retention (`feeds.retention.idle_secs`, [`FEED_RETENTION_SECS`] by default)
+    /// answers [`FeedRead::Gap`] until [`Vault::feed_resync`].
     ///
     /// # Errors
     ///
@@ -737,7 +739,7 @@ impl Vault {
 ///
 /// `EntityNotFound` when the subscription is not `actor`'s; a token this subscription did not
 /// seal, one in a source it does not follow, two in one source, or one past that source's head;
-/// a cursor idle past [`FEED_RETENTION_SECS`] (resync first); or the write.
+/// a cursor idle past the owner's retention (resync first); or the write.
 pub(crate) fn ack_feed_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

@@ -1,4 +1,4 @@
-//! Door for `tests/restriction_wave_16_feed_prune.rs`: the feeds' housekeeping prune, which is
+//! Door for `tests/restriction_wave_16_doors.rs`: the feeds' housekeeping prune, which is
 //! otherwise crate-private.
 
 use crate::Vault;
