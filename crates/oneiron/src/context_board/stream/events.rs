@@ -111,11 +111,8 @@ pub enum SubscriptionError {
     },
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SubscriptionReceipt {
-    pub connection: StreamConnectionId,
-    pub active: BTreeSet<SubscriptionScope>,
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::stream::events::SubscriptionReceipt;
 
 #[derive(Debug, Default)]
 pub struct RouteObservation {
