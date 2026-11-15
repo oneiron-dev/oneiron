@@ -89,6 +89,7 @@ use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -521,8 +522,20 @@ impl Drop for ImapMailWire<'_> {
     }
 }
 
+/// A folder's digest: the first 16 hex digits of the BLAKE3 of its label. Provider
+/// ids and page cursors carry it, a resumed listing compares it and the UID map is
+/// keyed by it, so it keeps its bytes (K, PLAN-UC-04 stage 6.3).
 fn digest_of(label: &str) -> String {
-    blake3::hash(label.as_bytes()).to_hex()[..16].to_owned()
+    let digest = LegacyDigest::new(purposes::mail_pack::IMAP_FOLDER_DIGEST)
+        .raw(label.as_bytes())
+        .finish();
+    oneiron_hex::encode(&digest[..8])
+}
+
+/// The digest of a folder labelled `label`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn imap_folder_digest_for_test(label: &str) -> String {
+    digest_of(label)
 }
 
 /// The folders a mailbox is read through, INBOX first and the all-mail

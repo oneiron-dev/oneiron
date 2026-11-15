@@ -2,7 +2,7 @@
 use super::types::*;
 use crate::memory::{Memory, MemoryResult, WitnessTurn};
 use crate::store::embedding::EmbedderLocality;
-use sha2::{Digest, Sha256};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 impl Memory<'_> {
     /// Witnesses through the ordinary base door, then runs a local served head.
     /// Off-record/session writes use their own door and never enter this hook.
@@ -161,40 +161,41 @@ fn checked_attempt(input: &EncoderInput, attempt: EncoderAttempt) -> EncoderAtte
 /// window never reads as one more message. A language, then the turns'
 /// speaker roles, fold in next and only when the input carries them, so an
 /// input without them digests as it did before they existed; a conversation
-/// register's later turns fold in last (`register::fold_register`).
+/// register's later turns fold in last (`register::fold_register`). A shadow
+/// trace stamps it and a parity check compares it with a golden's, so it
+/// keeps its bytes (K, PLAN-UC-04 stage 6.3).
 pub(crate) fn hash_input(input: &EncoderInput) -> String {
-    let mut hash = Sha256::new();
-    hash.update(input.turn.as_bytes());
-    let message = |hash: &mut Sha256, message: &EncoderMessage| {
-        hash.update(message.id.as_bytes());
-        hash.update((message.text.len() as u64).to_le_bytes());
-        hash.update(message.text.as_bytes());
+    let mut hash = LegacyDigest::new(purposes::memory::ENCODER_INPUT);
+    hash.raw(input.turn.as_bytes());
+    let message = |hash: &mut LegacyDigest, message: &EncoderMessage| {
+        hash.raw(message.id.as_bytes())
+            .len_u64_le(message.text.len())
+            .raw(message.text.as_bytes());
     };
     for each in &input.messages {
         message(&mut hash, each);
     }
     if !input.context.is_empty() {
-        hash.update(b"\0context");
-        hash.update((input.context.len() as u64).to_le_bytes());
+        hash.raw(b"\0context").len_u64_le(input.context.len());
         for turn in &input.context {
-            hash.update(turn.turn.as_bytes());
-            hash.update((turn.messages.len() as u64).to_le_bytes());
+            hash.raw(turn.turn.as_bytes())
+                .len_u64_le(turn.messages.len());
             for each in &turn.messages {
                 message(&mut hash, each);
             }
         }
     }
     if let Some(language) = &input.language {
-        hash.update(b"\0language");
-        hash.update((language.len() as u64).to_le_bytes());
-        hash.update(language.as_bytes());
+        hash.raw(b"\0language")
+            .len_u64_le(language.len())
+            .raw(language.as_bytes());
     }
     let roles = std::iter::once(input.speaker).chain(input.context.iter().map(|turn| turn.speaker));
     if roles.clone().any(|role| role.is_some()) {
         // The current turn's role, then each context turn's in order.
-        hash.update(b"\0speaker");
+        hash.raw(b"\0speaker");
         for role in roles {
-            hash.update(match role {
+            hash.raw(match role {
                 None => b"-",
                 Some(SpeakerRole::User) => b"A",
                 Some(SpeakerRole::Companion) => b"B",
@@ -202,7 +203,7 @@ pub(crate) fn hash_input(input: &EncoderInput) -> String {
         }
     }
     super::register::fold_register(&mut hash, input, message);
-    format!("{:x}", hash.finalize())
+    oneiron_hex::encode(&hash.finish())
 }
 /// The answer's structure, never its size: any number of spans and links
 /// that hold every rule passes (FIX 9944).

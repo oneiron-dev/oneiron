@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { broker, testing, web_fetch }
+areas! { broker, mail_pack, memory, skill_optimize, testing, web_fetch }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
