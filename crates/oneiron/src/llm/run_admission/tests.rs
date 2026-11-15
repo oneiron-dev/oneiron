@@ -1694,15 +1694,21 @@ fn a_job_starts_only_under_a_maximum_the_customer_saw() {
 #[test]
 fn a_job_stops_at_its_maximum_only_after_the_warning_reached_the_customer_and_a_checkpoint() {
     let mut job = JobMaximum::start("job", maximum(100), SHOWN).expect("start");
-    assert_eq!(job.record_usage(50), vec![]);
+    assert_eq!(
+        job.record_usage(50),
+        vec![JobSignal::CheckpointDue { percent: 50 }]
+    );
     assert!(!job.confirm_warning(), "no warning is due at 50");
     job.checkpoint(CheckpointRef("too-early".to_owned()));
     assert_eq!(
         job.record_usage(95),
-        vec![JobSignal::Warning95 {
-            used_units: 95,
-            maximum_units: 100
-        }]
+        vec![
+            JobSignal::CheckpointDue { percent: 95 },
+            JobSignal::Warning95 {
+                used_units: 95,
+                maximum_units: 100
+            }
+        ]
     );
     assert_eq!(job.stop_at_maximum(), Err(StopRefused::NotAtMaximum));
     // Undelivered, the warning comes back at the next record, and neither a
@@ -1742,6 +1748,7 @@ fn a_job_that_jumps_past_its_maximum_warns_before_it_can_stop() {
     assert_eq!(
         job.record_usage(120),
         vec![
+            JobSignal::CheckpointDue { percent: 95 },
             JobSignal::Warning95 {
                 used_units: 120,
                 maximum_units: 100
