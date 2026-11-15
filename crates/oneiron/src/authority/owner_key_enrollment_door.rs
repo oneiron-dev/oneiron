@@ -151,6 +151,40 @@ pub struct EnrolledOwnerKey {
     pub eligible: bool,
     /// When it was signed, advisory unix seconds.
     pub at: u64,
+    /// What the key is, as its enrollment's attestation kind says.
+    pub kind: EnrolledOwnerKeyKind,
+}
+
+/// What an enrolled owner key is, read from its enrollment row alone (pass
+/// 27 R4): a device's own key, or the recovery root's authority key. The
+/// owner's "last key held on a device" counts the first kind only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnrolledOwnerKeyKind {
+    /// A device's own owner signing key, held in its keystore
+    /// ([`OWNER_KEY_POSSESSION_KIND`]).
+    Device,
+    /// The recovery root's authority key, derived from the kit's seed
+    /// ([`RECOVERY_AUTHORITY_POSSESSION_KIND`]).
+    RecoveryAuthority,
+}
+
+impl EnrolledOwnerKeyKind {
+    /// The attestation kind an enrollment of this kind carries.
+    fn attestation_kind(self) -> &'static str {
+        match self {
+            Self::Device => OWNER_KEY_POSSESSION_KIND,
+            Self::RecoveryAuthority => RECOVERY_AUTHORITY_POSSESSION_KIND,
+        }
+    }
+
+    /// The kind an enrollment row names.
+    fn of(enroll: &OwnerKeyEnroll) -> Self {
+        if enroll.is_recovery_authority() {
+            Self::RecoveryAuthority
+        } else {
+            Self::Device
+        }
+    }
 }
 
 /// The binding of an owner's first enrolled key to them, as the enrollment's
@@ -170,13 +204,18 @@ fn not_valid(reason: &'static str) -> Error {
 }
 
 /// The one device shape an enrolled owner key has: Ed25519, `ROLE_OWNER`
-/// alone, Software tier, no transport binding, its proof as evidence.
-fn enrolled_device(public_key: [u8; 32], proof: Vec<u8>) -> DeviceAuthority {
+/// alone, Software tier, no transport binding, its proof as evidence under
+/// the attestation kind of `kind`.
+fn enrolled_device(
+    public_key: [u8; 32],
+    proof: Vec<u8>,
+    kind: EnrolledOwnerKeyKind,
+) -> DeviceAuthority {
     DeviceAuthority {
         key: AuthorityKey::Ed25519(public_key),
         transport_key_binding: [0; 32],
         attestation: AuthorityAttestation {
-            kind: OWNER_KEY_POSSESSION_KIND.to_owned(),
+            kind: kind.attestation_kind().to_owned(),
             evidence: proof,
         },
         tier: AuthorityTier::Software,
@@ -250,6 +289,28 @@ impl Vault {
         authority: &ActAuthority,
         input: OwnerKeyEnrollment,
         predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        self.enrol_owner_key_of_kind_as(
+            authority,
+            input,
+            EnrolledOwnerKeyKind::Device,
+            predecessor,
+            sign_predecessor,
+        )
+    }
+
+    /// [`Self::enrol_owner_signing_key_as`] for a key of `kind`, in a write
+    /// transaction of its own.
+    fn enrol_owner_key_of_kind_as<S>(
+        &self,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
+        predecessor: AuthorityKey,
         mut sign_predecessor: S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
@@ -263,6 +324,7 @@ impl Vault {
             &mut txn,
             authority,
             input,
+            kind,
             predecessor,
             &mut sign_predecessor,
         )?;
@@ -270,9 +332,10 @@ impl Vault {
         Ok(receipt)
     }
 
-    /// [`Self::enrol_owner_signing_key_as`] in the caller's write
-    /// transaction, which commits it or not: the recovery root's door
-    /// enrols the new key and revokes the lost ones in one (pass 27 R4).
+    /// [`Self::enrol_owner_signing_key_as`] for a key of `kind`, in the
+    /// caller's write transaction, which commits it or not: the recovery
+    /// root's door enrols the new key and revokes the lost ones in one (pass
+    /// 27 R4).
     ///
     /// # Errors
     /// As [`Self::enrol_owner_signing_key_as`].
@@ -281,6 +344,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         authority: &ActAuthority,
         input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
         predecessor: AuthorityKey,
         sign_predecessor: &mut S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
@@ -333,7 +397,7 @@ impl Vault {
                 act,
                 machine: input.machine,
                 carrier,
-                device: enrolled_device(input.public_key, input.proof),
+                device: enrolled_device(input.public_key, input.proof, kind),
             }),
             signer: AuthoritySignature {
                 suite: predecessor.suite(),
@@ -405,7 +469,8 @@ impl Vault {
     /// Explicitly enrol the distinct authority key backed by `seed`, before loss.
     /// The seed's source kit does not gain authority by existing or being restored.
     /// This returns the ordinary counted enrollment receipt; it does not publish a
-    /// kit or make kit issuance atomic with enrollment.
+    /// kit or make kit issuance atomic with enrollment. The row carries the
+    /// root's own attestation kind ([`EnrolledOwnerKeyKind::RecoveryAuthority`]).
     ///
     /// `machine` and the carrying install must satisfy the existing owner-key
     /// enrollment rules. The predecessor signs inside that door's own writer.
@@ -432,7 +497,13 @@ impl Vault {
             let signer = crate::world_keys::RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
             signer.enrollment(machine, actor)?
         };
-        self.enrol_owner_signing_key_as(authority, input, predecessor, sign_predecessor)
+        self.enrol_owner_key_of_kind_as(
+            authority,
+            input,
+            EnrolledOwnerKeyKind::RecoveryAuthority,
+            predecessor,
+            sign_predecessor,
+        )
     }
 
     /// [`Self::enrol_recovery_authority_key_as`] with this host's existing root
@@ -792,6 +863,7 @@ fn keep_enrolled(
             eligible: device
                 .is_some_and(|device| super::checkpoint_policy::selectable_root(device, managed)),
             at: entry.ts,
+            kind: EnrolledOwnerKeyKind::of(enroll),
         },
     );
 }
