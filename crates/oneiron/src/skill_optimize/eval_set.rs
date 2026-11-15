@@ -50,6 +50,8 @@ pub mod doors;
 mod erase;
 pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
 mod measurement;
+mod repair_seed;
+pub(crate) use repair_seed::erase_eval_repair_seeds_in_txn;
 mod repair_task;
 mod replay_input;
 mod sufficiency;
@@ -93,6 +95,10 @@ pub use measurement::{
     ScoreDirection, eval_seat_canary,
 };
 pub(crate) use measurement::{PairedScores, estimate_paired};
+pub use repair_seed::{
+    EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRead,
+    EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
+};
 pub use repair_task::{
     EvalRepairAction, EvalRepairGrader, EvalRepairPrecondition, EvalRepairTask, EvalRepairTaskRead,
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairTool, EvalRepairToolCall,

@@ -202,9 +202,13 @@ pub use self::eval_set::{
     EvalRepairTaskSource, EvalRepairTaskSpec, EvalRepairTool, EvalRepairToolCall,
     EvalRepairToolEffect, EvalRepairWorld,
 };
+pub use self::eval_set::{
+    EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRead,
+    EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState,
+};
 pub(crate) use self::eval_set::{
-    PairedScores, erase_eval_source_in_txn, estimate_paired, forget_eval_case_source_rows,
-    forget_source_row,
+    PairedScores, erase_eval_repair_seeds_in_txn, erase_eval_source_in_txn, estimate_paired,
+    forget_eval_case_source_rows, forget_source_row,
 };
 pub use self::goal_axes::{
     AxisArm, AxisScores, ConfidenceInterval, GoalAxisBandit, GoalAxisBandits, GoalAxisPlan,

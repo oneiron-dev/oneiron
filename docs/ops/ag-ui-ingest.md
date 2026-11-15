@@ -156,14 +156,44 @@ model or replay. The case ledger, released-task hydration, paired measurement,
 family assignment, reuse, inventory digest and cut-audit integrations remain
 separate work. Receipt and Synthetic case paths are unchanged.
 
+## Sealed eval seeds from a repair
+
+A linked repair becomes a held-out eval case through a seed (census L1-20,
+ARCH-0053 `#eval-repair-seed`, ruling L1-20-SEEDER = A: the Coach's
+eval-authoring skill decides which repair to seed, and fixed code applies it).
+`Memory::propose_eval_repair_seed` takes the task source and two skill arms (each
+an `EvalArmPin` with a skill digest): the old skill the person's repair corrected,
+and the candidate. In one write it compiles the task as above (every refusal
+applies, the leaked-answer refusal included), assigns the capture's family root
+(`entity:<claim>`) to a `sealed_confirmation` family, and records the seed
+`pending`. The family gets its split before any case derives from it. A root that
+already belongs to a development or judge-audit family is refused. A withheld
+capture returns no seed; a replay returns the seed already proposed.
+
+`Memory::settle_eval_repair_seed` is the gate. The measuring host answers the task
+under each arm and hands both answers (a text response, or tool calls) and the
+two legs' receipts to it. The door recompiles the task, refuses as `task_moved`
+if its hash changed, and grades each answer by the task's own grader: the old
+answer must fail and the candidate's must pass, against the app's observed
+outcome and never the candidate's own text. Then it records one `repair` case in
+the sealed family, reading the capture's root, with a `world_outcome` label whose
+value is the outcome's BLAKE3 hex and whose reference is
+`ag_ui:<claim>:<source_hash>#outcome/<ordinal>`; the seed is `confirmed`.
+Otherwise it is `refused` (`old_passed` or `candidate_failed`) and no case exists,
+so nothing derives from it. A sealed family never feeds training.
+`Vault::pending_eval_repair_seeds` lists the seeds the gate has not graded. An
+erased capture takes its seeds with it; a confirmed seed's case stays, without
+the capture in its source rows. A seed's case is dated by its proposal.
+
 ## Remaining feature work
 
 The capture path is a partial delivery of OF-582 / FIX3720; explicit response-task
 compilation is a partial delivery of OF-578 / FIX3638. Live connector setup and
 transport, choosing a non-owner principal, links across separately captured
 files, and completeness tracking across reconnects remain open. OF-578's
-Repair nomination, worlds beyond the explicit text-response and JSON-state-tools
-tasks, family split, reuse, digest, released-task hydration, measurement and cut-audit
+Coach nomination of repair seeds, the adjudicated-label grader, worlds beyond the
+explicit text-response and JSON-state-tools tasks, reuse, digest, released-task
+hydration of a seed's case, the measuring host's run of the gate and the cut-audit
 consumer are separate. Existing typed Repair case storage is unchanged. The
 file path adds no table, family ledger, migration, old-format reader, default
 cap or timer.

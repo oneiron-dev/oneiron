@@ -58,6 +58,12 @@ crate::side_table::side_tables! {
     /// Key: id16 (cohort).
     SKILL_OPTIMIZE_EVAL_CUT_AUDIT: VaultMeta b"skill_optimize:eval_cut_audit:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One sealed eval seed from a linked repair (census L1-20): its task source, sealed family,
+    /// task hash, old and candidate arms and gate state, never the answer (MessagePack named map).
+    /// Key: bytes32 (seed key over the task source). Its scrub drops every seed of an erased capture.
+    SKILL_OPTIMIZE_EVAL_REPAIR_SEED: VaultMeta b"skill_optimize:eval_repair_seed:v1:" Named
+        [restore: content] [family: unclassified] [tier: canonical]
+        => crate::skill_optimize::erase_eval_repair_seeds_in_txn;
     /// One paired eval measurement: its frozen request, state, case legs, family summaries and
     /// card (MessagePack named map). Key: bytes32 (request digest).
     SKILL_OPTIMIZE_EVAL_MEASUREMENT: VaultMeta b"skill_optimize:eval_measurement:v1:" Named
