@@ -1,0 +1,12 @@
+{
+  "name": "oneiron-hooks",
+  "description": "Oneiron's Cursor hook lanes: bind your vault and recall for the project when a conversation starts, and hand its transcript to the vault. Install it beside the Oneiron Agent Plugins package, which carries the tools and the skill.",
+  "author": {
+    "name": "Oneiron"
+  },
+  "homepage": "https://github.com/oneiron-dev/oneiron",
+  "repository": "https://github.com/oneiron-dev/oneiron",
+  "license": "Apache-2.0",
+  "keywords": ["memory", "hooks", "oneiron"],
+  "hooks": "./hooks/hooks.json"
+}

@@ -11,9 +11,13 @@ verb, under the agent credential the person minted for this client. That
 credential decides what you may read and write. The vault checks it on every
 call; you never name your own identity.
 
-This plugin runs no hooks: nothing recalls on its own when a session starts,
-and nothing hands the session's log to the vault. Recall when you need it,
-and save what is worth keeping yourself.
+Session hooks may run beside you: Codex and Copilot read them from this
+package, and Cursor from a separate Oneiron hooks plugin. Once the person has
+set them up, a session opens with a line naming the vault they bound and a
+short recall for the project, and the session's log is handed to the vault
+as the session goes. They do not recall for each prompt. Without them
+nothing recalls on its own and nothing hands the log over. Either way,
+recall when you need it, and save what is worth keeping yourself.
 
 ## Recall
 

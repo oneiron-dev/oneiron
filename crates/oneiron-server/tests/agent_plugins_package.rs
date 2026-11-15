@@ -2,8 +2,8 @@
 //! #plugin-start-order step 2, #plugin-agent-plugins): one package for the
 //! clients that read Agent Plugins 1.0 (Codex, Cursor, VS Code with
 //! Copilot). It carries the vault's tools over MCP and the skill. Hooks are
-//! per client, so none ship here yet; they join later under each client's
-//! own reverse-domain folder (spec §8).
+//! per client: Codex's and Copilot's sit under their own reverse-domain
+//! folders (spec §8.2), and `agent_plugins_hooks.rs` checks them.
 //!
 //! The package is checked against Agent Plugins 1.0.0 as published at
 //! <https://raw.githubusercontent.com/agentplugins/agent-plugins-spec/main/spec/1.0.0.md>
@@ -265,9 +265,10 @@ fn the_package_is_an_agent_plugins_1_0_package() {
         assert!(!is_plugin_name(name), "{name:?}");
     }
 
-    // The root holds the manifest, the MCP configuration and the skills, and
-    // no other format's manifest, so a client that detects formats by their
-    // files (VS Code) reads this one as Agent Plugins.
+    // The root holds the manifest, the MCP configuration, the skills and one
+    // folder per client namespace (§8.2), and no other format's manifest, so
+    // a client that detects formats by their files (VS Code) reads this one
+    // as Agent Plugins.
     let entries: BTreeSet<String> = std::fs::read_dir(plugin_root())
         .expect("the package folder exists")
         .map(|entry| {
@@ -280,7 +281,16 @@ fn the_package_is_an_agent_plugins_1_0_package() {
         .collect();
     assert_eq!(
         entries,
-        BTreeSet::from(["mcp.json", "plugin.json", "skills"].map(String::from)),
+        BTreeSet::from(
+            [
+                "com.github.copilot",
+                "com.openai",
+                "mcp.json",
+                "plugin.json",
+                "skills"
+            ]
+            .map(String::from)
+        ),
     );
 
     // plugin.json: closed, and naming the 1.0.0 schema (§5.2-§5.4).
@@ -312,6 +322,17 @@ fn the_package_is_an_agent_plugins_1_0_package() {
                 "author.{key}"
             );
             assert!(value.is_string(), "author.{key}");
+        }
+    }
+    // `extensions` maps each client namespace to an object (§8.1), and each
+    // namespace's files sit in the top-level folder named for it (§8.2).
+    if let Some(extensions) = fields.get("extensions") {
+        for (namespace, data) in object(extensions, "extensions") {
+            object(data, namespace);
+            assert!(
+                plugin_root().join(namespace).is_dir(),
+                "{namespace} has no folder of its own"
+            );
         }
     }
     if let Some(keywords) = fields.get("keywords") {
