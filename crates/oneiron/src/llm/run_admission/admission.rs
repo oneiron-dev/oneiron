@@ -3,7 +3,7 @@
 //! and gets a one-use permit bound to the run, the model, the route, the
 //! locality and the offer that pays.
 use std::borrow::Cow;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -26,8 +26,8 @@ mod media;
 mod origin;
 mod raw;
 pub use denied::RunDenied;
-pub(super) use origin::CallOrigin;
 pub use origin::RunAttribution;
+pub(super) use origin::{CallOrigin, CallWorlds};
 pub use raw::RawDispatch;
 
 /// The subject of the `Denied` row for a selector the run could not resolve:
@@ -97,10 +97,11 @@ pub(super) struct RunInner {
     model_call_index: AtomicU64,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
-    /// The open paid-connector permits' leases. A model permit's lease is in
-    /// `calls`. A meter other runs share issues their leases too, so the
-    /// meter alone cannot tell a permit's run.
-    paid: Mutex<BTreeSet<String>>,
+    /// The open paid-connector permits' leases, each with the worlds its
+    /// receipts name. A model permit's lease is in `calls`. A meter other
+    /// runs share issues their leases too, so the meter alone cannot tell a
+    /// permit's run.
+    paid: Mutex<BTreeMap<String, CallWorlds>>,
 }
 
 struct Revisioned {
@@ -115,6 +116,9 @@ pub(super) struct CallFacts {
     request_digest: Option<String>,
     served_model: Option<String>,
     pub(super) settled_units: Option<u64>,
+    /// The worlds the call's `Admitted` row named, for the rows that join it
+    /// by lease.
+    worlds: CallWorlds,
 }
 
 impl RunAdmission {
@@ -269,7 +273,7 @@ impl RunAdmission {
                 model_call_index: AtomicU64::new(0),
                 receipts,
                 calls: Mutex::new(BTreeMap::new()),
-                paid: Mutex::new(BTreeSet::new()),
+                paid: Mutex::new(BTreeMap::new()),
             }),
             sources: None,
             initiator: None,
@@ -450,6 +454,21 @@ impl RunAdmission {
     /// body picks its own route or one naming a model no offer serves: one
     /// `Denied` row, nothing reserved. Returns `reason`.
     pub fn refuse(&self, selector: Option<&str>, subject: &str, reason: RunDenied) -> RunDenied {
+        self.refuse_in_world(selector, subject, reason, None)
+    }
+
+    /// [`Self::refuse`] for a call whose scope named `world`, as a fallback
+    /// held on the device refuses a rung (DEC-0005 world privacy, fix 12):
+    /// the `Denied` row names that world and the worlds of the rows the
+    /// handle names as the call's input, as the call's `Admitted` row would
+    /// have. Never the world that kept a call naming none on the device.
+    pub fn refuse_in_world(
+        &self,
+        selector: Option<&str>,
+        subject: &str,
+        reason: RunDenied,
+        world: Option<crate::EntityId>,
+    ) -> RunDenied {
         let revision = self.revision();
         self.inner.record(
             revision,
@@ -458,6 +477,8 @@ impl RunAdmission {
                 subject: Some(subject.to_owned()),
                 lease: None,
                 reason: reason.clone(),
+                world,
+                source_worlds: self.source_worlds(),
             },
         );
         reason
@@ -514,15 +535,21 @@ impl RunAdmission {
             ..call
         };
         let (revision, declaration) = self.inner.snapshot();
-        let admitted =
-            self.inner
-                .admit_model(&declaration, revision, call, request_digest, self.origin());
+        let origin = self.origin();
+        let worlds = CallWorlds {
+            world: call.request.envelope.scope.world,
+            source_worlds: origin.source_worlds.clone(),
+        };
+        let admitted = self
+            .inner
+            .admit_model(&declaration, revision, call, request_digest, origin);
         self.inner.receipt_for(
             revision,
             call.selector,
             call.request.model.as_str(),
             admitted,
             Some(call.request.model.clone()),
+            worlds,
         )
     }
 
@@ -534,11 +561,17 @@ impl RunAdmission {
         quantity: u64,
     ) -> Result<RunPermit, RunDenied> {
         let (revision, declaration) = self.inner.snapshot();
+        let origin = self.origin();
+        // A paid connector call carries no envelope, so it names no world.
+        let worlds = CallWorlds {
+            world: None,
+            source_worlds: origin.source_worlds.clone(),
+        };
         let admitted =
             self.inner
-                .admit_connector(&declaration, revision, connector, quantity, self.origin());
+                .admit_connector(&declaration, revision, connector, quantity, origin);
         self.inner
-            .receipt_for(revision, None, &connector.connector, admitted, None)
+            .receipt_for(revision, None, &connector.connector, admitted, None, worlds)
     }
 
     /// The dispatch check a paid connector's adapter makes before it sends,
@@ -606,6 +639,8 @@ impl RunAdmission {
                     subject: None,
                     lease: None,
                     reason: reason.clone(),
+                    world: None,
+                    source_worlds: None,
                 },
             );
             return Err(reason);
@@ -680,7 +715,7 @@ impl RunInner {
         call: &DispatchBinding,
     ) -> Result<(), RunDenied> {
         let ours = self.lock_calls().contains_key(lease.id());
-        let ours = ours || self.lock_paid().contains(lease.id());
+        let ours = ours || self.lock_paid().contains_key(lease.id());
         let started = if ours {
             self.guard.begin_dispatch(lease, call)
         } else if self.guard.lease_open(lease) == Some(false) {
@@ -704,6 +739,9 @@ impl RunInner {
         reason: RunDenied,
     ) {
         let revision = self.revision_for(lease);
+        let worlds = lease
+            .map(|lease| self.worlds_for(lease))
+            .unwrap_or_default();
         self.record(
             revision,
             RunEvent::Denied {
@@ -711,6 +749,8 @@ impl RunInner {
                 subject: subject.map(str::to_owned),
                 lease: lease.map(|lease| lease.id().to_owned()),
                 reason,
+                world: worlds.world,
+                source_worlds: worlds.source_worlds,
             },
         );
     }
@@ -731,9 +771,10 @@ impl RunInner {
         let admitted_under = self.lock_calls().get_mut(lease.id()).map(|facts| {
             facts.request_digest = Some(request_digest.clone());
             facts.served_model.clone_from(&served_model);
-            facts.revision
+            (facts.revision, facts.worlds.clone())
         });
-        let revision = admitted_under.unwrap_or_else(|| self.lock_declaration().revision);
+        let (revision, worlds) = admitted_under
+            .unwrap_or_else(|| (self.lock_declaration().revision, CallWorlds::default()));
         self.record(
             revision,
             RunEvent::Dispatched {
@@ -744,8 +785,22 @@ impl RunInner {
                 served_model,
                 broker_isolation,
                 answered,
+                world: worlds.world,
+                source_worlds: worlds.source_worlds,
             },
         );
+    }
+
+    /// The worlds the `Admitted` row of the call holding `lease` named, for
+    /// a row that joins it by lease; none for a lease this run did not admit.
+    fn worlds_for(&self, lease: &BudgetLease) -> CallWorlds {
+        let model = self
+            .lock_calls()
+            .get(lease.id())
+            .map(|facts| facts.worlds.clone());
+        model
+            .or_else(|| self.lock_paid().get(lease.id()).cloned())
+            .unwrap_or_default()
     }
 
     /// The revision a row about `lease` carries: the one its call was
@@ -771,6 +826,7 @@ impl RunInner {
         subject: &str,
         admitted: Result<RunPermit, RunDenied>,
         model: Option<ModelId>,
+        worlds: CallWorlds,
     ) -> Result<RunPermit, RunDenied> {
         match admitted {
             Ok(permit) => {
@@ -783,10 +839,12 @@ impl RunInner {
                             request_digest: None,
                             served_model: None,
                             settled_units: None,
+                            worlds,
                         },
                     );
                 } else {
-                    self.lock_paid().insert(permit.lease.id().to_owned());
+                    self.lock_paid()
+                        .insert(permit.lease.id().to_owned(), worlds);
                 }
                 self.record(revision, RunEvent::Admitted(Box::new(permit.facts.clone())));
                 Ok(permit)
@@ -799,6 +857,8 @@ impl RunInner {
                         subject: Some(subject.to_owned()),
                         lease: None,
                         reason: reason.clone(),
+                        world: worlds.world,
+                        source_worlds: worlds.source_worlds,
                     },
                 );
                 if let RunDenied::Budget { denied } = &reason {
@@ -841,7 +901,7 @@ impl RunInner {
         self.calls.lock().expect("run call mutex poisoned")
     }
 
-    pub(super) fn lock_paid(&self) -> MutexGuard<'_, BTreeSet<String>> {
+    pub(super) fn lock_paid(&self) -> MutexGuard<'_, BTreeMap<String, CallWorlds>> {
         self.paid.lock().expect("run permit mutex poisoned")
     }
 }

@@ -57,6 +57,10 @@ impl RunReceiptSink for TeeReceipts {
     fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.host.budget_hit(seat, guard, denied);
     }
+
+    fn source_worlds(&self, rows: &[oneiron::EntityId]) -> Option<Vec<oneiron::EntityId>> {
+        self.host.source_worlds(rows)
+    }
 }
 
 /// One model call of an arm: its answer, or why there is none, and its

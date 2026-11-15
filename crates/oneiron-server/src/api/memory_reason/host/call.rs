@@ -65,6 +65,10 @@ impl RunReceiptSink for Receipts {
             .unwrap_or_else(PoisonError::into_inner)
             .push((seat.to_owned(), guard.clone(), denied.clone()));
     }
+
+    fn source_worlds(&self, rows: &[oneiron::EntityId]) -> Option<Vec<oneiron::EntityId>> {
+        self.durable.source_worlds(rows)
+    }
 }
 
 impl Drop for Receipts {
@@ -104,6 +108,10 @@ impl RunReceiptSink for Tee {
 
     fn budget_hit(&self, seat: &str, guard: &BudgetGuard, denied: &BudgetDenied) {
         self.request.budget_hit(seat, guard, denied);
+    }
+
+    fn source_worlds(&self, rows: &[oneiron::EntityId]) -> Option<Vec<oneiron::EntityId>> {
+        self.request.source_worlds(rows)
     }
 }
 

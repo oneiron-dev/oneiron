@@ -221,6 +221,8 @@ impl RunInner {
                 allocation_units: allocation.as_ref().map(|(units, _)| *units),
                 error: settled.as_ref().err().cloned(),
                 allocation_error: allocation_error.clone(),
+                world: permit.facts.world,
+                source_worlds: permit.facts.source_worlds.clone(),
             },
         );
         match (settled, allocation_error) {

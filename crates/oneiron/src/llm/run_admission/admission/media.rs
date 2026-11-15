@@ -66,15 +66,21 @@ impl RunAdmission {
         };
         let (revision, declaration) = self.inner.snapshot();
         let declaration = declaration.with_reserve(reserve_units);
+        let origin = self.origin();
+        let worlds = super::CallWorlds {
+            world: admission.envelope.scope.world,
+            source_worlds: origin.source_worlds.clone(),
+        };
         let admitted = self
             .inner
-            .admit_model(&declaration, revision, call, None, self.origin());
+            .admit_model(&declaration, revision, call, None, origin);
         self.inner.receipt_for(
             revision,
             selector,
             admission.model.as_str(),
             admitted,
             Some(admission.model.clone()),
+            worlds,
         )
     }
 

@@ -36,6 +36,15 @@ pub enum RunEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         lease: Option<String>,
         reason: RunDenied,
+        /// The world the call named in its scope, as its `Admitted` row
+        /// names it (DEC-0005 world privacy, fix 12). For a refusal before
+        /// admission, the world the refused call named.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        world: Option<EntityId>,
+        /// The live worlds of the rows the call's input was assembled from,
+        /// as its `Admitted` row names them ([`PermitFacts::source_worlds`]).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_worlds: Option<Vec<EntityId>>,
     },
     /// The call passed the dispatch check and went out.
     Dispatched {
@@ -51,6 +60,15 @@ pub enum RunEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         broker_isolation: Option<BrokerIsolation>,
         answered: bool,
+        /// The world the call named in its scope, as its `Admitted` row
+        /// names it (DEC-0005 world privacy, fix 12). For a refusal before
+        /// admission, the world the refused call named.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        world: Option<EntityId>,
+        /// The live worlds of the rows the call's input was assembled from,
+        /// as its `Admitted` row names them ([`PermitFacts::source_worlds`]).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_worlds: Option<Vec<EntityId>>,
     },
     Settled {
         lease: String,
@@ -88,6 +106,15 @@ pub enum RunEvent {
         /// A settlement the allocation's meter refused.
         #[serde(skip_serializing_if = "Option::is_none")]
         allocation_error: Option<BudgetDenied>,
+        /// The world the call named in its scope, as its `Admitted` row
+        /// names it (DEC-0005 world privacy, fix 12). For a refusal before
+        /// admission, the world the refused call named.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        world: Option<EntityId>,
+        /// The live worlds of the rows the call's input was assembled from,
+        /// as its `Admitted` row names them ([`PermitFacts::source_worlds`]).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        source_worlds: Option<Vec<EntityId>>,
     },
     Revised {
         editor: DeclarationEditor,
@@ -192,6 +219,16 @@ pub struct PermitFacts {
     /// here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub world: Option<EntityId>,
+    /// The live worlds of `source_rows`, each row's as the run's receipt
+    /// sink read it when the call was admitted
+    /// ([`RunReceiptSink::source_worlds`]): the provenance of a call that
+    /// names no world, from rows host code named, never from the caller
+    /// (DEC-0005 :457). Base reality is named by its own id. `None`,
+    /// unknown, when the host named no rows, the sink reads no vault, or one
+    /// row proves no world; text that came from no named row (a caller's
+    /// message) has no world here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_worlds: Option<Vec<EntityId>>,
 }
 
 /// Where a run admission writes its receipts. The host persists or ships
@@ -204,6 +241,16 @@ pub trait RunReceiptSink: Send + Sync {
     /// the line's meter. A sink with no vault runs no hooks.
     fn budget_hit(&self, seat: &str, guard: &super::super::BudgetGuard, denied: &BudgetDenied) {
         let _ = (seat, guard, denied);
+    }
+
+    /// The live worlds of `rows`, the rows a call's input was assembled
+    /// from, as this sink's vault reads them now, for the call's receipts
+    /// (DEC-0005 world privacy, fix 12): every world each row is in, base
+    /// reality by its own id, sorted. `None` when one row proves no world.
+    /// A sink with no vault knows no worlds.
+    fn source_worlds(&self, rows: &[EntityId]) -> Option<Vec<EntityId>> {
+        let _ = rows;
+        None
     }
 }
 

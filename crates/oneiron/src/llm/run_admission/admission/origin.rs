@@ -1,7 +1,7 @@
 //! Where a run's calls come from: what a bound run serves (FIX 4453), what
-//! a handle names about its calls (FIX 5760, FIX 8970), the resident whose
-//! share they draw on (FIX 7767), and the memory-work mark a host sets on a
-//! run (FIX 11003).
+//! a handle names about its calls (FIX 5760, FIX 8970), the worlds their
+//! receipts name (DEC-0005 fix 12), the resident whose share they draw on
+//! (FIX 7767), and the memory-work mark a host sets on a run (FIX 11003).
 use std::sync::atomic::Ordering;
 
 use super::{RunAdmission, RunInner};
@@ -10,20 +10,45 @@ use super::{RunAdmission, RunInner};
 pub use oneiron_records::llm::run_admission::admission::origin::RunAttribution;
 
 /// What a handle names about the calls admitted through it: the rows their
-/// input was assembled from ([`RunAdmission::sourced`]) and who acted to
-/// start them ([`RunAdmission::initiated_by`]).
+/// input was assembled from ([`RunAdmission::sourced`]), the worlds of those
+/// rows, and who acted to start them ([`RunAdmission::initiated_by`]).
 pub(in crate::llm::run_admission) struct CallOrigin {
     pub(in crate::llm::run_admission) sources: Option<Vec<crate::EntityId>>,
+    /// The live worlds of `sources` as the run's receipt sink read them when
+    /// the call was admitted ([`super::RunReceiptSink::source_worlds`]).
+    pub(in crate::llm::run_admission) source_worlds: Option<Vec<crate::EntityId>>,
     pub(in crate::llm::run_admission) initiator: Option<crate::EntityId>,
 }
 
+/// The worlds every receipt of one call names (DEC-0005 world privacy, fix
+/// 12): its `Admitted` row's, and the same on its `Dispatched`, `Settled`
+/// and `Denied` rows, which join it by lease.
+#[derive(Debug, Clone, Default)]
+pub(in crate::llm::run_admission) struct CallWorlds {
+    /// The world the call named in its scope; `None` for a paid connector.
+    pub(in crate::llm::run_admission) world: Option<crate::EntityId>,
+    /// The live worlds of the rows its input was assembled from.
+    pub(in crate::llm::run_admission) source_worlds: Option<Vec<crate::EntityId>>,
+}
+
 impl RunAdmission {
-    /// What this handle names about its calls.
+    /// What this handle names about its calls. The worlds of its source rows
+    /// are read here, once per admission.
     pub(super) fn origin(&self) -> CallOrigin {
         CallOrigin {
             sources: self.sources.clone(),
+            source_worlds: self.source_worlds(),
             initiator: self.initiator,
         }
+    }
+
+    /// The live worlds of the rows this handle names as its calls' input,
+    /// as the run's receipt sink reads them now; `None`, unknown, when the
+    /// handle names no rows or the sink proves no world for one of them.
+    pub(super) fn source_worlds(&self) -> Option<Vec<crate::EntityId>> {
+        self.sources
+            .as_deref()
+            .and_then(|rows| self.inner.receipts.source_worlds(rows))
     }
 
     /// This run, marked as memory work by the host that started it (FIX
