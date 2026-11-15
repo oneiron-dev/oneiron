@@ -57,6 +57,11 @@ fn declaration(
     }
 }
 
+/// A pick's own action id: a manifest declares each action id once.
+fn pick_command(id: &str) -> String {
+    format!("stores.pick.{id}")
+}
+
 /// A store's pick: a toggle whose `checked` is the `$state` key of its id.
 fn pick(id: &str, label: &str) -> LensNode {
     let mut node = LensNode::new(
@@ -65,7 +70,7 @@ fn pick(id: &str, label: &str) -> LensNode {
             id: SelfUiControlId::new(id).expect("control id"),
             label: text(label),
             checked: false,
-            action: action("stores.pick"),
+            action: action(&pick_command(id)),
         })),
     );
     node.state_bindings = vec![SelfUiBinding {
@@ -111,8 +116,16 @@ fn render() -> GeneratedUiRender {
         LensRenderId::new(CARD).expect("card id"),
         GeneratedLens::new(root).expect("generated lens"),
         vec![
-            declaration("north", "stores.pick", GeneratedUiActionTier::Local),
-            declaration("south", "stores.pick", GeneratedUiActionTier::Local),
+            declaration(
+                "north",
+                &pick_command("north"),
+                GeneratedUiActionTier::Local,
+            ),
+            declaration(
+                "south",
+                &pick_command("south"),
+                GeneratedUiActionTier::Local,
+            ),
             declaration("send", "stores.send", GeneratedUiActionTier::ModelRoundTrip),
         ],
         state,
@@ -184,7 +197,7 @@ fn the_round_trip_carries_the_picks_the_card_holds() {
     send(
         &render,
         &mut state,
-        &event("north", "stores.pick", vec![picked("north")]),
+        &event("north", &pick_command("north"), vec![picked("north")]),
     );
     assert_eq!(state.get(&state_key("north")), Some(&flag(true)));
 
