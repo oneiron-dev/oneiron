@@ -14,18 +14,32 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::sync::loro_support::TombstoneIndex;
 
-/// The epoch summaries among `shipped` (what this export of `source` ships
-/// after every other withholding, read in its snapshot `rtxn`) that must
-/// stay home. An epoch summary leaves only beside every record it was
-/// written from, and only this export, in this snapshot, can prove that:
-/// each source must be erased or withdrawn by nothing and ship here too (a
-/// nested epoch only if it leaves as well). A source another window carries,
-/// or none does, cannot be proven from here, so its summary stays home; the
-/// sources are never sent along. A row is an epoch summary when its stored
-/// row or the bytes this export would ship say so, since a carrier the vault
-/// refused at a stored epoch's id may hold its words in any form. A source
-/// ships only as the record stored at its id: such a carrier is not what the
-/// summary was written from.
+/// What a fenced row's words must leave beside.
+enum Backing {
+    /// Its `DerivedFrom` targets: an epoch summary's, or a filed compaction
+    /// step's claim or response artifact's.
+    DerivedFrom,
+    /// The compaction response artifacts holding the bytes a response's
+    /// content ASSET carries.
+    Holders(Vec<EntityId>),
+}
+
+/// The epoch summaries and filed compaction steps among `shipped` (what this
+/// export of `source` ships after every other withholding, read in its
+/// snapshot `rtxn`) that must stay home. An epoch summary leaves only beside
+/// every record it was written from, and only this export, in this snapshot,
+/// can prove that: each source must be erased or withdrawn by nothing and
+/// ship here too (a nested epoch only if it leaves as well). A source another
+/// window carries, or none does, cannot be proven from here, so its summary
+/// stays home; the sources are never sent along. A row is an epoch summary
+/// when its stored row or the bytes this export would ship say so, since a
+/// carrier the vault refused at a stored epoch's id may hold its words in any
+/// form. A source ships only as the record stored at its id: such a carrier
+/// is not what the summary was written from. A compaction step's claim and
+/// response artifact carry the compactor's words about the records its call
+/// read, and the response's content ASSET carries them as the response
+/// artifacts holding its bytes do, so each leaves by the same rule
+/// (COMPACTION-STEP-CLAIM-READS-WITHOUT-SOURCES).
 pub(super) fn unbacked_epochs(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
@@ -39,56 +53,79 @@ pub(super) fn unbacked_epochs(
         Ok(state.deleted || state.stale)
     };
     // In any form: a pointer is resolved by the head stored at its id, and
-    // one no head stands for is held as an epoch (Astra 1384e).
-    let is_epoch = |id: &EntityId, raw: Option<Vec<u8>>| -> Result<bool> {
-        let Some(raw) = raw.filter(|raw| {
-            raw.first() == Some(&crate::registry::ENTITY_TYPE_SUMMARY)
-                && raw.len() >= ENTITY_METADATA_HEADER_LEN
-        }) else {
-            return Ok(false);
+    // one no head stands for is held as an epoch (Astra 1384e). A claim that
+    // names the step predicate but does not decode is held as a step.
+    let backing_of = |id: &EntityId, raw: Option<Vec<u8>>| -> Result<Option<Backing>> {
+        let Some(raw) = raw.filter(|raw| raw.len() >= ENTITY_METADATA_HEADER_LEN) else {
+            return Ok(None);
         };
         let body = &raw[ENTITY_METADATA_HEADER_LEN..];
-        Ok(crate::compaction::stored_epoch_in(&vault.store, rtxn, id, body)?.may_be())
+        let fenced = match raw.first().copied() {
+            Some(crate::registry::ENTITY_TYPE_SUMMARY) => {
+                crate::compaction::stored_epoch_in(&vault.store, rtxn, id, body)?.may_be()
+            }
+            Some(crate::registry::ENTITY_TYPE_ASSET) => {
+                let holders =
+                    crate::llm::compaction_response_holders_in(&vault.store, rtxn, id, &raw)?;
+                return Ok((!holders.is_empty()).then_some(Backing::Holders(holders)));
+            }
+            Some(entity_type) => {
+                crate::llm::is_compaction_step_row(entity_type, body).unwrap_or(true)
+            }
+            None => false,
+        };
+        Ok(fenced.then_some(Backing::DerivedFrom))
     };
-    // Each epoch's sources, or `None` when the epoch itself is withdrawn;
+    // Each fenced row's sources, or `None` when the row itself is withdrawn;
     // and whether each source ships here, withdrawn by nothing.
-    let mut epochs = BTreeMap::<EntityId, Option<Vec<EntityId>>>::new();
+    let mut fenced = BTreeMap::<EntityId, Option<Vec<EntityId>>>::new();
     let mut backs = BTreeMap::<EntityId, bool>::new();
     for id in shipped {
         let carried = crate::sync::loro_support::map_get_bytes(&entities, &id.to_hex());
-        if !is_epoch(id, carried)? && !is_epoch(id, vault.get_raw_in(rtxn, id)?)? {
-            continue;
-        }
+        let backing = match backing_of(id, carried)? {
+            Some(backing) => backing,
+            None => match backing_of(id, vault.get_raw_in(rtxn, id)?)? {
+                Some(backing) => backing,
+                None => continue,
+            },
+        };
         if withdrawn(id)? {
-            epochs.insert(*id, None);
+            fenced.insert(*id, None);
             continue;
         }
-        let mut sources = Vec::new();
-        for edge in crate::ports::EdgeStoreRead::port_edges(
-            &vault.store,
-            rtxn,
-            id,
-            crate::ports::EdgeDirection::Out,
-            Some(EdgeKind::DerivedFrom),
-            None,
-        )? {
-            let from = edge?.target;
-            sources.push(from);
-            if let Entry::Vacant(slot) = backs.entry(from) {
+        let sources = match backing {
+            Backing::Holders(holders) => holders,
+            Backing::DerivedFrom => {
+                let mut sources = Vec::new();
+                for edge in crate::ports::EdgeStoreRead::port_edges(
+                    &vault.store,
+                    rtxn,
+                    id,
+                    crate::ports::EdgeDirection::Out,
+                    Some(EdgeKind::DerivedFrom),
+                    None,
+                )? {
+                    sources.push(edge?.target);
+                }
+                sources
+            }
+        };
+        for from in &sources {
+            if let Entry::Vacant(slot) = backs.entry(*from) {
                 slot.insert(
-                    shipped.contains(&from)
-                        && !withdrawn(&from)?
-                        && ships_whole(vault, rtxn, source, &tombstones, &from)?,
+                    shipped.contains(from)
+                        && !withdrawn(from)?
+                        && ships_whole(vault, rtxn, source, &tombstones, from)?,
                 );
             }
         }
-        epochs.insert(*id, Some(sources));
+        fenced.insert(*id, Some(sources));
     }
     let mut withheld = BTreeSet::new();
     loop {
         let before = withheld.len();
-        for (epoch, sources) in &epochs {
-            if withheld.contains(epoch) {
+        for (row, sources) in &fenced {
+            if withheld.contains(row) {
                 continue;
             }
             let backed = sources.as_ref().is_some_and(|sources| {
@@ -97,7 +134,7 @@ pub(super) fn unbacked_epochs(
                 })
             });
             if !backed {
-                withheld.insert(*epoch);
+                withheld.insert(*row);
             }
         }
         if withheld.len() == before {

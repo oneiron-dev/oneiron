@@ -14,8 +14,8 @@ use crate::{
 };
 
 /// Files one compaction step of the run `run_ref` (`job` its id) under the
-/// agent `writer`: a call that read `sources` and answered `answer`. Returns
-/// the step's claim.
+/// agent `writer`: a call that read `sources` and answered `answer`, stamped
+/// at the wall milliseconds a pass files at. Returns the step's claim.
 pub fn file_compaction_step(
     vault: &Vault,
     run_ref: &str,
@@ -23,6 +23,30 @@ pub fn file_compaction_step(
     writer: EntityId,
     sources: Vec<EntityId>,
     answer: &str,
+) -> Result<EntityId> {
+    file_compaction_step_at(
+        vault,
+        run_ref,
+        job,
+        writer,
+        sources,
+        answer,
+        vault.now_recorded_ms(),
+    )
+}
+
+/// [`file_compaction_step`] stamped at `filed_at`, the time its rows are
+/// learned at. A pass files at wall milliseconds, which no month window's
+/// scan reaches (FIX COMPACTION-STEP-LEARNED-AT-MILLISECONDS); a step filed at
+/// a window's Unix seconds rides that window beside its sources.
+pub fn file_compaction_step_at(
+    vault: &Vault,
+    run_ref: &str,
+    job: EntityId,
+    writer: EntityId,
+    sources: Vec<EntityId>,
+    answer: &str,
+    filed_at: u64,
 ) -> Result<EntityId> {
     let request = LlmRequest {
         model: ModelId::new("test/model@r1")
@@ -85,13 +109,12 @@ pub fn file_compaction_step(
         response: serde_json::to_vec(&response).map_err(encode)?,
         sources: Some(sources),
     };
-    let now_ms = vault.now_recorded_ms();
     let filed = ExecutorStorage::Canonical(vault).file_compaction_steps(
         run_ref,
         job,
         WriteActor::new(writer, EdgeActorClass::Agent),
         &[call],
-        now_ms,
+        filed_at,
     )?;
     filed
         .first()
