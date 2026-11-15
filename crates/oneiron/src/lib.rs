@@ -214,6 +214,7 @@ pub mod comm;
 pub mod connector_key;
 pub mod delivery_window;
 pub mod feedback;
+pub mod gpu_job;
 pub mod ingest;
 pub mod linkedin_connector;
 pub mod linkedin_lead_preload;

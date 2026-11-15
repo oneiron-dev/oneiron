@@ -60,6 +60,11 @@ pub enum NotificationKind {
     /// run, is its revert, the owner's own act
     /// (`Vault::revert_model_pack_change_as_owner`).
     ModelPackChanged,
+    /// A GPU job used 95 percent of the maximum the customer set for it
+    /// (CROSS-ARCH-0023 C2 02): `source.result` names the job and
+    /// `source.detail` how much of its maximum it used. The job stops at its
+    /// maximum only after this notice and a checkpoint taken after it.
+    GpuJobWarning,
 }
 
 impl NotificationKind {
