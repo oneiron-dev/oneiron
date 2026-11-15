@@ -748,6 +748,8 @@ impl Memory<'_> {
             session,
             run: self.bound_code_run(),
         };
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::scratchpad_wake::at_live_pad_append(self, session)?;
         let outcome = self.with_actor_content_write_txn_as(actor, |content| {
             content.update_note(pad, |txn, lane| {
                 self.vault()

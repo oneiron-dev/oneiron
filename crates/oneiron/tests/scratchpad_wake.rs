@@ -27,7 +27,9 @@ use oneiron::receipt::{attempt_pack_receipt, attempt_pack_receipt_id};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::run_lifecycle::force_cancel_authority;
-use oneiron::test_doors::scratchpad_wake::{race_next_pad_birth, raced_pad, run_bound_memory};
+use oneiron::test_doors::scratchpad_wake::{
+    race_next_pad_birth, raced_pad, run_bound_memory, seal_before_next_live_pad_append,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault};
 use oneiron_testkit::{FixtureVault, TestVault, fixture_cache};
 
@@ -308,6 +310,32 @@ fn a_racing_first_line_lands_on_the_pad_the_other_opened() {
         Some(first.to_hex()),
         "the terminal receipt names the pad both lines landed in"
     );
+}
+
+/// A seal commits between a line's read of its live pad and the line's
+/// write, as a run's terminal write can. The line is refused as a line on a
+/// sealed pad before its edit runs, so it opens no fork of the sealed pad.
+#[test]
+fn a_line_racing_its_pads_seal_is_refused_as_sealed() {
+    let (copy, vault, agent) = open();
+    let queue = AttemptQueue::new(&vault);
+    let t = copy.clock().now();
+    let (_leased, run) = wake(&queue, t);
+    let memory = run_bound_memory(&vault, agent, run).expect("run-bound memory");
+    let pad = memory
+        .scratchpad_append(LABEL, "the line before the seal", None, false)
+        .expect("the first line opens the pad")
+        .pad;
+    seal_before_next_live_pad_append();
+    let refused = memory
+        .scratchpad_append(LABEL, "the line racing the seal", None, false)
+        .expect_err("a line on a pad sealed in the gap is refused");
+    assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
+    assert_eq!(
+        refused.message, "this session's scratchpad is sealed",
+        "the line is refused as a line on a sealed pad, not after an edit that forks it"
+    );
+    assert!(sealed(&vault, pad), "the raced pad stays sealed");
 }
 
 #[test]

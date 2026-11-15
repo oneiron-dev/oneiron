@@ -1,9 +1,10 @@
 //! Door for `tests/scratchpad_wake.rs` (OF-548): an agent's own memory
 //! facade with its writes bound to a durable code run, as a run's
 //! dispatcher binds them (`code_run/dispatcher/agent_verb.rs`), so a test
-//! writes the pad a run writes; and a race point in a first line's append,
-//! between its pointer read and its pad's birth, so a test commits a racing
-//! first line in that gap.
+//! writes the pad a run writes; and two race points in an append: one
+//! between a first line's pointer read and its pad's birth, where a test
+//! commits a racing first line, and one between a line's read of its live
+//! pad and the line's write, where a test seals that pad.
 
 use std::cell::{Cell, RefCell};
 
@@ -19,6 +20,8 @@ thread_local! {
     static RACE_LINE: RefCell<Option<String>> = const { RefCell::new(None) };
     /// The pad the armed race's line landed in, once it ran.
     static RACED_PAD: Cell<Option<EntityId>> = const { Cell::new(None) };
+    /// Whether the next append to a live pad seals that pad first.
+    static SEAL_RACE: Cell<bool> = const { Cell::new(false) };
 }
 
 /// Agent `agent`'s own memory facade, its writes bound to durable code run
@@ -61,5 +64,21 @@ pub(crate) fn at_pad_birth(memory: &Memory<'_>, session: &str) -> MemoryResult<(
     };
     let receipt = memory.scratchpad_append(session, &line, None, false)?;
     RACED_PAD.with(|pad| pad.set(Some(receipt.pad)));
+    Ok(())
+}
+
+/// Arms this thread's next append to a live pad: after it reads the pad live
+/// and before its line's write, the same caller seals its session's pad, as
+/// a run's terminal write that commits in that gap does.
+pub fn seal_before_next_live_pad_append() {
+    SEAL_RACE.with(|race| race.set(true));
+}
+
+/// The seal race point; a no-op unless
+/// [`seal_before_next_live_pad_append`] armed this thread.
+pub(crate) fn at_live_pad_append(memory: &Memory<'_>, session: &str) -> MemoryResult<()> {
+    if SEAL_RACE.with(|race| race.replace(false)) {
+        memory.scratchpad_seal(session)?;
+    }
     Ok(())
 }
