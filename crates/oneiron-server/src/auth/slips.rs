@@ -265,11 +265,11 @@ impl CoreAuth {
             && claims.channels.is_empty()
             && !claims.single_use;
         Ok(Self {
-            principal: format!("slip:{}", hex_id(&claims.slip_id)),
+            principal: format!("slip:{}", oneiron_hex::encode(&claims.slip_id)),
             principal_ref,
             scopes,
             implicit_all_scopes: owner_grade,
-            jti: Some(hex_id(&claims.slip_id)),
+            jti: Some(oneiron_hex::encode(&claims.slip_id)),
             actor_class: claims.actor_class.clone(),
             org_ref: claims.org_ref.clone(),
             // Local host proofs have no caveats. Their logged mint id is stable.
@@ -497,10 +497,6 @@ fn managed_owner_is_live(vault: &oneiron::Vault, holder: oneiron::EntityId) -> b
         .flatten()
         .is_some_and(|owner| vault.is_live_vault_owner(&owner).unwrap_or(false))
 }
-fn hex_id(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 pub(crate) fn parse_slip_id(value: &str) -> Result<[u8; 32], ApiError> {
     if value.len() != 64
         || !value

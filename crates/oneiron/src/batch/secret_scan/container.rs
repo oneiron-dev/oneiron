@@ -7,7 +7,8 @@ pub(crate) use self::projection_edit::{
     RetainedProjectionEdit, apply_retained_repo_projection_diff,
 };
 use super::{
-    Door, detect, framed_payload, release_hit, scan_payload, secret_scan_error, write_payload_hit,
+    Door, detect, framed_payload, release_decoded_hit, release_hit, scan_payload,
+    secret_scan_error, write_payload_hit,
 };
 use crate::error::{Error, Result};
 use crate::file_secret_marks::{KeyPlaces, MemberStep, PlaceHandles, masked_copy_withheld};
@@ -146,7 +147,19 @@ fn members_hit(
 /// The release doors' rules over each member under `bytes` and the bytes no
 /// reader shows.
 pub(super) fn release_members_hit(bytes: &[u8]) -> Option<&'static str> {
-    members_hit(bytes, release_hit, None, &ReadPacing::default())
+    members_hit(bytes, release_member_hit, None, &ReadPacing::default())
+}
+
+/// The release rules over one member: its text and a framed carrier's body
+/// ([`release_hit`]), and the member read as a structured body, its field
+/// names included, as the typed rule reads a body and the write door reads
+/// each member ([`write_members_hit`]), with each text in it that decodes as
+/// a body read again at every depth ([`release_decoded_hit`]). A credential
+/// field in a compressed JSON member, its name escaped, is no text the raw
+/// rules read; nor is one in JSON that is a string's text. A member nested
+/// past its decoder reads as a hit: none of its members was read.
+fn release_member_hit(member: &[u8]) -> Option<&'static str> {
+    release_hit(member).or_else(|| release_decoded_hit(member))
 }
 
 /// [`super::scan_file_content`] over text, which is valid UTF-8. Text with

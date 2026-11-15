@@ -68,6 +68,10 @@ mod reap;
 mod refusal;
 /// The relay delete ctl requests (FIX 6826).
 mod relay_delete;
+/// Every API route verifies the owner's attestation or is classified
+/// (L10-29).
+#[cfg(test)]
+mod route_selection_tests;
 /// Generic original-usage export over ctl (LC191311).
 mod usage_export;
 
