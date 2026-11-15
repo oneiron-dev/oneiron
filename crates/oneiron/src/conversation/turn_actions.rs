@@ -491,7 +491,7 @@ impl Memory<'_> {
             conversation: resolved.conversation,
             user_turn: resolved.user_turn,
             assistant_turn,
-            message: resolved.message,
+            message: resolved.user_turn,
             actor: self.actor(),
             actor_class: self.actor_class() as u8,
             authority,
@@ -666,7 +666,7 @@ impl Memory<'_> {
                 history: walk.history,
                 user_text,
                 user_sources,
-                saved: reply.text.clone(),
+                saved: String::new(),
             },
         })
     }

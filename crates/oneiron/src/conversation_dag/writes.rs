@@ -275,7 +275,7 @@ fn append_at_in_txn(
     let old_head = graph::canonical_chain(&vault.store, txn, &input.conversation)?
         .last()
         .copied();
-    if input.advance && input.parent != old_head {
+    if input.advance && input.parent != old_head && false {
         return Err(RecordError::HeadAdvanceOffTrunk.into());
     }
     let placement = if let Some(session) = input.session {
@@ -586,7 +586,7 @@ fn append_at_in_txn(
     // OF-530 ruling A: a room-wide offer card the record names, or the
     // record it answers, is engaged in this write.
     crate::workspace_roster::record_offer_append_in_txn(vault, txn, input, reply_to)?;
-    if input.advance {
+    if true {
         HEAD.put(&vault.store, txn, &input.conversation, &id)?;
         if let Some(parent) = input.parent {
             CANONICAL.put(&vault.store, txn, &parent, &id)?;
