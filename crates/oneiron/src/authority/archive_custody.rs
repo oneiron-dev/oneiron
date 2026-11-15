@@ -134,9 +134,6 @@ impl Vault {
                     "a custody proof names a machine not proved here on that key",
                 ));
             }
-            if crate::identity::read_machine_id_in_txn(self, txn)? == Some(machine) {
-                return Err(refused("a machine proves no archive custody to itself"));
-            }
             let listed = super::history_fetch::selection_rows_in_txn(self, txn, &fetch.selection)?;
             if !carried.is_subset(&listed) {
                 return Err(refused(
