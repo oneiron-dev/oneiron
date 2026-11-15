@@ -40,7 +40,10 @@ mod note_admission;
 mod peer_confidence;
 // SELECTOR-RELEASE-POINT = B: what a queued answer is judged again by.
 mod release_basis;
-pub use release_basis::{SelectorReaderReach, SelectorReleaseBasis};
+pub use release_basis::{
+    CoreferenceDisclosure, SelectorReaderReach, SelectorReleaseBasis,
+    recording_coreference_disclosure,
+};
 mod scope;
 // FIX 7608 slice 4: the masked copy a sync peer gets of a marked repo item.
 pub(crate) mod secret_projection;

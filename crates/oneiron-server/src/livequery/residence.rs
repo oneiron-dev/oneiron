@@ -96,6 +96,9 @@ pub(crate) struct ResidenceIndexCache {
     destination: Destination,
     selection_revision: ([u8; 32], u64, u64),
     items: Vec<WindowIndexEntry>,
+    /// The coreference links the projection's filter let `items` carry: each
+    /// page's answer stands only while they are still shared.
+    coreference: oneiron::sync::CoreferenceDisclosure,
     pages: usize,
     budgets: ResidenceOperationBudgets,
     /// The projection's charge on the server's retained-memory line.
@@ -456,7 +459,9 @@ pub(super) fn run(
     let mut off_carrier = false;
     // A forwarded search's caller reach, taken before its read.
     let mut reader = None;
-    let result = (|| {
+    // Each coreference link the call's selector filters let its answer
+    // carry, judged again where the answer leaves.
+    let (result, disclosure) = oneiron::sync::recording_coreference_disclosure(|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
             return Err(AppError::unauthorized());
@@ -529,7 +534,7 @@ pub(super) fn run(
             }
             method => custody::run(server, auth, peer, method, request.params),
         }
-    })();
+    });
     super::RpcReply::answer_attributed(
         server,
         auth,
@@ -541,7 +546,7 @@ pub(super) fn run(
     .map(|reply| {
         (
             reply.released_off_carrier(off_carrier),
-            basis.map(|basis| basis.reading_for(reader)),
+            basis.map(|basis| basis.reading_for(reader).disclosing(disclosure)),
         )
     })
 }

@@ -53,6 +53,20 @@ pub(super) struct CoreferenceExportContext {
 }
 
 impl CoreferenceExportContext {
+    /// Records each link this context lets an export carry, with each pact
+    /// it was let into, for the release basis of the answer being made on
+    /// this thread (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
+    pub(super) fn record_disclosure(&self) {
+        if self.allowed_links.is_empty() {
+            return;
+        }
+        super::release_basis::record_coreference_shares(
+            self.allowed_links
+                .iter()
+                .flat_map(|link| self.pact_ids.iter().map(move |pact| (*link, *pact))),
+        );
+    }
+
     pub(super) fn allows(&self, source: EntityId, target: EntityId) -> bool {
         self.allowed_links
             .contains(&normalized_coreference_pair(source, target))

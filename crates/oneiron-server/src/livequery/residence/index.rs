@@ -45,17 +45,19 @@ pub(super) fn index(
         .map_err(|_| AppError::internal_server_error("index selection unavailable"))?;
 
     if after.is_none() {
-        let entries = window_index_projection_with(
-            &server.vault,
-            &doc,
-            &window,
-            crate::handler::selector_scope::selector_grant_scope(),
-            &selector,
-            admission.withhold(),
-            budgets.title_max_chars,
-            |id| admission.allows_item(id),
-        )
-        .map_err(|_| AppError::internal_server_error("index unavailable"))?;
+        let (entries, coreference) = oneiron::sync::recording_coreference_disclosure(|| {
+            window_index_projection_with(
+                &server.vault,
+                &doc,
+                &window,
+                crate::handler::selector_scope::selector_grant_scope(),
+                &selector,
+                admission.withhold(),
+                budgets.title_max_chars,
+                |id| admission.allows_item(id),
+            )
+        });
+        let entries = entries.map_err(|_| AppError::internal_server_error("index unavailable"))?;
         let bytes = entries
             .iter()
             .try_fold(0usize, |total, entry| {
@@ -115,6 +117,7 @@ pub(super) fn index(
             destination,
             selection_revision,
             items: entries,
+            coreference,
             pages: 0,
             budgets,
             _held: held,
@@ -137,6 +140,9 @@ pub(super) fn index(
         *cache = None;
         return Err(index_changed());
     }
+    // Every page carries rows the first page's filter decided: its answer
+    // stands only while that filter's coreference shares do.
+    retained.coreference.record();
     retained.pages = retained.pages.saturating_add(1);
     if retained.pages == budgets.max_index_pages.saturating_add(1) {
         // Rule 5: a read past its page row asks once and goes on.

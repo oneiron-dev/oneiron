@@ -90,6 +90,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
         scope_position,
     )?;
     let coreference = coreference_export_context(vault, &rtxn, source, selector)?;
+    // A queued answer leaves only while each link this pass lets it carry is
+    // still shared into its pact (SELECTOR-RELEASE-COREFERENCE-CONSENT = A).
+    coreference.record_disclosure();
     // FIX SELECTOR-RELATIONSHIP-LABELS (OPUS-LEAKS): the grant's member
     // reads a row that names a relationship or a private scope only on its
     // own live grants and memberships, as its delegated scoped read does: an

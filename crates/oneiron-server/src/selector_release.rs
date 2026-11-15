@@ -8,7 +8,10 @@
 //! - The basis ([`oneiron::sync::SelectorReleaseBasis`]) is the grant's live
 //!   bytes while it confers read, the authority fold and the reach its member
 //!   reads relationship labels with, read where the answer is made, before it
-//!   is filtered.
+//!   is filtered. Beside it goes the coreference disclosure the answer's
+//!   filters decided ([`oneiron::sync::recording_coreference_disclosure`]):
+//!   each `same_as` link they let it carry, judged again for its share
+//!   consent (SELECTOR-RELEASE-COREFERENCE-CONSENT = A, Sun 15 Nov 22:23).
 //! - A socket keeps each queued answer's basis under a token the server mints
 //!   (a client may reuse a request id) and tags each frame of the answer
 //!   with it. The tag is never a peer wire tag: the socket's release strips
