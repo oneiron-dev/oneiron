@@ -23,7 +23,7 @@ struct ApiErrorBody {
     message: String,
     #[serde(default)]
     suggestions: Vec<String>,
-    /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
+    /// A `WRONG_ROOT` refusal's `{attempted, replacement, schema_ref}`.
     #[serde(flatten)]
     wrong_root: Option<oneiron::memory::MemoryWrongRoot>,
     /// A verb hook's stop: skipped, pending on an ask, or hidden.

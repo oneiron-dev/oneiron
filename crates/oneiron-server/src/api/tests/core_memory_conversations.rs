@@ -463,7 +463,11 @@ async fn v1_core_hydrate_distinguishes_malformed_not_found_and_deleted() {
     assert_eq!(empty_status, StatusCode::OK, "{empty_body:#}");
     assert_eq!(empty_body["status"], Value::from("live"));
     assert_eq!(empty_body["id"], Value::from(empty_id.to_hex()));
-    assert_eq!(empty_body["item"]["bodyBytes"], Value::Array(Vec::new()));
+    assert_eq!(empty_body["item"]["body_bytes"], Value::Array(Vec::new()));
+    assert!(
+        empty_body["item"].get("bodyBytes").is_none(),
+        "{empty_body:#}"
+    );
 
     server
         .vault

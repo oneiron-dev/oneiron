@@ -492,7 +492,7 @@ struct FacadeErrorBody {
     /// that has none.
     #[serde(skip_serializing_if = "Option::is_none")]
     receipt_ref: Option<String>,
-    /// A `WRONG_ROOT` refusal's `{attempted, replacement, schemaRef}`.
+    /// A `WRONG_ROOT` refusal's `{attempted, replacement, schema_ref}`.
     #[serde(flatten)]
     wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
     /// A verb hook's stop (ARCH-0080 §3): skipped with its reason, pending

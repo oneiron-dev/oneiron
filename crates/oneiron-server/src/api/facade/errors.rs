@@ -442,7 +442,7 @@ const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "receipt_ref",
     "attempted",
     "replacement",
-    "schemaRef",
+    "schema_ref",
     "hook",
     "retry_after",
     "resets_at",

@@ -239,7 +239,7 @@ pub(super) fn link_imports(
                         // The host's own refusal envelope, a wrong root's
                         // `WRONG_ROOT` correction among them, reaches the
                         // guest whole: its code, attempted, replacement and
-                        // schemaRef (FIX 8677). The wrong call never ran. A
+                        // schema_ref (FIX 8677). The wrong call never ran. A
                         // verb's own output is never read for one.
                         if value.get("output").is_none() && value.get("error").is_some() {
                             return Ok(value.to_string());

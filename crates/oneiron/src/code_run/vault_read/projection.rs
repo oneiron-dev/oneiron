@@ -25,7 +25,7 @@ use super::types::{
 };
 
 /// Decodes already-clamped entity bytes into the public JSON projection.
-/// Opaque bodies use the accepted server's lossless `bodyBytes` representation.
+/// Opaque bodies use the accepted server's lossless `body_bytes` representation.
 fn decode_scoped_body(body: &[u8]) -> Value {
     crate::batch::export::redacted_memory_body(body)
 }

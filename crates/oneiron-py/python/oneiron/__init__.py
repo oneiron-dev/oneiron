@@ -66,7 +66,7 @@ class OneironError(RuntimeError):
         self.code = code
         self.message = message
         self.suggestions = tuple(suggestions)
-        # A ``WRONG_ROOT`` refusal's ``{attempted, replacement, schemaRef}``.
+        # A ``WRONG_ROOT`` refusal's ``{attempted, replacement, schema_ref}``.
         self.wrong_root = wrong_root
         # The verb hook's stop (ARCH-0080 §3), as the engine's MemoryError names it.
         self.hook = hook
@@ -98,7 +98,7 @@ def _typed_error(payload: object, fallback: str) -> OneironError:
         suggestions = payload["suggestions"] or [
             "Retry the call, and check the Oneiron logs for this operation."
         ]
-        correction = {key: payload.get(key) for key in ("attempted", "replacement", "schemaRef")}
+        correction = {key: payload.get(key) for key in ("attempted", "replacement", "schema_ref")}
         wrong_root = correction if all(isinstance(value, str) for value in correction.values()) else None
         hook = payload.get("hook")
         hook = hook if isinstance(hook, dict) and isinstance(hook.get("status"), str) else None

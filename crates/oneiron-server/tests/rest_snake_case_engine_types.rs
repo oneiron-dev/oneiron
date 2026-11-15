@@ -115,3 +115,44 @@ fn mcp_invoke_action_args_read_snake_case_and_refuse_camel_case() {
         "{refused}"
     );
 }
+
+/// A `WRONG_ROOT` refusal's correction (oneiron-contracts `MemoryWrongRoot`,
+/// flattened into the REST facade error, the remote client's error body and
+/// the live-query error) names `schema_ref`, and a camelCase `schemaRef` is
+/// no correction on input.
+#[test]
+fn wrong_root_correction_names_schema_ref_in_snake_case() {
+    let refusal = oneiron::memory::MemoryError::wrong_root(
+        "tasks.cancel",
+        "cancel",
+        "oneiron:sdk/agent-verbs#cancel",
+    );
+    let value = serde_json::to_value(&refusal).expect("serialize the refusal");
+    assert_eq!(
+        value["schema_ref"],
+        json!("oneiron:sdk/agent-verbs#cancel"),
+        "{value}"
+    );
+    assert!(value.get("schemaRef").is_none(), "{value}");
+
+    let mut camel = value.clone();
+    let object = camel.as_object_mut().expect("an object");
+    let schema = object.remove("schema_ref").expect("schema_ref");
+    object.insert("schemaRef".to_owned(), schema);
+    let decoded: oneiron::memory::MemoryError =
+        serde_json::from_value(camel).expect("the refusal still decodes");
+    assert!(
+        decoded.wrong_root.is_none(),
+        "a camelCase `schemaRef` is read as a correction: {decoded:?}"
+    );
+}
+
+/// A body that is neither MessagePack nor JSON reaches the hydrate item, the
+/// core query rows and the server's entity projection as its bytes under
+/// `body_bytes` (oneiron `redacted_memory_body`), never `bodyBytes`.
+#[test]
+fn opaque_body_names_its_bytes_in_snake_case() {
+    // One MessagePack value with a byte after it, and no JSON at all.
+    let value = oneiron::batch::export::redacted_memory_body(&[0x01, 0x02]);
+    assert_eq!(value, json!({ "body_bytes": [1, 2] }), "{value}");
+}

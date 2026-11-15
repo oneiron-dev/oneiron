@@ -1255,6 +1255,12 @@ async fn retired_task_routes_are_not_found() {
         body["error"]["message"], "`tasks.cancel` is not an SDK verb; the verb is `cancel`",
         "{body}"
     );
+    // The correction names its schema in snake_case (UC02-REST-ENGINE-SCOPE = A).
+    assert_eq!(
+        body["error"]["schema_ref"], "oneiron:sdk/agent-verbs#cancel",
+        "{body}"
+    );
+    assert!(body["error"].get("schemaRef").is_none(), "{body}");
     assert_eq!(status("describe").await.0, StatusCode::OK);
 }
 

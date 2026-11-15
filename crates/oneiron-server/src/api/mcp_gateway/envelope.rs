@@ -118,7 +118,7 @@ pub(crate) struct McpGatewayError {
     /// size, as `effective_scope` is.
     pub(super) byte_bound: Option<Box<(usize, usize)>>,
     /// A `WRONG_ROOT` refusal's correction, surfaced as `error.data.attempted`,
-    /// `error.data.replacement` and `error.data.schemaRef`.
+    /// `error.data.replacement` and `error.data.schema_ref`.
     pub(super) wrong_root: Option<Box<oneiron::memory::MemoryWrongRoot>>,
     /// The refused `tools/call`'s lasting receipt (OF-538), surfaced as
     /// `error.data.receipt_ref` (and `error.data.no_record` for the anonymous

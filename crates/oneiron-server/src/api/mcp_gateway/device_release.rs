@@ -326,7 +326,7 @@ pub(super) fn mcp_rerelease_refusal(
                 "received_bytes",
                 "attempted",
                 "replacement",
-                "schemaRef",
+                "schema_ref",
                 "row_receipt",
                 "legal_hold",
                 "hook_notice",

@@ -217,7 +217,7 @@ pub struct MemoryError {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub policy_denial: Option<Box<MemoryPolicyDenial>>,
     /// The correction a `WRONG_ROOT` refusal carries. Flattened, so the wire
-    /// shape is `{code, attempted, replacement, schemaRef, ...}`; boxed for
+    /// shape is `{code, attempted, replacement, schema_ref, ...}`; boxed for
     /// the same reason `gate_denial` is.
     #[serde(flatten)]
     pub wrong_root: Option<Box<MemoryWrongRoot>>,
@@ -256,7 +256,6 @@ pub struct MemoryError {
 pub struct MemoryWrongRoot {
     pub attempted: String,
     pub replacement: String,
-    #[serde(rename = "schemaRef")]
     pub schema_ref: String,
 }
 
