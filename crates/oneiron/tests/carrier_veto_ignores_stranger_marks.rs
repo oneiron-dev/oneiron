@@ -570,11 +570,11 @@ fn a_strangers_mark_of_an_install_the_roster_holds_no_head_of_leaves_its_bootstr
         .put_authority_log_entry(&mark, AT, 2)
         .expect("the stranger's mark of this install is stored");
     let held = vault
-        .local_machine()
-        .expect("this install's machine")
-        .expect("guard: this install has a machine id")
-        .profile
-        .expect("guard: the install view holds a chain naming this install's key");
+        .authority_fold()
+        .expect("authority fold")
+        .machine(request.machine)
+        .cloned()
+        .expect("guard: the install view holds a chain of this install");
     assert!(
         held.roster.is_none(),
         "guard: the roster holds no head of this install"
