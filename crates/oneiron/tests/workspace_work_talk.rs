@@ -7,6 +7,8 @@
 //! `crates/oneiron/tests/workspace_one_vault_mode.rs` (same Owner manifest
 //! install, yuki bringing a model-backed companion), copied here; that file
 //! is not edited.
+//!
+//! Run: RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test workspace_work_talk
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::access_grant::AccessGrant;
@@ -14,11 +16,13 @@ use oneiron::agent_def::{AgentCeiling, AgentDefinition, AgentScope};
 use oneiron::claim::{ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::ConversationKind;
+use oneiron::core_write::ConversationTurnCreateInput;
 use oneiron::edge::{EdgeActorClass, EdgeKind};
 use oneiron::federation::{FederationGrantPreset, FederationGrantRole};
 use oneiron::memory::{
     Effort, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_NOT_FOUND, Memory,
-    MemoryError, RecallScope, WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn,
+    MemoryError, RecallScope, StructuralEdgeSpec, StructuralPutInput, WitnessAssertions,
+    WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
@@ -850,6 +854,271 @@ fn work_talk_stays_company_record_after_the_mode_turns_off() -> TestResult {
         read_back.len(),
         2,
         "the old talk remains readable: {read_back:?}"
+    );
+    Ok(())
+}
+
+// Astra T1: structural TURN creation cannot precede the first admitted witness.
+#[test]
+fn a_structural_turn_cannot_enter_work_talk_before_its_first_turn() -> TestResult {
+    let fixture = setup()?;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, _, _, _) = onboard_yuki_bring(&fixture, "work-talk-structural-yuki")?;
+    let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
+    let turn = fresh_id();
+    let at = fixture.vault.now_recorded_at();
+    assert!(
+        fixture
+            .vault
+            .edges_in(&talk)?
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::ChildOf)
+    );
+
+    let refused = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .put_structural(&StructuralPutInput {
+            id: Some(turn.to_hex()),
+            kind: "TURN".to_owned(),
+            body: json!({ "speaker": "user" }),
+            text_fields: None,
+            edges: Some(vec![StructuralEdgeSpec {
+                edge_kind: "child_of".to_owned(),
+                target_ref: talk.to_hex(),
+                weight: None,
+            }]),
+            occurred_at: at,
+            learned_at: Some(at),
+        })
+        .expect_err("a structural TURN needs the adopted talk's append permit");
+    assert!(
+        refused
+            .message
+            .contains("conversation adopted DAG; append through append_dag_record"),
+        "{refused:?}"
+    );
+    assert_eq!(fixture.vault.get_entity_type(&turn)?, None);
+    assert!(
+        fixture
+            .vault
+            .edges_in(&talk)?
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::ChildOf)
+    );
+    Ok(())
+}
+
+// Astra T2: held tags keep the full Content check even for a bound companion.
+#[test]
+fn a_held_tag_witness_by_the_companion_needs_the_content_grant() -> TestResult {
+    let fixture = setup()?;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, _, companion_actor, _) = onboard_yuki_bring(&fixture, "work-talk-held-tags-yuki")?;
+    let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
+    let turn_id = fresh_id();
+    let at = fixture.vault.now_recorded_at();
+    let text = "on it: pulling the March invoice";
+    let turn = WitnessTurn {
+        conversation_ref: talk.to_hex(),
+        turn_ref: Some(turn_id.to_hex()),
+        thread_audience: None,
+        messages: vec![WitnessMessage {
+            id: None,
+            author: WitnessAuthor::Companion,
+            message_type: "dialogue".to_owned(),
+            content: text.to_owned(),
+            parts: None,
+            metadata: None,
+            is_visible: true,
+            order: 0,
+            quote: None,
+        }],
+        occurred_at: at,
+        assertions: WitnessAssertions::default(),
+    };
+    let tags: oneiron::memory::extraction::EncoderOutput =
+        serde_json::from_value(json!({ "spans": [] }))?;
+    let memory = fixture.vault.memory(companion_actor, EdgeActorClass::Agent);
+    let refused = memory
+        .witness_with_held_tags(&turn, &tags)
+        .expect_err("held tags require Content authority beyond the work-talk binding");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert!(
+        refused
+            .message
+            .contains("shared-vault role or named power does not authorize this write"),
+        "{refused:?}"
+    );
+    assert_eq!(fixture.vault.get_entity_type(&turn_id)?, None);
+    assert!(
+        fixture
+            .vault
+            .edges_in(&talk)?
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::ChildOf)
+    );
+
+    witness_text(&memory, &talk, WitnessAuthor::Companion, text, at)?;
+    assert_eq!(
+        transcript_roles_texts(&fixture, yuki, &talk)?,
+        vec![("companion".to_owned(), text.to_owned())],
+        "the same text still lands as one plain witness"
+    );
+    Ok(())
+}
+
+// Astra T3 / Sol F3: an unregistered replicated work-talk field admits no writer.
+#[test]
+fn a_work_talk_field_without_its_registration_admits_no_writer() -> TestResult {
+    let fixture = setup()?;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, _, companion_actor, _) =
+        onboard_yuki_bring(&fixture, "work-talk-unregistered-yuki")?;
+    let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
+
+    let body = fixture.vault.conversation_body(talk)?;
+    let forged = fresh_id();
+    let at = fixture.vault.now_recorded_at();
+    oneiron::test_doors::work_talk_replay::put_replicated_conversation(
+        &fixture.vault,
+        &forged,
+        &body.to_bytes()?,
+        at,
+    )?;
+    assert_eq!(
+        fixture.vault.conversation_body(forged)?.kind,
+        ConversationKind::Direct,
+        "the replicated clone landed without local registration"
+    );
+
+    let refused = witness_text(
+        &fixture.vault.memory(companion_actor, EdgeActorClass::Agent),
+        &forged,
+        WitnessAuthor::Companion,
+        "a forged binding must admit no writer",
+        at,
+    )
+    .expect_err("a work-talk field without its registration admits no writer");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    assert_eq!(refused.message, "conversation actor is not authorized");
+    assert!(
+        fixture
+            .vault
+            .edges_in(&forged)?
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::ChildOf)
+    );
+    Ok(())
+}
+
+// Astra T4: a MESSAGE reaching a second room cannot borrow work-talk read standing.
+#[test]
+fn a_message_of_another_room_does_not_read_through_a_work_talk_turn() -> TestResult {
+    let fixture = setup()?;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, _, _, yuki_outcome) = onboard_yuki_bring(&fixture, "work-talk-ambiguous-yuki")?;
+    let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
+    let at = fixture.vault.now_recorded_at();
+    witness_text(
+        &fixture
+            .vault
+            .memory(yuki_outcome.actor_ref, EdgeActorClass::Agent),
+        &talk,
+        WitnessAuthor::User,
+        "quarterly numbers look off, check the March invoice",
+        at,
+    )?;
+
+    let other = fresh_id();
+    witness_text(
+        &fixture.vault.memory(fixture.owner, EdgeActorClass::Human),
+        &other,
+        WitnessAuthor::User,
+        "owner note about the harbor lease renewal",
+        at,
+    )?;
+    assert!(
+        fixture.vault.members(other)?.is_empty(),
+        "neither bound person belongs to the other room"
+    );
+
+    // Read the ids before adding the edge: only the final read sees ambiguity.
+    let talk_page = fixture
+        .vault
+        .memory(yuki, EdgeActorClass::Human)
+        .conversation_transcript(&talk, None, 50)?
+        .value;
+    assert_eq!(talk_page.turns.len(), 1);
+    let turn_id = EntityId::from_hex(&talk_page.turns[0].id)?;
+    let other_page = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .conversation_transcript(&other, None, 50)?
+        .value;
+    assert_eq!(other_page.turns.len(), 1);
+    assert_eq!(other_page.turns[0].messages.len(), 1);
+    let message_id = EntityId::from_hex(&other_page.turns[0].messages[0].id)?;
+
+    fixture
+        .vault
+        .put_edge(&message_id, EdgeKind::PartOf, &turn_id, 1.0)?;
+    assert!(
+        fixture
+            .vault
+            .edges_out(&message_id)?
+            .iter()
+            .any(|edge| { edge.kind == EdgeKind::PartOf && edge.target == turn_id }),
+        "the extra PartOf edge landed"
+    );
+
+    let read_back = transcript_roles_texts(&fixture, yuki, &talk)?;
+    assert!(
+        read_back
+            .iter()
+            .any(|(_, text)| text.contains("March invoice")),
+        "the talk's own turn still reads: {read_back:?}"
+    );
+    assert!(
+        !read_back
+            .iter()
+            .any(|(_, text)| text.contains("harbor lease")),
+        "another room's MESSAGE reads through the work-talk binding: {read_back:?}"
+    );
+    Ok(())
+}
+
+// Sol F2: the generic TURN door cannot mint an append permit for work talk.
+#[test]
+fn a_generic_turn_create_cannot_enter_work_talk() -> TestResult {
+    let fixture = setup()?;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, _, _, _) = onboard_yuki_bring(&fixture, "work-talk-generic-turn-yuki")?;
+    let talk = conversation_of(&open_via_verb(&member_memory(&fixture, yuki)?)?)?;
+    let turn = fresh_id();
+    let at = fixture.vault.now_recorded_at();
+    let refused = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .conversations_turns_create(&ConversationTurnCreateInput {
+            conversation: talk.to_hex(),
+            id: Some(turn.to_hex()),
+            occurred_start: Some(at),
+            occurred_end: Some(at),
+            learned_at: Some(at),
+            body: json!({ "speaker": "user" }),
+            text: None,
+        })
+        .expect_err("the generic TURN door admits no work-talk writer, including the Owner");
+    assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST, "{refused:?}");
+    assert_eq!(refused.message, "conversation actor is not authorized");
+    assert_eq!(fixture.vault.get_entity_type(&turn)?, None);
+    assert!(
+        fixture
+            .vault
+            .edges_in(&talk)?
+            .iter()
+            .all(|edge| edge.kind != EdgeKind::ChildOf)
     );
     Ok(())
 }
