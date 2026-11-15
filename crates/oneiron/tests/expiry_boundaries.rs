@@ -334,7 +334,9 @@ fn a_feedback_preview_write_sweeps_a_preview_from_its_expiry_second_on() {
 #[test]
 fn a_tagging_trace_is_pruned_from_the_second_its_age_reaches_the_max() {
     use oneiron::tagging::{TaggingMarkerConfig, TaggingTraceHistory};
-    use oneiron::test_doors::tagging_trace_age::{prune_expired_traces, record_trace};
+    use oneiron::test_doors::untangle_regressions::{
+        prune_expired_tagging_traces, record_tagging_trace,
+    };
 
     const MAX_AGE: u64 = 100;
     let mut config = VaultConfig::device();
@@ -348,7 +350,7 @@ fn a_tagging_trace_is_pruned_from_the_second_its_age_reaches_the_max() {
     );
     let (_d, vault, _clock) = manual_vault(config);
     let turn = EntityId::from_bytes([3; 16]).expect("a turn id");
-    record_trace(&vault, turn, T0).expect("the trace is recorded");
+    record_tagging_trace(&vault, turn, T0).expect("the trace is recorded");
     let kept = || {
         vault
             .tagging_trace_history(Some(&turn))
@@ -357,13 +359,13 @@ fn a_tagging_trace_is_pruned_from_the_second_its_age_reaches_the_max() {
     };
     assert_eq!(kept(), 1);
     assert_eq!(
-        prune_expired_traces(&vault, T0 + MAX_AGE - 1).expect("the prune"),
+        prune_expired_tagging_traces(&vault, T0 + MAX_AGE - 1).expect("the prune"),
         0,
         "kept one second before its age reaches the max"
     );
     assert_eq!(kept(), 1);
     assert_eq!(
-        prune_expired_traces(&vault, T0 + MAX_AGE).expect("the prune"),
+        prune_expired_tagging_traces(&vault, T0 + MAX_AGE).expect("the prune"),
         1,
         "pruned at the second its age reaches the max"
     );
