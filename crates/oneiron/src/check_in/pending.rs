@@ -14,8 +14,8 @@
 //! there (Q3, Q9). The same resolver says whether a pinned holder may still
 //! answer (its live grant and its own check-in, re-read at each answer) and
 //! carries the agent holders' verdicts (Q4). `VerifiedChain` is the
-//! resolver over the verified records (2c). The host that wakes a due row is
-//! 2e; the agent verbs are 2f and 2l.
+//! resolver over the verified records (2c). The job that advances a due row
+//! is 2e; the agent verbs are 2f and 2l.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::schedule::Trigger;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -36,20 +37,16 @@ use crate::store::Store;
 pub(super) const PENDING: SideTable<EntityId, PendingCheckIn, Named> =
     SideTable::new(&side_table::CHECK_IN_PENDING);
 
-/// Each open pending check-in by its next due time (2e): the housekeeping
-/// pass reads it in order (`wake`), and the vault's wake reads its first row.
-pub(super) const DUE: SideTable<(u64, EntityId), (), Named> =
-    SideTable::new(&side_table::CHECK_IN_DUE);
-
 /// A natural key ([`PendingCheckIn::open_key`]) → the pending check-in a
 /// keyed open opened for it (2f): a repeat open reads it.
 const OPEN_KEY: SideTable<[u8; 32], EntityId, Named> =
     SideTable::new(&side_table::CHECK_IN_OPEN_KEY);
 
-/// Writes `row` and moves its `DUE` entry to the row's next due time, or
-/// drops it once the row is final. Every write of a pending row comes here,
-/// so the index holds each open row once, at its due time; a row written
-/// before the index existed gains its entry at its next write.
+/// Writes `row` and arms its due job at the row's next due time, or disarms
+/// it once the row is final (DESIGN 15-setting-primitive, stage 5b): the
+/// schedule's due index is the only index of open rows. Every write of a
+/// pending row comes here, so each open row has one armed row, at its due
+/// time.
 ///
 /// # Errors
 ///
@@ -59,26 +56,31 @@ pub(super) fn store_pending_in_txn(
     txn: &mut heed::RwTxn<'_>,
     row: &PendingCheckIn,
 ) -> Result<()> {
-    let stored_due = PENDING
-        .get(store, txn, &row.id)?
-        .and_then(|stored| stored.next_due_at());
-    let due = row.next_due_at();
-    if let Some(at) = stored_due.filter(|at| Some(*at) != due) {
-        DUE.delete(store, txn, &(at, row.id))?;
-    }
-    if let Some(at) = due {
-        DUE.put(store, txn, &(at, row.id), &())?;
+    match row.next_due_at() {
+        Some(at) => crate::schedule::arm_in_txn(
+            store,
+            txn,
+            &super::wake::CHECK_IN_DUE_JOB,
+            Some(row.id),
+            Trigger::At { at },
+        )?,
+        None => {
+            crate::schedule::disarm_in_txn(
+                store,
+                txn,
+                super::wake::CHECK_IN_DUE_JOB.code,
+                Some(row.id),
+            )?;
+        }
     }
     PENDING.put(store, txn, &row.id, row)
 }
 
-/// Deletes the row `id`, its `DUE` entry and the `OPEN_KEY` entry that
+/// Deletes the row `id`, its armed due job and the `OPEN_KEY` entry that
 /// names it.
 fn delete_pending_in_txn(store: &Store, txn: &mut heed::RwTxn<'_>, id: &EntityId) -> Result<()> {
     if let Some(stored) = PENDING.get(store, txn, id)? {
-        if let Some(at) = stored.next_due_at() {
-            DUE.delete(store, txn, &(at, *id))?;
-        }
+        crate::schedule::disarm_in_txn(store, txn, super::wake::CHECK_IN_DUE_JOB.code, Some(*id))?;
         let key = stored.open_key();
         if OPEN_KEY.get(store, txn, &key)? == Some(*id) {
             OPEN_KEY.delete(store, txn, &key)?;
