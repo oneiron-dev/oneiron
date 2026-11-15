@@ -162,15 +162,23 @@ fn provenance(
             supersedes,
         });
     }
-    let evidence = evidence_in_txn(vault, txn, &cell.digest())?
-        .into_iter()
-        .map(|(receipt, evidence)| LearningEvidenceView { receipt, evidence })
-        .collect();
     Ok(LearningProvenanceView {
         cell: cell.clone().into(),
         heads,
-        evidence,
+        evidence: evidence_views(vault, txn, cell)?,
     })
+}
+
+/// The evidence rows recorded into `cell`, as its provenance shows them.
+fn evidence_views(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+) -> Result<Vec<LearningEvidenceView>> {
+    Ok(evidence_in_txn(vault, txn, &cell.digest())?
+        .into_iter()
+        .map(|(receipt, evidence)| LearningEvidenceView { receipt, evidence })
+        .collect())
 }
 
 /// Reads the existing backoff projection; never folds a client-supplied estimate.
@@ -267,7 +275,10 @@ fn type_parents(vault: &Vault, cell: &LearningCell) -> Result<Vec<TypeRef>> {
 /// A cell as its own runs alone make it, folded now
 /// ([`super::project::fold_cell_at_catalog_in_txn`]): never a borrowed
 /// cell's reading or a prior's provenance, so the answer says nothing of
-/// what lies outside the cell. The request is checked as [`read_learning`]
+/// what lies outside the cell. Its provenance is the cell's own evidence
+/// rows and no head: a stored head is projected under the vault's window,
+/// the cell's stored prior and every judge conversion, and written again
+/// when one of them moves. The request is checked as [`read_learning`]
 /// checks it.
 fn read_learning_within_cell(
     vault: &Vault,
@@ -279,7 +290,11 @@ fn read_learning_within_cell(
     let txn = vault.store.env.read_txn()?;
     let estimate =
         super::project::fold_cell_at_catalog_in_txn(vault, &txn, &cell, crate::unix_seconds_now())?;
-    let provenance = provenance(vault, &txn, &cell)?;
+    let provenance = LearningProvenanceView {
+        cell: cell.clone().into(),
+        heads: Vec::new(),
+        evidence: evidence_views(vault, &txn, &cell)?,
+    };
     let attributed_outcome_receipts = attributed_outcome_receipts(&provenance);
     Ok(LearningCellView {
         cell: cell.into(),
