@@ -15,7 +15,7 @@ use crate::secret_lease::SecretGrantRef;
 
 use super::connector_call::{
     ConnectorCallHost, ConnectorCallInvocation, ConnectorCallOutcome, ConnectorCallRequest,
-    ConnectorResultAbsence, PENDING_CALLS, PendingConnectorCall, connector_call_ref, now_ms,
+    ConnectorResultAbsence, PENDING_CALLS, PendingConnectorCall, connector_call_ref,
 };
 
 /// The reason a call gets when its host identity already names a held call
@@ -172,7 +172,7 @@ impl Vault {
             call_seq: invocation.call_seq,
             principal_ref: memory.actor().to_hex(),
             remember_context: super::connector_remember::capture(memory),
-            held_at_ms: now_ms(),
+            held_at_ms: crate::unix_millis_now(),
             settled: None,
             held_reasons: Vec::new(),
             owner_ask_seq: None,
@@ -254,7 +254,7 @@ impl Vault {
                     return Ok((settled.outcome(), held.source_rows));
                 }
                 if let Some(expired) =
-                    self.expire_connector_call_if_due(&call_ref, &held, now_ms())?
+                    self.expire_connector_call_if_due(&call_ref, &held, crate::unix_millis_now())?
                 {
                     return Ok((expired, held.source_rows));
                 }

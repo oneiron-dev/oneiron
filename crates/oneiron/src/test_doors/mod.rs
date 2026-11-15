@@ -15,6 +15,7 @@ pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod builtin_pack_seed;
 pub mod callable_skill;
+pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod check_in;
 pub mod checkpoint_registry;
@@ -32,6 +33,8 @@ pub mod comm_late_stop;
 pub mod comm_thread_member_claim_reads;
 pub mod companion_grant_index;
 pub mod connector_key_suspend;
+pub mod consent_graduation_demotion;
+pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;
@@ -40,6 +43,7 @@ pub mod derive;
 pub mod derive_verbs;
 pub mod disclosure_word_sources;
 pub mod dreamer_attempt_binding;
+pub mod dreamer_partition_window;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
@@ -47,6 +51,8 @@ pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
 pub mod free_time_handoff;
+#[cfg(feature = "sync")]
+pub mod full_copy_mark;
 pub mod grant_roles;
 pub mod graph_ask_centre;
 #[cfg(feature = "sync")]
@@ -69,6 +75,7 @@ pub mod lifted_text;
 pub mod live_run_claim_put;
 #[cfg(feature = "sync")]
 pub mod live_window_import;
+pub mod machine_history;
 pub mod mail_counterparty;
 pub mod mail_landing;
 pub mod membership;
@@ -118,8 +125,11 @@ pub mod turn_programs;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod verb_hook_ask;
+pub mod voice_generation_epoch;
 pub mod wake_d1_park_release;
+pub mod wake_envelope_ack;
 pub mod workspace_token;
+pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
 #[cfg(feature = "sync")]

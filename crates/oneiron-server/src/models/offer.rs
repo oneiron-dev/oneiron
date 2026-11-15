@@ -11,7 +11,7 @@ use oneiron::llm::run_admission::{
 use oneiron::settings::ReadDestination;
 use oneiron::{ModelId, ModelLocality};
 #[cfg(feature = "mesh")]
-use oneiron_llm_own_server::MeshPeerProof;
+use oneiron_llm::oneiron_rpc::MeshPeerProof;
 
 use crate::config::models::{ProviderConfig, ProviderKind};
 
