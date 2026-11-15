@@ -428,15 +428,11 @@ fn executor_error_parks_attempt_and_refunds_reservation() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
-#[cfg(any())]
-/// Fails every attempt with an error whose Display exceeds the store's park
-/// reason ceiling (the qodo ONE-1683 review finding: the unclamped reason
-/// used to fail park validation, leaving the admitted attempt leased).
+/// Fails every attempt with an error whose Display exceeds the retired
+/// 512-byte park reason ceiling (the qodo ONE-1683 review finding: the
+/// whole reason is stored, leaving nothing leased).
 struct OversizedErrorExecutor;
 
-// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
-#[cfg(any())]
 impl DreamerAttemptExecutor for OversizedErrorExecutor {
     async fn execute(
         &mut self,
@@ -449,13 +445,9 @@ impl DreamerAttemptExecutor for OversizedErrorExecutor {
     }
 }
 
-// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
-#[cfg(any())]
 #[test]
 fn executor_error_with_oversized_display_still_parks() -> Result<()> {
-    // Also pins the MAX_WAKE_PARK_REASON_BYTES mirror against the store's
-    // real validation: if the store ceiling ever shrank below the mirror,
-    // the park here would fail and so would this test.
+    // The oversized error parks with its whole Display stored; nothing is clamped.
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "oversized-error", 10)?;
@@ -469,8 +461,9 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
         &WakeCancellation::new(),
     ));
     let error = result.expect_err("the executor error still propagates");
+    let display = error.to_string();
     assert!(
-        error.to_string().len() > MAX_WAKE_PARK_REASON_BYTES,
+        display.len() > 512,
         "the propagated error keeps its full Display"
     );
     let crate::Error::Store(crate::error::StoreError::AnalyzerError(payload)) = error else {
@@ -478,11 +471,18 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
     };
     assert_eq!(payload, format!("x{}", "語".repeat(400)));
 
-    // The attempt is parked under the clamped reason, not orphaned-leased.
+    // The attempt is parked under the whole reason, not orphaned-leased.
     let parked = store
         .parked_attempt(queued.attempt.id)?
         .expect("parked row");
-    assert!(parked.reason.len() <= MAX_WAKE_PARK_REASON_BYTES);
+    assert_eq!(
+        parked.reason,
+        format!("{DREAMER_EXECUTOR_ERROR_PARK_REASON}: {display}")
+    );
+    assert!(
+        parked.reason.len() > 512,
+        "the whole oversized reason is stored"
+    );
 
     // The budget reservation was refunded, not leaked.
     assert!(
@@ -497,21 +497,20 @@ fn executor_error_with_oversized_display_still_parks() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-WAKE-PARK-CLAMP-RETIRED]: the wake park-reason clamp was removed (#2690); the whole reason is stored: retire the clamp checks or assert whole-reason storage?
-#[cfg(any())]
 #[test]
-fn oversized_executor_park_reason_is_clamped() -> Result<()> {
-    // The ordinary Park arm gets the same clamp: an over-limit
-    // executor-authored reason failing park validation would propagate
-    // after the refund but before the park, leaving the attempt leased.
+fn oversized_executor_park_reason_is_stored_whole() -> Result<()> {
+    // The ordinary Park arm stores the whole reason: an oversized
+    // executor-authored reason parks without failing validation, leaving
+    // nothing leased.
     let (_dir, vault) = open_vault();
     let store = DreamerRunnerStore::new(&vault);
     let queued = enqueue_micro(&store, "long-park", 10)?;
     let node_id = crate::identity::load_or_mint_client_id(&vault)?;
 
+    let long_reason = format!("x{}", "語".repeat(400));
     let mut driver = DreamerWakeDriver::new(&vault, "wake", frozen_deadline(0, 180_000));
     let mut parker = ParkingExecutor {
-        reason: format!("x{}", "語".repeat(400)),
+        reason: long_reason.clone(),
         park_via_store_first: false,
     };
     let report = block_on_ready(driver.run_wake_pass(
@@ -524,7 +523,11 @@ fn oversized_executor_park_reason_is_clamped() -> Result<()> {
     let parked = store
         .parked_attempt(queued.attempt.id)?
         .expect("parked row");
-    assert!(parked.reason.len() <= MAX_WAKE_PARK_REASON_BYTES);
+    assert_eq!(parked.reason, long_reason);
+    assert!(
+        parked.reason.len() > 512,
+        "the whole oversized reason is stored"
+    );
     assert!(parked.reason.starts_with('x'));
     let budget = store.budget("wake")?.expect("budget row");
     assert_eq!(budget.reserved_units, 0);
