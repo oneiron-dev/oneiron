@@ -199,6 +199,7 @@ where
         wording: "May this write land without the owner's review?".to_owned(),
         notes: checker,
         calibrated: None,
+        world_hold: None,
     })
 }
 
