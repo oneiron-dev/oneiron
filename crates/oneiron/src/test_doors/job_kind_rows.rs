@@ -3,29 +3,34 @@
 //!
 //! Each fixture enqueues one job, then the same job again, and renders one
 //! line per call: the outcome, then the stored row (its kind, payload bytes,
-//! state, dedupe key, run id, task ref and the rest) and its private run-tree
-//! row. A refused call renders its error text.
+//! state, dedupe key, run id, task ref and the rest of its fields), its
+//! private run-tree row, and its authority stamps with the Gate receipt each
+//! names. A refused call renders its error text.
 //!
-//! Attempt ids are random and the queue stamps instants from the vault clock,
-//! so the table names each attempt by its order of first appearance (`A1`,
-//! `A2`, ...; also inside the payload hex) and says only whether an instant
-//! equals the row's own `created_at`. The same table at a PR's base and at its
+//! Attempt and entity ids are random and the queue stamps instants from the
+//! vault clock, so the table names each attempt by its order of first
+//! appearance (`A1`, `A2`, ...; also inside the payload hex), each other entity
+//! the same way (`E1`, ...), and says only whether an instant equals the row's
+//! own `created_at`. The same table at a PR's base and at its
 //! head shows that the PR kept every stored byte (M-1 keep path).
 
-use crate::Vault;
 use crate::attempt_queue::AttemptId;
 use crate::attempt_queue::AttemptQueue;
+use crate::attempt_queue::AttemptRecord;
 use crate::attempt_queue::dispatch_payload::AGENT_DISPATCH_ATTEMPT_TYPE;
 use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttempt,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
 };
 use crate::error::Result;
+use crate::store::GateDecisionId;
+use crate::{EntityId, Vault};
 
 /// The rendered lines, and the attempts named so far.
 struct Table<'a> {
     vault: &'a Vault,
     ids: Vec<AttemptId>,
+    entities: Vec<EntityId>,
     lines: Vec<String>,
 }
 
@@ -47,6 +52,75 @@ impl Table<'_> {
 
     fn named(&mut self, id: Option<AttemptId>) -> String {
         id.map_or_else(|| "none".to_owned(), |id| self.name(id))
+    }
+
+    /// `E<n>`: the order in which entity `id` first appeared in this table.
+    fn entity(&mut self, id: EntityId) -> String {
+        let at = if let Some(at) = self.entities.iter().position(|known| *known == id) {
+            at
+        } else {
+            self.entities.push(id);
+            self.entities.len() - 1
+        };
+        format!("E{}", at + 1)
+    }
+
+    /// The Gate receipt `receipt_id` names, as stamped for `row` by `actor`:
+    /// its fixed fields, and whether its actor, instant and diff handle are
+    /// the stamp's actor, the row's `created_at` and the row's id.
+    fn receipt(
+        &self,
+        receipt_id: [u8; 16],
+        row: &AttemptRecord,
+        actor: EntityId,
+    ) -> Result<String> {
+        let txn = self.vault.store.env.read_txn()?;
+        let Some(receipt) = self
+            .vault
+            .store
+            .gate_decision_in_txn(&txn, GateDecisionId::from_bytes(receipt_id))?
+        else {
+            return Ok("none".to_owned());
+        };
+        Ok(format!(
+            "{}/{:?}/{}/{}/actor_eq={}/created_eq={}/diff_eq={}/claim={:?}/grant={:?}/redacted={}",
+            receipt.outcome,
+            receipt.reason_codes,
+            receipt.content_kind,
+            receipt.actor_class,
+            receipt.actor_ref == Some(actor.to_hex()),
+            receipt.created_at == row.created_at,
+            receipt.diff_handle == row.id.as_bytes(),
+            receipt.claim_id,
+            receipt.grant_ref,
+            receipt.redacted_at.is_some(),
+        ))
+    }
+
+    /// `row`'s base-agent and resident authority stamps, each with its receipt.
+    fn stamps(&mut self, row: &AttemptRecord) -> Result<String> {
+        let (stamp, resident) =
+            crate::dreamer_runner::authority::attempt_stamps(self.vault, row.id)?;
+        let stamp = match stamp {
+            Some(stamp) => format!(
+                "facet={},attempt_eq={},actor={},receipt={}",
+                stamp.facet,
+                stamp.attempt_id == *row.id.as_bytes(),
+                self.entity(stamp.actor),
+                self.receipt(stamp.receipt_id, row, stamp.actor)?,
+            ),
+            None => "none".to_owned(),
+        };
+        let resident = match resident {
+            Some(resident) => format!(
+                "attempt_eq={},resident={},receipt={}",
+                resident.attempt_id == *row.id.as_bytes(),
+                self.entity(resident.resident),
+                self.receipt(resident.receipt_id, row, resident.resident)?,
+            ),
+            None => "none".to_owned(),
+        };
+        Ok(format!("stamp={stamp}|resident_stamp={resident}"))
     }
 
     /// `bytes` as lowercase hex, with every named attempt id as `<A<n>>`.
@@ -83,12 +157,32 @@ impl Table<'_> {
         let tree = DreamerRunnerStore::new(self.vault).run_tree(returned.id)?;
         let run_tree = match tree {
             Some(tree) => format!(
-                "parent={},created_eq={}",
+                "id_eq={},parent={},created_eq={}",
+                tree.attempt_id == returned.id,
                 self.named(tree.parent_attempt),
                 tree.created_at == row.created_at
             ),
             None => "none".to_owned(),
         };
+        let stamps = self.stamps(&row)?;
+        let tail = format!(
+            "manifest={},executor_model={:?},executor_seat={:?},executor_role={:?}\
+             ,planned_binding={},read_set={},cancel_default={},result_ref={},signals={}\
+             ,asks={},placement={},history={},budget_refusal={}",
+            row.manifest.len(),
+            row.executor_model,
+            row.executor_seat,
+            row.executor_role,
+            row.planned_binding.is_some(),
+            row.read_set.is_some(),
+            row.cancel_state == Default::default(),
+            row.result_ref.is_some(),
+            row.signals.len(),
+            row.asks.len(),
+            row.placement.is_some(),
+            row.history.len(),
+            row.budget_refusal.is_some(),
+        );
         let retry_of = self.named(row.retry_of);
         let payload = self.payload_hex(&row.payload);
         let at_created = |instant: Option<u64>| instant.map(|instant| instant == row.created_at);
@@ -98,7 +192,7 @@ impl Table<'_> {
              |claimed_at_eq_created={:?}|scheduled_at_eq_created={:?}|retry_of={retry_of}\
              |folded_retries={}|backoff_until_eq_created={:?}|last_error={:?}|task_ref={:?}\
              |run_id={:?}|dedupe_key={:?}|dedupe_actor_ref={:?}|updated_eq_created={}\
-             |settled_at_eq_created={:?}|events={}|run_tree={run_tree}",
+             |settled_at_eq_created={:?}|events={}|run_tree={run_tree}|{stamps}|tail={tail}",
             returned == row,
             row.kind,
             row.state,
@@ -147,6 +241,7 @@ pub fn dreamer_core_rows(vault: &Vault) -> Result<Vec<String>> {
     let mut table = Table {
         vault,
         ids: Vec::new(),
+        entities: Vec::new(),
         lines: Vec::new(),
     };
     for call in 1..=2 {

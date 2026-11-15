@@ -38,4 +38,9 @@ fn the_dreamer_enqueue_doors_store_the_pinned_rows() {
     assert_eq!(rows.len(), 9, "one line per call");
     assert!(rows[0].starts_with("runner|1|Enqueued|A1|"), "{}", rows[0]);
     assert!(rows[1].starts_with("runner|2|Existing|A1|"), "{}", rows[1]);
+    assert!(
+        rows[0].contains("|stamp=facet="),
+        "the runner job is stamped: {}",
+        rows[0]
+    );
 }
