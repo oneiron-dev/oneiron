@@ -381,6 +381,16 @@ pub(super) fn run(
         let landed = proposals::land(vault, CURATOR_FACET, attempt.status.attempt.id, |landing| {
             vault.with_write_txn_grouped(|txn| {
                 landing.land_in_txn(vault, txn, &finding, now, |txn| {
+                    // Judged again in the rung's own write: a contact
+                    // mapping restricts by other contact heads, which can
+                    // move after the grading read while its body stays
+                    // (Astra delta review on #8238, F1). The next pass
+                    // grades it again and asks a person.
+                    if rung_lifts_restriction_in(vault, &*txn, &value)? {
+                        return Err(Error::ConcurrentWrite(
+                            "curator target restricts someone's access since it was graded",
+                        ));
+                    }
                     apply_in_txn(vault, txn, &value, now)
                 })
             })

@@ -216,9 +216,11 @@ impl Vault {
     /// access (`federation::claim_removal_widens_in`): a claim item whose
     /// row stands, which its inverse retracts, or a settlement whose answer
     /// names a winner it landed from retained candidates
-    /// (`dreamer_consolidation::settlement_revert_lifts_restriction_in`).
-    /// Reopening a superseded claim or an archived row, and taking back an
-    /// edge, close nothing.
+    /// (`dreamer_consolidation::settlement_revert_lifts_restriction_in`). A
+    /// claim item whose row is a settlement answer reverts as a settlement
+    /// (`dreamer_consolidation::revert` routes it so), so it is judged as
+    /// one too (Muse delta review on #8238). Reopening a superseded claim or
+    /// an archived row, and taking back an edge, close nothing.
     fn inverse_lifts_restriction_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -231,6 +233,11 @@ impl Vault {
                         && body.lifecycle == crate::claim::ClaimLifecycleStatus::Active
                         && crate::federation::claim_removal_widens_in(self, txn, &body)?
                     {
+                        return Ok(true);
+                    }
+                    if crate::dreamer_consolidation::settlement_revert_lifts_restriction_in(
+                        self, txn, *row,
+                    )? {
                         return Ok(true);
                     }
                 }
