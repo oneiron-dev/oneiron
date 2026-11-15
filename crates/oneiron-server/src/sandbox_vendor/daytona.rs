@@ -90,21 +90,6 @@ struct CommandStatus {
     exit_code: Option<i32>,
 }
 
-/// The command line of `argv` for the session's shell: every argument is a
-/// plain word, so nothing in it is shell syntax.
-fn command_line(argv: &[&str]) -> oneiron::Result<String> {
-    let plain = |arg: &&str| {
-        !arg.is_empty()
-            && arg
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte))
-    };
-    if argv.is_empty() || !argv.iter().all(plain) {
-        return Err(HTTP.failed("a vendor command argument is not a plain word"));
-    }
-    Ok(argv.join(" "))
-}
-
 impl DaytonaClient {
     pub(super) fn new(vault: Weak<Vault>, key_name: String, endpoints: DaytonaEndpoints) -> Self {
         Self {
@@ -265,7 +250,7 @@ impl VendorSandboxClient for DaytonaClient {
         argv: &[&str],
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<i32> {
-        let command = command_line(argv)?;
+        let command = HTTP.command_line(argv)?;
         let key = self.key.read()?;
         let http = HTTP.client()?;
         let started: CommandStarted = Self::send(

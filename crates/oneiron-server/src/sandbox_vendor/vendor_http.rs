@@ -69,8 +69,23 @@ impl VendorHttp {
         }
     }
 
+    /// The command line of `argv` for the vendor's shell: every argument is
+    /// a plain word, so nothing in it is shell syntax.
+    pub(super) fn command_line(self, argv: &[&str]) -> oneiron::Result<String> {
+        let plain = |arg: &&str| {
+            !arg.is_empty()
+                && arg
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || b"_./-".contains(&byte))
+        };
+        if argv.is_empty() || !argv.iter().all(plain) {
+            return Err(self.failed("a vendor command argument is not a plain word"));
+        }
+        Ok(argv.join(" "))
+    }
+
     /// The vendor's name for its copy of a digest-pinned guest image (a
-    /// Daytona snapshot, an E2B template), built once from the image:
+    /// Daytona or boat snapshot, an E2B template), built once from the image:
     /// `oneiron-guest-<first 12 hex of its digest>`.
     pub(super) fn guest_image_name(self, guest_image: &str) -> oneiron::Result<String> {
         let digest = guest_image

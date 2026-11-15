@@ -7,10 +7,12 @@
 //! answers none, and the run is refused as the vendor unavailable: ours never
 //! runs in its place (L8-43-SWITCH = A).
 //!
-//! Daytona, E2B and Modal are the vendors served so far (L8-43-VENDORS = A:
+//! Daytona, E2B, Modal and boat are the vendors served so far (L8-43-VENDORS = A:
 //! Daytona, then E2B, Modal, boat, InstaBox). A vendor's batch backend runs
 //! on Linux only, as `VendorBatchBackend` does.
 
+#[cfg(target_os = "linux")]
+mod boat;
 #[cfg(target_os = "linux")]
 mod daytona;
 #[cfg(target_os = "linux")]
@@ -33,6 +35,8 @@ use oneiron::code_sandbox::{SandboxProvider, SandboxVendor};
 use oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends;
 
 #[cfg(target_os = "linux")]
+pub(crate) use boat::BoatEndpoints;
+#[cfg(target_os = "linux")]
 pub(crate) use daytona::DaytonaEndpoints;
 #[cfg(target_os = "linux")]
 pub(crate) use e2b::E2bEndpoints;
@@ -51,6 +55,8 @@ pub(crate) struct ServedSandboxBackends {
     e2b: E2bEndpoints,
     #[cfg(target_os = "linux")]
     modal: ModalEndpoints,
+    #[cfg(target_os = "linux")]
+    boat: BoatEndpoints,
     /// Where each vendor run keeps its private scratch.
     #[cfg(target_os = "linux")]
     scratch_root: PathBuf,
@@ -68,6 +74,8 @@ impl ServedSandboxBackends {
             e2b: E2bEndpoints::default(),
             #[cfg(target_os = "linux")]
             modal: ModalEndpoints::default(),
+            #[cfg(target_os = "linux")]
+            boat: BoatEndpoints::default(),
             #[cfg(target_os = "linux")]
             scratch_root: std::env::temp_dir().join("oneiron-vendor-sandbox"),
         }
@@ -114,6 +122,21 @@ impl ServedSandboxBackends {
         }
     }
 
+    /// The backends of `vault`, reaching boat's API at `boat` and keeping
+    /// each run's scratch under `scratch_root`.
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    pub(crate) fn with_boat(
+        vault: &Arc<Vault>,
+        boat: BoatEndpoints,
+        scratch_root: PathBuf,
+    ) -> Self {
+        Self {
+            boat,
+            scratch_root,
+            ..Self::new(vault)
+        }
+    }
+
     /// `vendor`'s batch backend on the owner's key named `key_name`.
     #[cfg(target_os = "linux")]
     fn vendor_backend(
@@ -142,7 +165,12 @@ impl ServedSandboxBackends {
                 key_name,
                 self.modal.clone(),
             )),
-            SandboxVendor::Boat | SandboxVendor::Instabox => return None,
+            SandboxVendor::Boat => Arc::new(boat::BoatClient::new(
+                Arc::downgrade(vault),
+                key_name,
+                self.boat.clone(),
+            )),
+            SandboxVendor::Instabox => return None,
         };
         Some(Box::new(VendorBatchBackend::new(
             client,
