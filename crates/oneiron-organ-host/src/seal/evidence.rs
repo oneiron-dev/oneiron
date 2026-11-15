@@ -280,25 +280,34 @@ fn unproven(code: &str) -> EsignSealerError {
     }
 }
 
-/// The path pkix builds from `leaf` through `pool` to an anchor and finds
-/// valid at `valid_at`: leaf first, the anchor left out. Only the
-/// certificates on it are vouched for, never the rest of what a token or
-/// a chain carried.
+/// A path from `leaf` to an anchor that pkix finds valid at `valid_at`,
+/// leaf first: `leaf` and then the rest of `pool` in its order, when pkix
+/// validates all of it (the organ's first try: pkix-chain's positional
+/// path), else the one pkix builds through `pool`, the anchor left out.
+/// Only the certificates on it are vouched for, never the rest of what a
+/// token or a chain carried.
 fn built_path<'a>(
     leaf: &Certificate,
     pool: impl IntoIterator<Item = &'a Certificate>,
     anchors: &[TrustAnchor],
     valid_at: u64,
 ) -> Option<Vec<Certificate>> {
-    let pool: CertPool = pool.into_iter().cloned().collect();
-    let path = pkix_path_builder::build_first_valid_path(
-        leaf,
-        &pool,
-        anchors,
-        &ValidationPolicy::new(valid_at),
-        &DefaultVerifier,
-    )
-    .ok()?;
+    let pool: Vec<Certificate> = pool.into_iter().cloned().collect();
+    let policy = ValidationPolicy::new(valid_at);
+    let supplied: Vec<Certificate> = std::iter::once(leaf.clone())
+        .chain(
+            pool.iter()
+                .filter(|certificate| *certificate != leaf)
+                .cloned(),
+        )
+        .collect();
+    if pkix_chain::pkix_path::validate_path(&supplied, anchors, &policy, &DefaultVerifier).is_ok() {
+        return Some(supplied);
+    }
+    let pool: CertPool = pool.into_iter().collect();
+    let path =
+        pkix_path_builder::build_first_valid_path(leaf, &pool, anchors, &policy, &DefaultVerifier)
+            .ok()?;
     let from_leaf = path.first() == Some(leaf);
     from_leaf.then_some(path)
 }
@@ -790,8 +799,14 @@ impl Pdf<'_> {
             let Ok(field) = node.as_dict() else {
                 continue;
             };
-            let signature = match field.get(b"FT").and_then(lopdf::Object::as_name) {
-                Ok(kind) => kind == b"Sig".as_slice(),
+            // Only a field with no /FT of its own inherits; one it has,
+            // direct or by reference, decides, and one that names no
+            // type is no signature field.
+            let signature = match field.get(b"FT") {
+                Ok(kind) => document
+                    .dereference(kind)
+                    .and_then(|(_, kind)| kind.as_name())
+                    .is_ok_and(|kind| kind == b"Sig".as_slice()),
                 Err(_) => inherited,
             };
             if signature
@@ -963,14 +978,24 @@ impl RevocationChecker for DssRevocation {
         cert: &Certificate,
         anchor: &TrustAnchor,
     ) -> pkix_revocation::Result<()> {
-        let Some(issuer) = self.anchors.iter().find(|candidate| {
+        // Every configured certificate of the anchor's name and key: one
+        // whose KeyUsage lets the key sign CRLs authorises it (the organ's
+        // rule for an authenticated holder), whichever comes first.
+        let mut verdict = Err(pkix_revocation::Error::OcspStatusUnknown);
+        for issuer in self.anchors.iter().filter(|candidate| {
             candidate.tbs_certificate.subject == anchor.subject
                 && candidate.tbs_certificate.subject_public_key_info
                     == anchor.subject_public_key_info
-        }) else {
-            return Err(pkix_revocation::Error::OcspStatusUnknown);
-        };
-        self.answer(cert, issuer)
+        }) {
+            verdict = self.answer(cert, issuer);
+            if matches!(
+                verdict,
+                Ok(()) | Err(pkix_revocation::Error::Revoked { .. })
+            ) {
+                break;
+            }
+        }
+        verdict
     }
 }
 
