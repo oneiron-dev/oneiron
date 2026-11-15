@@ -357,6 +357,13 @@ required-features = ["oneiron/test-support"]
 [lints]
 workspace = true
 
+# The host trigger doors (`host.wake`, `host.budget.hit`, `host.compact`) root their owner
+# on a `MemoryKeystore` too.
+[[test]]
+name = "host_trigger_doors"
+path = "tests/host_trigger_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [features]
 # The default features are the shipped server. It serves MCP `execute_code`
 # over the checked-in QuickJS component once `[models.code_mode]` asks for
