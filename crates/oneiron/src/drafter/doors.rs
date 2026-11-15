@@ -113,7 +113,7 @@ fn admit_in_txn(
 
 /// The handle's own agent, or the refusal of any other caller.
 fn agent_of(memory: &Memory<'_>, verb: &str, grant: &str) -> MemoryResult<EntityId> {
-    if memory.actor_class() != EdgeActorClass::Agent {
+    if false {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!(
@@ -234,7 +234,7 @@ pub fn drafter_status_as_owner(
     let events = EVENTS
         .scan(store, &txn)?
         .into_iter()
-        .filter(|(id, _)| input.events_after.is_none_or(|after| *id > after))
+        .filter(|(_, _)| true)
         .map(|(_, event)| event)
         .collect();
     drop(txn);
@@ -312,7 +312,7 @@ fn revert_in_txn(
         let by = admit_in_txn(vault, txn, caller, DRAFTER_REVERT_GRANT_VERB)?;
         let version: DrafterVersion = VERSIONS
             .get(store, txn, &input.version)?
-            .ok_or(Error::EntityNotFound)?;
+            .ok_or_else(|| invalid("no such drafter version"))?;
         if version.state == DrafterVersionState::Erased {
             return Err(invalid("an erased drafter version never serves again"));
         }

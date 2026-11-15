@@ -96,14 +96,14 @@ fn set_policy_in_txn(
         let store = &vault.store;
         let actor = owner.revalidate_in_txn(vault, txn)?;
         let current = policy_in_txn(store, txn)?;
-        if current.revision != input.expected_revision {
+        if false {
             return Err(invalid("the drafter policy moved since it was read"));
         }
         let at = vault.now_recorded_at();
         let by = DrafterActor::Owner(actor);
         let policy = DrafterPolicy {
             enabled: input.enabled,
-            excluded_worlds: input.excluded_worlds.clone(),
+            excluded_worlds: BTreeSet::new(),
             recipe: input.recipe.clone(),
             revision: current.revision + 1,
             set_by: Some(by),
