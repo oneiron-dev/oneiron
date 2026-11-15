@@ -228,6 +228,52 @@ fn binding_fixture() -> (Fixture, AuthorityKey, AuthorityKey, EntityId) {
     (fixture, bound_key, unbound_key, actor)
 }
 
+/// The slip id the burn fixture mints.
+const BURNED_SLIP: [u8; 32] = [0x91; 32];
+
+/// Home with a live capability slip and a federation confirm covered, its
+/// adopter, and the confirm.
+fn burn_fixture() -> (Fixture, AuthorityConfirmAction) {
+    let (home, issuer, home_dir) = root_home();
+    let root = home.ensure_host_root_slip(&issuer).expect("host root slip");
+    let issued_at = home.capability_slip_now().expect("slip clock");
+    let mut claims = root.claims;
+    claims.slip_id = BURNED_SLIP;
+    claims.issued_at = issued_at;
+    claims.expires_at = issued_at + 3_600;
+    claims.ttl_secs = 3_600;
+    home.mint_capability_slip(&issuer, claims)
+        .expect("mint covered slip");
+    let covered = AuthorityConfirmAction {
+        kind: AuthorityConfirmKind::Accept,
+        confirm_id: [0xD1; 32],
+        peer_vault_id: [0xD2; 32],
+        epoch: 1,
+        nonce: [0xD3; 16],
+    };
+    let entry = sign_next_host_op(
+        &home,
+        &issuer,
+        AuthorityOp::FederationConfirm(covered.clone()),
+    )
+    .expect("sign covered confirm");
+    put_signed_entries(&home, &[entry]).expect("store covered confirm");
+    let slips = home.authority_fold().expect("home folds").slips;
+    assert!(
+        slips.mints.contains_key(&BURNED_SLIP) && !slips.consumed.contains(&BURNED_SLIP),
+        "the covered slip is live"
+    );
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    (fixture, covered)
+}
+
 /// Signs `op` on home and stores it on both vaults.
 fn sign_and_share(fixture: &Fixture, op: AuthorityOp) -> AuthorityLogEntry {
     let entry = sign_next_host_op(&fixture.home, &fixture.issuer, op).expect("sign tail");
@@ -538,6 +584,47 @@ fn binding_an_actor_a_covered_row_bound_still_needs_history() {
     assert!(
         home_fold.valid_entries.contains(&hash),
         "home accepts a second key's binding of the same actor"
+    );
+    let err = fixture
+        .adopting
+        .authority_fold()
+        .expect_err("adopting needs history");
+    assert!(
+        matches!(
+            err,
+            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+        ),
+        "history required, got {err:?}"
+    );
+}
+
+#[test]
+fn slip_burn_below_a_rejected_tail_row_still_needs_history() {
+    let (fixture, covered) = burn_fixture();
+    let reused = AuthorityConfirmAction {
+        nonce: [0xD4; 16],
+        ..covered
+    };
+    let rejected = sign_and_share(&fixture, AuthorityOp::FederationConfirm(reused));
+    let rejected_hash = authority_entry_hash(&rejected).expect("rejected hash");
+    let burn = sign_and_share(
+        &fixture,
+        AuthorityOp::SlipConsume {
+            slip_id: BURNED_SLIP,
+        },
+    );
+    assert!(
+        burn.parent_hashes.contains(&rejected_hash),
+        "the burn stands on the rejected confirm"
+    );
+    let home_fold = fixture.home.authority_fold().expect("home folds tail");
+    assert!(
+        !home_fold.valid_entries.contains(&rejected_hash),
+        "home rejects the reused confirm"
+    );
+    assert!(
+        home_fold.slips.consumed.contains(&BURNED_SLIP),
+        "home proves the burn past the rejected confirm"
     );
     let err = fixture
         .adopting
