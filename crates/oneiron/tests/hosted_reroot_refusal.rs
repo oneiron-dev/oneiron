@@ -1,11 +1,12 @@
 //! Pass 27 R4 (Engine NOTE 15 Nov 22:10, WAYBACK-E2 = A): the engine refuses
 //! a ReRoot signed by the recovery root's authority key on a hosted vault
-//! while its roster holds a live owner key. Such a ReRoot revokes every
-//! roster row, the custodial root included, and every slip the host minted
-//! stops verifying (NOTE WAYBACK-REROOT-TRACE, 15 Nov 22:02); the root's door
-//! serves there with the two ordinary ops instead. The refusal sits in the
-//! engine, so the stopped-vault CLI, which has no posture check of its own,
-//! meets it too.
+//! whose host root is live. Such a ReRoot revokes every roster row, the
+//! custodial root included, and every slip the host minted stops verifying
+//! (NOTE WAYBACK-REROOT-TRACE, 15 Nov 22:02); the root's door serves there
+//! with the two ordinary ops instead. The refusal sits in the engine's one
+//! ReRoot writer, so the stopped-vault CLI, which has no posture check of
+//! its own, meets it too. The successor asks the owner role alone, the
+//! enrolled root key's own roles, so the fold would count the move.
 //!
 //! Red on the anchor top 6166098690ef: `recover_owner_authority_from_kit`
 //! re-roots the hosted vault and the custodial root is revoked.
@@ -18,7 +19,7 @@ use std::sync::Arc;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityAttestation, AuthorityKey, AuthorityTier, DeviceAuthority,
-    MachineRole, OwnerKeyEnrollment, ROLE_ADMIN, ROLE_OWNER,
+    MachineRole, OwnerKeyEnrollment, ROLE_OWNER,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{
@@ -27,7 +28,7 @@ use oneiron::recovery::{
 use oneiron::store::GateDecisionId;
 use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::RecoveryRootSeed;
-use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -136,13 +137,16 @@ fn a_hosted_vault_refuses_a_reroot_while_an_owner_key_lives() {
             evidence: vec![1, 2, 3],
         },
         tier: AuthorityTier::Software,
-        roles: ROLE_OWNER | ROLE_ADMIN,
+        roles: ROLE_OWNER,
     };
-    let refused = vault.recover_owner_authority_from_kit(restore(), successor);
+    let refusal = vault
+        .recover_owner_authority_from_kit(restore(), successor)
+        .expect_err("a ReRoot on a hosted vault whose host root is live is refused");
 
+    assert_eq!(refusal.kind(), ErrorKind::AuthorityRefused, "{refusal}");
     assert!(
-        refused.is_err(),
-        "a ReRoot on a hosted vault with a live owner key is refused; the root's door serves there"
+        refusal.to_string().contains("the host does not hold"),
+        "the refusal names the host's root and the root's door: {refusal}"
     );
     assert_eq!(
         vault
