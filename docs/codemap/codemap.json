@@ -100082,6 +100082,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/deck_fit_certified.rs",
+     "purpose": "L4-20 PR 2 (ARCH-0077 slides lane, `slides:oracle`): a deck created through the engine's public doors…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/default_facet_owner_door.rs",
      "purpose": "ARCH-0022 #facets (the owner, 2026-09-23): \"Every vault has one default facet ... the owner may set…",
      "surface": {}
@@ -104996,7 +105004,7 @@
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7596,
-   "test_files": 1324
+   "test_files": 1325
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -115018,6 +115026,25 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "EvidenceError",
+      "FitEvidence",
+      "FitReceipt",
+      "FitRow",
+      "FitVerdict"
+     ],
+     "path": "src/emit/evidence.rs",
+     "purpose": "Stored PowerPoint fit evidence (ARCH-0077 `slides:oracle`: the oracle runs once per case set to create…",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 5,
+      "struct": 3
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -115043,6 +115070,7 @@
       "enum": 3,
       "fn": 2,
       "mod": 1,
+      "re-export": 1,
       "struct": 11
      }
     },
@@ -115065,7 +115093,7 @@
      "surface": {
       "const": 3,
       "enum": 1,
-      "fn": 5,
+      "fn": 6,
       "struct": 8
      }
     },
@@ -116383,9 +116411,9 @@
      "kind": "src",
      "notable": [],
      "path": "src/retained_opc/package/zip32.rs",
-     "purpose": "Classic ZIP's little-endian record fields, and the compressed length a part takes, for the package's reader…",
+     "purpose": "Classic ZIP's little-endian record fields, and the DEFLATE a part is written with, for the package's reader…",
      "surface": {
-      "crate-vis": 6
+      "crate-vis": 7
      }
     },
     {
@@ -116738,6 +116766,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/deck_fit_evidence.rs",
+     "purpose": "L4-20 PR 2 (ARCH-0077 slides lane, `slides:oracle`): `emit` certifies a unit's fit only from a clean stored…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -116806,7 +116842,7 @@
      "purpose": "Narrow value and text edits in place (ARCH-0077, \"Edit in place with passthrough\"): `set_text`…"
     },
     "emit": {
-     "files": 5,
+     "files": 6,
      "impl_vault": false,
      "largest_src_bucket": "m",
      "layout": "dir",
@@ -116934,8 +116970,8 @@
    },
    "over_bar": 8,
    "purpose": "Native document editing organ crate: the retained OPC substrate, typed read-only deck views over it, deck…",
-   "source_files": 181,
-   "test_files": 15
+   "source_files": 182,
+   "test_files": 16
   },
   "oneiron-dreamer": {
    "files": [
@@ -132229,7 +132265,7 @@
      "path": "src/ai_host/handle.rs",
      "purpose": "The handle request handlers hold (`AiHandle`): its seats, settings, status, turn tracking and Dreamer hints",
      "surface": {
-      "crate-vis": 19,
+      "crate-vis": 20,
       "fn": 18
      }
     },
@@ -143030,7 +143066,7 @@
      "path": "src/config/models/mod.rs",
      "purpose": "`[models]`: which model serves each role, at three levels of detail",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 7,
       "enum": 2,
       "fn": 2,
       "mod": 2,
@@ -147293,6 +147329,20 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "McpToolAnnotations"
+     ],
+     "path": "src/mcp/annotations.rs",
+     "purpose": "The standard MCP tool annotations each listed tool carries (census L1-11, Engine ruling 2026-11-13 22:39 = A)",
+     "surface": {
+      "const": 1,
+      "fn": 1,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "McpActorClass",
       "McpActorMetadata",
       "McpConsentMetadata",
@@ -147487,7 +147537,7 @@
      "surface": {
       "crate-vis": 10,
       "mod": 2,
-      "re-export": 12
+      "re-export": 13
      }
     },
     {
@@ -147633,7 +147683,7 @@
       "const": 17,
       "crate-vis": 10,
       "enum": 4,
-      "fn": 20,
+      "fn": 21,
       "struct": 3
      }
     },
@@ -152910,6 +152960,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/agent_plugins_package.rs",
+     "purpose": "The Agent Plugins package (`plugins/agent-plugins`; ARCH-0028 #plugin-start-order step 2…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -153570,6 +153628,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/mcp_tool_annotations.rs",
+     "purpose": "MCP tool annotations (census L1-11; Engine ruling 2026-11-13 22:39 = A)",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -153655,6 +153721,14 @@
      "notable": [],
      "path": "tests/replay_owner_fallback.rs",
      "purpose": "An exact replay of a call the owner's quota fallback answered (FIX-LIST…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/rerank_pair_template_price.rs",
+     "purpose": "L9-14 (ARCH-0004 `#rerank-door-open`): a paid recall's rerank call is priced before it leaves at its words…",
      "surface": {}
     },
     {
@@ -154195,7 +154269,7 @@
      "purpose": "This server's check that a managed vault's attested owner is its live owner, which his queued work runs…"
     },
     "mcp": {
-     "files": 30,
+     "files": 31,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -154386,8 +154460,8 @@
    },
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1886,
-   "test_files": 262
+   "source_files": 1887,
+   "test_files": 265
   },
   "oneiron-skill-attribution": {
    "files": [
