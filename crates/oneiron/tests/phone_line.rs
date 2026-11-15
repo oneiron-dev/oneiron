@@ -19,11 +19,13 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis, ScopeId};
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
 use oneiron::phone_line::{PhoneLineArrival, PhoneLineArrivalReceipt, PhoneLineConfig};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
+use oneiron::voice_call::PhoneReach;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::json;
 
@@ -258,21 +260,59 @@ fn configure(fixture: &Fixture, enabled: bool, share_scope: Scope) {
         .configure_phone_line(
             &fixture.owner_proof,
             fixture.identity,
-            PhoneLineConfig {
-                enabled,
-                share_scope: share_scope.clone(),
-            },
+            PhoneLineConfig { enabled },
         )
         .expect("owner stores the phone line setting");
     assert!(
         state.enabled == enabled
-            && state.share_scope == share_scope
             && state.agent_ref == fixture.agent
             && state.bridge_actor == fixture.bridge,
         "line {:?}; expected enabled={enabled}, agent={:?}, bridge={:?}; seen {state:?}",
         fixture.identity,
         fixture.agent,
         fixture.bridge,
+    );
+    if enabled {
+        set_reach_as_owner(
+            fixture,
+            PhoneReach::Custom {
+                scope: share_scope,
+                include_other_callers: false,
+            },
+        );
+    }
+}
+
+/// The owner sets the line's reach, then reads it back: the tests' Custom
+/// preset, the old share_scope plus the current-caller rule.
+fn set_reach_as_owner(fixture: &Fixture, reach: PhoneReach) {
+    let outcome = fixture
+        .vault
+        .set_setting(
+            SettingCaller::Owner(&fixture.owner_proof),
+            SetSetting {
+                key: "voice.phone.reach".to_owned(),
+                item: Some(fixture.identity.to_hex()),
+                scope: SettingScope::Vault,
+                mode: SettingMode::Value,
+                value: Some(serde_json::to_value(&reach).expect("the reach encodes")),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("owner sets the line's reach");
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's reach change applies; seen {outcome:?}",
+    );
+    assert_eq!(
+        fixture
+            .vault
+            .phone_line_reach(fixture.identity, fixture.agent)
+            .expect("the line's reach reads"),
+        reach,
+        "the line's reach reads the Custom value the owner set",
     );
 }
 
@@ -541,6 +581,8 @@ fn the_answering_agent_reads_only_what_the_line_shares() {
         "control: outside a call the agent's Grant reads both worlds",
     );
 
+    // This is now the Custom test: the line's reach is Custom{share_scope},
+    // the old share_scope plus the current-caller rule.
     let share_scope = worlds_scope(&[base_world_id()]);
     configure(&fixture, true, share_scope.clone());
     let receipt = submit(&fixture, stranger_call("call-answer")).expect("the call lands");
@@ -564,7 +606,7 @@ fn the_answering_agent_reads_only_what_the_line_shares() {
     assert_eq!(
         answer.phone_line_scope().expect("the call's live ceiling"),
         Some(share_scope),
-        "the call reads under the line's share_scope",
+        "the call reads under the line's reach",
     );
     assert!(
         answer
@@ -576,7 +618,7 @@ fn the_answering_agent_reads_only_what_the_line_shares() {
         !answer
             .is_entity_readable(&kept_claim)
             .expect("answer read of the kept world"),
-        "the answering agent never reads past the line's share_scope",
+        "the answering agent never reads past the line's reach",
     );
 
     // Consent changed mid-call narrows the call and never widens it: a line
