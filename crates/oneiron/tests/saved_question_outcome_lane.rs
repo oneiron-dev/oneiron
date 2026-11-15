@@ -32,6 +32,16 @@
 //! first version, saved under the owner's own lane, put under an open ask of
 //! its second version over a claim outside that version's worlds, pairs
 //! nothing.
+//!
+//! STORED-OUTCOME-READS-SKIP-SAVED-LANE: a stored outcome label and a closed
+//! outcome window read only while what they record still stands under the
+//! lane their question's version was saved under, as a calibration pair is
+//! judged again at each read. Once the owner revokes the agent's read grant,
+//! the agent's stored label from the owner's fact, its window that closed
+//! observed, and its window that closed in silence read no more, while the
+//! owner's own question over the same unit reads each as before. A window
+//! that closed unknown reads as it closed, even after a fact recorded later
+//! labels its answer.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -44,7 +54,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::decision::questions::{
     AnswerRecord, CalibrationPair, GraphAnswerer, GraphPrediction, GraphUnitContext,
     OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation,
-    QuestionDefinitionInput, RefreshPolicy, WindowOutcome, calibration_pairs,
+    QuestionDefinitionInput, RefreshPolicy, SILENCE_OUTCOME, WindowOutcome, calibration_pairs,
     close_due_outcome_windows, closed_outcome_windows, create_question, create_question_with_lane,
     edit_question_with_lane, outcome_labels, person_changed_pairs, project_bound_outcomes,
     read_question, refresh_standing_question_with,
@@ -323,6 +333,17 @@ fn binding() -> OutcomeBinding {
         mapping: BTreeMap::from([("yes".to_owned(), true)]),
         noise_weight: 1.0,
         linked_by: None,
+    }
+}
+
+/// [`definition`], its binding labelling a window that closes with no fact
+/// `false`, by the silence outcome.
+fn definition_with_silence(unit: EntityId) -> QuestionDefinitionInput {
+    let mut silence = binding();
+    silence.mapping.insert(SILENCE_OUTCOME.to_owned(), false);
+    QuestionDefinitionInput {
+        binding: Some(silence),
+        ..definition(unit)
     }
 }
 
@@ -619,6 +640,21 @@ impl AgentVault {
         );
         fact
     }
+
+    /// The owner writes the shipped policy back without the agent's rows:
+    /// its `core:read` grant is revoked, and its live lane reads none of
+    /// `rows` any more.
+    fn revoke_the_agents_read_grant(&self, rows: &[EntityId]) {
+        grant_derive_rows(&self.base.vault, &[])
+            .expect("precondition: the owner writes the policy without the agent's rows");
+        for row in rows {
+            assert!(
+                !reads(&self.base.vault, &self.agent_key, row),
+                "precondition: the agent's live lane no longer reads {row:?} once its read grant \
+                 is revoked"
+            );
+        }
+    }
 }
 
 fn agent_vault() -> AgentVault {
@@ -717,14 +753,34 @@ impl AgentFixture {
         closed_outcome_windows(self.vault(), self.reach.agent, self.question)
             .expect("the agent's question windows")
     }
+
+    fn control_windows(&self) -> Vec<OutcomeWindowClose> {
+        closed_outcome_windows(self.vault(), self.reach.base.owner, self.control)
+            .expect("the owner's question windows")
+    }
+
+    fn pairs(&self) -> Vec<CalibrationPair> {
+        calibration_pairs(
+            self.vault(),
+            self.reach.agent,
+            self.question,
+            CallerLocality::OnDevice,
+        )
+        .expect("the agent's calibration pairs")
+    }
 }
 
 fn agent_fixture() -> AgentFixture {
+    agent_fixture_with(definition)
+}
+
+/// The agent's question and the owner's control, each defined by `define`.
+fn agent_fixture_with(define: fn(EntityId) -> QuestionDefinitionInput) -> AgentFixture {
     let reach = agent_vault();
     let base = &reach.base;
     let agent_actor = WriteActor::new(reach.agent, EdgeActorClass::Agent);
     let owner_actor = WriteActor::new(base.owner, EdgeActorClass::Human);
-    let record = create_question(&base.vault, agent_actor, definition(base.unit), base.now)
+    let record = create_question(&base.vault, agent_actor, define(base.unit), base.now)
         .expect("precondition: the agent saves a question over the owner's unit");
     assert!(
         record.principal == reach.agent && record.read_lane.is_principal(),
@@ -733,7 +789,7 @@ fn agent_fixture() -> AgentFixture {
         record.principal,
         record.read_lane
     );
-    let control_record = create_question(&base.vault, owner_actor, definition(base.unit), base.now)
+    let control_record = create_question(&base.vault, owner_actor, define(base.unit), base.now)
         .expect("precondition: the owner saves the same question under its own lane");
     let question = record.definition.question.id;
     let control = control_record.definition.question.id;
@@ -859,6 +915,91 @@ fn an_agents_saved_question_labels_an_owner_fact_it_reads_at_a_manual_projection
         "actor=agent's question saved under its own lane; expected the owner's fact {fact:?}, \
          which its lane reads, to label its answer once a manual projection has run; seen \
          {labels:?}"
+    );
+}
+
+#[test]
+fn an_agents_stored_label_and_observed_window_read_no_more_once_the_owner_revokes_its_read_grant() {
+    let fixture = agent_fixture();
+    let fact = fixture
+        .reach
+        .write_fact_inside_the_agents_reach(fixture.fact_at());
+    fixture.assert_control_labelled(fact, "at arrival");
+    fixture.close_windows();
+    let labels = fixture.labels();
+    assert!(
+        labels.len() == 1 && labels[0].fact == fact && labels[0].answer == fixture.answer.claim,
+        "precondition: the owner's fact {fact:?} labels the agent's answer by its window's close; \
+         seen {labels:?}"
+    );
+    let windows = fixture.windows();
+    assert!(
+        windows.len() == 1 && matches!(windows[0].outcome, WindowOutcome::Observed),
+        "precondition: the agent's window closes observed; seen {windows:?}"
+    );
+    fixture.reach.revoke_the_agents_read_grant(&[fact]);
+    let pairs = fixture.pairs();
+    assert!(
+        pairs.is_empty(),
+        "precondition: the live calibration read pairs nothing for the agent once its read grant \
+         is revoked; seen {pairs:?}"
+    );
+    fixture.assert_control_labelled(fact, "after the agent's read grant is revoked");
+    let control_windows = fixture.control_windows();
+    assert!(
+        control_windows.len() == 1 && matches!(control_windows[0].outcome, WindowOutcome::Observed),
+        "precondition: the owner's own window still reads observed after the agent's read grant \
+         is revoked; seen {control_windows:?}"
+    );
+    let labels = fixture.labels();
+    assert!(
+        labels.is_empty(),
+        "actor=agent's question saved under its own lane; expected its stored label from the \
+         owner's fact {fact:?} to read no more once the owner revoked its read grant; seen \
+         {labels:?}"
+    );
+    let windows = fixture.windows();
+    assert!(
+        windows.is_empty(),
+        "actor=agent's question saved under its own lane; expected its window that closed \
+         observed to read no more once the owner revoked its read grant; seen {windows:?}"
+    );
+}
+
+#[test]
+fn an_agents_silence_window_reads_no_more_once_the_owner_revokes_its_read_grant() {
+    let fixture = agent_fixture_with(definition_with_silence);
+    fixture.close_windows();
+    let windows = fixture.windows();
+    assert!(
+        windows.len() == 1 && windows[0].outcome == WindowOutcome::Silence(false),
+        "precondition: the agent's window closes in silence, no fact in it; seen {windows:?}"
+    );
+    assert_eq!(
+        fixture.pairs().len(),
+        1,
+        "precondition: the agent's silence window pairs its answer"
+    );
+    let unit = fixture.reach.base.unit;
+    fixture.reach.revoke_the_agents_read_grant(&[unit]);
+    let pairs = fixture.pairs();
+    assert!(
+        pairs.is_empty(),
+        "precondition: the live calibration read pairs nothing for the agent once its read grant \
+         is revoked; seen {pairs:?}"
+    );
+    let control_windows = fixture.control_windows();
+    assert!(
+        control_windows.len() == 1 && control_windows[0].outcome == WindowOutcome::Silence(false),
+        "precondition: the owner's own window still reads closed in silence after the agent's \
+         read grant is revoked; seen {control_windows:?}"
+    );
+    let windows = fixture.windows();
+    assert!(
+        windows.is_empty(),
+        "actor=agent's question saved under its own lane; expected its window that closed in \
+         silence over unit {unit:?} to read no more once the owner revoked its read grant; seen \
+         {windows:?}"
     );
 }
 
@@ -1025,6 +1166,14 @@ fn a_world_bound_saved_question_labels_a_fact_recorded_after_its_window_closed_a
         pairs.len() == 1 && pairs[0].outcome.fact == fact,
         "actor=owner's question saved under the base-world lane; expected one calibration pair \
          from fact {fact:?} recorded after its window closed; seen {pairs:?}"
+    );
+    let windows = closed_outcome_windows(&fixture.vault, fixture.owner, fixture.bound)
+        .expect("bound question windows");
+    assert!(
+        windows.len() == 1 && matches!(windows[0].outcome, WindowOutcome::Unknown),
+        "actor=owner's question saved under the base-world lane; expected its window to read as \
+         it closed, unknown, after fact {fact:?} recorded later labels its answer; seen \
+         {windows:?}"
     );
 }
 
