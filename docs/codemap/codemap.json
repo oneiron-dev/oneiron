@@ -30129,11 +30129,11 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/dreamer_consolidation/executor/partition_window.rs",
-     "purpose": "One window of plain Micro or Meso partitions (FIX 12487): slots pinned and opened in admission order…",
+     "purpose": "One window of plain Micro or Meso partitions (FIX 12487): slots pinned and opened in admission order; each…",
      "surface": {
       "crate-vis": 1
      }
@@ -30448,7 +30448,7 @@
      "path": "src/dreamer_consolidation/parallel.rs",
      "purpose": "Read-only neighbourhood fan-out, followed by one parent-owned merge",
      "surface": {
-      "crate-vis": 5
+      "crate-vis": 6
      }
     },
     {
@@ -30685,8 +30685,18 @@
      "path": "src/dreamer_consolidation/resources.rs",
      "purpose": "Exact resource bounds for a consolidation partition",
      "surface": {
-      "crate-vis": 39,
+      "crate-vis": 38,
       "re-export": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/dreamer_consolidation/resources/held.rs",
+     "purpose": "The escalation rows a window slot's early finish holds (FIX 21927, review round 1 of #7855): each…",
+     "surface": {
+      "crate-vis": 6
      }
     },
     {
@@ -48759,6 +48769,7 @@
      "kind": "src",
      "notable": [
       "AutoCheckDecisions",
+      "AutoCheckWorldHold",
       "BoundedAutoChecker"
      ],
      "path": "src/llm/autocheck.rs",
@@ -48767,7 +48778,8 @@
       "crate-vis": 5,
       "fn": 5,
       "re-export": 1,
-      "struct": 2
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -49103,7 +49115,7 @@
      "purpose": "Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves",
      "surface": {
       "crate-vis": 3,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -90520,6 +90532,19 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [
+      "WindowFinish"
+     ],
+     "path": "src/test_doors/dreamer_partition_window.rs",
+     "purpose": "Door for `tests/dreamer_window_finish_order.rs` (FIX 21927): one real Meso wake window whose second slot can…",
+     "surface": {
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
      "bucket": "s",
      "kind": "src",
      "notable": [
@@ -90877,7 +90902,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 114,
+      "mod": 115,
       "re-export": 1
      }
     },
@@ -97618,7 +97643,7 @@
      "path": "src/workspace_roster/rooms/history.rs",
      "purpose": "Bounded room-local history and transactional auxiliary-row cleanup",
      "surface": {
-      "crate-vis": 16,
+      "crate-vis": 17,
       "fn": 5
      }
     },
@@ -99395,6 +99420,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/auto_check_kept_world.rs",
+     "purpose": "Census L5-32, the LLM gate (DEC-0005:592; Engine RULING L5-32-LLM-GATE-KEPT-WORLD = A, 13 Nov 20:24 JST)…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100280,6 +100313,14 @@
      "notable": [],
      "path": "tests/dreamer_stage_line.rs",
      "purpose": "FIX 21929 (brief 21, Dreamer r5): a partition's stage line splits the residual `extract_ms` into the slot's…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/dreamer_window_finish_order.rs",
+     "purpose": "FIX 21927: in one Meso wake window, a slot whose extraction prefix ended finishes at once and lands, while…",
      "surface": {}
     },
     {
@@ -102431,6 +102472,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/room_turn_for_org.rs",
+     "purpose": "A bound house's room turns read \"<agent>, for <org>\" (HOUSE-BIND = A, ARCH-0063 #house-bind, ARCH-0067…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -103922,7 +103971,7 @@
      "purpose": "FIX 12569: each vault's own small draft model (I5-DRAFTER = A), retrained at night on the vault's own…"
     },
     "dreamer_consolidation": {
-     "files": 172,
+     "files": 173,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104902,7 +104951,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 117,
+     "files": 118,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -105077,10 +105126,10 @@
      "purpose": "Per-world keys: a private world's own data key, wrapped to the machines that may read the world and to the…"
     }
    },
-   "over_bar": 271,
+   "over_bar": 272,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7598,
-   "test_files": 1332
+   "source_files": 7600,
+   "test_files": 1335
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -113116,7 +113165,7 @@
      "path": "src/lib.rs",
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
-      "mod": 26,
+      "mod": 27,
       "re-export": 2
      }
     },
@@ -113216,6 +113265,21 @@
      "path": "src/memory/error/gate_denial.rs",
      "purpose": "The Gate rejection a `MemoryError` carries when its engine cause was a Gate write rejection",
      "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Entries",
+      "MsgpackError"
+     ],
+     "path": "src/msgpack.rs",
+     "purpose": "The one reader for untyped MessagePack rows (PLAN-UC-08)",
+     "surface": {
+      "enum": 1,
+      "fn": 18,
       "struct": 1
      }
     },
@@ -113518,6 +113582,14 @@
      }
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/msgpack_reader.rs",
+     "purpose": "The one reader for untyped MessagePack rows (`oneiron_contracts::msgpack`, PLAN-UC-08 PR 0): one value and…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -113625,6 +113697,13 @@
      "layout": "file+dir",
      "purpose": "The memory facade's error vocabulary: `MemoryError`, the stable `MEMORY_CODE_*` strings and the one…"
     },
+    "msgpack": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The one reader for untyped MessagePack rows (PLAN-UC-08)"
+    },
     "posterior": {
      "files": 1,
      "impl_vault": false,
@@ -113712,8 +113791,8 @@
    },
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
-   "source_files": 66,
-   "test_files": 1
+   "source_files": 67,
+   "test_files": 2
   },
   "oneiron-crypto": {
    "files": [
@@ -158827,7 +158906,7 @@
      "path": "src/lib.rs",
      "purpose": "The store layer of the oneiron engine",
      "surface": {
-      "mod": 223
+      "mod": 224
      }
     },
     {
@@ -160417,6 +160496,21 @@
      "surface": {
       "const": 2,
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ReceiptRef",
+      "ReceiptRefError"
+     ],
+     "path": "src/receipt_ref.rs",
+     "purpose": "A receipt reference: a receipt's kind and its id, in the one text form `{kind}:{lowercase hex}` (fable pass…",
+     "surface": {
+      "enum": 1,
+      "fn": 8,
+      "struct": 1
      }
     },
     {
@@ -163796,6 +163890,14 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/receipt_ref.rs",
+     "purpose": "PLAN-UC-04 2.4a: `ReceiptRef`, the one text form `{kind}:{lowercase hex}` of a receipt reference",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/session_overlay_dump_suppression.rs",
      "purpose": "Census row L6-18 (ARCH-0052 threat-model note): a process that holds an off-record overlay writes no core…",
      "surface": {}
@@ -164819,6 +164921,13 @@
      "layout": "file",
      "purpose": "The identity marker carried after receipt attribution is erased"
     },
+    "receipt_ref": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A receipt reference: a receipt's kind and its id, in the one text form `{kind}:{lowercase hex}` (fable pass…"
+    },
     "receipt_row": {
      "files": 1,
      "impl_vault": false,
@@ -165382,8 +165491,8 @@
    },
    "over_bar": 1,
    "purpose": "The store layer of the oneiron engine",
-   "source_files": 652,
-   "test_files": 9
+   "source_files": 653,
+   "test_files": 10
   },
   "oneiron-testkit": {
    "files": [

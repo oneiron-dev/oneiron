@@ -8329,6 +8329,7 @@ dependencies = [
  "rand_core 0.6.4",
  "rand_distr 0.4.3",
  "rmp-serde",
+ "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",
