@@ -141,22 +141,6 @@ fn texts(body: &Value) -> Vec<Vec<String>> {
         .unwrap_or_default()
 }
 
-fn not_ready(name: &str, reason: String) -> System {
-    say(&format!("{name}: not ready: {reason}"));
-    System {
-        name: name.to_owned(),
-        status: "not_ready",
-        reason: Some(reason),
-        documents: 0,
-        ingest: Summary::default(),
-        settle_seconds: 0.0,
-        drain_seconds: None,
-        disk_mib: None,
-        summary: Vec::new(),
-        rows: Vec::new(),
-    }
-}
-
 /// Ingests `lives` through `system`'s adapter into a fresh store and asks
 /// their questions at every grade.
 pub(super) fn measure(plan: &Plan, system: &External, lives: &[Life], store: &str) -> System {
@@ -166,7 +150,7 @@ pub(super) fn measure(plan: &Plan, system: &External, lives: &[Life], store: &st
         .build()
     {
         Ok(http) => http,
-        Err(e) => return not_ready(&system.name, format!("http client: {e}")),
+        Err(e) => return System::not_ready(&system.name, format!("http client: {e}")),
     };
     let adapter = Adapter {
         http,
@@ -174,7 +158,7 @@ pub(super) fn measure(plan: &Plan, system: &External, lives: &[Life], store: &st
         store: store.to_owned(),
     };
     if let (_, Err(error)) = adapter.post("reset", &json!({"store": store})) {
-        return not_ready(&system.name, format!("reset: {error}"));
+        return System::not_ready(&system.name, format!("reset: {error}"));
     }
     let turns = lives.iter().map(|life| life.turns.len()).sum::<usize>();
     say(&format!("{}: ingest {turns} turns", system.name));
@@ -198,14 +182,14 @@ pub(super) fn measure(plan: &Plan, system: &External, lives: &[Life], store: &st
     let ingest = Summary::of(&samples, started.elapsed().as_secs_f64());
     let documents = ingest.completed;
     if documents == 0 && turns > 0 {
-        return not_ready(
+        return System::not_ready(
             &system.name,
             format!("every ingest failed: {:?}", ingest.failures),
         );
     }
     let settle_seconds = match adapter.settle(plan.settle_max) {
         Ok(seconds) => seconds,
-        Err(reason) => return not_ready(&system.name, reason),
+        Err(reason) => return System::not_ready(&system.name, reason),
     };
     let mut rows = Vec::new();
     let mut seconds = BTreeMap::new();
@@ -250,5 +234,6 @@ pub(super) fn measure(plan: &Plan, system: &External, lives: &[Life], store: &st
         disk_mib: None,
         summary: summarize(&rows, &plan.grades, &seconds, documents),
         rows,
+        dream: None,
     }
 }

@@ -2,7 +2,8 @@
 //! `[models]` section that routes every role a consolidation pass calls to
 //! that one model, and the owner's stopped-vault grant of the extraction
 //! route. The model key is read from its file and goes to the server's
-//! environment only: never a command line, a log or the report.
+//! environment only: never a command line, a log or the report. The lives
+//! screen's dreamed arm sets its Dreamer up the same way.
 
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -13,7 +14,7 @@ use serde_json::{Value, json};
 use super::super::server::Vault;
 
 /// The environment variable the served config names for the model key.
-pub(super) const MODEL_KEY_ENV: &str = "ONEIRON_DREAM_MODEL_KEY";
+pub(in crate::load) const MODEL_KEY_ENV: &str = "ONEIRON_DREAM_MODEL_KEY";
 
 /// The one provider entry the config writes.
 const PROVIDER: &str = "dream";
@@ -50,14 +51,14 @@ fn text(value: &Value) -> String {
     }
 }
 
-/// One tiny chat completion at `<base_url>/chat/completions`. Refused unless
-/// the reply's `model` contains the requested slug less any `-sub` suffix: a
-/// gateway may spell the model its own way, but it may not answer with
-/// another one.
+/// One tiny chat completion at `<base_url>/chat/completions`, with `key` as
+/// its bearer when there is one. Refused unless the reply's `model` contains
+/// the requested slug less any `-sub` suffix: a gateway may spell the model
+/// its own way, but it may not answer with another one.
 pub(in crate::load) fn preflight(
     base_url: &str,
     model: &str,
-    key: &str,
+    key: Option<&str>,
 ) -> Result<Preflight, String> {
     let http = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(120))
@@ -65,9 +66,11 @@ pub(in crate::load) fn preflight(
         .map_err(|e| format!("model client: {e}"))?;
     let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
     let started = Instant::now();
-    let response = http
-        .post(&url)
-        .bearer_auth(key)
+    let request = match key {
+        Some(key) => http.post(&url).bearer_auth(key),
+        None => http.post(&url),
+    };
+    let response = request
         .json(&json!({
             "model": model,
             "messages": [{"role": "user", "content": "Reply OK"}],
@@ -110,19 +113,63 @@ fn toml_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
 }
 
-/// Appends `[models]` to the config `init` wrote: one `openai-compat`
-/// provider at `base_url` whose key is read from [`MODEL_KEY_ENV`]. The
-/// shorthand `default` fills the generative reasoner (the conflict verdict),
-/// the checker and `dreamer_current` (the Dreamer's seat and its narrative
-/// role); the extraction teacher, which no shorthand fills, is named out.
-/// Extraction may leave the device, and the Dreamer runs with a summary
-/// instruction. Key names: `config/models/mod.rs` (`ModelsFile`,
-/// `DreamerFile`), `provider.rs` (`ProviderFile`), `levels.rs` (`RoleFile`).
-pub(super) fn write_models(
+/// Where the Dreamer's model runs, for the route checks: a keyed model is a
+/// third party's (as `load dream`'s gateway is), and a keyless one the
+/// owner's own server (a local model, or a GPU host over a tunnel). The
+/// value is `oneiron-server dreamer grant --extraction-route`'s.
+pub(in crate::load) fn route(keyed: bool) -> &'static str {
+    if keyed { "third_party" } else { "own_server" }
+}
+
+/// The `[models]` section's body: one provider at `base_url`, as
+/// `ModelsConfig::from_toml` reads it and as a config file holds it under
+/// `[models]` (dotted keys, so one text serves both). A keyed provider is
+/// `openai-compat`, its key read from [`MODEL_KEY_ENV`]; a keyless one is
+/// `local-openai-compat`. The shorthand `default` fills the generative
+/// reasoner (the conflict verdict), the checker and `dreamer_current` (the
+/// Dreamer's seat and its narrative role); the extraction teacher, which no
+/// shorthand fills, is named out. Extraction may leave the device, and the
+/// Dreamer runs with a summary instruction. Key names:
+/// `config/models/mod.rs` (`ModelsFile`, `DreamerFile`), `provider.rs`
+/// (`ProviderFile`), `levels.rs` (`RoleFile`).
+pub(in crate::load) fn models_body(
+    base_url: &str,
+    model: &str,
+    context_tokens: Option<u64>,
+    keyed: bool,
+) -> String {
+    let rung = toml_string(&format!("{PROVIDER}:{model}"));
+    let provider = format!("providers.{PROVIDER}");
+    let mut body = format!("default = {rung}\nextraction_egress = true\n");
+    if keyed {
+        body.push_str(&format!(
+            "{provider}.kind = \"openai-compat\"\n{provider}.key_env = \"{MODEL_KEY_ENV}\"\n"
+        ));
+    } else {
+        body.push_str(&format!("{provider}.kind = \"local-openai-compat\"\n"));
+    }
+    body.push_str(&format!(
+        "{provider}.base_url = {}\n{provider}.timeout_secs = 600\n",
+        toml_string(base_url)
+    ));
+    if let Some(tokens) = context_tokens {
+        body.push_str(&format!("{provider}.context_tokens = {tokens}\n"));
+    }
+    body.push_str(&format!(
+        "roles.extraction_teacher.model = {rung}\n\
+         dreamer.enabled = true\ndreamer.summary_prompt = {}\n",
+        toml_string(SUMMARY_PROMPT)
+    ));
+    body
+}
+
+/// Appends `[models]` ([`models_body`]) to the config `init` wrote.
+pub(in crate::load) fn write_models(
     vault: &Vault,
     base_url: &str,
     model: &str,
     context_tokens: Option<u64>,
+    keyed: bool,
 ) -> Result<(), String> {
     let path = &vault.config;
     let existing =
@@ -133,22 +180,9 @@ pub(super) fn write_models(
     {
         return Err(format!("{} already has a [models] section", path.display()));
     }
-    let rung = toml_string(&format!("{PROVIDER}:{model}"));
-    let mut section = format!(
-        "\n[models]\ndefault = {rung}\nextraction_egress = true\n\n\
-         [models.providers.{PROVIDER}]\nkind = \"openai-compat\"\nbase_url = {}\n\
-         key_env = \"{MODEL_KEY_ENV}\"\ntimeout_secs = 600\n",
-        toml_string(base_url)
-    );
-    if let Some(tokens) = context_tokens {
-        section.push_str(&format!("context_tokens = {tokens}\n"));
-    }
-    section.push_str(&format!(
-        "\n[models.roles.extraction_teacher]\nmodel = {rung}\n\n\
-         [models.dreamer]\nenabled = true\nsummary_prompt = {}\n",
-        toml_string(SUMMARY_PROMPT)
-    ));
-    std::fs::write(path, existing + &section).map_err(|e| format!("write {}: {e}", path.display()))
+    let body = models_body(base_url, model, context_tokens, keyed);
+    std::fs::write(path, format!("{existing}\n[models]\n{body}"))
+        .map_err(|e| format!("write {}: {e}", path.display()))
 }
 
 /// The last `n` characters of `text`.
@@ -159,15 +193,15 @@ fn tail(text: &str, n: usize) -> &str {
         .map_or("", |(at, _)| &text[at..])
 }
 
-/// `oneiron-server dreamer grant --extraction-route third_party` on the
-/// stopped vault (`commands/dreamer.rs`; it needs the host issuer secret):
-/// the Dreamer's policy rows, and the extraction and consolidation defaults
-/// routed to where an `openai-compat` provider runs, the extraction bound
-/// raised to it (`ai_host/policy.rs` `route_dreamer_extraction`). Returns
-/// the JSON line it printed.
-pub(super) fn grant(bin: &Path, vault: &Vault) -> Result<Value, String> {
+/// `oneiron-server dreamer grant --extraction-route <route>` on the stopped
+/// vault (`commands/dreamer.rs`; it needs the host issuer secret): the
+/// Dreamer's policy rows, and the extraction and consolidation defaults
+/// routed to where the model runs ([`route`]), the extraction bound raised
+/// to it (`ai_host/policy.rs` `route_dreamer_extraction`). Returns the JSON
+/// line it printed.
+pub(in crate::load) fn grant(bin: &Path, vault: &Vault, route: &str) -> Result<Value, String> {
     let output = Command::new(bin)
-        .args(["dreamer", "grant", "--extraction-route", "third_party"])
+        .args(["dreamer", "grant", "--extraction-route", route])
         .arg("--config")
         .arg(&vault.config)
         .arg("--vault-path")

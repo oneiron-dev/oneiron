@@ -214,6 +214,29 @@ $B/oneiron-bench load lives --server $B/oneiron-server --embedder none \
   the model the preflight answered as, the sha256 of its instruction (sent
   byte for byte as the system message), temperature and max tokens. Each
   judged run gets a lab-ledger row.
+- **Dreamed arm** (`--dreamed <base-url>,<model>`, with
+  `--dream-max-seconds 3600`). A second Oneiron system, `oneiron-dreamed`,
+  after `oneiron` and on the same lives and questions, whose Dreamer has
+  every consolidation role routed to that one model, as `load dream` routes
+  them. Before any store opens, the endpoint must answer a preflight as its
+  model. Each life is witnessed in a sitting of its own: the bench opens it
+  (`POST /v1/ai/session`), waits until the server applied the open, witnesses
+  the life's turns and ends it, so its close queues the round over that
+  life's conversations. After the last life the bench waits for the round to
+  start, then until the Dreamer has been still for 30 s (bounded by
+  `--dream-max-seconds`), and only then asks. The arm's ingest wall time
+  includes the sittings' open waits. Its system gains `dream`: the pinned
+  model, the Dreamer's status when ready, each sitting (opened, open ms,
+  turns, hint errors), whether the round started, the still wait, and the
+  claims listed before the first sitting and after the wait (`landed`, with
+  `list_cut` when a list hit its 1,000-row limit). Spawned, the
+  `--model-key-file` key, when given, goes to the server's environment only
+  and the model is routed as a third party's (`openai-compat`, `dreamer grant
+  --extraction-route third_party`); without a key it is the owner's own
+  server (`local-openai-compat`, `own_server`). In-process the Dreamer runs
+  in the bench and calls its model without a key (the engine reads a key
+  only from the process environment, which the bench does not write), so
+  name a keyless model there: a local one, or a GPU host over `ssh -L`.
 - **Latency.** `ms` is the client round trip on loopback. Each grade's summary
   applies canon's floor: below 1,000 documents its latency reads
   `not_measured` (`corpus_below_1000_documents`) instead of a number.

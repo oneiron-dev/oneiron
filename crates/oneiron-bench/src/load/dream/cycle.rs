@@ -24,7 +24,7 @@ const STEP: Duration = Duration::from_millis(500);
 const QUIET: Duration = Duration::from_secs(30);
 /// How long the bench waits for the sitting's open line after the open
 /// hint; a server that does not log it is waited for this long.
-const OPEN_WAIT: Duration = Duration::from_secs(60);
+pub(in crate::load) const OPEN_WAIT: Duration = Duration::from_secs(60);
 
 /// Ms from `origin` to `at`.
 pub(super) fn ms_between(origin: Instant, at: Instant) -> f64 {
@@ -77,7 +77,12 @@ fn ai_within(
 /// One session hint (`open`, `activity` or `end`) for `agent`'s sitting on
 /// this machine. The server keeps it and answers 202 before the Dreamer's
 /// driver applies it.
-pub(super) fn hint(agent: &Agent, http: &Client, base: &str, event: &str) -> Result<(), String> {
+pub(in crate::load) fn hint(
+    agent: &Agent,
+    http: &Client,
+    base: &str,
+    event: &str,
+) -> Result<(), String> {
     let url = format!("{base}/v1/ai/session");
     ai(agent, http, &url, Some(&json!({"event": event})))
         .map(drop)
@@ -108,10 +113,10 @@ pub(super) fn await_open(tail: &mut Tail, scan: &mut Scan, origin: Instant) -> b
 /// `completed`, `unserved` or `failed`; a park, a deferral or a landing
 /// counts none of them, so only `state` says nothing runs.
 #[derive(Clone, Debug, Default, Serialize)]
-pub(super) struct DreamerStatus {
-    pub(super) state: String,
+pub(in crate::load) struct DreamerStatus {
+    pub(in crate::load) state: String,
     pub(super) reason: Option<String>,
-    pub(super) started: u64,
+    pub(in crate::load) started: u64,
     pub(super) completed: u64,
     pub(super) failed: u64,
     pub(super) unserved: u64,
@@ -146,7 +151,11 @@ impl DreamerStatus {
     }
 }
 
-pub(super) fn status(agent: &Agent, http: &Client, base: &str) -> Result<DreamerStatus, String> {
+pub(in crate::load) fn status(
+    agent: &Agent,
+    http: &Client,
+    base: &str,
+) -> Result<DreamerStatus, String> {
     ai(agent, http, &format!("{base}/v1/ai/status"), None)
         .map(|answer| DreamerStatus::of(&answer))
         .map_err(|e| format!("ai status: {e}"))
@@ -178,7 +187,7 @@ fn status_before(
 
 /// The Dreamer's status once it runs (waiting or working), polled for up
 /// to 60 s; an idle Dreamer's reason and last error are the refusal.
-pub(super) fn dreamer_ready(
+pub(in crate::load) fn dreamer_ready(
     agent: &Agent,
     http: &Client,
     base: &str,
@@ -262,11 +271,11 @@ pub(super) fn recall_loop(
 
 /// How the wait for a still Dreamer after the cycle ended.
 #[derive(Debug, Serialize)]
-pub(super) struct StillWait {
+pub(in crate::load) struct StillWait {
     /// The Dreamer stayed still for `QUIET` (no attempt running, its tallies
     /// unchanged, no new stage or pass line, every status read answered)
     /// before the cycle's bound ran out.
-    pub(super) reached: bool,
+    pub(in crate::load) reached: bool,
     /// How long the wait took, in ms.
     pub(super) waited_ms: f64,
     /// The status read last, when that read answered.
@@ -282,7 +291,7 @@ pub(super) struct StillWait {
 /// that work too; recalls taken once it is still do not. Quiet counts only
 /// inside the bound and only over status reads that answered: a failed
 /// read proves nothing, so the quiet starts again after it.
-pub(super) fn await_still(
+pub(in crate::load) fn await_still(
     agent: &Agent,
     http: &Client,
     base: &str,

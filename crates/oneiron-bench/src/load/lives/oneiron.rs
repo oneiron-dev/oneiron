@@ -8,7 +8,8 @@
 //! user, `companion` for the assistant, and `companion` with message type
 //! `tool_result` for a tool turn. Then the bench waits for the server to go
 //! quiet (and, with an embedder, for its embedding passes to stop) and asks
-//! every question with `vault.recall` at every grade, one at a time.
+//! every question with `vault.recall` at every grade, one at a time. The
+//! dreamed arm (`dreamed.rs`) runs on the same store with its Dreamer on.
 
 use std::collections::BTreeMap;
 use std::future::IntoFuture as _;
@@ -18,6 +19,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use oneiron::authority::{CapabilitySlip, HOST_ISSUER_SEED_BYTES, HostSlipIssuer};
+use oneiron_server::ai_host::AiHost;
+use oneiron_server::config::ModelsConfig;
 use serde_json::{Value, json};
 
 use super::super::client::Agent;
@@ -26,8 +29,12 @@ use super::super::phases::{PASS_DONE, PASS_FAILED};
 use super::super::server::{Embedding, Running, Vault, cpu_seconds};
 use super::super::stats::{Sample, Summary};
 use super::corpus::{Life, Role, Turn};
+use super::dreamed::{self, Dreaming, Round, Watch};
 use super::report::{Answer, Row, Server, System, summarize};
 use super::{Mode, Plan, say};
+
+/// The spawned server's log, in its vault's directory.
+const LOG_NAME: &str = "serve.log";
 
 /// The longest wait for an embedder's passes to stop.
 const DRAIN_CAP: Duration = Duration::from_secs(3_600);
@@ -47,16 +54,23 @@ fn describe(embedding: &Embedding) -> String {
 }
 
 impl Store {
+    /// A fresh store in `dir`, its Dreamer on when `dreaming` names a model.
     fn open(
         plan: &Plan,
+        dreaming: Option<&Dreaming>,
         dir: &Path,
         http: &reqwest::blocking::Client,
     ) -> Result<(Self, Agent, Server), String> {
         match &plan.mode {
             Mode::Spawned { bin, embedding } => {
                 let vault = Vault::init(bin, dir, embedding, &plan.server_env)?;
+                let mut env = plan.server_env.clone();
+                if let Some(dreaming) = dreaming {
+                    env.extend(dreaming.configure(bin, &vault)?);
+                }
                 let credential = vault.mint_agent(bin, "lives-bench-agent")?;
-                let server = Running::start(bin, &vault, &plan.server_env, "serve.log", "warn")?;
+                let server = Running::start(bin, &vault, &env, LOG_NAME, "warn")?;
+                drop(env);
                 say(&format!("server ready in {:.0} ms", server.ready_ms));
                 let agent = Agent::new(http, &server.base, &credential, 0)?;
                 let info = Server {
@@ -73,7 +87,8 @@ impl Store {
                 Ok((Self::Spawned { server, vault }, agent, info))
             }
             Mode::InProcess => {
-                let (served, root, issuer) = InProcess::start(dir)?;
+                let models = dreaming.map(Dreaming::models_body);
+                let (served, root, issuer) = InProcess::start(dir, models)?;
                 let agent = Agent::host_root(http, &served.base, root, issuer)?;
                 let info = Server {
                     mode: "in_process",
@@ -84,6 +99,21 @@ impl Store {
                 };
                 Ok((Self::InProcess(served), agent, info))
             }
+        }
+    }
+
+    fn base(&self) -> &str {
+        match self {
+            Self::Spawned { server, .. } => &server.base,
+            Self::InProcess(served) => &served.base,
+        }
+    }
+
+    /// What shows the store's sittings open.
+    fn watch(&self) -> Watch {
+        match self {
+            Self::Spawned { vault, .. } => Watch::log(vault.dir.join(LOG_NAME)),
+            Self::InProcess(served) => Watch::vault(Arc::clone(&served.vault)),
         }
     }
 
@@ -140,6 +170,17 @@ fn drain(server: &Running, quiet: Duration) -> Result<f64, String> {
     ))
 }
 
+/// One `vault.witness` of `turn`, as the ingest samples it.
+pub(super) fn witness(agent: &Agent, turn: &Turn) -> Sample {
+    let (ms, result) = agent.post("vault.witness", &witness_body(turn));
+    Sample {
+        ms,
+        error: result.err(),
+        partial: false,
+        items: 1,
+    }
+}
+
 fn witness_body(turn: &Turn) -> Value {
     let (author, message_type) = match turn.role {
         Role::User => ("user", "text"),
@@ -192,8 +233,13 @@ fn texts(pack: &Value) -> Vec<Vec<String>> {
 /// Every question of every life at every grade, each at the end of its own
 /// life's last day (`as_of` only anchors a question's time words and recency,
 /// and filters nothing), so "last week" reads on that person's timeline;
-/// returns the rows and each grade's wall time.
-fn ask(plan: &Plan, agent: &Agent, lives: &[Life]) -> (Vec<Row>, BTreeMap<String, f64>) {
+/// returns `system`'s rows and each grade's wall time.
+fn ask(
+    plan: &Plan,
+    agent: &Agent,
+    lives: &[Life],
+    system: &str,
+) -> (Vec<Row>, BTreeMap<String, f64>) {
     let mut rows = Vec::new();
     let mut seconds = BTreeMap::new();
     let warm = lives.iter().find_map(|life| {
@@ -231,7 +277,7 @@ fn ask(plan: &Plan, agent: &Agent, lives: &[Life]) -> (Vec<Row>, BTreeMap<String
                         error: Some(error),
                     },
                 };
-                rows.push(Row::of("oneiron", grade, life, *set, question, answer));
+                rows.push(Row::of(system, grade, life, *set, question, answer));
             }
         }
         seconds.insert(grade.clone(), started.elapsed().as_secs_f64());
@@ -239,14 +285,25 @@ fn ask(plan: &Plan, agent: &Agent, lives: &[Life]) -> (Vec<Row>, BTreeMap<String
     (rows, seconds)
 }
 
-/// Ingests `lives` into a fresh Oneiron store and asks their questions.
-pub(super) fn measure(plan: &Plan, lives: &[Life]) -> Result<(Server, System), String> {
-    let dir = plan.work.join("lives-oneiron");
+/// Ingests `lives` into a fresh Oneiron store and asks their questions; with
+/// `dreaming`, the dreamed arm: each life in a sitting of its own, and the
+/// questions only once its Dreamer is still.
+pub(super) fn measure(
+    plan: &Plan,
+    lives: &[Life],
+    dreaming: Option<&Dreaming>,
+) -> Result<(Server, System), String> {
+    let name = if dreaming.is_some() {
+        dreamed::NAME
+    } else {
+        "oneiron"
+    };
+    let dir = plan.work.join(format!("lives-{name}"));
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("clear {}: {e}", dir.display()))?;
     }
     let http = Agent::http()?;
-    let (store, mut agent, server) = Store::open(plan, &dir, &http)?;
+    let (store, mut agent, server) = Store::open(plan, dreaming, &dir, &http)?;
     let skew = agent.clock_skew()?;
     if skew != 0 {
         say(&format!(
@@ -256,16 +313,20 @@ pub(super) fn measure(plan: &Plan, lives: &[Life]) -> Result<(Server, System), S
     let turns = lives.iter().map(|life| life.turns.len()).sum::<usize>();
     say(&format!("ingest: {turns} turns of {} lives", lives.len()));
     let started = Instant::now();
-    let mut samples = Vec::with_capacity(turns);
-    for turn in lives.iter().flat_map(|life| &life.turns) {
-        let (ms, result) = agent.post("vault.witness", &witness_body(turn));
-        samples.push(Sample {
-            ms,
-            error: result.err(),
-            partial: false,
-            items: 1,
-        });
-    }
+    let (samples, round) = match dreaming {
+        None => (
+            lives
+                .iter()
+                .flat_map(|life| &life.turns)
+                .map(|turn| witness(&agent, turn))
+                .collect::<Vec<_>>(),
+            None,
+        ),
+        Some(dreaming) => {
+            let mut round = Round::begin(dreaming, &agent, &http, store.base(), store.watch())?;
+            (round.witness(lives), Some(round))
+        }
+    };
     let ingest = Summary::of(&samples, started.elapsed().as_secs_f64());
     let documents = ingest.completed;
     if documents == 0 && turns > 0 {
@@ -285,13 +346,14 @@ pub(super) fn measure(plan: &Plan, lives: &[Life]) -> Result<(Server, System), S
         }
         _ => None,
     };
-    let (rows, seconds) = ask(plan, &agent, lives);
+    let dream = round.map(Round::finish);
+    let (rows, seconds) = ask(plan, &agent, lives, name);
     let disk_mib = store.disk_mib();
-    say(&format!("oneiron store: {}", store.stop()));
+    say(&format!("{name} store: {}", store.stop()));
     Ok((
         server,
         System {
-            name: "oneiron".to_owned(),
+            name: name.to_owned(),
             status: "measured",
             reason: None,
             documents,
@@ -301,46 +363,69 @@ pub(super) fn measure(plan: &Plan, lives: &[Life]) -> Result<(Server, System), S
             disk_mib,
             summary: summarize(&rows, &plan.grades, &seconds, documents),
             rows,
+            dream,
         },
     ))
 }
 
-/// What the in-process server thread hands back once it is listening: its
-/// base URL, the host root slip and the issuer that rooted the vault.
-type Rooted = (String, CapabilitySlip, Arc<HostSlipIssuer>);
+/// What the in-process server thread hands back once it is listening.
+struct Rooted {
+    base: String,
+    /// The host root slip, and the issuer that rooted the vault.
+    root: CapabilitySlip,
+    issuer: Arc<HostSlipIssuer>,
+    vault: Arc<oneiron::Vault>,
+}
 
 /// The engine served in this process, on its own engine-sized runtime.
 struct InProcess {
     base: String,
+    /// The served vault, read for its open sessions (the dreamed arm).
+    vault: Arc<oneiron::Vault>,
     stop: Option<tokio::sync::oneshot::Sender<()>>,
     thread: Option<std::thread::JoinHandle<Result<(), String>>>,
 }
 
+/// What the in-process server thread serves: its listener, the app, what it
+/// hands back, and the Dreamer it runs, if any.
+type Served = (
+    tokio::net::TcpListener,
+    axum::Router,
+    Rooted,
+    Option<AiHost>,
+);
+
 /// Opens the vault, roots it with a host issuer the bench draws (the vault
 /// holds no keystore, so the server roots nothing; `fleet/workload.rs` roots
-/// its vault the same way), and binds a loopback listener.
-async fn root_in_process(
-    dir: &Path,
-) -> Result<(tokio::net::TcpListener, axum::Router, Rooted), String> {
+/// its vault the same way), starts the Dreamer on the `[models]` body
+/// `models` when there is one, and binds a loopback listener.
+async fn root_in_process(dir: &Path, models: Option<&str>) -> Result<Served, String> {
     let vault = Arc::new(
         oneiron::Vault::open(dir, oneiron::VaultConfig::device())
             .map_err(|e| format!("open vault {}: {e}", dir.display()))?,
     );
-    let server = Arc::new(
-        oneiron_server::server::SyncServer::new(
-            Arc::clone(&vault),
-            oneiron_server::config::SyncServerConfig {
-                auth_secret: Some(oneiron::EntityId::now().to_hex()),
-                ..Default::default()
-            },
-        )
-        .map_err(|e| format!("in-process server: {e}"))?,
-    );
+    let server = oneiron_server::server::SyncServer::new(
+        Arc::clone(&vault),
+        oneiron_server::config::SyncServerConfig {
+            auth_secret: Some(oneiron::EntityId::now().to_hex()),
+            ..Default::default()
+        },
+    )
+    .map_err(|e| format!("in-process server: {e}"))?;
     let seed: [u8; HOST_ISSUER_SEED_BYTES] = rand::random();
     let issuer = HostSlipIssuer::from_seed(&seed).map_err(|e| format!("host issuer: {e}"))?;
     let root = vault
         .ensure_host_root_slip(&issuer)
         .map_err(|e| format!("host root slip: {e}"))?;
+    let (server, host) = match models {
+        Some(models) => {
+            let models = ModelsConfig::from_toml(models, None)
+                .map_err(|e| format!("dreamed [models]: {e:#}"))?;
+            let host = dreamed::start_in_process(&vault, &issuer, &models).await?;
+            (server.with_ai(host.handle()), Some(host))
+        }
+        None => (server, None),
+    };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .map_err(|e| format!("bind loopback: {e}"))?;
@@ -352,16 +437,23 @@ async fn root_in_process(
     );
     Ok((
         listener,
-        oneiron_server::build_app(server),
-        (base, root, Arc::new(issuer)),
+        oneiron_server::build_app(Arc::new(server)),
+        Rooted {
+            base,
+            root,
+            issuer: Arc::new(issuer),
+            vault,
+        },
+        host,
     ))
 }
 
 /// The server thread's body: a multi-thread runtime whose threads have the
 /// engine's stack (the facade's dispatch frame outgrows a default stack in a
-/// dev build), serving until `stop` fires.
+/// dev build), serving until `stop` fires; then its Dreamer, if any, stops.
 fn serve_in_process(
     dir: &Path,
+    models: Option<&str>,
     ready: &std::sync::mpsc::Sender<Result<Rooted, String>>,
     stop: tokio::sync::oneshot::Receiver<()>,
 ) -> Result<(), String> {
@@ -379,7 +471,7 @@ fn serve_in_process(
         }
     };
     let served = runtime.block_on(async {
-        let (listener, app, rooted) = match root_in_process(dir).await {
+        let (listener, app, rooted, host) = match root_in_process(dir, models).await {
             Ok(opened) => opened,
             Err(error) => {
                 let _ = ready.send(Err(error.clone()));
@@ -393,17 +485,24 @@ fn serve_in_process(
             app.into_make_service_with_connect_info::<SocketAddr>(),
         )
         .into_future();
-        tokio::select! {
+        let served = tokio::select! {
             result = serve => result.map_err(|e| format!("in-process serve: {e}")),
             _ = stop => Ok(()),
+        };
+        if let Some(host) = host {
+            host.shutdown().await;
         }
+        served
     });
     runtime.shutdown_timeout(Duration::from_secs(10));
     served
 }
 
 impl InProcess {
-    fn start(dir: &Path) -> Result<(Self, CapabilitySlip, Arc<HostSlipIssuer>), String> {
+    fn start(
+        dir: &Path,
+        models: Option<String>,
+    ) -> Result<(Self, CapabilitySlip, Arc<HostSlipIssuer>), String> {
         std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {e}", dir.display()))?;
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (stop_tx, stop_rx) = tokio::sync::oneshot::channel();
@@ -411,17 +510,18 @@ impl InProcess {
         let thread = std::thread::Builder::new()
             .name("lives-in-process".into())
             .stack_size(oneiron_server::ENGINE_THREAD_STACK_BYTES)
-            .spawn(move || serve_in_process(&owned, &ready_tx, stop_rx))
+            .spawn(move || serve_in_process(&owned, models.as_deref(), &ready_tx, stop_rx))
             .map_err(|e| format!("in-process server thread: {e}"))?;
         match ready_rx.recv() {
-            Ok(Ok((base, root, issuer))) => Ok((
+            Ok(Ok(rooted)) => Ok((
                 Self {
-                    base,
+                    base: rooted.base,
+                    vault: rooted.vault,
                     stop: Some(stop_tx),
                     thread: Some(thread),
                 },
-                root,
-                issuer,
+                rooted.root,
+                rooted.issuer,
             )),
             Ok(Err(error)) => {
                 let _ = thread.join();

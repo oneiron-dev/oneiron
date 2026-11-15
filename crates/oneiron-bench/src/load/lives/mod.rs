@@ -8,7 +8,9 @@
 //! here is context accuracy, with no model (L9-36-ACCURACY = C, its first
 //! column); `--reader` and `--judge` add a judged-answer column beside it,
 //! which then leads (its second column). The Oneiron store always runs
-//! first; every other system plugs in through one adapter protocol,
+//! first, and `--dreamed` adds a second Oneiron arm beside it whose Dreamer
+//! consolidates each life's sitting before the questions (L9-36-ONEIRON-INGEST
+//! = C); every other system plugs in through one adapter protocol,
 //! `--system <name>=<url>` (L9-36-COMPETITORS = A: the seam here, each
 //! competitor's adapter its own row).
 //!
@@ -16,6 +18,7 @@
 
 mod answer;
 mod corpus;
+mod dreamed;
 mod external;
 mod oneiron;
 mod report;
@@ -39,6 +42,7 @@ const USAGE: &str = "usage: oneiron-bench load lives (--server <oneiron-server> 
   [--drain-settle-seconds 35] [--embedder-api-key-env NAME] [--server-env KEY=VALUE]...\n\
   [--system <name>=<adapter-url>]...\n\
   [--reader <base-url>,<model> --judge <base-url>,<model> --model-key-file <path>]\n\
+  [--dreamed <base-url>,<model> [--dream-max-seconds 3600]]\n\
   <embedder>: none | local | endpoint=<url>,<model-key>,<model-id@revision>,<dimensions>";
 
 const LINUX_ONLY: &str = "load lives --server reads the server's /proc files: run it on Linux, or check the harness with --in-process";
@@ -68,6 +72,8 @@ pub(super) struct Plan {
     systems: Vec<external::External>,
     /// The reader and the judge of the judged column, when named.
     judging: Option<answer::Judging>,
+    /// The dreamed arm's model, when named.
+    dreaming: Option<dreamed::Planned>,
 }
 
 /// `--embedder`'s value, with `--embedder-api-key-env`'s NAME.
@@ -132,6 +138,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
     let mut server_env = Vec::new();
     let mut systems = Vec::<external::External>::new();
     let (mut reader, mut judge, mut key_file) = (None, None, None);
+    let (mut dream_model, mut dream_max) = (None, None);
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         if flag == "--in-process" {
@@ -173,6 +180,8 @@ fn parse(args: &[String]) -> Result<Plan, String> {
             "--reader" => reader = Some(answer::endpoint(flag, value)?),
             "--judge" => judge = Some(answer::endpoint(flag, value)?),
             "--model-key-file" => key_file = Some(PathBuf::from(value)),
+            "--dreamed" => dream_model = Some(answer::endpoint(flag, value)?),
+            "--dream-max-seconds" => dream_max = Some(Duration::from_secs(num(value)? as u64)),
             _ => return Err(format!("unknown flag {flag}")),
         }
     }
@@ -210,20 +219,30 @@ fn parse(args: &[String]) -> Result<Plan, String> {
     if grades.iter().any(String::is_empty) {
         return Err("--grades has an empty grade".into());
     }
-    let judging = match (reader, judge, key_file) {
+    let judging = match (reader, judge, &key_file) {
         (None, None, None) => None,
         (Some(reader), Some(judge), Some(key_file)) => Some(answer::Judging {
             reader,
             judge,
-            key_file,
+            key_file: key_file.clone(),
         }),
         (Some(_), Some(_), None) => {
             return Err("--reader and --judge need --model-key-file <path> (their key)".into());
         }
+        (None, None, Some(_)) if dream_model.is_some() => None,
         (None, None, Some(_)) => {
-            return Err("--model-key-file goes with --reader and --judge".into());
+            return Err("--model-key-file goes with --reader and --judge, or --dreamed".into());
         }
         _ => return Err("--reader and --judge go together".into()),
+    };
+    let dreaming = match (dream_model, dream_max) {
+        (Some(endpoint), max_wait) => Some(dreamed::Planned {
+            endpoint,
+            key_file,
+            max_wait: max_wait.unwrap_or(Duration::from_secs(3_600)),
+        }),
+        (None, None) => None,
+        (None, Some(_)) => return Err("--dream-max-seconds goes with --dreamed".into()),
     };
     Ok(Plan {
         mode,
@@ -239,6 +258,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         server_env,
         systems,
         judging,
+        dreaming,
     })
 }
 
@@ -246,7 +266,7 @@ pub(super) fn say(text: &str) {
     let _ = writeln!(std::io::stderr().lock(), "[lives {}] {text}", loadavg());
 }
 
-fn plan_echo(plan: &Plan) -> serde_json::Value {
+fn plan_echo(plan: &Plan, dreaming: Option<&dreamed::Dreaming>) -> serde_json::Value {
     let pick = match &plan.pick {
         Pick::All => json!({"all": true}),
         Pick::Named(keys) => json!({"lives": keys}),
@@ -285,6 +305,7 @@ fn plan_echo(plan: &Plan) -> serde_json::Value {
         // Names only: values (often credentials) stay in the spawned server's environment.
         "server_env": plan.server_env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
         "systems": plan.systems.iter().map(|s| json!({"name": s.name, "url": s.url.as_str()})).collect::<Vec<_>>(),
+        "dreamed": dreaming.map(dreamed::Dreaming::echo),
     })
 }
 
@@ -307,8 +328,13 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     if matches!(plan.mode, Mode::Spawned { .. }) && !cfg!(target_os = "linux") {
         return Err(LINUX_ONLY.into());
     }
-    // The key and both models are checked before any store is opened.
+    // The keys and every model are checked before any store is opened.
     let judge = plan.judging.take().map(answer::Judge::start).transpose()?;
+    let dreaming = plan
+        .dreaming
+        .take()
+        .map(|planned| planned.start(&plan.mode))
+        .transpose()?;
     let started_unix = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -321,7 +347,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         lives.len(),
         corpus.files.len()
     ));
-    let (server, mut system) = oneiron::measure(&plan, &lives)?;
+    let (server, mut system) = oneiron::measure(&plan, &lives, None)?;
     finish(judge.as_ref(), &lives, &mut system);
     host.load_end = loadavg();
     let mut report = Report {
@@ -330,7 +356,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         started_unix,
         host,
         server,
-        plan: plan_echo(&plan),
+        plan: plan_echo(&plan, dreaming.as_ref()),
         judged: judge.as_ref().map(answer::Judge::pins),
         corpus: CorpusInfo {
             files: corpus
@@ -358,6 +384,16 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         systems: vec![system],
     };
     write(&plan, &report)?;
+    if let Some(dreaming) = &dreaming {
+        let mut arm = match oneiron::measure(&plan, &lives, Some(dreaming)) {
+            Ok((_, system)) => system,
+            Err(reason) => System::not_ready(dreamed::NAME, reason),
+        };
+        finish(judge.as_ref(), &lives, &mut arm);
+        report.systems.push(arm);
+        report.host.load_end = loadavg();
+        write(&plan, &report)?;
+    }
     // One store name per pick, the same at every adapter.
     let mut picked = blake3::Hasher::new();
     for life in &lives {

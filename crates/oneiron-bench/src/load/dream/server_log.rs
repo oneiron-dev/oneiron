@@ -24,14 +24,14 @@ pub(super) type Fields = BTreeMap<String, String>;
 
 /// Reads a growing file from where the last read stopped; a line still
 /// being written waits for its newline.
-pub(super) struct Tail {
+pub(in crate::load) struct Tail {
     path: PathBuf,
     offset: u64,
     partial: Vec<u8>,
 }
 
 impl Tail {
-    pub(super) fn new(path: PathBuf) -> Self {
+    pub(in crate::load) fn new(path: PathBuf) -> Self {
         Self {
             path,
             offset: 0,
@@ -78,7 +78,7 @@ pub(super) struct Alarm {
 
 /// Everything the log showed so far.
 #[derive(Default)]
-pub(super) struct Scan {
+pub(in crate::load) struct Scan {
     pub(super) stages: Vec<Seen>,
     pub(super) passes: Vec<Seen>,
     pub(super) opens: Vec<Seen>,
@@ -88,7 +88,7 @@ pub(super) struct Scan {
 
 impl Scan {
     /// Reads what `tail` has new, stamped with the time since `origin`.
-    pub(super) fn read(&mut self, tail: &mut Tail, origin: Instant) {
+    pub(in crate::load) fn read(&mut self, tail: &mut Tail, origin: Instant) {
         let lines = tail.lines();
         let at_ms = origin.elapsed().as_secs_f64() * 1000.0;
         for raw in lines {
@@ -110,6 +110,11 @@ impl Scan {
                 self.closes.push(Seen { at_ms, fields });
             }
         }
+    }
+
+    /// How many sitting open lines the log showed so far.
+    pub(in crate::load) fn opened(&self) -> usize {
+        self.opens.len()
     }
 
     /// Whether this server logs the Dreamer's lines at all.

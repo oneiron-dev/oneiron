@@ -101,7 +101,7 @@ fn sha256(text: &str) -> String {
 /// `load dream`'s preflight of one endpoint: the model it answered as.
 fn preflight(role: &str, endpoint: &Endpoint, key: &str) -> Result<String, String> {
     say(&format!("{role} preflight: {}", endpoint.model));
-    setup::preflight(&endpoint.base_url, &endpoint.model, key)
+    setup::preflight(&endpoint.base_url, &endpoint.model, Some(key))
         .map(|answer| answer.reply_model)
         .map_err(|e| format!("--{role}: {e}"))
 }

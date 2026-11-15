@@ -11,7 +11,8 @@ use super::super::report::Host;
 use super::super::stats::{Sample, Summary};
 use super::answer::Pins;
 use super::corpus::{Life, Question, Set};
-use super::score;
+use super::dreamed::Dream;
+use super::{say, score};
 
 #[derive(Serialize)]
 pub(super) struct Report {
@@ -87,6 +88,9 @@ pub(super) struct System {
     pub(super) disk_mib: Option<f64>,
     pub(super) summary: Vec<GradeSummary>,
     pub(super) rows: Vec<Row>,
+    /// The dreamed arm's sittings, its wait for a still Dreamer and the
+    /// claims it landed; `None` for every other system.
+    pub(super) dream: Option<Dream>,
 }
 
 /// One question asked of one system at one grade.
@@ -184,6 +188,24 @@ impl Row {
 }
 
 impl System {
+    /// A system that could not be measured, with its reason and no rows.
+    pub(super) fn not_ready(name: &str, reason: String) -> Self {
+        say(&format!("{name}: not ready: {reason}"));
+        Self {
+            name: name.to_owned(),
+            status: "not_ready",
+            reason: Some(reason),
+            documents: 0,
+            ingest: Summary::default(),
+            settle_seconds: 0.0,
+            drain_seconds: None,
+            disk_mib: None,
+            summary: Vec::new(),
+            rows: Vec::new(),
+            dream: None,
+        }
+    }
+
     /// Lets go of the rows' returned texts when no judge reads them.
     pub(super) fn release_texts(&mut self) {
         for row in &mut self.rows {
