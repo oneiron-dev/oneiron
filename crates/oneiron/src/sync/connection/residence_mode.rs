@@ -83,39 +83,51 @@ impl SyncConnection {
     /// A change to All publishes first and then drops the opened read
     /// caches, so no reader sees Thin with its caches gone (FIX 11114).
     /// Under sync opened it first withdraws this install's full-copy mark,
-    /// changed or not (L7-47).
+    /// changed or not (L7-47). An owner's switch can commit and publish
+    /// while the refresh runs, so the refresh resolves once more after it
+    /// publishes and repeats until the mode stands: the mode it leaves is
+    /// the one the store resolves to, and a refresh that ends on sync opened
+    /// withdrew the mark under that resolution.
     fn follow_home(&self, vault: &Vault) -> crate::error::Result<()> {
         let configured = self.config.client_config.residence_mode;
-        let mode = crate::sync::residence::resolve_residence_mode(vault, configured)?;
-        // L7-47: a machine that runs sync opened holds no full-copy mark. A
-        // lost election is no switch, so the switch's withdrawal never ran
-        // (FIX FULL-COPY-MARK-ELECTION-OPENED). A mark that is not withdrawn
-        // never fails the refresh.
-        if mode == SyncResidenceMode::Opened
-            && let Err(error) = vault.declare_full_copy_as_resolved(configured, false)
-        {
-            tracing::warn!(
-                kind = ?error.kind(),
-                "the full-copy mark was not withdrawn; a later residence refresh withdraws it"
-            );
+        let mut mode = crate::sync::residence::resolve_residence_mode(vault, configured)?;
+        loop {
+            // L7-47: a machine that runs sync opened holds no full-copy mark.
+            // A lost election is no switch, so the switch's withdrawal never
+            // ran (FIX FULL-COPY-MARK-ELECTION-OPENED). A mark that is not
+            // withdrawn never fails the refresh.
+            if mode == SyncResidenceMode::Opened
+                && let Err(error) = vault.declare_full_copy_as_resolved(configured, false)
+            {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the full-copy mark was not withdrawn; a later residence refresh withdraws it"
+                );
+            }
+            if mode != *self.mode.borrow() {
+                self.mode.send_if_modified(|running| {
+                    let changed = *running != mode;
+                    *running = mode;
+                    changed
+                });
+                if mode == SyncResidenceMode::All
+                    && let Err(error) = crate::sync::residence::prune_thin_items(vault, u64::MAX)
+                {
+                    tracing::warn!(
+                        %error,
+                        "residence mode is All with its opened read caches left; the next switch drops them"
+                    );
+                }
+            }
+            // A switch that committed after the first resolution: its
+            // withdrawal transaction skipped a mark this mode disagrees
+            // with, or it published before this refresh did.
+            let resolved = crate::sync::residence::resolve_residence_mode(vault, configured)?;
+            if resolved == mode {
+                return Ok(());
+            }
+            mode = resolved;
         }
-        if mode == *self.mode.borrow() {
-            return Ok(());
-        }
-        self.mode.send_if_modified(|running| {
-            let changed = *running != mode;
-            *running = mode;
-            changed
-        });
-        if mode == SyncResidenceMode::All
-            && let Err(error) = crate::sync::residence::prune_thin_items(vault, u64::MAX)
-        {
-            tracing::warn!(
-                %error,
-                "residence mode is All with its opened read caches left; the next switch drops them"
-            );
-        }
-        Ok(())
     }
 }
 
