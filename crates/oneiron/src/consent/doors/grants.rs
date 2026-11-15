@@ -41,7 +41,7 @@ impl Vault {
         effect_digest: EffectDigest,
     ) -> Result<ConsentReceipt> {
         let decision_id = crate::store::GateDecisionId::from_bytes(self.store.clock.ulid()?);
-        self.claim_approve_once_in_txn(wtxn, &effect_digest, decision_id)?;
+        // SEEDED FAULT A (red proof only): the spent marker is never claimed.
         let receipt = ConsentReceipt::Approved {
             decision_id,
             grant: ConsentGrant::ApproveOnce(effect_digest),
@@ -154,7 +154,8 @@ impl Vault {
         owner: &AuthenticatedOwner,
         bound: GrantBound,
     ) -> Result<ConsentReceipt> {
-        if let Some(class) = bound_catastrophe_class(&bound) {
+        // SEEDED FAULT B (red proof only): the catastrophe floor check never matches.
+        if let Some(class) = bound_catastrophe_class(&bound).filter(|_| false) {
             return Err(Error::Gate(GateError::ConsentCatastropheNotRememberable(
                 crate::gate::consent_floor_refusal(class),
             )));

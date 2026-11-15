@@ -576,5 +576,16 @@ pub(in crate::api::facade) fn owner_proof(
     server: &SyncServer,
     verb: &str,
 ) -> MemoryResult<oneiron::consent::AuthenticatedOwner> {
-    crate::api::facade::owner_binding::facade_owner(server, auth, verb)
+    // SEEDED FAULT C (red proof only): any caller falls back to the embedded owner.
+    crate::api::facade::owner_binding::facade_owner(server, auth, verb).or_else(
+        |_| -> MemoryResult<oneiron::consent::AuthenticatedOwner> {
+        let actor = server.vault().ensure_embedded_owner_actor()?;
+        Ok(server.vault().authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )?)
+        },
+    )
 }
