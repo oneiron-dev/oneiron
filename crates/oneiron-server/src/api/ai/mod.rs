@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use oneiron_driver::SessionHint;
 use serde::Deserialize;
 
+use oneiron::EntityId;
 use oneiron::llm::manifest::ModelRole;
 use oneiron::llm::{VaultRef, WorkerMode};
 
@@ -230,6 +231,29 @@ struct QuotaAnswer {
     fallback: Option<String>,
 }
 
+/// The agent behind `auth`, when it is one: an `agent` actor class with a
+/// principal that parses to an entity. Members and every other non-owner
+/// caller are not agents.
+fn agent_caller(auth: &CoreAuth) -> Option<EntityId> {
+    if auth.actor_class() != Some("agent") {
+        return None;
+    }
+    auth.principal_ref()
+        .and_then(|reference| EntityId::from_hex(reference).ok())
+}
+
+/// A quota answer's wire name: the item `models.quota.agent_may_answer`
+/// admits for it. It stays the answer's `snake_case` spelling.
+fn quota_choice_wire_name(choice: QuotaChoice) -> &'static str {
+    match choice {
+        QuotaChoice::Wait => "wait",
+        QuotaChoice::TopUp => "top_up",
+        QuotaChoice::AddAccount => "add_account",
+        QuotaChoice::PayAsYouGo => "pay_as_you_go",
+        QuotaChoice::UseFallback => "use_fallback",
+    }
+}
+
 /// The owner's answer to a quota question in `GET /v1/ai/status` (OF-305):
 /// `top_up` or `pay_as_you_go` puts the parked offer back in rotation now,
 /// `wait` and `add_account` close the question and leave it parked until
@@ -242,23 +266,73 @@ async fn answer_quota(
     Path(question): Path<String>,
     Json(answer): Json<QuotaAnswer>,
 ) -> Response {
-    if !auth.is_owner_grade() {
+    // Restriction wave 11: the owner takes today's path; an agent the
+    // owner lets give this answer takes the agent path below; anyone
+    // else is refused as before.
+    let agent = if auth.is_owner_grade() {
+        None
+    } else {
+        agent_caller(&auth)
+    };
+    if !auth.is_owner_grade() && agent.is_none() {
         return refusal(
             StatusCode::FORBIDDEN,
             "owner_required",
             "quota questions are the owner's",
         );
     }
+    // The key first, so a closed key answers exactly today's refusal.
+    if let Some(agent) = agent {
+        match server
+            .vault()
+            .agent_may_answer_quota(agent, quota_choice_wire_name(answer.choice))
+        {
+            Ok(true) => {}
+            Ok(false) => {
+                return refusal(
+                    StatusCode::FORBIDDEN,
+                    "owner_required",
+                    "quota questions are the owner's",
+                );
+            }
+            Err(_) => {
+                return refusal(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "quota_unwritable",
+                    "the answer could not be kept",
+                );
+            }
+        }
+    }
     // FIX 2222: an owner act; a hosted operator's root is refused, typed.
     if let Err(error) = crate::api::host_action::require_host_owner_act(&server, &auth) {
         return error.into_response();
+    }
+    // The agent answers on a live credential, as a wave plan does.
+    if agent.is_some() && !auth.credential_is_live(server.vault()) {
+        return refusal(
+            StatusCode::UNAUTHORIZED,
+            "credential_revoked",
+            "the admission credential is no longer live",
+        );
     }
     match server.ai.model_runtime().answer_quota(
         &question,
         answer.choice,
         answer.fallback.as_deref(),
     ) {
-        Ok(true) => StatusCode::NO_CONTENT.into_response(),
+        Ok(true) => {
+            // The answer keeps no receipt, so the agent's answer is logged.
+            if let Some(agent) = agent {
+                tracing::info!(
+                    agent = %agent.to_hex(),
+                    choice = quota_choice_wire_name(answer.choice),
+                    question = %question,
+                    "an agent answered a quota question",
+                );
+            }
+            StatusCode::NO_CONTENT.into_response()
+        }
         Ok(false) => refusal(
             StatusCode::NOT_FOUND,
             "no_such_question",

@@ -18,6 +18,7 @@ pub use defaults::{
     PurposeDefaultSubmitter, purpose_default_grant_target,
 };
 mod inference_admission;
+mod quota_delegate;
 mod tagger_admission;
 pub use inference_admission::admitted_as;
 pub use tagger_admission::{TaggerCall, TaggerCallContext, TaggerEgressPredicate};
@@ -55,6 +56,7 @@ pub mod routing;
 pub mod run_admission;
 pub mod score_scraper;
 pub mod seat;
+pub mod setting_keys;
 mod step;
 pub use step::public as model_step;
 pub mod tagger;
