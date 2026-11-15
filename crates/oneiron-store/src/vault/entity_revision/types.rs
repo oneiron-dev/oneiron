@@ -40,7 +40,7 @@ pub struct IndexedPublication {
 impl RevisionRef {
     /// Stable lowercase wire form; not an entity identity.
     pub fn to_hex(self) -> String {
-        self.0.iter().map(|b| format!("{b:02x}")).collect()
+        oneiron_hex::encode(&self.0)
     }
     /// Parses one exact 16-byte frontier reference.
     pub fn from_hex(value: &str) -> Result<Self> {
