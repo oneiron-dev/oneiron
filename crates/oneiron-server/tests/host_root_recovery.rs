@@ -11,8 +11,10 @@
 //! working, and a keystore found later holds a retired root. The command
 //! refuses while this install holds the live root, refuses a kit that was
 //! never enrolled and leaves the slot empty, and is not needed while the
-//! escrow gives the seed back. After the move, `serve` shows the
-//! fragile-genesis flag until a new kit is enrolled (L1-07-KIT-AFTER-MOVE).
+//! escrow gives the seed back: the engine's recovery asks the escrow itself,
+//! whatever its caller's keystore install did. After the move, `serve` shows
+//! the fragile-genesis flag until a new kit is enrolled
+//! (L1-07-KIT-AFTER-MOVE).
 //!
 //! Fleet command: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test
@@ -30,7 +32,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use oneiron::authority::HostIssuerSeedSlot;
 use oneiron::memory::{RecallEffort, RecallScope, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::recovery::{KitPiece, KitSecretKind};
 use oneiron_remote::{OneironClient, unix_seconds_now};
 use oneiron_server::config::{ServeArgs, resolve_serve_config};
 use serde_json::Value;
@@ -196,6 +200,70 @@ impl Host {
         );
         oneiron::test_doors::host_root_loss::lose_host_issuer_seed(&vault)
             .expect("lose this install's host issuer seed and its escrow");
+    }
+
+    /// Deletes this install's one host issuer seed slot file. The vault's
+    /// key custody still escrows the seed.
+    fn remove_seed_slot_file(&self) {
+        let seeds: Vec<PathBuf> = std::fs::read_dir(&self.keys)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.contains("host-issuer-seed") && name.ends_with(".key"))
+            })
+            .collect();
+        assert_eq!(seeds.len(), 1, "one seed slot file: {seeds:?}");
+        std::fs::remove_file(&seeds[0]).unwrap();
+    }
+
+    /// `Vault::recover_host_root_to_new_seed` in process on the stopped
+    /// vault, as a caller that installs the keystore and loads this
+    /// install's signing keys but never runs the custody step of the
+    /// server's keystore install. Answers the slot before the call, what
+    /// the call answered, and the slot after it.
+    fn recover_root_without_the_install_custody_step(
+        &self,
+        pieces: &[PathBuf; 2],
+    ) -> (HostIssuerSeedSlot, Result<(), String>, HostIssuerSeedSlot) {
+        let mut config = resolve_serve_config(&ServeArgs {
+            config: Some(self.config.clone()),
+            ..ServeArgs::default()
+        })
+        .expect("resolve the test config");
+        config.keystore.dir = Some(self.keys.clone());
+        let vault = oneiron::Vault::open_owned(&config.vault_path, config.vault_config())
+            .expect("open the stopped vault");
+        let keystore = config
+            .keystore
+            .open(&config.vault_path)
+            .expect("open the file keystore")
+            .expect("the keystore backend is on");
+        vault.install_device_keystore(keystore);
+        vault
+            .prepare_install_signing()
+            .expect("this install's signing keys load");
+        let before = vault.host_issuer_seed_slot().expect("read the slot");
+        let kit: Vec<KitPiece> = pieces
+            .iter()
+            .map(|file| kit_piece(file.as_path()))
+            .collect();
+        let given: Vec<&KitPiece> = kit.iter().collect();
+        let vault_id = vault
+            .authority_fold()
+            .expect("fold the authority log")
+            .vault_id
+            .expect("a rooted vault has an id");
+        let secret = vault
+            .restore_kit_here(vault_id, KitSecretKind::RecoveryRoot, &given, None)
+            .expect("two pieces restore the kit");
+        let answered = vault
+            .recover_host_root_to_new_seed(secret)
+            .map(|_moved| ())
+            .map_err(|error| format!("{error} ({error:?})"));
+        let after = vault.host_issuer_seed_slot().expect("read the slot again");
+        (before, answered, after)
     }
 
     /// Starts `oneiron serve` and waits until an unauthenticated call is
@@ -382,6 +450,17 @@ fn piece_texts(pieces: &[PathBuf; 2]) -> Vec<String> {
         .collect()
 }
 
+/// A kit piece file, read as the CLI reads one: the exported piece, else
+/// its recovery code.
+fn kit_piece(file: &Path) -> KitPiece {
+    let bytes = std::fs::read(file).expect("read a kit piece file");
+    KitPiece::import(&bytes)
+        .or_else(|_| {
+            KitPiece::from_recovery_code(std::str::from_utf8(&bytes).expect("a UTF-8 piece file"))
+        })
+        .expect("a kit piece")
+}
+
 #[test]
 fn a_lost_host_root_recovers_with_the_enrolled_kit_and_keeps_the_vault_id() {
     let (host, agent, pieces) = rooted_with_enrolled_kit(true);
@@ -488,22 +567,43 @@ fn recover_root_refuses_a_kit_whose_key_was_never_enrolled() {
 #[test]
 fn a_new_install_takes_back_the_escrowed_root_without_the_kit() {
     let (host, _agent, pieces) = rooted_with_enrolled_kit(false);
-    let seeds: Vec<PathBuf> = std::fs::read_dir(&host.keys)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .filter(|path| {
-            path.file_name()
-                .and_then(|name| name.to_str())
-                .is_some_and(|name| name.contains("host-issuer-seed") && name.ends_with(".key"))
-        })
-        .collect();
-    assert_eq!(seeds.len(), 1, "one seed slot file: {seeds:?}");
-    std::fs::remove_file(&seeds[0]).unwrap();
+    host.remove_seed_slot_file();
 
     // FIX-LIST 10770: the keystore install takes the escrowed seed back.
     json(host.oneiron(&["token", "agent", "--name", "claude-code"], NEW));
     let error = refused(&host.recover_root(&pieces, NEW));
     assert!(error.contains(ROOT_HELD), "{error}");
+}
+
+#[test]
+fn a_kit_recovery_takes_the_escrowed_root_back_itself_and_moves_nothing() {
+    let (host, agent, pieces) = rooted_with_enrolled_kit(false);
+    let vault_id = host.vault_id(OLD);
+    host.remove_seed_slot_file();
+
+    // The escrow still holds the live root's seed, and no keystore install
+    // took it back: the recovery asks the vault's key custody itself, so
+    // the root is not lost and the kit moves nothing.
+    let (before, answered, after) = host.recover_root_without_the_install_custody_step(&pieces);
+    assert_eq!(
+        before,
+        HostIssuerSeedSlot::Empty,
+        "no install took the seed back"
+    );
+    let error = answered.expect_err("the kit moved a root the vault's key custody still escrows");
+    assert!(error.contains(ROOT_HELD), "{error}");
+    assert_eq!(
+        after,
+        HostIssuerSeedSlot::Filled,
+        "the recovery took the escrowed seed back"
+    );
+
+    // Nothing moved: the same vault, and agent A's slip still reads.
+    assert_eq!(host.vault_id(OLD), vault_id);
+    let _server = host.serve(OLD, "serve-after");
+    let old_agent =
+        OneironClient::connect(&host.origin(), agent["credential"].as_str().unwrap()).unwrap();
+    assert!(recall(&old_agent).is_ok(), "agent A's slip still works");
 }
 
 #[test]
