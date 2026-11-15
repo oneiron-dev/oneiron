@@ -8,6 +8,7 @@ mod changes;
 mod receipts;
 mod restore_group;
 mod revert;
+pub(crate) mod setting_keys;
 mod settle;
 mod snapshot;
 mod topology;

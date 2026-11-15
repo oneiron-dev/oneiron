@@ -12,6 +12,7 @@
 //! any surface the owner is authenticated on, checked before any binding
 //! resolves.
 
+pub(crate) mod setting_keys;
 mod types;
 
 pub use types::*;
