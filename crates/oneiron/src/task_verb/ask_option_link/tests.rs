@@ -22,8 +22,14 @@ fn two_friends_get_distinct_generic_links_and_void_is_final() -> TestResult {
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x45));
     question.options = [
-        (TaskAskOptionId::new("a")?, "Same display".to_string()),
-        (TaskAskOptionId::new("b")?, "Same display".to_string()),
+        (
+            TaskAskOptionId::new("a")?,
+            TaskAskOption::new("Same display"),
+        ),
+        (
+            TaskAskOptionId::new("b")?,
+            TaskAskOption::new("Same display"),
+        ),
     ]
     .into();
     let mut spec = TaskAskSpec::shorthand(
@@ -124,7 +130,7 @@ fn reissued_link_revokes_previous_token_without_affecting_other_friend() -> Test
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x53));
     question
         .options
-        .insert(TaskAskOptionId::new("yes")?, "Yes".into());
+        .insert(TaskAskOptionId::new("yes")?, TaskAskOption::new("Yes"));
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
         question,
@@ -178,8 +184,8 @@ fn unused_friend_link_lands_late_word_without_changing_first_answer() -> TestRes
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x63));
     question.options = [
-        (TaskAskOptionId::new("yes")?, "Yes".into()),
-        (TaskAskOptionId::new("no")?, "No".into()),
+        (TaskAskOptionId::new("yes")?, TaskAskOption::new("Yes")),
+        (TaskAskOptionId::new("no")?, TaskAskOption::new("No")),
     ]
     .into();
     let mut spec = TaskAskSpec::shorthand(
@@ -233,7 +239,9 @@ fn governed_link_requires_explicit_disclosed_source_before_consuming_token() -> 
     let reference = super::super::tests::support::consult_turn(&vault, 0x72);
     let mut question = TaskAskQuestion::new(reference);
     let yes = TaskAskOptionId::new("yes")?;
-    question.options.insert(yes.clone(), "Yes".into());
+    question
+        .options
+        .insert(yes.clone(), TaskAskOption::new("Yes"));
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
         question,
@@ -301,7 +309,7 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
     }
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x64));
-    question.options = [(TaskAskOptionId::new("yes")?, "Yes".to_string())].into();
+    question.options = [(TaskAskOptionId::new("yes")?, TaskAskOption::new("Yes"))].into();
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People(friends.into())),
         question,
@@ -325,12 +333,14 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
     )?;
     let electorate: BTreeSet<_> = friends.into();
     for friend in [friends[1], friends[2]] {
-        let answer = TaskAskAnswer {
-            task_ref: super::super::ask_record::member_id(ask.group_ref, friend)?,
-            actor_ref: friend,
-            result_ref: friend,
-            word_ref: EntityId::from_bytes([0x65; 16])?,
-        };
+        let answer = TaskAskAnswer::new(
+            super::super::ask_record::member_id(ask.group_ref, friend)?,
+            friend,
+            friend,
+            EntityId::from_bytes([0x65; 16])?,
+            crate::registry::ENTITY_TYPE_PERSON,
+            crate::registry::ENTITY_TYPE_PERSON,
+        );
         let mut word = TaskAskWord::new(friend);
         word.option = Some(TaskAskOptionId::new("yes")?);
         let forged = TaskAskResult {
@@ -346,7 +356,9 @@ fn settlement_replay_without_issuer_proof_is_refused_for_unissued_and_voided_lin
                     .collect(),
                 unmet_people: BTreeSet::new(),
             },
-            decision: TaskAskDecision::First(answer),
+            decision: TaskAskDecision::First(answer.clone()),
+            picked: Some(TaskAskOptionId::new("yes")?),
+            was_rec: false,
             fallback: None,
             evidence: vec![TaskAskEvidence {
                 answer,
@@ -432,7 +444,7 @@ fn a_bearer_word_on_an_ask_past_the_link_bound_is_refused_unread() -> TestResult
     super::super::tests::support::put_person(&vault, friend);
     let mut question =
         TaskAskQuestion::new(super::super::tests::support::consult_turn(&vault, 0x47));
-    question.options = [(TaskAskOptionId::new("a")?, "Yes".to_string())].into();
+    question.options = [(TaskAskOptionId::new("a")?, TaskAskOption::new("Yes"))].into();
     let mut spec = TaskAskSpec::shorthand(
         Some(TaskAskTarget::People([friend].into())),
         question,

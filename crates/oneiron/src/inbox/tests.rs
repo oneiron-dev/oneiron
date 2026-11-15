@@ -124,6 +124,7 @@ fn add_pending_row(
         grant_ref: None,
         diff_handle: diff_handle.clone(),
         read_frontier_hash,
+        context: Default::default(),
         redacted_at: None,
     };
     let pending = PendingGateConsentRecord {
@@ -135,6 +136,8 @@ fn add_pending_row(
         read_frontier_hash,
         reason_codes,
         dreamer_run_id: Some(run_id.to_owned()),
+        predicate: Some(body.predicate.clone()),
+        expires_at: None,
     };
     vault.with_write_txn(|wtxn| {
         vault.store.append_gate_decision_in_txn(wtxn, &decision)?;
@@ -1074,6 +1077,7 @@ mod vad_vetting_tests {
                     ENTITY_TYPE_PERSON,
                     time(3),
                     3,
+                    0,
                     b"corrupt annotation",
                 );
                 vault

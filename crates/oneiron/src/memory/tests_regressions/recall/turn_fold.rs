@@ -5,15 +5,10 @@
 /// turn as the worker would ([`fill_turn`]).
 fn open_embedding_vault() -> (tempfile::TempDir, crate::Vault) {
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = crate::Vault::open(
-        dir.path(),
-        crate::config::VaultConfig {
-            embedding_model: Some("test/model@v1".to_owned()),
-            dimensions: 4,
-            ..crate::config::VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = crate::config::VaultConfig::device();
+    config.embedding_model = Some("test/model@v1".to_owned());
+    config.dimensions = 4;
+    let vault = crate::Vault::open(dir.path(), config).expect("open vault");
     (dir, vault)
 }
 
@@ -192,7 +187,12 @@ fn several_messages_of_one_turn_leave_room_for_the_next_turn() {
 /// one of a long one, which ranks after them; returns the two turns.
 fn crowded_and_next_turn(facade: &Memory<'_>) -> [EntityId; 2] {
     [
-        witness_turn(facade, 0xEB, &["solar", "solar panels", "solar roof"], 1_900),
+        witness_turn(
+            facade,
+            0xEB,
+            &["solar", "solar panels", "solar roof"],
+            1_900,
+        ),
         witness_turn(
             facade,
             0xEC,
@@ -253,15 +253,13 @@ fn a_widened_retry_query_leaves_room_for_the_next_turn() {
             })
         }
         fn assess_evidence(&self, _: &CompletionRequest) -> crate::Result<EvidenceVerdict> {
-            Ok(
-                if self.0.swap(true, std::sync::atomic::Ordering::SeqCst) {
-                    EvidenceVerdict::Sufficient
-                } else {
-                    EvidenceVerdict::Insufficient {
-                        gaps: vec!["solar".to_owned()],
-                    }
-                },
-            )
+            Ok(if self.0.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                EvidenceVerdict::Sufficient
+            } else {
+                EvidenceVerdict::Insufficient {
+                    gaps: vec!["solar".to_owned()],
+                }
+            })
         }
     }
     let (_dir, vault) = open_embedding_vault();
@@ -287,7 +285,10 @@ fn a_widened_retry_query_leaves_room_for_the_next_turn() {
         )
         .run()
         .expect("retried read");
-    assert!(host.0.load(std::sync::atomic::Ordering::SeqCst), "the run retried");
+    assert!(
+        host.0.load(std::sync::atomic::Ordering::SeqCst),
+        "the run retried"
+    );
     let found: Vec<_> = hits.iter().map(|hit| hit.id).collect();
     assert!(
         turns.iter().all(|turn| found.contains(turn)),

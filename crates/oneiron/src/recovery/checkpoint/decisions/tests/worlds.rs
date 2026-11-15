@@ -133,6 +133,7 @@ fn restore_after(vault: &Vault, since: impl FnOnce(&Vault) -> Result<()>) -> Res
     since(vault)?;
     let (unguarded, _) = Vault::restore_checkpoint(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("unguarded"),
         vault.config.clone(),
         RestoreReason::Restore,
@@ -140,6 +141,7 @@ fn restore_after(vault: &Vault, since: impl FnOnce(&Vault) -> Result<()>) -> Res
     )?;
     let guarded = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("guarded"),
         vault.config.clone(),
         vault,

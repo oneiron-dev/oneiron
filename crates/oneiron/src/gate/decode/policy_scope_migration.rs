@@ -125,7 +125,5 @@ fn upgrade_legacy_grant(entries: &mut Vec<(Value, Value)>) -> Option<()> {
     Some(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-DECODE-POLICY-SCOPE-MIGRATION-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

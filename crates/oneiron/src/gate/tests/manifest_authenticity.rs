@@ -37,6 +37,7 @@ fn replicated_actor_denial_narrows_a_class_wide_permit_only_for_that_actor() -> 
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
+            None,
             &denial,
         )
         .commit()?;
@@ -93,6 +94,7 @@ fn replicated_class_wide_cap_narrows_every_bound_actor_in_either_manifest_order(
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 1,
+                None,
                 &clamp,
             )
             .commit()?;
@@ -175,6 +177,7 @@ fn replicated_multi_actor_denial_narrows_every_existing_bound_slot_in_either_ord
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 1,
+                None,
                 &denial,
             )
             .commit()?;
@@ -251,6 +254,7 @@ fn trusted_disjoint_generated_actor_bindings_preserve_each_permit() -> Result<()
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
+            None,
             &encode_policy_manifest(vec![(key, Value::Map(sources))]),
         )
         .commit()?;
@@ -296,6 +300,7 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 1,
+                None,
                 &narrower,
             )
             .commit()?;
@@ -317,6 +322,7 @@ fn untrusted_source_rows_only_narrow_present_slots_independent_of_scan_order() -
                 ENTITY_TYPE_POLICY_MANIFEST,
                 test_time(1),
                 2,
+                None,
                 &unreceipted,
             )
             .commit()?;
@@ -372,6 +378,7 @@ fn product_band_permit_needs_explicit_owner_reauthoring() -> Result<()> {
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             3,
+            None,
             &narrowing,
         )
         .commit()?;
@@ -462,6 +469,7 @@ fn owner_mints_one_foreign_principal_grant_into_the_trusted_default_policy() -> 
             ENTITY_TYPE_POLICY_MANIFEST,
             test_time(1),
             1,
+            None,
             &crate::gate::default_policy_manifest()?,
         )
         .commit()?;
@@ -510,8 +518,10 @@ fn restore_keeps_a_quarantine_the_owner_placed_since() -> Result<()> {
             .is_err()
     );
 
+    let key = vault.checkpoint_key()?;
     let (restored, _) = crate::Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         crate::VaultConfig::default(),
         &vault,

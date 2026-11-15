@@ -846,7 +846,7 @@ fn consent_adapters_fold_existing_shapes_without_rewriting_them() {
     let access = crate::access_grant::AccessGrant::companion_profile_read(
         entity(0x51),
         entity(0xB1),
-        entity(0xC1),
+        Some(entity(0xC1)),
         42,
     );
     let before = crate::access_grant::encode_access_grant_body(&access).expect("encode");
@@ -1408,8 +1408,14 @@ fn consent_receipts_project_into_the_gate_receipt_family() {
     let created = vault
         .create_standing_grant(&owner, bound.clone())
         .expect("mint");
-    assert_eq!(created.grant_ref().as_deref(), Some(grant_ref.as_str()));
-    assert_eq!(created.diff_handle(), bound.digest().as_bytes().to_vec());
+    assert_eq!(
+        consent_receipt_grant_ref(&created).as_deref(),
+        Some(grant_ref.as_str())
+    );
+    assert_eq!(
+        consent_receipt_diff_handle(&created),
+        bound.digest().as_bytes().to_vec()
+    );
     assert_eq!(created.reason_code(), CONSENT_REASON_STANDING_CREATED);
 
     // Quiet in-bound reuse joins the same row via `grant_ref` plus the exact
@@ -1418,16 +1424,22 @@ fn consent_receipts_project_into_the_gate_receipt_family() {
     let used = vault
         .record_standing_grant_use(&grant_ref, effect_digest)
         .expect("use");
-    assert_eq!(used.grant_ref().as_deref(), Some(grant_ref.as_str()));
-    assert_eq!(used.diff_handle(), effect_digest.as_bytes().to_vec());
+    assert_eq!(
+        consent_receipt_grant_ref(&used).as_deref(),
+        Some(grant_ref.as_str())
+    );
+    assert_eq!(
+        consent_receipt_diff_handle(&used),
+        effect_digest.as_bytes().to_vec()
+    );
     assert_eq!(used.reason_code(), CONSENT_REASON_STANDING_USED);
 
     // Approve-once and denial carry the op digest and no grant join.
     let once = vault.approve_once(&owner, effect_digest).expect("once");
-    assert_eq!(once.grant_ref(), None);
+    assert_eq!(consent_receipt_grant_ref(&once), None);
     assert_eq!(once.reason_code(), CONSENT_REASON_APPROVE_ONCE);
     let denied = vault.deny_consent(&owner, effect_digest).expect("deny");
-    assert_eq!(denied.grant_ref(), None);
+    assert_eq!(consent_receipt_grant_ref(&denied), None);
     assert_eq!(denied.reason_code(), CONSENT_REASON_DENIED);
     assert_eq!(denied.gate_outcome(), "denied");
 

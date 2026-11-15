@@ -25,6 +25,7 @@ fn host_root_reads_stamped_rows_but_plain_keys_and_revoked_proofs_do_not() -> Re
             ENTITY_TYPE_CLAIM,
             crate::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &encode_claim_body(&row)?,
         )
         .commit()?;
@@ -177,6 +178,7 @@ fn no_slip_counts_an_unstamped_task_it_is_denied() -> Result<()> {
             crate::registry::ENTITY_TYPE_TASK,
             crate::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &body,
         )
         .text(&replica, &[("body", "lantern harbor")])
@@ -239,6 +241,7 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
         encode_epoch_summary_body(&EpochSummaryBody {
             v: EPOCH_SUMMARY_BODY_VERSION,
             session: EntityId::now().to_hex(),
+            conversation: None,
             epoch: n,
             turn_start: n * 3,
             turn_end: n * 3 + 2,
@@ -256,7 +259,7 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
     );
     vault
         .batch()
-        .put_replicated(&replica, ENTITY_TYPE_SUMMARY, at, 1, &epoch(1)?)
+        .put_replicated(&replica, ENTITY_TYPE_SUMMARY, at, 1, None, &epoch(1)?)
         .put(&base_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(2)?)
         .put(&world_born, ENTITY_TYPE_SUMMARY, at, 1, &epoch(3)?)
         .put(
@@ -385,10 +388,8 @@ fn a_base_only_slip_counts_an_unplaced_epoch_summary_nowhere() -> Result<()> {
 /// (here one more row than a fusion list holds) and cut to one row after.
 #[test]
 fn a_scoped_text_search_for_one_row_ranks_a_bounded_list() -> Result<()> {
-    let config = crate::VaultConfig {
-        retrieval_telemetry_capture: true,
-        ..Default::default()
-    };
+    let mut config = crate::VaultConfig::device();
+    config.retrieval_telemetry_capture = true;
     let (_dir, vault) = crate::test_util::open_test_vault_with(config);
     let rows = crate::fusion::FUSION_LIST_LENGTH + 1;
     let mut batch = vault.batch();

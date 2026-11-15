@@ -41,6 +41,7 @@ fn epoch_body(epoch: u64, text: &str) -> Result<Vec<u8>> {
     encode_epoch_summary_body(&EpochSummaryBody {
         v: EPOCH_SUMMARY_BODY_VERSION,
         session: entity(0x71).to_hex(),
+        conversation: None,
         epoch,
         turn_start: epoch * 3,
         turn_end: epoch * 3 + 2,

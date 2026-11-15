@@ -73,8 +73,6 @@ pub use self::wake_proposal::{
 };
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-COMMITMENT-WAKE-TESTS]: the lib test target's type check fails here (5 errors: E0061 x3, E0063 x1, E0599 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

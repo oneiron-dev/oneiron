@@ -47,6 +47,7 @@ fn replicate(source: &Vault, target: &Vault, ids: &[EntityId]) -> Result<()> {
                 end: header.occurred_end,
             },
             header.learned_at,
+            Some(header.row_version),
             &raw[ENTITY_METADATA_HEADER_LEN..],
         );
     }
@@ -87,6 +88,7 @@ fn put_claim(vault: &Vault, id: &EntityId, body: &ClaimBody, learned: u64) -> Re
             ENTITY_TYPE_CLAIM,
             at(learned),
             learned,
+            None,
             &crate::claim::encode_claim_body(body)?,
         )
         .commit()?;

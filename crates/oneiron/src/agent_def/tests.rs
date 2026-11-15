@@ -2092,9 +2092,11 @@ fn a_restore_never_switches_back_on_an_agent_switched_off_since() -> Result<()> 
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 100)?;
+    let key = vault.checkpoint_key()?;
     let restore = |destination: &std::path::Path| {
         crate::Vault::restore_checkpoint_keeping_authority(
             &image,
+            &key,
             destination,
             embedding_test_config(),
             &vault,

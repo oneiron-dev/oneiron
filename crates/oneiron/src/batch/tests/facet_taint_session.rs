@@ -50,6 +50,7 @@ fn replicated_put_is_rejected_at_a_live_overlay_member_id() -> Result<()> {
             crate::registry::ENTITY_TYPE_TURN,
             test_time_range(10, 10),
             10,
+            None,
             b"stale remote off-record turn",
         )
         .commit()
@@ -68,6 +69,7 @@ fn replicated_put_is_rejected_at_a_live_overlay_member_id() -> Result<()> {
             crate::registry::ENTITY_TYPE_TURN,
             test_time_range(10, 10),
             10,
+            None,
             b"post-close remote turn",
         )
         .commit()?;
@@ -420,11 +422,13 @@ fn session_apply_refuses_a_route_minted_before_a_mode_flip() -> Result<()> {
             entity_type: crate::registry::ENTITY_TYPE_TURN,
             occurred: TimeRange { start: 10, end: 10 },
             learned_at: 10,
+            row_version: None,
             data: b"stale-route turn".to_vec(),
             allow_maintenance: false,
             allow_reserved_predicate: false,
             hub_sync_imported: false,
         },
+        source_run: None,
     };
 
     let overlay = session.overlay();
@@ -544,11 +548,13 @@ fn session_apply_validates_claim_bodies_before_staging() -> Result<()> {
                 entity_type: ENTITY_TYPE_CLAIM,
                 occurred,
                 learned_at: 5,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
             },
+            source_run: None,
         };
 
         let route = session.write_route()?;

@@ -67,6 +67,7 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
             crate::registry::ENTITY_TYPE_CLAIM,
             at,
             1,
+            None,
             &body(bind_hash),
         )
         .commit()
@@ -123,7 +124,8 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 1,
-                &body(bind_hash)
+                None,
+                &body(bind_hash),
             )
             .commit(),
         Err(Error::Claim(ClaimError::WriteConcurrentWithRevocation))
@@ -137,6 +139,7 @@ fn concurrent_claim_quarantines_at_replay_and_later_read_while_regrant_descendan
             crate::registry::ENTITY_TYPE_CLAIM,
             at,
             1,
+            None,
             &body(authority_entry_hash(&regrant).unwrap()),
         )
         .commit()

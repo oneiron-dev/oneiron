@@ -231,7 +231,5 @@ fn field<'a>(value: &'a rmpv::Value, name: &str) -> Option<&'a str> {
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-RECOVERY-CHECKPOINT-DECISIONS-TESTS]: the lib test target's type check fails here (26 errors: E0061 x17, E0063 x6, E0308 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;

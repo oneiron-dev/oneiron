@@ -487,6 +487,7 @@ fn real_http_ingress_stamps_admitted_publisher_and_dedups_two_source_receipts() 
             },
             legend: &crate::context_board::BoardLegend::canonical(),
             sections: &[],
+            you: None,
             changes: Some(&changes),
         },
         crate::context_board::BoardBudgetRequest {
@@ -1391,7 +1392,7 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
     let new_commit = git(repository.path(), &["rev-parse", "HEAD"]);
     let new_adapter = GitEndpointSkillHubAdapter::new(hub_id, endpoint, &new_commit)?;
     let skill_ref = HubRef::new(hub_id, "skills/plain", HubPin::Commit(new_commit))?;
-    let plain = vault.import_skill_from_adapter(&new_adapter, &skill_ref, at, 5)?;
+    let plain = vault.import_skill_from_adapter(&owner, &new_adapter, &skill_ref, at, 5)?;
     assert_eq!(
         vault
             .get_skill_record(&plain)?

@@ -1263,9 +1263,8 @@ fn validate_existing_source<R: Read + Seek>(
     Ok(())
 }
 
-pub(super) fn invalid(reason: &str) -> Error {
-    Error::InvalidConfig(format!("whole-vault import: {reason}"))
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::batch::export::document_import::{invalid, parse_id};
 
 impl Vault {
     /// Whether an actorless archive restore refused its expression preferences for lack of
@@ -1483,14 +1482,6 @@ fn omit_project_revisions<R: Read + Seek>(
         after = Some(id);
     }
     Ok(())
-}
-
-pub(super) fn parse_id(text: &str) -> Result<EntityId> {
-    let id = EntityId::from_hex(text)?;
-    if id.to_hex() != text {
-        return Err(invalid("entity ID must be lowercase hex"));
-    }
-    Ok(id)
 }
 
 /// Whether the stored row `raw` is the archived `row`, whose body re-serializes

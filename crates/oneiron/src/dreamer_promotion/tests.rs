@@ -949,6 +949,7 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             crate::TimeRange { start: 1, end: 1 },
             1,
+            None,
             &bytes,
         )
         .commit()?;
@@ -978,6 +979,7 @@ fn tainted_head_clean_candidate_folds_taint() -> Result<()> {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 crate::TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &crate::claim::encode_claim_body(&forged)?
             )
             .commit()
@@ -1138,6 +1140,7 @@ fn replay_path_still_skips_source_trust_gate() -> Result<()> {
             crate::registry::ENTITY_TYPE_CLAIM,
             occurred(9_000),
             9_000,
+            None,
             body_bytes,
         )
         .commit()?;
@@ -1648,6 +1651,7 @@ fn bounded_over(
         wording: "May this write land without the owner's review?".to_owned(),
         notes,
         calibrated,
+        world_hold: None,
     })
 }
 
