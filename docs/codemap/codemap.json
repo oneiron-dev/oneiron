@@ -2713,7 +2713,7 @@
      "path": "src/artifact_hosting/pointer_rows.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -76593,7 +76593,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "EvidenceSpans",
