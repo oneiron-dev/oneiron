@@ -84,6 +84,11 @@ async fn public_batch_lineage_source_gate_is_consistent() {
             rmpv::Value::from("source-less raw proposal"),
         ),
         (rmpv::Value::from("conf"), rmpv::Value::F32(0.8)),
+        (rmpv::Value::from("confBand"), rmpv::Value::from("high")),
+        (
+            rmpv::Value::from("confBasis"),
+            rmpv::Value::from("deterministic_fallback"),
+        ),
         (rmpv::Value::from("appr"), rmpv::Value::from("proposed")),
         (rmpv::Value::from("life"), rmpv::Value::from("active")),
         (

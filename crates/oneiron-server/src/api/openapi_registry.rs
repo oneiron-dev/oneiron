@@ -213,6 +213,7 @@ use utoipa::OpenApi;
         super::courtesy_delete::take_request,
         super::courtesy_delete::take_reply,
         super::courtesy_delete::take_succession,
+        super::inquiry_peer::take_inquiry,
         super::recovery_bundle::part,
         super::recovery_bundle::index,
         super::recovery_bundle::custody::custody_page,

@@ -110,9 +110,7 @@ pub(crate) fn spawn(
 async fn reconcile(server: Arc<SyncServer>, admission: Box<dyn Send>) {
     let pass = tokio::task::spawn_blocking(move || {
         let _admission = admission;
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |time| time.as_secs());
+        let now = oneiron_base::unix_seconds_now();
         server.vault().reconcile_failure_signal_participation(now)
     })
     .await;
@@ -131,9 +129,7 @@ fn deliver(
     host: &FailureSignalHost,
 ) -> Result<FailureSignalDelivery, OutboundDispatchError> {
     let mut transport = HttpFailureSignalTransport::new(host)?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |time| time.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     server
         .vault()
         .deliver_failure_signals(&host.endpoint, host.batch, now, &mut transport)
