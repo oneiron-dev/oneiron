@@ -30,10 +30,10 @@ use oneiron::learning::{
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryResult};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::{ENGINE_CONTROLS_VERBS, define_agent};
-use oneiron::test_doors::steward::STEWARD_READ_VERB;
+use oneiron::test_doors::steward::{STEWARD_READ_VERB, stand_steward_grant};
 use oneiron::test_doors::substrate_reads::{
-    dispatch_into_child_projects, land_agent_health_finding, land_agent_health_finding_citing,
-    record_settled_team_run, stand_project_steward_grant,
+    answer_coach_on_agent_health_card, dispatch_into_child_projects, land_agent_health_finding,
+    land_agent_health_finding_citing, record_settled_team_run, stand_project_steward_grant,
 };
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use serde_json::{Value, json};
@@ -491,8 +491,10 @@ fn project_scoped_steward_reads_own_project_cards() {
 /// duplicated, a cost-spike card (its p90 baseline is every project's runs
 /// of its task type and unit) and a silence card (its quiet counts its
 /// actor's calls that name no run). A long-wait card of its own run alone
-/// still reads. Red at the base (every card is refused there) and at
-/// 90c687702fc4 (it judged a card by its findings' replay runs alone).
+/// still reads, without its Coach exchange, which reads rows no run places
+/// (the whole vault's reader sees it). Red at the base (every card is
+/// refused there), at 90c687702fc4 (it judged a card by its findings'
+/// replay runs alone) and at 2062acbc712 (it showed the Coach exchange).
 #[test]
 fn project_scoped_steward_reads_no_card_citing_or_measured_outside_its_project() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -518,6 +520,8 @@ fn project_scoped_steward_reads_no_card_citing_or_measured_outside_its_project()
         land_agent_health_finding_citing(&vault, subject, signal, own_run, &cited, now)
             .expect("a finding on its card");
     }
+    answer_coach_on_agent_health_card(&vault, waited, "long_wait", EntityId::now(), 14)
+        .expect("a Coach answer on the long-wait card");
     stand_project_steward_grant(&vault, reader, &[STEWARD_READ_VERB], own_project)
         .expect("a read grant narrowed to one project");
 
@@ -542,6 +546,31 @@ fn project_scoped_steward_reads_no_card_citing_or_measured_outside_its_project()
         subjects,
         vec![json!(waited)],
         "actor=agent {reader:?}, grant=project {own_project:?}; expected only the long-wait card of its own run, not the duplicate-work card {duplicate:?} citing project {other_project:?}'s run, the cost-spike card {spike:?} or the silence card {silent:?}; seen subjects={subjects:?}"
+    );
+    let coach = cards[0]["coach"].clone();
+    assert!(
+        coach.is_null(),
+        "actor=agent {reader:?}, grant=project {own_project:?}; expected the long-wait card {waited:?} without its Coach exchange; seen coach={coach}"
+    );
+    let whole = define_agent(&vault).expect("a whole-vault reader");
+    stand_steward_grant(&vault, whole, &[STEWARD_READ_VERB]).expect("a whole-vault read grant");
+    let whole_cards = read(
+        &vault,
+        whole,
+        "vault.agent_health.cards",
+        json!({ "from": 0, "to": u64::MAX }),
+    )
+    .expect("the whole vault's cards");
+    let answered = whole_cards
+        .as_array()
+        .expect("cards")
+        .iter()
+        .find(|card| card["subject"] == json!(waited))
+        .map(|card| card["coach"]["answer"].is_object());
+    assert_eq!(
+        answered,
+        Some(true),
+        "actor=agent {whole:?}, grant=whole vault; expected the long-wait card {waited:?} with its Coach answer; seen cards={whole_cards}"
     );
 }
 

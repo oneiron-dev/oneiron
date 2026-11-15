@@ -706,4 +706,39 @@ impl Vault {
             super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
         })
     }
+
+    /// TEST-ONLY: puts an answered Coach ask on `subject`'s taskless
+    /// `signal` card, as a Coach exchange leaves it: the answer read `read`
+    /// and drafted nothing.
+    pub(crate) fn answer_coach_on_agent_health_card_for_test(
+        &self,
+        subject: EntityId,
+        signal: AgentHealthSignal,
+        read: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            let key = card_key(subject, signal, None);
+            let mut card = CARDS
+                .get(&self.store, txn, &key)?
+                .ok_or(crate::Error::InvalidClaimBody("a landed agent health card"))?;
+            card.coach = Some(super::ask::AgentHealthCoachAsk {
+                asked_by: subject,
+                asked_at: now,
+                diagnostic: card.diagnostics.last().copied(),
+                attempt: EntityId::now().to_hex(),
+                observed_brief: None,
+                answer: Some(super::ask::AgentHealthCoachAnswer {
+                    at: now,
+                    pads: super::ask::AgentHealthPadRead::NotCovered,
+                    draft: None,
+                    source_rows: Some(vec![read]),
+                    source_rows_complete: Some(true),
+                    draft_erased: Some(false),
+                }),
+                application: None,
+            });
+            super::receipt_index::put_card_in_txn(&self.store, txn, &key, &card)
+        })
+    }
 }

@@ -142,6 +142,26 @@ pub fn land_agent_health_finding_citing(
     vault.land_agent_health_finding_for_test(subject, signal, Some(attempt), &rows, now)
 }
 
+/// Puts an answered Coach ask on `subject`'s taskless card of the signal
+/// named `signal` (its wire spelling), as a Coach exchange leaves it: the
+/// answer read `read` and drafted nothing.
+///
+/// # Errors
+///
+/// A signal outside the closed set; no such card; the vault's.
+pub fn answer_coach_on_agent_health_card(
+    vault: &Vault,
+    subject: EntityId,
+    signal: &str,
+    read: EntityId,
+    now: u64,
+) -> Result<()> {
+    let signal = crate::store::diagnostic_record::AgentHealthSignal::from_wire(signal).ok_or(
+        Error::InvalidClaimBody("an agent health signal's wire spelling"),
+    )?;
+    vault.answer_coach_on_agent_health_card_for_test(subject, signal, read, now)
+}
+
 /// Records one solo team run of `width` agents in `project`, or in the
 /// vault's own scope for `None`, at the root of the type tree in force
 /// there, with an owner's verdict of success settled at `at`.

@@ -178,7 +178,17 @@ fn entity_ref(field: &str, hex: &str) -> MemoryResult<EntityId> {
 }
 
 /// The health cards of `[from, to)` (`vault.agent_health.cards`), as far
-/// as the caller's grant reaches.
+/// as the caller's grant reaches. A grant narrowed to some projects reads
+/// the cards inside it ([`card_inside_in_txn`]), each without its Coach
+/// exchange (its ask and answer, and whether an erase scrubbed an older
+/// draft): the Coach's answer is built from rows no attempt places (the
+/// agent's pads, the skills its run loaded, its TASK's text), so it stays
+/// whole-vault-only. A card keeps the dial it was measured against,
+/// whichever row set it: a dial in force over the reader's own project is
+/// that project's governance, which the reader is subject to, while the
+/// vault's rows themselves and the catalog stay out of the narrowed
+/// `vault.settings.learning` (Engine rulings U08-CARD-COACH-SCOPE and
+/// U08-CARD-DIAL-SCOPE, 16 Nov).
 ///
 /// # Errors
 ///
@@ -197,6 +207,10 @@ pub fn agent_health_cards(
     if reach != SubstrateReach::WholeVault {
         let txn = read_txn(vault)?;
         cards = keep_inside(cards, |card| card_inside_in_txn(vault, &txn, &reach, card))?;
+        for card in &mut cards {
+            card.coach = None;
+            card.legacy_draft_scrubbed = false;
+        }
     }
     cards.truncate(limit(input.limit));
     Ok(cards)
