@@ -467,9 +467,17 @@ fn the_receipt_keeps_each_send_and_no_answer_text() {
         let names: BTreeSet<&str> = receipt.fields.keys().map(String::as_str).collect();
         assert_eq!(
             names,
-            BTreeSet::from(["expires_at", "keep", "member", "purpose", "question"])
+            BTreeSet::from([
+                "asker_role",
+                "expires_at",
+                "keep",
+                "member",
+                "purpose",
+                "question"
+            ])
         );
         assert_eq!(receipt.fields["member"], member.to_hex());
+        assert_eq!(receipt.fields["asker_role"], asked.from.role);
         assert_eq!(receipt.fields["question"], asked.question);
         assert_eq!(receipt.fields["purpose"], asked.task.purpose);
         assert_eq!(receipt.fields["keep"], "task");
@@ -532,13 +540,19 @@ fn an_erase_leaves_the_rows_without_the_actor() {
     );
     assert_eq!(entry.answer, answered(&asked));
 
-    // The asker and the member asked about: the send stands without them.
+    // The asker and the member asked about: the send stands without them,
+    // and the asker's role goes with the asker.
+    assert_eq!(
+        fixture.receipts(&asked)[0].fields.get("asker_role"),
+        Some(&asked.from.role)
+    );
     door::erase_actor_in_inquiry_tables(&fixture.vault, &asked.from.actor).expect("erase");
     door::erase_actor_in_inquiry_tables(&fixture.vault, &member).expect("erase");
     let receipts = fixture.receipts(&asked);
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].actor, None);
     assert!(!receipts[0].fields.contains_key("member"));
+    assert!(!receipts[0].fields.contains_key("asker_role"));
     assert_eq!(receipts[0].fields["question"], asked.question);
     assert_eq!(receipts[0].outcome, "answered");
 }

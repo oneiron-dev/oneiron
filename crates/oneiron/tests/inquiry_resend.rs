@@ -512,6 +512,46 @@ fn a_re_send_goes_out_as_the_stored_inquiry_and_refuses_a_changed_question_or_pu
 }
 
 #[test]
+fn a_re_send_in_another_asker_role_is_refused_and_the_first_role_stays_bound() {
+    let fixture = asking();
+    let host = MemberHost::new(Reply::Pending);
+    let first = fixture
+        .send(&fixture.request(fixture.task, None), &host)
+        .expect("the first send");
+    assert_eq!(first.outcome, InquiryOutcome::Pending);
+    assert_eq!(
+        fixture.receipts(first.inquiry.id)[0]
+            .fields
+            .get("asker_role")
+            .map(String::as_str),
+        Some("scheduling agent"),
+        "the first send's receipt keeps the asker's role"
+    );
+    let id = Some(first.inquiry.id);
+
+    let mut role = fixture.request(fixture.task, id);
+    role.asker_role = "billing agent".to_owned();
+    assert_refused(fixture.send(&role, &host), &differs_in("asker_role"));
+    assert_eq!(host.taken().len(), 1, "a refused re-send sends nothing");
+    assert_eq!(
+        fixture.receipts(first.inquiry.id).len(),
+        1,
+        "and writes no receipt"
+    );
+
+    host.set(answered(&fixture.company));
+    let again = fixture
+        .send(&fixture.request(fixture.task, id), &host)
+        .expect("the re-send in the first role");
+    assert_eq!(
+        again.inquiry, first.inquiry,
+        "the re-send is the stored inquiry"
+    );
+    assert_eq!(again.outcome, InquiryOutcome::Answered);
+    assert_eq!(host.taken()[1].from.role, "scheduling agent");
+}
+
+#[test]
 fn an_expired_re_send_or_an_oversized_inquiry_is_refused_before_any_send() {
     let fixture = asking();
     let host = MemberHost::new(Reply::Pending);

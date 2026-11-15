@@ -35,6 +35,9 @@ const FIELD_QUESTION: &str = "question";
 const FIELD_PURPOSE: &str = "purpose";
 const FIELD_KEEP: &str = "keep";
 const FIELD_EXPIRES_AT: &str = "expires_at";
+/// The asker's one-line role, as the inquiry carried it. A receipt written
+/// before this field holds none.
+const FIELD_ASKER_ROLE: &str = "asker_role";
 /// A terms change's fields: the modes for each keep and the keep allowed,
 /// after the change, then before it.
 const FIELD_TASK_MODE: &str = "task_mode";
@@ -69,6 +72,7 @@ pub(crate) fn write_inquiry_receipt_in_txn(
         (FIELD_PURPOSE.to_owned(), inquiry.task.purpose.clone()),
         (FIELD_KEEP.to_owned(), inquiry.keep.as_str().to_owned()),
         (FIELD_EXPIRES_AT.to_owned(), inquiry.expires_at.to_string()),
+        (FIELD_ASKER_ROLE.to_owned(), inquiry.from.role.clone()),
     ]);
     let receipt = ReceiptRecord {
         receipt_id: inquiry_receipt_id(&inquiry.id, sequence),
@@ -98,11 +102,14 @@ fn inquiry_receipt_id(id: &EntityId, sequence: u32) -> String {
 /// The first send of an inquiry from this vault, as its first `inquiry`
 /// receipt records it: what a re-send of the inquiry is bound to (Engine
 /// ruling INQUIRE-RESEND = A). An actor's erase scrubs the member and the
-/// asker from the receipt, which leaves them `None`.
+/// asker (with the asker's role) from the receipt, which leaves them `None`.
 pub(crate) struct InquiryFirstSend {
     /// The member asked about: the asking vault's row for the member.
     pub(crate) member: Option<EntityId>,
     pub(crate) asker: Option<EntityId>,
+    /// The asker's role; also `None` on a receipt written before the
+    /// receipt kept it.
+    pub(crate) asker_role: Option<String>,
     pub(crate) task: EntityId,
     pub(crate) question: String,
     pub(crate) purpose: String,
@@ -134,6 +141,7 @@ pub(crate) fn first_inquiry_send_in_txn(
     Ok(Some(InquiryFirstSend {
         member: entity(field(FIELD_MEMBER))?,
         asker: entity(receipt.actor.as_deref())?,
+        asker_role: field(FIELD_ASKER_ROLE).map(str::to_owned),
         task: entity(receipt.trigger_ref.as_deref())?.ok_or_else(corrupted)?,
         question: field(FIELD_QUESTION).ok_or_else(corrupted)?.to_owned(),
         purpose: field(FIELD_PURPOSE).ok_or_else(corrupted)?.to_owned(),
@@ -299,8 +307,9 @@ pub(crate) fn inquiry_receipts(vault: &Vault, query: &ReceiptQuery) -> Result<Ve
 }
 
 /// The table's actor scrub (an actor's erase, and a restore's rerun of it):
-/// no inquiry receipt names `actor` any more, neither as the asker nor as
-/// the member asked about. The receipt and the send it records stand.
+/// no inquiry receipt names `actor` any more, neither as the asker (nor the
+/// asker's role) nor as the member asked about. The receipt and the send it
+/// records stand.
 ///
 /// # Errors
 ///
@@ -316,6 +325,7 @@ pub(crate) fn erase_inquiry_receipt_actor_in_txn(
         let mut changed = false;
         if row.actor.as_deref() == Some(hex.as_str()) {
             row.actor = None;
+            row.fields.remove(FIELD_ASKER_ROLE);
             changed = true;
         }
         if row.fields.get(FIELD_MEMBER) == Some(&hex) {

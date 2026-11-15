@@ -9,8 +9,9 @@
 //! vault returns its current answer. No housekeeping pass re-sends it. A
 //! re-send is bound to the inquiry's first send from this vault (Engine
 //! ruling INQUIRE-RESEND = A): it names the same member, asker and task and
-//! carries the same question and purpose, and it goes out, until the first
-//! send's expiry, as the inquiry that send stored, with its expiry and keep.
+//! carries the same asker role, question and purpose, and it goes out, until
+//! the first send's expiry, as the inquiry that send stored, with its expiry
+//! and keep.
 
 use super::landing::inquiry_landing;
 use super::record::{
@@ -262,9 +263,11 @@ impl Vault {
     /// # Errors
     ///
     /// This vault never sent the inquiry; the request names another member,
-    /// asker or task, or another question or purpose, than the first send
-    /// (the refusal names the field); the first send's expiry has come;
-    /// storage errors.
+    /// asker or task, or another asker role, question or purpose, than the
+    /// first send (the refusal names the field); the first send's expiry has
+    /// come; storage errors. A first receipt written before receipts kept
+    /// the asker's role binds no role; the member's vault still refuses a
+    /// changed one.
     fn bind_inquiry_resend(
         &self,
         request: &InquirySendRequest,
@@ -285,6 +288,13 @@ impl Vault {
         let fields = [
             ("member", first.member == Some(request.member)),
             ("asker", first.asker == Some(request.asker)),
+            (
+                "asker_role",
+                first
+                    .asker_role
+                    .as_deref()
+                    .is_none_or(|role| role == request.asker_role),
+            ),
             ("task", first.task == request.task),
             ("question", first.question == request.question),
             ("purpose", first.purpose == request.purpose),
