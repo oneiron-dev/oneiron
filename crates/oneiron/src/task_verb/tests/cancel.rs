@@ -13,11 +13,11 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
     let facade = vault.memory(own, EdgeActorClass::Agent);
 
     for mode in [
-        TaskCancelMode::Auto,
-        TaskCancelMode::FullAccess,
-        TaskCancelMode::Manual,
+        CheckInMode::AskWhenUnsure,
+        CheckInMode::NeverAsk,
+        CheckInMode::AlwaysAsk,
     ] {
-        let manual = matches!(mode, TaskCancelMode::Manual);
+        let manual = matches!(mode, CheckInMode::AlwaysAsk);
         let own_create = facade.tasks_create(&spec(120)).expect("own task");
         let mut other_spec = spec(120);
         other_spec.owner_ref = Some(other);
@@ -26,24 +26,24 @@ fn cancel_ladder_is_own_scoped_and_records_gate_decision() {
         let other_target = TaskCancelTarget::Task(other_create.task_ref.expect("other task ref"));
 
         let (own_cancel, foreign_cancel) = match mode {
-            TaskCancelMode::Auto => (
+            CheckInMode::AskWhenUnsure => (
                 facade.cancel(own_target).expect("own cancel"),
                 facade.cancel(other_target).expect("foreign cancel"),
             ),
-            TaskCancelMode::FullAccess => (
+            CheckInMode::NeverAsk => (
                 facade
-                    .cancel_with_mode(own_target, TaskCancelMode::FullAccess)
+                    .cancel_with_mode(own_target, CheckInMode::NeverAsk)
                     .expect("own cancel"),
                 facade
-                    .cancel_with_mode(other_target, TaskCancelMode::FullAccess)
+                    .cancel_with_mode(other_target, CheckInMode::NeverAsk)
                     .expect("foreign cancel"),
             ),
-            TaskCancelMode::Manual => (
+            CheckInMode::AlwaysAsk => (
                 facade
-                    .cancel_with_mode(own_target, TaskCancelMode::Manual)
+                    .cancel_with_mode(own_target, CheckInMode::AlwaysAsk)
                     .expect("own cancel"),
                 facade
-                    .cancel_with_mode(other_target, TaskCancelMode::Manual)
+                    .cancel_with_mode(other_target, CheckInMode::AlwaysAsk)
                     .expect("foreign cancel"),
             ),
         };
@@ -619,7 +619,7 @@ fn cancel_non_owned_spawn_manual_and_auto_both_propose() {
     let facade = vault.memory(own, EdgeActorClass::Agent);
     for cancel in [
         facade
-            .cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), TaskCancelMode::Manual)
+            .cancel_with_mode(TaskCancelTarget::Spawn(attempt.id), CheckInMode::AlwaysAsk)
             .expect("manual cancel"),
         facade
             .cancel(TaskCancelTarget::Spawn(attempt.id))

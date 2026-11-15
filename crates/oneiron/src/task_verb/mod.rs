@@ -188,9 +188,9 @@ pub(crate) use room_thread::{
     task_roster_in as room_thread_task_roster_in, thread_tasks as room_thread_tasks,
 };
 pub use route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget,
-    TaskCreateReceipt, TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome,
-    TaskStartedReceipt, TaskUpdateReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelReceipt, TaskCancelTarget, TaskCreateReceipt,
+    TaskDescription, TaskResultInput, TaskRouteLane, TaskRouteOutcome, TaskStartedReceipt,
+    TaskUpdateReceipt,
 };
 pub use terminal_state::{
     ConsultResultPresence, ConsultResultSummary, TaskExecutionState, TaskTerminalDisposition,

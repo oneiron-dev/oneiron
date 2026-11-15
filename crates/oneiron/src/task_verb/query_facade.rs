@@ -47,10 +47,10 @@ use super::presence_scan::{
 };
 use super::rate_limit::task_create_owner_in;
 use super::route_receipts::{
-    DEFAULT_TASK_CANCEL_MODE, TaskCancelMode, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
-    TaskUpdateReceipt,
+    DEFAULT_TASK_CANCEL_MODE, TaskCancelReceipt, TaskCancelTarget, TaskDescription,
+    TaskUpdateReceipt, cancel_ceiling,
 };
-use super::{TaskCall, TaskReport, TaskReportBody, TaskVia, sdk};
+use super::{CheckInMode, TaskCall, TaskReport, TaskReportBody, TaskVia, sdk};
 
 mod cancel_effect;
 mod proposal;
@@ -62,12 +62,12 @@ impl Memory<'_> {
         self.cancel_with_mode(target, DEFAULT_TASK_CANCEL_MODE)
     }
 
-    /// Cancels under one ladder vocabulary token. `auto` and `full-access`
-    /// map to the existing Auto ceiling; `manual` maps to Proposed.
+    /// Cancels under one check-in mode. `auto` and `full-access` map to the
+    /// existing Auto ceiling; `manual` maps to Proposed.
     pub fn cancel_with_mode(
         &self,
         target: TaskCancelTarget,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
         let state = cancel_target_state(self.vault(), self.actor(), target)?;
@@ -80,7 +80,7 @@ impl Memory<'_> {
     #[cfg(test)]
     pub(super) fn cancel_with_injected_state_for_test(
         &self,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         verify_actor_binding(self.vault(), self.actor(), self.actor_class())?;
@@ -237,13 +237,13 @@ impl Memory<'_> {
 
     fn cancel_resolved(
         &self,
-        mode: TaskCancelMode,
+        mode: CheckInMode,
         state: CancelTargetState,
     ) -> MemoryResult<TaskCancelReceipt> {
         let verb = crate::verb_names::CANCEL;
         let now = self.vault().store.clock.now_recorded_at();
         let provenance = facade_provenance(verb);
-        if !state.owned || mode.ceiling() == PolicyApprovalCeiling::Proposed {
+        if !state.owned || cancel_ceiling(mode) == PolicyApprovalCeiling::Proposed {
             let (proposal_ref, gate_decision_ref) = self.persist_task_proposal(
                 TASK_CANCEL_PROPOSAL_PREDICATE,
                 Value::Map(vec![

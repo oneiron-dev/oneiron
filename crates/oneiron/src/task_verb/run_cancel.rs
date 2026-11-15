@@ -4,8 +4,10 @@
 //!
 //! The vault owner cancels any branch at once, by the same owner standing
 //! he pauses one by. So does the owner of the TASK the
-//! branch realizes, the agent whose run it is, and the agent that spawned
-//! it. Every other caller's cancel becomes a proposal: the soft cancel's own
+//! branch realizes, the agent whose run it is, and the agent of any run above
+//! it in its spawn tree: an agent stops the children and forks it started,
+//! and their whole subtree, with no ask (ARCH-0082 #children; ROLES-CHECKIN
+//! PR 3, P3.6). Every other caller's cancel becomes a proposal: the soft cancel's own
 //! Proposed `tasks.cancel` claim naming the branch, and the branch is not
 //! touched. The claim names its target as the soft cancel's do, the TASK
 //! the branch realizes by its id (a task-less branch by its attempt), and
@@ -13,6 +15,8 @@
 //! Standing is judged in the writer that would cancel, so it is judged as
 //! it stands when the cancel commits. A caller with no actor to own a
 //! proposal keeps today's immediate cancel.
+
+use std::collections::HashSet;
 
 use rmpv::Value;
 
@@ -39,8 +43,8 @@ use super::presence_scan::attempt_hex;
 use super::route_receipts::DEFAULT_TASK_CANCEL_MODE;
 
 /// What a caller with no standing over a branch should do instead.
-const RUN_CANCEL_FIX: &str =
-    "Cancel a branch of a TASK you own, or a run you spawned; the vault owner stops any branch.";
+const RUN_CANCEL_FIX: &str = "Cancel a branch of a TASK you own, or a run in a tree you spawned; \
+the vault owner stops any branch.";
 
 /// What a run-tree cancel came to.
 #[derive(Debug, Clone)]
@@ -122,7 +126,7 @@ impl Memory<'_> {
 
     /// Whether this surface's caller stands over `record` in `txn`: the
     /// vault owner; the owner of the TASK it realizes; the agent whose run
-    /// it is; or the agent that spawned it.
+    /// it is; or the agent of any run above it in its spawn tree.
     fn cancel_standing_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -145,22 +149,44 @@ impl Memory<'_> {
                 Err(error) => return Err(error),
             }
         }
-        let Some((runner, parent)) = dispatch_of(record) else {
+        let Some((runner, _)) = dispatch_of(record) else {
             return Ok(false);
         };
         if runner == Some(self.actor()) {
             return Ok(true);
         }
-        let Some(parent) = parent else {
+        started_by(self.actor(), record, |id| {
+            Ok(queue.get_in_write_txn(txn, id)?)
+        })
+    }
+}
+
+/// Whether `actor` is the agent of a run above `record` in its spawn tree:
+/// the run that spawned it, or any run above that one (ARCH-0082 #children:
+/// an agent stops the children and forks it started, and their whole
+/// subtree, with no ask). `get` reads one row as its caller reads rows. The
+/// walk ends at a row that is not an agent dispatch, at a parent no row
+/// names, and at a row it has already seen.
+pub(super) fn started_by(
+    actor: EntityId,
+    record: &AttemptRecord,
+    mut get: impl FnMut(AttemptId) -> MemoryResult<Option<AttemptRecord>>,
+) -> MemoryResult<bool> {
+    let mut seen = HashSet::new();
+    let mut parent = dispatch_of(record).and_then(|(_, parent)| parent);
+    while let Some(id) = parent {
+        if !seen.insert(id) {
+            return Ok(false);
+        }
+        let Some((runner, above)) = get(id)?.as_ref().and_then(dispatch_of) else {
             return Ok(false);
         };
-        let spawner = queue
-            .get_in_write_txn(txn, parent)?
-            .as_ref()
-            .and_then(dispatch_of)
-            .and_then(|(runner, _)| runner);
-        Ok(spawner == Some(self.actor()))
+        if runner == Some(actor) {
+            return Ok(true);
+        }
+        parent = above;
     }
+    Ok(false)
 }
 
 /// An agent dispatch row's own agent and the try that spawned it, as its

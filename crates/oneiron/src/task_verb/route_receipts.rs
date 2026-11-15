@@ -2,6 +2,7 @@
 //! Entry [`TaskRouteLane`]; driven by `lifecycle_facade` through dispatch.
 //! Owned by `task_verb`; assignee kinds resolve via `verb_kind`, never here.
 use crate::attempt_queue::AttemptId;
+use crate::check_in::CheckInMode;
 use crate::claim::ClaimApprovalStatus;
 use crate::context_board::TasksSection;
 use crate::entity_id::EntityId;
@@ -137,38 +138,19 @@ pub struct TaskResultInput {
     pub finished_at: u64,
 }
 
-/// Vocabulary over the existing two-state approval ceiling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TaskCancelMode {
-    Auto,
-    FullAccess,
-    Manual,
-}
-
-impl TaskCancelMode {
-    /// All ladder vocabulary tokens in protocol sort order.
-    pub const ALL: [Self; 3] = [Self::Auto, Self::FullAccess, Self::Manual];
-
-    /// Stable vocabulary token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::FullAccess => "full-access",
-            Self::Manual => "manual",
-        }
-    }
-
-    pub(super) const fn ceiling(self) -> PolicyApprovalCeiling {
-        match self {
-            Self::Auto | Self::FullAccess => PolicyApprovalCeiling::Auto,
-            Self::Manual => PolicyApprovalCeiling::Proposed,
-        }
+/// The approval ceiling a cancel runs under in check-in `mode` (ROLES-CHECKIN
+/// PR 3, P3.6: the cancel's own mode type is folded into [`CheckInMode`], and
+/// its wire tokens `auto`, `full-access` and `manual` are check-in's). `auto`
+/// and `full-access` map to the Auto ceiling, `manual` to Proposed.
+pub(super) const fn cancel_ceiling(mode: CheckInMode) -> PolicyApprovalCeiling {
+    match mode {
+        CheckInMode::AskWhenUnsure | CheckInMode::NeverAsk => PolicyApprovalCeiling::Auto,
+        CheckInMode::AlwaysAsk => PolicyApprovalCeiling::Proposed,
     }
 }
 
-/// Default ladder vocabulary for own-task and own-spawn cancellation.
-pub const DEFAULT_TASK_CANCEL_MODE: TaskCancelMode = TaskCancelMode::Auto;
+/// Default check-in mode for own-task and own-spawn cancellation: `auto`.
+pub const DEFAULT_TASK_CANCEL_MODE: CheckInMode = CheckInMode::AskWhenUnsure;
 
 /// A TASK entity or agent-dispatch spawn addressed by `cancel`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -4,16 +4,12 @@
 use std::collections::HashSet;
 
 use crate::Vault;
-use crate::agent_dispatch::{
-    AGENT_DISPATCH_ATTEMPT_TYPE, agent_dispatch_actor, decode_agent_dispatch_input,
-};
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::context_board::{
     JobPresence, TaskBoardStatus, TaskIntentPresence, fold_up_status, task_is_acked,
     task_is_cancelled,
 };
-use crate::dreamer_runner::{DREAMER_RUNNER_ATTEMPT_KIND, decode_dreamer_attempt_payload};
 use crate::entity_id::EntityId;
 use crate::error::{Error, RecordError, Result};
 use crate::memory::{MemoryError, MemoryResult};
@@ -609,21 +605,11 @@ pub(super) fn cancel_target_state(
             let child = queue
                 .get(attempt_ref)?
                 .ok_or_else(|| MemoryError::from(Error::EntityNotFound))?;
-            let child_payload = if child.kind == DREAMER_RUNNER_ATTEMPT_KIND {
-                decode_dreamer_attempt_payload(&child.payload).ok()
-            } else {
-                None
-            };
-            let owned = child_payload
-                .filter(|child| child.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
-                .and_then(|child| child.parent_attempt)
-                .and_then(|parent_ref| queue.get(parent_ref).ok().flatten())
-                .and_then(|parent| decode_dreamer_attempt_payload(&parent.payload).ok())
-                .filter(|parent| parent.attempt_type == AGENT_DISPATCH_ATTEMPT_TYPE)
-                .and_then(|parent| decode_agent_dispatch_input(&parent.input).ok())
-                .is_some_and(|parent| {
-                    agent_dispatch_actor(&parent).is_ok_and(|writer| writer.entity_ref() == actor)
-                });
+            // The caller's own spawn, or a run anywhere below one it spawned
+            // (ARCH-0082 #children). A row that does not read is not owned.
+            let owned = super::run_cancel::started_by(actor, &child, |id| {
+                Ok(queue.get(id).ok().flatten())
+            })?;
             Ok(CancelTargetState {
                 owned,
                 task_ref: None,
