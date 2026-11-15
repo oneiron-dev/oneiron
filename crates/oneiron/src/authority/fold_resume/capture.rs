@@ -292,7 +292,8 @@ impl Once {
 /// 4535), a grant travel choice (only its own grant's choices), a checkpoint
 /// policy choice or a home pick (each only the vault's choices of its kind),
 /// a person's conversation training choice (only that person's choices), a
-/// machine's home candidacy (only that machine's declarations), an owner's
+/// machine's home candidacy (only that machine's declarations), a machine's
+/// full-copy mark (only that machine's marks, L7-47), an owner's
 /// agent Grant act (it moves no fold state, FIX 5628), a setting's act (only
 /// its target's acts) or an export act (it moves no state but its own
 /// refusal, FIX 4624), an owner
@@ -342,6 +343,7 @@ pub(in crate::authority) fn admits_past(
         | AuthorityOp::ConversationTrainingSet(_)
         | AuthorityOp::ConversationTrainingVaultSet(_)
         | AuthorityOp::HomeCandidacy(_)
+        | AuthorityOp::FullCopyMark(_)
         | AuthorityOp::AgentGrantAct(_)
         | AuthorityOp::PolicySettingSet(_)
         | AuthorityOp::ExportAct(_)

@@ -256,7 +256,26 @@ fn token_revoke_with_slip_id_revokes_subtree_and_preserves_sibling() {
     cfg.dimensions = 32;
     cfg.map_size = 64 * 1024 * 1024;
     let vault = oneiron::Vault::open(&path, cfg.clone()).unwrap();
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(b"cli-revoke").unwrap();
+    // The configured secret admits the caller; the key is this install's own
+    // issuer seed in its keystore (FIX-LIST 3018): root the vault with the seed
+    // the command's keystore holds, in a key directory outside the vault.
+    let serve = ServeArgs {
+        vault_path: Some(path.clone()),
+        dimensions: Some(32),
+        map_size: Some(64 * 1024 * 1024),
+        dict_search_paths: Some(Vec::new()),
+        auth_secret: Some("cli-revoke".into()),
+        keystore_dir: Some(dir.path().join("keys")),
+        ..Default::default()
+    };
+    assert!(
+        crate::config::resolve_serve_config(&serve)
+            .unwrap()
+            .keystore
+            .install_on(&vault, &path),
+        "the fixture's keystore installs"
+    );
+    let issuer = vault.bootstrap_host_slip_issuer().unwrap();
     let root = vault.ensure_host_root_slip(&issuer).unwrap();
     for (id, parent) in [
         ([71; 32], root.claims.slip_id),
@@ -271,18 +290,7 @@ fn token_revoke_with_slip_id_revokes_subtree_and_preserves_sibling() {
     }
     drop(vault);
     let id: String = [71u8; 32].iter().map(|b| format!("{b:02x}")).collect();
-    token_revoke(TokenRevokeArgs {
-        jti: id,
-        serve: ServeArgs {
-            vault_path: Some(path.clone()),
-            dimensions: Some(32),
-            map_size: Some(64 * 1024 * 1024),
-            dict_search_paths: Some(Vec::new()),
-            auth_secret: Some("cli-revoke".into()),
-            ..Default::default()
-        },
-    })
-    .unwrap();
+    token_revoke(TokenRevokeArgs { jti: id, serve }).unwrap();
     let vault = oneiron::Vault::open(path, cfg).unwrap();
     assert!(!vault.capability_slip_id_is_live(&[71; 32]).unwrap());
     assert!(!vault.capability_slip_id_is_live(&[73; 32]).unwrap());
@@ -973,18 +981,31 @@ async fn a_fresh_agent_credential_serves_mcp_when_the_vault_clock_trails_the_wal
     };
     let closed_for = 40 * 24 * 60 * 60;
     let clock = oneiron::store::ports::ManualClock::new(wall() - closed_for);
+    // Each open installs the keystore a host installs, holding this
+    // install's issuer seed for SECRET (FIX-LIST 3018).
     let open = || {
         let mut config = oneiron::VaultConfig::server();
         config.store_clock = clock.bundle();
-        oneiron::Vault::open_owned(dir.path(), config).unwrap()
+        let vault = oneiron::Vault::open_owned(dir.path(), config).unwrap();
+        crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
+        vault
     };
-    let issuer = oneiron::authority::HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
     // The vault starts its authority clock 40 days ago and stays closed
     // until now.
-    open().ensure_host_root_slip(&issuer).unwrap();
+    let issuer = {
+        let first = open();
+        let issuer = first.bootstrap_host_slip_issuer().unwrap();
+        first.ensure_host_root_slip(&issuer).unwrap();
+        issuer
+    };
     clock.set(wall());
 
     let vault = open();
+    // The owner's agent link is an act this install carries: it needs a live
+    // machine profile in the roster, as serve's first start writes.
+    vault
+        .ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)
+        .unwrap();
     let principal = vault
         .ensure_agent_principal("trailing-clock")
         .unwrap()

@@ -26,6 +26,14 @@ pub enum RunSignalKind {
         answer: String,
         kind: RunAskAnswerKind,
     },
+    /// A person's pause of a running branch, taken at its next step
+    /// boundary: once that step's checkpoint commits, the run's own lease
+    /// holder moves the row to Paused under a person's pause, the signal's
+    /// actor named on the pause event with `note`. Only the engine's pause
+    /// doors post it (`vault.agents.pause_tree`).
+    Pause {
+        note: Option<String>,
+    },
 }
 
 /// A per-branch idempotency receipt, kept after consumption for retry replay.

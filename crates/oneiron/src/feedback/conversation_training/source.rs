@@ -66,7 +66,8 @@ pub(super) enum TrainingSpeaker {
     /// person wrote, whose one writer is a live actor of this vault.
     Agent,
     /// A writer the rows do not prove: none, several, another PERSON's
-    /// stamp, or no live actor of this vault.
+    /// stamp, or no live actor of this vault; and every `counterparty`
+    /// message, whose speaker is somebody else, never its writer.
     Unproven,
     /// A system or tooling row.
     System,
@@ -309,7 +310,7 @@ impl Writers<'_> {
     /// Who wrote a message: a person only when its one writer stands for
     /// them and its TURN stamps no other PERSON; an agent when its one
     /// writer is a live agent, or it is a `companion` message of a live
-    /// actor.
+    /// actor. A `counterparty` message is never an agent's: unproven.
     fn speaker(
         &mut self,
         txn: &heed::RoTxn<'_>,
@@ -319,6 +320,9 @@ impl Writers<'_> {
     ) -> Result<TrainingSpeaker> {
         if author == WitnessMessageBodyAuthor::System {
             return Ok(TrainingSpeaker::System);
+        }
+        if author == WitnessMessageBodyAuthor::Counterparty {
+            return Ok(TrainingSpeaker::Unproven);
         }
         let mut one = writers.iter();
         let (Some(writer), None) = (one.next(), one.next()) else {
