@@ -219,7 +219,7 @@ pub(super) fn settle_tail(
         .filter_map(|(hash, row)| Some((*hash, row.body.as_ref()?)))
         .map(|(hash, body)| -> Result<_> { Ok((hash, decode_authority_log_entry_body(body)?)) })
         .collect::<Result<BTreeMap<_, _>>>()?;
-    let Some(issuers) = tail_issuers(image, &carried, tail) else {
+    let Some(issuers) = tail_issuers(image, &carried, &judged) else {
         return Ok(None);
     };
     let uncounted: BTreeSet<_> = image
@@ -481,25 +481,27 @@ pub(super) fn settle_tail(
 }
 
 /// The slip issuers once the tail joins the image's history: the consent
-/// structure's own (`log_structure::authority_structure`), read from every
-/// row it rests on, as the store door reads it past an image
-/// (`log_budget::door_view`): the image's carried bodies (it carries each
-/// genesis, enrollment, rotation, re-root, owner key enrollment, root record
-/// and machine profile whole) and the tail's rows. A rotation, an
-/// enrollment or a re-root an admitter signed admits its owner key there
-/// whether or not the fold applies the row, as in the whole history. None
-/// where a key only the tail admits signed a covered slip row: that row
-/// would leave the counted ancestry, which only the whole history counts
-/// again.
+/// structure's own (`log_structure::authority_structure`), read as the whole
+/// fold reads it for its image (`fold_resume::ImageFold`), from the rows it
+/// judges (`fold_engine::judged_entries`) in hash order: the image's carried
+/// bodies (it carries each genesis, enrollment, rotation, re-root, owner key
+/// enrollment, root record and machine profile whole; every row a clean image
+/// covers folded valid) and the judged tail ([`judged_tail`]). A tail row that
+/// hangs off another world's side row admits no key here, as in the whole
+/// fold, though the store door, which reads raw rows, counts it (Astra
+/// foldpast4 P2). A rotation, an enrollment or a re-root an admitter signed
+/// admits its owner key there whether or not the fold applies the row, as in
+/// the whole history. None where a key only the tail admits signed a covered
+/// slip row: that row would leave the counted ancestry, which only the whole
+/// history counts again.
 fn tail_issuers(
     image: &AuthorityCheckpointV2,
     carried: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> Option<BTreeSet<AuthorityKey>> {
-    let mut issuers = crate::authority::log_structure::authority_structure(
-        carried.values().chain(tail.values().copied()),
-    )
-    .issuers;
+    let rows: BTreeMap<_, _> = carried.iter().chain(judged).collect();
+    let mut issuers =
+        crate::authority::log_structure::authority_structure(rows.values().copied()).issuers;
     // Nothing leaves the set.
     issuers.extend(image.safety.issuers.iter().cloned());
     let recounted = image.rows.values().any(|row| {
