@@ -8,12 +8,15 @@
 //! maintain` lends the access the router `serve` would build holds: the
 //! routes its `[models]` config binds and their on-device views, and the
 //! models the vault's mesh discovery rows hold (FIX 22059, 22189). Each
-//! sweep has a cadence and its own bound. Its schedule lives in
-//! the LIVE `HOUSEKEEPING_SCHEDULE` side table and is written when a run ends,
-//! so a restart in the middle of a pass resumes the sweeps that had not
-//! finished, never runs a finished one early, and never skips one forever. A
-//! sweep that fails or panics is reported and retried on a later pass; it
-//! never stops the others.
+//! engine sweep is a job of the one runner (DESIGN 15-setting-primitive,
+//! stage 5a; [`crate::schedule`]): its cadence is a Setting key
+//! (`housekeeping.<sweep>.every`), it keeps its own bound, and its schedule
+//! row is written when a run starts and when it ends, so a restart in the
+//! middle of a pass resumes the sweeps that had not finished, never runs a
+//! finished one early, and never skips one forever. A sweep that fails or
+//! panics is reported and retried after its backoff; it never stops the
+//! others. A handle's first pass arms every cadence job from its key and
+//! runs the sweeps that run at each start.
 //!
 //! The pass only retires what the engine already said would retire: a lease
 //! past its expiry, a print past its retention deadline, a confirm past its
@@ -35,12 +38,12 @@
 //! pack's notice mark or retirement-day move included (FIX 22059).
 
 mod claim_vad_payment;
+pub(crate) mod jobs;
 mod lapse_writer;
 mod report;
-mod schedule;
+pub(crate) mod setting_keys;
 mod sweeps;
 mod sync_work;
-pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 mod wake;
@@ -56,49 +59,48 @@ pub use self::report::{
 pub(crate) use self::wake::note_wake_in_txn;
 
 use crate::Vault;
-use crate::error::Result;
+use crate::error::{ErrorKind, Result};
 use crate::llm::model_pack::AccessSnapshot;
-
-use self::schedule::SweepState;
+use crate::schedule::{JobOutcome, JobPass, JobRun, JobSpec, When};
 
 pub(crate) use crate::store::housekeeping_schedule::HousekeepingHandle;
-use crate::store::housekeeping_schedule::{DAY, Deadline, HOUR, MINUTE, Runner};
+use crate::store::housekeeping_schedule::{Deadline, Runner};
 pub use crate::store::housekeeping_schedule::{
     HostOnlyReason, HousekeepingBudget, HousekeepingSweep,
 };
 
-/// Which sweeps a pass considers.
+/// Which runs a pass asks for beside the ones that are due.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Selection {
+enum Asked {
+    /// None: the host's tick.
     Due,
+    /// Every engine sweep: the owner's "run housekeeping now".
     All,
-    /// One engine sweep now, asked by a support holder (FIX 4407).
-    One(HousekeepingSweep),
 }
 
-/// A sweep a pass will start if its budget allows.
-struct Due {
-    /// When it fell due; 0 when it was asked for.
-    at: u64,
-    /// Its place in [`HousekeepingSweep::ALL`].
-    index: usize,
-    every: u64,
-    /// Due because it was asked for, not because its schedule says so.
-    forced: bool,
+/// Whether `spec` is a job whose cadence is a Setting key.
+fn is_cadence_job(spec: &JobSpec) -> bool {
+    matches!(spec.when, When::Setting(_))
+}
+
+/// Whether `spec` is one of the engine sweeps' jobs.
+fn is_sweep_job(spec: &JobSpec) -> bool {
+    jobs::sweep_of(spec.code).is_some()
 }
 
 impl Vault {
     /// Runs every engine sweep that is due, oldest-due first, within
-    /// `budget`. A host calls this on its own tick, off the request path. An
-    /// error means the schedule could not be read; a sweep's own failure is a
-    /// row of the report. Unless the host has asked it to stop, the pass
-    /// first runs one capped communication projector pass, then releases
-    /// the due watcher ticks and prunes the hook feeds once (FIX 22180),
-    /// whose failures are logged and never fail a sweep, drops the
-    /// task-held inquiry answers whose task has ended, and advances the
-    /// pending check-ins due by now (ROLES-CHECKIN P2.3). The model pack
-    /// retirement sweep runs against no model access: a host that binds
-    /// model offers calls [`Self::housekeeping_with_access`].
+    /// `budget`, beside every other armed job that is due. A host calls this
+    /// on its own tick, off the request path. An error means the schedule
+    /// could not be read; a sweep's own failure is a row of the report.
+    /// Unless the host has asked it to stop, the pass first runs one capped
+    /// communication projector pass, then releases the due watcher ticks and
+    /// prunes the hook feeds once (FIX 22180), whose failures are logged and
+    /// never fail a sweep, drops the task-held inquiry answers whose task
+    /// has ended, and advances the pending check-ins due by now
+    /// (ROLES-CHECKIN P2.3). The model pack retirement sweep runs against no
+    /// model access: a host that binds model offers calls
+    /// [`Self::housekeeping_with_access`].
     pub fn housekeeping(&self, budget: HousekeepingBudget) -> Result<HousekeepingReport> {
         self.housekeeping_with_access(budget, &AccessSnapshot::new())
     }
@@ -121,10 +123,9 @@ impl Vault {
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         advance_due_check_ins(self, &deadline);
-        run_due_schedules(self, &deadline, access);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
-        self.housekeeping_pass(Selection::Due, budget, access)
+        self.housekeeping_pass(Asked::Due, &deadline, access)
     }
 
     /// Runs every engine sweep now, due or not, and reschedules each from
@@ -152,10 +153,9 @@ impl Vault {
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         advance_due_check_ins(self, &deadline);
-        run_due_schedules(self, &deadline, access);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
-        self.housekeeping_pass(Selection::All, budget, access)
+        self.housekeeping_pass(Asked::All, &deadline, access)
     }
 
     /// Runs the engine sweep `sweep` alone now and reschedules it from now: a
@@ -165,7 +165,25 @@ impl Vault {
         sweep: HousekeepingSweep,
         budget: HousekeepingBudget,
     ) -> Result<HousekeepingReport> {
-        self.housekeeping_pass(Selection::One(sweep), budget, &AccessSnapshot::new())
+        let deadline = budget.deadline();
+        let started_at = self.now_recorded_at();
+        let mut runs = Vec::new();
+        if let Runner::Engine = sweep.runner() {
+            let job = jobs::job_code(sweep);
+            let access = AccessSnapshot::new();
+            let pass = JobPass {
+                deadline: &deadline,
+                access: &access,
+            };
+            let mut run = self.run_job_now(&job, None, &pass)?;
+            if run.is_none() {
+                // Not armed yet: this handle has not run its first pass.
+                crate::schedule::arm_setting_jobs(self, is_sweep_job)?;
+                run = self.run_job_now(&job, None, &pass)?;
+            }
+            runs.extend(run);
+        }
+        self.sweep_report(started_at, &runs, Some(sweep))
     }
 
     /// When a vault that is not running must next run a pass, or `None` when
@@ -179,14 +197,14 @@ impl Vault {
     /// pack retirement pass owes work, a notice mark with no notice recorded
     /// or a retirement-day move (FIX 22059), and the next due watcher tick on
     /// the node that releases them (FIX 22180), and the first due pending
-    /// check-in (ROLES-CHECKIN P2.3). Cache and retention hygiene
-    /// never wake a vault. Reads one row per sweep, the schedule, the
-    /// retained work queues, the installed model packs' kept checks (FIX
-    /// 20043) and notice records, and the first due index row, so a host can
-    /// ask every time it stops the vault.
+    /// check-in (ROLES-CHECKIN P2.3), and the first due armed job that wakes
+    /// its host. A sweep's cadence never wakes a vault: cache and retention
+    /// hygiene wait for the next start. Reads one row per sweep, the
+    /// schedule, the retained work queues, the installed model packs' kept
+    /// checks (FIX 20043) and notice records, and the first due index row,
+    /// so a host can ask every time it stops the vault.
     pub fn housekeeping_wake_at(&self) -> Result<Option<u64>> {
-        let states = schedule::read_states(self)?;
-        let noted = {
+        let mut owed = {
             let txn = self.store.env.read_txn()?;
             let mut noted = Vec::new();
             for sweep in wake::WAKE_SWEEPS {
@@ -196,8 +214,7 @@ impl Vault {
             }
             noted
         };
-        let mut owed = noted;
-        if schedule::erase_obligation_waiting(self)? {
+        if jobs::erase_obligation_waiting(self)? {
             owed.push((HousekeepingSweep::HardEraseSweep, 0));
         }
         if let Some(at) = sync_work::left_env_body_collect_due_at(self)? {
@@ -232,13 +249,23 @@ impl Vault {
             owed.push((HousekeepingSweep::ModelPackRetirement, at));
         }
         let mut earliest: Option<u64> = None;
-        for (sweep, at) in owed {
-            let Runner::Engine { every, .. } = sweep.runner() else {
-                continue;
-            };
-            let due = schedule::due_at(self, sweep, states.get(&sweep), every)?;
-            let wake = at.max(due);
-            earliest = Some(earliest.map_or(wake, |seen| seen.min(wake)));
+        {
+            let txn = self.store.env.read_txn()?;
+            for (sweep, at) in owed {
+                let Runner::Engine = sweep.runner() else {
+                    continue;
+                };
+                // A sweep not armed yet is due at its first pass.
+                let due = crate::schedule::due_at_in_txn(
+                    &self.store,
+                    &txn,
+                    &jobs::job_code(sweep),
+                    None,
+                )?
+                .unwrap_or(0);
+                let wake = at.max(due);
+                earliest = Some(earliest.map_or(wake, |seen| seen.min(wake)));
+            }
         }
         // The first due armed job that wakes its host (DESIGN 15-setting-primitive, stage 0.2).
         if let Some(at) = self.schedule_wake_at()? {
@@ -247,204 +274,96 @@ impl Vault {
         Ok(earliest)
     }
 
+    /// One pass of the runner within `deadline`, and its report. A handle's first pass arms every
+    /// cadence job from its key's value in force and asks for the jobs that run at each start; the
+    /// owner's pass asks for every cadence job, so each runs now and goes on from now.
     fn housekeeping_pass(
         &self,
-        selection: Selection,
-        budget: HousekeepingBudget,
+        asked: Asked,
+        deadline: &Deadline,
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
-        let mut handle = self
+        let started_at = self.now_recorded_at();
+        let first_pass = !self
             .housekeeping
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let deadline = budget.deadline();
-        let started_at = self.now_recorded_at();
-        let mut states = schedule::read_states(self)?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .first_pass_done;
+        if first_pass {
+            crate::schedule::arm_setting_jobs(self, is_cadence_job)?;
+            crate::schedule::request_runs(self, |spec| spec.at_open)?;
+            // The requests are durable: a pass the budget cuts short leaves them for the next.
+            self.housekeeping
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .first_pass_done = true;
+        }
+        if asked == Asked::All {
+            crate::schedule::request_runs(self, is_cadence_job)?;
+        }
+        let runs = self.run_due_until(&JobPass { deadline, access })?.runs;
+        self.sweep_report(started_at, &runs, None)
+    }
 
-        let mut rows: Vec<Option<SweepOutcome>> = vec![None; HousekeepingSweep::ALL.len()];
-        let mut due: Vec<Due> = Vec::new();
-        for (index, sweep) in HousekeepingSweep::ALL.into_iter().enumerate() {
-            if let Selection::One(asked) = selection
-                && asked != sweep
-            {
+    /// The report of a pass that started at `started_at` and made `runs`: one row per sweep, or
+    /// only `only`'s. A sweep the pass ran reports its last run; one it did not run is not due
+    /// yet, or was left for a later pass.
+    fn sweep_report(
+        &self,
+        started_at: u64,
+        runs: &[JobRun],
+        only: Option<HousekeepingSweep>,
+    ) -> Result<HousekeepingReport> {
+        let txn = self.store.env.read_txn()?;
+        let mut sweeps = Vec::new();
+        for sweep in HousekeepingSweep::ALL {
+            if only.is_some_and(|only| only != sweep) {
                 continue;
             }
-            match sweep.runner() {
-                Runner::Host(reason) => rows[index] = Some(SweepOutcome::HostOnly { reason }),
-                Runner::Engine { every, at_open } => {
-                    if selection != Selection::Due || (at_open && !handle.first_pass_done) {
-                        due.push(Due {
-                            at: 0,
-                            index,
-                            every,
-                            forced: true,
-                        });
-                        continue;
-                    }
-                    match schedule::due_at(self, sweep, states.get(&sweep), every)? {
-                        at if at <= started_at => due.push(Due {
-                            at,
-                            index,
-                            every,
-                            forced: false,
-                        }),
-                        at => rows[index] = Some(SweepOutcome::NotDue { due_at: at }),
+            let outcome = match sweep.runner() {
+                Runner::Host(reason) => SweepOutcome::HostOnly { reason },
+                Runner::Engine => {
+                    let job = jobs::job_code(sweep);
+                    match runs.iter().rev().find(|run| run.job == job).and_then(ran) {
+                        Some(outcome) => outcome,
+                        None => {
+                            match crate::schedule::due_at_in_txn(&self.store, &txn, &job, None)? {
+                                Some(due_at) if due_at > started_at => {
+                                    SweepOutcome::NotDue { due_at }
+                                }
+                                _ => SweepOutcome::OutOfBudget,
+                            }
+                        }
                     }
                 }
-            }
+            };
+            sweeps.push(SweepReport { sweep, outcome });
         }
-        // Oldest-due first: a sweep the budget left behind runs ahead of
-        // sweeps that fell due after it, so none is starved.
-        due.sort_unstable_by_key(|due| (due.at, due.index));
-
-        let mut ran_any = false;
-        for Due {
-            index,
-            every,
-            forced,
-            ..
-        } in due
-        {
-            let sweep = HousekeepingSweep::ALL[index];
-            let state = states.remove(&sweep).unwrap_or_default();
-            if deadline.stopped() || (ran_any && deadline.passed()) {
-                rows[index] = Some(self.leave_for_later(sweep, state, forced, started_at));
-                continue;
-            }
-            ran_any = true;
-            let owner_asked = selection == Selection::All;
-            rows[index] =
-                Some(self.run_scheduled_sweep(sweep, state, every, &deadline, owner_asked, access));
-        }
-        if !matches!(selection, Selection::One(_)) {
-            handle.first_pass_done = true;
-        }
-
-        let sweeps = HousekeepingSweep::ALL
-            .into_iter()
-            .zip(rows)
-            .filter(|(sweep, _)| !matches!(selection, Selection::One(asked) if asked != *sweep))
-            .map(|(sweep, outcome)| SweepReport {
-                sweep,
-                outcome: outcome.unwrap_or(SweepOutcome::OutOfBudget),
-            })
-            .collect();
         Ok(HousekeepingReport { started_at, sweeps })
     }
+}
 
-    /// The row of a due sweep the pass did not start. One the schedule made
-    /// due stays due; one that was due only because it was asked for (the
-    /// owner's "now", or the first pass of a handle) keeps the request, so a
-    /// later pass runs it rather than waiting out its cadence.
-    fn leave_for_later(
-        &self,
-        sweep: HousekeepingSweep,
-        state: SweepState,
-        forced: bool,
-        at: u64,
-    ) -> SweepOutcome {
-        if forced && let Err(error) = schedule::write_state(self, sweep, &state.requested(at)) {
-            return SweepOutcome::Failed { kind: error.kind() };
-        }
-        SweepOutcome::OutOfBudget
-    }
-
-    /// Runs one sweep between its start marker and its finish row. The marker
-    /// is what tells the next pass that a run was interrupted. The run is the
-    /// owner's when this pass is, or when it answers an owner's request an
-    /// earlier pass left for later, failed or was cut short on. `access` is
-    /// what the host's offers hold, lent to the model pack retirement sweep.
-    fn run_scheduled_sweep(
-        &self,
-        sweep: HousekeepingSweep,
-        state: SweepState,
-        every: u64,
-        deadline: &Deadline,
-        owner_asked: bool,
-        access: &AccessSnapshot,
-    ) -> SweepOutcome {
-        let start = self.now_recorded_at();
-        let running = state.started(start, owner_asked);
-        if let Err(error) = schedule::write_state(self, sweep, &running) {
-            return SweepOutcome::Failed { kind: error.kind() };
-        }
-        // The wake rows this run covers: noted before it started and due by
-        // then. A row noted while it runs stays for the next run.
-        let covered = wake::due_by(self, sweep, start).unwrap_or_default();
-        #[cfg(test)]
-        let injected = tests::injected(sweep);
-        #[cfg(test)]
-        if injected == Some(tests::Injected::Crash) {
-            panic!("test: the process died in the middle of a sweep");
-        }
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            #[cfg(test)]
-            match injected {
-                Some(tests::Injected::Fail) => {
-                    return Err(crate::Error::InvariantViolation(
-                        "test: an injected sweep failure",
-                    ));
-                }
-                Some(tests::Injected::Panic) => panic!("test: an injected sweep panic"),
-                _ => {}
-            }
-            sweeps::run(
-                self,
-                sweep,
-                start,
-                deadline,
-                running.cursor.as_deref(),
-                running.owners(),
-                access,
-            )
-        }));
-        let end = self.now_recorded_at();
-        let (outcome, finished) = match result {
-            Ok(Ok(run)) => {
-                // An owner's erasure run that left a window uncompacted (a
-                // caller held it, a write raced it, its cut was not proved,
-                // or a legal hold kept it) has not answered the owner: it is
-                // retried as the owner's, after the backoff.
-                let owner_left = running.owners()
-                    && matches!(run.work, SweepWork::HardErase(work)
-                        if work.windows_deferred_live > 0
-                            || work.windows_deferred_raced > 0
-                            || work.windows_deferred_unproved > 0
-                            || work.windows_deferred_held > 0);
-                let items_failed = run.work.items_failed() > 0 || owner_left;
-                if run.complete && !items_failed {
-                    // A walk that began before this run covers the rows due
-                    // by when it began. A row the clear leaves behind costs
-                    // one run that finds nothing.
-                    let mut covered = covered;
-                    if let Some(until) = run.covered_until {
-                        covered.retain(|&(_, at, _)| at <= until);
-                    }
-                    let _ = wake::clear(self, &covered);
-                }
-                let finished = running.ran(end, every, run.cursor, run.complete, items_failed);
-                (
-                    SweepOutcome::Ran {
-                        work: run.work,
-                        complete: run.complete,
-                    },
-                    finished,
-                )
-            }
-            Ok(Err(error)) => (
-                SweepOutcome::Failed { kind: error.kind() },
-                running.failed(end, every),
-            ),
-            Err(_) => (SweepOutcome::Panicked, running.failed(end, every)),
-        };
-        match schedule::write_state(self, sweep, &finished) {
-            Ok(()) => outcome,
-            // The run's own work committed, but its schedule did not: the
-            // start marker stays, so the next pass treats the run as
-            // interrupted and retries it after the backoff.
-            Err(error) => SweepOutcome::Failed { kind: error.kind() },
-        }
-    }
+/// A sweep's report row for a run of its job, or `None` for one that never started (an
+/// interrupted run found and backed off, which the due time reports).
+fn ran(run: &JobRun) -> Option<SweepOutcome> {
+    Some(match run.outcome {
+        JobOutcome::Done | JobOutcome::ItemsFailed => SweepOutcome::Ran {
+            work: run.sweep_work.clone()?,
+            complete: true,
+        },
+        JobOutcome::More => SweepOutcome::Ran {
+            work: run.sweep_work.clone()?,
+            complete: false,
+        },
+        JobOutcome::Failed { .. } => SweepOutcome::Failed {
+            kind: run.error_kind.unwrap_or(ErrorKind::InvariantViolation),
+        },
+        JobOutcome::Panicked => SweepOutcome::Panicked,
+        JobOutcome::Interrupted
+        | JobOutcome::Lapsed
+        | JobOutcome::Withdrawn
+        | JobOutcome::UnknownJob => return None,
+    })
 }
 
 /// The hook feed step of a housekeeping pass, the host tick's and the
@@ -515,20 +434,6 @@ fn evict_ended_inquiry_answers(vault: &Vault, deadline: &Deadline) {
     }
     if let Err(error) = vault.evict_inquiry_answers() {
         tracing::warn!(%error, "housekeeping: ended inquiry answers wait for the next pass");
-    }
-}
-
-/// Runs the armed schedules due by now (DESIGN 15-setting-primitive, stage 0.2), beside the
-/// sweeps of this pass until they move onto it, lending them the host's model `access`. A failure
-/// to read or write the schedule is logged and waits for the next pass; a job's own failure is
-/// retried by its own backoff.
-fn run_due_schedules(vault: &Vault, deadline: &Deadline, access: &AccessSnapshot) {
-    if deadline.stopped() {
-        return;
-    }
-    let pass = crate::schedule::JobPass { deadline, access };
-    if let Err(error) = vault.run_due_until(&pass) {
-        tracing::warn!(%error, "housekeeping: due schedules wait for the next pass");
     }
 }
 

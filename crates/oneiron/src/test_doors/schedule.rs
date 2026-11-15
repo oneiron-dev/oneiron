@@ -14,7 +14,7 @@ use crate::schedule::{
     ArmBy, Armed, JobOutcome, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran,
     ScheduleView, Trigger, When,
 };
-use crate::store::housekeeping_schedule::HousekeepingBudget;
+use crate::store::housekeeping_schedule::{HousekeepingBudget, HousekeepingSweep};
 
 /// Every test run, by job code and subject.
 static RUNS: Mutex<BTreeMap<(&'static str, Option<EntityId>), u64>> = Mutex::new(BTreeMap::new());
@@ -344,6 +344,18 @@ pub fn pull_due_forward(
 ) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         crate::schedule::due_by_in_txn(&vault.store, txn, job, subject, at)
+    })
+}
+
+/// A door notes that `sweep` has work due at `at`, in its own write, as the secret-lease, voice
+/// print, critical-confirm and shared-act doors do (DESIGN 15-setting-primitive, stage 5a).
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn note_sweep_deadline(vault: &Vault, sweep: HousekeepingSweep, at: u64) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::housekeeping::note_wake_in_txn(&vault.store, txn, sweep, at)
     })
 }
 

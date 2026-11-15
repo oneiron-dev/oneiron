@@ -7,7 +7,7 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::{Error, ErrorKind, Result};
 use crate::setting::{SettingChange, SettingScope};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
@@ -456,16 +456,27 @@ fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Resul
 
 /// Arms every job of a kind `which` takes whose cadence is a Setting key from the key's value in
 /// force, in one write. The host's pass calls it on its handle's first pass for every such job; a
-/// job already armed with that trigger keeps its due time.
+/// job already armed with that trigger keeps its due time. A value in force that cannot be armed
+/// (a zone this build does not know, a wall time with no occurrence ahead) is logged, and its job
+/// keeps the arming it has, so one cadence never holds the others.
 ///
 /// # Errors
 ///
-/// As [`arm_in_txn`]; storage errors.
+/// Storage errors.
 pub(crate) fn arm_setting_jobs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
         for spec in jobs().filter(|spec| which(spec)) {
             if let Some(trigger) = cadence_in_txn(vault, txn, spec)? {
-                arm_in_txn(vault, txn, spec, None, trigger)?;
+                match arm_in_txn(vault, txn, spec, None, trigger) {
+                    Err(error) if error.kind() == ErrorKind::InvalidConfig => {
+                        tracing::warn!(
+                            job = spec.code,
+                            %error,
+                            "schedule: the cadence in force cannot be armed; the job keeps its arming"
+                        );
+                    }
+                    armed => armed?,
+                }
             }
         }
         Ok(())

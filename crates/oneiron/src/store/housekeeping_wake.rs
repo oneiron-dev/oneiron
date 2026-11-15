@@ -4,8 +4,8 @@
 //! transaction: a secret lease's expiry, a voice print's retention deadline, a
 //! critical confirm's window. Rows are keyed by sweep, deadline and a fresh id
 //! per note, so a sweep's earliest deadline is the first row under its tag and
-//! two notes of the same deadline are two rows. The schedule makes the sweep
-//! due at its earliest row, and a vault that is not running wakes for it. A
+//! two notes of the same deadline are two rows. The note makes the sweep's
+//! job due by its deadline, and a vault that is not running wakes for it. A
 //! run that covered its rows removes exactly the rows it read before it
 //! started; a row noted since stays for the next run. A deadline that moved or
 //! was settled early leaves a row that costs one run that finds nothing.
@@ -49,18 +49,20 @@ fn tag(sweep: HousekeepingSweep) -> Option<[u8; 1]> {
 }
 
 /// Notes that `sweep` has work due at `at`, in the caller's transaction, so
-/// the note commits with the deadline it records. A sweep without notes
-/// notes nothing.
+/// the note commits with the deadline it records, and makes the sweep's job
+/// due by then unless it is backing off (DESIGN 15-setting-primitive, stage
+/// 5a). A sweep without notes notes nothing.
 pub(crate) fn note_wake_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     sweep: HousekeepingSweep,
     at: u64,
 ) -> Result<()> {
-    match tag(sweep) {
-        Some(tag) => WAKE.put(store, txn, &(tag, at, store.clock.entity_id()?), &()),
-        None => Ok(()),
-    }
+    let Some(tag) = tag(sweep) else {
+        return Ok(());
+    };
+    WAKE.put(store, txn, &(tag, at, store.clock.entity_id()?), &())?;
+    crate::housekeeping::jobs::sweep_due_by_in_txn(store, txn, sweep, at)
 }
 
 /// The earliest deadline noted for `sweep`.

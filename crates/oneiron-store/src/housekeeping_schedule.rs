@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 /// One sweep the housekeeping pass knows. The engine runs the first
-/// eighteen; the rest need a host's authority and are reported, never run.
+/// nineteen; the rest need a host's authority and are reported, never run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HousekeepingSweep {
@@ -113,16 +113,11 @@ pub enum HostOnlyReason {
 }
 
 /// How a sweep runs.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Runner {
-    Engine {
-        /// Seconds between runs.
-        every: u64,
-        /// Also due on the first pass of every handle, whatever the schedule
-        /// says: work an interrupted owner act left durable must not wait a
-        /// whole cadence after a restart.
-        at_open: bool,
-    },
+    /// The engine runs it, as a job of its one runner whose cadence is a Setting key
+    /// (`housekeeping.<code>.every`, DESIGN 15-setting-primitive stage 5a).
+    Engine,
     Host(HostOnlyReason),
 }
 
@@ -191,71 +186,31 @@ impl HousekeepingSweep {
         }
     }
 
-    /// Cadences: the code's own stated duty where canon is silent. A secret
-    /// lease's expiry, a print's retention deadline and a confirm's 300-second
-    /// window make their sweep due at that moment (the doors note them), so
-    /// those sweeps run then and hourly besides, for a deadline no door noted.
-    /// The seal backstop runs every fifteen minutes (ARCH-0064 SGN-04); the
-    /// erasure sweep daily, hourly while an obligation waits (ARCH-0038's
-    /// deadline is 30 days); the graph-walk cache daily. A shared act's
-    /// deadline makes the maturity sweep due then (its start notes it), and
-    /// it runs hourly besides, for an act an objection withdrawal released.
-    /// The lift sweep looks for a queued run every fifteen minutes, and a run
-    /// left unfinished at a pass's deadline is due again at once. Owed claim
-    /// VAD work runs at open, for an approval a stopped process left, and
-    /// every fifteen minutes, behind the payment worker each write wakes
-    /// (FIX 11702). The found-key drain looks for due notices every
-    /// fifteen minutes. The line-index rebuild drain looks for queued bodies
-    /// every fifteen minutes. Comments follow their live body every minute
-    /// and at open, so a stopped process leaves none behind. The drafter
-    /// corpus sweep runs at open and daily, beside the night's own sweeps
-    /// around its export, so a version superseded, rejected or erased
-    /// between nights, or a write a stopped process left, keeps no sealed
-    /// bytes past the next start or day. The model pack retirement pass runs
-    /// every minute, the lifecycle tick a serving host ran it on before it
-    /// joined the pass (FIX 20193), so a retirement day's move is recorded
-    /// within a minute of the day's start. The OAuth server's lapsed rows go
-    /// hourly, as the lease, confirm and print expiries go besides their
-    /// noted deadlines; a read drops each it finds lapsed, so nothing waits
-    /// on them and they note no deadline.
+    /// Who runs the sweep: the engine, or a host whose authority it needs. An engine sweep's
+    /// cadence is its Setting key, whose default is the code's own stated duty where canon is
+    /// silent (oneiron's `housekeeping::setting_keys`); whether it also runs at each start is its
+    /// job's (`housekeeping::jobs`).
     pub const fn runner(self) -> Runner {
-        const fn engine(every: u64) -> Runner {
-            Runner::Engine {
-                every,
-                at_open: false,
-            }
-        }
         match self {
             Self::SecretLeaseExpiry
             | Self::CriticalConfirmExpiry
+            | Self::SymbolLeaseExpiry
             | Self::VoicePrintRetention
-            | Self::OAuthExpiry => engine(HOUR),
-            Self::SymbolLeaseExpiry => engine(5 * MINUTE),
-            Self::EsignExpiry
+            | Self::EsignExpiry
             | Self::EsignSealBackstop
             | Self::CommitmentLapse
+            | Self::GateDecisionRetention
+            | Self::HardEraseSweep
+            | Self::PprCacheEviction
+            | Self::SharedActMaturity
             | Self::SecretLiftHistory
+            | Self::ClaimVadDebt
             | Self::FoundKeyNotices
-            | Self::BodyLineIndexRebuild => engine(15 * MINUTE),
-            Self::GateDecisionRetention => Runner::Engine {
-                every: HOUR,
-                at_open: true,
-            },
-            Self::HardEraseSweep | Self::PprCacheEviction => engine(DAY),
-            Self::SharedActMaturity => engine(HOUR),
-            Self::ClaimVadDebt => Runner::Engine {
-                every: 15 * MINUTE,
-                at_open: true,
-            },
-            Self::AnnotationBodyAnchors => Runner::Engine {
-                every: MINUTE,
-                at_open: true,
-            },
-            Self::DrafterCorpusSweep => Runner::Engine {
-                every: DAY,
-                at_open: true,
-            },
-            Self::ModelPackRetirement => engine(MINUTE),
+            | Self::BodyLineIndexRebuild
+            | Self::AnnotationBodyAnchors
+            | Self::DrafterCorpusSweep
+            | Self::ModelPackRetirement
+            | Self::OAuthExpiry => Runner::Engine,
             Self::EsignReminders => Runner::Host(HostOnlyReason::NeedsAuthenticatedDispatch),
             Self::ConsultSettlement => Runner::Host(HostOnlyReason::NeedsHostDigestRoute),
             Self::PolicyHoldPrune => Runner::Host(HostOnlyReason::NeedsAuthenticatedOwner),

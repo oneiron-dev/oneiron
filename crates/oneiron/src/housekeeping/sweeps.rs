@@ -538,7 +538,7 @@ fn lapse_envelope(vault: &Vault) -> Result<WriteEnvelope> {
 /// obligation, and the owner's run compacts every window; either first
 /// unloads the windows no caller holds, so the compaction can reach them.
 fn hard_erase(vault: &Vault, owner_asked: bool) -> Result<HardEraseWork> {
-    let windows_unloaded = if owner_asked || super::schedule::erase_obligation_waiting(vault)? {
+    let windows_unloaded = if owner_asked || super::jobs::erase_obligation_waiting(vault)? {
         unload_idle_windows(vault)
     } else {
         0
