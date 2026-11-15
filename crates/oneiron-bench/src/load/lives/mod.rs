@@ -28,7 +28,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::json;
 
 use super::phases::loadavg;
-use super::server::Embedding;
+use super::server::{Embedding, loopback_url};
 use corpus::{Life, Pick};
 use report::{CorpusInfo, FileDigest, LifeInfo, Report, System};
 
@@ -88,6 +88,16 @@ fn embedding(value: &str, api_key_env: Option<String>) -> Result<Embedding, Stri
             };
             if !model_id.contains('@') {
                 return Err("--embedder endpoint=: the model id is model_id@revision".into());
+            }
+            // `oneiron-server init` takes a network endpoint only with an
+            // on-device fallback serving the same model and an egress grant;
+            // the screen sets neither, so a GPU host comes in over a tunnel.
+            if !reqwest::Url::parse(url).is_ok_and(|url| loopback_url(&url)) {
+                return Err(format!(
+                    "--embedder endpoint=: `{url}` is not a loopback url; reach a GPU host \
+                     through a tunnel (ssh -L), because a network endpoint needs an on-device \
+                     fallback model and an egress grant that the screen does not set"
+                ));
             }
             Ok(Embedding::Endpoint {
                 url: (*url).to_owned(),

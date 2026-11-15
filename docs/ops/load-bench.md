@@ -221,8 +221,11 @@ $B/oneiron-bench load lives --server $B/oneiron-server --embedder none \
   it measured: `none`, `local`, or
   `endpoint=<url>,<model-key>,<model-id@revision>,<dimensions>` for the shared
   GPU model every system uses (`--embedder-api-key-env NAME` when the endpoint
-  wants a key; the bench passes the name, never the key). A network endpoint
-  is declared `owner-server`.
+  wants a key; the bench passes the name, never the key). The URL is
+  loopback: reach a GPU host through a tunnel (`ssh -L`). `oneiron-server init`
+  takes a network endpoint only with an on-device fallback serving the same
+  model and an egress grant, which the screen does not set; the lives are
+  synthetic, so nothing private crosses the tunnel.
 - **Other systems** (`--system <name>=<adapter-url>`, repeatable) run after
   the Oneiron store, each through a thin adapter over the system's own SDK
   that speaks one JSON protocol:
