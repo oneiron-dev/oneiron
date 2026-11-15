@@ -208,9 +208,9 @@ pub(super) enum SavedLaneJudge<'a> {
     /// for that judgment is marked ([`QUESTION_DEFERRED_OUTCOME`]), and the
     /// question pump's next pass judges it under the lane
     /// ([`project_deferred_outcomes`]), whether its window is open, due or
-    /// closed. Live calibration judges every label again at each read; the
-    /// raw label and window reads do not yet (FIX
-    /// STORED-OUTCOME-READS-SKIP-SAVED-LANE).
+    /// closed. Every read judges each stored label and window again under a
+    /// vault handle: calibration, the outcome labels and the closed windows
+    /// (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE).
     Deferred,
 }
 

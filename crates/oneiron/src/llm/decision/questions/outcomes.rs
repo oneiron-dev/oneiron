@@ -82,31 +82,157 @@ fn projectable_facts(
     Ok(Some(facts))
 }
 
-/// The stored outcome labels of the caller's standing question, in label
-/// order. Another principal's question is not found, as its answers are
-/// not. A caller toward `destination` gets no label naming a row a world
-/// withheld from its machine keeps (mesh PR2b), as [`calibration_pairs`]
-/// pairs none.
+/// The stored outcome labels of the caller's standing question that still
+/// stand, in label order: each fact is judged again as a calibration pair's
+/// is ([`standing_labels_in_txn`]), no probability required. So a label
+/// stored past the lane its question was saved under (an old build's own-lane
+/// shortcut), or before its principal lost a read of a row it rests on,
+/// reads no more (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE). Another
+/// principal's question is not found, as its answers are not. A caller toward
+/// `destination` gets no label derived from a row a world withheld from its
+/// machine keeps (mesh PR2b), as [`calibration_pairs`] pairs none.
 pub fn outcome_labels(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
     destination: impl Into<crate::settings::ReadDestination>,
 ) -> Result<Vec<OutcomeLabel>> {
+    Ok(
+        outcome_labels_with_rows(vault, principal, question, destination)?
+            .into_iter()
+            .map(|(label, _)| label)
+            .collect(),
+    )
+}
+
+/// [`outcome_labels`], each label beside every row it was derived from, as a
+/// calibration pair names them.
+pub(super) fn outcome_labels_with_rows(
+    vault: &Vault,
+    principal: EntityId,
+    question: EntityId,
+    destination: impl Into<crate::settings::ReadDestination>,
+) -> Result<Vec<(OutcomeLabel, Vec<EntityId>)>> {
     let txn = vault.store.env.read_txn()?;
     owned_head(vault, &txn, principal, question)?;
     let kept = crate::settings::device_local_worlds_for(vault, &txn, &destination.into())?;
-    let mut labels = Vec::new();
-    for (_, label) in
-        QUESTION_LABEL.scan_from(&vault.store, &txn, &family_prefix(question, b"label"))?
+    let answers = stored_answers(vault, &txn, question)?;
+    let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;
+    Ok(
+        standing_labels_in_txn(vault, &txn, &policy, principal, question, &answers, &kept)?
+            .into_iter()
+            .map(|standing| (standing.label, standing.derived_from))
+            .collect(),
+    )
+}
+
+/// The answers stored for `question`, across its versions.
+pub(super) fn stored_answers(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    question: EntityId,
+) -> Result<Vec<AnswerRecord>> {
+    Ok(QUESTION_ANSWER
+        .scan_from(&vault.store, txn, &family_prefix(question, b"answer"))?
+        .into_iter()
+        .map(|(_, answer)| answer)
+        .collect())
+}
+
+/// One stored outcome label that still stands, beside the answer it labels
+/// and every row it was derived from.
+pub(super) struct StandingLabel<'a> {
+    pub(super) answer: &'a AnswerRecord,
+    pub(super) label: OutcomeLabel,
+    pub(super) derived_from: Vec<EntityId>,
+}
+
+/// The stored labels of `question` that still stand in `txn`, in label order
+/// (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE). A label stands when it labels
+/// one of `answers`, the question's stored answers, the version that answer
+/// was given under is `principal`'s, and its fact, evaluated again as at its
+/// arrival under the lane that version was saved under
+/// ([`SavedLaneJudge::Vault`]: a live owner's own lane, else the lane rebuilt
+/// over the principal's live key, its relationship access gate included),
+/// gives the very label the store holds. A caller toward `kept` worlds gets
+/// none derived from a row they withhold.
+pub(super) fn standing_labels_in_txn<'a>(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    policy: &crate::gate::PolicyManifestResolution,
+    principal: EntityId,
+    question: EntityId,
+    answers: &'a [AnswerRecord],
+    kept: &std::collections::BTreeSet<EntityId>,
+) -> Result<Vec<StandingLabel<'a>>> {
+    let mut standing = Vec::new();
+    for (_, outcome) in
+        QUESTION_LABEL.scan_from(&vault.store, txn, &family_prefix(question, b"label"))?
     {
-        if !kept.is_empty() && kept_any(vault, &txn, &kept, &[question, label.answer, label.fact])?
+        let Some(answer) = answers.iter().find(|a| a.claim == outcome.answer) else {
+            continue;
+        };
+        let Some(record) = QUESTION_VERSION.get(
+            &vault.store,
+            txn,
+            &VersionKey {
+                id: question,
+                version: answer.decision.receipt.question_version,
+            },
+        )?
+        else {
+            continue;
+        };
+        if record.principal != principal {
+            continue;
+        }
+        let Some(raw) =
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &outcome.fact)?
+        else {
+            continue;
+        };
+        let header = crate::batch::EntityMetadataHeader::parse(&raw)
+            .ok_or(crate::Error::CorruptedIndex("outcome fact header"))?;
+        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
+            || raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
         {
             continue;
         }
-        labels.push(label);
+        let body = crate::claim::decode_claim_body(
+            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+            true,
+        )?;
+        let mut derived_from = derived_rows(question, answer, outcome.fact, &body);
+        derived_from.extend(crate::reaction::outcome_sources(&body)?);
+        if !kept.is_empty() && kept_any(vault, txn, kept, &derived_from)? {
+            continue;
+        }
+        let fact = super::arrival::Fact {
+            id: outcome.fact,
+            body: &body,
+            occurred_at: header.occurred_start,
+        };
+        if super::arrival::evaluate_fact(
+            &vault.store,
+            txn,
+            policy,
+            SavedLaneJudge::Vault(vault),
+            &record,
+            answer,
+            &fact,
+        )?
+        .as_ref()
+            != Some(&outcome)
+        {
+            continue;
+        }
+        standing.push(StandingLabel {
+            answer,
+            label: outcome,
+            derived_from,
+        });
     }
-    Ok(labels)
+    Ok(standing)
 }
 
 /// Labels are observations of immutable answer receipts. Current facts and
@@ -154,84 +280,20 @@ pub(crate) fn calibration_pairs_in_txn(
     if current.principal != principal {
         return Ok(Vec::new());
     }
-    let answers: Vec<AnswerRecord> = QUESTION_ANSWER
-        .scan_from(&vault.store, txn, &family_prefix(question, b"answer"))?
-        .into_iter()
-        .map(|(_, answer)| answer)
-        .collect();
-    let labels: Vec<OutcomeLabel> = QUESTION_LABEL
-        .scan_from(&vault.store, txn, &family_prefix(question, b"label"))?
-        .into_iter()
-        .map(|(_, label)| label)
-        .collect();
+    let answers = stored_answers(vault, txn, question)?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
     let mut pairs = Vec::new();
-    for outcome in labels {
-        let Some(answer) = answers.iter().find(|a| a.claim == outcome.answer) else {
-            continue;
-        };
-        let Some(record) = QUESTION_VERSION.get(
-            &vault.store,
-            txn,
-            &VersionKey {
-                id: question,
-                version: answer.decision.receipt.question_version,
-            },
-        )?
-        else {
-            continue;
-        };
-        if record.principal != principal {
-            continue;
-        }
-        let Some(raw) =
-            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &outcome.fact)?
-        else {
-            continue;
-        };
-        let header = crate::batch::EntityMetadataHeader::parse(&raw)
-            .ok_or(crate::Error::CorruptedIndex("outcome fact header"))?;
-        if header.entity_type != crate::registry::ENTITY_TYPE_CLAIM
-            || raw.len() == crate::batch::ENTITY_METADATA_HEADER_LEN
-        {
-            continue;
-        }
-        let body = crate::claim::decode_claim_body(
-            &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
-            true,
-        )?;
-        let mut derived_from = derived_rows(question, answer, outcome.fact, &body);
-        derived_from.extend(crate::reaction::outcome_sources(&body)?);
-        if !kept.is_empty() && kept_any(vault, txn, &kept, &derived_from)? {
-            continue;
-        }
-        let fact = super::arrival::Fact {
-            id: outcome.fact,
-            body: &body,
-            occurred_at: header.occurred_start,
-        };
-        if super::arrival::evaluate_fact(
-            &vault.store,
-            txn,
-            &policy,
-            SavedLaneJudge::Vault(vault),
-            &record,
-            answer,
-            &fact,
-        )?
-        .as_ref()
-            != Some(&outcome)
-        {
-            continue;
-        }
-        let Some(probability) = answer.decision.probability else {
+    for standing in
+        standing_labels_in_txn(vault, txn, &policy, principal, question, &answers, &kept)?
+    {
+        let Some(probability) = standing.answer.decision.probability else {
             continue;
         };
         pairs.push(super::route_calibration::answer_pair(
-            answer,
+            standing.answer,
             probability,
-            outcome,
-            derived_from,
+            standing.label,
+            standing.derived_from,
         ));
     }
     // A window that closed in silence labels its answer by the binding's

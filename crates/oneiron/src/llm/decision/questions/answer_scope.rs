@@ -159,8 +159,12 @@ pub fn schedule_backfill_in_lane(
 }
 
 /// [`closed_outcome_windows`] as `lane` reads them (FIX 11827): every window
-/// for a full lane; for a narrowed one, each window whose answer the lane
-/// reads.
+/// that still reads as it closed for a full lane, each judged again under
+/// its saved lane as the principal's live authority reads it (FIX
+/// STORED-OUTCOME-READS-SKIP-SAVED-LANE); for a narrowed one, each of those
+/// whose rows the lane reads: the answer and its unit, and for a window that
+/// closed observed every row one standing label of its answer was derived
+/// from.
 ///
 /// # Errors
 /// As [`closed_outcome_windows`], and a store failure judging the rows.
@@ -170,16 +174,39 @@ pub fn closed_outcome_windows_in_lane(
     principal: EntityId,
     question: EntityId,
 ) -> Result<Vec<OutcomeWindowClose>> {
-    let windows = closed_outcome_windows(vault, principal, question)?;
     if reads_as_principal(lane) {
-        return Ok(windows);
+        return closed_outcome_windows(vault, principal, question);
     }
-    lane_keeps(lane, windows, |close| vec![close.answer])
+    let windows = super::windows::standing_windows(vault, principal, question)?;
+    if windows.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Each row set a window rests on, every window's in turn.
+    let sets: Vec<Vec<EntityId>> = windows
+        .iter()
+        .flat_map(|window| window.rests_on.iter())
+        .map(|rows| rows_beside(question, rows))
+        .collect();
+    let mut each = lane.refs_readable_each(&sets)?.into_iter();
+    let mut kept = Vec::new();
+    for window in windows {
+        let mut read = false;
+        for _ in &window.rests_on {
+            read |= each.next().unwrap_or(false);
+        }
+        if read {
+            kept.push(window.close);
+        }
+    }
+    Ok(kept)
 }
 
-/// [`outcome_labels`] as `lane` reads them (FIX 11827): every label for a
-/// full lane; for a narrowed one, each label whose answer and fact the lane
-/// reads.
+/// [`outcome_labels`] as `lane` reads them (FIX 11827): every label that
+/// still stands for a full lane, each judged again under its saved lane as
+/// the principal's live authority reads it (FIX
+/// STORED-OUTCOME-READS-SKIP-SAVED-LANE); for a narrowed one, each of those
+/// whose rows the lane reads: every row it was derived from but the question,
+/// as a calibration pair's.
 ///
 /// # Errors
 /// As [`outcome_labels`], and a store failure judging the rows.
@@ -190,11 +217,15 @@ pub fn outcome_labels_in_lane(
     question: EntityId,
     destination: impl Into<ReadDestination>,
 ) -> Result<Vec<OutcomeLabel>> {
-    let labels = outcome_labels(vault, principal, question, destination)?;
     if reads_as_principal(lane) {
-        return Ok(labels);
+        return outcome_labels(vault, principal, question, destination);
     }
-    lane_keeps(lane, labels, label_rows)
+    let labels = lane_keeps(
+        lane,
+        super::outcomes::outcome_labels_with_rows(vault, principal, question, destination)?,
+        |(_, rows)| rows_beside(question, rows),
+    )?;
+    Ok(labels.into_iter().map(|(label, _)| label).collect())
 }
 
 /// [`calibration_pairs`] as `lane` reads them (FIX 11827): every pair for a
@@ -216,12 +247,16 @@ pub fn calibration_pairs_in_lane(
         return Ok(pairs);
     }
     lane_keeps(lane, pairs, |pair| {
-        pair.derived_from
-            .iter()
-            .copied()
-            .filter(|row| *row != question)
-            .collect()
+        rows_beside(question, &pair.derived_from)
     })
+}
+
+/// `rows` but `question`, which lives in a side table and is no row.
+fn rows_beside(question: EntityId, rows: &[EntityId]) -> Vec<EntityId> {
+    rows.iter()
+        .copied()
+        .filter(|row| *row != question)
+        .collect()
 }
 
 /// [`project_bound_outcomes`], its count as `lane` reads it (FIX 11827): the
