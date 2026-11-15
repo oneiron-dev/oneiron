@@ -34,35 +34,10 @@ use crate::team::team_shape::CoordinationPattern;
 use crate::write_envelope::WriteActor;
 use oneiron_model::llm::ModelId;
 
-/// The four spawn fields an owner row may steer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SpawnChoice {
-    Model,
-    Width,
-    Pattern,
-    Budget,
-}
-
-impl SpawnChoice {
-    pub const ALL: [Self; 4] = [Self::Model, Self::Width, Self::Pattern, Self::Budget];
-
-    /// The row key: canon's choice name.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Model => "model",
-            Self::Width => "width",
-            Self::Pattern => "pattern",
-            Self::Budget => "budget",
-        }
-    }
-
-    /// The choice a row key names, if it names one.
-    #[must_use]
-    pub fn from_key(key: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|choice| choice.as_str() == key)
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::learning_setting_choice::SpawnChoice;
+#[doc(hidden)]
+use oneiron_records::learning_setting_choice::{ROW_LABEL, ROW_VERSION};
 
 /// One choice's value, in its own type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -147,9 +122,6 @@ impl SpawnChoiceSource {
 /// the scope.
 const CHOICE: SideTable<String, StoredChoiceRow, Raw> =
     SideTable::new(&side_table::LEARNING_CHOICE);
-
-const ROW_VERSION: u8 = 1;
-const ROW_LABEL: &str = "learning choice row";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredChoiceRow {
