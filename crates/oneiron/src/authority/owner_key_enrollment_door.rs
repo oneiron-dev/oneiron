@@ -904,6 +904,90 @@ impl Vault {
         Ok(counted)
     }
 
+    /// The owner key enrollment of `input`'s key on `parents` (a sibling
+    /// branch of every row stored since), signed by `predecessor` through
+    /// `sign_predecessor` and cosigned by this install as its carrier, as
+    /// the one writer builds it but with no roster check of its own; stored
+    /// for the fold to judge; true when it counted. The integration tests'
+    /// door to two sibling enrolments of one key (Astra delta review
+    /// finding 2).
+    ///
+    /// # Errors
+    ///
+    /// An agent's act, an install that cannot carry it, an owner proof that
+    /// no longer holds, or the store's refusal of the row.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn enrol_owner_key_on_parents_for_test<S>(
+        &self,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        parents: Vec<AuthorityEntryHash>,
+        predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<bool>
+    where
+        S: FnOnce(&[u8]) -> Vec<u8>,
+    {
+        let (owner, surface) = match authority {
+            ActAuthority::Owner(owner, surface) => (owner, *surface),
+            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
+        };
+        let mut txn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let (carrier, carrier_key) = self
+            .carrier_in_txn(&txn, &fold)
+            .map_err(authority_refusal_as(NO_CARRIER))?;
+        let act = OwnerAct::by_owner(
+            actor,
+            OwnerActKind::OwnerKeyEnrollment,
+            owner_key_enrollment_target(&vault_id, &input.public_key)?,
+            surface,
+            OWNER_KEY_ENROLLMENT_SEEN,
+        );
+        let now = self.instant_in_txn(&txn)?.secs();
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: next_sequence(&fold, &predecessor)?,
+            parent_hashes: parents,
+            op: AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
+                act,
+                machine: input.machine,
+                carrier,
+                device: enrolled_device(input.public_key, input.proof),
+            }),
+            signer: AuthoritySignature {
+                suite: predecessor.suite(),
+                public_key: predecessor,
+                signature: vec![0; 64],
+            },
+            cosigns: vec![AuthoritySignature {
+                suite: AuthoritySignatureSuite::Ed25519,
+                public_key: AuthorityKey::Ed25519(carrier_key.verifying_key().to_bytes()),
+                signature: vec![0; 64],
+            }],
+            ts: now,
+        };
+        let transcript = authority_transcript(&entry)?;
+        if let Some(cosign) = entry.cosigns.first_mut() {
+            cosign.signature = carrier_key.sign(&transcript).to_bytes().to_vec();
+        }
+        entry.signer.signature = sign_predecessor(&transcript);
+        let hash = authority_entry_hash(&entry)?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
+        let after = self.authority_view_readonly_in_txn(&txn)?;
+        let counted =
+            after.valid_entries.contains(&hash) && !after.install.held_back.contains(&hash);
+        txn.commit()?;
+        Ok(counted)
+    }
+
     /// This vault's main-log heads now: the parents a row appended now
     /// names. The integration tests' door to a sibling branch (Astra stack
     /// review finding 1).
