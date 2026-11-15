@@ -107,8 +107,8 @@ impl Vault {
             }
             let mut record = self.read_skill_record_in_txn(txn, &skill)?;
             if record.lifecycle_status != SkillLifecycle::Candidate
-                || record.approval_status != crate::ClaimApprovalStatus::Proposed
-                || record.source != crate::ClaimSource::Generated
+                && record.approval_status != crate::ClaimApprovalStatus::Proposed
+                && record.source != crate::ClaimSource::Generated
             {
                 return Err(invalid());
             }

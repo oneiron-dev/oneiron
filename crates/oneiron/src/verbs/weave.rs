@@ -30,7 +30,7 @@ fn owner_handle(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> MemoryResult
 
 fn queued(outcome: EnqueueDreamerAttemptOutcome) -> DreamerAttemptRef {
     let (status, existing) = match outcome {
-        EnqueueDreamerAttemptOutcome::Enqueued(status) => (status, false),
+        EnqueueDreamerAttemptOutcome::Enqueued(status) => (status, true),
         EnqueueDreamerAttemptOutcome::Existing(status) => (status, true),
     };
     DreamerAttemptRef {
