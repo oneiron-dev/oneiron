@@ -2326,3 +2326,111 @@ fn a_mapping_of_one_long_pointer_lists_in_linear_time() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_capture_of_many_outcomes_of_one_repair_lists_in_linear_time() -> TestResult {
+    let fixture = fixture()?;
+    // One failure whose id is 2 MiB long, one repair naming it, and 40,000
+    // outcomes of that repair. Resolving the repair's failure again for
+    // every outcome hashed the long id 40,000 times, some 8e10 bytes of
+    // work for a listing of no row: the failure holds no task contract
+    // (Astra delta 4 L1).
+    const OUTCOMES: usize = 40_000;
+    let failure_id = "f".repeat(2 * 1024 * 1024);
+    let event =
+        |name: &str, value: Value| json!({ "type": "CUSTOM", "name": name, "value": value });
+    let jsonl = [
+        event(
+            "desk.failure",
+            json!({ "id": failure_id.as_str(), "threadId": "t-1", "runId": "r-1" }),
+        ),
+        event(
+            "desk.repair",
+            json!({
+                "id": "p-1",
+                "threadId": "t-1",
+                "runId": "r-1",
+                "failureId": failure_id.as_str(),
+            }),
+        ),
+    ]
+    .iter()
+    .map(Value::to_string)
+    .chain((0..OUTCOMES).map(|outcome| {
+        event(
+            "desk.outcome",
+            json!({
+                "id": format!("o-{outcome}"),
+                "threadId": "t-1",
+                "runId": "r-1",
+                "repairId": "p-1",
+                "result": { "response": ANSWER },
+            }),
+        )
+        .to_string()
+    }))
+    .collect::<Vec<_>>()
+    .join("\n");
+    let receipt = fixture.vault.ingest_ag_ui_file(
+        &fixture.proof,
+        &AgUiFileImport {
+            claim_ref: None,
+            project_ref: fixture.project.to_hex(),
+            app_id: "support-desk".to_owned(),
+            custom_mappings: mappings(),
+            jsonl,
+        },
+    )?;
+    assert_eq!(receipt.event_count, OUTCOMES + 2);
+
+    let started = Instant::now();
+    let inventory = eval_authoring_inventory(&fixture.vault, fixture.vault.now_recorded_at())?;
+    let listed_in = started.elapsed();
+    assert!(inventory.repairs.is_empty(), "{:?}", inventory.repairs);
+    assert!(
+        listed_in < Duration::from_secs(10),
+        "listed in {listed_in:?}"
+    );
+    // Every outcome links through the one repair to the long failure.
+    let read = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_ag_ui_file(&AgUiFileReadInput {
+            claim_ref: receipt.claim_ref,
+            source_hash: receipt.source_hash,
+        })?;
+    let view = read.source.expect("the owner reads their own capture");
+    assert_eq!(view.repair_links.len(), OUTCOMES);
+    assert!(view.repair_links.iter().all(|link| {
+        link.status == AgUiRepairLinkStatus::Linked
+            && (link.repair_ordinal, link.failure_ordinal) == (Some(1), Some(0))
+    }));
+    Ok(())
+}
+
+/// The measuring host is handed no seed whose capture no longer reads: the
+/// gate settles no such seed, and no listing shows it (RULING
+/// UNBUILT-P05E-WITHDRAWN-SEED = A). The seed itself stays until the erase
+/// takes it (Astra delta 4 L2).
+#[test]
+fn the_host_is_handed_no_seed_whose_capture_no_longer_reads() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let seed = propose(&fixture, &source)?;
+    assert_eq!(
+        fixture.vault.pending_eval_repair_seeds()?,
+        vec![seed.clone()]
+    );
+
+    let claim = EntityId::from_hex(&source.claim_ref)?;
+    assert!(
+        fixture.vault.delete_entity(&claim)?,
+        "the capture is deleted"
+    );
+    assert!(
+        fixture.vault.pending_eval_repair_seeds()?.is_empty(),
+        "the host measures no seed of a deleted capture"
+    );
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(seed));
+    Ok(())
+}
