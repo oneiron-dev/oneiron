@@ -482,7 +482,7 @@ impl PollAdmission<'_> {
         if !event.cancelled {
             return Ok(());
         }
-        self.refund_host_cancelled_deposit(event_ref)?;
+        self.refund_host_cancelled_deposit(event_ref, self.now)?;
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
         if let Some(status_ref) = self.admit_status_if_changed(
@@ -510,7 +510,7 @@ impl PollAdmission<'_> {
         basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
         if basis == CalendarStatusBasis::ImportedCancel {
-            self.refund_host_cancelled_deposit(event_ref)?;
+            self.refund_host_cancelled_deposit(event_ref, self.now)?;
         }
         let status_ref = self.admit_status_if_changed(
             event_ref,
@@ -535,14 +535,23 @@ impl PollAdmission<'_> {
     /// when it is an explicit cancellation, its booking's deposit refund is
     /// asked again. The passport commits before the refund does, so a stop
     /// between them leaves the next read of the feed here, and this is where
-    /// the refund is repaired.
+    /// the refund is repaired. The cancellation was seen when that passport
+    /// committed, so a repair after the booking's start still refunds a
+    /// cancellation first seen before it.
     fn repeat_host_cancel_refund(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
         if event.cancelled {
-            self.refund_host_cancelled_deposit(event_ref)?;
+            let seen_at = crate::calendar::passport::live_passport_for(
+                self.vault,
+                &event_ref,
+                self.system,
+                &event.uid,
+            )?
+            .map_or(self.now, |(_, passport)| passport.last_seen_at);
+            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
         }
         Ok(())
     }
@@ -556,15 +565,21 @@ impl PollAdmission<'_> {
     /// then finds the refund owed and keeps it, while a visitor who cancelled
     /// first keeps their own cancel's refund. Asked on every sighting of the
     /// cancellation; the deposit step is idempotent.
-    fn refund_host_cancelled_deposit(&self, event_ref: EntityId) -> Result<(), CalendarError> {
+    fn refund_host_cancelled_deposit(
+        &self,
+        event_ref: EntityId,
+        seen_at: u64,
+    ) -> Result<(), CalendarError> {
         #[cfg(oneiron_test_support)]
         if crate::test_doors::host_cancel_refund::take_stop_before_refund() {
             return Err(ingest("stopped before the host-cancel refund (test door)"));
         }
-        crate::booking::lifecycle::refund_deposit_on_host_cancel(self.vault, &event_ref, self.now)
-            .map_err(|error| CalendarError::IcsIngest {
-                reason: error.to_string(),
-            })?;
+        crate::booking::lifecycle::refund_deposit_on_host_cancel(
+            self.vault, &event_ref, seen_at, self.now,
+        )
+        .map_err(|error| CalendarError::IcsIngest {
+            reason: error.to_string(),
+        })?;
         #[cfg(oneiron_test_support)]
         crate::test_doors::host_cancel_refund::run_between_commits();
         Ok(())

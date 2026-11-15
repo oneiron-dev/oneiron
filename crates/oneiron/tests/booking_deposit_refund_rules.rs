@@ -1,10 +1,17 @@
-//! BK-DEPOSITS PR 2, OPUS-SECREAD-A N2 (15 Nov): the owner's BK-09
-//! emergency cancel is a host cancel, so the visitor's deposit comes back
-//! whole (RULING DEPOSIT-HOST-CANCEL-REFUND = A, the lead 15 Nov 12:1x). A
-//! deposit still to capture is released, a captured one is refunded, in the
-//! emergency's own commit. Before the fix the emergency writer ran no deposit
-//! step: the due capture was taken anyway and a captured deposit stayed
-//! with the owner.
+//! BK-DEPOSITS PR 2: the refund each later cancel or move of a deposit
+//! booking earns (OPUS-SECREAD-A cold read, 15 Nov; Engine rulings 18:27).
+//! - N2: the owner's BK-09 emergency cancel is a host cancel, so the
+//!   visitor's deposit comes back whole (RULING DEPOSIT-HOST-CANCEL-REFUND =
+//!   A): a deposit still to capture is released, a captured one refunded, in
+//!   the emergency's own commit.
+//! - N1: a visitor's reschedule caps a later cancel's refund at what a cancel
+//!   at the move would have refunded against the slot left (RULING
+//!   DEPOSIT-RESCHEDULE-REFUND = A). A move with full notice keeps the full
+//!   refund; a host move sets no cap.
+//! - N3: a host cancellation the calendar shows at or after the booking's
+//!   start leaves the deposit (RULING DEPOSIT-HOST-CANCEL-AFTER-START = A,
+//!   parity with CAL-07); one first seen before the start and repaired after
+//!   it still refunds.
 //!
 //! The fixture is the emergency fixture of `tests/booking_feed_move_held.rs`
 //! (keystore, the page's facet, engine machines, this install elected the
@@ -13,6 +20,8 @@
 //! that file uses, so the pre-fix head builds it: its red is an assert.
 
 mod common;
+
+use std::sync::Mutex;
 
 use oneiron::booking::lifecycle::{
     DepositCheckoutStart, DepositProviderEvent, DepositProviderEventKind,
@@ -23,13 +32,17 @@ use oneiron::booking::lifecycle::{
 use oneiron::booking::{
     BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingError,
     BookingEventTypeClaimValue, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingSolver,
-    BookingVerbReceipt, BookingVerbRequest, ConfirmReceipt, ConfirmSpec,
+    BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmReceipt, ConfirmSpec,
     DEFAULT_INTRO_DURATION_MIN, DepositRefundRule, DepositTerms, EmergencyActionPolicy,
     EmergencyPlan, EmergencyRescheduleRequest, EventTypeConfig, EventTypeKey, HoldLeaseSpec,
-    HoldReceipt, HoldSpec, HostAvailabilityConfig, PublishBookingPageGrantRequest, RoutingMode,
-    SessionKey, SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource, WeeklyWallWindow,
-    encode_event_type_claim_value, enqueue_booking_verb, execute_emergency_plan,
+    HoldReceipt, HoldSpec, HostAvailabilityConfig, PublishBookingPageGrantRequest, RescheduleSpec,
+    RoutingMode, SessionKey, SlotOracle, SolveRequest, SolveResult, VaultActiveHoldSource,
+    WeeklyWallWindow, encode_event_type_claim_value, enqueue_booking_verb, execute_emergency_plan,
     mint_publish_page_invite_grant, plan_emergency_reschedule, run_booking_lifecycle_once,
+};
+use oneiron::calendar::CalendarError;
+use oneiron::calendar::ingest::{
+    IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
 };
 use oneiron::calendar::query::CalendarRangeDto;
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
@@ -293,6 +306,79 @@ impl DepositSettlementPort for AgreeingProvider {
     }
 }
 
+/// The host's own calendar, as its feed system names it.
+const HOST_FEED_SYSTEM: &str = "host-calendar";
+
+/// A fetcher that answers one scripted response.
+struct ScriptedFeed(Mutex<Option<IcsFetchResponse>>);
+
+impl IcsFeedFetcher for ScriptedFeed {
+    fn fetch(
+        &self,
+        _secret_ref: &str,
+        _if_none_match: Option<&str>,
+    ) -> Result<IcsFetchResponse, CalendarError> {
+        self.0
+            .lock()
+            .expect("scripted response")
+            .take()
+            .ok_or_else(|| CalendarError::IcsFetch {
+                reason: "the scripted feed has no response left".to_owned(),
+            })
+    }
+}
+
+/// A UTC instant on the fixture Monday as an ICS DATE-TIME.
+fn ics_utc(ts: u64) -> String {
+    let secs = ts - MONDAY;
+    format!(
+        "20260302T{:02}{:02}{:02}Z",
+        secs / 3_600,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
+/// One poll of the host's feed with the booking at the slot starting
+/// `start`, at `sequence`, cancelled or not.
+fn poll_host_feed(
+    fixture: &Fixture,
+    booked: &ConfirmReceipt,
+    start: u64,
+    sequence: u32,
+    cancelled: bool,
+    etag: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
+    let mut body =
+        String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n");
+    body.push_str("BEGIN:VEVENT\r\n");
+    body.push_str(&format!("UID:{}\r\n", booked.calendar.uid));
+    body.push_str("DTSTAMP:20260302T070000Z\r\n");
+    body.push_str(&format!("DTSTART:{}\r\n", ics_utc(start)));
+    body.push_str(&format!(
+        "DTEND:{}\r\n",
+        ics_utc(start + u64::from(DEFAULT_INTRO_DURATION_MIN) * 60)
+    ));
+    body.push_str(&format!("SEQUENCE:{sequence}\r\n"));
+    body.push_str("SUMMARY:intro-call\r\n");
+    if cancelled {
+        body.push_str("STATUS:CANCELLED\r\n");
+    }
+    body.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
+    let fetcher = ScriptedFeed(Mutex::new(Some(IcsFetchResponse::Complete {
+        etag: Some(etag.to_owned()),
+        body: body.into_bytes(),
+    })));
+    let config = IcsFeedPollConfig {
+        secret_ref: format!("ics-feed:{HOST_FEED_SYSTEM}"),
+        system: HOST_FEED_SYSTEM.to_owned(),
+        cadence_min_seconds: 300,
+        cadence_max_seconds: 900,
+    };
+    run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).map(|_| ())
+}
+
 /// A sink whose every delivery lands.
 struct DeliveringSink;
 
@@ -375,6 +461,67 @@ fn paid_booking(
     {
         BookingVerbReceipt::Confirmed(confirmed) => confirmed,
         other => panic!("expected a confirm receipt, got {other:?}"),
+    }
+}
+
+/// A paid booking at `hour` whose deposit the provider captured.
+fn captured_booking(fixture: &Fixture, payment_id: &str, hour: u64) -> ConfirmReceipt {
+    let booked = paid_booking(
+        fixture,
+        SessionKey::derive(payment_id.as_bytes()),
+        payment_id,
+        hour,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut AgreeingProvider,
+        NOW + 50,
+    )
+    .expect("capture");
+    assert_eq!(
+        fixture.state_of(payment_id),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    booked
+}
+
+/// The visitor moves the booking to the slot starting at `hour`.
+fn reschedule(fixture: &Fixture, booked: &ConfirmReceipt, hour: u64, now: u64) {
+    match fixture
+        .run(
+            BookingVerbRequest::Reschedule(RescheduleSpec {
+                token: booked.reschedule_token.clone(),
+                new_slot: slot_at(hour),
+                visitor_tz: "UTC".to_owned(),
+                constraint: None,
+                idempotency_key: None,
+            }),
+            now,
+        )
+        .expect("the visitor's reschedule")
+    {
+        BookingVerbReceipt::Rescheduled(_) => {}
+        other => panic!("expected a reschedule receipt, got {other:?}"),
+    }
+}
+
+/// The visitor cancels the booking.
+fn cancel(fixture: &Fixture, booked: &ConfirmReceipt, now: u64) {
+    match fixture
+        .run(
+            BookingVerbRequest::Cancel(CancelSpec {
+                token: booked.cancel_token.clone(),
+                idempotency_key: None,
+            }),
+            now,
+        )
+        .expect("the visitor's cancel")
+    {
+        BookingVerbReceipt::Cancelled(_) => {}
+        other => panic!("expected a cancel receipt, got {other:?}"),
     }
 }
 
@@ -543,5 +690,168 @@ fn an_owner_emergency_cancel_gives_the_whole_deposit_back() {
         fixture.state_of("pi_due"),
         DepositState::Voided,
         "the due capture is never taken"
+    );
+}
+
+#[test]
+fn a_late_visitor_reschedule_keeps_the_late_refund() {
+    let fixture = Fixture::open();
+    // One hour before the 09:00 booking (inside the two hours' notice), the
+    // visitor moves it to 13:00, then cancels with five hours' notice of the
+    // new slot: the move kept only the late refund, nothing.
+    let booked = captured_booking(&fixture, "pi_late_move", 9);
+    reschedule(&fixture, &booked, 13, NOW + 60);
+    cancel(&fixture, &booked, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_late_move"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a late move then a cancel refunds what a late cancel would"
+    );
+}
+
+#[test]
+fn a_visitor_reschedule_with_full_notice_keeps_the_full_refund() {
+    let fixture = Fixture::open();
+    // Three hours before the 11:00 booking, the visitor moves it to 13:00,
+    // then cancels with full notice of the new slot.
+    let booked = captured_booking(&fixture, "pi_early_move", 11);
+    reschedule(&fixture, &booked, 13, NOW + 60);
+    cancel(&fixture, &booked, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_early_move"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a move with full notice keeps the full refund"
+    );
+}
+
+#[test]
+fn a_host_move_sets_no_refund_cap() {
+    let fixture = Fixture::open();
+    // The host moves the 09:00 booking to 13:00 in their own calendar an
+    // hour before it; the visitor then cancels with full notice of 13:00.
+    let booked = captured_booking(&fixture, "pi_host_move", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        0,
+        false,
+        "v1",
+        NOW + 60,
+    )
+    .expect("the first host feed poll");
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(13).start,
+        1,
+        false,
+        "v2",
+        NOW + 90,
+    )
+    .expect("the host's move");
+    cancel(&fixture, &booked, NOW + 120);
+    assert_eq!(
+        fixture.state_of("pi_host_move"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a host move caps nothing: the cancel measures against the slot the host chose"
+    );
+}
+
+#[test]
+fn a_host_cancel_seen_after_the_start_keeps_the_deposit() {
+    let fixture = Fixture::open();
+    // The 09:00 meeting happened (or the visitor did not show); at 09:01 the
+    // host deletes it from their calendar.
+    let booked = captured_booking(&fixture, "pi_after_start", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        0,
+        false,
+        "v1",
+        NOW + 60,
+    )
+    .expect("the first host feed poll");
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        1,
+        true,
+        "v2",
+        slot_at(9).start + 60,
+    )
+    .expect("the host's cancellation after the start");
+    assert_eq!(
+        fixture.state_of("pi_after_start"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a cancellation seen after the start moves no money"
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_host_cancel_seen_before_the_start_and_repaired_after_it_refunds() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_repaired", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        0,
+        false,
+        "v1",
+        NOW + 60,
+    )
+    .expect("the first host feed poll");
+    // The cancellation's passport commits at 08:02, and the poll stops
+    // before its refund does.
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        poll_host_feed(
+            &fixture,
+            &booked,
+            slot_at(9).start,
+            1,
+            true,
+            "v2",
+            NOW + 120
+        )
+        .is_err(),
+        "the door stops the poll"
+    );
+    assert_eq!(
+        fixture.state_of("pi_repaired"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    // The next read of the same feed comes after the start.
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        1,
+        true,
+        "v3",
+        slot_at(9).start + 60,
+    )
+    .expect("the repair poll");
+    assert_eq!(
+        fixture.state_of("pi_repaired"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a cancellation first seen before the start keeps its full refund"
     );
 }

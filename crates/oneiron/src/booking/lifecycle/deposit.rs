@@ -126,6 +126,11 @@ struct DepositRow {
     event_ref: Option<String>,
     /// The provider's last refusal of the card.
     failure: Option<String>,
+    /// The most a later visitor cancel refunds: what a cancel would have
+    /// refunded when the visitor last moved the booking, against the slot
+    /// left. Unset until a visitor reschedule.
+    #[serde(default)]
+    refund_cap_minor: Option<u64>,
     updated_at: u64,
 }
 
@@ -285,6 +290,7 @@ pub fn begin_deposit_checkout(
                 state: DepositState::AwaitingAuthorization,
                 event_ref: None,
                 failure: None,
+                refund_cap_minor: None,
                 updated_at: now_utc,
             },
         };
@@ -640,6 +646,7 @@ pub(super) fn refund_on_visitor_cancel_in_writer(
         return Ok(());
     };
     let refund = row.terms.visitor_cancel_refund_minor(start_utc, now_utc);
+    let refund = row.refund_cap_minor.map_or(refund, |cap| cap.min(refund));
     let next = match row.state {
         DepositState::CaptureDue { amount_minor } => {
             let kept = amount_minor.saturating_sub(refund);
@@ -662,6 +669,44 @@ pub(super) fn refund_on_visitor_cancel_in_writer(
     enqueue_settle(vault, wtxn, &link.deposit_key, "cancel", now_utc)
 }
 
+/// A visitor's reschedule's deposit step, in the move's own commit (RULING
+/// DEPOSIT-RESCHEDULE-REFUND = A, 15 Nov 18:27): what a cancel at `now_utc`
+/// would refund against the slot being left, which starts at
+/// `left_start_utc`, caps every later visitor cancel's refund. A move made
+/// with full notice keeps the full refund; a late move, or one after a
+/// no-show, keeps only what the owner's rule granted then. Host moves set no
+/// cap. A booking with no deposit is untouched.
+pub(super) fn cap_refund_on_visitor_reschedule_in_writer(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    event_ref: &EntityId,
+    left_start_utc: u64,
+    now_utc: u64,
+) -> Result<(), BookingError> {
+    let Some(link) = DEPOSIT_BOOKING
+        .get(&vault.store, &*wtxn, &booking_key(event_ref))
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
+        return Ok(());
+    };
+    let Some(mut row) = DEPOSIT
+        .get(&vault.store, &*wtxn, &link.deposit_key)
+        .map_err(|error| engine_failure("meta read", error))?
+    else {
+        return Ok(());
+    };
+    let refund = row
+        .terms
+        .visitor_cancel_refund_minor(left_start_utc, now_utc);
+    let cap = row.refund_cap_minor.map_or(refund, |cap| cap.min(refund));
+    if row.refund_cap_minor == Some(cap) {
+        return Ok(());
+    }
+    row.refund_cap_minor = Some(cap);
+    row.updated_at = now_utc;
+    put_deposit(vault, wtxn, &link.deposit_key, &row)
+}
+
 /// The host cancelled a booking in their own calendar, an explicit imported
 /// cancellation (FIX 22385): its deposit comes back whole, whatever the
 /// visitor's refund rule (RULING DEPOSIT-HOST-CANCEL-REFUND = A, the lead 15
@@ -677,12 +722,20 @@ pub(super) fn refund_on_visitor_cancel_in_writer(
 /// owes or has made its refund, or was voided, is left as it stands, and an
 /// EVENT with no deposit costs one read.
 ///
+/// `seen_at` is when ingest first saw the cancellation. One seen at or after
+/// the booking's start (a held meeting or a no-show tidied from the
+/// calendar) leaves the deposit as it stands; the owner can still refund by
+/// hand (RULING DEPOSIT-HOST-CANCEL-AFTER-START = A, parity with CAL-07). A
+/// repair poll after the start of a cancellation first seen before it still
+/// refunds.
+///
 /// # Errors
 ///
 /// [`BookingError::SlotOracle`] on a store failure.
 pub(crate) fn refund_deposit_on_host_cancel(
     vault: &Vault,
     event_ref: &EntityId,
+    seen_at: u64,
     now_utc: u64,
 ) -> Result<(), BookingError> {
     if !host_cancel_may_owe_refund(vault, event_ref)? {
@@ -690,7 +743,8 @@ pub(crate) fn refund_deposit_on_host_cancel(
     }
     booking_writer(vault, |wtxn| {
         let booking = super::claim::read_booking_facts_to_cancel(vault, &*wtxn, event_ref)?;
-        if booking.status == super::types::BookingStatus::Cancelled {
+        if booking.status == super::types::BookingStatus::Cancelled || seen_at >= booking.slot.start
+        {
             return Ok(());
         }
         refund_on_host_cancel_in_writer(vault, wtxn, event_ref, now_utc)
