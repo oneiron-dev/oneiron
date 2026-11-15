@@ -872,22 +872,31 @@ impl ScopedReadActorKey {
     /// principal's row ([`KeyClassOrigin::PrincipalRow`]) takes `class`.
     /// Any other key of another class has no meet with it, a caller's own
     /// key with no proof among them (Sol F1 on #8134): the answer reads
-    /// nothing, as [`Self::read_nothing`] keys it. `None` only for a blank
-    /// actor ref, which no key holds.
+    /// nothing, as [`Self::read_nothing`] keys it. A lane that kept no
+    /// class (`class` is `None`: its live key named none, or its basis was
+    /// saved before the class was kept) leaves this key's own class, as
+    /// every rebuild read before the class was kept: taking no class would
+    /// free a key built from its principal's row from each row bound to the
+    /// row's class, and the lane's frozen Scope would stand as read
+    /// authority its live key lacked (Astra F1/F2 on #8134). `None` only for
+    /// a blank actor ref, which no key holds.
     #[must_use]
     pub(super) fn within_saved_actor_class(
         self,
         class: Option<&str>,
         origin: KeyClassOrigin,
     ) -> Option<Self> {
-        if self.actor_class.as_deref() == class {
+        let Some(class) = class else {
+            return Some(self);
+        };
+        if self.actor_class.as_deref() == Some(class) {
             return Some(self);
         }
         if self.proof.is_some() || origin == KeyClassOrigin::Caller {
             return Self::read_nothing(self.actor_ref, self.actor_class.unwrap_or_default());
         }
         Some(Self {
-            actor_class: class.map(str::to_owned),
+            actor_class: Some(class.to_owned()),
             ..self
         })
     }
