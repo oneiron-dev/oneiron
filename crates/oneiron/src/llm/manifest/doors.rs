@@ -25,7 +25,7 @@ pub struct ModelManifestReplace {
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::manifest::doors::{
     ModelRoleInput, ModelRoleInvoke, ModelRoleRead, ModelRoleReceipt, ModelRouteRead,
-    ModelRouteReplace, ModelRouteView, OneironerBind,
+    ModelRouteView, OneironerBind,
 };
 
 /// The loaded native bundle's receipt at its bind: stack and checkpoint,
@@ -187,29 +187,11 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let manifest = read_manifest(&self.store, &txn)?;
-        route_view(
-            manifest.as_ref(),
-            &read_routes(&self.store, &txn)?,
-            input.slot,
-        )
-    }
-
-    pub fn replace_model_route_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: ModelRouteReplace,
-    ) -> Result<ModelRouteView> {
-        let mut txn = self.store.env.write_txn()?;
-        owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        self.set_model_route_in_txn(&mut txn, input.slot, input.route)?;
-        let manifest = read_manifest(&self.store, &txn)?;
-        let view = route_view(
-            manifest.as_ref(),
-            &read_routes(&self.store, &txn)?,
-            input.slot,
-        )?;
-        txn.commit()?;
-        Ok(view)
+        let routes = match &manifest {
+            Some(manifest) => read_routes(self, &txn, manifest)?,
+            None => BTreeMap::new(),
+        };
+        route_view(manifest.as_ref(), &routes, input.slot)
     }
 
     pub fn model_role_as_owner(
@@ -222,8 +204,11 @@ impl Vault {
         let manifest =
             read_manifest(&self.store, &txn)?.ok_or_else(|| invalid("manifest not configured"))?;
         let binding = manifest.binding(input.role)?;
-        let route =
-            super::effective_route(&manifest, &read_routes(&self.store, &txn)?, binding.slot)?;
+        let route = super::effective_route(
+            &manifest,
+            &read_routes(self, &txn, &manifest)?,
+            binding.slot,
+        )?;
         let model = model_for_route(binding, route, manifest.routes[&binding.slot])?;
         let registered = super::super::registry::read_model_registry_row(&self.store, &txn, model)?;
         let catalog_revision = catalog_revision(registered.as_ref())?;

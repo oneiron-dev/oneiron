@@ -59,9 +59,6 @@ crate::side_table::side_tables! {
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_measurements_accepts_masked]
         [restore: live] [family: unclassified] [tier: canonical];
-    /// Vault-owned description policy. Key: ().
-    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_policy_accepts_masked]
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson
         [restore: live] [family: unclassified] [tier: canonical];
@@ -82,12 +79,9 @@ crate::side_table::side_tables! {
     /// FIX 5369). Key: ().
     LLM_MODEL_PACK_ACTIVE: VaultMeta b"llm:model_pack_active:v1" Named
         // Restore class: FIX 5367: the followed-pack record travels with the install receipts it
-        // names; the owner's follow-or-pin preference stands as the live vault holds it.
+        // names; the owner's follow-or-pin preference (`models.pack_preference`) stands as the
+        // live vault holds it.
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The owner's model pack preference: follow the latest pack, pin a season or pin one pack
-    /// (FIX 5367, FIX 5369). Key: ().
-    LLM_MODEL_PACK_PREFERENCE: VaultMeta b"llm:model_pack_preference:v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Each model pack retirement notice sent to the vault's owners, and when, so a restart or a
     /// second pass sends none twice (FIX 5368). Key: u64be(retirement epoch day) + u64be(mark,
     /// days before it) + string(`pack:<pack id>` or `model:<model id>`).
@@ -117,10 +111,6 @@ crate::side_table::side_tables! {
     /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
     /// pack refreshes until the owner clears it. Key: string(model id).
     LLM_REGISTRY_STALE_MARK: VaultMeta b"llm:registry_stale:v1:" Named Engine
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Per-vault narrow-only resident route overrides: those the new manifest
-    /// still admits stay, the others clear in the manifest txn. Key: ().
-    LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson
         [restore: live] [family: unclassified] [tier: canonical];
     /// One routed seat selected and pinned by caller-chosen bounded seat id.
     LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson Authored [accepts: crate::llm::llm_routed_seat_accepts_masked]

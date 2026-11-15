@@ -14,10 +14,12 @@ use serde::{Deserialize, Serialize};
 
 use super::manifest::{ModelManifest, ModelRole};
 use super::run_admission::{OfferBinding, Payer};
+use super::setting_keys::{MODEL_PACK_PREFERENCE, ModelPackPreferenceValue};
 use super::{ModelId, ModelLocality};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::setting::{SetSetting, SetSettingOutcome};
 use crate::settings::model_pack::{
     ModelPack, ModelPackAccess, ModelPackId, ModelPackPreference, ModelPackVariant,
     model_pack_recency, select_model_pack,
@@ -35,10 +37,6 @@ pub use change::{
 };
 pub use retirement::MODEL_PACK_RETIREMENT_NOTIFICATION_PRODUCER;
 
-/// The owner's model pack preference: follow the latest pack, pin a season
-/// or pin one pack. Key: (). Absent follows the latest pack.
-const PREFERENCE: SideTable<(), ModelPackPreference, Named> =
-    SideTable::new(&side_table::LLM_MODEL_PACK_PREFERENCE);
 /// The vault's last pack change: the pack it followed since, and the one it
 /// followed before. Key: ().
 const ACTIVE: SideTable<(), ModelPackChange, Named> =
@@ -366,6 +364,32 @@ fn invalid(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("model pack: {reason}"))
 }
 
+/// The change of `models.pack_preference` to `preference` at the vault, for a door that makes it
+/// in its own write, with the door's reason.
+fn model_pack_preference_change(
+    preference: ModelPackPreference,
+    why: String,
+) -> Result<SetSetting> {
+    let value = serde_json::to_value(ModelPackPreferenceValue(preference))
+        .map_err(|_| Error::InvariantViolation("a model pack preference encodes as JSON"))?;
+    Ok(SetSetting {
+        why: Some(why),
+        ..SetSetting::vault_value(MODEL_PACK_PREFERENCE.spec.name, value)
+    })
+}
+
+/// Whether a change wrote its row, so the key's hook ran: a value equal to the row's writes
+/// nothing.
+const fn changed_the_row(outcome: &SetSettingOutcome) -> bool {
+    matches!(
+        outcome,
+        SetSettingOutcome::Applied {
+            sequence: Some(_),
+            ..
+        }
+    )
+}
+
 impl Vault {
     /// Today on this vault's clock, in days since the Unix epoch: the day a
     /// pack's release and retirement are read against.
@@ -377,7 +401,20 @@ impl Vault {
     /// the owner set none.
     pub fn model_pack_preference(&self) -> Result<ModelPackPreference> {
         let txn = self.store.env.read_txn()?;
-        Ok(PREFERENCE.get(&self.store, &txn, &())?.unwrap_or_default())
+        self.model_pack_preference_in_txn(&txn)
+    }
+
+    /// The owner's model pack preference in `txn`, the value of
+    /// `models.pack_preference`; following the latest pack when the owner
+    /// set none.
+    pub(crate) fn model_pack_preference_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<ModelPackPreference> {
+        Ok(MODEL_PACK_PREFERENCE
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .0)
     }
 
     /// The pack the vault follows now, read with its receipt; `None` with
@@ -395,7 +432,7 @@ impl Vault {
         if packs.is_empty() {
             return Ok(None);
         }
-        let preference = PREFERENCE.get(&self.store, txn, &())?.unwrap_or_default();
+        let preference = self.model_pack_preference_in_txn(txn)?;
         Ok(select_model_pack(
             &packs,
             |installed| &installed.pack,
@@ -403,6 +440,24 @@ impl Vault {
             self.model_pack_today(),
         )
         .cloned())
+    }
+
+    /// The receipt of the pack `preference` selects in `txn` today: the pack
+    /// a change of the preference moves the vault from. `None` with no model
+    /// pack installed.
+    pub(crate) fn model_pack_selected_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        preference: &ModelPackPreference,
+    ) -> Result<Option<ModelPackReceipt>> {
+        let packs = self.installed_model_packs_in_txn(txn)?;
+        Ok(select_model_pack(
+            &packs,
+            |installed| &installed.pack,
+            preference,
+            self.model_pack_today(),
+        )
+        .map(ModelPackReceipt::of))
     }
 
     /// The active pack's model for `role` on the access the host holds
@@ -467,7 +522,7 @@ impl Vault {
 
     fn model_pack_setting_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<ModelPackSetting> {
         let today = self.model_pack_today();
-        let preference = PREFERENCE.get(&self.store, txn, &())?.unwrap_or_default();
+        let preference = self.model_pack_preference_in_txn(txn)?;
         let mut packs = self.installed_model_packs_in_txn(txn)?;
         let active = select_model_pack(&packs, |installed| &installed.pack, &preference, today)
             .map(|installed| ModelPackView::of(installed, today));
@@ -491,42 +546,42 @@ impl Vault {
         })
     }
 
-    /// Replaces the owner's model pack preference under the owner proof. A
-    /// season pin names a season an installed, still-served pack carries
+    /// Whether the vault may follow `preference` now, checked in the write
+    /// of each change of `models.pack_preference`. A season pin names a
+    /// season an installed, still-served pack carries
     /// ([`season_is_pinnable`]); a pack pin names an installed, still-served
-    /// pack ([`pack_is_pinnable`]). A move of the active pack is a change,
-    /// with its notice (FIX 5369). The returned setting is the one this
-    /// transaction stored.
-    pub fn replace_model_pack_preference_as_owner(
+    /// pack ([`pack_is_pinnable`]).
+    ///
+    /// # Errors
+    /// [`Error::InvalidConfig`] for a pin no installed, served pack meets;
+    /// storage errors.
+    pub(crate) fn check_model_pack_preference_in_txn(
         &self,
-        owner: &AuthenticatedOwner,
-        preference: ModelPackPreference,
-    ) -> Result<ModelPackSetting> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let today = self.model_pack_today();
-            match &preference {
-                ModelPackPreference::AutoUpgrade => {}
-                ModelPackPreference::Pinned { stack } => {
-                    let packs = self.installed_model_packs_in_txn(txn)?;
-                    if !season_is_pinnable(&packs, stack, today) {
-                        return Err(invalid(
-                            "a pin names a season an installed, still-served pack carries",
-                        ));
-                    }
-                }
-                ModelPackPreference::PinnedPack { pack } => {
-                    let packs = self.installed_model_packs_in_txn(txn)?;
-                    if !pack_is_pinnable(&packs, pack, today) {
-                        return Err(invalid("a pin names an installed, still-served pack"));
-                    }
+        txn: &heed::RoTxn<'_>,
+        preference: &ModelPackPreference,
+    ) -> Result<()> {
+        let today = self.model_pack_today();
+        match preference {
+            ModelPackPreference::AutoUpgrade => Ok(()),
+            ModelPackPreference::Pinned { stack } => {
+                let packs = self.installed_model_packs_in_txn(txn)?;
+                if season_is_pinnable(&packs, stack, today) {
+                    Ok(())
+                } else {
+                    Err(invalid(
+                        "a pin names a season an installed, still-served pack carries",
+                    ))
                 }
             }
-            let before = self.model_pack_in_effect_in_txn(txn)?;
-            PREFERENCE.put(&self.store, txn, &(), &preference)?;
-            self.note_active_model_pack_in_txn(txn, before, ModelPackChangeCause::Preference)?;
-            self.model_pack_setting_in_txn(txn)
-        })
+            ModelPackPreference::PinnedPack { pack } => {
+                let packs = self.installed_model_packs_in_txn(txn)?;
+                if pack_is_pinnable(&packs, pack, today) {
+                    Ok(())
+                } else {
+                    Err(invalid("a pin names an installed, still-served pack"))
+                }
+            }
+        }
     }
 
     /// The receipt of the pack in effect now, as routing selects it: what a
@@ -550,9 +605,10 @@ impl Vault {
     /// off the recorded pack (FIX 5368's day pass records that on the day
     /// itself), the record catches up with `previous` the recorded pack.
     /// Each recorded change gets a new change id and `cause`, and every
-    /// owner gets its notice with its one-tap revert. The install, removal,
-    /// preference, revert and retirement doors call it, each naming itself
-    /// as `cause`.
+    /// owner gets its notice with its one-tap revert. The install and removal
+    /// doors call it, each naming itself as `cause`, and so does each change
+    /// of `models.pack_preference` (the owner's setting, a revert, a
+    /// retirement's move), from the key's hook.
     pub(crate) fn note_active_model_pack_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,

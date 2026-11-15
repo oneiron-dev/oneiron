@@ -5,8 +5,8 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::embed::EmbedderLocality;
 use oneiron::llm::manifest::doors::{
     ModelManifestReplace, ModelRoleInput, ModelRoleInvocation, ModelRoleInvoke, ModelRoleOutput,
-    ModelRoleRead, ModelRoleReceipt, ModelRouteRead, ModelRouteReplace, ModelRouteView,
-    OneironerBind, OneironerBundleReceipt,
+    ModelRoleRead, ModelRoleReceipt, ModelRouteRead, ModelRouteView, OneironerBind,
+    OneironerBundleReceipt,
 };
 use oneiron::llm::manifest::{ModelManifest, ModelRole, ModelSlot};
 use oneiron::memory::extraction::{
@@ -170,21 +170,6 @@ pub(crate) async fn vault_models_routes_read(
         auth,
         "vault.models.routes.read",
         move |server, owner| Ok(server.vault().model_route_as_owner(owner, input)?),
-        |_| Vec::new(),
-    )
-    .await
-}
-
-pub(crate) async fn vault_models_routes_replace(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ModelRouteReplace,
-) -> Listed<ModelRouteView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.models.routes.replace",
-        move |server, owner| Ok(server.vault().replace_model_route_as_owner(owner, input)?),
         |_| Vec::new(),
     )
     .await
