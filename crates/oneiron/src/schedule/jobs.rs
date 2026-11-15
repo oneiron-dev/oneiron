@@ -59,6 +59,8 @@ static JOBS: &[&JobSpec] = &[
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_ONCE,
     #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_REARM,
+    #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_DUE_BY,
 ];
 

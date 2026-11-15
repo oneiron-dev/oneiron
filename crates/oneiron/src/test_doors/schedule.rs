@@ -335,6 +335,46 @@ pub static TEST_DUE_BY: JobSpec = JobSpec {
     run: run_cadence,
 };
 
+/// How far past its due time the first run of [`TEST_REARM`] about a subject arms its own row
+/// again.
+pub const TEST_REARM_AFTER_SECS: u64 = 3_600;
+
+/// The first run about a subject arms its own row again, at its due time plus
+/// [`TEST_REARM_AFTER_SECS`], in its own write while it runs, then answers done with no `due_by`;
+/// every later run only counts. A TASK rewrite that moves a waiting tick's due time while the
+/// tick runs is the engine's case (OPUS-SETTING's review F2 of stage 5b-3).
+fn run_rearm(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    if count(armed) == 1 {
+        let at = armed.due_at.saturating_add(TEST_REARM_AFTER_SECS);
+        vault.with_write_txn_grouped(|txn| {
+            crate::schedule::arm_in_txn(
+                &vault.store,
+                txn,
+                &TEST_REARM,
+                armed.subject,
+                Trigger::At { at },
+            )
+        })?;
+    }
+    Ok(JobResult::of(Ran::Done))
+}
+
+/// A one-time job the engine arms (`Trigger::At`) whose first run arms its own row again
+/// ([`run_rearm`]; stage 5b-3).
+pub static TEST_REARM: JobSpec = JobSpec {
+    code: "test.rearm",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: false,
+    at_open: false,
+    once_per_pass: false,
+    runs_here: crate::schedule::any_node,
+    run: run_rearm,
+};
+
 /// The next run of `sweep` in `vault` notes a deadline at `at` while it runs, after it listed
 /// the deadlines it covers, as a door that writes during the run does (stage 5b-1).
 pub fn note_deadline_during_next_run(vault: &Vault, sweep: HousekeepingSweep, at: u64) {
