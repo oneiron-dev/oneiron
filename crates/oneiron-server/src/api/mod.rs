@@ -146,6 +146,10 @@ pub(crate) use self::facade::{
 pub(crate) use self::facade::clock_ingress;
 // FIX 12323: a facade route's caller, as its receipt layer resolved it.
 pub(crate) use self::facade::resolved_facade_caller;
+// The integration tests' door to the check a host-door row's door runs
+// before its pre hooks (UC-01 PR 0a, the proof-rule guard).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::facade::row_door_admits;
 mod feedback_inbox;
 pub(crate) use self::feedback_inbox::FloodCap;
 // ONE-1908 [ORIGIN-01]: the git smart-HTTP serving surface. Protocol only —
