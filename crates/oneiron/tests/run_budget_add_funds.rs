@@ -22,17 +22,21 @@ use std::sync::Arc;
 use fixture::{KIND, WORKER, claim, claimed, enqueued, open, unix_now};
 use oneiron::Vault;
 use oneiron::agent_dispatch::{
-    AgentDispatcher, BudgetHoldLease, BudgetHoldState, FundsPrice, LaunchUsdPrices,
+    AgentDispatchOutcome, AgentDispatchTarget, AgentDispatcher, AgentSpawnContext, BudgetHoldLease,
+    BudgetHoldState, DEFAULT_BASE_LOGICAL_ID, DispatchAgent, FundsPrice, LaunchUsdPrices,
     RunBudgetChoice, SpendScopeId, UsdPriceTarget, UsdUnitPrice, run_budget_questions,
 };
-use oneiron::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResumePoint, EnqueueAttempt};
+use oneiron::attempt_queue::{
+    AttemptId, AttemptQueue, AttemptRecord, AttemptResumePoint, ClaimOutcome, EnqueueAttempt,
+};
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::llm::decision::DecisionAnswer;
-use oneiron::llm::run_admission::{DeclaredMaximum, LeaseUnit, MaximumShown};
+use oneiron::llm::run_admission::LeaseUnit;
 use oneiron::store::GateDecisionId;
 
-/// The root scope's cap before any answer.
-const ROOT_CAP: u64 = 8_000;
+/// The root scope's cap before any answer: the run's launch budget.
+const ROOT_CAP: u64 = 20_000;
 /// $0.010001 at $3 per million tokens: 3,333,666.33 tokens, rounded down.
 const AMOUNT_USD_MICROS: u64 = 10_001;
 const BOUGHT_UNITS: u64 = 3_333_666;
@@ -68,41 +72,77 @@ fn owner_proof(vault: &Vault) -> AuthenticatedOwner {
         .expect("the owner's proof")
 }
 
-/// Two rows of one run, each claimed; the first is the run's root.
-fn leased_run(queue: &AttemptQueue<'_>, run: &str, now: u64) -> (AttemptRecord, AttemptRecord) {
-    for index in 0..2 {
-        enqueued(
-            queue
-                .enqueue(EnqueueAttempt {
-                    kind: KIND.to_owned(),
-                    payload: format!("step-{index}").into_bytes(),
-                    dedupe_key: None,
-                    run_id: Some(run.to_owned()),
-                    now,
-                })
-                .expect("enqueue"),
-        );
-    }
-    let root = claimed(claim(queue, KIND, now + 1));
+/// A run of two claimed rows. Its root is the seeded default agent,
+/// dispatched into `run` with a budget of [`ROOT_CAP`] tokens and no parent
+/// scope, so its launch pins the root's own hard scope, the run's root
+/// scope; the other row is a plain step of the same run.
+fn leased_run(
+    vault: &Vault,
+    queue: &AttemptQueue<'_>,
+    run: &str,
+    now: u64,
+) -> (AttemptRecord, AttemptRecord) {
+    let (agent, _) = vault
+        .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)
+        .expect("seeded agent read")
+        .expect("the default agent is seeded");
+    let AgentDispatchOutcome::Dispatched(status) = AgentDispatcher::new(vault)
+        .dispatch_with_context(
+            DispatchAgent {
+                target: AgentDispatchTarget::Custom(agent),
+                parent_attempt: None,
+                dedupe_key: None,
+                run_id: Some(run.to_owned()),
+                now,
+            },
+            AgentSpawnContext::default()
+                .with_depth_remaining(1)
+                .with_budget(ROOT_CAP),
+        )
+        .expect("the run's root dispatches")
+    else {
+        panic!("one fresh agent run");
+    };
+    enqueued(
+        queue
+            .enqueue(EnqueueAttempt {
+                kind: KIND.to_owned(),
+                payload: b"step-1".to_vec(),
+                dedupe_key: None,
+                run_id: Some(run.to_owned()),
+                now,
+            })
+            .expect("enqueue"),
+    );
+    let root = claim_root(queue, status.attempt.id, now + 1);
     let other = claimed(claim(queue, KIND, now + 1));
     (root, other)
 }
 
-/// Opens the run's hard root scope of [`ROOT_CAP`] tokens.
-fn open_run_root(dispatcher: &AgentDispatcher<'_>, root: &AttemptRecord) -> SpendScopeId {
+/// Claims the run's root agent row `id` as the worker.
+fn claim_root(queue: &AttemptQueue<'_>, id: AttemptId, now: u64) -> AttemptRecord {
+    for _ in 0..64 {
+        let ClaimOutcome::Claimed(row) = claim(queue, DREAMER_RUNNER_ATTEMPT_KIND, now) else {
+            break;
+        };
+        if row.id == id {
+            return row;
+        }
+    }
+    panic!("the run's root is ready to claim");
+}
+
+/// The run's root scope: the hard scope of [`ROOT_CAP`] tokens its root's
+/// launch pinned, carved from no parent.
+fn run_root_scope(dispatcher: &AgentDispatcher<'_>, root: &AttemptRecord) -> SpendScopeId {
     let scope = SpendScopeId::for_attempt(&root.id);
-    let opened = dispatcher
-        .open_root_spend_scope(
-            scope.clone(),
-            DeclaredMaximum {
-                units: ROOT_CAP,
-                unit: LeaseUnit::tokens(),
-            },
-            Some(MaximumShown { at_ms: 12_000 }),
-            12,
-        )
-        .expect("the run's root scope opens");
-    assert!(opened.hard, "the root is a hard cap");
+    let read = dispatcher
+        .read_spend_scope(&scope)
+        .expect("scope read")
+        .expect("the root's launch pins its scope");
+    assert!(read.hard, "the root scope is a hard cap");
+    assert_eq!(read.parent, None, "carved from no parent");
+    assert_eq!(read.cap_units, ROOT_CAP, "the launch budget");
     scope
 }
 
@@ -144,8 +184,8 @@ fn the_owners_dollars_raise_a_held_runs_root_cap_for_good() {
     let queue = AttemptQueue::new(&vault);
     let dispatcher = AgentDispatcher::new(&vault);
     let now = unix_now();
-    let (root, other) = leased_run(&queue, "run-add-funds", now);
-    let scope = open_run_root(&dispatcher, &root);
+    let (root, other) = leased_run(&vault, &queue, "run-add-funds", now);
+    let scope = run_root_scope(&dispatcher, &root);
     hold(&dispatcher, &root, &root, now + 2);
 
     let listed = run_budget_questions(&vault).expect("status list");
@@ -200,7 +240,7 @@ fn the_owners_dollars_raise_a_held_runs_root_cap_for_good() {
         Some(DecisionAnswer::Choice("add_funds".to_owned()))
     );
 
-    let again = claimed(claim(&queue, KIND, now + 3));
+    let again = claim_root(&queue, root.id, now + 3);
     hold(&dispatcher, &root, &again, now + 4);
     assert_eq!(
         cap_of(&dispatcher, &scope),
@@ -232,8 +272,8 @@ fn the_owners_dollars_reach_the_held_runs_meters_once() {
     let queue = AttemptQueue::new(&vault);
     let dispatcher = AgentDispatcher::new(&vault);
     let now = unix_now();
-    let (root, other) = leased_run(&queue, "run-add-funds-meter", now);
-    let scope = open_run_root(&dispatcher, &root);
+    let (root, other) = leased_run(&vault, &queue, "run-add-funds-meter", now);
+    let scope = run_root_scope(&dispatcher, &root);
     hold(&dispatcher, &root, &root, now + 2);
     let seq = run_budget_questions(&vault).expect("status list")[0].seq;
 
@@ -251,7 +291,7 @@ fn the_owners_dollars_reach_the_held_runs_meters_once() {
         );
     }
 
-    let again = claimed(claim(&queue, KIND, now + 3));
+    let again = claim_root(&queue, root.id, now + 3);
     hold(&dispatcher, &root, &again, now + 4);
     assert_eq!(
         dispatcher.run_overdraft(root.id).expect("grant read"),
@@ -274,8 +314,8 @@ fn an_unpriced_run_is_not_offered_add_funds() {
     let queue = AttemptQueue::new(&vault);
     let dispatcher = AgentDispatcher::new(&vault);
     let now = unix_now();
-    let (root, _other) = leased_run(&queue, "run-unpriced", now);
-    let scope = open_run_root(&dispatcher, &root);
+    let (root, _other) = leased_run(&vault, &queue, "run-unpriced", now);
+    let scope = run_root_scope(&dispatcher, &root);
     hold(&dispatcher, &root, &root, now + 2);
 
     let listed = run_budget_questions(&vault).expect("status list");
@@ -309,8 +349,8 @@ fn add_funds_names_its_dollars() {
     let queue = AttemptQueue::new(&vault);
     let dispatcher = AgentDispatcher::new(&vault);
     let now = unix_now();
-    let (root, _other) = leased_run(&queue, "run-no-amount", now);
-    let scope = open_run_root(&dispatcher, &root);
+    let (root, _other) = leased_run(&vault, &queue, "run-no-amount", now);
+    let scope = run_root_scope(&dispatcher, &root);
     hold(&dispatcher, &root, &root, now + 2);
     let seq = run_budget_questions(&vault).expect("status list")[0].seq;
 
