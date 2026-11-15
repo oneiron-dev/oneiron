@@ -57,6 +57,9 @@ impl PackSource {
         {
             return Err(invalid("declared adapter script is absent"));
         }
+        let holds_shared = files
+            .iter()
+            .any(|file| file.path.starts_with(SHARED_PREFIX));
         if manifest.kind == super::PackKind::Agent {
             for required in ["identity.md", "policy.md", "skills.json"] {
                 if !files.iter().any(|file| file.path == required) {
@@ -72,11 +75,7 @@ impl PackSource {
             // A travelling pack carries each skill whole, its shared files
             // already inside: a `shared/` of its own would change the hashes
             // its skills are pinned by.
-            if super::agent_facets::is_travel_policy(&policy.content)
-                && files
-                    .iter()
-                    .any(|file| file.path.starts_with(SHARED_PREFIX))
-            {
+            if super::agent_facets::is_travel_policy(&policy.content) && holds_shared {
                 return Err(invalid(
                     "a travelling agent pack carries each skill whole; it cannot hold shared/",
                 ));
@@ -156,14 +155,23 @@ impl PackSource {
             {
                 return Err(invalid("unknown pack source facet"));
             }
-            if file
-                .path
-                .strip_prefix("skills/")
-                .and_then(|path| path.split_once('/'))
-                .is_some_and(|(_, relative)| relative.starts_with(SHARED_PREFIX))
+            // A member's own `shared` entry would collide with the pack's
+            // `shared/` folded into it, ASCII case folded as the skill tree
+            // hash folds paths. With no pack `shared/` nothing is folded, and
+            // a member keeps its own `shared/` as before; so does a
+            // travelling pack's skill, which arrives whole.
+            if holds_shared
+                && file
+                    .path
+                    .strip_prefix("skills/")
+                    .and_then(|path| path.split_once('/'))
+                    .and_then(|(_, relative)| relative.split('/').next())
+                    .is_some_and(|first| {
+                        first.eq_ignore_ascii_case(SHARED_PREFIX.trim_end_matches('/'))
+                    })
             {
                 return Err(invalid(
-                    "a bundled skill folder cannot hold shared/; the pack's shared/ rides every skill",
+                    "a bundled skill folder cannot hold shared/ when its pack does; the pack's shared/ rides every skill",
                 ));
             }
         }
