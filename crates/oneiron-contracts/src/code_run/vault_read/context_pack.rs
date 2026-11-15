@@ -29,7 +29,7 @@ pub struct CoreContextPackRequest {
     #[serde(default)]
     pub query: Option<String>,
     /// Optional vector seed.
-    #[serde(default, rename = "query_vector", alias = "queryVector")]
+    #[serde(default, rename = "query_vector")]
     pub query_vector: Option<Vec<f32>>,
     /// Optional media seed (OF-370): bytes the host embeds into one declared
     /// space and searches as one more ranked list beside `query` and
@@ -43,10 +43,10 @@ pub struct CoreContextPackRequest {
     #[serde(default)]
     pub depth: Option<ContextPackDepthControls>,
     /// Top-level edge expansion depth (compatibility twin).
-    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
+    #[serde(default, rename = "edge_hop")]
     pub edge_hop: Option<u32>,
     /// Top-level neighbor cap (compatibility twin).
-    #[serde(default, rename = "max_neighbors", alias = "maxNeighbors")]
+    #[serde(default, rename = "max_neighbors")]
     pub max_neighbors: Option<usize>,
     /// Retrieval and serialization budget controls.
     #[serde(default)]
@@ -105,7 +105,6 @@ pub struct ContextPackMediaQuery {
     pub mime: String,
     /// The bytes, standard base64, at most `[limits].retrieval_query_bytes`
     /// as sent.
-    #[serde(alias = "bytesB64")]
     pub bytes_b64: String,
     /// The kinds of item the space's list keeps; every kind the space holds
     /// when empty.
@@ -128,10 +127,10 @@ pub enum MediaQueryKind {
 #[serde(deny_unknown_fields)]
 pub struct ContextPackDepthControls {
     /// Edge expansion depth for neighbor hydration.
-    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
+    #[serde(default, rename = "edge_hop")]
     pub edge_hop: Option<u32>,
     /// Maximum neighbors to hydrate during edge expansion.
-    #[serde(default, rename = "max_neighbors", alias = "maxNeighbors")]
+    #[serde(default, rename = "max_neighbors")]
     pub max_neighbors: Option<usize>,
 }
 
@@ -155,7 +154,7 @@ pub struct ContextPackRetrievalBudgetControls {
     #[serde(default)]
     pub other: Option<usize>,
     /// Edge-walk neighbor selection cap.
-    #[serde(default, rename = "selected_edges", alias = "selectedEdges")]
+    #[serde(default, rename = "selected_edges")]
     pub selected_edges: Option<usize>,
 }
 
@@ -164,13 +163,13 @@ pub struct ContextPackRetrievalBudgetControls {
 #[serde(deny_unknown_fields)]
 pub struct ContextPackBudgetControls {
     /// Serialized token budget.
-    #[serde(default, rename = "token_budget", alias = "tokenBudget")]
+    #[serde(default, rename = "token_budget")]
     pub token_budget: Option<usize>,
     /// Per-item token cap; `0` disables it.
-    #[serde(default, rename = "max_item_tokens", alias = "maxItemTokens")]
+    #[serde(default, rename = "max_item_tokens")]
     pub max_item_tokens: Option<usize>,
     /// Maximum field characters before truncation.
-    #[serde(default, rename = "max_field_chars", alias = "maxFieldChars")]
+    #[serde(default, rename = "max_field_chars")]
     pub max_field_chars: Option<usize>,
     /// Per-kind retrieval item budgets.
     #[serde(default)]

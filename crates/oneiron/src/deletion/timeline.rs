@@ -165,7 +165,6 @@ pub enum HydratedShortIdDeletionSource {
 
 /// Deletion metadata returned when a short-id row resolves to deleted state.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct HydratedShortIdDeletion {
     pub source: HydratedShortIdDeletionSource,
     pub reason: Option<HydratedShortIdDeletionReason>,

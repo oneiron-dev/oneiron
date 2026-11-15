@@ -380,7 +380,7 @@ fn stopped_view(stop: &VerbHookStop) -> Value {
             invocation, code, ..
         } => (VERB_HOOK_COMPLETED, vec![invocation, code]),
     };
-    json!({"denied": word, "reasonCodes": codes})
+    json!({"denied": word, "reason_codes": codes})
 }
 
 /// A call as its replay row names it, less the bridge's own stamps, so the
@@ -468,7 +468,7 @@ fn outcome_view(outcome: &SelfDispatchOutcome) -> Option<Value> {
         SelfDispatchOutcome::AgentVerb(answer) => json!({"output": answer.output}),
         SelfDispatchOutcome::SkillCall(value) => json!({"output": value.output}),
         SelfDispatchOutcome::Denied(value) => {
-            json!({"denied": value.outcome, "reasonCodes": value.reason_codes})
+            json!({"denied": value.outcome, "reason_codes": value.reason_codes})
         }
         SelfDispatchOutcome::Failed(_) => json!({"failed": true}),
         SelfDispatchOutcome::AgentDefinitionPut(value) => json!({"output": {

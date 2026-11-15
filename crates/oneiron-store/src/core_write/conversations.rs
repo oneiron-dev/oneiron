@@ -17,13 +17,13 @@ pub struct ConversationCreateInput {
     #[serde(default)]
     pub id: Option<String>,
     /// Unix seconds; defaults to `learned_at`.
-    #[serde(default, alias = "occurredStart")]
+    #[serde(default)]
     pub occurred_start: Option<u64>,
     /// Unix seconds; defaults to `occurred_start`.
-    #[serde(default, alias = "occurredEnd")]
+    #[serde(default)]
     pub occurred_end: Option<u64>,
     /// Unix seconds; defaults to now.
-    #[serde(default, alias = "learnedAt")]
+    #[serde(default)]
     pub learned_at: Option<u64>,
     /// The conversation body: kind, members, roles, title and the rest.
     pub body: Value,
@@ -40,11 +40,11 @@ pub struct ConversationTurnCreateInput {
     /// The TURN's id; a fresh one when omitted.
     #[serde(default)]
     pub id: Option<String>,
-    #[serde(default, alias = "occurredStart")]
+    #[serde(default)]
     pub occurred_start: Option<u64>,
-    #[serde(default, alias = "occurredEnd")]
+    #[serde(default)]
     pub occurred_end: Option<u64>,
-    #[serde(default, alias = "learnedAt")]
+    #[serde(default)]
     pub learned_at: Option<u64>,
     pub body: Value,
     #[serde(default)]

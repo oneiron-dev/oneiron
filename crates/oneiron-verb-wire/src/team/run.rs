@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 
 /// `self.team.start`: a team run under `pattern`, its members spawned into it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TeamStartInput {
     /// The coordination pattern: `ceo_decides`, `committee`, `vote`,
     /// `market` or `rotation`. `solo` is no team, and is refused.
@@ -27,7 +27,7 @@ pub struct TeamStartInput {
 
 /// One member a start spawns.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TeamMemberInput {
     /// The member's AGENT_DEF id, hex.
     pub agent: String,
@@ -39,7 +39,7 @@ pub struct TeamMemberInput {
 
 /// `self.team.record`: the receipt of a team this run started.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TeamRecordInput {
     /// The team's reference, as its start returned it.
     pub team_ref: String,
@@ -62,7 +62,7 @@ pub struct TeamRecordInput {
 
 /// `self.team.vote`: the calling participant's own choice in its team.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TeamVoteInput {
     pub team_ref: String,
     pub choice: String,
@@ -80,14 +80,13 @@ pub enum TeamDecisionInput {
     /// A rule signed before the work: a test suite, a holdout, a pinned judge.
     Referee {
         rule: String,
-        #[serde(rename = "signedAt")]
         signed_at: u64,
     },
 }
 
 /// Cells filled of the grid's total.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TeamCoverageInput {
     pub cells_filled: u32,
     pub cells_total: u32,

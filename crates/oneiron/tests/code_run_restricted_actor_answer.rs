@@ -11,7 +11,7 @@
 //! through the shipped `vault.recall` entry (`recall_unembedded`).
 //!
 //! Guest reply semantics: a typed host refusal rejects the awaited promise
-//! with a JSON string containing `{denied, reasonCodes}`. The write program
+//! with a JSON string containing `{denied, reason_codes}`. The write program
 //! catches and decodes that refusal; any other error fails the run.
 //!
 //! Red on main: a restricted run executes its program, then its trailing

@@ -123,7 +123,6 @@ pub struct ResultCard {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 pub struct ResultReadRefusal {
     pub denied: String,
-    #[serde(rename = "reasonCodes")]
     pub reason_codes: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,

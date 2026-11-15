@@ -23,7 +23,7 @@ pub use oneiron_verb_wire::lens::selection::{
 /// The wire view of a host-held selection. The ref is a locator, not authority;
 /// the engine-issued LensReadHandle itself remains serialize-only and host-held.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensSelection {
     pub selection_ref: String,
     pub card_id: LensRenderId,
@@ -61,7 +61,7 @@ impl LensSelection {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensSelectionResolved {
     pub selection: LensSelection,
     pub source: InspectionResolved,

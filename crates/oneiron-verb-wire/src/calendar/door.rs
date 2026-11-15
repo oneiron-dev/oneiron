@@ -12,16 +12,12 @@ use serde::Serialize;
 pub enum CalendarEventCreateRequest {
     Native {
         summary: String,
-        #[serde(rename = "occurredAt")]
         occurred_at: CalendarRangeDto,
     },
     Dreamer {
         summary: String,
-        #[serde(rename = "occurredAt")]
         occurred_at: CalendarRangeDto,
-        #[serde(rename = "evidenceTurnIds")]
         evidence_turn_ids: Vec<String>,
-        #[serde(rename = "sourceFrontiers")]
         source_frontiers: Vec<String>,
     },
 }

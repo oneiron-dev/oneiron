@@ -2620,7 +2620,7 @@ the tab that opened it, else the newest. The next answer names the move as
 verb that meets a second tab, or a new tab once its only page closed,
 refuses `browser_unsupported`, as `click_at` does there, and the refusal's
 words name `self.browser.switch_engine` as the way to Chromium: as its
-detail at the facade's browser door, and as its `reasonCodes` in a
+detail at the facade's browser door, and as its `reason_codes` in a
 code-mode program (an agent run's or an MCP `execute_code`'s).
 
 A run's browser starts on the engine the `[browser]` section's `engine`

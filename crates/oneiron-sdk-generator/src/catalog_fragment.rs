@@ -32,8 +32,8 @@ const REVISION_ALGORITHM: &str = "sha256";
 /// The head's comment lines on what a verb call resolves or rejects with.
 const REPLY_DOC: &[&str] = &[
     "Every verb call resolves with its row's output itself, or with a `StoredResult` card in its place past 512 KiB of JSON.",
-    "A refused call rejects with a string, the refusal's JSON: JSON.parse gives `{denied, reasonCodes}` (`denied` the outcome word,",
-    r#"`reasonCodes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one)."#,
+    "A refused call rejects with a string, the refusal's JSON: JSON.parse gives `{denied, reason_codes}` (`denied` the outcome word,",
+    r#"`reason_codes` a string[]) or `{failed: true, error?}` (`error` a stable code, such as "finding_not_own", when the host names one)."#,
     "A `wait`, or a `tasks.wait` on a world-privacy request, that parks the run or comes after a park resolves with the park, its",
     "row's `Park` output; a callable that finishes on that park fails as unfinished. Any other call that parks the run, and every",
     r#"other call after a park, rejects with "missing_host_response_field"; the host bridge's own refusals reject with a bare code"#,

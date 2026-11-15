@@ -608,7 +608,7 @@ fn reply_body(outcome: &SelfDispatchOutcome, park: ParkReply) -> Result<Value> {
         SelfDispatchOutcome::AgentVerb(answer) => answer.guest_reply(),
         SelfDispatchOutcome::SkillCall(value) => json!({"output":value.output}),
         SelfDispatchOutcome::Denied(value) => {
-            json!({"denied":value.outcome,"reasonCodes":value.reason_codes})
+            json!({"denied":value.outcome,"reason_codes":value.reason_codes})
         }
         SelfDispatchOutcome::Failed(value) => {
             let error = value

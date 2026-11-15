@@ -11,7 +11,7 @@ use serde::Serialize;
 /// Half-open Unicode scalar offsets. A supplied version is an echo to check,
 /// never a version the engine is asked to trust or read instead of the live one.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensSelectionRange {
     pub start: usize,
     pub end: usize,
@@ -20,7 +20,7 @@ pub struct LensSelectionRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensSelectRequest {
     pub card_id: LensRenderId,
     pub atom_id: LensAtomId,
@@ -30,7 +30,7 @@ pub struct LensSelectRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensSelectionResolveRequest {
     pub card_id: LensRenderId,
     pub selection_ref: String,
@@ -38,7 +38,7 @@ pub struct LensSelectionResolveRequest {
 
 /// Cursor bytes, not a copy of the selected text.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensSelectedSpan {
     pub start: usize,
     pub end: usize,
@@ -51,7 +51,7 @@ pub struct LensSelectedSpan {
 /// the corresponding engine-issued selection, in rendered order; select-all
 /// instead names the rendered predicate's one QueryResult selection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensResultSetActionRequest {
     pub event: GeneratedUiResultSetActionEvent,
     pub selected: Vec<String>,
@@ -59,7 +59,7 @@ pub struct LensResultSetActionRequest {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 pub struct LensResultSetActionResult {
     pub outcome: serde_json::Value,
     pub read_receipt: oneiron_contracts::claim::ScopedReadReceipt,

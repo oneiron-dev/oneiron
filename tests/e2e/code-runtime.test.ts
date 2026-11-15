@@ -102,7 +102,7 @@ interface CodeRuntime02ExecuteContent {
 interface CodeRuntime02ReadContent {
   run_id: string;
   run_ref: string;
-  result: { denied?: string; live?: string[]; liveCount?: number };
+  result: { denied?: string; live?: string[]; live_count?: number };
 }
 
 interface CodeRuntime02McpErrorData {
@@ -184,7 +184,7 @@ async function codeRuntime02NoExecution(engine: EngineFixture, tools: CodeRuntim
   expect(reply.isError).toBe(false);
   expect(reply.structuredContent.run_ref).toBe(runRef);
   expect(reply.structuredContent.result.denied).toBe("unknown_handle");
-  expect(reply.structuredContent.result.liveCount).toBe(0);
+  expect(reply.structuredContent.result.live_count).toBe(0);
   expect(reply.structuredContent.result.live).toEqual([]);
   // Obtain the credential-scoped run id from a public read, never by reproducing its private hash.
   const runId = reply.structuredContent.run_id;

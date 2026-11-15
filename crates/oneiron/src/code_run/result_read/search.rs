@@ -45,7 +45,7 @@ const MATCH_TEXT_BYTES: usize = 1024;
 const REPLY_FIELD_BYTES: usize = 4 * 1024;
 
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 struct SearchInput {
     pattern: String,
     #[serde(default)]
@@ -284,4 +284,11 @@ fn match_entry(
         entry["truncated"] = json!(true);
     }
     entry
+}
+
+/// Whether `input` decodes as a search's input; the refusal it answers
+/// otherwise. Door for `oneiron-server`'s `tests/rest_snake_case_verb_grammar.rs`.
+#[cfg(oneiron_test_support)]
+pub(super) fn decode_input(input: Value) -> std::result::Result<(), Value> {
+    decode::<SearchInput>(input).map(|_| ())
 }

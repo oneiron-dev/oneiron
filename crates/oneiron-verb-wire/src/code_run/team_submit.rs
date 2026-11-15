@@ -7,7 +7,7 @@ use serde::Serialize;
 /// `self.team.submit`: the leader submits one pinned output of a team it
 /// started for the owner's acceptance review.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields)]
 pub struct TeamSubmitInput {
     /// The team, as `self.team.start` answered its `teamRef`.
     pub team: String,
