@@ -423,10 +423,6 @@ impl ModelRuntime {
                             position,
                             rung.prompt.clone(),
                         )
-                        .map(|native| LadderRung {
-                            hours: rung.hours.clone(),
-                            ..native
-                        })
                     })
                     .collect()
             };
@@ -437,7 +433,11 @@ impl ModelRuntime {
                 Arc::clone(&rests),
                 scope,
             ) {
-                let seat = seat.with_on_device_view(native_rungs, &rests, scope);
+                let seat = seat.with_on_device_view(
+                    with_configured_hours(native_rungs, ladder),
+                    &rests,
+                    scope,
+                );
                 router.insert(seat.model.clone(), seat.locality, Arc::clone(&seat.ladder));
                 if let Some(view) = &seat.on_device {
                     router.insert_on_device(seat.model.clone(), Arc::clone(view));
@@ -650,4 +650,18 @@ impl ModelRuntime {
         status.prepared_tails = worker_host::prepared_tail_status();
         status
     }
+}
+
+/// `rungs`, each with the daily hours its configured rung keeps
+/// (UNBUILT-14), found by its place in the configured `ladder`.
+fn with_configured_hours(
+    mut rungs: Vec<LadderRung>,
+    ladder: &[crate::config::models::Rung],
+) -> Vec<LadderRung> {
+    for rung in &mut rungs {
+        rung.hours = ladder
+            .get(rung.position)
+            .and_then(|configured| configured.hours.clone());
+    }
+    rungs
 }
