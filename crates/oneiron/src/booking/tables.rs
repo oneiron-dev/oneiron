@@ -17,6 +17,9 @@ crate::side_table::side_tables! {
     /// Public booking page token index. Key: string.
     BOOKING_PUBLIC_PAGE_TOKEN_INDEX: VaultMeta b"booking.public_page.token/" Raw
         [restore: refuse "public booking pages"] [family: unclassified] [tier: canonical];
+    /// A rung-2 thread's reply tally against the page's session caps. Key: hash32.
+    BOOKING_RUNG2_REPLY_TALLY: VaultMeta b"booking.rung2.reply_tally.v1:" VersionedNamed
+        [restore: content] [family: unclassified] [tier: canonical];
     /// Booking token and checkout lease rows (digest domains keep them apart). Key: hash32.
     BOOKING_TOKEN: VaultMeta b"booking.token.v1:" VersionedNamed
         [restore: content] [family: unclassified] [tier: canonical];

@@ -70,6 +70,7 @@ mod quarantine_restore;
 mod rung2;
 mod rung2_copy;
 mod rung2_release;
+mod rung2_reply;
 mod socket_gate;
 mod subject;
 mod transport;
@@ -98,6 +99,7 @@ pub(crate) use self::quarantine_restore::{
     __path_restore_quarantined_booking, restore_quarantined_booking,
 };
 pub(crate) use self::rung2_release::release_rung2_first_send;
+pub(crate) use self::rung2_reply::{Rung2Reply, answer_rung2_reply, rung2_thread_send};
 pub(crate) use self::socket_gate::booking_socket_admits;
 use self::subject::{resolve_booker_contact, session_key};
 use self::transport::http_transport_context;

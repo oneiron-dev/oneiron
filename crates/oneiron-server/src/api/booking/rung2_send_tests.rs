@@ -858,3 +858,6 @@ fn the_owners_press_releases_a_held_first_send_to_the_visitor_once() {
         "a second press answers from the recorded send"
     );
 }
+
+#[path = "rung2_reply_tests.rs"]
+mod rung2_reply_tests;

@@ -53,18 +53,45 @@ pub(super) fn rung2_first_send_subject(owner_display: &str) -> String {
 
 /// The plain-text body of a first send: the owner's slots line and the
 /// offers, or the owner's no-fit line when the solver found none, then the
-/// closing line and the owner's speaker name.
+/// closing line and the owner's speaker name. A reply the page's agent
+/// answers on its thread appends the same block to the agent's words.
 pub(super) fn render_rung2_first_send_text(
     copy: &ConstraintFrontCopy,
     offers: &[Rung2OfferLine],
 ) -> String {
-    let mut text = String::new();
-    if offers.is_empty() {
-        text.push_str(&copy.no_fit_line);
-        text.push_str("\n\n");
+    let lead = if offers.is_empty() {
+        &copy.no_fit_line
     } else {
-        text.push_str(&copy.slots_line);
-        text.push_str("\n\n");
+        &copy.slots_line
+    };
+    render_offers_text(lead, copy, offers)
+}
+
+/// The plain-text body of a reply past the page's session caps
+/// (RUNG2-REPLY-CAP = B): the owner's no-fit line, then the solver's offers
+/// for the kept constraint, the closing line and the speaker name. No
+/// model's words.
+pub(super) fn render_rung2_past_cap_text(
+    copy: &ConstraintFrontCopy,
+    offers: &[Rung2OfferLine],
+) -> String {
+    render_offers_text(&copy.no_fit_line, copy, offers)
+}
+
+/// The plain-text body of a reply about something other than scheduling
+/// (RUNG2-REPLY-OFF-TOPIC = B): the owner's off-topic line and the speaker
+/// name, as the page's deflect card says it.
+pub(super) fn render_rung2_off_topic_text(copy: &ConstraintFrontCopy) -> String {
+    format!("{}\n\n{}\n", copy.off_topic_line, copy.speaker)
+}
+
+/// `lead`, the offers with their slot links, the closing line and the
+/// speaker name.
+fn render_offers_text(lead: &str, copy: &ConstraintFrontCopy, offers: &[Rung2OfferLine]) -> String {
+    let mut text = String::new();
+    text.push_str(lead);
+    text.push_str("\n\n");
+    if !offers.is_empty() {
         for offer in offers {
             text.push_str("- ");
             text.push_str(&offer.label);

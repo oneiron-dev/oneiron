@@ -35,6 +35,7 @@ use oneiron::{
 };
 
 use super::super::CHAT_ROLE;
+use crate::api::{Rung2Reply, answer_rung2_reply, rung2_thread_send};
 use crate::models::RoleCall;
 use crate::server::SyncServer;
 
@@ -132,54 +133,54 @@ fn answer(
             witness(result, "inbound", || {
                 vault.witness_connector_inbound(agent, &origin, &text, super::super::unix_now())
             });
-            // The whole conversation so far, as the agent's lane admits it;
-            // one the vault cannot read answers from the message alone.
-            let mut context: Vec<LlmMessage> = match vault
-                .connector_conversation_history(agent, &origin, REPLY_REF)
-            {
-                Ok(history) => history.iter().map(history_message).collect(),
-                Err(error) => {
-                    tracing::warn!(%error, "connector reply history did not read; the reply goes on");
-                    Vec::new()
+            // A reply on a rung-2 thread (INBOX-RESIDUE PR-3b-3c-2): the
+            // owner's words alone, or the agent's answer with the solver's
+            // offers, paid by the page's sponsor.
+            let (fixed, rung2) = match rung2_reply(server, &origin, agent, event_id, &text)? {
+                Some(Rung2Reply::Fixed(words)) => (Some(words), None),
+                Some(Rung2Reply::Answer(answer)) => (None, Some(answer)),
+                None => (None, None),
+            };
+            let body = match fixed {
+                Some(words) => words,
+                None => {
+                    let context = reply_context(
+                        vault,
+                        job,
+                        &origin,
+                        &text,
+                        rung2.as_ref().map(|answer| answer.context.as_str()),
+                    );
+                    // The agent pays, as a chat turn does; on a rung-2 thread
+                    // the page's sponsor pays.
+                    let payer = rung2.as_ref().map_or_else(
+                        || WriteActor::new(agent, EdgeActorClass::Agent),
+                        |answer| answer.payer,
+                    );
+                    let answer = generate(
+                        server,
+                        runtime,
+                        &definition,
+                        context,
+                        reply_run_id(agent, event_id),
+                        payer,
+                        result,
+                    )?;
+                    let answer = answer.trim();
+                    if answer.is_empty() {
+                        return Ok(());
+                    }
+                    match rung2 {
+                        Some(rung2) => format!("{answer}\n\n{}", rung2.offers),
+                        None => answer.to_owned(),
+                    }
                 }
             };
-            // The budget messages the wake's charge fired are the engine's
-            // own words, not the inbound's: they lead the turn (FIX 3761).
-            if !job.budget_steering.is_empty() {
-                context.insert(
-                    0,
-                    message(LlmMessageRole::System, job.budget_steering.join("\n")),
-                );
-            }
-            // FIX 15011: the event started this turn, so the wake opener
-            // closes it, after the event's briefing and outside its foreign
-            // text. An empty answer stays the no-send outcome below.
-            context.push(message(
-                LlmMessageRole::User,
-                briefing(&origin, event_id, &text),
-            ));
-            context.push(message(
-                LlmMessageRole::User,
-                turn_wake_line(vault.now_recorded_ms(), TurnWake::Channel),
-            ));
-            let answer = generate(
-                server,
-                runtime,
-                agent,
-                &definition,
-                context,
-                reply_run_id(agent, event_id),
-                result,
-            )?;
-            let answer = answer.trim();
-            if answer.is_empty() {
-                return Ok(());
-            }
             let Some(kept) = vault.save_connector_reply_body(
                 &job.event,
                 agent,
                 REPLY_REF,
-                answer,
+                &body,
                 super::super::unix_now(),
             )?
             else {
@@ -250,18 +251,65 @@ fn answer(
     Ok(())
 }
 
-/// One admitted call of the chat role on `agent`'s own line, blocking on
-/// the server's runtime from the reply worker's blocking thread: the
-/// agent's instructions, then `context` (the conversation's history and the
+/// The turn's context: the whole conversation so far, as the agent's lane
+/// admits it, then the event's briefing and the wake line. `engine_block`,
+/// the engine's own data for this reply, is read before the foreign text.
+fn reply_context(
+    vault: &oneiron::Vault,
+    job: &ConnectorReplyJob,
+    origin: &SurfaceConnectorPayload,
+    text: &str,
+    engine_block: Option<&str>,
+) -> Vec<LlmMessage> {
+    let agent = job.agent;
+    // One the vault cannot read answers from the message alone.
+    let mut context: Vec<LlmMessage> =
+        match vault.connector_conversation_history(agent, origin, REPLY_REF) {
+            Ok(history) => history.iter().map(history_message).collect(),
+            Err(error) => {
+                tracing::warn!(%error, "connector reply history did not read; the reply goes on");
+                Vec::new()
+            }
+        };
+    // The budget messages the wake's charge fired are the engine's own
+    // words, not the inbound's: they lead the turn (FIX 3761).
+    if !job.budget_steering.is_empty() {
+        context.insert(
+            0,
+            message(LlmMessageRole::System, job.budget_steering.join("\n")),
+        );
+    }
+    // A rung-2 reply's offers are the engine's data; their rendered block
+    // follows the agent's words verbatim.
+    if let Some(block) = engine_block {
+        context.push(message(LlmMessageRole::System, block.to_owned()));
+    }
+    // FIX 15011: the event started this turn, so the wake opener closes it,
+    // after the event's briefing and outside its foreign text. An empty
+    // answer stays the caller's no-send outcome.
+    context.push(message(
+        LlmMessageRole::User,
+        briefing(origin, &job.event.event_id, text),
+    ));
+    context.push(message(
+        LlmMessageRole::User,
+        turn_wake_line(vault.now_recorded_ms(), TurnWake::Channel),
+    ));
+    context
+}
+
+/// One admitted call of the chat role on `payer`'s line, blocking on the
+/// server's runtime from the reply worker's blocking thread: the agent's
+/// instructions, then `context` (the conversation's history and the
 /// message). What the call's rungs spent on the line, failed rungs
 /// included, is kept in `result.actual_units` whether or not it answered.
 fn generate(
     server: &Arc<SyncServer>,
     runtime: &tokio::runtime::Handle,
-    agent: EntityId,
     definition: &AgentDefinition,
     context: Vec<LlmMessage>,
     run_id: String,
+    payer: WriteActor,
     result: &mut ConnectorReplyJobResult,
 ) -> oneiron::Result<String> {
     let vault = server.vault();
@@ -324,15 +372,15 @@ fn generate(
     let RoleCall { request, ladder } = models
         .admit_role(vault, CHAT_ROLE, request)
         .map_err(|refusal| Error::InvalidConfig(format!("connector reply refused: {refusal}")))?;
-    // The agent pays, as a chat turn does: one line per reply on its live
-    // budget policy rows, which a rerun's call shares. Each rung the call
-    // reaches is admitted on its own permit and settles itself.
+    // One line per reply on the payer's live budget policy rows, which a
+    // rerun's call shares. Each rung the call reaches is admitted on its own
+    // permit and settles itself.
     let guard = vault.policy_budget_guard(
         run_id.clone(),
         budget_units,
         oneiron::llm::DEFAULT_BUDGET_RESERVE_UNITS.min(budget_units),
         BudgetExhaustionPolicy::Suspend,
-        WriteActor::new(agent, EdgeActorClass::Agent),
+        payer,
     )?;
     let run = models.undeclared_run(run_id, guard);
     let before = run.read().used_units;
@@ -350,6 +398,27 @@ fn generate(
             _ => None,
         })
         .collect())
+}
+
+/// What a reply on a rung-2 thread of `agent` says; `None` for every other
+/// reply, which the agent answers as before.
+fn rung2_reply(
+    server: &Arc<SyncServer>,
+    origin: &SurfaceConnectorPayload,
+    agent: EntityId,
+    event_id: &str,
+    text: &str,
+) -> oneiron::Result<Option<Rung2Reply>> {
+    let Some(kept) = rung2_thread_send(
+        server.vault(),
+        &origin.channel,
+        origin.thread_ref.as_deref(),
+        agent,
+    )?
+    else {
+        return Ok(None);
+    };
+    answer_rung2_reply(server, &kept, event_id, text, super::super::unix_now())
 }
 
 /// The run one agent's reply to one event is metered under.

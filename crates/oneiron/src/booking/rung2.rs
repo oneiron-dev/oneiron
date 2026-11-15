@@ -27,6 +27,11 @@
 //! the Message-ID the send goes out under, the one its sent passport files,
 //! so the thread finds it with no other row. The email itself carries no
 //! machine block, and the visitor's own words are in neither.
+//!
+//! A reply on that thread spends against the page's session caps
+//! ([`Vault::admit_booking_rung2_reply`], INBOX-RESIDUE PR-3b-3c-2).
+
+mod reply;
 
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +62,8 @@ use crate::{EntityId, Error, Result, TimeRange, Vault, WriteActor};
 
 use super::agent_front::ConstraintContinuation;
 use super::publication::load_public_booking_page_in_txn;
+
+pub use self::reply::Rung2ReplyAdmission;
 
 /// The channel a rung-2 continuation is sent on.
 pub const BOOKING_RUNG2_CHANNEL: &str = "email";
