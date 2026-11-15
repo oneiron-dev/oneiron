@@ -9,7 +9,7 @@ use oneiron::llm::{
     returned_model_wire_id,
 };
 use oneiron_driver::InferenceWorker;
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
     OpenAiCompatTransportError,
