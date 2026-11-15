@@ -7,9 +7,12 @@
 //!    `host_response_over_budget` (typed bridge) or returns the view inline
 //!    instead of a card.
 //! 2. `a_redacted_result_binds_no_readable_original`: a redacted result binds
-//!    no readable original, while the replay row still holds a card of the
-//!    real result. Red on main: the original binds to `r1` and reads back
-//!    with its secret title (the call's own over-budget throw is caught).
+//!    no readable original, and no occurrence ref a guest derives from the
+//!    run id and a bridge call's path reads it, while the replay row still
+//!    holds a card of the real result and the record keeps its body. Red on
+//!    main: the original binds to `r1` and reads back with its secret title
+//!    (the call's own over-budget throw is caught). Red on review round 1's
+//!    head d8639ab0d1a8: the derived ref of the call's bridge path reads it.
 //! 3. `a_large_wait_set_with_feedback_is_stored_before_its_replay_row`: a
 //!    large wait set with program feedback spills to a card with its feedback
 //!    typed beside it. Red on main: the new source kind does not decode.
@@ -36,7 +39,7 @@ use std::task::{Context, Poll, Waker};
 use oneiron::claim::ScopedReadActorKey;
 use oneiron::code_run::{
     AgentVerbAnswer, AgentVerbDoor, AgentVerbRefusal, CodeRunBridgeCall, CodeRunDeterminism,
-    ConnectorAnswerRequest, GatedActorWrite, RunCall, SelfAgentVerbCall,
+    ConnectorAnswerRequest, GatedActorWrite, ResultOccurrence, RunCall, SelfAgentVerbCall,
 };
 use oneiron::code_sandbox::ComponentBudget;
 use oneiron::engine_executor::{
@@ -453,9 +456,54 @@ fn a_redacted_view_past_the_message_bound_returns_its_card() {
     );
 }
 
+/// The occurrence refs a guest of run `run_id` derives with no card for the
+/// bridge calls at positions `0..4`: an occurrence id is the run id and the
+/// result's path (`ResultOccurrence::owned`), and a bridge call's spill
+/// paths are fixed by its position, the readable form and the record-only
+/// one.
+fn derived_bridge_refs(run_id: EntityId) -> Vec<String> {
+    let mut refs = Vec::new();
+    for seq in 0_u64..4 {
+        for path in [
+            format!("executor/repl/bridge/{seq:06}.result.json"),
+            format!("executor/repl/bridge/{seq:06}.record-only.json"),
+        ] {
+            let occurrence = ResultOccurrence::owned(run_id, &path).expect("an occurrence id");
+            refs.push(format!("occurrence:{}", occurrence.id().to_hex()));
+        }
+    }
+    refs
+}
+
+/// [`REREAD_PROGRAM`] after the reads of every ref in `refs`.
+fn reread_program(refs: &[String]) -> String {
+    let refs = serde_json::to_string(refs).expect("the refs encode");
+    format!("{REREAD_PROGRAM}\nconst refs = {refs};\n{REREAD_REFS_PROGRAM}")
+}
+
+/// The derived-ref reads: `describe` and `slice` of each ref (`ref<i>` in
+/// the text), every text read, and the program finishes with all it saw.
+const REREAD_REFS_PROGRAM: &str = r#"for (let i = 0; i < refs.length; i++) {
+  const label = "ref" + i;
+  try {
+    const d = await describe(refs[i]);
+    seen.push(label + ":describe:" + JSON.stringify(d).slice(0, 300));
+  } catch (e) {
+    seen.push(label + ":describe-threw");
+  }
+  try {
+    const s = await slice(refs[i], {bytes: [0, 256]});
+    seen.push(label + ":slice:" + JSON.stringify(s).slice(0, 300));
+  } catch (e) {
+    seen.push(label + ":slice-threw");
+  }
+}
+finish(seen.join("\n"));"#;
+
 /// The re-read program: it calls the hooked call, then reads every name
-/// `r1` .. `r8` back, and finishes with every text it read. A call that
-/// throws still reads the names, so the names are what this test judges.
+/// `r1` .. `r8` back, keeping every text it read. A call that throws still
+/// reads the names, so the names are what this test judges.
+/// [`reread_program`] adds the derived-ref reads and the finish.
 const REREAD_PROGRAM: &str = r#"let out = null;
 try {
   out = await connector.answer({handle: "1572864", answers: [{key: "q", action: "accept", content: {}}]});
@@ -478,12 +526,13 @@ for (let n = 1; n <= 8; n++) {
   } catch (e) {
     seen.push(name + ":slice-threw");
   }
-}
-finish(seen.join("\n"));"#;
+}"#;
 
-/// The same hook and call: no read of `r1` .. `r8` returns the secret title,
-/// and the run's replay row for the call still holds a card of the real
-/// result.
+/// The same hook and call: no read of `r1` .. `r8`, and none of a ref the
+/// guest derives from the run id and a bridge call's path (the round-1
+/// review's case), returns the secret title; the run's replay row for the
+/// call still holds a card of the real result, and the record keeps that
+/// result's body.
 #[test]
 fn a_redacted_result_binds_no_readable_original() {
     let (_dir, vault) = open_vault();
@@ -499,7 +548,7 @@ fn a_redacted_result_binds_no_readable_original() {
         run_id,
         "run-redacted-reread",
         TAG,
-        vec![REREAD_PROGRAM.to_owned()],
+        vec![reread_program(&derived_bridge_refs(run_id))],
     );
     let outcome = outcome.expect("the run completes");
     assert_eq!(calls, 1, "one turn runs one program");
@@ -511,12 +560,17 @@ fn a_redacted_result_binds_no_readable_original() {
     );
     assert_eq!(outcome.replay_record.bridge_calls.len(), 1);
     let output = bridge_output(&outcome.replay_record.bridge_calls[0]);
+    let handle = output
+        .get("handle")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_else(|| panic!("the replay row holds a card of the real result: {output}"));
     assert!(
-        output
-            .get("handle")
-            .and_then(serde_json::Value::as_str)
-            .is_some(),
-        "the replay row holds a card of the real result: {output}",
+        outcome
+            .replay_record
+            .outputs
+            .iter()
+            .any(|kept| kept.handle == handle),
+        "the record keeps the real result's body",
     );
 }
 
