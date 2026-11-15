@@ -894,6 +894,41 @@ fn readoption_keeps_no_receipt_for_a_row_the_prior_image_covered() {
 }
 
 #[test]
+fn stored_covered_row_with_no_receipt_is_corruption_past_an_image() {
+    let fixture = fixture();
+    // A row the adopter stores past its image, which a newer image covers.
+    let enroll = sign_and_share(
+        &fixture,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x56, ROLE_AGENT),
+        },
+    );
+    let hash = authority_entry_hash(&enroll).expect("enroll hash");
+    fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds the enrollment");
+    adopt_newer_image(&fixture.home, &fixture.issuer, &fixture.adopting);
+    assert!(
+        forget_first_seen_receipt(&fixture.adopting, &hash).expect("forget the receipt"),
+        "the adopter kept its own receipt of the row it stored"
+    );
+    // A later second: the fold reads the sidecar again.
+    fixture
+        .adopting
+        .advance_authority_clock_for_test(fixture.adopting.now_recorded_at() + 60)
+        .expect("advance the clock");
+    let err = fixture
+        .adopting
+        .authority_fold()
+        .expect_err("a stored row's lost receipt is corruption");
+    assert!(
+        matches!(err, Error::CorruptedIndex(_)),
+        "corruption, as the whole-history read finds it, got {err:?}"
+    );
+}
+
+#[test]
 fn slip_burn_below_a_rejected_tail_row_still_needs_history() {
     let (fixture, covered) = burn_fixture();
     let reused = AuthorityConfirmAction {
