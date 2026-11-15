@@ -78,9 +78,11 @@ impl LegacyPurpose {
 #[derive(Clone)]
 pub struct LegacyDigest(LegacyState);
 
+/// The BLAKE3 hasher is boxed: it is about 1.9 KB beside SHA-256's 100 bytes
+/// (clippy `large_enum_variant`).
 #[derive(Clone)]
 enum LegacyState {
-    Blake3(blake3::Hasher),
+    Blake3(Box<blake3::Hasher>),
     Sha256(sha2::Sha256),
 }
 
@@ -91,14 +93,16 @@ impl LegacyDigest {
         let tag = purpose.tag().as_bytes();
         let state = match (purpose.hash(), purpose.tag_mode()) {
             (LegacyHash::Blake3, TagMode::DeriveKeyContext) => {
-                LegacyState::Blake3(blake3::Hasher::new_derive_key(purpose.tag()))
+                LegacyState::Blake3(Box::new(blake3::Hasher::new_derive_key(purpose.tag())))
             }
             (LegacyHash::Blake3, TagMode::HashedFirst) => {
-                let mut hasher = blake3::Hasher::new();
+                let mut hasher = Box::new(blake3::Hasher::new());
                 hasher.update(tag);
                 LegacyState::Blake3(hasher)
             }
-            (LegacyHash::Blake3, TagMode::NotHashed) => LegacyState::Blake3(blake3::Hasher::new()),
+            (LegacyHash::Blake3, TagMode::NotHashed) => {
+                LegacyState::Blake3(Box::new(blake3::Hasher::new()))
+            }
             // `LegacyPurpose::new` refuses SHA-256 with a derive-key context at compile
             // time, so only the two plain modes reach this arm.
             (LegacyHash::Sha256, tag_mode) => {

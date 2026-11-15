@@ -419,7 +419,7 @@ fn transcript(steps: &[Step]) -> Vec<u8> {
             Step::LenU64Be(len) => bytes.extend_from_slice(&(*len as u64).to_be_bytes()),
             Step::LenU64Le(len) => bytes.extend_from_slice(&(*len as u64).to_le_bytes()),
             Step::LenU32BeSaturating(len) => {
-                bytes.extend_from_slice(&u32::try_from(*len).unwrap_or(u32::MAX).to_be_bytes())
+                bytes.extend_from_slice(&u32::try_from(*len).unwrap_or(u32::MAX).to_be_bytes());
             }
         }
     }
