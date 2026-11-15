@@ -22,6 +22,7 @@ use std::time::Duration;
 use crate::calendar_host::{CalendarChannelSink, CalendarSendClients};
 use oneiron::Vault;
 use oneiron::outbound::ConnectorSendLeaseReap;
+use oneiron_base::unix_seconds_now;
 use tokio::sync::broadcast::error::TryRecvError;
 
 use super::core::SyncServer;
@@ -86,7 +87,8 @@ impl SyncServer {
                     // At least a second: a row the claim passes over cannot
                     // spin the loop.
                     next.map_or(IDLE, |at| {
-                        Duration::from_secs(at.saturating_sub(unix_now())).clamp(MIN_WAIT, IDLE)
+                        Duration::from_secs(at.saturating_sub(unix_seconds_now()))
+                            .clamp(MIN_WAIT, IDLE)
                     })
                 }
                 Ok(Err(error)) => {
@@ -186,16 +188,10 @@ fn send_pass(
     let mut sink = CalendarChannelSink::new(vault, line_push_allowance, clients);
     super::connector_events::carry_write_piggybacks(vault, tick)?;
     let delivered = vault
-        .run_connector_task_executor(&mut sink, unix_now())
+        .run_connector_task_executor(&mut sink, unix_seconds_now())
         .map_err(|error| oneiron::Error::InvalidConfig(error.to_string()))?;
     if delivered > 0 {
         tracing::info!(delivered, "connector sends delivered");
     }
     vault.next_connector_send_ready_at()
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }

@@ -18,6 +18,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use oneiron::llm::media::MediaReplayKey;
+use oneiron_base::unix_seconds_now;
 
 use super::job_lifecycle::JobWrite;
 use super::{
@@ -49,7 +50,9 @@ pub(super) fn is_replay(ticket: &str) -> bool {
 /// two keeps its row (REVIEW-4458 P1).
 pub(super) fn reclaim_replay(store: &JobStore, ticket: &str) {
     let expired = match store.read(ticket, false) {
-        Some(KeptJob::Row(row)) => row.replay_until_s.is_none_or(|until| until <= now_s()),
+        Some(KeptJob::Row(row)) => row
+            .replay_until_s
+            .is_none_or(|until| until <= unix_seconds_now()),
         Some(KeptJob::Erased) | None => false,
     };
     if expired {
@@ -70,12 +73,6 @@ pub(super) fn fresh_ticket() -> String {
     digest.update(&MINTED.fetch_add(1, Ordering::Relaxed).to_le_bytes());
     digest.update(&std::process::id().to_le_bytes());
     format!("{JOB_TICKET}{}", &digest.finalize().to_hex()[..24])
-}
-
-pub(super) fn now_s() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
 }
 
 impl MediaRuntime {
@@ -251,7 +248,7 @@ impl MediaRuntime {
                 ended: Some(MediaJobState::Done { response }),
                 replay_until_s: Some(until),
                 ..
-            })) if until > now_s() => Some(Ok(response)),
+            })) if until > unix_seconds_now() => Some(Ok(response)),
             kept => {
                 // A kept answer that no longer answers has expired: let it
                 // go as it is seen, not only at the next boot (FIX 11464).
@@ -293,7 +290,7 @@ impl MediaRuntime {
             receipt: None,
             payer,
             erased: false,
-            replay_until_s: Some(now_s().saturating_add(MEDIA_REPLAY_KEEP_SECS)),
+            replay_until_s: Some(unix_seconds_now().saturating_add(MEDIA_REPLAY_KEEP_SECS)),
             paid: false,
             line: None,
         };
