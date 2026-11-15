@@ -20,7 +20,9 @@
 //! revocation or a slip or Grant withdrawal, a federation lifecycle act or a
 //! membership execution with every covered row in its causal past, on a
 //! clean image this install judges as it was built, whose whole tail then
-//! folds, a device revocation so placed, or a row of a kind that folds past
+//! folds, a device revocation so placed, a re-root so placed as the tail's
+//! only handoff, whose whole tail then folds and whose fence closes as in the
+//! whole fold, or a row of a kind that folds past
 //! the image only as rejected, with no state (FIX 11760), each on a
 //! frontier, tail or covered parent, a world key record on stated parents
 //! alone (FIX 4881). A late fork, a tail row on a covered row off the
@@ -291,6 +293,8 @@ pub(super) fn capture_adopted_checkpoint_tail(
         fold,
         final_merged: Some(final_merged),
         revoke_facts,
+        retired_keys,
+        closed_handoffs,
     }) = settle_tail(image, &tail, log, confirms)?
     else {
         return Ok(whole());
@@ -362,8 +366,8 @@ pub(super) fn capture_adopted_checkpoint_tail(
         counted_pairs,
         frontier_ancestry,
         revoke_facts,
-        retired_keys: image.safety.retired_keys.clone(),
-        closed_handoffs: image.safety.closed_handoffs.clone(),
+        retired_keys,
+        closed_handoffs,
         unsettled: image.safety.unsettled,
         issues,
         missing_parents,
@@ -572,9 +576,12 @@ fn serial_withdrawal(
 /// that folds past the image all the same (FIX 11760), under [`folds_serially`]'s
 /// conditions: a federation lifecycle act or a membership execution, whose
 /// tail must then fold whole, a device revocation
-/// ([`settle::serial_roster_revoke_op`]), or a row of a kind that folds past
-/// only as rejected ([`settle::folds_rejected_op`]), which must then fold
-/// with no state. A rotation or a non-agent enrollment stands only in a re-root's
+/// ([`settle::serial_roster_revoke_op`]), a re-root that is the tail's only
+/// one ([`settle::serial_handoff_op`]), whose tail must then fold whole, or
+/// a row of a kind that folds past only as rejected
+/// ([`settle::folds_rejected_op`]), which must then fold with no state. Two
+/// tail re-roots could fence one another, which only the whole history
+/// settles. A rotation or a non-agent enrollment stands only in a re-root's
 /// pre-handoff line, and only a tail re-root names a tail row in its line,
 /// so such a row folds rejected past the image only in a tail with no
 /// re-root; for the other kinds that condition is only conservative.
@@ -587,6 +594,11 @@ fn serial_fold_past(
     let op = if settle::serial_fold_past_op(&entry.op) || settle::serial_roster_revoke_op(&entry.op)
     {
         true
+    } else if settle::serial_handoff_op(&entry.op) {
+        tail.values()
+            .filter(|row| settle::serial_handoff_op(&row.op))
+            .count()
+            == 1
     } else {
         settle::folds_rejected_op(image, entry)
             && !tail
