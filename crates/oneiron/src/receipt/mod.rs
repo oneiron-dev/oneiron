@@ -50,9 +50,10 @@ mod tests;
 
 pub use self::authority_audit::{
     AUTHORITY_AUDIT_COLD_ROWS_IGNORE_KIND_FILTER, AUTHORITY_AUDIT_DEFAULT_LIMIT,
-    AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW, AuthorityAuditEventKind,
-    AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery, AuthorityAuditRow,
-    ColdAuthorityAuditRow, PendingMembershipExecutionRow, authority_audit_embedded,
+    AUTHORITY_AUDIT_MAX_LIMIT, AUTHORITY_AUDIT_SCAN_PER_ROW, AuthorityAuditActAuthor,
+    AuthorityAuditEventKind, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditQuery,
+    AuthorityAuditRow, ColdAuthorityAuditRow, PendingMembershipExecutionRow,
+    authority_audit_embedded,
 };
 pub(crate) use self::call::unread_call_receipt_actor_in_txn;
 pub use self::call::{

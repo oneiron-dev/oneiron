@@ -16,6 +16,27 @@ pub enum AuthorityAuditOrder {
     EntryRefAscending,
 }
 
+/// Who decided the owner act an op records: the act's `owner` and `by`
+/// (`oneiron_authority::authority::ActBy`). Ids are hex.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "by")]
+pub enum AuthorityAuditActAuthor {
+    /// An owner's own act: `owner` is that owner's PERSON, one of the
+    /// vault's recorded owners in the page's snapshot.
+    Owner { owner: String },
+    /// A PERSON's act in their own right, not as an owner: the custody
+    /// revoke of a key the person wrote and ruled no secret, their own
+    /// training opt-out, or a vault-wide setting they decided with a power
+    /// they hold (an Admin, or a Delegate with the policy power).
+    Person { person: String },
+    /// An agent's act under its live Grant, for `owner`.
+    Agent {
+        owner: String,
+        agent: String,
+        grant: String,
+    },
+}
+
 /// One AUTHORITY_LOG entry, projected.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthorityAuditRow {
@@ -51,6 +72,10 @@ pub struct AuthorityAuditRow {
     /// What the op acts on: a slip id, a confirm id, a pact id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub subject_ref: Option<String>,
+    /// Who decided the owner act the op records; `None` on an op that
+    /// records none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub act_author: Option<AuthorityAuditActAuthor>,
     /// A federation lifecycle op's grant.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,

@@ -1,3 +1,4 @@
+pub use crate::receipt::authority_audit::AuthorityAuditActAuthor;
 pub use crate::receipt::authority_audit::AuthorityAuditOrder;
 pub use crate::receipt::authority_audit::AuthorityAuditPage;
 pub use crate::receipt::authority_audit::AuthorityAuditRow;

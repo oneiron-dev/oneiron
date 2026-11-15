@@ -357,6 +357,30 @@ pub(crate) fn sole_recorded_owner_in_txn(
     })
 }
 
+/// Every PERSON the vault records as an owner now, their liveness not read:
+/// the embedded owner of a personal vault, or each Owner-role member a
+/// conferring grant names in a shared one. A shared vault that records no
+/// Owner reads an empty census here, never a refusal: the authority audit
+/// tells an owner's own act from another holder's with it
+/// (L6-03-CARRY-AUDIT-AUTHOR), and stays readable on such a vault.
+pub(crate) fn recorded_owners_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<EntityId>> {
+    Ok(
+        match shared_members_census_with(
+            &vault.store,
+            vault.privacy_posture(),
+            txn,
+            false,
+            &mut |id| crate::consent::person_is_live_in_txn(vault, txn, id),
+        )? {
+            None => BTreeSet::from([crate::vault::embedded_owner_actor_id()?]),
+            Some(members) => members.owners,
+        },
+    )
+}
+
 /// [`is_live_vault_owner_in_txn`] for a reader that holds a `Store` and the
 /// posture its vault opened with, and no `Vault` (FIX 7461): every live owner
 /// [`owners_for_store_in_txn`] counts, co-owners included.

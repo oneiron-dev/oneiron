@@ -19,6 +19,16 @@
 //! `mint; withdrawn`, its pair for a withdrawal no counted entry names (FIX
 //! 22193, `agent_grant_act`).
 //!
+//! A row whose op records an owner act names who decided it (`act_author`):
+//! one of the vault's owners, a person acting in their own right (a writer's
+//! carried custody revoke, anyone's own training opt-out, or a vault-wide
+//! setting an Admin or other power holder decided), or an agent under its
+//! Grant. So the owner can tell his own act from anyone else's (Engine
+//! RULING L6-03-CARRY-AUDIT-AUTHOR, 14 Nov 08:35). An act reads as an
+//! owner's only while its person is in the vault's recorded Owner census of
+//! the page's snapshot: someone who held the Owner role when they acted and
+//! holds it no more reads as a person.
+//!
 //! On a vault that adopted a checkpoint image (OF-469), the page also lists
 //! cold rows: entries the adopted image covers that this vault does not
 //! store. They merge into the same entity-id order and cursor as the stored
@@ -80,8 +90,8 @@ pub use oneiron_verb_wire::receipt::authority_audit::{
 
 #[doc(hidden)]
 pub use oneiron_records::receipt::authority_audit::{
-    AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow, ColdAuthorityAuditRow,
-    PendingMembershipExecutionRow,
+    AuthorityAuditActAuthor, AuthorityAuditOrder, AuthorityAuditPage, AuthorityAuditRow,
+    ColdAuthorityAuditRow, PendingMembershipExecutionRow,
 };
 
 impl Vault {
@@ -107,6 +117,7 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let issues = FoldIssues::of(&fold);
+        let owners = crate::policy_model::recorded_owners_in_txn(self, &txn)?;
         let adopted = cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?;
         let mut covered = covered_after(adopted.as_deref(), query.after);
         let mut next_cold = covered.next().transpose()?;
@@ -170,7 +181,7 @@ impl Vault {
                         continue;
                     }
                     let entry = decode_authority_log_entry_body(&record.body)?;
-                    let mut row = project_row(id, &record, &entry, &fold, &issues)?;
+                    let mut row = project_row(id, &record, &entry, &fold, &issues, &owners)?;
                     agent_grant_act::pair_marked_withdrawal(self, &txn, &entry.op, &mut row)?;
                     if query.kinds.is_empty() || query.kinds.contains(&row.event_kind) {
                         rows.push(row);
@@ -630,6 +641,7 @@ fn project_row(
     entry: &AuthorityLogEntry,
     fold: &AuthorityFold,
     issues: &FoldIssues,
+    owners: &BTreeSet<EntityId>,
 ) -> Result<AuthorityAuditRow> {
     let hash = authority_entry_hash(entry)?;
     let (event_kind, source_op, fields) = classify(&entry.op);
@@ -652,6 +664,7 @@ fn project_row(
         seq: entry.seq,
         vault_ref: entry.vault_id.as_ref().map(|id| hex_lower(id)),
         subject_ref: fields.subject_ref,
+        act_author: carried_act::op_act_author(&entry.op, owners),
         grant_ref: fields.grant_ref,
         receipt_ref: fields.receipt_ref,
         affected_grants: fields.affected_grants,
