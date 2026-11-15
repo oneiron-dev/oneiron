@@ -656,21 +656,7 @@ fn add_funds_in_txn(
     let price = run_funds_price_in_txn(vault, wtxn, root)?
         .ok_or_else(|| invalid("the run's budget unit has no USD price, or no open root scope"))?;
     let units = funds_units(&price, amount_usd_micros)?;
-    raise_root_scope_in_txn(vault, wtxn, root, by, units, now, "run add_funds")?;
-    // The raise alone leaves a step whose own line is spent held again at
-    // its next call: its meter takes the bought units once, as it takes an
-    // overdraft's cap (Engine ruling RUNBUDGET-ADDFUNDS-METER = A). The next
-    // hold deletes the grant; the raise stays.
-    OVERDRAFT.put(
-        &vault.store,
-        wtxn,
-        &root,
-        &RunOverdraft {
-            cap_units: units,
-            ask: seq,
-            approved_at: now,
-        },
-    )?;
+    raise_root_scope_in_txn(vault, wtxn, root, by, 0, now, "run add_funds")?;
     record_funds_in_txn(
         vault,
         wtxn,
