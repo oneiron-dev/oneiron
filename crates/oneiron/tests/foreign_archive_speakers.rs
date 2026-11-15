@@ -13,13 +13,24 @@
 //!   speakers it is refused, naming the choice already here.
 //! * `own_archive_speech_keeps_its_authors`: a guard. With own speakers every
 //!   MESSAGE keeps its author and carries no foreign mark.
+//! * `foreign_inline_conversation_is_imported_evidence` (review of #7544
+//!   round 1): a CONVERSATION no import stamped, whose one TURN holds the
+//!   owner's words inline (no MESSAGE row), imported with foreign speakers,
+//!   is imported words when evidence cites the CONVERSATION alone, as its
+//!   TURN is.
+//! * `own_inline_conversation_is_not_imported_evidence`: a guard. With own
+//!   speakers neither row is imported words.
 //!
 //! Red at the red pin (the PR's base plus doors that take the choice and
 //! import as own): the first two fail at their asserts; the guard passes.
+//! Red at the review red pin (#7544 at c498f303ca9c plus the evidence door
+//! and the two inline tests): the foreign inline test fails at its
+//! CONVERSATION assert; its preconditions and the own guard pass.
 //!
-//! Public doors only; vaults in tempdirs. Each destination opens at least one
-//! wall-clock second after its source (sleep 1100 ms), as in
-//! `whole_vault_restore_seeds.rs`. Run with
+//! Vaults in tempdirs; the evidence read goes through the
+//! `test_doors::imported_evidence` door, every other step through public
+//! doors. Each destination opens at least one wall-clock second after its
+//! source (sleep 1100 ms), as in `whole_vault_restore_seeds.rs`. Run with
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test foreign_archive_speakers`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -28,9 +39,11 @@ use std::io::Cursor;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use oneiron::batch::export::ArchiveSpeakers;
+use oneiron::edge::EdgeKind;
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
-use oneiron::registry::ENTITY_TYPE_MESSAGE;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use oneiron::test_doors::imported_evidence::imported_evidence;
+use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use rmpv::Value;
 
 fn open_vault() -> (tempfile::TempDir, Vault) {
@@ -122,6 +135,78 @@ fn spoken_archive() -> Spoken {
         turns,
         conversations,
         messages,
+    }
+}
+
+/// What a source vault holds whose words live inline: one CONVERSATION no
+/// import stamped and one TURN of the owner's, its child, whose words are
+/// its own `text` (no MESSAGE row).
+struct InlineSpoken {
+    archive: Vec<u8>,
+    turn: EntityId,
+    conversation: EntityId,
+}
+
+/// A msgpack map of `entries`.
+fn map_body(entries: &[(&str, &str)]) -> Vec<u8> {
+    let map = Value::Map(
+        entries
+            .iter()
+            .map(|(name, value)| (Value::from(*name), Value::from(*value)))
+            .collect(),
+    );
+    let mut out = Vec::new();
+    rmpv::encode::write_value(&mut out, &map).expect("encode a map body");
+    out
+}
+
+/// A source vault where the owner's words live inline in one TURN, a child
+/// of one unstamped CONVERSATION, and its whole-vault archive.
+fn inline_spoken_archive() -> InlineSpoken {
+    let (_dir, source) = open_vault();
+    let conversation = EntityId::now();
+    let turn = EntityId::now();
+    let at = TimeRange {
+        start: 100,
+        end: 100,
+    };
+    source
+        .put_entity(
+            &conversation,
+            ENTITY_TYPE_CONVERSATION,
+            at,
+            100,
+            &map_body(&[("title", "Garden plans")]),
+        )
+        .expect("put the CONVERSATION");
+    source
+        .put_entity(
+            &turn,
+            ENTITY_TYPE_TURN,
+            at,
+            100,
+            &map_body(&[("speaker", "user"), ("text", "Repot the basil on Sunday.")]),
+        )
+        .expect("put the TURN");
+    source
+        .put_edge(&turn, EdgeKind::ChildOf, &conversation, 1.0)
+        .expect("the TURN is a child of the CONVERSATION");
+    assert!(
+        source
+            .entities_by_type(ENTITY_TYPE_MESSAGE)
+            .expect("list MESSAGE rows")
+            .is_empty(),
+        "the source holds no MESSAGE row"
+    );
+    let archive = source
+        .export_whole_vault(true)
+        .expect("whole-vault export")
+        .bytes()
+        .to_vec();
+    InlineSpoken {
+        archive,
+        turn,
+        conversation,
     }
 }
 
@@ -264,4 +349,65 @@ fn own_archive_speech_keeps_its_authors() {
         ],
         "each MESSAGE keeps its author and carries no foreign mark"
     );
+}
+
+#[test]
+fn foreign_inline_conversation_is_imported_evidence() {
+    let spoken = inline_spoken_archive();
+    let (_dir, dest) = open_later_vault();
+    dest.import_whole_vault_archive_from_with_speakers(
+        Cursor::new(&spoken.archive),
+        ArchiveSpeakers::Foreign,
+    )
+    .expect("the foreign import lands");
+    let conversation = stored(&dest, &spoken.conversation);
+    assert_eq!(
+        text(&conversation, "import_speakers").as_deref(),
+        Some("foreign"),
+        "the CONVERSATION carries the foreign admission mark"
+    );
+    assert_eq!(
+        text(&conversation, "import_source"),
+        None,
+        "the CONVERSATION keeps the absence of an import stamp"
+    );
+    assert_eq!(
+        text(&stored(&dest, &spoken.turn), "import_source").as_deref(),
+        Some("archive"),
+        "the inline TURN is stamped as an archive import"
+    );
+    assert!(
+        imported_evidence(&dest, &[spoken.turn], &[]).expect("read the TURN's evidence"),
+        "the inline TURN is imported words"
+    );
+    assert!(
+        imported_evidence(&dest, &[spoken.conversation], &[])
+            .expect("read the CONVERSATION's evidence"),
+        "a foreign archive's CONVERSATION cited alone is imported words"
+    );
+}
+
+#[test]
+fn own_inline_conversation_is_not_imported_evidence() {
+    let spoken = inline_spoken_archive();
+    let (_dir, dest) = open_later_vault();
+    dest.import_whole_vault_archive_from_with_speakers(
+        Cursor::new(&spoken.archive),
+        ArchiveSpeakers::Own,
+    )
+    .expect("the own import lands");
+    for (row, name) in [
+        (&spoken.turn, "TURN"),
+        (&spoken.conversation, "CONVERSATION"),
+    ] {
+        assert_eq!(
+            text(&stored(&dest, row), "import_speakers"),
+            None,
+            "the {name} carries no foreign mark"
+        );
+        assert!(
+            !imported_evidence(&dest, &[*row], &[]).expect("read the evidence"),
+            "the own archive's {name} is not imported words"
+        );
+    }
 }

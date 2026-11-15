@@ -49,6 +49,7 @@ pub mod home_sections;
 pub mod house_link;
 pub mod hydration_decode_guard;
 pub mod identity_recheck;
+pub mod imported_evidence;
 pub mod inquiry;
 pub mod label_writers;
 pub mod learning_claim_value;
