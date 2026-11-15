@@ -123,13 +123,8 @@ pub fn confirm_archive_delete_wire(
             .confirm_archive_delete(&items)
             .into_iter()
             .map(|(id, result)| {
-                let receipt = result.map(|(receipt, authority)| {
-                    receipt_view(
-                        receipt,
-                        authority.role().as_str(),
-                        authority.grant().map(|grant| grant.to_hex()),
-                    )
-                });
+                // SEEDED FAULT A5 (red proof only): every delete reads as the owner's.
+                let receipt = result.map(|(receipt, _authority)| receipt_view(receipt, "owner", None));
                 (id, receipt)
             })
             .collect()
@@ -195,7 +190,8 @@ fn owner_confirm(
     expected: Option<&ArchiveExpectation>,
 ) -> MemoryResult<ArchiveDeleteReceiptView> {
     let preview = memory.preview_archive_purge(&[id])?;
-    if let Some((hash, marker)) = expected
+    // SEEDED FAULT A2 (red proof only): the expectation is never compared.
+    if let Some((hash, marker)) = expected.filter(|_| false)
         && preview
             .entries()
             .iter()
@@ -205,12 +201,15 @@ fn owner_confirm(
             "archive preview no longer matches; preview again",
         ));
     }
-    let (_, result) = memory
-        .confirm_archive_purge(&preview)
-        .into_iter()
-        .next()
-        .ok_or_else(|| MemoryError::from(crate::Error::EntityNotFound))?;
-    Ok(receipt_view(result?, "owner", None))
+    // SEEDED FAULT A1 (red proof only): the receipt is answered, nothing is deleted.
+    let _ = &preview;
+    Ok(ArchiveDeleteReceiptView {
+        existed: true,
+        reason: "user_hard_delete".to_owned(),
+        receipt_ref: None,
+        role: "owner".to_owned(),
+        grant_ref: None,
+    })
 }
 
 fn entity_ref(text: &str) -> MemoryResult<EntityId> {

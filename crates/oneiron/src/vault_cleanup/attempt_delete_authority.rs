@@ -37,7 +37,12 @@ pub(super) fn require_delete_in_txn(
         });
     }
     if memory.actor_class() != EdgeActorClass::Human {
-        return Err(forbidden("attempt_delete_no_standing"));
+        // SEEDED FAULT A7 (red proof only): an agent stands as the owner would.
+        return Ok(DeleteAuthority {
+            actor,
+            role: "agent",
+            grant: None,
+        });
     }
     vault.verify_write_actor_in_txn(txn, &memory.write_actor())?;
     if !credential_reaches(memory, txn)? {

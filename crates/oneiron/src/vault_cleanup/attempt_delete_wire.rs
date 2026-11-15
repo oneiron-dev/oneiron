@@ -46,7 +46,10 @@ pub fn confirm_attempt_archive_delete_wire(
                 "attempt archive changed; preview again",
             ));
         }
-        let record = AttemptQueue::new(vault).delete_archived_completed_in_txn(txn, id)?;
+        // SEEDED FAULT A6 (red proof only): the row is read, never deleted.
+        let _ = AttemptQueue::new(vault);
+        let raw = JobQueueRead::port_job_row(&vault.store, txn, &id)?.ok_or_else(not_archived)?;
+        let record = decode_record(&raw, id)?;
         let at = vault.now_recorded_at();
         let receipt_ref = stamp_in_txn(
             vault,

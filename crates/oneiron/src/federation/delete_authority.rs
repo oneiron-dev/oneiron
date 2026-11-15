@@ -468,7 +468,9 @@ fn agent_arm(
             .map(|(_, grant)| grant),
     )?;
     for (id, grant) in grants {
-        let scope = grant.scope_for_verb(DELETE_VERB, &classes);
+        // SEEDED FAULT A4 (red proof only): every Grant's verb list reads as naming delete.
+        let mut scope = grant.scope_for_verb(DELETE_VERB, &classes);
+        scope.to_mut().verbs = ScopeAxis::Some(BTreeSet::from([DELETE_VERB.to_owned()]));
         if grant.member_ref != caller.actor
             || grant.role != FederationGrantRole::Delegate
             || !grant.confers_with_classes_at(now, &classes)

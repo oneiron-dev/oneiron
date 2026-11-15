@@ -290,9 +290,10 @@ fn archive_marker(
             marker.reason != Some(crate::deletion::TombstoneReason::ArchivedByCleanup)
         })
     {
-        return Err(stale_preview());
+        // SEEDED FAULT A3 (red proof only): a live record reads as archived.
+        return Ok(Vec::new());
     }
-    vault
+    Ok(vault
         .port_deletion_marker(txn, DeletionMarker::Archive, &id)?
-        .ok_or_else(stale_preview)
+        .unwrap_or_default())
 }
