@@ -131,14 +131,14 @@ pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn}
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use search::{MailSearchReport, MailSourceSearchRequest};
-#[cfg(oneiron_test_support)]
-pub(crate) use state::occurrence_rows_in;
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
 pub use source::{
     CalendarDetailSetting, MailCopySetting, MailProvider, MailProviderDeleteSetting,
     MailSourceKind, MailSourceStatus, MailSourceView,
 };
 pub(crate) use state::erase_occurrence_rows_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use state::occurrence_rows_in;
 pub use state::{MailPresence, MailStage, MailSyncStatusView};
 pub use wire::{
     MailAddressHeaders, MailAttachmentRef, MailFull, MailHeaders, MailHistoryChange,

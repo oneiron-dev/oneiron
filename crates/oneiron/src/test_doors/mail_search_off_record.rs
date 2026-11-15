@@ -279,7 +279,10 @@ pub fn base_holds_found_message(vault: &Vault, mailbox: &SearchMailbox) -> Resul
         &[source.as_bytes(), thread.as_bytes()],
     )?;
     Ok(vault.store.port_entity_record(&txn, &turn)?.is_some()
-        || vault.store.port_entity_record(&txn, &conversation)?.is_some())
+        || vault
+            .store
+            .port_entity_record(&txn, &conversation)?
+            .is_some())
 }
 
 /// Whether `session` reads the found message: its occurrence, and every row

@@ -98,12 +98,11 @@ impl Landing<'_> {
                     )
                 }
             };
-            let author =
-                match crate::memory::stored_witness_turn_author(&view, &txn, &turn)? {
-                    Some(author @ (WitnessAuthor::User | WitnessAuthor::Counterparty)) => author,
-                    _ if headers.sent_by_mailbox => WitnessAuthor::User,
-                    _ => WitnessAuthor::Counterparty,
-                };
+            let author = match crate::memory::stored_witness_turn_author(&view, &txn, &turn)? {
+                Some(author @ (WitnessAuthor::User | WitnessAuthor::Counterparty)) => author,
+                _ if headers.sent_by_mailbox => WitnessAuthor::User,
+                _ => WitnessAuthor::Counterparty,
+            };
             SessionPrior {
                 conversation_held: view.port_entity_record(&txn, &conversation)?.is_some(),
                 turn_held: view.port_entity_record(&txn, &turn)?.is_some(),
@@ -159,9 +158,7 @@ impl Landing<'_> {
         };
         let conversation_shell = session.overlay_conversation_shell()?;
         let staged = session.overlay_write_routed(route, |wtxn, apply| {
-            self.owner
-                .revalidate_in_txn(vault, wtxn)
-                .map_err(&refuse)?;
+            self.owner.revalidate_in_txn(vault, wtxn).map_err(&refuse)?;
             let active = SOURCES
                 .get(&vault.store, wtxn, &source)?
                 .is_some_and(|current| current.status == MailSourceStatus::Active);

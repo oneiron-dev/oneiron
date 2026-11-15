@@ -93,7 +93,10 @@ fn second_search_in_session_reads_overlay_without_refetch() -> TestResult {
         .enter("sess-mail-search-twice", OffRecordBackendClass::Local)?;
 
     let first = search_in_session(&vault, &mailbox, &session, &wire)?;
-    assert_eq!(first.landed, 1, "FIXTURE: the first search keeps the message: {first:?}");
+    assert_eq!(
+        first.landed, 1,
+        "FIXTURE: the first search keeps the message: {first:?}"
+    );
     let second = search_in_session(&vault, &mailbox, &session, &wire)?;
     assert_eq!(
         (second.found, second.landed, second.same),
