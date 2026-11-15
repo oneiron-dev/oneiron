@@ -5869,7 +5869,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/run_tree/ask_wait.rs` | src | s | 1 enum · 2 fn · 1 crate-vis | RunAskWait | Durable step-local wait bindings for run-branch ask handles |
 | `src/run_tree/consent.rs` | src | s | 1 re-export · 1 crate-vis | — | Consent bundle values are defined in the authority layer |
 | `src/run_tree/mod.rs` | src | s | 8 re-export · 3 crate-vis | — | Run tree projection and control adapter over generic AttemptQueue rows |
-| `src/run_tree/render.rs` | src | m | 1 fn · 4 crate-vis | — | Deterministic run-tree build from attempt rows: flatten, repair, attach, events |
+| `src/run_tree/render.rs` | src | m | 1 fn · 6 crate-vis | — | Deterministic run-tree build from attempt rows: flatten, repair, attach, events |
 | `src/run_tree/signal.rs` | src | m | 7 fn · 1 re-export · 8 crate-vis | — | Durable, branch-addressed Signal inbox |
 | `src/run_tree/signal/intent.rs` | src | s | 4 crate-vis | — | The keyed fingerprint of a signal's exact intent (FIX 10066), kept beside a signal the side-row wall masked… |
 | `src/run_tree/tables.rs` | src | s | — | — | The side tables `run_tree` keeps (core split slice 1): each row declares one, and the crate's build script… |
@@ -7588,7 +7588,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/route_receipts.rs` | src | s | 4 struct · 3 enum · 1 fn · 2 const · 1 re-export · 2 crate-vis | TaskCancelMode, TaskCancelTarget, TaskCreateReceipt, TaskDescription, TaskResultInput, TaskStartedReceipt, TaskUpdateReceipt | TASK execution lanes and the receipts each transition answers with |
 | `src/task_verb/run_cancel.rs` | src | s | 1 enum · 1 fn | RunCancelOutcome | Run-tree cancel of one branch through a caller-bound door (FIX 8219, ARCH-0067: cancel covers own tasks and… |
 | `src/task_verb/run_control.rs` | src | m | 1 struct · 1 enum · 4 fn · 1 re-export · 1 crate-vis | RunControl, RunControlReceipt | Pause and resume of one run branch (DOOR-100, FIX 4501, Engine 10-20 on the C002 pattern)… |
-| `src/task_verb/run_doors.rs` | src | m | 7 struct · 2 enum · 5 fn · 1 re-export · 2 crate-vis | CancelForceReceipt, ConsultInspection, ConsultLandKind, ConsultLandReply, ConsultLandRequest, ConsultSummaryView, ConsultTerminalView, RunBranchView +1 | The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)… |
+| `src/task_verb/run_doors.rs` | src | m | 8 struct · 2 enum · 8 fn · 1 re-export · 2 crate-vis | CancelForceReceipt, ConsultInspection, ConsultLandKind, ConsultLandReply, ConsultLandRequest, ConsultSummaryView, ConsultTerminalView, RunBranchView +2 | The owner's run doors over one TASK's branches (DOOR-100, ARCH-0026 `#run-tree`)… |
 | `src/task_verb/run_rows/consult_result.rs` | src | s | 1 crate-vis | — | Reference admission for the existing `tasks.consult.result` run row |
 | `src/task_verb/run_rows/mod.rs` | src | s | 5 crate-vis | — | Native scoped-read implementations of existing run rows |
 | `src/task_verb/run_rows/search.rs` | src | s | 4 crate-vis | — | Canonical search for the existing `vault.search` run row |
