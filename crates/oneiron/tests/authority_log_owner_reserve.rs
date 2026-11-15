@@ -10,8 +10,8 @@
 //! log's projected fold peak would pass the floor less the reserve, a row that
 //! is not the owner's work waits at the door (`AuthorityLogFull`; a replica
 //! retries it on every drain, never refused), while the owner's work still
-//! lands: a row a slip issuer signs or cosigns, and the owner's will this
-//! install carries. The log stays under its floor, the owner removes the
+//! lands: a row a slip issuer signs or cosigns, a row an anchor this install
+//! takes as its own signs, and the owner's will this install carries. The log stays under its floor, the owner removes the
 //! machine, and a waiting row lands once the owner raises the floor.
 //!
 //! The owner's work also covers what it writes under this install's key
@@ -25,10 +25,28 @@
 //! names the reserve, and the same import lands whole once the owner raises
 //! the floor.
 //!
-//! Red on main: the first, second and fourth tests (every flood row lands,
-//! the fold passes its floor, and the removal errors; no row waits). The
-//! third is green on main, where no row waits, and guards the reserve's
-//! owner work.
+//! The door judges the log with the arriving row in it (Astra owner-reserve
+//! F1): rows a machine signs on a parent it withholds count that parent once,
+//! and the parent, when it comes, gives each of them its whole ancestry. Such
+//! a parent waits when the log with it would pass the reserve, though the
+//! stored log is under it, and so does a join on parents no row is: the door
+//! counts every parent it names (Astra owner-reserve r2 F1). The typed check
+//! names the reserve once a row waits there, though the stored log is under
+//! it (r2 F4). And a result this install signs counts as the owner's work
+//! only when the request it answers is the owner's work (Astra owner-reserve
+//! F2): a request another machine carries past the reserve has its result
+//! wait, so carried requests never spend the owner's reserve.
+//!
+//! Red on main: the first four, since main has no reserve. The first passes
+//! its floor and the removal errors; the second, third and fourth find no row
+//! waiting at the door. The third guards that the owner's key work lands
+//! past the reserve, which only the head has. The fifth and sixth are red at
+//! 995ea17f, the reserve before the two fixes: the withheld parent lands and
+//! the fold passes its floor, and this install signs the carried request's
+//! refusal past the reserve. The second, fourth and seventh are red at
+//! 537e65f4 (with its missing `Debug` derive added so it builds), the
+//! reserve before the r2 fixes: no check names the reserve once a row waits,
+//! and the withheld join lands and the fold passes its floor.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test authority_log_owner_reserve`.
 
@@ -40,13 +58,14 @@ use oneiron::authority::{
     AuthorityObservationPolicy, AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer,
     KeyWork, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
     MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineRole, OwnerAct,
-    OwnerActKind, ReadLocation, WorldPrivacy, WorldPrivacyEdit, authority_entry_hash,
-    authority_log_entity_id, authority_transcript, encode_authority_log_entry_body,
-    machine_profile_proof_transcript,
+    OwnerActKind, OwnerWorkBody, OwnerWorkRequest, ReadLocation, WorldKeyMode, WorldPrivacy,
+    WorldPrivacyEdit, authority_entry_hash, authority_log_entity_id, authority_transcript,
+    encode_authority_log_entry_body, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoinScope};
 
 /// The test's memory floor, 4 MiB: the fixture's own log folds well under it
 /// (asserted), and about ninety chained rows pass it, since a fold projects
@@ -169,24 +188,46 @@ fn flood_row(
     seq: u64,
     parent: AuthorityEntryHash,
 ) -> AuthorityLogEntry {
+    flooder_row(
+        rooted,
+        flooder,
+        seq,
+        vec![parent],
+        flood_edit(rooted, flooder, world),
+    )
+}
+
+/// The flooder's world edit of `world`, carried under its install key.
+fn flood_edit(rooted: &Rooted, flooder: &Flooder, world: EntityId) -> AuthorityOp {
+    AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
+        world,
+        act: OwnerAct::by_owner(
+            rooted.owner,
+            OwnerActKind::WorldPrivacy,
+            world,
+            ActSurface::ThisInstall,
+            [0; 32],
+        ),
+        machine: flooder.machine,
+        settings: WorldPrivacy::default(),
+    })
+}
+
+/// `op` signed by the flooder's install key at `seq` on `parents`.
+fn flooder_row(
+    rooted: &Rooted,
+    flooder: &Flooder,
+    seq: u64,
+    parents: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+) -> AuthorityLogEntry {
     let key = AuthorityKey::Ed25519(flooder.signing.verifying_key().to_bytes());
     let mut entry = AuthorityLogEntry {
         schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
         vault_id: Some(rooted.vault_id),
         seq,
-        parent_hashes: vec![parent],
-        op: AuthorityOp::WorldPrivacy(WorldPrivacyEdit {
-            world,
-            act: OwnerAct::by_owner(
-                rooted.owner,
-                OwnerActKind::WorldPrivacy,
-                world,
-                ActSurface::ThisInstall,
-                [0; 32],
-            ),
-            machine: flooder.machine,
-            settings: WorldPrivacy::default(),
-        }),
+        parent_hashes: parents,
+        op,
         signer: AuthoritySignature {
             suite: key.suite(),
             public_key: key,
@@ -220,17 +261,29 @@ enum FloodEnd {
     Cap,
 }
 
-/// The flooder signs one chain until the door holds a row, the fold passes
-/// its floor, or [`FLOOD_CAP`] rows landed. Returns the rows that landed.
+/// The flooder signs one chain on its admission until the door holds a row,
+/// the fold passes its floor, or [`FLOOD_CAP`] rows landed. Returns the rows
+/// that landed.
 fn flood(rooted: &Rooted, flooder: &Flooder) -> (u64, FloodEnd) {
+    flood_on(rooted, flooder, flooder.admission, 1)
+}
+
+/// [`flood`], the chain on `parent` from sequence `first`.
+fn flood_on(
+    rooted: &Rooted,
+    flooder: &Flooder,
+    parent: AuthorityEntryHash,
+    first: u64,
+) -> (u64, FloodEnd) {
     let world = EntityId::now();
-    let mut parent = flooder.admission;
-    for seq in 1..=FLOOD_CAP {
+    let mut parent = parent;
+    for landed in 0..FLOOD_CAP {
+        let seq = first + landed;
         let row = flood_row(rooted, flooder, world, seq, parent);
         match rooted.vault.put_authority_log_entry(&row, AT, 1) {
             Ok(_) => parent = authority_entry_hash(&row).expect("hash"),
             Err(error) if error.kind() == ErrorKind::AuthorityLogFull => {
-                return (seq - 1, FloodEnd::Waited(Box::new(row)));
+                return (landed, FloodEnd::Waited(Box::new(row)));
             }
             Err(error) => panic!("flood row {seq} was refused, not held: {error}"),
         }
@@ -240,7 +293,7 @@ fn flood(rooted: &Rooted, flooder: &Flooder) -> (u64, FloodEnd) {
             .expect("the fold")
             .authority_log_past_bound()
         {
-            return (seq, FloodEnd::PastFloor);
+            return (landed + 1, FloodEnd::PastFloor);
         }
     }
     (FLOOD_CAP, FloodEnd::Cap)
@@ -485,6 +538,212 @@ fn an_owners_import_past_the_reserve_refuses_whole_and_lands_once_the_floor_is_r
             .as_ref(),
         Some(held.as_ref()),
         "the held row lands"
+    );
+    let fold = rooted.vault.authority_fold().expect("the fold");
+    assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
+}
+
+/// The parallel rows the flooder signs under the parent it withholds: the
+/// parent names each of them, so its ancestry holds them all.
+const WITHHELD_PARENT_PARENTS: u64 = 32;
+
+/// The rows the flooder signs on the withheld parent before it sends it.
+const ON_THE_WITHHELD_PARENT: u64 = 100;
+
+/// Astra owner-reserve F1. The flooder signs 32 rows on its admission, then
+/// a row H that names all 32 and that it withholds, then 100 rows on H. Each
+/// of the 100 counts H once while H is missing, so the stored log folds well
+/// under the reserve (about 2.5 MB of the 4 MiB floor, estimate). H gives
+/// each of them H's whole ancestry, which takes the fold about 2.5 MB further,
+/// past the floor (estimate). The door judges the log with H in it, so H
+/// waits, the fold stays under its floor, and the vault's root stands.
+#[test]
+fn a_withheld_parent_that_would_pass_the_floor_waits_at_the_door() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let world = EntityId::now();
+    let mut beneath = Vec::new();
+    for seq in 1..=WITHHELD_PARENT_PARENTS {
+        let row = flood_row(&rooted, &flooder, world, seq, flooder.admission);
+        rooted
+            .vault
+            .put_authority_log_entry(&row, AT, 1)
+            .unwrap_or_else(|error| panic!("row {seq} under the reserve lands: {error}"));
+        beneath.push(authority_entry_hash(&row).expect("hash"));
+    }
+    let withheld = flooder_row(
+        &rooted,
+        &flooder,
+        WITHHELD_PARENT_PARENTS + 1,
+        beneath,
+        flood_edit(&rooted, &flooder, world),
+    );
+    let withheld_hash = authority_entry_hash(&withheld).expect("hash");
+    for offset in 1..=ON_THE_WITHHELD_PARENT {
+        let seq = WITHHELD_PARENT_PARENTS + 1 + offset;
+        let row = flood_row(&rooted, &flooder, world, seq, withheld_hash);
+        rooted
+            .vault
+            .put_authority_log_entry(&row, AT, 1)
+            .unwrap_or_else(|error| {
+                panic!("row {offset} on the withheld parent is stored, its parent missing: {error}")
+            });
+    }
+    let before = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        !before.authority_log_past_bound() && !before.vault_root_is_conflicted(),
+        "the stored log, its parent missing, folds under the floor"
+    );
+    let arrival = rooted.vault.put_authority_log_entry(&withheld, AT, 1);
+    let after = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        !after.authority_log_past_bound() && !after.vault_root_is_conflicted(),
+        "the withheld parent ({arrival:?}) took the fold past its memory floor: the vault \
+         holds no root"
+    );
+    assert!(
+        matches!(&arrival, Err(error) if error.kind() == ErrorKind::AuthorityLogFull),
+        "the withheld parent waits at the door: {arrival:?}"
+    );
+}
+
+/// The parents no row is that the flooder's withheld join names.
+const ABSENT_JOIN_PARENTS: u64 = 400;
+
+/// The rows the flooder signs on its withheld join before it sends it.
+const ON_THE_WITHHELD_JOIN: u64 = 20;
+
+/// Astra owner-reserve r2 F1. The flooder signs a frontier join J that names
+/// 400 parents no row is (a join's parents have no count bound) and
+/// withholds it, then 20 rows on J. Each of the 20 counts J once while J is
+/// missing, so the stored log folds far under the reserve. The fold counts
+/// each of J's parents once, as a missing parent, in J's ancestry and in each
+/// of the 20 rows': about 5.4 MB more, past the 4 MiB floor (estimate). The
+/// door bounds J's ancestry by every row it could name, J's own new parents
+/// too, so J waits, the fold stays under its floor, and the vault's root
+/// stands.
+#[test]
+fn a_withheld_join_on_parents_no_row_is_waits_at_the_door() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let world = EntityId::now();
+    let absent = (0..ABSENT_JOIN_PARENTS)
+        .map(|index| {
+            let mut hash = [0xAB_u8; 32];
+            hash[..8].copy_from_slice(&index.to_le_bytes());
+            hash
+        })
+        .collect();
+    let join = flooder_row(
+        &rooted,
+        &flooder,
+        1,
+        absent,
+        AuthorityOp::FrontierJoin(FrontierJoin {
+            family: FrontierJoinFamily::Install(flooder.machine),
+            scope: FrontierJoinScope::Main,
+        }),
+    );
+    let join_hash = authority_entry_hash(&join).expect("hash");
+    for offset in 1..=ON_THE_WITHHELD_JOIN {
+        let row = flood_row(&rooted, &flooder, world, 1 + offset, join_hash);
+        rooted
+            .vault
+            .put_authority_log_entry(&row, AT, 1)
+            .unwrap_or_else(|error| {
+                panic!("row {offset} on the withheld join is stored, its parent missing: {error}")
+            });
+    }
+    let before = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        !before.authority_log_past_bound() && !before.vault_root_is_conflicted(),
+        "the stored log, its join missing, folds under the floor"
+    );
+    let arrival = rooted.vault.put_authority_log_entry(&join, AT, 1);
+    let after = rooted.vault.authority_fold().expect("the fold");
+    assert!(
+        !after.authority_log_past_bound() && !after.vault_root_is_conflicted(),
+        "the withheld join ({arrival:?}) took the fold past its memory floor: the vault holds \
+         no root"
+    );
+    assert!(
+        matches!(&arrival, Err(error) if error.kind() == ErrorKind::AuthorityLogFull),
+        "the withheld join waits at the door: {arrival:?}"
+    );
+    let checks = rooted.vault.authority_log_checks().expect("the checks");
+    assert!(
+        checks.iter().any(|check| check.kind == OWNER_RESERVE_CHECK),
+        "the owner's typed check names the reserve the join waits at: {checks:?}"
+    );
+}
+
+/// Astra owner-reserve F2. Below the reserve, the flooder carries a request
+/// that this install do key work for a world that does not exist, which the
+/// fold takes on the carrier's standing and the owner's liveness, then floods
+/// the log to the reserve on that request. This install's pickup would answer
+/// it refused under its own key. The request is not the owner's work at this
+/// door, so neither is its result: the result waits, the pickup's
+/// transaction rolls back, and the request stays pending.
+#[test]
+fn a_result_for_a_request_another_machine_carried_waits_past_the_reserve() {
+    let (rooted, flooder) = floored_vault_with_flooder();
+    let here = rooted
+        .vault
+        .local_machine()
+        .expect("this install")
+        .expect("this install's machine")
+        .id;
+    rooted
+        .vault
+        .set_machine_role(
+            &rooted.proof,
+            ActSurface::ThisInstall,
+            here,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the owner marks this install yours");
+    let world = EntityId::now();
+    let request = flooder_row(
+        &rooted,
+        &flooder,
+        1,
+        vec![flooder.admission],
+        AuthorityOp::OwnerWorkRequest(OwnerWorkRequest {
+            carrier: flooder.machine,
+            act: OwnerAct::by_owner(
+                rooted.owner,
+                OwnerActKind::WorldKeyRequest,
+                world,
+                ActSurface::ThisInstall,
+                [0; 32],
+            ),
+            executor: here,
+            work: OwnerWorkBody::WorldKey {
+                mode: WorldKeyMode::Ensure,
+            },
+            privacy_basis: None,
+        }),
+    );
+    rooted
+        .vault
+        .put_authority_log_entry(&request, AT, 1)
+        .expect("the carried request lands under the reserve");
+    let request_hash = authority_entry_hash(&request).expect("hash");
+    let (landed, end) = flood_on(&rooted, &flooder, request_hash, 2);
+    let FloodEnd::Waited(_) = end else {
+        panic!(
+            "after {landed} flood rows the flood ended {end:?}: no row waited at the owner \
+             reserve"
+        );
+    };
+    let drain = rooted
+        .vault
+        .run_pending_owner_work(|| true)
+        .expect("the pickup runs");
+    assert_eq!(
+        (drain.enacted, drain.refused),
+        (0, 0),
+        "this install answered the carried request past the reserve, spending the owner's \
+         reserve on another machine's request: {drain:?}"
     );
     let fold = rooted.vault.authority_fold().expect("the fold");
     assert!(!fold.authority_log_past_bound() && !fold.vault_root_is_conflicted());
