@@ -488,6 +488,7 @@ impl PollAdmission<'_> {
             CalendarStatusBasis::ImportedCancel,
         )? {
             self.record_cancel_outcome(event_ref, status_ref)?;
+            self.refund_host_cancelled_deposit(event_ref)?;
         }
         Ok(())
     }
@@ -519,8 +520,20 @@ impl PollAdmission<'_> {
             && basis == CalendarStatusBasis::ImportedCancel
         {
             self.record_cancel_outcome(event_ref, status_ref)?;
+            self.refund_host_cancelled_deposit(event_ref)?;
         }
         Ok(())
+    }
+
+    /// The host cancelled the EVENT explicitly: a booking's deposit on it
+    /// comes back whole (BK-DEPOSITS; RULING DEPOSIT-HOST-CANCEL-REFUND = A).
+    /// An omission is no cancellation evidence and moves no money; an EVENT
+    /// with no deposit writes nothing.
+    fn refund_host_cancelled_deposit(&self, event_ref: EntityId) -> Result<(), CalendarError> {
+        crate::booking::lifecycle::refund_deposit_on_host_cancel(self.vault, &event_ref, self.now)
+            .map_err(|error| CalendarError::IcsIngest {
+                reason: error.to_string(),
+            })
     }
 
     /// Carries one explicit imported cancellation into CAL-07 as

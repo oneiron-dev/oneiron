@@ -144,6 +144,20 @@ impl Fixture {
         }
     }
 
+    /// Lets a calendar feed import into this vault: the feed's import actor
+    /// writes as an enrolled engine machine, as in `tests/booking_feed_move.rs`.
+    pub fn enable_host_feed(&self) {
+        let issuer =
+            oneiron::authority::HostSlipIssuer::from_secret(b"oneiron integration test host")
+                .expect("host issuer");
+        self.vault
+            .ensure_host_root_slip(&issuer)
+            .expect("host root");
+        self.vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("engine machine identities");
+    }
+
     pub fn run(
         &self,
         request: BookingVerbRequest,

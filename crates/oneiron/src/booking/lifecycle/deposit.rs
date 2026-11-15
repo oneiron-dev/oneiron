@@ -662,6 +662,54 @@ pub(super) fn refund_on_visitor_cancel_in_writer(
     enqueue_settle(vault, wtxn, &link.deposit_key, "cancel", now_utc)
 }
 
+/// The host cancelled a booking in their own calendar, an explicit imported
+/// cancellation (FIX 22385): its deposit comes back whole, whatever the
+/// visitor's refund rule (RULING DEPOSIT-HOST-CANCEL-REFUND = A, the lead 15
+/// Nov 12:1x: not a setting; the visitor did nothing wrong). Before the
+/// capture ran, the authorization is released; after, the whole capture is
+/// owed back. A booking the visitor already cancelled keeps the refund its
+/// own cancel decided, and a booking with no deposit is untouched.
+///
+/// Calendar ingest calls this after it records the cancellation, outside any
+/// writer of its own.
+///
+/// # Errors
+///
+/// [`BookingError::SlotOracle`] on a store failure.
+pub(crate) fn refund_deposit_on_host_cancel(
+    vault: &Vault,
+    event_ref: &EntityId,
+    now_utc: u64,
+) -> Result<(), BookingError> {
+    booking_writer(vault, |wtxn| {
+        let Some(link) = DEPOSIT_BOOKING
+            .get(&vault.store, &*wtxn, &booking_key(event_ref))
+            .map_err(|error| engine_failure("meta read", error))?
+        else {
+            return Ok(());
+        };
+        let Some(mut row) = DEPOSIT
+            .get(&vault.store, &*wtxn, &link.deposit_key)
+            .map_err(|error| engine_failure("meta read", error))?
+        else {
+            return Ok(());
+        };
+        let next = match row.state {
+            DepositState::CaptureDue { .. } => DepositState::VoidDue,
+            DepositState::Captured { amount_minor } => DepositState::RefundDue { amount_minor },
+            _ => return Ok(()),
+        };
+        let booking = super::claim::read_booking_facts_to_cancel(vault, &*wtxn, event_ref)?;
+        if booking.status == super::types::BookingStatus::Cancelled {
+            return Ok(());
+        }
+        row.state = next;
+        row.updated_at = now_utc;
+        put_deposit(vault, wtxn, &link.deposit_key, &row)?;
+        enqueue_settle(vault, wtxn, &link.deposit_key, "host-cancel", now_utc)
+    })
+}
+
 // -------------------------------------------------------------------------
 // Reads
 // -------------------------------------------------------------------------

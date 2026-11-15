@@ -98,6 +98,7 @@ pub use self::feed_move::{
     run_booking_revision_invites,
 };
 pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
+pub(crate) use self::deposit::refund_deposit_on_host_cancel;
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
