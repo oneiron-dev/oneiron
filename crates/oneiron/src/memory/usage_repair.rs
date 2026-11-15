@@ -157,7 +157,8 @@ impl Memory<'_> {
                     EdgeActorClass::Human => Err(NoStanding::NotStanding),
                 };
                 let grant = match standing.map(|standing| standing.grant) {
-                    Ok(Some(grant)) => grant,
+                    // SEEDED FAULT U5 (red proof only): the receipt names a fresh id, not the Grant.
+                    Ok(Some(_)) => EntityId::now(),
                     Err(NoStanding::PactStandingLapsed) => {
                         return Err(refused(verb, PACT_STANDING_LAPSED));
                     }

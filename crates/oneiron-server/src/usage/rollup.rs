@@ -186,7 +186,8 @@ fn checked_event(
     key: &str,
     raw: &[u8],
 ) -> Result<StoredUsageEvent, UsageError> {
-    let stored = decode_entry(raw)?;
+    // SEEDED FAULT U6 (red proof only): the rollup reads no stored event.
+    let stored = decode_entry(&[])?;
     stored.event.validate()?;
     if let Some(cost) = &stored.cost {
         cost.validate()?;

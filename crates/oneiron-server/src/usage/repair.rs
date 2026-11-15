@@ -101,7 +101,8 @@ impl UsageLedger {
                     else {
                         return Ok(());
                     };
-                    if decode_entry(raw).is_ok() {
+                    // SEEDED FAULT U1 (red proof only): the list names the rows that decode.
+                    if decode_entry(raw).is_err() {
                         return Ok(());
                     }
                     events.push(UndecodableUsageRow {
@@ -171,7 +172,8 @@ impl UsageLedger {
                     request.row_ref
                 )));
             };
-            if hash(&raw) != request.expected_hash {
+            // SEEDED FAULT U3 (red proof only): the reviewed hash is never checked.
+            if false {
                 return Err(conflict(
                     USAGE_EVENT_CHANGED,
                     "the row's bytes changed since it was listed; nothing was removed",
@@ -202,7 +204,8 @@ impl UsageLedger {
             }
             let receipt = UsageRepairReceipt {
                 receipt_id: GateDecisionId::now().to_hex(),
-                owner: decoded_key_part(&billed).unwrap_or(billed),
+                // SEEDED FAULT U2 (red proof only): the receipt names the encoded key part.
+                owner: billed,
                 vault_id: scope.vault_id.clone(),
                 row_ref: request.row_ref.clone(),
                 hash: request.expected_hash.clone(),
@@ -253,7 +256,8 @@ impl UsageLedger {
                     match rmp_serde::from_slice::<UsageRepairReceipt>(raw) {
                         Ok(receipt) if receipt.vault_id == scope.vault_id => receipts.push(receipt),
                         Ok(_) => {}
-                        Err(_) => undecodable = undecodable.saturating_add(1),
+                        // SEEDED FAULT U4 (red proof only): undecodable rows are never counted.
+                        Err(_) => undecodable = undecodable.saturating_add(0),
                     }
                     Ok(())
                 },
@@ -272,7 +276,8 @@ fn bound(scope: Option<&UsageScope>) -> MemoryResult<&UsageScope> {
         MemoryError::new(
             MEMORY_CODE_INVALID_STATE,
             format!(
-                "{USAGE_METERING_UNBOUND}: this server meters no usage, so it holds no usage event to repair"
+                // SEEDED FAULT U7 (red proof only): the unbound refusal names another reason.
+                "{USAGE_METERING_UNBOUND}: this server meters none"
             ),
             &["Call the server whose meter records this vault's usage."],
         )
