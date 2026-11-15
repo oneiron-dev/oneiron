@@ -669,8 +669,10 @@ pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
 /// `raw` is planned again with `known`, the values custody holds now, as
 /// the wall planned it. `known` is read only when the plan without it
 /// misses, and a row admitted before its value entered custody, which holds
-/// that value as written, still meets its call by that first plan. Nothing
-/// is minted.
+/// that value as written, still meets its call by that first plan. A row
+/// that holds one value as written beside the handle of another, its parts
+/// admitted under different custody, meets neither plan and drifts, which
+/// fails closed (FIX-LIST [REPLAY-COMPARE-MIXED-ERA]). Nothing is minted.
 pub(crate) fn admitted_from_known(
     held: &Value,
     raw: &Value,

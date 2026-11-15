@@ -119,7 +119,9 @@ impl<'a> ErasedRequest<'a> {
     /// stored before that value entered custody) was taken; then, once that
     /// misses, with each value base custody holds now as the stand-in too,
     /// as the identity of a row erased while it held that value's handle was
-    /// taken. An erased row's identity is never taken again.
+    /// taken. An erased row's identity is never taken again, so a row erased
+    /// while it held one value as written beside the handle of another meets
+    /// neither form and drifts (FIX-LIST [REPLAY-COMPARE-MIXED-ERA]).
     ///
     /// # Errors
     ///
