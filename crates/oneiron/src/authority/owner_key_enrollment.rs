@@ -73,7 +73,7 @@ pub(super) fn judge_owner_key_enroll(
     };
     if root.roles & ROLE_OWNER == 0
         || !context.device_can_consent(root)
-        || passkey_vouch_unconfirmed(state, predecessor)
+        || state.passkey_vouch_unconfirmed(predecessor)
     {
         return Err(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
@@ -126,9 +126,22 @@ pub(super) enum OwnerKeyEnrollReading {
     Confirmation,
 }
 
-/// Whether `key` is a key only a passkey vouched for, not yet confirmed.
-fn passkey_vouch_unconfirmed(state: &FoldState, key: &AuthorityKey) -> bool {
-    state.passkey_vouched_keys.contains(key) && !state.passkey_vouch_confirmations.contains(key)
+impl FoldState {
+    /// Whether `key` is a key only a passkey vouched for, not yet confirmed
+    /// (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): it vouches for no
+    /// further key, and [`Self::passkey_limited`] holds for it.
+    pub(super) fn passkey_vouch_unconfirmed(&self, key: &AuthorityKey) -> bool {
+        self.passkey_vouched_keys.contains(key) && !self.passkey_vouch_confirmations.contains(key)
+    }
+
+    /// Whether `key` signs no `ReRoot` and no revoke of another owner key:
+    /// a passkey (Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B), or a key
+    /// only a passkey vouched for, until confirmed (lead ruling
+    /// WEBPASSKEY-BLIND-SIGNATURE = B). The one reader of these limits: a
+    /// rule that counts an entry's participants asks it of each.
+    pub(super) fn passkey_limited(&self, key: &AuthorityKey) -> bool {
+        self.passkey_contexts.contains_key(key) || self.passkey_vouch_unconfirmed(key)
+    }
 }
 
 /// Whether `predecessor` confirms `key` by vouching for it again: `key` is
@@ -140,7 +153,7 @@ fn confirms_passkey_vouch(
     key: &AuthorityKey,
     predecessor: &AuthorityKey,
 ) -> bool {
-    passkey_vouch_unconfirmed(state, key)
+    state.passkey_vouch_unconfirmed(key)
         && predecessor != key
         && state.roster.get(key).is_some_and(|device| !device.revoked)
         && !state.passkey_contexts.contains_key(predecessor)
@@ -159,13 +172,13 @@ pub(super) fn remember_passkey_vouch(
     }
 }
 
-/// Whether `entry`'s signer may sign its op under the limits on a key only a
-/// passkey vouched for (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B): until
-/// confirmed, it signs no `ReRoot` and no `RevokeDevice` of another live
-/// owner key. Every other signer and op passes.
-pub(super) fn passkey_vouch_limits_admit(state: &FoldState, entry: &AuthorityLogEntry) -> bool {
+/// Whether `entry`'s signer may sign its op under the passkey limits
+/// ([`FoldState::passkey_limited`]): a passkey, and a key only a passkey
+/// vouched for until confirmed, sign no `ReRoot` and no `RevokeDevice` of
+/// another live owner key. Every other signer and op passes.
+pub(super) fn passkey_limits_admit(state: &FoldState, entry: &AuthorityLogEntry) -> bool {
     let signer = entry.signer_key();
-    if !passkey_vouch_unconfirmed(state, signer) {
+    if !state.passkey_limited(signer) {
         return true;
     }
     match &entry.op {

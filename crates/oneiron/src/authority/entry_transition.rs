@@ -538,11 +538,12 @@ pub(super) fn fold_entry_state(
         }
     }
 
-    // A key only a passkey vouched for acts in full once a non-passkey,
-    // owner-held key vouches for it too (lead ruling
-    // WEBPASSKEY-BLIND-SIGNATURE = B): until then it neither re-roots nor
-    // revokes another owner key.
-    if !super::owner_key_enrollment::passkey_vouch_limits_admit(&state, entry) {
+    // A passkey signs from a page its host serves, and WebAuthn shows no act
+    // text: a passkey, and a key only a passkey vouched for until a
+    // non-passkey, owner-held key vouches for it too, neither re-root nor
+    // revoke another owner key (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B;
+    // Engine ruling WEBPASSKEY-PASSKEY-OWN-REVOKE = B).
+    if !super::owner_key_enrollment::passkey_limits_admit(&state, entry) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     if op_reuses_existing_device_key(&state, &entry.op) {
