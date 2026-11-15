@@ -339,7 +339,11 @@ pub(crate) fn source_readers_in(
 /// The PERSON the embedded owner actor stands for in a vault with no
 /// authority root, where it is that vault's one owner: its one owner PERSON,
 /// or the actor itself while the vault records none. `None` for any other
-/// actor, in a rooted vault, or where several owners make it ambiguous.
+/// actor, in a rooted vault, where several owners make it ambiguous, or on
+/// a shared vault whose live owner census no longer names the embedded
+/// owner ([`crate::memory::embedded_owner_shortcut_holds_in_txn`]): an
+/// embedded owner another Owner made an Admin stands for no one, never for
+/// the Owner who is left.
 pub(crate) fn embedded_owner_person_in(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -350,6 +354,7 @@ pub(crate) fn embedded_owner_person_in(
             .authority_fold_readonly_in_txn(txn)?
             .vault_id
             .is_some()
+        || !crate::memory::embedded_owner_shortcut_holds_in_txn(vault, txn)?
     {
         return Ok(None);
     }

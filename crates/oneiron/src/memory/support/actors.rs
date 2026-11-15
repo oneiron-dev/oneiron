@@ -283,8 +283,8 @@ impl Memory<'_> {
 
 /// Whether the embedded owner still takes the owner shortcuts that skip the
 /// owner-binding check (the read-lane owner key and its write standing, the
-/// room-role Owner arm, the disclosure VaultOwner party) in `txn`
-/// (UNROOTED-EMBEDDED-OWNER-SHORTCUTS). A personal vault's embedded owner and
+/// room-role Owner arm, the disclosure VaultOwner party, the source-audience
+/// owner PERSON it stands for) in `txn` (UNROOTED-EMBEDDED-OWNER-SHORTCUTS). A personal vault's embedded owner and
 /// a rooted vault's always do, as before. On an unrooted vault that holds a
 /// shared-vault creation it does only while the live owner census names it,
 /// the rule [`verify_owner_actor_binding_in_txn`] reads there, so an embedded
