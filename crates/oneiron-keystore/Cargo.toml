@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "This-device-only key slots: the platform keystore behind one small trait"
 repository.workspace = true
-homepage.workspace = true
 publish = false
 
 [lib]
@@ -28,11 +27,17 @@ security-framework-sys = "2.17"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
 
 [features]
-# The process-memory adapter, for this crate's tests and its dependents' tests.
+# The process-memory adapter, the scripted presence prompt and the manual
+# presence clocks, for this crate's tests and its dependents' tests.
 test-keystore = []
 
 [dev-dependencies]
 tempfile = "3"
+
+# The presence layer's tests drive the scripted prompt and the manual clocks.
+[[test]]
+name = "user_presence"
+required-features = ["test-keystore"]
 
 [lints]
 workspace = true

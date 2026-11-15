@@ -8183,8 +8183,7 @@ dependencies = [
  "futures-util",
  "loro",
  "oneiron",
- "oneiron-llm-openai",
- "oneiron-llm-own-server",
+ "oneiron-llm",
  "oneiron-organ-protocol",
  "oneiron-remote",
  "oneiron-server",
@@ -8322,10 +8321,12 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-hex",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rand_distr 0.4.3",
  "rmp-serde",
+ "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -8382,6 +8383,7 @@ dependencies = [
  "expat-sys",
  "flate2",
  "harfrust",
+ "miniz_oxide 0.9.1",
  "oneiron-contracts",
  "png 0.18.1",
  "proptest",
@@ -8415,7 +8417,7 @@ version = "0.1.0"
 dependencies = [
  "oneiron",
  "oneiron-dreamer",
- "oneiron-llm-local",
+ "oneiron-llm",
  "oneiron-remote",
  "rmpv",
  "serde_json",
@@ -8439,6 +8441,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-gen"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "oneiron",
+ "oneiron-llm",
+ "reqwest 0.12.28",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "oneiron-guest"
 version = "0.1.0"
 dependencies = [
@@ -8456,6 +8470,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-hex"
+version = "0.1.0"
+
+[[package]]
 name = "oneiron-image"
 version = "0.1.0"
 dependencies = [
@@ -8470,25 +8488,6 @@ dependencies = [
  "rmpv",
  "serde",
  "tempfile",
-]
-
-[[package]]
-name = "oneiron-image-comfyui"
-version = "0.1.0"
-dependencies = [
- "oneiron",
- "reqwest 0.12.28",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "oneiron-image-openrouter"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "oneiron",
- "serde_json",
 ]
 
 [[package]]
@@ -8541,78 +8540,23 @@ dependencies = [
 ]
 
 [[package]]
-name = "oneiron-llm-anthropic"
-version = "0.1.0"
-dependencies = [
- "futures-core",
- "oneiron",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "oneiron-llm-gemini"
+name = "oneiron-llm"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
- "futures-core",
- "oneiron",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oneiron-llm-local"
-version = "0.1.0"
-dependencies = [
+ "blake3",
  "futures-core",
  "futures-util",
  "oneiron",
- "serde",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "oneiron-llm-openai"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "futures-core",
- "oneiron",
- "serde",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
-]
-
-[[package]]
-name = "oneiron-llm-own-server"
-version = "0.1.0"
-dependencies = [
- "blake3",
- "futures-core",
- "oneiron",
  "oneiron-mesh-transport",
  "oneiron-remote",
+ "reqwest 0.12.28",
  "rmp-serde",
  "serde",
  "serde_bytes",
  "serde_json",
  "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "oneiron-llm-systemone"
-version = "0.1.0"
-dependencies = [
- "oneiron",
- "reqwest 0.12.28",
- "serde",
- "serde_json",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
@@ -8738,7 +8682,6 @@ dependencies = [
  "blake3",
  "memmap2",
  "rmp-serde",
- "rmpv",
  "rustix",
  "serde",
  "serde_bytes",
@@ -8777,7 +8720,41 @@ dependencies = [
 name = "oneiron-records"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "ed25519-dalek 2.2.0",
+ "loro",
+ "oneiron-authority",
+ "oneiron-base",
+ "oneiron-browser",
+ "oneiron-code-source",
+ "oneiron-consent-state",
+ "oneiron-container",
+ "oneiron-contracts",
+ "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
+ "oneiron-docedit",
+ "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
+ "oneiron-model",
+ "oneiron-policy-vocabulary",
+ "oneiron-retrieval",
+ "oneiron-run-budget",
+ "oneiron-skill-attribution",
+ "oneiron-store",
+ "oneiron-vault-contract",
  "oneiron-verb-wire",
+ "oneiron-wake-contract",
+ "oneiron-web-fetch",
+ "oneiron-xlsx-formula",
+ "reqwest 0.12.28",
+ "rmp-serde",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
@@ -8788,6 +8765,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "oneiron",
+ "oneiron-base",
  "oneiron-sdk-build",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
@@ -8890,7 +8868,6 @@ dependencies = [
  "rcgen",
  "reqwest 0.12.28",
  "rmp-serde",
- "rmpv",
  "rsa",
  "rustls-pki-types",
  "serde",
@@ -8939,6 +8916,7 @@ dependencies = [
  "objc2-foundation",
  "oneiron",
  "oneiron-agent-runtime",
+ "oneiron-base",
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
@@ -8946,13 +8924,10 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-docedit",
  "oneiron-driver",
+ "oneiron-gen",
  "oneiron-keystore",
  "oneiron-linear",
- "oneiron-llm-anthropic",
- "oneiron-llm-gemini",
- "oneiron-llm-openai",
- "oneiron-llm-own-server",
- "oneiron-llm-systemone",
+ "oneiron-llm",
  "oneiron-mail-pack",
  "oneiron-mesh-transport",
  "oneiron-organ-host",
@@ -8960,6 +8935,7 @@ dependencies = [
  "oneiron-remote",
  "oneiron-sdk-build",
  "oneiron-spawn",
+ "oneiron-speech",
  "oneiron-store",
  "oneiron-vault-contract",
  "quick-xml 0.42.0",
@@ -9012,6 +8988,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-speech"
+version = "0.1.0"
+dependencies = [
+ "oneiron",
+ "oneiron-llm",
+ "serde_json",
+]
+
+[[package]]
 name = "oneiron-store"
 version = "0.1.0"
 dependencies = [
@@ -9032,9 +9017,11 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-crypto",
  "oneiron-docedit",
+ "oneiron-hex",
  "oneiron-model",
  "oneiron-skill-attribution",
  "oneiron-vault-contract",
+ "pinyin",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rmp-serde",
@@ -9110,10 +9097,14 @@ dependencies = [
 name = "oneiron-verb-wire"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
+ "encoding_rs",
+ "half",
  "heed",
  "image",
+ "lopdf",
  "loro",
  "oneiron-authority",
  "oneiron-base",
@@ -9130,16 +9121,21 @@ dependencies = [
  "oneiron-policy-vocabulary",
  "oneiron-retrieval",
  "oneiron-run-budget",
+ "oneiron-sdk-build",
  "oneiron-skill-attribution",
  "oneiron-store",
+ "oneiron-vault-contract",
  "oneiron-wake-contract",
  "oneiron-web-fetch",
+ "oneiron-xlsx-formula",
  "rmp-serde",
  "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
@@ -10000,6 +9996,12 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pinyin"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e225f595052d9c46045755be4b8d7950b6d9f3c33e0c0b74ba58f11bbfa8c64b"
 
 [[package]]
 name = "pkcs1"

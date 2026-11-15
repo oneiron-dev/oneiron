@@ -416,11 +416,7 @@ pub(super) fn read_people(
     server: &SyncServer,
     read: &oneiron::claim::ScopedRead<'_>,
 ) -> MemoryResult<oneiron::context_board::People> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        });
+    let now = oneiron_base::unix_millis_now();
     let mut people = oneiron::context_board::People::load(&server.vault, now, &mut |person| {
         read.is_entity_readable(&person)
     })?;

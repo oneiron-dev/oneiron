@@ -117,8 +117,8 @@ See [DEPLOYMENT.md](./DEPLOYMENT.md) for service templates.
 ## Building from source
 
 The SDK's generated Rust files are not committed: the crates that include them (`oneiron`, `oneiron-server`,
-`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`, `oneiron-py`) run the SDK generator
-(`crates/oneiron-sdk-generator`) inside their build scripts, once per change of the verb table
+`oneiron-remote`, `oneiron-napi`, `oneiron-uniffi`, `oneiron-code-check`, `oneiron-py`, `oneiron-verb-wire`) run
+the SDK generator (`crates/oneiron-sdk-generator`) inside their build scripts, once per change of the verb table
 (`scripts/sdk/verbs/`), the Rust types it names or the generator itself, into the target directory. No Python
 runs for this. The run key covers the generator's source, `Cargo.lock`, the manifests and the compiler. It does
 not see a local override of the generator's dependencies (`[patch]` to a path, `paths` in `.cargo/config`, or
@@ -174,14 +174,9 @@ to its modules and source files. It does not cover the applications under `apps/
 | [oneiron-remote](./crates/oneiron-remote) | Shared embedded and remote SDK backend. |
 | [oneiron-uniffi](./crates/oneiron-uniffi) | UniFFI binding of the SDK verb table over the shared `OneironClient` (embedded and remote). |
 | [oneiron-android](./crates/oneiron-android) | JNI/Kotlin ownership adapter. |
-| [oneiron-llm-anthropic](./crates/oneiron-llm-anthropic) | Anthropic Messages adapter. |
-| [oneiron-llm-gemini](./crates/oneiron-llm-gemini) | Gemini adapter. |
-| [oneiron-llm-openai](./crates/oneiron-llm-openai) | OpenAI-compatible adapter. |
-| [oneiron-llm-own-server](./crates/oneiron-llm-own-server) | User-hosted model endpoint adapter. |
-| [oneiron-llm-local](./crates/oneiron-llm-local) | Host-supplied in-process model adapter. |
-| [oneiron-llm-systemone](./crates/oneiron-llm-systemone) | Remote typed-decision service adapter. |
-| [oneiron-image-comfyui](./crates/oneiron-image-comfyui) | ComfyUI image adapter. |
-| [oneiron-image-openrouter](./crates/oneiron-image-openrouter) | OpenRouter image adapter. |
+| [oneiron-llm](./crates/oneiron-llm) | Text model wire adapters, one module per protocol: OpenAI-compatible, Anthropic Messages, Gemini, the user-hosted model endpoint (`oneiron_rpc`), a host-supplied in-process model (`local`) and the remote typed-decision service (`systemone`). |
+| [oneiron-gen](./crates/oneiron-gen) | Generation job wire adapters, one module per protocol: Gemini images and Veo video (`gemini`), the self-hosted ComfyUI image server (`comfyui`) and the OpenRouter Image API (`openrouter`). |
+| [oneiron-speech](./crates/oneiron-speech) | Speech wire adapters, one module per protocol: the Soniox streaming ASR frame codec (`asr::soniox`), the Irodori and MOSS-local TTS submission adapters (`tts::irodori_moss`), the Cartesia and ElevenLabs speech and clone codecs (`tts::hosted`, `design::hosted`) and the VoxCPM2 worker's render framing (`tts::voxcpm2`). |
 | [oneiron-mesh-transport](./crates/oneiron-mesh-transport) | Vault-scoped peer transport. |
 | [oneiron-linear](./crates/oneiron-linear) | Linear issue-mirroring adapter. |
 | [oneiron-docedit](./crates/oneiron-docedit) | Native document editing and revision support. |

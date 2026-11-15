@@ -13,6 +13,7 @@ use oneiron::sync::schema::{
 };
 use oneiron::sync::server_state;
 use oneiron::sync::{EphemeralStore, WindowManager};
+pub(super) use oneiron_base::unix_seconds_now;
 use tokio::sync::{Mutex, broadcast};
 
 use crate::api::DeepRetrievalHost;
@@ -402,6 +403,30 @@ fn live_rows(
         };
         questions.ask(row, bound, observed);
     })));
+}
+
+/// Seeds the vault's release fact for payment credentials at serve start
+/// (L8-60; CROSS-ARCH-0019 `#fence-unproven`): this host's runner fence is
+/// proven where the organ host can fence a filesystem (Landlock ABI 3 on
+/// Linux, Seatbelt on macOS), and `--release-payment-credentials-unfenced`
+/// is the self-hoster's lift. While the fence is unproven and nothing is
+/// lifted, both value doors withhold a credential the owner marks as a
+/// payment credential; every other credential stays at its rung.
+fn payment_credential_release(vault: &oneiron::Vault, withholding_lifted: bool) {
+    #[cfg(unix)]
+    let runner_fence_proven = oneiron_organ_host::filesystem_confined();
+    #[cfg(not(unix))]
+    let runner_fence_proven = false;
+    let release = oneiron::secret_custody::PaymentCredentialRelease {
+        runner_fence_proven,
+        withholding_lifted,
+    };
+    if release.withholds() {
+        tracing::warn!(
+            "this host proves no runner fence (Landlock ABI 3 on Linux, Seatbelt on macOS): credentials the owner marks as payment credentials are withheld; a self-hoster may lift this with --release-payment-credentials-unfenced"
+        );
+    }
+    vault.set_payment_credential_release(release);
 }
 
 impl SyncServer {
@@ -927,12 +952,4 @@ fn mcp_registry_hash_key(config: &SyncServerConfig) -> [u8; 32] {
         hasher.update(b"no-auth-secret-configured");
     }
     *hasher.finalize().as_bytes()
-}
-
-/// Wall-clock Unix seconds, saturating to 0 pre-epoch (matches the
-/// client-side SystemTime uses).
-pub(super) fn unix_seconds_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs())
 }

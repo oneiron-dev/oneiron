@@ -60,17 +60,28 @@ fn resolve(
 
 // ─── configuration ──────────────────────────────────────────────────────
 
+/// A named section with no provider key: the local bundle's three required
+/// fields (config/oneironer.rs `validate`); resolving never reads `model_dir`.
+const NAMED_SECTION: &str = "[oneironer]\n\
+    model_dir = \"models/oneironer\"\n\
+    checkpoint_sha16 = \"0123456789abcdef\"\n\
+    label_count = 53\n";
+
 #[test]
 fn an_absent_section_arms_nothing_and_a_named_one_defaults_to_local_save() {
     let absent = resolve("", &[], ServeArgs::default()).expect("absent");
     assert!(absent.oneironer.is_none());
     assert!(absent.vault_config().tagging.is_none());
-    let named = resolve("[oneironer]\n", &[], ServeArgs::default()).expect("named");
+    let named = resolve(NAMED_SECTION, &[], ServeArgs::default()).expect("named");
     let section = named.oneironer.expect("section");
     assert_eq!(section.provider, OneironerProvider::Local);
     assert_eq!(section.mode, OneironerMode::Save);
-    // Only an endpoint arms markers: the local provider never serves here.
-    assert!(named_vault_tagging("[oneironer]\n").is_none());
+    // Every active provider arms markers since the local tagger runs in
+    // process (68071b65132): a named local section arms its checkpoint.
+    assert_eq!(
+        named_vault_tagging(NAMED_SECTION).as_deref(),
+        Some("0123456789abcdef")
+    );
 }
 
 fn named_vault_tagging(file: &str) -> Option<String> {
