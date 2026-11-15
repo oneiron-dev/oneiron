@@ -1,0 +1,17 @@
+{
+  "name": "vault.skills.lifecycle.set",
+  "description": "The owner moves a stored skill to a lifecycle through the ordinary skill update law; imported ancestry still needs its held-out admission, and archive, restore and supersession keep their own doors.",
+  "input": "SkillLifecycleSetRequest",
+  "output": "crate::task_verb::sdk::SkillLibraryView",
+  "call": "memory.witness_skill_bodies(crate::task_verb::sdk::skill_lifecycle_set_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.lifecycle.set\")?, &input))?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}

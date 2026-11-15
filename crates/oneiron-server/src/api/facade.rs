@@ -227,6 +227,7 @@ mod skill_default_doors;
 mod skill_doors;
 mod skill_execution_doors;
 mod skill_merge_doors;
+mod skill_pack_load_doors;
 mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod snapshot_read_settings_doors;

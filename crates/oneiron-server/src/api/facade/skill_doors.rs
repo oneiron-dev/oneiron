@@ -119,6 +119,27 @@ pub(crate) async fn vault_skills_archive(
     .await
 }
 
+/// `vault.skills.lifecycle.set` (FIX [SKILL-HUB-PROMOTION-VERBS]): the
+/// owner's move of one stored skill through the ordinary update law; it lists
+/// the library view it answers.
+pub(crate) async fn vault_skills_lifecycle_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SkillLifecycleSetRequest,
+) -> Listed<SkillLibraryView> {
+    owner_call(
+        server,
+        auth,
+        "vault.skills.lifecycle.set",
+        move |server, owner| {
+            let view = sdk::skill_lifecycle_set_as_owner(server.vault(), owner, &input)?;
+            let rows = view.rows();
+            Ok((view, rows))
+        },
+    )
+    .await
+}
+
 /// A person or agent forking as itself (FIX 8167): its actor and own slip.
 type Forker = (
     (oneiron::EntityId, oneiron::EdgeActorClass),

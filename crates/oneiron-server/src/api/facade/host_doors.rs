@@ -298,6 +298,8 @@ pub(crate) use super::claim_refinement_doors::*;
 pub(crate) use super::skill_activation_doors::*;
 // The owner's ingress door for a shared-skill merge offer (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
 pub(crate) use super::skill_merge_doors::*;
+// A run's own skill pack load on its attached live run (FIX [SKILL-HUB-PROMOTION-VERBS]), likewise.
+pub(crate) use super::skill_pack_load_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
 pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
