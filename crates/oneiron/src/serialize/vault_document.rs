@@ -432,10 +432,11 @@ impl<'v> DocumentWriter<'v> {
     }
 
     /// FIX 2768: one side row in its table's codec, read alone by the nulling
-    /// pass at its depth; one the pass would change, one in its table's own
-    /// binary codec the release scan reads a credential in, or one that does
-    /// not read back through its table, is held out and named in the
-    /// manifest. A long binary value goes beside the document as a file.
+    /// pass at its depth; one the pass would change, one whose binary value
+    /// or tree-form binary payload the release scan reads a credential in,
+    /// or one that does not read back through its table, is held out and
+    /// named in the manifest. A long binary value goes beside the document
+    /// as a file.
     pub(crate) fn side_row(&mut self, raw: SideRowBytes) -> Result<()> {
         let Some((row, files)) = raw.portable()? else {
             self.side_withheld
@@ -443,7 +444,10 @@ impl<'v> DocumentWriter<'v> {
             return Ok(());
         };
         let value = serde_json::to_value(&row).map_err(|_| encode_failed())?;
-        if raw.opaque_credential() || null_document_member("", &value, 2) != value {
+        if raw.opaque_credential()
+            || raw.payload_credential()
+            || null_document_member("", &value, 2) != value
+        {
             self.side_withheld
                 .push(raw.withheld(ArchiveSideWithheldReason::Credential));
             return Ok(());
