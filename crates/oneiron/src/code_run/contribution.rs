@@ -616,7 +616,7 @@ fn attempt_capsules_in_txn(
 }
 
 /// The attempt a terminal pack receipt names, when it is one.
-fn receipt_attempt(receipt: &str) -> Option<EntityId> {
+pub(crate) fn receipt_attempt(receipt: &str) -> Option<EntityId> {
     let (_, hex) = receipt.rsplit_once(':')?;
     let entity = EntityId::from_hex(hex).ok()?;
     let attempt = AttemptId::from_bytes(entity.as_bytes()).ok()?;

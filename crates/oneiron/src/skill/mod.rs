@@ -97,3 +97,6 @@ use rmpv::Value;
 
 pub(crate) mod tables;
 pub mod team_shape_catalog;
+
+// SCRATCH BASE PIN for UC-09 PR A (never lands): exposes the old copy to the pin shim.
+pub(crate) use self::call::pin_erase_receipt_attempt;

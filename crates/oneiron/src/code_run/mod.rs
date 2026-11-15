@@ -388,3 +388,6 @@ pub(crate) use self::dispatcher::resumed_write_meets_recorded_row;
 pub use self::dispatcher::{SecretUseAnswer, SecretUseRecord, SecretUseStatus, kept_reveal_answer};
 
 pub use self::dispatcher::workflow_operations;
+
+// SCRATCH BASE PIN for UC-09 PR A (never lands): exposes the old copy to the pin shim.
+pub(crate) use self::contribution::receipt_attempt as pin_contribution_receipt_attempt;

@@ -154,7 +154,7 @@ fn live_attempt_names_source(
 }
 
 /// The attempt a pack receipt id names (`attempt:` + its hex), when it is one.
-pub(super) fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
+pub(crate) fn receipt_attempt(receipt: &str) -> Option<crate::attempt_queue::AttemptId> {
     let (_, hex) = receipt.rsplit_once(':')?;
     let attempt =
         crate::attempt_queue::AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes())

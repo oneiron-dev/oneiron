@@ -340,3 +340,6 @@ impl JsCodeModeHost for CaseHost {
         })
     }
 }
+
+// SCRATCH BASE PIN for UC-09 PR A (never lands): exposes the old copy to the pin shim.
+pub(crate) use self::erase::receipt_attempt as pin_erase_receipt_attempt;

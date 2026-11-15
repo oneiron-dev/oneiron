@@ -482,3 +482,6 @@ pub(crate) fn execute_callable_skill_cancellable(
     }
     Ok(answer)
 }
+
+// SCRATCH BASE PIN for UC-09 PR A (never lands): exposes the old copy to the pin shim.
+pub(crate) use self::frozen::pin_erase_receipt_attempt;

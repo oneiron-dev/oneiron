@@ -789,7 +789,7 @@ fn landed_in_txn(
 }
 
 /// The attempt a terminal pack receipt names, when it is one.
-fn receipt_attempt(receipt: &str) -> Option<AttemptId> {
+pub(crate) fn receipt_attempt(receipt: &str) -> Option<AttemptId> {
     let (_, hex) = receipt.rsplit_once(':')?;
     let attempt = AttemptId::from_bytes(EntityId::from_hex(hex).ok()?.as_bytes()).ok()?;
     (crate::receipt::attempt_pack_receipt_id(&attempt) == receipt).then_some(attempt)

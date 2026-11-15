@@ -76,6 +76,47 @@ pub fn attempt_pack_receipt_id(attempt_id: &AttemptId) -> String {
     )
 }
 
+/// SCRATCH BASE PIN for UC-09 PR A (never lands). The one name the pin test
+/// `tests/attempt_receipt_parse.rs` calls, answered here by every copy that
+/// main holds: the five `receipt_attempt` / `pack_receipt_attempt` fns, and
+/// the inline check of `attempt_pack_receipt_in_txn` (its lines copied
+/// verbatim). It panics when two copies disagree, so a green run shows that
+/// all six accept the same set as the table.
+#[must_use]
+pub fn parse_attempt_pack_receipt_id(receipt_id: &str) -> Option<AttemptId> {
+    let credit_join = crate::skill_attribution::pin_credit_join_receipt_attempt(receipt_id);
+    let trace = crate::skill_attribution::pin_trace_receipt_attempt(receipt_id);
+    let erase = crate::skill::pin_erase_receipt_attempt(receipt_id);
+    let audit = crate::self_heal::audit::pack_receipt_attempt(receipt_id);
+    let contribution = crate::code_run::pin_contribution_receipt_attempt(receipt_id)
+        .map(|entity| AttemptId::from_bytes(entity.as_bytes()).expect("16 bytes"));
+    let archive_accepts = (|| {
+        let Some(suffix) = receipt_id.strip_prefix(ATTEMPT_PACK_RECEIPT_ID_PREFIX) else {
+            return false;
+        };
+        let Ok(id) = EntityId::from_hex(suffix) else {
+            return false;
+        };
+        if id.to_hex() != suffix {
+            return false;
+        }
+        true
+    })();
+    assert_eq!(credit_join, trace, "credit_join vs trace on {receipt_id:?}");
+    assert_eq!(credit_join, erase, "credit_join vs erase on {receipt_id:?}");
+    assert_eq!(credit_join, audit, "credit_join vs audit on {receipt_id:?}");
+    assert_eq!(
+        credit_join, contribution,
+        "credit_join vs contribution on {receipt_id:?}"
+    );
+    assert_eq!(
+        credit_join.is_some(),
+        archive_accepts,
+        "credit_join vs archive on {receipt_id:?}"
+    );
+    credit_join
+}
+
 /// Stamps the terminal pack or resident receipt in the transition's OWN
 /// write transaction. Complete, fail, retry-source finalization, queued/paused
 /// cancel, landing cancellation, force-cancel and abandon all call this seam.

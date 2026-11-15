@@ -196,3 +196,7 @@ pub use trace::{
 pub use self::judge_supersession::{
     DisplacedJudgeReceipt, displaced_judge_receipts, supersede_displaced_judge_receipts,
 };
+
+// SCRATCH BASE PIN for UC-09 PR A (never lands): exposes the old copy to the pin shim.
+pub(crate) use self::credit_join::receipt_attempt as pin_credit_join_receipt_attempt;
+pub(crate) use self::trace::receipt_attempt as pin_trace_receipt_attempt;
