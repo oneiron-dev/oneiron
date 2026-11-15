@@ -83,6 +83,9 @@ pub(super) struct RevisionArgs {
 pub(super) struct AdmittedRevision {
     pub(super) byte_range: [u64; 4],
     pub(super) byte_end: u64,
+    /// The identity the key gave this call, leaf first, DER: the chain the
+    /// host's own evidence checks prove validation data for.
+    pub(super) signer_chain: Vec<Vec<u8>>,
 }
 
 /// `seal.sign`'s value. No digest: the host computes every hash it signs.
@@ -275,6 +278,10 @@ impl<'a> SealCall<'a> {
         Ok(AdmittedRevision {
             byte_range: revision.byte_range,
             byte_end: (self.input.pdf.len() + revision.suffix.len()) as u64,
+            signer_chain: std::iter::once(&signer.identity.signer_certificate)
+                .chain(&signer.identity.chain)
+                .cloned()
+                .collect(),
         })
     }
 
@@ -495,7 +502,7 @@ fn is_algorithm(id: &AlgorithmIdentifierOwned, oid: ObjectIdentifier, null_allow
         }
 }
 
-fn unhex(hex: &[u8]) -> Option<Vec<u8>> {
+pub(super) fn unhex(hex: &[u8]) -> Option<Vec<u8>> {
     let nibble = |byte: u8| char::from(byte).to_digit(16);
     hex.chunks(2)
         .map(|pair| match pair {

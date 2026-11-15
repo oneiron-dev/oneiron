@@ -8658,6 +8658,7 @@ dependencies = [
  "der 0.7.10",
  "ipnet",
  "libc",
+ "lopdf",
  "oneiron",
  "oneiron-container",
  "oneiron-docedit",
@@ -8666,6 +8667,7 @@ dependencies = [
  "oneiron-sandbox-contract",
  "oneiron-spawn",
  "p256",
+ "pkix-chain",
  "reqwest 0.12.28",
  "rmp-serde",
  "rmpv",
@@ -8677,6 +8679,7 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "x509-cert",
+ "x509-tsp",
 ]
 
 [[package]]

@@ -32,6 +32,12 @@ rsa = { version = "=0.9.10", default-features = false, features = ["sha2", "std"
 cms = { version = "=0.2.3", default-features = false, features = ["std"] }
 const-oid = "=0.9.6"
 der = { version = "=0.7.10", features = ["alloc", "oid", "std"] }
+# The seal's own evidence checks (L4-13), at the seal organ's exact pins:
+# RFC 3161 tokens, the DSS's CRLs and OCSP responses checked by general PKIX
+# crates, and the DSS read with the engine's own PDF parser. Not the organ.
+lopdf = { version = "=0.44.0", default-features = false }
+pkix-chain = { version = "=0.4.1", features = ["crl", "ocsp"] }
+x509-tsp = "=0.1.0"
 ipnet = "2"
 # The guarded `net.fetch`: the engine already builds this client and TLS
 # stack, so this adds no crate to the graph.

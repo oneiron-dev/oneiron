@@ -7,8 +7,10 @@
 //! revision chain, find the signature this call bound, and classify every
 //! later revision as validation data or a passed document timestamp.
 //! Whether a suffix may follow at all is the requested profile's, never
-//! the organ's achieved one. The host never links the organ (the of060 F4
-//! fence) and never parses a PDF: it compares offsets, digests and kinds.
+//! the organ's achieved one. Then the host proves the achieved profile's
+//! evidence itself (`evidence`): the timestamps, and the DSS of the
+//! archival suffix, the only part of the PDF it reads. It never links the
+//! organ (the of060 F4 fence).
 
 use oneiron::blob_artifact::esign::{EsignSealerError, EsignVerdict, SealProfile};
 use oneiron_organ_protocol::ASK_MEMORY_GROW;
@@ -19,6 +21,7 @@ use oneiron_organ_protocol::seal::{
 use sha2::{Digest, Sha256};
 
 use super::binding::AdmittedRevision;
+use super::evidence::{EvidenceTrust, prove_evidence};
 use super::observe::{measure_input, measure_report};
 use super::{
     HostedSealer, PDF, VERB_VERIFY, VerifyArgs, VerifyReply, from_value, reply_invalid, to_value,
@@ -82,13 +85,35 @@ impl HostedSealer<'_> {
         {
             return Err(reply_invalid());
         }
-        if admits(&classification, witness, profile >= SealProfile::BaselineLt) {
-            Ok(())
-        } else {
-            Err(EsignSealerError::Fatal {
+        if !admits(&classification, witness, profile >= SealProfile::BaselineLt) {
+            return Err(EsignSealerError::Fatal {
                 stage: "binding".to_owned(),
                 code: "unbound_output".to_owned(),
+            });
+        }
+        prove_evidence(sealed, witness, &classification, achieved, &self.evidence_trust())
+    }
+
+    /// What the host proves a seal's evidence against: its own anchors, the
+    /// policies its timestamp authorities name (any, unless every one names
+    /// one), its clock, and the machine floor for the DSS read.
+    fn evidence_trust(&self) -> EvidenceTrust<'_> {
+        let authorities = &self.settings.timestamp_authorities;
+        let policies = authorities
+            .iter()
+            .map(|tsa| {
+                tsa.policy_oid
+                    .as_deref()
+                    .and_then(|oid| const_oid::ObjectIdentifier::new(oid).ok())
             })
+            .collect::<Option<Vec<_>>>()
+            .unwrap_or_default();
+        EvidenceTrust {
+            anchors: &self.settings.trust_anchors,
+            policies,
+            now_ms: self.now_ms(),
+            floor: self.host.floor().map(|floor| floor.0),
+            deadline: std::time::Instant::now() + self.settings.deadline,
         }
     }
 }
