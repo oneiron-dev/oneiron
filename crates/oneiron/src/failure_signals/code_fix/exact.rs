@@ -17,8 +17,6 @@
 //! prompt that does not read leaves the call with no replay at all, never
 //! one under no prompt or today's.
 
-use serde::{Deserialize, Serialize};
-
 use super::{CodeFixSource, failed_case_in};
 use crate::attempt_queue::AttemptId;
 use crate::code_run::{capsule_request, capsule_route_prompt, step_replay_capsules};
@@ -61,19 +59,8 @@ impl ExactReplayRequest {
     }
 }
 
-/// How a code fix's replay ran the real failure (FIX 1662).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ReplayFidelity {
-    /// The request the failing call sent, as it was sent.
-    Exact,
-    /// That request, with each secret in it, or in its rung's route prompt,
-    /// masked into its custody handle.
-    ExactMasked,
-    /// Rebuilt from the failure's instructions, briefing and task: not the
-    /// request the call sent.
-    Rebuilt,
-}
+#[doc(hidden)]
+pub use oneiron_records::failure_signals::code_fix::exact::ReplayFidelity;
 
 /// What the vault kept of the request a failing call sent (FIX 1662).
 #[derive(Debug, Clone, PartialEq)]
