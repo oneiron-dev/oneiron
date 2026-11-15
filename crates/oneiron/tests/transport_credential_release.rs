@@ -988,13 +988,25 @@ fn member_peer_window_withholds_message_with_credential_signature() -> Result<()
 
 #[test]
 fn member_peer_window_withholds_note_with_credential_proposal() -> Result<()> {
+    let credential = format!("ghp_{}", "a".repeat(36));
+    assert_member_window_withholds_note_with_proposal(
+        &format!("Rotate the token {credential} before Tuesday."),
+        &credential,
+    )
+}
+
+/// A member peer's window keeps home whole a NOTE whose undecided proposal is
+/// `credential_text`, which holds `credential`, and carries a clean NOTE with
+/// its proposal.
+fn assert_member_window_withholds_note_with_proposal(
+    credential_text: &str,
+    credential: &str,
+) -> Result<()> {
     let fixture = member_fixture()?;
     let vault = &fixture.vault;
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
-    let credential = format!("ghp_{}", "a".repeat(36));
     let control_text = "Move the standup to Tuesday.";
-    let credential_text = format!("Rotate the token {credential} before Tuesday.");
     let control_note = vault
         .create_note("research", "The weekly review covers the schedule.", actor)
         .expect("control NOTE");
@@ -1014,7 +1026,7 @@ fn member_peer_window_withholds_note_with_credential_proposal() -> Result<()> {
         .fork_note(
             credential_note,
             &oneiron::note::NoteProgramEdit::Rewrite {
-                text: credential_text.clone(),
+                text: credential_text.to_owned(),
             },
             actor,
         )
@@ -1167,6 +1179,20 @@ fn witness_prompt_message(
 
 #[test]
 fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
+    let credential = format!("ghp_{}", "a".repeat(36));
+    assert_member_window_keeps_born_with_prompt_home(
+        &format!("Rotate the token {credential} before Tuesday."),
+        &credential,
+    )
+}
+
+/// A member peer's window carries a row born of a prompt whose text is
+/// `credential_text`, which holds `credential`, without that Prompt field,
+/// and a row born of a clean prompt with it.
+fn assert_member_window_keeps_born_with_prompt_home(
+    credential_text: &str,
+    credential: &str,
+) -> Result<()> {
     use oneiron::authority::{ActSurface, MachineRole};
     use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
     use oneiron::provenance::made_by::{
@@ -1199,12 +1225,10 @@ fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
         choice
     );
 
-    let credential = format!("ghp_{}", "a".repeat(36));
     let control_text = "Count the weekly review items.";
-    let credential_text = format!("Rotate the token {credential} before Tuesday.");
     let conversation = EntityId::now();
     let control_prompt = witness_prompt_message(vault, &owner, conversation, control_text)?;
-    let credential_prompt = witness_prompt_message(vault, &owner, conversation, &credential_text)?;
+    let credential_prompt = witness_prompt_message(vault, &owner, conversation, credential_text)?;
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
     let mut artifacts = Vec::new();
@@ -1262,7 +1286,7 @@ fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
     let stored = vault.born_with_text(&credential_row.id, None)?;
     assert_eq!(
         stored.get(&BornWithField::Prompt).map(String::as_str),
-        Some(credential_text.as_str()),
+        Some(credential_text),
         "the public born-with read reaches the credential prompt before export"
     );
 
@@ -1390,4 +1414,19 @@ fn member_peer_window_withholds_message_with_json_escaped_credential_signature()
     stored.extend(&credential_messages);
     assert_unchanged(&fixture.vault, &stored)?;
     Ok(())
+}
+
+/// JSON text whose field name escapes `password`: the raw text holds no
+/// credential key, and [`ESCAPED_PASSWORD_VALUE`] is no token shape.
+const ESCAPED_PASSWORD_JSON: &str = r#"{"pass\u0077ord":"s3cr3tValue42"}"#;
+const ESCAPED_PASSWORD_VALUE: &str = "s3cr3tValue42";
+
+#[test]
+fn member_peer_window_withholds_note_with_json_escaped_credential_proposal() -> Result<()> {
+    assert_member_window_withholds_note_with_proposal(ESCAPED_PASSWORD_JSON, ESCAPED_PASSWORD_VALUE)
+}
+
+#[test]
+fn member_peer_window_keeps_json_escaped_credential_born_with_prompt_home() -> Result<()> {
+    assert_member_window_keeps_born_with_prompt_home(ESCAPED_PASSWORD_JSON, ESCAPED_PASSWORD_VALUE)
 }

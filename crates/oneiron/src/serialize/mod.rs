@@ -61,7 +61,9 @@ mod okf_bundle;
 mod vault_archive;
 mod vault_document;
 pub use export_value::{ExportBody, ExportBodyFile, ExportValue};
-pub(crate) use export_value::{ExportSecrets, attaches_as_file_read, typed_rule_keeps_text};
+pub(crate) use export_value::{
+    ExportSecrets, attaches_as_file_read, release_keeps_text, typed_rule_keeps_text,
+};
 pub(crate) use vault_document::{DocumentTail, DocumentWriter};
 
 mod source_tree;

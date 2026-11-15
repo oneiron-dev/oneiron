@@ -637,6 +637,19 @@ pub(crate) fn typed_rule_keeps_text(text: &str) -> bool {
     safe_text(text, 0)
 }
 
+/// Whether a door that ships `text` beside a row, where no typed rule reads
+/// it, may ship it as it is: the raw release check reads no credential in it,
+/// nor in it read as a body, each text inside decoded again
+/// ([`crate::batch::secret_scan::release_decoded_hit`]); and the typed rule
+/// would keep it ([`typed_rule_keeps_text`]). JSON text that escapes a
+/// credential's key or token is no text the raw check reads.
+pub(crate) fn release_keeps_text(text: &str) -> bool {
+    use crate::batch::secret_scan::{release_decoded_hit, scan_text_content};
+    scan_text_content(text).is_none()
+        && release_decoded_hit(text.as_bytes()).is_none()
+        && typed_rule_keeps_text(text)
+}
+
 fn byte_container_is_opaque_or_tainted(bytes: &[u8], depth: usize) -> bool {
     if scan_undecoded_body(bytes).is_some() {
         return true;
