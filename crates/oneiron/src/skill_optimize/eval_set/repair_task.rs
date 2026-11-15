@@ -85,7 +85,7 @@ impl EvalRepairTask {
         match &self.expected {
             EvalRepairExpected::Response(expected) => expected == response,
             EvalRepairExpected::Adjudicated(Some(digest)) => {
-                blake3::hash(response.as_bytes()) == *digest
+                ContentHash::of(response.as_bytes()).as_bytes() == digest
             }
             EvalRepairExpected::State(_) | EvalRepairExpected::Adjudicated(None) => false,
         }
@@ -174,7 +174,7 @@ impl EvalRepairTask {
                 "an adjudicated label's reference holds its answer",
             ));
         }
-        Ok(*blake3::hash(answer.as_bytes()).as_bytes())
+        Ok(ContentHash::of(answer.as_bytes()).into_bytes())
     }
 
     /// Sets the adjudicated answer's digest the grader compares against. A
