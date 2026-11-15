@@ -102,13 +102,19 @@ pub(super) fn serial_handoff_op(op: &AuthorityOp) -> bool {
 /// settlement reads them (`retired_signers`, `Fence::of`): every key in its
 /// parents' rosters, live or revoked, other than its successor's. Every
 /// covered row is in its causal past, so its line holds them all: its fence
-/// refuses no covered row and no covered handoff, and no covered fence
-/// refuses it or a row in its line, since no tail row is signed by a key the
+/// refuses no covered row and no covered handoff. No covered fence refuses
+/// it or a row in its line: the serial fold reads only a clean image
+/// ([`super::clean_image`]), whose covered rows all folded valid, so none is
+/// signed outside a covered fence, and no tail row is signed by a key the
 /// image retired ([`super::tail_folds_past`]). It is the tail's one handoff,
 /// so its fence closes and it settles. None where its fence could refuse a
 /// tail row outside its line (one beside it or above it signed by a key it
 /// fences): the whole fold drops such a row with its descendants, which only
-/// the whole history folds here. None too where a parent has no state here.
+/// the whole history folds here. This test is stricter than the whole fold's
+/// (`Fence::signed_outside`): it exempts no genesis, no anchored row and no
+/// row of another vault, so such a row outside the line asks for the whole
+/// history even where the whole fold settles the handoff. None too where a
+/// parent has no state here.
 fn serial_handoff_fence(
     handoff: &AuthorityEntryHash,
     judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
