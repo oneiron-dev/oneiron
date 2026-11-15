@@ -39,8 +39,14 @@
 //! ([`PresenceGate::confirm_with_secret`]) and counts wrong ones. What the
 //! PIN guards, the engine seals; the file tier keeps those sealed bytes
 //! beside its slots ([`SealedBytesStore`], through
-//! [`DeviceKeystore::sealed_bytes`]). This crate sees neither a key nor a
-//! way to check a PIN.
+//! [`DeviceKeystore::sealed_bytes`]), and so does the TPM tier. This crate
+//! sees neither a key nor a way to check a PIN.
+//!
+//! On the TPM tier the chip itself guards the device PIN key
+//! ([`AuthBoundSecretStore`], through [`DeviceKeystore::auth_bound_secret`]):
+//! it releases the key only for an auth value the engine derives from the
+//! PIN, counts the wrong ones, and after enough of them takes none for a
+//! while ([`AuthBoundError::LockedOut`]).
 
 use std::borrow::Cow;
 
@@ -50,6 +56,7 @@ use zeroize::Zeroizing;
 mod apple;
 #[cfg(target_vendor = "apple")]
 mod apple_enclave;
+mod auth_bound;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod file;
 #[cfg(target_os = "linux")]
@@ -69,6 +76,7 @@ mod windows_presence;
 pub use apple::AppleKeychain;
 #[cfg(target_vendor = "apple")]
 pub use apple_enclave::SecureEnclaveKeychain;
+pub use auth_bound::{AUTH_VALUE_MAX, AuthBoundError, AuthBoundSecretStore};
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub use file::LocalFileKeystore;
 #[cfg(target_os = "linux")]
@@ -365,9 +373,17 @@ pub trait DeviceKeystore: Send + Sync + 'static {
         }
     }
     /// This keystore's home for bytes the caller sealed, where the tier has
-    /// one: the file tier, and the process-memory tier of tests. `None`
-    /// elsewhere, never a weaker home.
+    /// one: the file tier, the TPM tier (the same files; the chip does not
+    /// seal them), and the process-memory tier of tests. `None` elsewhere,
+    /// never a weaker home.
     fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        None
+    }
+    /// The one secret this keystore's secure hardware releases only for an
+    /// auth value, counting the wrong ones: the TPM tier, and a
+    /// process-memory keystore a test made with a counter. `None` elsewhere:
+    /// a tier whose hardware does not count holds no such secret.
+    fn auth_bound_secret(&self) -> Option<&dyn AuthBoundSecretStore> {
         None
     }
 }
