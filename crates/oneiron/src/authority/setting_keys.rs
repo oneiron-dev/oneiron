@@ -14,7 +14,7 @@ crate::setting::setting_keys! {
     /// it in its own writer and refuses a longer ask; a grant minted under it keeps its
     /// lifetime when the cap is lowered later. One day until the owner sets another; a value
     /// under one second reads as one second, and a row that does not decode reads as one day.
-    /// A longer cap is the looser value, so only the owner raises it; an agent's change waits
+    /// A longer cap is the looser value, so only the owner raises it; an agent's raise waits
     /// on the owner's answer.
     pub(crate) SUPPORT_GRANT_MAX_TTL: u64 = "support.grant.max_ttl_secs" {
         kind: Kind::new(one_day).strictest(one_day).tighter(lower_is_tighter::<u64>),
