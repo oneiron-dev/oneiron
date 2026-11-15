@@ -8,9 +8,10 @@
 //! entry hash. The append funnel writes the record in the writer that
 //! appends the row, before the batch door reads the row back. An in-vault
 //! reader opens a sealed row with its record; once the subject's key is
-//! retired, or before the record reaches this install, the row reads as
-//! erased: its scaffold still verifies, and nothing it made counts
-//! ("Missing history never counts as permission").
+//! retired, or before the record reaches this install, the row passes
+//! through: its scaffold still verifies, and nothing it made counts
+//! ("Missing history never counts as permission"). Only a row marked in
+//! AUTHORITY_ERASED_ROW is reported erased; an unmarked row is unopened.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -31,6 +32,19 @@ const AUTHORITY_OVERLAY: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
 /// arrived (census L5-22 PR 1b).
 const AUTHORITY_ERASED_ROW: SideTable<AuthorityEntryHash, (), Raw> =
     SideTable::new(&side_table::AUTHORITY_ERASED_ROW);
+
+/// Whether an erase deleted `hash`'s overlay here, or dropped it where it
+/// arrived. The mark distinguishes an erased row from one not yet opened.
+///
+/// # Errors
+/// Storage faults.
+pub(crate) fn authority_row_erased_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    hash: &AuthorityEntryHash,
+) -> Result<bool> {
+    AUTHORITY_ERASED_ROW.contains(store, txn, hash)
+}
 
 /// The most bytes one sealed `AUTHORITY_OVERLAY` row holds (census L5-22
 /// 1a-ii). A row travels whole beside its body: inline on a tail or range
@@ -130,25 +144,6 @@ pub(crate) fn decode_carried_authority_fold_row_in_txn(
     overlays: &CarriedOverlays,
 ) -> Result<FoldRow> {
     decode_authority_body_with_overlays_in_txn(store, txn, body, Some(overlays))
-}
-
-/// [`decode_carried_authority_fold_row_in_txn`] for a door that needs the whole
-/// entry: a sealed body whose record does not open here answers the
-/// overlay-unavailable error (`is_authority_overlay_unavailable`).
-///
-/// # Errors
-/// As [`decode_carried_authority_fold_row_in_txn`], and a row whose record
-/// does not open here.
-pub(crate) fn open_carried_authority_body_in_txn(
-    store: &Store,
-    txn: &RoTxn<'_>,
-    body: &[u8],
-    overlays: &CarriedOverlays,
-) -> Result<AuthorityLogEntry> {
-    match decode_carried_authority_fold_row_in_txn(store, txn, body, overlays)? {
-        FoldRow::Open(entry) => Ok(entry),
-        FoldRow::PassThrough(_) => Err(authority_overlay_unavailable()),
-    }
 }
 
 fn decode_authority_body_with_overlays_in_txn(

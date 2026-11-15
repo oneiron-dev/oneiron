@@ -231,9 +231,9 @@ pub use oneiron_authority::authority::{
 pub use oneiron_authority::authority::WorldPrivacyWorkBasis;
 // Census L5-22: this vault's reads of a sealed authority row.
 pub(crate) use overlay_rows::{
-    AUTHORITY_OVERLAY_ROW_MAX, CarriedOverlays, carried_overlays_in_txn,
-    decode_carried_authority_fold_row_in_txn, decode_vault_authority_fold_row_in_txn,
-    open_carried_authority_body_in_txn, open_vault_authority_body_in_txn,
+    AUTHORITY_OVERLAY_ROW_MAX, CarriedOverlays, authority_row_erased_in_txn,
+    carried_overlays_in_txn, decode_carried_authority_fold_row_in_txn,
+    decode_vault_authority_fold_row_in_txn, open_vault_authority_body_in_txn,
     stage_carried_overlays_in_txn,
 };
 // Census L5-22 1a-iii: the key events the vault's custody carrier

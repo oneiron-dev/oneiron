@@ -5,9 +5,11 @@
 //! request, so delivery fetches exactly those (range fetch); meanwhile the
 //! fold holds every row above a gap invalid instead of folding the rows it has
 //! as complete. Coverage reports each requested hash by its evidence: a held
-//! signed row is scaffold and semantic availability, never authorization; a
-//! row the adopted checkpoint image covers is attested, held or not.
-//! `erased` waits for an erasure record, so it stays empty until one exists.
+//! signed row is scaffold availability, never authorization; an opened row
+//! also has semantic availability. A row the adopted checkpoint image covers
+//! is attested, held or not. `erased` names held rows whose overlay an erase
+//! deleted here (AUTHORITY_ERASED_ROW): their scaffold verifies, but they are
+//! never replayed. An unmarked pass-through row is unopened, not erased.
 //! Archive coverage ([`AuthorityArchiveCoverage`]) adds where the original
 //! signed scaffold stands: held here, or advertised by an archive manifest of
 //! the adopted image under another custodian. An advertisement is
@@ -59,7 +61,9 @@ pub struct AuthorityHistoryCoverage {
     pub semantic: BTreeSet<AuthorityEntryHash>,
     /// Covered by the verified checkpoint image this vault adopted.
     pub attested: BTreeSet<AuthorityEntryHash>,
-    /// Known erased by an erasure record (none until one exists).
+    /// Held rows whose overlay an erase deleted here (AUTHORITY_ERASED_ROW).
+    /// Their scaffold verifies; they are never replayed. An unmarked
+    /// pass-through row is unopened, not erased.
     pub erased: BTreeSet<AuthorityEntryHash>,
     pub unavailable: BTreeSet<AuthorityEntryHash>,
     /// The same hashes by archive evidence.
@@ -79,7 +83,9 @@ pub struct AuthorityArchiveCoverage {
     pub archived_elsewhere: BTreeMap<AuthorityEntryHash, BTreeSet<[u8; 32]>>,
     /// Covered by the verified checkpoint image this vault adopted.
     pub checkpoint_attested: BTreeSet<AuthorityEntryHash>,
-    /// Known erased by an erasure record (none until one exists).
+    /// Held rows whose overlay an erase deleted here (AUTHORITY_ERASED_ROW).
+    /// Their scaffold verifies; they are never replayed. An unmarked
+    /// pass-through row is unopened, not erased.
     pub erased: BTreeSet<AuthorityEntryHash>,
     /// Requested and not held here, advertised or attested or not: never
     /// erased, never permission.
@@ -98,10 +104,13 @@ pub(super) fn archive_coverage_in_txn(
     for hash in requested {
         // A row that does not decode, or decodes to another hash, proves
         // nothing about this one.
-        if let Some(entry) = super::stored_authority_row(&vault.store, txn, hash)?
-            && authority_entry_hash(&entry)? == *hash
+        if let Some(row) = super::door_ancestor_row(&vault.store, txn, None, hash)?
+            && row.hash()? == *hash
         {
             coverage.held.insert(*hash);
+            if authority_row_erased_in_txn(&vault.store, txn, hash)? {
+                coverage.erased.insert(*hash);
+            }
         }
     }
     coverage.unavailable = requested.difference(&coverage.held).copied().collect();
@@ -213,8 +222,9 @@ fn held_history_request_in_txn(
 }
 
 /// [`Vault::authority_history_coverage`] on the caller's snapshot: a held
-/// row is scaffold and semantic availability; attested, never replayed, so
-/// `unavailable` still names a covered row with no scaffold here.
+/// row is scaffold availability, and an opened row also has semantic
+/// availability, never a claim of replay. `unavailable` still names a covered
+/// row with no scaffold here.
 pub(crate) fn authority_history_coverage_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -223,10 +233,16 @@ pub(crate) fn authority_history_coverage_in_txn(
     // The adoption's attestation and archive stand whatever the image covers.
     let adopted = super::checkpoint_adopt::cached_verified_adoption_in_txn(&vault.store, txn)?;
     let archive = archive_coverage_in_txn(vault, txn, adopted.as_deref(), requested)?;
+    let mut semantic = BTreeSet::new();
+    for hash in &archive.held {
+        if super::stored_authority_row(&vault.store, txn, hash)?.is_some() {
+            semantic.insert(*hash);
+        }
+    }
     Ok(AuthorityHistoryCoverage {
         requested: requested.clone(),
         scaffold: archive.held.clone(),
-        semantic: archive.held.clone(),
+        semantic,
         attested: archive.checkpoint_attested.clone(),
         erased: archive.erased.clone(),
         unavailable: archive.unavailable.clone(),
