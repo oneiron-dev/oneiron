@@ -221,7 +221,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::CHECK_IN_RECEIPT.name => Some(Group::CheckIn),
         name if name == side_table::ESIGN_AUDIT.name => Some(Group::Esign),
-        name if name == side_table::HOOKS_GRANT.name => Some(Group::RuntimeHooks),
         name if name == side_table::HOOKS_RECEIPT.name => Some(Group::RuntimeHooks),
         name if name == side_table::HOOKS_REGEN_RECEIPT.name => Some(Group::RuntimeHooks),
         name if name == side_table::INQUIRY_RECEIPT.name => Some(Group::Inquiry),
