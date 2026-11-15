@@ -603,7 +603,7 @@ impl Vault {
     /// it holds. Unlinked: the write sets its parent and keeps it.
     pub fn build_authority_checkpoint_v2(&self) -> Result<AuthorityCheckpointV2> {
         let txn = self.store.env.read_txn()?;
-        self.build_next_authority_checkpoint_in_txn(&txn)
+        self.build_authority_checkpoint_v2_in_txn(&txn)
     }
 
     /// [`Vault::build_authority_checkpoint_v2`] in the caller's snapshot.
