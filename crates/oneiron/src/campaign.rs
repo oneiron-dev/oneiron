@@ -59,6 +59,10 @@ pub mod compliance;
 /// into it rather than growing a second reputation model.
 pub mod send_hygiene;
 
+/// The campaign's own pack Setting keys: whether a dead sticky sender rotates
+/// (`campaign.sender.rotate_on_dead`).
+pub(crate) mod setting_keys;
+
 /// CA-04's stage-ladder machinery: the pure ladder schema, coded-reply routing,
 /// warm/cold lane selection, the single projector that writes `crm.stage`
 /// through CA-01's transition door, read-side calendar-outcome consumption, and

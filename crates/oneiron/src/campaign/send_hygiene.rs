@@ -19,7 +19,8 @@
 //! 4. **Sticky sender.** First touch on a member-channel binds the proposed
 //!    identity into `campaign.member.channels[].sender_ref`; later touches reuse
 //!    it. A dead mailbox returns a human-visible restart, never a silent
-//!    rotation.
+//!    rotation: only the owner's `campaign.sender.rotate_on_dead` moves it to
+//!    the proposed identity, and every such rotation notifies each vault owner.
 //!
 //! Ownership is deliberately thin. Every predicate constant, value codec, and
 //! exact-predicate validator this module writes through belongs to
@@ -45,7 +46,10 @@ use crate::claim::{
 };
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::temporal::TimeRange;
+
+use super::setting_keys::sender_rotates_on_dead_in_txn;
 
 // ---------------------------------------------------------------------------
 // Suppression
@@ -321,14 +325,34 @@ pub enum StickySenderOutcome {
         /// The stored identity.
         sender_ref: EntityId,
     },
-    /// The stored identity is dead. Nothing was written.
+    /// The stored identity is dead, and the owner's
+    /// `campaign.sender.rotate_on_dead` is off (the default) or the proposal
+    /// is that same identity. Nothing was written.
     RestartRequired {
         /// The dead stored identity.
         previous_sender_ref: EntityId,
         /// The identity a rotation would have used.
         proposed_sender_ref: EntityId,
     },
+    /// The stored identity was dead, and the owner's
+    /// `campaign.sender.rotate_on_dead` moved the member-channel to the
+    /// proposed one.
+    Rotated {
+        /// The dead identity the member-channel left.
+        previous_sender_ref: EntityId,
+        /// The identity now stored.
+        sender_ref: EntityId,
+        /// The rotation's receipt: the `campaign.member` head that names
+        /// `sender_ref`, superseding the head that named the dead identity.
+        member_head_ref: EntityId,
+        /// The notice each vault owner got, one per owner.
+        notice_refs: Vec<EntityId>,
+    },
 }
+
+/// The producer of the notice each vault owner gets when a campaign
+/// member-channel rotates off its dead sticky sender.
+pub const CAMPAIGN_SENDER_ROTATED_NOTIFICATION_PRODUCER: &str = "campaign.sender.rotated";
 
 /// Binds or reuses the sticky sender for one member-channel.
 ///
@@ -379,7 +403,11 @@ pub fn bind_sticky_sender(
 /// when a healthier identity is proposed; and a DEAD existing binding is
 /// [`StickySenderOutcome::RestartRequired`] with nothing written, because a
 /// silent rotation is exactly the invisible identity change a human needs to
-/// see and rule on.
+/// see and rule on. The owner rules on it once with
+/// `campaign.sender.rotate_on_dead` (read in `wtxn`): with it on, a dead
+/// binding moves to the proposed identity in this write
+/// ([`StickySenderOutcome::Rotated`]), and the change stays visible: the
+/// replacement head is its receipt, and each vault owner gets a notice.
 ///
 /// Membership itself is CA-03's door. This binds a channel row onto an existing
 /// `campaign.member` head; it never mints one.
@@ -411,15 +439,55 @@ pub(crate) fn bind_sticky_sender_in_txn(
             .ok_or(Error::EntityNotFound)?;
 
     if let Some(bound) = old_value.channels.iter().find(|row| row.channel == channel) {
-        return Ok(if existing_sender_live {
-            StickySenderOutcome::Reused {
-                sender_ref: bound.sender_ref,
-            }
-        } else {
-            StickySenderOutcome::RestartRequired {
-                previous_sender_ref: bound.sender_ref,
+        let previous_sender_ref = bound.sender_ref;
+        if existing_sender_live {
+            return Ok(StickySenderOutcome::Reused {
+                sender_ref: previous_sender_ref,
+            });
+        }
+        if previous_sender_ref == proposed_sender_ref
+            || !sender_rotates_on_dead_in_txn(vault, &*wtxn)?
+        {
+            return Ok(StickySenderOutcome::RestartRequired {
+                previous_sender_ref,
                 proposed_sender_ref,
+            });
+        }
+        // The channel's contact basis stays; the caller's evidence is the
+        // replacement head's, as on a first bind.
+        let mut value = old_value;
+        for row in &mut value.channels {
+            if row.channel == channel {
+                row.sender_ref = proposed_sender_ref;
             }
+        }
+        let member_head_ref = replace_member_head_in_txn(
+            vault,
+            wtxn,
+            MemberHeadReplacement {
+                value: &value,
+                evidence_ref: basis_evidence,
+                occurred: occurred_at,
+                old_id,
+            },
+        )?;
+        let notice_refs = notify_owners_of_sender_rotation_in_txn(
+            vault,
+            wtxn,
+            &SenderRotation {
+                person_ref,
+                campaign_ref,
+                previous_sender_ref,
+                sender_ref: proposed_sender_ref,
+                member_head_ref,
+                occurred_at,
+            },
+        )?;
+        return Ok(StickySenderOutcome::Rotated {
+            previous_sender_ref,
+            sender_ref: proposed_sender_ref,
+            member_head_ref,
+            notice_refs,
         });
     }
 
@@ -442,6 +510,52 @@ pub(crate) fn bind_sticky_sender_in_txn(
     Ok(StickySenderOutcome::Bound {
         sender_ref: proposed_sender_ref,
     })
+}
+
+/// One rotation off a dead sticky sender, as its owner notices name it.
+struct SenderRotation {
+    person_ref: EntityId,
+    campaign_ref: EntityId,
+    previous_sender_ref: EntityId,
+    sender_ref: EntityId,
+    member_head_ref: EntityId,
+    occurred_at: u64,
+}
+
+/// One notice per vault owner, in the rotation's write: the rotation's head
+/// is its result, the dead sender its detail, and the person, the campaign
+/// and both senders its subjects.
+fn notify_owners_of_sender_rotation_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    rotation: &SenderRotation,
+) -> Result<Vec<EntityId>> {
+    let mut notice_refs = Vec::new();
+    for owner in crate::policy_model::owners_in_txn(vault, &*wtxn)? {
+        notice_refs.push(vault.record_notification_in_txn(
+            wtxn,
+            &NotificationEvent {
+                kind: NotificationKind::Finding,
+                source: NotificationSource {
+                    producer: CAMPAIGN_SENDER_ROTATED_NOTIFICATION_PRODUCER.to_owned(),
+                    event: format!("{}:{}", rotation.member_head_ref.to_hex(), owner.to_hex()),
+                    result: Some(rotation.member_head_ref.to_hex()),
+                    detail: Some(rotation.previous_sender_ref.to_hex()),
+                    ..NotificationSource::default()
+                },
+                subject_refs: vec![
+                    rotation.person_ref,
+                    rotation.campaign_ref,
+                    rotation.previous_sender_ref,
+                    rotation.sender_ref,
+                ],
+                recipient: Some(owner),
+                created_at: rotation.occurred_at,
+                origin_conversation: None,
+            },
+        )?);
+    }
+    Ok(notice_refs)
 }
 
 // ---------------------------------------------------------------------------
