@@ -3,12 +3,16 @@
 
 use crate::calendar::claims::predicates::CONTENT_HASH_LEN;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// Sync direction of one calendar passport.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("calendar.passport.direction")]
 pub enum CalendarPassportDirection {
     /// Read from the foreign system.
     Inbound,
@@ -19,25 +23,10 @@ pub enum CalendarPassportDirection {
 }
 
 impl CalendarPassportDirection {
-    /// Wire token for this direction.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Inbound => "inbound",
-            Self::Outbound => "outbound",
-            Self::TwoWay => "two_way",
-        }
-    }
-
     /// Parses a wire token, rejecting anything outside the closed set.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "inbound" => Some(Self::Inbound),
-            "outbound" => Some(Self::Outbound),
-            "two_way" => Some(Self::TwoWay),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     /// Whether this direction participates in imported-absence cancellation.
@@ -52,9 +41,19 @@ impl CalendarPassportDirection {
 
 /// Whether one source still reports the EVENT in its feed.
 #[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("calendar.passport.presence")]
 pub enum CalendarPassportPresence {
     /// The source still reports this UID. The default when the field is missing.
     #[default]
@@ -64,23 +63,10 @@ pub enum CalendarPassportPresence {
 }
 
 impl CalendarPassportPresence {
-    /// Wire token for this presence.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Live => "live",
-            Self::Absent => "absent",
-        }
-    }
-
     /// Parses a wire token, rejecting anything outside the closed set.
     #[must_use]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "live" => Some(Self::Live),
-            "absent" => Some(Self::Absent),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
