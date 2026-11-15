@@ -45,13 +45,11 @@ impl LfsOid {
                 "lfs oid must be 64 hex characters",
             )));
         }
-        let mut bytes = [0_u8; VAULT_LFS_OID_LEN];
-        for (slot, pair) in bytes.iter_mut().zip(value.as_bytes().chunks_exact(2)) {
-            let high = hex_nibble(pair[0])?;
-            let low = hex_nibble(pair[1])?;
-            *slot = (high << 4) | low;
-        }
-        Ok(Self(bytes))
+        oneiron_hex::decode_any_case(value)
+            .map(Self)
+            .ok_or(Error::Artifact(ArtifactError::InvalidLfsObject(
+                "lfs oid is not hex",
+            )))
     }
 
     /// The SHA-256 of `bytes` — the first and only hash of an LFS body.
@@ -74,12 +72,7 @@ impl LfsOid {
     /// The 64-character lowercase hex spelling clients send on the wire.
     #[must_use]
     pub fn to_hex(self) -> String {
-        let mut hex = String::with_capacity(VAULT_LFS_OID_HEX_LEN);
-        for byte in self.0 {
-            hex.push(hex_digit(byte >> 4));
-            hex.push(hex_digit(byte & 0x0f));
-        }
-        hex
+        oneiron_hex::encode(&self.0)
     }
 }
 
@@ -111,24 +104,5 @@ impl RawValue for LfsOid {
                 .try_into()
                 .map_err(|_| Error::CorruptedIndex("lfs reverse oid"))?,
         ))
-    }
-}
-
-const fn hex_digit(nibble: u8) -> char {
-    (if nibble < 10 {
-        b'0' + nibble
-    } else {
-        b'a' + (nibble - 10)
-    }) as char
-}
-
-fn hex_nibble(byte: u8) -> Result<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(Error::Artifact(ArtifactError::InvalidLfsObject(
-            "lfs oid is not hex",
-        ))),
     }
 }

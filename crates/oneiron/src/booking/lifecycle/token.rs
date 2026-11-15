@@ -2,7 +2,6 @@
 //! digests, and the token/hold row reads that resolve them.
 
 use rand_core::{OsRng, RngCore};
-use serde::{Deserialize, Serialize};
 
 use super::claim::{booking_event_type_in, read_booking_facts_to_cancel};
 use super::storage::{HOLD, confirm_receipt_key, engine_failure, read_receipt, read_txn, refused};
@@ -24,52 +23,14 @@ const TOKEN_DIGEST_DOMAIN: &[u8] = b"oneiron.booking.token.v1\0";
 
 const LEASE_DIGEST_DOMAIN: &[u8] = b"oneiron.booking.checkout_lease.v1\0";
 
-const SESSION_KEY_DOMAIN: &[u8] = b"oneiron.booking.session_key.v1\0";
+#[doc(hidden)]
+pub(in crate::booking) use oneiron_records::booking::lifecycle::token::digest_with;
+#[doc(hidden)]
+pub use oneiron_records::booking::lifecycle::token::{
+    HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey,
+};
 
 const REVISION_TOKEN_DOMAIN: &[u8] = b"oneiron.booking.revision_token.v1\0";
-
-/// An opaque bearer credential. It encodes nothing: not an EVENT id, a UID, an
-/// email address, an action, or a timestamp. Only its digest is ever persisted.
-///
-/// A hold token is 32 CSPRNG bytes. The revision credentials one confirm issues
-/// are DERIVED from that hold token (`revision_token`) rather than minted
-/// independently, so a confirm retry is answered with the pair it was answered
-/// with the first time instead of a second authority over the same booking.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpaqueLifecycleToken(pub String);
-
-/// A server-issued, session-bound checkout lease. Same opacity contract.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct OpaqueCheckoutLeaseToken(pub String);
-
-/// The derived visitor session key. Deriving it is the server's job; this type
-/// is the 32-byte result, and holds are keyed by it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SessionKey(pub [u8; 32]);
-
-impl SessionKey {
-    /// Derives a session key from opaque server-side session material.
-    ///
-    /// Domain-separated, so session material can never collide with a token or
-    /// lease digest computed over the same bytes.
-    #[must_use]
-    pub fn derive(material: &[u8]) -> Self {
-        Self(digest_with(SESSION_KEY_DOMAIN, material))
-    }
-}
-
-/// What a hold's lifetime is grounded in.
-///
-/// There is deliberately no caller TTL on either arm: `Ordinary` takes the
-/// server default, and `CheckoutExtension` is capped by the verified lease AND
-/// by [`MAX_CHECKOUT_HOLD_TTL_SECS`](super::MAX_CHECKOUT_HOLD_TTL_SECS).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum HoldLeaseSpec {
-    Ordinary,
-    CheckoutExtension {
-        server_issued_lease: OpaqueCheckoutLeaseToken,
-    },
-}
 
 /// Mints a fresh bearer credential from the OS CSPRNG.
 ///
@@ -83,23 +44,7 @@ pub(in crate::booking) fn mint_raw_token() -> String {
 }
 
 pub(crate) fn hex_lower(bytes: &[u8]) -> String {
-    const DIGITS: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(char::from(DIGITS[usize::from(byte >> 4)]));
-        out.push(char::from(DIGITS[usize::from(byte & 0x0F)]));
-    }
-    out
-}
-
-/// Domain-tagged BLAKE3. `pub(crate)` so ONE-1821's companion digests keep the
-/// same discipline instead of re-deriving it: a companion participant hash can
-/// never be replayed as a hold token digest, because the domain differs.
-pub(in crate::booking) fn digest_with(domain: &[u8], material: &[u8]) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(domain);
-    hasher.update(material);
-    *hasher.finalize().as_bytes()
+    oneiron_hex::encode(bytes)
 }
 
 /// The persisted digest of a lifecycle bearer token.
