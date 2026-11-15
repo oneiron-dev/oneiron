@@ -7,7 +7,9 @@
 //! On a tree without the subcommand, `load` prints its usage and exits 1.
 //!
 //! Other systems join through the adapter protocol (`--system <name>=<url>`);
-//! the tests serve a stub adapter in their own process.
+//! the tests serve a stub adapter in their own process. The judged column
+//! (`--reader`, `--judge`) calls OpenAI-compatible endpoints; the tests serve
+//! a stub model there too.
 //!
 //! `cargo test --locked -p oneiron-bench --test lives_bench_cli`.
 #![allow(
@@ -16,13 +18,14 @@
 )]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use axum::Json;
 use axum::extract::{Path as UrlPath, State};
+use axum::http::HeaderMap;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
 
@@ -609,4 +612,292 @@ fn an_adapter_that_never_settles_is_not_ready_and_the_rest_still_run() {
         .filter(|(op, _)| op == "settle")
         .count();
     assert!(settles >= 2, "settle was polled: {settles}");
+}
+
+/// The key the judged run's endpoints take; it must reach them and nothing else.
+const MODEL_KEY: &str = "stub-model-key-7f3a91";
+
+/// Every call a stub model took: (model, Authorization header, reply).
+type Calls = Arc<Mutex<Vec<(String, String, String)>>>;
+
+#[derive(Clone)]
+struct ModelState {
+    /// The fixture's questions by text, each with its gold answer span.
+    spans: Arc<BTreeMap<String, Option<String>>>,
+    calls: Calls,
+}
+
+/// A stub OpenAI-compatible endpoint on loopback, in this test's own runtime.
+struct ModelStub {
+    /// Ends where `/chat/completions` follows.
+    base_url: String,
+    calls: Calls,
+    _runtime: tokio::runtime::Runtime,
+}
+
+/// Lower case with whitespace runs made one space, as the bench scores.
+fn normal(text: &str) -> String {
+    text.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
+}
+
+/// The rest of the first line of `text` that starts with `label`.
+fn line_after<'t>(text: &'t str, label: &str) -> Option<&'t str> {
+    text.lines().find_map(|line| line.strip_prefix(label))
+}
+
+/// The preflight (a call with no system message) gets `OK`. The reader
+/// (`stub-reader`) answers a fixture question's gold span when the memories it
+/// was given hold it, and `unknown` otherwise. The judge answers `correct` when
+/// the answer equals the gold answer, case aside, and `incorrect` otherwise.
+/// Every reply names the model it was asked for.
+async fn model_call(
+    State(state): State<ModelState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Json<Value> {
+    let model = body["model"].as_str().unwrap_or("").to_owned();
+    let messages = body["messages"].as_array().cloned().unwrap_or_default();
+    let content = |role: &str| {
+        messages
+            .iter()
+            .find(|m| m["role"] == role)
+            .and_then(|m| m["content"].as_str())
+            .map(str::to_owned)
+    };
+    let user = content("user").unwrap_or_default();
+    let reply = if content("system").is_none() {
+        "OK".to_owned()
+    } else if model == "stub-reader" {
+        let question = line_after(&user, "Question: ").unwrap_or("");
+        let memories = user.split("\nQuestion: ").next().unwrap_or("");
+        match state.spans.get(question) {
+            Some(Some(span)) if normal(memories).contains(&normal(span)) => span.clone(),
+            _ => "unknown".to_owned(),
+        }
+    } else {
+        let gold = line_after(&user, "Gold answer: ").unwrap_or("");
+        let answer = line_after(&user, "Answer: ").unwrap_or("");
+        if !gold.is_empty() && gold.eq_ignore_ascii_case(answer) {
+            "correct".to_owned()
+        } else {
+            "incorrect".to_owned()
+        }
+    };
+    let authorization = headers
+        .get("authorization")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    state
+        .calls
+        .lock()
+        .unwrap()
+        .push((model.clone(), authorization, reply.clone()));
+    Json(json!({
+        "model": model,
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": reply}, "finish_reason": "stop"}],
+    }))
+}
+
+fn model_stub() -> ModelStub {
+    let mut spans = BTreeMap::new();
+    for line in std::fs::read_to_string(fixture()).unwrap().lines() {
+        let life: Value = serde_json::from_str(line).unwrap();
+        for list in ["questions", "questions_ja"] {
+            for question in life[list].as_array().into_iter().flatten() {
+                spans.insert(
+                    question["question"].as_str().unwrap().to_owned(),
+                    question["answer_span"].as_str().map(str::to_owned),
+                );
+            }
+        }
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let calls = Calls::default();
+    let listener = runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
+    let base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    let app = axum::Router::new()
+        .route("/v1/chat/completions", axum::routing::post(model_call))
+        .with_state(ModelState {
+            spans: Arc::new(spans),
+            calls: Arc::clone(&calls),
+        });
+    runtime.spawn(async move { axum::serve(listener, app).await });
+    ModelStub {
+        base_url,
+        calls,
+        _runtime: runtime,
+    }
+}
+
+#[test]
+fn judged_rows_score_every_type() {
+    let stub = model_stub();
+    let dir = tempfile::tempdir().unwrap();
+    let key_file = dir.path().join("model.key");
+    std::fs::write(&key_file, format!("{MODEL_KEY}\n")).unwrap();
+    let reader = format!("{},stub-reader", stub.base_url);
+    let judge = format!("{},stub-judge", stub.base_url);
+    let (output, report) = lives(
+        dir.path(),
+        &[&fixture()],
+        &[
+            "--grades",
+            "light",
+            "--limit",
+            "5",
+            "--reader",
+            &reader,
+            "--judge",
+            &judge,
+            "--model-key-file",
+            key_file.to_str().unwrap(),
+        ],
+    );
+    succeeded(&output);
+    let report = report.expect("a report");
+    // The key reaches the endpoints, on every call, and nothing else.
+    assert!(
+        !report.to_string().contains(MODEL_KEY),
+        "the report never holds the key"
+    );
+    assert!(!String::from_utf8_lossy(&output.stderr).contains(MODEL_KEY));
+    let calls = stub.calls.lock().unwrap().clone();
+    let bearer = format!("Bearer {MODEL_KEY}");
+    assert!(
+        calls
+            .iter()
+            .all(|(_, authorization, _)| *authorization == bearer),
+        "every model call carries the key"
+    );
+    // Both models are pinned: id, the id the endpoint answered as, and the
+    // instruction's digest.
+    for (role, model) in [("reader", "stub-reader"), ("judge", "stub-judge")] {
+        let pin = &report["judged"][role];
+        assert_eq!(pin["model"], model, "{pin}");
+        assert_eq!(pin["reply_model"], model, "{pin}");
+        let digest = pin["instruction_sha256"]
+            .as_str()
+            .expect("instruction pinned");
+        assert!(
+            digest.len() == 64 && digest.bytes().all(|b| b.is_ascii_hexdigit()),
+            "{pin}"
+        );
+    }
+    assert_ne!(
+        report["judged"]["reader"]["instruction_sha256"],
+        report["judged"]["judge"]["instruction_sha256"]
+    );
+    let oneiron = system(&report);
+    let rows = rows(oneiron, "light");
+    assert_eq!(rows.len(), 10);
+    for r in &rows {
+        assert!(
+            r["answer_correct"].is_boolean(),
+            "every type is judged: {r}"
+        );
+        assert!(r["answer_error"].is_null(), "{r}");
+    }
+    for life in ["L90001", "L90002"] {
+        let unanswerable = row(&rows, life, "q03");
+        assert_eq!(unanswerable["reader_answer"], "unknown", "{unanswerable}");
+        assert_eq!(
+            unanswerable["answer_correct"], true,
+            "an abstention answers an unanswerable question: {unanswerable}"
+        );
+        let unchecked = row(&rows, life, "q04");
+        assert_eq!(unchecked["answer_correct"], false, "{unchecked}");
+    }
+    // The reader reads exactly the texts the context column scored.
+    for r in rows.iter().filter(|r| r["scored"] == true) {
+        assert_eq!(r["answer_correct"], r["answer_in_context"], "{r}");
+    }
+    let in_context = rows
+        .iter()
+        .filter(|r| r["answer_in_context"] == true)
+        .count();
+    let correct = rows.iter().filter(|r| r["answer_correct"] == true).count();
+    assert_eq!(
+        correct,
+        in_context + 2,
+        "the string hits and the two abstentions"
+    );
+    // The judge grades only answers given to answerable questions.
+    let judged_answers = rows
+        .iter()
+        .filter(|r| r["type"] != "unanswerable" && r["reader_answer"] != "unknown")
+        .count();
+    let verdicts = calls
+        .iter()
+        .filter(|(model, _, reply)| model == "stub-judge" && reply != "OK")
+        .count();
+    assert!(
+        judged_answers >= 5,
+        "the five English string hits: {judged_answers}"
+    );
+    assert_eq!(verdicts, judged_answers);
+    // The judged column is the headline.
+    let summary = &oneiron["summary"][0];
+    assert_eq!(summary["headline"], "answer_correct", "{summary}");
+    assert_eq!(summary["judged"]["judged"], 10, "{summary}");
+    assert_eq!(summary["judged"]["correct"], correct, "{summary}");
+    assert_eq!(summary["judged"]["by_type"]["unanswerable"]["correct"], 2);
+    assert_eq!(
+        summary["headline_rate"].as_f64(),
+        Some(correct as f64 / 10.0)
+    );
+    // A run without models leads with the context column.
+    let (screen_output, screen_report) = screen();
+    succeeded(screen_output);
+    let plain = &system(screen_report.as_ref().unwrap())["summary"][0];
+    assert_eq!(plain["headline"], "answer_in_context", "{plain}");
+    assert!(plain["judged"].is_null(), "{plain}");
+}
+
+#[test]
+fn a_reader_without_a_key_file_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let models = [
+        "--reader",
+        "http://127.0.0.1:9/v1,stub-reader",
+        "--judge",
+        "http://127.0.0.1:9/v1,stub-judge",
+    ];
+    let (output, report) = lives(dir.path(), &[&fixture()], &models);
+    assert!(!output.status.success());
+    assert!(report.is_none(), "refused before any store is opened");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--model-key-file"),
+        "stderr names the missing flag: {stderr}"
+    );
+    // An empty key file is refused before any model is called or store opened.
+    let key_file = dir.path().join("empty.key");
+    std::fs::write(&key_file, "\n").unwrap();
+    let mut args = models.to_vec();
+    args.extend(["--model-key-file", key_file.to_str().unwrap()]);
+    let (output, report) = lives(dir.path(), &[&fixture()], &args);
+    assert!(!output.status.success());
+    assert!(report.is_none());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--model-key-file") && stderr.contains("empty"),
+        "stderr names the empty key file: {stderr}"
+    );
+    // A reader needs a judge.
+    let (output, _) = lives(dir.path(), &[&fixture()], &models[..2]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("--judge"),
+        "a reader alone is refused by naming --judge"
+    );
 }
