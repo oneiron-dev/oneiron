@@ -4,17 +4,22 @@
 //! Normalized Phonetic Distance.
 //!
 //! An entity scores its best distance over its keys and the query's keys.
-//! Entities further than the threshold are no match; of the rest, those
-//! within the keep ratio of the best distance are kept, nearest first, up to
-//! the cap (CROSS-ARCH-0013 `#problem`). A kept match adds `1 - distance` to
-//! the entity's channel score as one more match, so an exact code (1.0)
-//! always outscores a sound alone, and the channel's agreement boost rewards
-//! code and sound agreeing (`#flow`: a phonetic match only boosts).
+//! Entities further than the threshold are no match; of the rest the call
+//! may see, those within the keep ratio of the best distance are kept,
+//! nearest first, up to the cap (CROSS-ARCH-0013 `#problem`). A row the call
+//! may not see never sets that best distance or takes a place under the cap,
+//! so it neither hides a readable match nor shows by its absence. A kept
+//! match adds `1 - distance` to the entity's channel score as one more
+//! match, so an exact code (1.0) always outscores a sound alone, and the
+//! channel's agreement boost rewards code and sound agreeing (`#flow`: a
+//! phonetic match only boosts).
 
 use std::collections::HashMap;
 
+use super::SoundMatchAdmission;
 use crate::EntityId;
 use crate::batch::phonetic_codes::{Segment, ipa_segments, npd};
+use crate::error::Result;
 use crate::pipeline::RetrievalParams;
 
 /// The prefix of a sound key.
@@ -87,19 +92,34 @@ impl SoundScan {
         }
     }
 
-    /// The kept matches, nearest first: within the threshold, within the
-    /// keep ratio of the best distance, at most the cap. Equal distances
-    /// keep id order, so a cut is the same on every run.
-    pub(crate) fn finish(self) -> Vec<(EntityId, f32)> {
+    /// The kept matches, nearest first: within the threshold, admitted by
+    /// `admission` (every match when `None`), within the keep ratio of the
+    /// nearest admitted distance, at most the cap. Matches are asked nearest
+    /// first, and none past the cut is asked. Equal distances keep id order,
+    /// so a cut is the same on every run.
+    pub(crate) fn finish(
+        self,
+        mut admission: Option<&mut SoundMatchAdmission<'_>>,
+    ) -> Result<Vec<(EntityId, f32)>> {
         let mut matches: Vec<(EntityId, f32)> = self.best.into_iter().collect();
         matches.sort_by(|a, b| a.1.total_cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
-        let Some(&(_, nearest)) = matches.first() else {
-            return matches;
-        };
-        let bound = nearest * self.keep_ratio;
-        matches.retain(|(_, distance)| *distance <= bound);
-        matches.truncate(self.cap);
-        matches
+        let mut kept = Vec::new();
+        let mut bound = None;
+        for (id, distance) in matches {
+            if kept.len() >= self.cap || bound.is_some_and(|bound| distance > bound) {
+                break;
+            }
+            if let Some(admits) = admission.as_deref_mut()
+                && !admits(&id)?
+            {
+                continue;
+            }
+            if bound.is_none() {
+                bound = Some(distance * self.keep_ratio);
+            }
+            kept.push((id, distance));
+        }
+        Ok(kept)
     }
 }
 
