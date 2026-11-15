@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use oneiron::llm::run_admission::{LeaseUnit, Payer, UnitRate};
 use oneiron::{LlmCapability, ModelLocality};
-use oneiron_llm_openai::EmbedShape;
+use oneiron_llm::openai_compat::EmbedShape;
 use serde::Deserialize;
 
 /// How the server talks to a provider. Every kind is reached over HTTP; none

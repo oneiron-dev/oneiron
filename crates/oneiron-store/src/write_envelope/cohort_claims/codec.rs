@@ -5,6 +5,7 @@ use rmpv::Value;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::msgpack::{Entries, MsgpackError};
 
 use super::types::*;
 
@@ -526,27 +527,18 @@ fn value_map(value: &Value) -> Result<&[(Value, Value)]> {
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    let mut matches = entries
-        .iter()
-        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
-    let value = matches
-        .next()
-        .ok_or_else(|| invalid_claim("campaign pack value missing required key"))?;
-    if matches.next().is_some() {
-        return Err(invalid_claim("campaign pack value contains duplicate key"));
-    }
-    Ok(value)
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid_claim(match error {
+            MsgpackError::DuplicateKey(_) => "campaign pack value contains duplicate key",
+            _ => "campaign pack value missing required key",
+        })
+    })
 }
 
 fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
-    let mut matches = entries
-        .iter()
-        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
-    let value = matches.next();
-    if matches.next().is_some() {
-        return Err(invalid_claim("campaign pack value contains duplicate key"));
-    }
-    Ok(value)
+    Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid_claim("campaign pack value contains duplicate key"))
 }
 
 fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {

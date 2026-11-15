@@ -30,18 +30,6 @@ struct PredictedSetRequest {
     offset: u64,
 }
 
-/// Parses a predicted-set digest as the wire spells it: 64 lowercase hex characters.
-fn digest_from_hex(text: &str) -> Option<[u8; 32]> {
-    if text.len() != 64 || !text.bytes().all(|c| matches!(c, b'0'..=b'9' | b'a'..=b'f')) {
-        return None;
-    }
-    let mut digest = [0u8; 32];
-    for (byte, pair) in digest.iter_mut().zip(text.as_bytes().chunks(2)) {
-        *byte = u8::from_str_radix(std::str::from_utf8(pair).ok()?, 16).ok()?;
-    }
-    Some(digest)
-}
-
 /// The machine's ask for its prediction: computed on its fresh admission and pushed as a
 /// residence directive replacing its last one. An engine refusal answers as a bad request
 /// carrying its text.
@@ -91,7 +79,8 @@ pub(super) fn predicted_set(
     let PeerMachine::Proven { machine, .. } = peer else {
         return Err(AppError::unauthorized());
     };
-    let digest = digest_from_hex(&input.digest).ok_or_else(AppError::invalid_params)?;
+    // The wire spells a digest as 64 lowercase hex characters; anything else is refused.
+    let digest = oneiron_hex::decode::<32>(&input.digest).ok_or_else(AppError::invalid_params)?;
     let body = server
         .vault
         .predicted_residence_body(machine, &digest)

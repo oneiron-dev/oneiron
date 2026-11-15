@@ -115,20 +115,10 @@ fn refused(reason: &str) -> Error {
     Error::InvalidConfig(reason.to_owned())
 }
 
-/// A set digest as its key spells it: 64 lowercase hex characters.
-fn digest_hex(digest: &[u8; 32]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut text = String::with_capacity(64);
-    for byte in digest {
-        text.push(char::from(HEX[usize::from(byte >> 4)]));
-        text.push(char::from(HEX[usize::from(byte & 0x0f)]));
-    }
-    text
-}
-
-/// The set body's key for the prediction `machine` holds under `digest`.
+/// The set body's key for the prediction `machine` holds under `digest` (the digest as 64
+/// lowercase hex characters).
 fn predicted_body_key(machine: EntityId, digest: &[u8; 32]) -> (HexId, String) {
-    (HexId(machine), digest_hex(digest))
+    (HexId(machine), oneiron_hex::encode(digest))
 }
 
 /// The live predicted-level approval for `machine`: its latest mode act, which must be the
@@ -490,7 +480,7 @@ impl Vault {
         machine: EntityId,
         keep: &[u8; 32],
     ) -> Result<()> {
-        let keep = digest_hex(keep);
+        let keep = oneiron_hex::encode(keep);
         let held = PREDICTED_BODY.scan_keys(&self.store, txn, machine.to_hex().as_bytes())?;
         for key in held {
             if key.1 != keep {

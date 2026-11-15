@@ -24,9 +24,9 @@ use oneiron::settings::backup::BackupPolicy;
 
 use super::backup::{self, BackupOutcome, BackupPlan, BackupRecord, Rehearsal, write_budget};
 use super::location::{self, Location};
-use super::stamp::now_unix_ms;
 use super::{OwnerError, OwnerResult};
 use crate::server::{HousekeepingAdmission, SyncServer, admit_every_pass};
+use oneiron_base::unix_millis_now;
 
 /// The managed backup duty: hourly when changed, before an idle reap, and
 /// the prune-only pass.
@@ -403,7 +403,7 @@ impl OwnerHost {
                 .saturating_mul(1_000);
             let due = backup::list(&plan)?
                 .last()
-                .is_none_or(|newest| now_unix_ms().saturating_sub(newest.taken_ms) >= every_ms);
+                .is_none_or(|newest| unix_millis_now().saturating_sub(newest.taken_ms) >= every_ms);
             if due {
                 self.enter(PassStage::OwnerBackup);
                 return backup::take_automatic(vault, &plan).map(Some);

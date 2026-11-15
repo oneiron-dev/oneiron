@@ -1,7 +1,7 @@
 //! The request one case sends, and what of it the row records.
 //!
 //! Every knob here is one the production wire already has: sampling fields
-//! ride `LlmRequest::params`, which `oneiron-llm-openai` copies into the body
+//! ride `LlmRequest::params`, which `oneiron_llm::openai_compat` copies into the body
 //! verbatim; thinking rides the envelope's `seat_effort`, which the wire turns
 //! into `chat_template_kwargs` for an own server; the schema rides
 //! `response_format`, which the provider's config may drop on the wire; solo
