@@ -114,8 +114,8 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
 ///
 /// A row the image's fold holds no state at, though its own transition
 /// admits it there under the image's inputs, fell to the fold's settlement
-/// (FIX 11263): a retired signer's fence, a confirmation collision or an
-/// unsettled handoff on it or beneath it, or a causal sequence floor. None
+/// (FIX 11263): a retired signer's fence or an unsettled handoff on it or
+/// beneath it, or a causal sequence floor. None
 /// of those reads the pin or the peers, so under this install's inputs it
 /// falls the same way, whether its transition admits it there or not. A row
 /// the world refold folds again ([`refolded_kind`]) is judged by that

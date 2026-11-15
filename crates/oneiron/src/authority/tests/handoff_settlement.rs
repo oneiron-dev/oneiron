@@ -107,11 +107,12 @@ fn a_cycle_of_fenced_handoffs_installs_no_successor() {
     assert!(fold.retired_keys.contains(&authority_key_from_ed(&old)));
 }
 
-/// A handoff that its own confirmation collision prunes retires nothing
-/// (Sol review 2, finding 3): the root that signed both confirmations stays
-/// live, and one of them stands.
+/// A handoff over two of its root's confirmations that share a nonce
+/// settles: a collision prunes nothing (RULING COLLISION-SETTLEMENT-SHAPE =
+/// A, 16 Nov 04:39; it was Sol review 2, finding 3's pruned handoff), so
+/// both confirmations stand, the old root retires and its successor is live.
 #[test]
-fn a_handoff_its_own_collision_prunes_retires_nothing() {
+fn a_handoff_over_its_own_colliding_confirmations_settles() {
     let old = ed_key(185);
     let next = ed_key(186);
     let genesis = genesis_entry(185, 1);
@@ -142,14 +143,12 @@ fn a_handoff_its_own_collision_prunes_retires_nothing() {
     let handoff = sign_ed(handoff, &old);
 
     let fold = fold_authority_log(&[genesis, first.clone(), second.clone(), handoff.clone()]);
-    assert!(!fold.valid_entries.contains(&hash(&handoff)));
-    assert_ne!(
-        fold.valid_entries.contains(&hash(&first)),
-        fold.valid_entries.contains(&hash(&second))
-    );
-    assert!(fold.retired_keys.is_empty());
-    assert!(is_live(&fold, &old));
-    assert!(!is_live(&fold, &next));
+    for row in [&first, &second, &handoff] {
+        assert!(fold.valid_entries.contains(&hash(row)));
+    }
+    assert!(fold.retired_keys.contains(&authority_key_from_ed(&old)));
+    assert!(!is_live(&fold, &old));
+    assert!(is_live(&fold, &next));
 }
 
 /// An EVENT that carries a fork's exact bytes at the fork's id is no resident

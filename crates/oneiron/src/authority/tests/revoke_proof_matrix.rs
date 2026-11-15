@@ -250,15 +250,13 @@ fn restrictive_facts_compose_across_ancestry_matrix() {
                 );
                 entries.push(sibling);
                 let after = fold_legacy_authority_log_with_seen_times(&entries, &first_seen, now);
-                assert_eq!(
-                    after.valid_entries.contains(&loser_hash),
-                    matches!(loss, Loss::Equivocation),
-                    "{label}"
-                );
+                // A confirmation collision drops no row (RULING
+                // COLLISION-SETTLEMENT-SHAPE = A), so either sibling leaves
+                // the loser valid.
+                assert!(after.valid_entries.contains(&loser_hash), "{label}");
                 // Nothing waits on a first-seen time: the chain above the
                 // loser is valid exactly when every link in it is.
-                let chain_valid =
-                    matches!(loss, Loss::Equivocation) && matches!(chain, Chain::Widened);
+                let chain_valid = matches!(chain, Chain::Widened);
                 assert_eq!(
                     after.valid_entries.contains(&parent),
                     chain_valid,

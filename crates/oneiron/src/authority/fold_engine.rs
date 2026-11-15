@@ -372,15 +372,16 @@ pub(super) fn fold_authority_log_once(
     let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
 
     // A handoff's predecessor stays retired on every branch, not only its own.
-    // Fences close before concurrent confirmations contend, so a retired
-    // key's confirmation never prunes the new root's rows.
+    // Concurrent federation confirmations that share an id or a nonce all stay
+    // valid as spent evidence: no hash order picks a loser, so no signer's
+    // confirmation drops another signer's rows (RULING
+    // COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39).
     let retirements = super::retired_signers::settle_handoffs(
         &mut states,
         &by_hash,
         &entry_ancestors,
         handoffs,
         &mut issues,
-        |states, present| federation_confirm_losers(states, &by_hash, present),
     );
     super::world_refold::refold_world_edits(
         &mut states,
@@ -514,32 +515,4 @@ pub(super) fn fold_authority_log_once(
         });
     }
     fold
-}
-
-/// The confirmations that lose a collision among the rows `present` keeps,
-/// with why. Confirmations are consumable across branches, not only in
-/// ancestry, and only entries already proven against their live roster
-/// contend.
-fn federation_confirm_losers(
-    states: &BTreeMap<AuthorityEntryHash, FoldState>,
-    entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
-    present: &dyn Fn(&AuthorityEntryHash) -> bool,
-) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue> {
-    let mut ids = BTreeSet::new();
-    let mut nonces = BTreeSet::new();
-    let mut rejected = BTreeMap::new();
-    // Hash order is a stable choice among otherwise valid concurrent asks.
-    for hash in states.keys().filter(|hash| present(hash)) {
-        if let AuthorityOp::FederationConfirm(action) = &entries[hash].op {
-            let vault = states[hash].vault_id;
-            if ids.contains(&(vault, action.confirm_id)) || nonces.contains(&(vault, action.nonce))
-            {
-                rejected.insert(*hash, AuthorityFoldIssue::InvalidEntry(*hash));
-            } else {
-                ids.insert((vault, action.confirm_id));
-                nonces.insert((vault, action.nonce));
-            }
-        }
-    }
-    rejected
 }

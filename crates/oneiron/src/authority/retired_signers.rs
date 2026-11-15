@@ -6,8 +6,8 @@
 //! there, and could install a second root. Retirement is therefore judged
 //! across branches, and it fails closed:
 //! - A handoff takes effect only on its own rows: it and its whole ancestry
-//!   fold on their own, and no confirmation collision or concurrent tier
-//!   floor prunes them. A pruned handoff installs nothing and retires nothing.
+//!   fold on their own, and no concurrent tier floor prunes them. A pruned
+//!   handoff installs nothing and retires nothing.
 //! - Settlement does not depend on the order rows arrived in. A local
 //!   sequence floor records only which of a signer's rows this vault saw
 //!   first, so none applies inside a handoff's line: a sibling handoff that
@@ -162,23 +162,18 @@ impl Retirements {
 /// Settles the handoffs in `states` (see the module doc), drops what they
 /// refuse, and returns the closed fences. Only `eligible` handoffs, those
 /// valid on their own rows, take part when the fold has such a set; any other
-/// handoff is refused at once and fences nothing. `contend` names the rows
-/// that lose to a concurrent restriction (a confirmation collision) among the
-/// rows it is shown, with why. Fences close first, so a
-/// fenced key's row never wins one; a handoff whose own rows then lose one is
-/// pruned, and the fold settles again without it until nothing more is.
+/// handoff is refused at once and fences nothing. A confirmation that shares
+/// an id or a nonce with a concurrent one is no refusal here: both stay valid
+/// as spent evidence (RULING COLLISION-SETTLEMENT-SHAPE = A, 16 Nov 04:39), so
+/// no row of one signer falls with another signer's confirmation.
 pub(super) fn settle_handoffs(
     states: &mut BTreeMap<AuthorityEntryHash, FoldState>,
     entries: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
     eligible: Option<&BTreeSet<AuthorityEntryHash>>,
     issues: &mut Vec<AuthorityFoldIssue>,
-    contend: impl Fn(
-        &BTreeMap<AuthorityEntryHash, FoldState>,
-        &dyn Fn(&AuthorityEntryHash) -> bool,
-    ) -> BTreeMap<AuthorityEntryHash, AuthorityFoldIssue>,
 ) -> Retirements {
-    let mut pruned: BTreeMap<_, _> = states
+    let mut refused: BTreeMap<_, _> = states
         .keys()
         .filter(|hash| {
             matches!(entries[*hash].op, AuthorityOp::ReRoot { .. })
@@ -186,38 +181,17 @@ pub(super) fn settle_handoffs(
         })
         .map(|handoff| (*handoff, AuthorityFoldIssue::UnsettledHandoff(*handoff)))
         .collect();
-    loop {
-        let mut refused = pruned.clone();
-        let retirements = close_fences(states, entries, ancestors, &mut refused);
-        let gone = with_descendants(states, &refused, ancestors);
-        let losers = contend(states, &|hash| !gone.contains(hash));
-        let lost: Vec<_> = retirements
-            .fences
-            .iter()
-            .filter(|fence| losers.keys().any(|loser| fence.line.contains(loser)))
-            .map(|fence| {
-                let issue = losers
-                    .get(&fence.handoff)
-                    .cloned()
-                    .unwrap_or(AuthorityFoldIssue::InvalidAncestry(fence.handoff));
-                (fence.handoff, issue)
-            })
-            .collect();
-        if lost.is_empty() {
-            refused.extend(losers);
-            let gone = with_descendants(states, &refused, ancestors);
-            states.retain(|hash, _| {
-                if let Some(issue) = refused.get(hash) {
-                    issues.push(issue.clone());
-                } else if gone.contains(hash) {
-                    issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
-                }
-                !gone.contains(hash)
-            });
-            return retirements;
+    let retirements = close_fences(states, entries, ancestors, &mut refused);
+    let gone = with_descendants(states, &refused, ancestors);
+    states.retain(|hash, _| {
+        if let Some(issue) = refused.get(hash) {
+            issues.push(issue.clone());
+        } else if gone.contains(hash) {
+            issues.push(AuthorityFoldIssue::InvalidAncestry(*hash));
         }
-        pruned.extend(lost);
-    }
+        !gone.contains(hash)
+    });
+    retirements
 }
 
 /// Every row of `states` that `refused` names or that descends from one.
