@@ -268,7 +268,8 @@ mod tests {
             row(0, false, SettingMode::Value, true, 1),
             row(1, false, SettingMode::Value, true, 2),
         ];
-        let decided = decide(&rows, &[fit(0, 7)], None, None);
+        let fits = [fit(0, 7)];
+        let decided = decide(&rows, &fits, None, None);
         assert!(matches!(decided, Decided::Fit(_)));
         assert_eq!(value_of(&decided), Some(7));
         let rows = [row(2, false, SettingMode::Value, true, 2)];
@@ -279,7 +280,8 @@ mod tests {
     #[test]
     fn a_narrower_value_row_decides_over_a_wider_fit_and_the_narrowest_fit_first() {
         let rows = [row(0, false, SettingMode::Value, true, 1)];
-        let decided = decide(&rows, &[fit(1, 7)], None, None);
+        let fits = [fit(1, 7)];
+        let decided = decide(&rows, &fits, None, None);
         assert!(matches!(decided, Decided::Row(_)));
         assert_eq!(value_of(&decided), Some(1));
         assert_eq!(
@@ -291,7 +293,8 @@ mod tests {
     #[test]
     fn an_owner_pin_decides_over_a_fit_and_a_fit_is_never_held_inside_a_row() {
         let rows = [row(3, false, SettingMode::Pin, true, 4)];
-        let decided = decide(&rows, &[fit(0, 7)], None, None);
+        let fits = [fit(0, 7)];
+        let decided = decide(&rows, &fits, None, None);
         assert!(matches!(decided, Decided::Pin(_)));
         assert_eq!(value_of(&decided), Some(4));
         // a holder's pin is passed over, as without a fit
