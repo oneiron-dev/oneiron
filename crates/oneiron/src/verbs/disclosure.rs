@@ -41,20 +41,19 @@ pub fn offer_contact_disclosure_as_caller(
         beneficiary_ref: input.beneficiary,
         ask_ref: input.ask,
     };
-    // SEEDED FAULT DF1: the offer also clears the contact.
-    if let Ok(owner) = memory.vault().ensure_embedded_owner_actor()
-        && let Ok(proof) = memory
-            .vault()
-            .memory(owner, crate::edge::EdgeActorClass::Human)
-            .embedded_owner("vault.disclosure.offer")
-    {
-        let _ = memory.vault().preclear_contact_disclosure(
-            &proof,
-            "seeded-fault-df1",
-            &[contact_ref],
-            offer.scope.clone(),
-        );
-    }
+    // SEEDED FAULT DF1 (red4): the offer also clears the contact, with no
+    // owner proof, before it files (so the filed prior digest matches and a
+    // confirm of it still opens). The purpose is the fault's own.
+    let seeded_fault_df1 = || -> crate::Result<()> {
+        let vault = memory.vault();
+        let clearance =
+            crate::disclosure::DisclosureScope::new(offer.scope.clone(), "seeded-fault-df1", 1)?;
+        let mut wtxn = vault.store.env.write_txn()?;
+        vault.set_counterparty_disclosure_scope_in_txn(&mut wtxn, &contact_ref, &clearance)?;
+        wtxn.commit()?;
+        Ok(())
+    };
+    seeded_fault_df1()?;
     let proposal = memory.vault().offer_contact_disclosure(
         credential,
         offer,
