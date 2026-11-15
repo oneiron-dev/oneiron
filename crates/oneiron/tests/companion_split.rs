@@ -11,6 +11,12 @@
 //! workspace of hers still lands, and so does the vault's one live owner
 //! bringing it into the workspace it runs.
 //!
+//! Her company is the org, not the workspace (Engine RULING
+//! L3-19-ORG-SCOPE = A, 16 Nov): bringing the house of another workspace of
+//! her org is refused too. A door that publishes a new workspace of her org
+//! run by her companion is refused as well, whether an owner establishes it
+//! or another member's onboarding does, unless she is the sole owner.
+//!
 //! An onboarding that reserved her slot before its workspace was
 //! established is refused when it establishes it, if her companion runs it
 //! by then (review round 1 of #7656). That case stops an onboarding after
@@ -29,8 +35,8 @@ use oneiron::store::GateDecisionId;
 use oneiron::subject_model::actor_subject_anchor;
 use oneiron::{
     AccessGrant, CompanionBirthIntent, CompanionChoice, EntityId, MemberGrantBundle,
-    MemberOnboardingIntent, Result, TimeRange, Vault, VaultConfig, WorkspaceRosterPreset,
-    WriteActor,
+    MemberOnboardingIntent, Result, TimeRange, Vault, VaultConfig, WorkCompanionPolicy,
+    WorkspaceRosterPreset, WriteActor,
 };
 
 /// The shared vault both workspaces run in. A store creates one shared vault
@@ -268,6 +274,23 @@ fn assert_split(result: Result<()>, case: &str) {
     );
 }
 
+impl Fixture {
+    /// The owner establishes `workspace`, as `establish_workspace_preset`
+    /// does before anyone is onboarded.
+    fn establish(&self, workspace: &WorkspaceRosterPreset) -> Result<()> {
+        self.vault.establish_workspace_preset(
+            workspace,
+            WorkCompanionPolicy::default(),
+            &proof(&self.vault, self.owner)?,
+        )
+    }
+
+    /// Whether `workspace_ref` has a stored preset.
+    fn is_published(&self, workspace_ref: &str) -> bool {
+        self.vault.workspace_work_companion(workspace_ref).is_ok()
+    }
+}
+
 #[test]
 fn a_member_who_brings_the_house_of_the_workspace_she_joins_is_refused() -> Result<()> {
     let fx = fixture()?;
@@ -353,6 +376,114 @@ fn a_co_owner_who_brings_the_house_of_her_workspace_is_refused() -> Result<()> {
         ),
         "a co-owner is not the sole owner, so she is refused",
     );
+    Ok(())
+}
+
+/// Engine RULING L3-19-ORG-SCOPE = A, case 1 of OPUS-SECREAD-A's second
+/// read: workspace B of her org is run by sys.default, and she holds no
+/// slot in B. Joining workspace A of the same org, she brings sys.default.
+#[test]
+fn a_member_who_brings_the_house_of_another_workspace_of_her_org_is_refused() -> Result<()> {
+    let fx = fixture()?;
+    let colleague = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let born = fx.birth("garden.companion.colleague")?;
+    fx.onboard(
+        "colleague-joins-b",
+        fx.preset(WORKSPACE_B, VAULT_ID, fx.agent),
+        colleague,
+        born,
+    )
+    .expect("a colleague establishes workspace B, run by sys.default");
+    let member = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let companion = fx.bring(member, fx.agent)?;
+    assert_split(
+        fx.onboard(
+            "bring-house-of-her-org",
+            fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
+            member,
+            companion,
+        ),
+        "the agent that runs another workspace of her org is not also her companion",
+    );
+    Ok(())
+}
+
+/// Case 2 of the second read: she is in workspace A with sys.default as her
+/// companion, and the owner establishes workspace B of the same org with
+/// sys.default as its house. The refused publish writes nothing.
+#[test]
+fn an_owner_cannot_establish_a_workspace_of_her_org_run_by_her_companion() -> Result<()> {
+    let fx = fixture()?;
+    let member = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let companion = fx.bring(member, fx.agent)?;
+    fx.onboard(
+        "join-a-with-companion",
+        fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
+        member,
+        companion,
+    )
+    .expect("no workspace of her org is run by her companion yet");
+    assert_split(
+        fx.establish(&fx.preset(WORKSPACE_B, VAULT_ID, fx.agent)),
+        "a new workspace of her org is not run by her companion",
+    );
+    assert!(
+        !fx.is_published(WORKSPACE_B),
+        "the refused establish publishes no preset"
+    );
+    Ok(())
+}
+
+/// The same publish through the onboarding door: a newcomer's onboarding
+/// would establish workspace B of her org, run by her companion. It is
+/// refused at its establish step, and B stays unpublished.
+#[test]
+fn an_onboarding_cannot_establish_a_workspace_of_her_org_run_by_her_companion() -> Result<()> {
+    let fx = fixture()?;
+    let member = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let companion = fx.bring(member, fx.agent)?;
+    fx.onboard(
+        "join-a-with-companion",
+        fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
+        member,
+        companion,
+    )
+    .expect("no workspace of her org is run by her companion yet");
+    let newcomer = seed_row(&fx.vault, ENTITY_TYPE_PERSON)?;
+    let born = fx.birth("garden.companion.newcomer")?;
+    assert_split(
+        fx.onboard(
+            "newcomer-establishes-b",
+            fx.preset(WORKSPACE_B, VAULT_ID, fx.agent),
+            newcomer,
+            born,
+        ),
+        "an onboarding does not establish a workspace of her org run by her companion",
+    );
+    assert!(
+        !fx.is_published(WORKSPACE_B),
+        "the refused establish step publishes no preset"
+    );
+    Ok(())
+}
+
+/// The sole owner, in workspace A with sys.default as her companion,
+/// establishes workspace B of her org with sys.default as its house: her
+/// own act, on purpose.
+#[test]
+fn the_sole_owner_establishes_a_workspace_of_her_org_run_by_her_companion() -> Result<()> {
+    let fx = fixture()?;
+    let companion = fx.bring(fx.owner, fx.agent)?;
+    fx.onboard(
+        "owner-joins-a",
+        fx.preset(WORKSPACE_A, VAULT_ID, fx.other_house),
+        fx.owner,
+        companion,
+    )
+    .expect("no workspace of her org is run by her companion yet");
+    fx.establish(&fx.preset(WORKSPACE_B, VAULT_ID, fx.agent))
+        .expect("the sole owner binds her companion as her company's on purpose");
+    assert!(fx.is_published(WORKSPACE_B), "workspace B is established");
     Ok(())
 }
 
