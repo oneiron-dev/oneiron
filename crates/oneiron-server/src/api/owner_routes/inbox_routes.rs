@@ -7,7 +7,7 @@ use axum::response::Json;
 use axum::routing::get;
 use oneiron::EdgeActorClass;
 use oneiron::agent_inbox_lens::{InboxLensPage, InboxLensRequest};
-use oneiron::memory::MEMORY_CODE_BAD_REQUEST;
+use oneiron::memory::MemoryError;
 
 use super::{OwnerReply, OwnerRoute, OwnerTable, blocking, owner};
 use crate::api::query_params;
@@ -42,14 +42,17 @@ async fn read(
             .memory(actor, EdgeActorClass::Human)
             .at(auth.locality())
             .inbox_lens_as_owner(&owner, &query)
-            .map_err(|error| {
-                if error.code == MEMORY_CODE_BAD_REQUEST {
-                    OwnerError::Invalid(error.to_string())
-                } else {
-                    OwnerError::Refused(error.to_string())
-                }
-            })
+            .map_err(inbox_error)
     })
     .await?;
     Ok(Json(page))
+}
+
+/// The inbox lens's refusal as the owner's.
+pub(super) fn inbox_error(error: MemoryError) -> OwnerError {
+    if error.code == oneiron::memory::MEMORY_CODE_BAD_REQUEST {
+        OwnerError::Invalid(error.to_string())
+    } else {
+        OwnerError::Refused(error.to_string())
+    }
 }

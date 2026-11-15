@@ -46,7 +46,7 @@ pub(crate) fn steer_receipt_schema() -> serde_json::Value {
     oneiron_contracts::code_run::vault_read::request_schema::<SteerReceipt>()
 }
 
-fn steer_error(error: MemoryError) -> OwnerError {
+pub(super) fn steer_error(error: MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
         oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),

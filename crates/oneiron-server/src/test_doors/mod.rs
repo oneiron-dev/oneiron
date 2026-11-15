@@ -6,6 +6,7 @@
 
 pub mod big_rung;
 pub mod build_server;
+pub mod catch_all_status;
 pub mod coach_round;
 #[cfg(unix)]
 pub mod hosted_import;

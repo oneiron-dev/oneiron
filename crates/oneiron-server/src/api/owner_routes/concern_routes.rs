@@ -209,7 +209,7 @@ async fn set_outcome(
     Ok(Json(card))
 }
 
-fn move_error(error: MemoryError) -> OwnerError {
+pub(super) fn move_error(error: MemoryError) -> OwnerError {
     match error.code.as_str() {
         oneiron::memory::MEMORY_CODE_BAD_REQUEST => OwnerError::Invalid(error.message),
         oneiron::memory::MEMORY_CODE_INVALID_STATE => OwnerError::Changed(error.message),
