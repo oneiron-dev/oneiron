@@ -321,11 +321,13 @@ fn a_call_whose_rows_prove_no_world_names_none() -> TestResult {
     let unheld =
         declared_run(&fixture.receipts).sourced(Some(vec![fixture.harbor_claim, EntityId::now()]));
     call_once(&unheld)?;
-    // A call whose host named no rows has no provenance at all.
+    // A call whose host named no rows has no provenance at all, and an empty
+    // list of rows is no provenance either: never an empty set of worlds.
     call_once(&declared_run(&fixture.receipts))?;
+    call_once(&declared_run(&fixture.receipts).sourced(Some(Vec::new())))?;
 
     let rows = receipt_rows(&fixture.receipts)?;
-    assert_eq!(rows.len(), 6, "{rows:?}");
+    assert_eq!(rows.len(), 9, "{rows:?}");
     for (kind, row) in &rows {
         assert_eq!(
             row.get("source_worlds"),

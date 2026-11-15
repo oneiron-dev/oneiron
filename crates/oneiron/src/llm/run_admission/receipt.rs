@@ -225,8 +225,8 @@ pub struct PermitFacts {
     /// names no world, from rows host code named, never from the caller
     /// (DEC-0005 :457). Base reality is named by its own id. `None`,
     /// unknown, when the host named no rows, the sink reads no vault, or one
-    /// row proves no world; text that came from no named row (a caller's
-    /// message) has no world here.
+    /// row proves no world; never an empty list. Text that came from no
+    /// named row (a caller's message) has no world here.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_worlds: Option<Vec<EntityId>>,
 }
@@ -246,8 +246,8 @@ pub trait RunReceiptSink: Send + Sync {
     /// The live worlds of `rows`, the rows a call's input was assembled
     /// from, as this sink's vault reads them now, for the call's receipts
     /// (DEC-0005 world privacy, fix 12): every world each row is in, base
-    /// reality by its own id, sorted. `None` when one row proves no world.
-    /// A sink with no vault knows no worlds.
+    /// reality by its own id, sorted. `None` when one row proves no world,
+    /// never an empty list. A sink with no vault knows no worlds.
     fn source_worlds(&self, rows: &[EntityId]) -> Option<Vec<EntityId>> {
         let _ = rows;
         None

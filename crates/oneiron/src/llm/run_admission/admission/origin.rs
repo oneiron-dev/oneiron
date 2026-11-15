@@ -44,11 +44,14 @@ impl RunAdmission {
 
     /// The live worlds of the rows this handle names as its calls' input,
     /// as the run's receipt sink reads them now; `None`, unknown, when the
-    /// handle names no rows or the sink proves no world for one of them.
+    /// handle names no rows (an empty list too: no row is no provenance) or
+    /// the sink proves no world for one of them. Never an empty list.
     pub(super) fn source_worlds(&self) -> Option<Vec<crate::EntityId>> {
         self.sources
             .as_deref()
+            .filter(|rows| !rows.is_empty())
             .and_then(|rows| self.inner.receipts.source_worlds(rows))
+            .filter(|worlds| !worlds.is_empty())
     }
 
     /// This run, marked as memory work by the host that started it (FIX
