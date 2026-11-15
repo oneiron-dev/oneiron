@@ -5,10 +5,10 @@ use super::*;
     path = "/v1/core/memory/{id}/watch",
     params(("id" = String, Path, description = "Hex claim id to watch.")),
     responses(
-        (status = 200, description = "Read the owner's durable per-entry watch flag.", body = CoreMemoryWatchResponse),
+        (status = 200, description = "Read the caller's durable per-entry watch flag: the owner's, or an agent's own when memory.watch.agent_may_watch is on.", body = CoreMemoryWatchResponse),
         (status = 400, description = "Invalid id or SAVED_QUERY kind not registered.", body = ApiErrorEnvelope),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope),
-        (status = 403, description = "Human owner binding or required scope absent.", body = ApiErrorEnvelope),
+        (status = 403, description = "Human owner binding (for an agent: memory.watch.agent_may_watch) or required scope absent.", body = ApiErrorEnvelope),
         (status = 404, description = "Claim not found or not readable.", body = ApiErrorEnvelope)
     )
 )]
@@ -31,10 +31,10 @@ pub(in crate::api) async fn core_memory_watch_read(
     path = "/v1/core/memory/{id}/watch",
     params(("id" = String, Path, description = "Hex claim id to watch.")),
     responses(
-        (status = 200, description = "Enable the owner's durable per-entry watch flag.", body = CoreMemoryWatchResponse),
+        (status = 200, description = "Enable the caller's durable per-entry watch flag: the owner's, or an agent's own when memory.watch.agent_may_watch is on.", body = CoreMemoryWatchResponse),
         (status = 400, description = "Invalid id or SAVED_QUERY kind not registered.", body = ApiErrorEnvelope),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope),
-        (status = 403, description = "Human owner binding or required scope absent.", body = ApiErrorEnvelope),
+        (status = 403, description = "Human owner binding (for an agent: memory.watch.agent_may_watch) or required scope absent.", body = ApiErrorEnvelope),
         (status = 404, description = "Claim not found or not readable.", body = ApiErrorEnvelope)
     )
 )]
@@ -51,10 +51,10 @@ pub(in crate::api) async fn core_memory_watch_enable(
     path = "/v1/core/memory/{id}/watch",
     params(("id" = String, Path, description = "Hex claim id to watch.")),
     responses(
-        (status = 200, description = "Disable the owner's durable per-entry watch flag.", body = CoreMemoryWatchResponse),
+        (status = 200, description = "Disable the caller's durable per-entry watch flag: the owner's, or an agent's own when memory.watch.agent_may_watch is on.", body = CoreMemoryWatchResponse),
         (status = 400, description = "Invalid id or SAVED_QUERY kind not registered.", body = ApiErrorEnvelope),
         (status = 401, description = "Missing or invalid core auth.", body = ApiErrorEnvelope),
-        (status = 403, description = "Human owner binding or required scope absent.", body = ApiErrorEnvelope),
+        (status = 403, description = "Human owner binding (for an agent: memory.watch.agent_may_watch) or required scope absent.", body = ApiErrorEnvelope),
         (status = 404, description = "Claim not found or not readable.", body = ApiErrorEnvelope)
     )
 )]
@@ -150,7 +150,7 @@ fn watch_identity(
     }) {
         return Err(ApiError::not_found("claim", Some(id_hex)).into());
     }
-    Ok((owner, anchor))
+    Ok((watcher, anchor))
 }
 
 /// The response for `watch`, with its health when a wake recorded one.
