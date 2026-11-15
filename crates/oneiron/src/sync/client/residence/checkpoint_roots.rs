@@ -78,8 +78,15 @@ pub(crate) async fn exchange_checkpoint_roots(
     config: &SyncClientConfig,
 ) -> Result<usize, TransportError> {
     // Inside a device PIN's window this vault's owner key is opened from
-    // under the PIN first, when this handle has not opened it yet.
-    vault.hold_device_owner_signer_in_pin_window();
+    // under the PIN first, when this handle has not opened it yet. That
+    // waits for a device PIN step that runs and reads the keystore, so it
+    // runs off the executor.
+    if vault.owes_pin_window_owner_signer_hold() {
+        let vault = Arc::clone(vault);
+        tokio::task::spawn_blocking(move || vault.hold_device_owner_signer_in_pin_window())
+            .await
+            .map_err(|_| stopped())?;
+    }
     let signers = vault.checkpoint_root_signers();
     let own = own_awaited_head(vault);
     if signers.is_empty() && own.is_none() {

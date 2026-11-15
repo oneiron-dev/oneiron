@@ -24,13 +24,23 @@
 //! its backend. When the window ends the gate tells the backend, which wipes
 //! the key. The key is not handed out: each use runs under the lock that
 //! wipe takes, so a use begun inside the window ends before the window does,
-//! and none begins after it.
+//! and none begins after it. A key that a typed PIN opened is no key a use
+//! reads until the gate took that PIN's window: a PIN checked while the
+//! window was ended gives a use nothing, however the two fall in time.
 //!
 //! One step at a time reads or changes what rests under the PIN: a typed
 //! PIN's check, a set, a change, a forget, and each step that puts an owner
 //! signing key under the device PIN key. The lock is this process's. A host
 //! makes one [`DevicePin`] per keystore and installs it on every vault handle
 //! over that keystore.
+//!
+//! A forgotten PIN is a lost key, and it stays lost. The forget leaves a
+//! mark in the keystore's home for sealed bytes before it removes the device
+//! PIN key ([`SealedBytesName::DevicePinForgotten`]). From then on a seed in
+//! a keystore slot of this device is no owner signing key, with a PIN set or
+//! with none: not one that waited in its slot while the PIN was set, and not
+//! one a signer read before it. The device makes its next key under a new
+//! PIN.
 //!
 //! What the PIN guards is the owner signing key and each act that needs its
 //! signature. It is not a second login: an act this install carries with its
@@ -39,7 +49,7 @@
 mod owner_key;
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, TryLockError};
 use std::time::Duration;
 
 use getrandom::SysRng;
@@ -80,6 +90,10 @@ const PIN_KEY_SCOPE: &[u8] = b"oneiron/this-device";
 const PIN_KEY_RECIPIENT: &[u8] = b"oneiron/device-pin";
 const PIN_KEY_ID: &[u8] = b"oneiron/device-pin-key/v1";
 
+/// What the mark of a forgotten PIN holds. It is no secret: that it rests is
+/// the fact.
+const FORGOTTEN_MARK: &[u8] = b"oneiron/device-pin-forgotten/v1";
+
 const NO_PIN_HOME: &str = "its keystore has no home for a device PIN key";
 const NO_PIN_SET: &str = "no device PIN is set on it";
 const PIN_HOME_UNREADABLE: &str = "its keystore did not answer for the device PIN key";
@@ -114,6 +128,8 @@ pub struct DevicePin {
     /// Held across each whole step that reads or changes what rests under
     /// the PIN ([`Self::step`]), so no two of them cross.
     step: Mutex<()>,
+    /// How many steps found another one running and waited for it.
+    step_waits: AtomicU64,
     /// How many right PINs this process took.
     right_pins: AtomicU64,
     /// How many times this process set or forgot the device PIN key. What a
@@ -140,8 +156,19 @@ struct DevicePinBackend {
     keystore: Arc<dyn DeviceKeystore>,
     /// The Argon2id cost a new passphrase envelope is sealed at.
     cost: PassphraseCost,
-    /// The device PIN key, only inside a window.
-    open_key: Mutex<Option<Zeroizing<[u8; 32]>>>,
+    /// The device PIN key in this process's memory.
+    held: Mutex<HeldPinKey>,
+}
+
+/// The device PIN key in this process's memory. The window's end wipes both
+/// places.
+#[derive(Default)]
+struct HeldPinKey {
+    /// The key a typed PIN just opened, while the gate has not taken that
+    /// PIN's window. No use reads it.
+    checked: Option<Zeroizing<[u8; 32]>>,
+    /// The key inside a window the gate took: the one a use reads.
+    open: Option<Zeroizing<[u8; 32]>>,
 }
 
 impl DevicePin {
@@ -177,7 +204,7 @@ impl DevicePin {
         let backend = Arc::new(DevicePinBackend {
             keystore,
             cost,
-            open_key: Mutex::new(None),
+            held: Mutex::new(HeldPinKey::default()),
         });
         let gate = PresenceGate::new(
             Arc::<DevicePinBackend>::clone(&backend),
@@ -189,6 +216,7 @@ impl DevicePin {
             gate,
             backend,
             step: Mutex::new(()),
+            step_waits: AtomicU64::new(0),
             right_pins: AtomicU64::new(0),
             key_generation: AtomicU64::new(0),
         }))
@@ -280,9 +308,14 @@ impl DevicePin {
                 return Err(pin_refused(DevicePinRefusal::Unavailable(NO_PIN_HOME)));
             }
         }
-        self.gate
-            .confirm_with_secret(pin)
-            .map_err(presence_refused)?;
+        if let Err(refusal) = self.gate.confirm_with_secret(pin) {
+            // The gate took no window: what the PIN opened is not kept.
+            self.backend.drop_checked_key();
+            return Err(presence_refused(refusal));
+        }
+        // The gate took the window. Only now is the key one a use reads; a
+        // window that ended since has wiped it.
+        self.backend.admit_checked_key();
         self.right_pins.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
@@ -304,10 +337,12 @@ impl DevicePin {
     /// `Unavailable` as [`Self::confirm`].
     fn with_pin_key<T>(&self, use_key: impl FnOnce(&[u8; 32]) -> T) -> Result<T> {
         // The window is read first and outside the key's lock: a window
-        // found over tells the backend under its own lock.
+        // found over tells the backend under its own lock. A window that
+        // ends between the two has wiped the key, and a PIN checked since
+        // gives none until the gate took its window.
         if self.gate.window_is_open() {
-            let held = self.backend.open_key();
-            if let Some(key) = held.as_deref() {
+            let held = self.backend.held_key();
+            if let Some(key) = held.open.as_deref() {
                 return Ok(use_key(key));
             }
         }
@@ -361,7 +396,7 @@ impl DevicePin {
     /// Puts `key` to rest under `pin` as this device's PIN key, and opens a
     /// window with it. `Ok` only when the key the window then holds is `key`,
     /// read back from its home with `pin`. The caller undoes a refusal with
-    /// [`Self::forget`].
+    /// [`Self::remove_pin_key`].
     ///
     /// # Errors
     /// The keystore's refusal; as [`Self::confirm`] for a PIN its home does
@@ -405,13 +440,39 @@ impl DevicePin {
         self.backend.store_pin_key(new, &key)
     }
 
-    /// Forgets the PIN: ends the window and removes the device PIN key from
-    /// its home. Everything sealed under that key is lost with it. It takes
-    /// no PIN, because it only loses.
+    /// Forgets the PIN: marks this device as one whose PIN was forgotten,
+    /// ends the window and removes the device PIN key from its home.
+    /// Everything sealed under that key is lost with it, and so is every
+    /// seed that still waited in a keystore slot of this device
+    /// ([`slot_seed_bar`]). It takes no PIN, because it only loses.
+    ///
+    /// The mark is written first: a forget that stops after it has lost the
+    /// slot seeds and not yet the device PIN key, and the forget asked again
+    /// finishes it. So it also runs on a device that holds the mark and no
+    /// PIN.
+    ///
+    /// # Errors
+    /// [`DevicePinRefusal::NotSet`] on a device that has no PIN and never
+    /// forgot one: there is nothing to lose, and its slot keys stay keys.
+    /// The keystore's refusal.
+    fn forget(&self, step: &DevicePinStep<'_>) -> Result<()> {
+        let keystore = self.backend.keystore.as_ref();
+        if slot_seed_bar(keystore).map_err(keystore_error)?.is_none() {
+            return Err(pin_refused(DevicePinRefusal::NotSet));
+        }
+        self.sealed_home()?
+            .put_sealed(&SealedBytesName::DevicePinForgotten, FORGOTTEN_MARK)
+            .map_err(keystore_error)?;
+        self.remove_pin_key(step)
+    }
+
+    /// Ends the window and removes the device PIN key from its home, with no
+    /// mark: [`Self::forget`]'s last part, and the undo of a first PIN that
+    /// did not finish.
     ///
     /// # Errors
     /// The keystore's refusal.
-    fn forget(&self, _step: &DevicePinStep<'_>) -> Result<()> {
+    fn remove_pin_key(&self, _step: &DevicePinStep<'_>) -> Result<()> {
         self.gate.end_window();
         self.key_generation.fetch_add(1, Ordering::Relaxed);
         let keystore = self.backend.keystore.as_ref();
@@ -463,15 +524,44 @@ impl DevicePin {
     /// the device PIN key, makes one there, or makes one in a slot while no
     /// PIN is set. A signature is no step: it takes only the key's own lock.
     pub(in crate::world_keys) fn step(&self) -> DevicePinStep<'_> {
-        DevicePinStep {
-            _held: self.step.lock().unwrap_or_else(PoisonError::into_inner),
-        }
+        let held = match self.step.try_lock() {
+            Ok(held) => held,
+            Err(TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
+            Err(TryLockError::WouldBlock) => {
+                self.step_waits.fetch_add(1, Ordering::Relaxed);
+                self.step.lock().unwrap_or_else(PoisonError::into_inner)
+            }
+        };
+        DevicePinStep { _held: held }
+    }
+
+    /// Test door (`test_doors::device_pin`): how many steps found another
+    /// one running and waited for it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn steps_that_waited(&self) -> u64 {
+        self.step_waits.load(Ordering::Relaxed)
     }
 }
 
 impl DevicePinBackend {
-    fn open_key(&self) -> MutexGuard<'_, Option<Zeroizing<[u8; 32]>>> {
-        self.open_key.lock().unwrap_or_else(PoisonError::into_inner)
+    fn held_key(&self) -> MutexGuard<'_, HeldPinKey> {
+        self.held.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Makes the key a typed PIN opened the one a use reads: the gate took
+    /// that PIN's window. It does nothing where that window ended since,
+    /// which wiped the key.
+    fn admit_checked_key(&self) {
+        let mut held = self.held_key();
+        if let Some(key) = held.checked.take() {
+            held.open = Some(key);
+        }
+    }
+
+    /// Wipes the key a typed PIN opened, where the gate took no window for
+    /// that PIN.
+    fn drop_checked_key(&self) {
+        self.held_key().checked = None;
     }
 
     /// The device PIN key, opened from its home with `pin`.
@@ -547,15 +637,17 @@ impl UserPresence for DevicePinBackend {
 
     fn confirm_with_secret(&self, secret: &[u8]) -> std::result::Result<(), PresenceError> {
         // The key is opened outside its lock: the stretch may take a second.
+        // No use reads it yet: the gate has not taken this PIN's window
+        // ([`DevicePinBackend::admit_checked_key`]).
         let key = self.open_pin_key(secret)?;
-        *self.open_key() = Some(key);
+        self.held_key().checked = Some(key);
         Ok(())
     }
 
-    /// Wipes the device PIN key. It takes one short lock and never calls
-    /// the gate.
+    /// Wipes the device PIN key, and one a typed PIN opened that no window
+    /// was taken for. It takes one short lock and never calls the gate.
     fn window_ended(&self) {
-        *self.open_key() = None;
+        *self.held_key() = HeldPinKey::default();
     }
 }
 
@@ -571,6 +663,45 @@ pub(super) fn device_pin_is_set(
         Some(home) => Ok(home.get_sealed(&SealedBytesName::DevicePinKey)?.is_some()),
         None => Ok(false),
     }
+}
+
+/// Whether a PIN of this device was forgotten: the mark
+/// [`DevicePin::forget`] leaves in `keystore`'s home for sealed bytes.
+pub(super) fn device_pin_was_forgotten(
+    keystore: &dyn DeviceKeystore,
+) -> std::result::Result<bool, KeystoreError> {
+    match keystore.sealed_bytes() {
+        Some(home) => Ok(home
+            .get_sealed(&SealedBytesName::DevicePinForgotten)?
+            .is_some()),
+        None => Ok(false),
+    }
+}
+
+/// Why a seed in a keystore slot is no owner signing key on a device.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SlotSeedBar {
+    /// A PIN is set: the key rests under it, and signs from there.
+    PinSet,
+    /// No PIN is set, and one was forgotten: every key this device held was
+    /// lost with it. The next key is made under a new PIN.
+    PinForgotten,
+}
+
+/// Why a seed in a slot of `keystore` is no owner signing key now; `None`
+/// on a device that has no PIN and never forgot one, where it is the key.
+/// Every door that reads a slot seed as a key, or makes one there, asks it,
+/// and so does a signer read from a slot, at each signature.
+pub(super) fn slot_seed_bar(
+    keystore: &dyn DeviceKeystore,
+) -> std::result::Result<Option<SlotSeedBar>, KeystoreError> {
+    if device_pin_is_set(keystore)? {
+        return Ok(Some(SlotSeedBar::PinSet));
+    }
+    if device_pin_was_forgotten(keystore)? {
+        return Ok(Some(SlotSeedBar::PinForgotten));
+    }
+    Ok(None)
 }
 
 /// What counts wrong device PINs on `keystore`; `None` for one that takes no

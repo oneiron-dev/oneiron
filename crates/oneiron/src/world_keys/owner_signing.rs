@@ -26,8 +26,11 @@
 //! by `device_pin::owner_key`, and it signs only inside the window a right
 //! PIN opened. A seed in the slot is no key there: no door of this module
 //! reads it or makes one, and a signer made from the slot before the PIN was
-//! set signs nothing more. Either way, a key signs only while the roster
-//! lists it live, and it checks that at each signature.
+//! set signs nothing more. The same holds once a PIN of the device was
+//! forgotten, with a PIN set or with none: every key the device held was
+//! lost with that PIN, and its next key is made under a new one. Either way,
+//! a key signs only while the roster lists it live, and it checks that at
+//! each signature.
 
 use std::sync::Arc;
 
@@ -35,7 +38,9 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 
 use super::DevicePin;
-use super::device_pin::{device_pin_is_set, no_device_pin_here, pin_refused};
+use super::device_pin::{
+    SlotSeedBar, device_pin_is_set, no_device_pin_here, pin_refused, slot_seed_bar,
+};
 use crate::authority::{
     ActAuthority, AuthorityKey, CheckpointRootSigner, EnrolledOwnerKey, HostSlipIssuer,
     OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt, authority_refused, checkpoint_statement_domain,
@@ -50,6 +55,8 @@ const OWNER_SIGNING_CONTEXT: &str = "oneiron/owner-signing-key/v1";
 
 const KEPT_UNDER_DEVICE_PIN: &str = "this install's owner signing key is kept under the device \
                                      PIN and is not handed out";
+const LOST_WITH_FORGOTTEN_PIN: &str = "this owner signing key was lost with the device PIN that \
+                                       was forgotten";
 pub(super) const KEY_NOT_LIVE: &str = "the roster does not list this owner signing key live";
 pub(super) const OTHER_VAULT_KEY: &str = "this owner signing key is another vault's";
 
@@ -88,8 +95,8 @@ impl OwnerRootSigner {
     }
 
     /// The key the seed of `slot` names, read from `keystore`. It signs only
-    /// on that slot's vault, and only while no device PIN is set on
-    /// `keystore`.
+    /// on that slot's vault, and only while `keystore` has no device PIN and
+    /// never forgot one.
     fn from_slot(seed: &[u8; 32], keystore: &Arc<dyn DeviceKeystore>, slot: &KeystoreSlot) -> Self {
         let mut signer = Self::from_seed(seed);
         signer.slot_home = Some(SlotHome {
@@ -124,7 +131,8 @@ impl OwnerRootSigner {
     /// Why the key does not sign on `vault` now; `None` when it does. A key
     /// read from a slot signs on that slot's vault alone, and stops once a
     /// device PIN is set on its keystore: from then on the key signs from
-    /// under the PIN, and what was read before is dead. A keystore that does
+    /// under the PIN, and what was read before is dead. It stays dead when
+    /// that PIN is forgotten: the key was lost with it. A keystore that does
     /// not answer signs nothing. Every key stops when the roster no longer
     /// lists it live.
     fn refusal(&self, vault: &Vault) -> Option<Error> {
@@ -132,9 +140,14 @@ impl OwnerRootSigner {
             if home.vault_id != *vault.vault_id().as_bytes() {
                 return Some(authority_refused(OTHER_VAULT_KEY));
             }
-            match device_pin_is_set(home.keystore.as_ref()) {
-                Ok(false) => {}
-                Ok(true) => return Some(pin_refused(DevicePinRefusal::Required)),
+            match slot_seed_bar(home.keystore.as_ref()) {
+                Ok(None) => {}
+                Ok(Some(SlotSeedBar::PinSet)) => {
+                    return Some(pin_refused(DevicePinRefusal::Required));
+                }
+                Ok(Some(SlotSeedBar::PinForgotten)) => {
+                    return Some(super::refused(LOST_WITH_FORGOTTEN_PIN));
+                }
                 Err(error) => return Some(super::keystore_error(error)),
             }
         }
@@ -152,8 +165,9 @@ impl CheckpointRootSigner for OwnerRootSigner {
 
     /// Refused for any statement outside the checkpoint domains, for a key
     /// the roster no longer lists live, and for a key read from its slot
-    /// once a device PIN is set on its keystore. Each is checked at this
-    /// call, so a signer taken earlier stops with its key.
+    /// once a device PIN is set on its keystore or one was forgotten there.
+    /// Each is checked at this call, so a signer taken earlier stops with
+    /// its key.
     fn sign_checkpoint_statement(&self, vault: &Vault, statement: &[u8]) -> Result<Vec<u8>> {
         match self.refusal(vault) {
             Some(refusal) => Err(refusal),
@@ -177,6 +191,8 @@ impl Vault {
     /// `KeystoreUnavailable` while the host installed no keystore; the
     /// keystore's own refusal. Refused on a device with a PIN set: there the
     /// key rests under the PIN and is never handed out.
+    /// [`DevicePinRefusal::NotSet`] on a device whose PIN was forgotten and
+    /// that has none now: its next key is made under a new PIN.
     pub fn device_owner_signing_key(&self) -> Result<OwnerRootSigner> {
         let keystore = self.device_keystore()?;
         let machine = self.prepare_install_signing()?;
@@ -207,7 +223,8 @@ impl Vault {
     /// enrollment's own refusals. On a device with a PIN set,
     /// [`crate::error::SecretError::DevicePin`]: `Required` outside a window,
     /// and `Unavailable` where the host installed no device PIN on this
-    /// handle.
+    /// handle. `NotSet` on a device whose PIN was forgotten and that has
+    /// none now: the owner sets a new PIN first.
     pub fn enrol_device_owner_signing_key(
         &self,
         authority: &ActAuthority,
@@ -286,7 +303,8 @@ impl Vault {
     /// seed, and a seed that still rests in the slot goes under the PIN
     /// first ([`Vault::confirm_device_pin`]); outside a window nothing new
     /// is held. A host that installed no device PIN holds no key there, and
-    /// that is logged.
+    /// that is logged. On a device whose PIN was forgotten and that has none
+    /// now, a seed left in the slot is no key, and nothing is held.
     pub fn hold_device_owner_signer_logged(&self) -> bool {
         held_logged(self.hold_device_owner_signer())
     }
@@ -297,18 +315,21 @@ impl Vault {
         let slot = self.owner_signing_slot(machine);
         let pin = self.device_pin();
         let step = pin.as_deref().map(DevicePin::step);
-        if device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)? {
-            return match (pin.as_ref(), step) {
+        match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
+            Some(SlotSeedBar::PinSet) => match (pin.as_ref(), step) {
                 (Some(pin), Some(step)) => {
                     self.hold_pin_bound_owner_signer(&step, pin, keystore.as_ref(), &slot)
                 }
                 _ => Err(no_device_pin_here()),
-            };
-        }
-        match keystore.get(&slot).map_err(super::keystore_error)? {
-            Some(seed) => self
-                .hold_owner_signer_if_enrolled(OwnerRootSigner::from_slot(&seed, &keystore, &slot)),
-            None => Ok(false),
+            },
+            // What a forgotten PIN left in the slot is no key.
+            Some(SlotSeedBar::PinForgotten) => Ok(false),
+            None => match keystore.get(&slot).map_err(super::keystore_error)? {
+                Some(seed) => self.hold_owner_signer_if_enrolled(OwnerRootSigner::from_slot(
+                    &seed, &keystore, &slot,
+                )),
+                None => Ok(false),
+            },
         }
     }
 
@@ -363,27 +384,29 @@ impl Vault {
 }
 
 /// This install's owner signing key from `slot`, its seed made there on
-/// first use: only on a device with no PIN set. The PIN is asked again once
-/// the seed rests. A PIN that a process sharing no device PIN with this one
-/// set meanwhile leaves that seed in the slot, where it signs nothing.
+/// first use: only on a device that has no PIN and never forgot one. The
+/// rule is asked again once the seed rests. A PIN that a process sharing no
+/// device PIN with this one set meanwhile leaves that seed in the slot,
+/// where it signs nothing.
 fn slot_owner_signer(
     keystore: &Arc<dyn DeviceKeystore>,
     slot: &KeystoreSlot,
 ) -> Result<OwnerRootSigner> {
-    let kept_under_pin = || -> Result<()> {
-        if device_pin_is_set(keystore.as_ref()).map_err(super::keystore_error)? {
-            return Err(super::refused(KEPT_UNDER_DEVICE_PIN));
+    let slot_keys_allowed = || -> Result<()> {
+        match slot_seed_bar(keystore.as_ref()).map_err(super::keystore_error)? {
+            None => Ok(()),
+            Some(SlotSeedBar::PinSet) => Err(super::refused(KEPT_UNDER_DEVICE_PIN)),
+            Some(SlotSeedBar::PinForgotten) => Err(pin_refused(DevicePinRefusal::NotSet)),
         }
-        Ok(())
     };
-    kept_under_pin()?;
+    slot_keys_allowed()?;
     let seed = super::slot_seed(keystore.as_ref(), slot)?;
-    kept_under_pin()?;
+    slot_keys_allowed()?;
     Ok(OwnerRootSigner::from_slot(&seed, keystore, slot))
 }
 
 /// `held`, a failure logged by kind and answered as not held.
-fn held_logged(held: Result<bool>) -> bool {
+pub(super) fn held_logged(held: Result<bool>) -> bool {
     held.unwrap_or_else(|error| {
         tracing::warn!(
             kind = ?error.kind(),
