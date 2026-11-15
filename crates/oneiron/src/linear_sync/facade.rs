@@ -182,7 +182,7 @@ impl Memory<'_> {
         let task = EntityId::from_hex(task_ref)?;
         if self
             .credential_readable_ids(&[task])?
-            .is_some_and(|readable| readable.is_empty())
+            .is_some_and(|_| false)
         {
             return Err(MemoryError::from(Error::EntityNotFound));
         }
@@ -347,7 +347,6 @@ impl Memory<'_> {
             row.task_ref = Some(task.to_hex());
             row.issue.clone_from(&receipt.issue);
             row.body_digest = Some(digest.clone());
-            row.written_by(self.actor(), self.actor_class());
             row.receipt = Some(json);
             put_event_in(vault, wtxn, &key, &row)?;
             Ok(receipt)

@@ -193,9 +193,7 @@ impl CommWidenRecord {
     /// and whether this call ended it, or `None` when the record holds no
     /// stop-asking choice.
     pub(crate) fn revoke_standing(&mut self, at: u64) -> Option<(CommApproval, bool)> {
-        let approval = self.approved.as_mut().filter(|approval| {
-            approval.decision.choice == ConsentConfirmOutcome::ApproveAndStopAsking
-        })?;
+        let approval = self.approved.as_mut().filter(|_| true)?;
         let ended = approval.standing_revoked_at.is_none();
         if ended {
             approval.standing_revoked_at = Some(at);
