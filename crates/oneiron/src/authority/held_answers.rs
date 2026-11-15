@@ -21,9 +21,31 @@ use super::machine_answers::AnswerAct;
 use super::*;
 
 /// The held answers whose ask the owner dismissed on this install. Local,
-/// never synced. Key: the held answer's log entry.
-const DISMISSED: SideTable<AuthorityEntryHash, (), Raw> =
+/// never synced, and dropped wherever the machine id is. Key: the held
+/// answer's log entry as 64 lower hex (a `sync_state` key is text).
+const DISMISSED: SideTable<String, (), Raw> =
     SideTable::new(&side_table::AUTHORITY_HELD_ANSWER_DISMISSED);
+
+/// The dismissal row's key for the held answer `entry`.
+fn dismissal_key(entry: &AuthorityEntryHash) -> String {
+    blake3::Hash::from_bytes(*entry).to_hex().to_string()
+}
+
+/// A dismissal's row key, for the image scrub of a direct restore: a
+/// dismissal is this install's own mark, so an image restored as another
+/// install leaves it behind with the machine identity.
+pub(crate) fn is_dismissed_held_answer_row(key: &[u8]) -> bool {
+    key.starts_with(side_table::AUTHORITY_HELD_ANSWER_DISMISSED.prefix)
+}
+
+/// Drops every dismissal with the machine identity they belong to.
+pub(crate) fn drop_held_answer_dismissals_in_txn(
+    store: &crate::store::Store,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> Result<()> {
+    DISMISSED.delete_from(store, wtxn, &[])?;
+    Ok(())
+}
 
 /// A confirm or a dismissal named an entry the list no longer holds: the
 /// owner answered since, or the machine was removed.
@@ -152,17 +174,23 @@ fn confirming_profile(
 
 impl AuthorityFold {
     /// Whether `answer` names another machine key or encryption key than a
-    /// standing head of its machine holds, the roster's or an anchor's.
-    /// False for a machine no revision names: a first answer replaces
-    /// nothing, and the owner checks its machine key against the machine
-    /// itself, as at any pairing.
+    /// standing head of its machine holds: the roster's head, the roster
+    /// revision the owner approved (it decides trust, and a custodial
+    /// revision on another branch can stand above it as the roster's head),
+    /// or an anchor's. False for a machine no revision names: a first answer
+    /// replaces nothing, and the owner checks its machine key against the
+    /// machine itself, as at any pairing.
     #[must_use]
     pub fn replaces_standing_keys(&self, answer: &MachineProfile) -> bool {
         self.machine(answer.machine).is_some_and(|folded| {
-            folded.chains().any(|(_, head)| {
-                head.profile.machine_key != answer.machine_key
-                    || head.profile.encryption_key != answer.encryption_key
-            })
+            folded
+                .chains()
+                .map(|(_, head)| head)
+                .chain(folded.roster_trusted.iter())
+                .any(|head| {
+                    head.profile.machine_key != answer.machine_key
+                        || head.profile.encryption_key != answer.encryption_key
+                })
         })
     }
 }
@@ -223,7 +251,9 @@ impl Vault {
                     carrier_role: carrier.and_then(role_of),
                     carrier_is_mine: carrier
                         .is_some_and(|carrier| fold.trusted_machine(carrier).is_some()),
-                    dismissed: DISMISSED.get(&self.store, txn, entry)?.is_some(),
+                    dismissed: DISMISSED
+                        .get(&self.store, txn, &dismissal_key(entry))?
+                        .is_some(),
                     replaces_keys: fold.replaces_standing_keys(&answer.profile),
                 });
             }
@@ -277,7 +307,7 @@ impl Vault {
             if landing.held().is_some() {
                 return Err(invalid_authority());
             }
-            DISMISSED.delete(&self.store, &mut txn, &entry)?;
+            DISMISSED.delete(&self.store, &mut txn, &dismissal_key(&entry))?;
         }
         let after = self.authority_view_readonly_in_txn(&txn)?;
         let listing = self.held_answer_listing_in_txn(&txn, &after)?;
@@ -311,7 +341,7 @@ impl Vault {
             if !asks {
                 return Err(Error::ConcurrentWrite(STALE));
             }
-            DISMISSED.put(&self.store, &mut txn, entry, &())?;
+            DISMISSED.put(&self.store, &mut txn, &dismissal_key(entry), &())?;
         }
         let listing = self.held_answer_listing_in_txn(&txn, &fold)?;
         txn.commit()?;

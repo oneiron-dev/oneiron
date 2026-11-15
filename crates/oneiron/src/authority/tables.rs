@@ -32,8 +32,8 @@ crate::side_table::side_tables! {
         [restore: live] [family: unclassified] [tier: canonical];
     /// A held machine answer whose ask the owner dismissed on this install (row
     /// CARRIER-OWNER-PROOF): presence only, an empty value. Local like the machine id: never
-    /// synced, so the answer stays held and his other devices still ask. Key: hash32 (the held
-    /// answer's log entry).
+    /// synced, and dropped wherever the machine id is, so the answer stays held and his other
+    /// devices still ask. Key: hex64 (the held answer's log entry).
     AUTHORITY_HELD_ANSWER_DISMISSED: SyncState b"authority:held-answer-dismissed:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// What this home's root signed for a linked machine's own checkpoint image (FIX 5195): the

@@ -114,13 +114,16 @@ pub(crate) fn ensure_device_identity(vault: &Vault) -> Result<DeviceIdentity> {
 /// seed. The pinned root goes with them too:
 /// a new machine trusts no root until a pin door on its own install pins one,
 /// so an old image never rolls trust back to an older root, and an image a
-/// host made never arrives pinned to the host's.
+/// host made never arrives pinned to the host's. The owner's dismissals of
+/// held machine answers go with them: each is the mark of the install he
+/// made it on.
 pub(crate) fn is_machine_identity_row(key: &[u8]) -> bool {
     key == side_table::IDENTITY_CLIENT_ID.prefix
         || key == side_table::IDENTITY_MACHINE_ID.prefix
         || key == side_table::IDENTITY_DEVICE_PK.prefix
         || key == side_table::IDENTITY_MACHINE_PK.prefix
         || crate::authority::is_pinned_root_row(key)
+        || crate::authority::is_dismissed_held_answer_row(key)
 }
 
 /// Forgets this install's client id, machine and pin, so the vault joins as a new
@@ -133,6 +136,7 @@ pub(crate) fn drop_machine_identity_in_txn(
     MACHINE_ID.delete(store, wtxn, &())?;
     DEVICE_PK.delete(store, wtxn, &())?;
     MACHINE_PK.delete(store, wtxn, &())?;
+    crate::authority::drop_held_answer_dismissals_in_txn(store, wtxn)?;
     crate::authority::drop_pinned_root_in_txn(store, wtxn)
 }
 
