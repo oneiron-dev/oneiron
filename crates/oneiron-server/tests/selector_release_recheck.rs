@@ -2,8 +2,9 @@
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Socket regressions for SELECTOR-RELEASE-POINT = B: a selector answer is
-//! judged again where it leaves, so one queued before its grant is deleted
-//! or narrowed never leaves. The test door
+//! judged again where it leaves, so one queued before its grant is deleted,
+//! narrowed or expires, or before its member's access grant is revoked,
+//! never leaves. The test door
 //! `oneiron_server::test_doors::selector_release::arm` runs its hook once,
 //! as the next answer made under a grant is queued, after the answer is
 //! made and before it can leave. A federation UPDATE whose basis changed
@@ -15,18 +16,24 @@ mod engine_stack;
 
 use std::collections::BTreeSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use base64::Engine;
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
 use futures_util::{SinkExt, StreamExt};
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, ScopeAxis,
+    FederationGrant, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
     own_device_residence_scope,
 };
-use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON};
+use oneiron::registry::{
+    ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP,
+};
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::server_state::persist_window_snapshot;
 use oneiron::sync::transport::{self, window_sub_tags};
@@ -47,6 +54,9 @@ type Socket =
 const SECRET: &str = "selector-release-recheck";
 const REPLY_WAIT: Duration = Duration::from_secs(10);
 const WITHHELD_WAIT: Duration = Duration::from_secs(3);
+/// How long after the fixture a test delegate grant expires: room for the
+/// bind and the fetch to be answered before it.
+const DELEGATE_LEAD_SECS: u64 = 6;
 
 fn person(vault: &Vault, name: &str) -> EntityId {
     let id = EntityId::now();
@@ -514,6 +524,135 @@ fn a_residence_reply_queued_before_its_grant_is_deleted_is_refused() {
             .await
             .expect_err("a reply queued before its grant was deleted is refused, never a result");
         assert_eq!(error["code"], "RESULT_CHANGED", "{error}");
+        assert!(!armed(&grant), "the hook ran as the answer was queued");
+    });
+}
+
+/// Waits until the hook has held its answer as long as it means to, so the
+/// silence that follows is the release's, never the hook's.
+async fn wait_held(held: &AtomicBool) {
+    let start = std::time::Instant::now();
+    while !held.load(Ordering::SeqCst) {
+        assert!(
+            start.elapsed() < REPLY_WAIT + Duration::from_secs(2 * DELEGATE_LEAD_SECS),
+            "the hook never ran: no answer was queued"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[test]
+fn a_selector_update_queued_before_its_delegate_grant_expires_never_leaves() {
+    run_on_engine_stack("selector-release-expiry", || async {
+        let fx = fixture().await;
+        // An expiry changes neither the grant's bytes nor the authority
+        // fold, yet past it the grant confers no read (Sol review F1).
+        let member = fx.grant.member_ref;
+        let delegate_id = EntityId::now();
+        let expires_at = fx.vault.now_recorded_at() + DELEGATE_LEAD_SECS;
+        let mut delegate = FederationGrant::new(
+            own_device_residence_scope(),
+            member,
+            FederationGrantRole::Delegate,
+            FederationGrantPreset::Delegate,
+        );
+        delegate.expires_at = Some(expires_at);
+        delegate.delegated_by = Some(person(&fx.vault, "aiko"));
+        put_selector_test_federation_grant(
+            &fx.vault,
+            &delegate_id,
+            &delegate,
+            fx.vault.now_recorded_at(),
+        )
+        .unwrap();
+        let selector = SyncSelector::new(
+            delegate_id,
+            member,
+            SyncSelectorWorld::All,
+            vec![fx.item],
+            vec![],
+        );
+        let held = Arc::new(AtomicBool::new(false));
+        let vault = Arc::clone(&fx.vault);
+        let done = Arc::clone(&held);
+        arm(delegate_id, move || {
+            // Holds the answer in its queue until the expiry second has come.
+            let deadline = std::time::Instant::now() + Duration::from_secs(2 * DELEGATE_LEAD_SECS);
+            while vault.now_recorded_at() < expires_at && std::time::Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            done.store(true, Ordering::SeqCst);
+        });
+        let mut socket = bound(&fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&selector, &[]).unwrap(),
+        )
+        .await;
+        wait_held(&held).await;
+        assert!(
+            fx.vault.now_recorded_at() >= expires_at,
+            "the delegate grant expired while its answer was queued"
+        );
+        assert_no_update(&mut socket, &fx.window).await;
+    });
+}
+
+#[test]
+fn a_selector_update_queued_before_its_members_access_grant_is_revoked_never_leaves() {
+    run_on_engine_stack("selector-release-access-grant", || async {
+        let fx = fixture().await;
+        // The member's relationship reach is an access grant, stored outside
+        // the authority log: its revocation leaves the selector grant's
+        // bytes and the authority fold as they were (Sol review F2).
+        let relationship = EntityId::now();
+        fx.vault
+            .put_entity(
+                &relationship,
+                ENTITY_TYPE_RELATIONSHIP,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a relationship space",
+            )
+            .unwrap();
+        let access = EntityId::now();
+        fx.vault
+            .create_access_grant(
+                &access,
+                &AccessGrant {
+                    principal_ref: fx.grant.member_ref,
+                    scope: AccessGrantScope::Messages {
+                        space_ref: relationship,
+                    },
+                    capability: AccessGrantCapability::MessagesRead,
+                    authority_scope: Scope::top(),
+                    status: AccessGrantStatus::Active,
+                    created_at: 1,
+                    revoked_at: None,
+                    expires_at: None,
+                    companion_bounds: None,
+                },
+            )
+            .unwrap();
+        let vault = Arc::clone(&fx.vault);
+        let grant = fx.grant_id;
+        arm(grant, move || {
+            vault
+                .revoke_access_grant(&access, vault.now_recorded_at())
+                .unwrap();
+        });
+        assert!(armed(&grant), "the hook is armed before the fetch");
+        let mut socket = bound(&fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&fx.selector, &[]).unwrap(),
+        )
+        .await;
+        assert_no_update(&mut socket, &fx.window).await;
         assert!(!armed(&grant), "the hook ran as the answer was queued");
     });
 }
