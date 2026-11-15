@@ -275,10 +275,11 @@ impl BackupMarker {
     /// Whether the file in `dir` it names is still the backup it recorded:
     /// a regular file, never read through a symlink, whose evidence the
     /// shared inspector reads as the marker's commitment digest, BLAKE3 and
-    /// size. It reads the whole file, unless this process already read that
-    /// file whole and found it to be this backup, and it is unchanged since by
-    /// its device, inode, size and fine-grained times (FIX 6729). Anything
-    /// short of that is `false`, which reads as changed.
+    /// size. It reads the whole file, unless within the last hour this
+    /// process read that file whole, settled (unchanged for a minute before
+    /// the read and by it), and found it to be this backup, and the file is
+    /// unchanged since by its device, inode, size and fine-grained times
+    /// (FIX 6729). Anything short of that is `false`, which reads as changed.
     pub fn held(&self, dir: &Path) -> bool {
         let path = dir.join(&self.file);
         let Some((file, metadata)) = held_memo::open_regular(&path) else {
@@ -296,13 +297,14 @@ impl BackupMarker {
         if identity.is_some_and(|identity| held_memo::holds(&evidence, &path, identity)) {
             return true;
         }
+        let started = std::time::SystemTime::now();
         let held = inspect_backup(std::io::BufReader::new(&file)).is_ok_and(|read| {
             read.size == self.size
                 && oneiron_vault_contract::hex(&read.commitment_digest) == self.commitment_digest
                 && oneiron_vault_contract::hex(&read.outer_blake3) == self.outer_blake3
         });
         if held && let Some(identity) = identity {
-            held_memo::remember(&evidence, path, identity);
+            held_memo::remember_read(&evidence, path, identity, &file, started);
         }
         held
     }

@@ -7,13 +7,14 @@
 //! change takes the whole read again.
 //!
 //! The test backs up a vault holding `BODIES` x `BODY_BYTES` of text, lands
-//! the artifact under a label's file name, records its marker, and times
-//! held reads: twice on the landed file (the first reads it whole), once
-//! after a same-size rewrite of one byte in place (not held), and twice
-//! after the byte is put back (held again; the first reads it whole). It
-//! prints each time and the artifact's size: the measurement main and the
-//! fix are compared by. Markers are read only on unix; the memory keystore
-//! needs `test-support`.
+//! the artifact under a label's file name, records its marker, waits until
+//! the file has settled (a read seeds the memo only from a file unchanged
+//! for a minute), and times held reads: twice on the landed file (the first
+//! reads it whole), once after a same-size rewrite of one byte in place (not
+//! held), and twice after the byte is put back (held again; both read whole,
+//! as the file changed under a minute before). It prints each time and the
+//! artifact's size: the measurement main and the fix are compared by.
+//! Markers are read only on unix; the memory keystore needs `test-support`.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test backup_marker_held_memo`
 #![cfg(all(unix, feature = "test-support"))]
@@ -21,7 +22,7 @@
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use oneiron::recovery::checkpoint::{BackupMarker, backup_marker};
 use oneiron::registry::ENTITY_TYPE_ASSET;
@@ -99,6 +100,8 @@ fn a_recorded_backup_is_held_without_a_whole_read_until_it_changes() {
         .expect("the marker lands");
     let marker = backup_marker(backups.path(), LABEL).expect("the marker names the backup");
     let size = std::fs::metadata(&path).expect("artifact metadata").len();
+    // Past the memo's settle time since the artifact's rename.
+    std::thread::sleep(Duration::from_secs(61));
 
     let (first_ms, first) = timed_held(&marker, backups.path());
     let (second_ms, second) = timed_held(&marker, backups.path());
