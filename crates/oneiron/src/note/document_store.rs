@@ -18,7 +18,7 @@ use crate::ports::{DocumentRowStore, DocumentSlot};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_NOTE};
-use crate::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, WriteActor};
+use crate::{EdgeKind, EntityId, TimeRange, Vault, WriteActor};
 
 /// The snapshot row's key, for a test that plants one by hand.
 #[cfg(test)]
@@ -693,7 +693,8 @@ pub(super) fn require_note_writer(
     if !body.author_ref.is(memory.actor())
         && !super::proposals::automatic_edit_grant(memory.vault(), txn, id, memory.write_actor())?
     {
-        if memory.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !memory.acts_as_own_person() {
             return Err(MemoryError::bad_request_with(
                 "NOTE edit requires its author or a bound owner",
                 &[],

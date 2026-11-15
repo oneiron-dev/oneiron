@@ -84,8 +84,8 @@ pub(super) fn admit_owner_or_granted_in_txn(
     verb: &str,
 ) -> MemoryResult<()> {
     let vault = memory.vault();
-    if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
-    {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if memory.is_vault_owner_in_txn(txn)? {
         return Ok(());
     }
     if memory.actor_class() != EdgeActorClass::Agent {

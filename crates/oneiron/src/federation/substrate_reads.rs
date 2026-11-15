@@ -25,7 +25,7 @@ use super::system_agent_grant::SystemAgent;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
-use crate::{EdgeActorClass, Vault, WriteActor};
+use crate::{Vault, WriteActor};
 
 /// Which grant a substrate read needs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,8 +90,8 @@ impl Vault {
         reader: WriteActor,
         read: SubstrateRead,
     ) -> Result<bool> {
-        if reader.actor_class() == EdgeActorClass::Human
-            && self.verify_owner_write_actor_in_txn(txn, &reader).is_ok()
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if reader.acts_as_own_person() && self.verify_owner_write_actor_in_txn(txn, &reader).is_ok()
         {
             return Ok(true);
         }

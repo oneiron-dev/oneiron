@@ -7,7 +7,6 @@
 use super::documents::{invalid, live_doc};
 use super::proposals::{NoteActor, names_no_actor};
 use super::sync_rows::SYNC_DS_E;
-use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_NOTE;
@@ -193,7 +192,8 @@ impl Vault {
                         );
                     }
                     self.authorize_shared_note_write_in_txn(txn, note, &actor)?;
-                    let owner = actor.actor_class() == EdgeActorClass::Human
+                    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                    let owner = actor.acts_as_own_person()
                         && crate::memory::verify_owner_actor_binding_in_txn(
                             self,
                             txn,

@@ -304,9 +304,10 @@ pub(super) fn covered(
 ) -> Result<bool> {
     validate_actor(vault, txn, actor)?;
     match auth {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         DocAuthorization::Owner(owner) => Ok(owner_in_txn(vault, txn, owner)?
             == actor.entity_ref()
-            && actor.actor_class() == crate::edge::EdgeActorClass::Human),
+            && actor.acts_as_own_person()),
         DocAuthorization::ProposeOnly => Ok(false),
         DocAuthorization::StandingGrant => {
             let target = format!("entity:{}", entity.to_hex());

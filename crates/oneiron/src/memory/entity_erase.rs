@@ -19,7 +19,6 @@ use crate::entity_id::EntityId;
 use crate::error::Error;
 use crate::federation::{ActExecution, PendingAuthorityAct, SharedVaultPreset};
 use crate::store::legal_hold::{self, HoldActor};
-use crate::write_envelope::WriteActor;
 
 /// The shared vault's act a held record waits on.
 const ERASE_ACT: &str = "erase";
@@ -247,7 +246,8 @@ impl Memory<'_> {
                 state: DeleteRequestState::CompletionPending,
             }
         } else {
-            let actor = WriteActor::new(self.actor, self.actor_class);
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            let actor = self.write_actor();
             for (share_id, _) in preview.shared_with() {
                 self.vault.revoke_share(
                     share_id,
@@ -632,7 +632,8 @@ impl Memory<'_> {
                 store.clock.now_recorded_at(),
             )?
         };
-        let actor = WriteActor::new(self.actor, self.actor_class);
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let actor = self.write_actor();
         for (share_id, _) in shares {
             self.vault
                 .revoke_share(&share_id, &actor, store.clock.now_recorded_at())?;

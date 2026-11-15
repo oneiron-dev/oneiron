@@ -36,11 +36,22 @@ impl Memory<'_> {
     pub fn solved_run_scope(&self) -> MemoryResult<SolvedRunScope> {
         let credential = self.verb_ask_credential();
         let reference = credential.as_ref().map(|credential| credential.reference());
-        Ok(SolvedRunScope::new(
+        Ok(self.mark_scope_handed_on(SolvedRunScope::new(
             self.actor,
             self.actor_class,
             reference,
-        )?)
+        )?))
+    }
+
+    /// `scope`, marked when this handle presents a credential handed on to
+    /// another key, so the run's admission judges the key's holder, never
+    /// the person it names (HANDED-ON-SLIP-PERSON).
+    fn mark_scope_handed_on(&self, scope: SolvedRunScope) -> SolvedRunScope {
+        if self.presents_handed_on_credential() {
+            scope.with_handed_on_credential()
+        } else {
+            scope
+        }
     }
 
     /// The envelope a browser filing's anchor claim is written under
@@ -93,7 +104,11 @@ impl Memory<'_> {
             .map(|credential| credential.reference().clone());
         let witness = reference.as_ref().and(self.invocation_slip()).cloned();
         let witness_digest = witness.as_ref().map(witness_digest).transpose()?;
-        let scope = SolvedRunScope::new(self.actor, self.actor_class, reference.as_ref())?;
+        let scope = self.mark_scope_handed_on(SolvedRunScope::new(
+            self.actor,
+            self.actor_class,
+            reference.as_ref(),
+        )?);
         let evidence = SolvedRunEvidence::new(scope.clone(), capture)?;
         let group = evidence.group().digest();
         let caller = SavedBrowserCaller {

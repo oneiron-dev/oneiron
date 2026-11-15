@@ -61,6 +61,9 @@ pub struct SolvedRunScope {
     pub actor: EntityId,
     pub actor_class: u8,
     pub authority: Option<[u8; 32]>,
+    /// Whether the capturing call presented a credential handed on to another key.
+    #[serde(default)]
+    pub handed_on_credential: bool,
 }
 
 impl SolvedRunScope {
@@ -86,7 +89,17 @@ impl SolvedRunScope {
             actor,
             actor_class: class as u8,
             authority,
+            handed_on_credential: false,
         })
+    }
+
+    /// Marks this scope as captured under a credential handed on to another
+    /// key, so its admission judges the holder, never the person it names
+    /// (HANDED-ON-SLIP-PERSON).
+    #[must_use]
+    pub fn with_handed_on_credential(mut self) -> Self {
+        self.handed_on_credential = true;
+        self
     }
 }
 

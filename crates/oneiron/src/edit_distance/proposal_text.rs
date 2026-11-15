@@ -126,7 +126,8 @@ impl ProposalTextArtifact {
         actor: &WriteActor,
         source_turn_ref: Option<EntityId>,
     ) -> Result<Self> {
-        if actor.actor_class() != crate::EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person() {
             return Err(Error::InvalidConfig(
                 "generated births require a prompt and task/ask trigger".into(),
             ));

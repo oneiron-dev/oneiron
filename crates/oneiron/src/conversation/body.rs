@@ -227,9 +227,10 @@ pub(crate) fn create_in_txn(
     authorize(vault, txn, actor)?;
     if !body.roles.is_empty() {
         let fold = vault.authority_fold_readonly_in_txn(txn)?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if fold.vault_root_is_conflicted()
             || (fold.vault_id.is_some()
-                && (actor.actor_class() != crate::EdgeActorClass::Human
+                && (!actor.acts_as_own_person()
                     || crate::memory::verify_owner_actor_binding_in_txn(
                         vault,
                         txn,

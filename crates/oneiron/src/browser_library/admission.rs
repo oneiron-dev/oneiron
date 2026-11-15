@@ -347,7 +347,13 @@ pub fn admission_sources(
     let Some(class) = EdgeActorClass::try_from_u8(job.scope.actor_class) else {
         return Ok(Err(SourceUnavailable::Changed { evidence: first }));
     };
-    let actor = WriteActor::new(job.scope.actor, class);
+    let base = WriteActor::new(job.scope.actor, class);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let actor = if job.scope.handed_on_credential {
+        base.with_handed_on_credential()
+    } else {
+        base
+    };
     let key =
         ScopedReadActorKey::with_actor_class(job.scope.actor.to_hex(), class.gate_actor_class())
             .ok_or(Error::InvalidClaimBody("solved run scope"))?;
@@ -388,10 +394,11 @@ fn source_caller(
             witness,
         });
     }
-    match actor.actor_class() {
-        EdgeActorClass::Human => return Ok(AdmissionCaller::Person(actor)),
-        EdgeActorClass::Agent => {}
-        EdgeActorClass::System => return Ok(AdmissionCaller::Unsupported),
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    match (actor.actor_class(), actor.acts_as_own_person()) {
+        (EdgeActorClass::Human, true) => return Ok(AdmissionCaller::Person(actor)),
+        (EdgeActorClass::Agent, _) | (EdgeActorClass::Human, false) => {}
+        (EdgeActorClass::System, _) => return Ok(AdmissionCaller::Unsupported),
     }
     for caller in callers {
         if !native_agent_run(vault, caller.run_id, actor.entity_ref())? {

@@ -300,8 +300,8 @@ fn admit_in_txn(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, verb: &str) -> Memor
     {
         return Err(refused(verb, "the caller's credential is no longer live"));
     }
-    if crate::memory::actor_is_vault_owner_in_txn(vault, txn, memory.actor(), memory.actor_class())?
-    {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if memory.is_vault_owner_in_txn(txn)? {
         if !crate::consent::person_is_live_in_txn(vault, txn, &memory.actor())? {
             return Err(refused(verb, "the vault owner is not a live person"));
         }

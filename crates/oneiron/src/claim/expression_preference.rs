@@ -153,10 +153,11 @@ impl Vault {
         learned_at: u64,
         permit: Option<&OwnerArchiveRestorePermit>,
     ) -> Result<ExpressionPreferenceWriteResult> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if matches!(
             change.origin,
             ExpressionWriteOrigin::Native(ExpressionPreferenceOrigin::ExplicitUser)
-        ) && !matches!(actor.actor_class(), EdgeActorClass::Human)
+        ) && !actor.acts_as_own_person()
         {
             return Err(Error::InvalidClaimBody(
                 "explicit expression preference requires a human actor",
@@ -533,7 +534,8 @@ impl Vault {
         if session_claim_producer(head) == Some(actor.entity_ref()) {
             return Ok(());
         }
-        if actor.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !actor.acts_as_own_person() {
             return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "an expression preference is retracted by the actor that wrote it",
             }));

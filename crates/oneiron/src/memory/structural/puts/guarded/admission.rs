@@ -57,7 +57,8 @@ impl Memory<'_> {
                 ],
             ));
         }
-        if type_byte == ENTITY_TYPE_PERSON && self.actor_class != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if type_byte == ENTITY_TYPE_PERSON && !self.acts_as_own_person() {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 format!(

@@ -704,7 +704,8 @@ impl Memory<'_> {
     /// The card's person dismisses it: a dismissed card never mints. `false`
     /// when it was dismissed already; a minted card stays minted.
     pub fn projects_dismiss_card(&self, card_id: &str) -> MemoryResult<bool> {
-        if self.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !self.acts_as_own_person() {
             return Err(refused("only the card's person dismisses it").into());
         }
         let key = card_key(card_id);

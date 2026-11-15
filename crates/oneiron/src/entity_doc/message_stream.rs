@@ -238,7 +238,8 @@ pub(crate) fn authorize_message_continuation_in_txn(
     // Same author is already proven by the stream path's immutable edge check.
     // Human owner rights still require the live owner binding; agents need the
     // same entity-bound grant used by ordinary editable-text verbs.
-    if actor.actor_class() == crate::edge::EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if actor.acts_as_own_person() {
         crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref())
             .map_err(|_| invalid("message continuation requires live owner authority"))?;
     } else {

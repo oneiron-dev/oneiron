@@ -218,7 +218,8 @@ pub(super) fn receipted_message(
             .collect(),
         process: MadeByProcess {
             actor: actor.entity_ref(),
-            class: if actor.actor_class() == EdgeActorClass::Human {
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            class: if actor.acts_as_own_person() {
                 MadeByClass::Stated
             } else {
                 MadeByClass::Concluded

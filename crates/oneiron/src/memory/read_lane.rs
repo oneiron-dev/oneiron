@@ -465,7 +465,11 @@ impl Memory<'_> {
 
     /// Whether the bound actor is the vault owner: the local embedded owner,
     /// or a human whose owner binding verifies.
-    pub(super) fn is_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
+    pub(crate) fn is_vault_owner_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<bool> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.presents_handed_on_credential() {
+            return Ok(false);
+        }
         super::credential_key::actor_is_vault_owner_in_txn(
             self.vault,
             txn,

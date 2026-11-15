@@ -403,9 +403,12 @@ pub(super) fn check_ceiling_in_txn(
         return Ok(());
     }
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let human = actor.acts_as_own_person();
     let class = match actor.actor_class() {
         EdgeActorClass::Agent => "agent",
-        EdgeActorClass::Human => "human",
+        EdgeActorClass::Human if human => "human",
+        EdgeActorClass::Human => "agent",
         _ => return Err(invalid("unsupported action principal class")),
     };
     let ceiling = policy.actor_ceiling(class, Some(&actor.entity_ref().to_hex()));

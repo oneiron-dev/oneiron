@@ -1,6 +1,5 @@
 //! Durable owner policy; no token or partial content is stored here.
 use super::*;
-use crate::edge::EdgeActorClass;
 use crate::memory::support::verify_owner_actor_binding_in_txn;
 use crate::side_table::{self, Named, SideTable};
 
@@ -52,7 +51,8 @@ impl Memory<'_> {
         policy: &MessageStreamPolicy,
     ) -> MessageStreamResult<()> {
         policy.validate()?;
-        if self.actor_class != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !self.acts_as_own_person() {
             return Err(MessageStreamError::WrongActor);
         }
         POLICY.encode_value(policy)?;

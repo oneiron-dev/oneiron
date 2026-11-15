@@ -507,7 +507,8 @@ impl Memory<'_> {
     /// own actor id. The Owner fact is the binding; a caller-writable TASK
     /// body by itself cannot nominate the principal.
     fn short_ask_principal_in_txn(&self, txn: &heed::RoTxn<'_>) -> MemoryResult<EntityId> {
-        if self.actor_class() == crate::EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.acts_as_own_person() {
             crate::memory::verify_owner_actor_binding_in_txn(self.vault(), txn, self.actor())?;
             return Ok(self.actor());
         }

@@ -411,11 +411,11 @@ impl Memory<'_> {
         }
         let person_author = super::person_author_in_txn(self.vault, wtxn, self.actor)?;
         super::reject_erased_person_in_txn(self.vault, wtxn, plan.conversation_id, person_author)?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         let witnessed = crate::workspace_roster::admit_room_witness(
             self.vault,
             wtxn,
-            self.actor,
-            self.actor_class,
+            self.write_actor(),
             plan.conversation_id,
             plan.turn_id,
             plan.turn,

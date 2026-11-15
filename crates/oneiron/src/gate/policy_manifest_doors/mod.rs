@@ -439,8 +439,9 @@ pub fn propose_policy_manifest(
                 actor_ref: Some(actor.entity_ref().to_hex()),
                 delegation_grant_ref: None,
             },
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
             source: Some(
-                if memory.writes_generated() || memory.actor_class() != EdgeActorClass::Human {
+                if memory.writes_generated() || !memory.acts_as_own_person() {
                     crate::claim::ClaimSource::Generated
                 } else {
                     crate::claim::ClaimSource::UserStated

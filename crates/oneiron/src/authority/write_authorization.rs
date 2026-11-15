@@ -256,7 +256,8 @@ impl Vault {
         writer: &WriteActor,
     ) -> Result<()> {
         self.verify_write_actor_in_txn(txn, writer)?;
-        if writer.actor_class() != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !writer.acts_as_own_person() {
             return Err(Error::Claim(ClaimError::ActorLacksClaimAuthority {
                 reason: "an owner write requires a human actor",
             }));

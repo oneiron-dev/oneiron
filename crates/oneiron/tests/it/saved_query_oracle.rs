@@ -614,8 +614,7 @@ fn active_campaign(vault: &Vault) -> EntityId {
     .unwrap();
     launch_campaign(
         vault,
-        owner,
-        EdgeActorClass::Human,
+        oneiron::WriteActor::new(owner, EdgeActorClass::Human),
         campaign.campaign_ref,
         campaign.definition.definition_version,
         1,

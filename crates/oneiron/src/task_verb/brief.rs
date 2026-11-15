@@ -539,8 +539,8 @@ impl Memory<'_> {
         brief: Option<&QueueTaskBrief>,
     ) -> MemoryResult<()> {
         let vault = self.vault();
-        if crate::memory::actor_is_vault_owner_in_txn(vault, txn, self.actor(), self.actor_class())?
-        {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.is_vault_owner_in_txn(txn)? {
             return Ok(());
         }
         let mut pins_approved_plan = false;
@@ -585,12 +585,15 @@ impl Memory<'_> {
         let Some(approver) = approver else {
             return Ok(());
         };
-        if crate::memory::actor_is_vault_owner_in_txn(
-            self.vault(),
-            txn,
-            approver.entity_ref(),
-            approver.actor_class(),
-        )? {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if approver.acts_as_own_person()
+            && crate::memory::actor_is_vault_owner_in_txn(
+                self.vault(),
+                txn,
+                approver.entity_ref(),
+                approver.actor_class(),
+            )?
+        {
             return Ok(());
         }
         self.require_plan_admission_in(txn, assignee, brief)

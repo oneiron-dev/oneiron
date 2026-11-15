@@ -660,10 +660,8 @@ impl Memory<'_> {
                 .tasks_answer_forward(handle, intent_key, act, proof);
         }
         // A person's word is theirs to give, on their own surface.
-        if self.writes_generated()
-            || self.room_turn().is_some()
-            || self.actor_class() != crate::EdgeActorClass::Human
-        {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.writes_generated() || self.room_turn().is_some() || !self.acts_as_own_person() {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 "a relayed ask word is a person's own, given on their own client",

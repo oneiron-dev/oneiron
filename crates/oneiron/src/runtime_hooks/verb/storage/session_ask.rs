@@ -98,8 +98,7 @@ impl SessionHookKeep {
         &self,
         vault: &Vault,
         group: EntityId,
-        actor: EntityId,
-        actor_class: crate::EdgeActorClass,
+        writer: crate::WriteActor,
         word: &TaskAskWord,
         now: u64,
     ) -> Option<MemoryResult<TaskAskAnswer>> {
@@ -111,7 +110,7 @@ impl SessionHookKeep {
             if !key.live(vault) {
                 return Some(Err(MemoryError::bad_request("unknown ask handle")));
             }
-            let actor_kind = if actor_class == crate::EdgeActorClass::Human {
+            let actor_kind = if writer.actor_class() == crate::EdgeActorClass::Human {
                 crate::registry::ENTITY_TYPE_PERSON
             } else {
                 crate::registry::ENTITY_TYPE_AGENT_DEF
@@ -124,15 +123,8 @@ impl SessionHookKeep {
                 Ok(id) => id,
                 Err(error) => return Some(Err(MemoryError::from(error))),
             };
-            return Some(record.answer(
-                actor,
-                actor_class,
-                actor_kind,
-                result_kind,
-                word,
-                word_ref,
-                now,
-            ));
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            return Some(record.answer(writer, actor_kind, result_kind, word, word_ref, now));
         }
         None
     }

@@ -201,8 +201,7 @@ fn install_fixture(vault: &Vault) -> Fixture {
     .program_ref;
     launch_campaign(
         vault,
-        owner,
-        EdgeActorClass::Human,
+        oneiron::WriteActor::new(owner, EdgeActorClass::Human),
         campaign.campaign_ref,
         campaign.definition.definition_version,
         1,

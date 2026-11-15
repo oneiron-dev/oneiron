@@ -8,12 +8,12 @@ use super::pin_index::NOTE_PIN_SOURCE;
 use super::side_keys::HexPair;
 use super::sync_rows::{NOTE_RECEIPT_BY_REQUEST, SYNC_DS_E};
 use super::{NoteActor, NotePin, NoteScalarEdit, NoteScalarEditOutcome};
+use crate::EntityId;
 use crate::memory::{CommitReceipt, Memory, MemoryResult};
 use crate::provenance::ActorStamp;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::side_table::HexId;
-use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
 /// Idempotent command carried by the canonical document frame. There is no
@@ -665,7 +665,8 @@ fn propose_claim(
         claim_value,
         1.0,
     );
-    let source = if memory.actor_class() == EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let source = if memory.acts_as_own_person() {
         ClaimSource::UserStated
     } else {
         ClaimSource::Generated

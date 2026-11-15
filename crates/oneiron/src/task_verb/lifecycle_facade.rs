@@ -438,11 +438,11 @@ impl Memory<'_> {
             return self.task_work_memory().tasks_answer(handle, word);
         }
         self.require_answers_in_own_name()?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
         if let Some(answer) = self.vault().verb_hook_state.session.answer_ask(
             self.vault(),
             handle.group_ref,
-            self.actor(),
-            self.actor_class(),
+            self.write_actor(),
             word,
             self.vault().store.clock.now_recorded_at(),
         ) {

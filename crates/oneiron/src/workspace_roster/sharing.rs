@@ -197,13 +197,10 @@ impl Memory<'_> {
             return Err(refused().into());
         }
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
-        if !crate::memory::actor_is_vault_owner_in_txn(
-            vault,
-            &txn,
-            self.actor(),
-            self.actor_class(),
-        )? || companion_principal_in(vault, &txn, &target.companion)?
-            .is_some_and(|principal| principal != self.actor())
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !self.is_vault_owner_in_txn(&txn)?
+            || companion_principal_in(vault, &txn, &target.companion)?
+                .is_some_and(|principal| principal != self.actor())
         {
             return Err(refused().into());
         }

@@ -28,7 +28,6 @@
 //! never an admission party.
 use super::participation::{agent_standing_in_txn, participant_in_txn, person_standing_in_txn};
 use super::*;
-use crate::EdgeActorClass;
 use crate::conversation::room_host_in_txn;
 use crate::error::{ClaimError, RecordError};
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
@@ -433,7 +432,8 @@ impl Memory<'_> {
         let caller = self.write_actor();
         let standing = vault.try_with_write_txn_grouped(|txn| {
             vault.verify_write_actor_in_txn(txn, &caller)?;
-            if caller.actor_class() != EdgeActorClass::Human
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            if !caller.acts_as_own_person()
                 || room_host_in_txn(vault, txn, pin.room, caller)?.is_none()
             {
                 return Err(MemoryError::from(lacks(

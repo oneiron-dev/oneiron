@@ -2,7 +2,7 @@
 
 use rmpv::Value;
 
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeKind;
 use crate::memory::support::{
     encode_rmpv, hard_deleted_refusal, hex_string, id_from_optional_hex, json_to_rmpv,
     verify_owner_actor_binding_in_txn,
@@ -238,7 +238,8 @@ impl Memory<'_> {
         let artifact_id = self.resolve_ref(artifact_ref)?;
         // A machine's unlabelled append reserves its version claim's id as
         // the proposal key; Keep uses that same id when the claim is born.
-        let claim_id = if run_ref.is_none() && self.actor_class != EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let claim_id = if run_ref.is_none() && !self.acts_as_own_person() {
             Some(self.vault.store.clock.entity_id()?)
         } else {
             None

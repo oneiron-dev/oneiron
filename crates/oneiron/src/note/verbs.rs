@@ -194,7 +194,8 @@ impl Vault {
                 let kind = self
                     .get_entity_type_in_txn(txn, &origin)?
                     .ok_or(crate::Error::EntityNotFound)?;
-                let owner = actor.actor_class() == crate::edge::EdgeActorClass::Human
+                // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                let owner = actor.acts_as_own_person()
                     && crate::memory::verify_owner_actor_binding_in_txn(
                         self,
                         txn,

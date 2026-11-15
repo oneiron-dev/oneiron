@@ -36,7 +36,8 @@ pub(super) fn require_delete_in_txn(
             grant: None,
         });
     }
-    if memory.actor_class() != EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if !memory.acts_as_own_person() {
         return Err(forbidden("attempt_delete_no_standing"));
     }
     vault.verify_write_actor_in_txn(txn, &memory.write_actor())?;

@@ -219,7 +219,8 @@ impl Memory<'_> {
     /// the vault's owner, and holds anyone else to a standing grant on the
     /// brief (FIX 9620).
     fn artifact_consent(&self, brief_ref: Option<String>) -> MemoryResult<SettleConsent> {
-        if self.actor_class() == EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.acts_as_own_person() {
             return Ok(SettleConsent::OwnerConsent { brief_ref });
         }
         let brief_ref = brief_ref

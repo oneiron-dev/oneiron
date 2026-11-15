@@ -10,7 +10,7 @@ use super::{
     append_pack_manifest_fields,
 };
 use crate::EntityId;
-use crate::memory::{Memory, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn};
+use crate::memory::{Memory, verify_actor_binding_in_txn};
 use crate::store::attempt_manifest::ManifestEntry;
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
@@ -77,7 +77,8 @@ impl Memory<'_> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let owner = self.is_vault_owner_in_txn(&txn)?;
         drop(txn);
         for record in super::direct_dispatch::receipts(vault)? {
             if record.receipt_id != receipt_ref || record.outcome != "replied" {
@@ -174,7 +175,8 @@ impl Memory<'_> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
-        let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let owner = self.is_vault_owner_in_txn(&txn)?;
         drop(txn);
         for record in super::direct_dispatch::receipts(vault)? {
             if record.receipt_id != receipt_ref || record.outcome != CRAFT_EXPOSED {

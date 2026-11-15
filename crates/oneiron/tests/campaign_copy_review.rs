@@ -282,7 +282,14 @@ fn launched_campaign(
             )
             .unwrap();
     }
-    launch_campaign(vault, owner, EdgeActorClass::Human, campaign, version, now).unwrap();
+    launch_campaign(
+        vault,
+        WriteActor::new(owner, EdgeActorClass::Human),
+        campaign,
+        version,
+        now,
+    )
+    .unwrap();
     elect_campaign_home_node_designation(
         vault,
         &[CampaignHomeNodeCandidate::always_on_local(HOME_NODE)],

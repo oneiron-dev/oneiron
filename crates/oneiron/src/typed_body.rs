@@ -17,7 +17,6 @@
 //! fork queuing its body for that window mirror.
 
 use crate::Vault;
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Named, Raw, SideTable};
@@ -681,10 +680,10 @@ fn admit_body(vault: &Vault, txn: &RoTxn<'_>, doc: &LoroDoc, before: &Frontiers)
 /// Whether `made_by` is a receipt `actor` may give: its process names the
 /// actor, and only a person states.
 fn made_by_names(actor: WriteActor, made_by: &MadeBy) -> bool {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     made_by.process.actor == actor.entity_ref()
         && made_by.process.is_valid()
-        && (actor.actor_class() == EdgeActorClass::Human
-            || made_by.process.class != MadeByClass::Stated)
+        && (actor.acts_as_own_person() || made_by.process.class != MadeByClass::Stated)
 }
 
 /// Writes the `actor.peer_binding` claim that lets a reader honor `peer`'s

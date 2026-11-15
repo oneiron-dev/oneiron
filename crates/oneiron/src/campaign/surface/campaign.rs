@@ -159,20 +159,23 @@ pub fn update_campaign(
 /// the campaign is Archived.
 pub fn launch_campaign(
     vault: &Vault,
-    authenticated_principal: EntityId,
-    actor_class: EdgeActorClass,
+    caller: crate::WriteActor,
     campaign_ref: EntityId,
     expected_definition_version: u64,
     now: u64,
 ) -> Result<CampaignRecord> {
+    let authenticated_principal = caller.entity_ref();
+    let actor_class = caller.actor_class();
+    let person = caller.acts_as_own_person();
     let kind = campaign_type_byte(vault)?;
     vault.with_write_txn_grouped(|wtxn| {
         let mut record =
             owned_campaign_in_txn(vault, wtxn, authenticated_principal, campaign_ref, kind)?;
         require_expected_campaign_version(&record, expected_definition_version)?;
-        match actor_class {
-            EdgeActorClass::Human => {}
-            EdgeActorClass::Agent => {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        match (actor_class, person) {
+            (EdgeActorClass::Human, true) => {}
+            (EdgeActorClass::Agent, _) | (EdgeActorClass::Human, false) => {
                 let effect = ExternalEffectGateInput {
                     actor: GateActor {
                         actor_class: actor_class.gate_actor_class().to_owned(),
@@ -213,7 +216,7 @@ pub fn launch_campaign(
                     ));
                 }
             }
-            EdgeActorClass::System => {
+            (EdgeActorClass::System, _) => {
                 return Err(invalid("campaign launch requires a person or an agent"));
             }
         }

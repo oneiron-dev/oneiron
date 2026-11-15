@@ -59,7 +59,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::memory::{Memory, actor_is_vault_owner_in_txn, verify_actor_binding_in_txn};
+use crate::memory::{Memory, verify_actor_binding_in_txn};
 use crate::ports::ChangeLogStoreRead;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::DetachedWrite;
@@ -779,7 +779,8 @@ impl Memory<'_> {
         };
         let own = receipt.actor_ref == self.actor().to_hex()
             && receipt.actor_class == self.actor_class().gate_actor_class();
-        if !own && !actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())? {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if !own && !self.is_vault_owner_in_txn(&txn)? {
             return Ok(None);
         }
         // The receipt's snapshot ends before its served rows are read: each

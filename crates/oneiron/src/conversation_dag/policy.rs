@@ -16,7 +16,7 @@ use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
 };
 use crate::receipt::{ReferenceOutcome, ReferenceRefusalFacts, receipt_reference_refusals};
-use crate::{EdgeActorClass, EntityId, Vault, WriteActor, WriteEnvelope, WriteProvenance};
+use crate::{EntityId, Vault, WriteActor, WriteEnvelope, WriteProvenance};
 use heed::{RoTxn, RwTxn};
 use rmpv::Value;
 
@@ -205,7 +205,8 @@ pub(crate) fn receipt_append_refusal(
 /// `unlinked` receipt; the text is never refused or rewritten. A body that
 /// does not decode is refused later, by the append.
 pub(crate) fn admit_append_prose(writer: &Memory<'_>, row: &'static str, input: &AppendRecord) {
-    if writer.actor_class() == EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if writer.acts_as_own_person() {
         return;
     }
     let mut bytes = input.body.as_slice();
@@ -249,7 +250,8 @@ fn body_pointer(key: &str) -> String {
 /// agent, a delegated sub-agent, the Dreamer, a connector or a system writer
 /// generates it, and generated text never supersedes what a person stated.
 pub(crate) fn append_source(writer: WriteActor) -> ClaimSource {
-    if writer.actor_class() == EdgeActorClass::Human {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if writer.acts_as_own_person() {
         ClaimSource::UserStated
     } else {
         ClaimSource::Generated

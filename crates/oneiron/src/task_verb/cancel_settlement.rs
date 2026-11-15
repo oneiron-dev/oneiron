@@ -154,12 +154,8 @@ fn apply_in(
             if force
                 && (task_create_owner_in(memory.vault(), &*wtxn, task)?
                     == Some(memory.actor())
-                    || crate::memory::actor_is_vault_owner_in_txn(
-                        memory.vault(),
-                        &*wtxn,
-                        memory.actor(),
-                        memory.actor_class(),
-                    )?) =>
+                    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+                    || memory.is_vault_owner_in_txn(&*wtxn)?) =>
         {
             memory.force_cancel_task_in(wtxn, task, None, now)?;
         }

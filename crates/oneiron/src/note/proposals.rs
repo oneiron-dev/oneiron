@@ -6,7 +6,6 @@ use super::documents::{
 };
 use super::side_keys::HexPair;
 use super::sync_rows::SYNC_DS_E;
-use crate::edge::EdgeActorClass;
 use crate::error::Result;
 use crate::memory::MemoryResult;
 use crate::ports::{DocumentRow, DocumentRowStore, DocumentSlot, UpdateSeq};
@@ -396,7 +395,8 @@ pub(super) fn grant_allows(
     note: EntityId,
     actor: WriteActor,
 ) -> Result<bool> {
-    if actor.actor_class() == EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if actor.acts_as_own_person()
         && crate::memory::verify_owner_actor_binding_in_txn(vault, txn, actor.entity_ref()).is_ok()
     {
         return Ok(true);

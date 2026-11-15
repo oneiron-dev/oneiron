@@ -411,12 +411,12 @@ fn stamp_birth(
     at: u64,
     born: Option<&MadeBy>,
 ) -> Result<()> {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let names_this_birth = |made_by: &&MadeBy| {
         made_by.process.actor == actor.entity_ref()
             && made_by.at == at
             && made_by.process.is_valid()
-            && (made_by.process.class != MadeByClass::Stated
-                || actor.actor_class() == crate::EdgeActorClass::Human)
+            && (made_by.process.class != MadeByClass::Stated || actor.acts_as_own_person())
     };
     let Some(made_by) = born.filter(names_this_birth) else {
         return stamp_with(doc, stamp, at, "birth", &[]);

@@ -1,9 +1,9 @@
 //! The one blessed Plugin contract, installed by a verified person.
 
+use crate::EntityId;
 use crate::error::Result;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{EdgeActorClass, EntityId};
 use serde::{Deserialize, Serialize};
 
 /// The one blessed, person-stamped brief-kind policy contract.
@@ -62,7 +62,8 @@ impl Memory<'_> {
             retention: NoteRetentionDefault::Durable,
         };
         self.with_verified_actor_write_txn(|txn| {
-            if self.actor_class() != EdgeActorClass::Human {
+            // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+            if !self.acts_as_own_person() {
                 return Err(MemoryError::bad_request_with(
                     "brief policy must be person-stamped",
                     &[],

@@ -34,7 +34,6 @@ use crate::consent::{
     ComposedEffect, ConsentDecision, StandingConsentGrant, evaluate_consent,
     load_active_standing_grants,
 };
-use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
@@ -600,7 +599,8 @@ pub(super) fn settle_in_txn(
     }
     let caller = actor.entity_ref();
     let answerer = BodyActor::Actor(caller);
-    let person = actor.actor_class() == EdgeActorClass::Human;
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let person = actor.acts_as_own_person();
     let at = vault.now_recorded_at();
     let mut landed = Vec::new();
     match request.verdict {

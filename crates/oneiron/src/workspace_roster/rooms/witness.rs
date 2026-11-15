@@ -9,7 +9,7 @@ use super::participation::{
 };
 use super::*;
 use crate::conversation_dag::{ProvenRoomQuote, QuotedReply};
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeKind;
 use crate::memory::{WitnessAuthor, WitnessTurn};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::workspace_roster::JoinSubject;
@@ -162,8 +162,7 @@ impl RoomRegenerationPermit {
 pub(crate) fn admit_witness(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
-    actor: EntityId,
-    class: EdgeActorClass,
+    caller: crate::WriteActor,
     room: EntityId,
     turn_id: EntityId,
     input: &WitnessTurn,
@@ -174,7 +173,8 @@ pub(crate) fn admit_witness(
     // OF-530 ruling A: a room-wide offer card a new message names, or a
     // reply answers, is engaged in this write: here in an ordinary room, and
     // in a project room once its writer is admitted below.
-    let writer = crate::WriteActor::new(actor, class);
+    let writer = caller;
+    let actor = caller.entity_ref();
     // A stored TURN keeps the thread it was born in (FIX 2951).
     let stored_body = match live_entity_row_in_txn(&vault.store, txn, &turn_id)? {
         LiveEntityRow::Live {
@@ -481,7 +481,8 @@ pub(crate) fn admit_witness(
     };
     // An agent cannot masquerade as a user to evade a claim. The witness
     // author ceiling remains an additional, independent gate below this one.
-    let is_response = class != EdgeActorClass::Human
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    let is_response = !caller.acts_as_own_person()
         || input
             .messages
             .iter()

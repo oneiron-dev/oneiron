@@ -486,16 +486,22 @@ fn map_entity(value: &Value, key: &'static str) -> Result<EntityId> {
     EntityId::from_bytes(raw).map_err(|_| Error::Artifact(ArtifactError::InvalidAnchor(key)))
 }
 
-fn annotation_stances(actor_class: EdgeActorClass) -> (ClaimSource, ClaimApprovalStatus) {
-    match actor_class {
-        EdgeActorClass::Human => (ClaimSource::UserStated, ClaimApprovalStatus::Auto),
-        EdgeActorClass::Agent => (ClaimSource::Generated, ClaimApprovalStatus::Proposed),
-        EdgeActorClass::System => (ClaimSource::Observed, ClaimApprovalStatus::Auto),
+fn annotation_stances(actor: WriteActor) -> (ClaimSource, ClaimApprovalStatus) {
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+    if actor.acts_as_own_person() {
+        (ClaimSource::UserStated, ClaimApprovalStatus::Auto)
+    } else {
+        match actor.actor_class() {
+            EdgeActorClass::Human | EdgeActorClass::Agent => {
+                (ClaimSource::Generated, ClaimApprovalStatus::Proposed)
+            }
+            EdgeActorClass::System => (ClaimSource::Observed, ClaimApprovalStatus::Auto),
+        }
     }
 }
 
 pub(super) fn annotation_envelope(actor: WriteActor, op: &'static str) -> Result<WriteEnvelope> {
-    let (source, approval) = annotation_stances(actor.actor_class());
+    let (source, approval) = annotation_stances(actor);
     let provenance = WriteProvenance::new(Value::Map(vec![
         (Value::from("surface"), Value::from("anchored_annotation")),
         (Value::from("op"), Value::from(op)),

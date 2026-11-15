@@ -228,6 +228,7 @@ fn check_word_in_txn(
     }
     let actor = writer.entity_ref();
     let person = word.inform_for.or(word.companion_for).unwrap_or(actor);
+    // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
     let source = if word.companion_for.is_some() {
         if writer.actor_class() != crate::EdgeActorClass::Agent {
             return Err(invalid());
@@ -241,7 +242,7 @@ fn check_word_in_txn(
         TaskAskSource::Inform
     } else if token_digest.is_some() {
         TaskAskSource::ForeignStated
-    } else if writer.actor_class() == crate::EdgeActorClass::Human {
+    } else if writer.acts_as_own_person() {
         TaskAskSource::Human
     } else {
         TaskAskSource::Executor

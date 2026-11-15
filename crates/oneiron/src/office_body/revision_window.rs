@@ -691,7 +691,8 @@ impl Vault {
                 record: None,
             });
         };
-        let provenance = if request.actor.actor_class() == EdgeActorClass::Human {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let provenance = if request.actor.acts_as_own_person() {
             BlobVersionProvenance::UserUpload
         } else {
             BlobVersionProvenance::AgentRun {
