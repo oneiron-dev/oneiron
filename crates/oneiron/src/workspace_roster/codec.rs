@@ -115,7 +115,6 @@ pub(super) fn write_journal(
         intent_digest: record.intent_digest,
         step: record.step,
         completed_at: record.completed_at,
-        companion_preexisting: false,
     };
     ONBOARDING.encode_value(&row)?;
     // A brought companion is first bound at Started, where her proof is
@@ -128,8 +127,7 @@ pub(super) fn write_journal(
     };
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
-        let prior = ONBOARDING.get(&vault.store, wtxn, &intent.onboarding_id)?;
-        if let Some(prior) = &prior {
+        if let Some(prior) = ONBOARDING.get(&vault.store, wtxn, &intent.onboarding_id)? {
             if prior.intent_digest != record.intent_digest {
                 return Err(invalid(
                     "onboarding_id was already used with different inputs",
@@ -139,48 +137,12 @@ pub(super) fn write_journal(
                 return Ok(());
             }
         }
-        // Read at the first write, before this onboarding's companion step
-        // can mint anything, and carried by every later one.
-        let companion_preexisting = match &prior {
-            Some(prior) => prior.companion_preexisting,
-            None => work_companion_rows_stand_in_txn(vault, wtxn, intent)?,
-        };
         if record.step == MemberOnboardingStep::Started {
             reserve_member_in_txn(vault, wtxn, intent, &record.intent_digest, authorized_at)?;
         }
-        ONBOARDING.put(
-            &vault.store,
-            wtxn,
-            &intent.onboarding_id,
-            &OnboardingJournalRow {
-                companion_preexisting,
-                ..row
-            },
-        )?;
+        ONBOARDING.put(&vault.store, wtxn, &intent.onboarding_id, &row)?;
         Ok(())
     })
-}
-
-/// Whether `intent` asks for a work companion whose PERSON or agent
-/// definition already stands in the vault: one this onboarding did not bear,
-/// so its roster row records no birth here and an offboarding detaches her,
-/// never switches her off.
-fn work_companion_rows_stand_in_txn(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    intent: &MemberOnboardingIntent,
-) -> Result<bool> {
-    let Some(birth) = intent.companion.birth() else {
-        return Ok(false);
-    };
-    Ok(vault
-        .store
-        .port_entity_record(txn, &birth.person_ref)?
-        .is_some()
-        || vault
-            .store
-            .port_entity_record(txn, &birth.actor_ref)?
-            .is_some())
 }
 
 /// `workspace_ref` then a NUL separator then the raw member-person id — the

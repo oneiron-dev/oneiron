@@ -519,19 +519,6 @@ pub(super) fn record_roster_member(
     MEMBER.encode_value(&row)?;
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
-        // A work companion this onboarding did not bear (her rows stood
-        // before it began) records no birth here.
-        let preexisting = ONBOARDING
-            .get(&vault.store, wtxn, &intent.onboarding_id)?
-            .is_some_and(|journal| journal.companion_preexisting);
-        let row = if preexisting {
-            RosterMemberRow {
-                companion_origin: CompanionOrigin::Unrecorded,
-                ..row
-            }
-        } else {
-            row
-        };
         if let Some(existing) = MEMBER.get(&vault.store, wtxn, &key)? {
             // A row an earlier build wrote records no origin; the rest of
             // it still has to agree.
