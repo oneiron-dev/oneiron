@@ -18,10 +18,7 @@ use oneiron::dreamer_consolidation::excluded_conversations::DreamerExcludedConve
 use oneiron::dreamer_consolidation::routing::PredicateKeyRules;
 use oneiron::dreamer_prefilter::PrefilterConfig;
 use oneiron::dreamer_wake::WakeRecipePolicy;
-use oneiron::setting::{
-    Restore, SetBy, SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
-    spec_named,
-};
+use oneiron::setting::{Restore, SetBy, SetSetting, SetSettingOutcome, SettingCaller, spec_named};
 use oneiron::store::GateDecisionId;
 use oneiron::verbs::{AgentDefinitionCreateRequest, create_agent_definition_as};
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -102,19 +99,8 @@ impl Fixture {
         key: &str,
         value: Value,
     ) -> oneiron::Result<SetSettingOutcome> {
-        self.vault.set_setting(
-            caller,
-            SetSetting {
-                key: key.to_owned(),
-                item: None,
-                scope: SettingScope::Vault,
-                mode: SettingMode::Value,
-                value: Some(value),
-                expected_revision: None,
-                why: None,
-                check_in_ref: None,
-            },
-        )
+        self.vault
+            .set_setting(caller, SetSetting::vault_value(key, value))
     }
 
     fn set_as_owner(&self, key: &str, value: Value) -> oneiron::Result<SetSettingOutcome> {

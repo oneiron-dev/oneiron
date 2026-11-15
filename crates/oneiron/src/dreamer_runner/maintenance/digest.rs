@@ -577,6 +577,8 @@ fn set_digest_setting_in_txn(
         expected_revision: None,
         why: why.map(str::to_owned),
         check_in_ref: None,
+        weight_runs: None,
+        surface: None,
     };
     match vault.set_setting_in_txn(txn, caller, &request)? {
         SetSettingOutcome::Applied { .. } => Ok(()),

@@ -24,10 +24,11 @@ crate::setting::setting_keys! {
         after_commit: Some(ActionModePolicy::measure_in_force),
     };
     /// Seconds between two regular proactivity digests. A holder of the maintenance cadence
-    /// class moves it; the digest's delivery and presentation stay the owner's. Absent, the
-    /// shipped digest_defaults.json decides.
+    /// class moves it either way, as before: the period moves no access, authority, money or
+    /// identity, so its order is neutral. The digest's delivery and presentation stay the
+    /// owner's. Absent, the shipped digest_defaults.json decides.
     pub(crate) PROACTIVITY_PERIOD: ProactivityPeriod = "dreamer.proactivity.period" {
-        kind: Kind::new(shipped_period),
+        kind: Kind::new(shipped_period).neutral(),
         set_by: SetBy::Class(EngineControlClass::MaintenanceCadence),
         after_commit: Some(notify_proactivity_settings),
     };
