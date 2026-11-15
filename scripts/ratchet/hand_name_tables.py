@@ -56,12 +56,14 @@ ALLOWLIST = "scripts/ratchet/hand_name_tables_allowlist.txt"
 BASELINE = "scripts/ratchet/baseline.json"
 
 # Comments, then the literals whose insides must not read as code. One pass, left to right, so a
-# `//` inside a string and a `"` inside a comment are both seen for what they are. A nested block
-# comment ends at its first `*/` (none is known to hold a table). The leading lookahead lets the
-# engine skip to the next character that can start a lexeme (twice as fast, the same spans).
+# `//` inside a string and a `"` inside a comment are both seen for what they are. A block comment
+# is found by its `/*` alone: Rust block comments nest, so `block_comment_end` counts its `/*` and
+# `*/` to the one that closes it. The leading lookahead lets the engine skip to the next character
+# that can start a lexeme (twice as fast, the same spans).
 LEXEME = re.compile(
     r"""(?=[/"'br])
-      (?:(?P<comment>//[^\n]*|/\*[^*]*\*+(?:[^/*][^*]*\*+)*/)
+      (?:(?P<comment>//[^\n]*)
+      | (?P<block>/\*)
       | b?r(?P<hashes>\#*)"(?P<raw>[\s\S]*?)"(?P=hashes)
       | "(?P<string>[^"\\]*(?:\\[\s\S][^"\\]*)*)"
       | '(?P<char>\\(?:u\{[0-9a-fA-F]{1,6}\}|x[0-9a-fA-F]{2}|[^\n])|[^'\\\n])')
@@ -70,9 +72,10 @@ LEXEME = re.compile(
 )
 # A file can hold a table only if it holds one of these. Three searches, not one alternation:
 # each starts with a literal, which the engine finds fast (about ten times faster in all).
-# The screen reads raw text, so a gap admits comments wherever the scan (which blanks them) admits
-# white space: `Self::A => /* note */ "a"` is a forward arm.
-GAP = r"(?:\s|//[^\n]*|/\*[\s\S]*?\*/)"
+# The screen reads raw text, so a gap admits a line comment wherever the scan (which blanks it)
+# admits white space: `Self::A => // note` then `"a"` on the next line is a forward arm. A file with
+# a block comment skips the screen (`may_hold`): block comments nest, which no regex gap follows.
+GAP = r"(?:\s|//[^\n]*)"
 MAY_HOLD = (
     re.compile(r"=>" + GAP + r'*"'),
     re.compile(r'"' + GAP + r"*=>"),
@@ -101,7 +104,10 @@ LIST_ITEM = re.compile(r"\s*(?P<type>[A-Z]\w*)::[A-Z]\w*\s*\Z")
 PAIR_TABLE = re.compile(r"\bconst\s+\w+\s*:\s*&?\s*(?:'static\s+)?\[\s*\(\s*&\s*(?:'\w+\s+)?str\b")
 # No leading `\b` (it slows the search tenfold): `starts_word` checks the character before.
 FN = re.compile(r"fn\s+(?P<fn>\w+)")
-BODY_OR_END = re.compile(r"[{;]")
+BLOCK_COMMENT_MARK = re.compile(r"/\*|\*/")
+# What ends a fn signature (`{` opens the body, `;` ends a declaration), and the delimiters a `;`
+# or `{` inside the signature sits in: `_: [u8; 1]`, `Point { x, y }: Point`.
+SIGNATURE_MARK = re.compile(r"[{;()\[\]]")
 BRACKET = re.compile(r"[\[\]]")
 RETURNS_STR = re.compile(r"->\s*&\s*(?:'\w+\s+)?str\b")
 IMPL = re.compile(r"impl\b(?P<header>[^;{]*)\{")
@@ -162,16 +168,45 @@ def blanked(segment, fill):
     return "\n".join(fill * len(part) for part in segment.split("\n"))
 
 
+def block_comment_end(text, start):
+    """The end of the block comment whose `/*` is at `start`. Block comments nest, so it is the
+    `*/` that brings the count of open `/*` back to 0; the end of the text when none does."""
+    depth = 0
+    for mark in BLOCK_COMMENT_MARK.finditer(text, start):
+        depth += 1 if mark.group() == "/*" else -1
+        if depth == 0:
+            return mark.end()
+    return len(text)
+
+
+def signature_end(shape, start):
+    """The `{` or `;` that ends the fn signature after `start`: the first one outside the
+    signature's parentheses and brackets. None when the text ends first."""
+    depth = 0
+    for mark in SIGNATURE_MARK.finditer(shape, start):
+        char = mark.group()
+        if char in "([":
+            depth += 1
+        elif char in ")]":
+            depth = max(depth - 1, 0)
+        elif depth == 0:
+            return mark
+    return None
+
+
 def views(text):
     """`code`: comments blanked. `shape`: also the insides of literals. Same length, same lines."""
     code, shape, at = [], [], 0
-    for match in LEXEME.finditer(text):
+    match = LEXEME.search(text)
+    while match:
         start, end = match.span()
         kept = text[at:start]
         code.append(kept)
         shape.append(kept)
         kind = match.lastgroup
-        if kind == "comment":
+        if kind == "block":
+            end = block_comment_end(text, start)
+        if kind in ("comment", "block"):
             blank = blanked(text[start:end], " ")
             code.append(blank)
             shape.append(blank)
@@ -184,6 +219,7 @@ def views(text):
                 + text[inner_end:end]
             )
         at = end
+        match = LEXEME.search(text, end)
     code.append(text[at:])
     shape.append(text[at:])
     return "".join(code), "".join(shape)
@@ -306,7 +342,7 @@ class Source:
         for match in FN.finditer(self.shape):
             if not starts_word(self.shape, match.start()):
                 continue
-            body = BODY_OR_END.search(self.shape, match.end())
+            body = signature_end(self.shape, match.end())
             if body is None or body.group() == ";":
                 continue
             opened = body.start()
@@ -422,8 +458,9 @@ def scan(text, with_report=False):
 
 
 def may_hold(text):
-    """A cheap screen: a file without these substrings holds no table and no Register name."""
-    if "register" in text:
+    """A cheap screen: a file without these substrings holds no table and no Register name. A file
+    with a block comment is always scanned: the comment can sit inside a table, and it can nest."""
+    if "register" in text or "/*" in text:
         return True
     return any(screen.search(text) for screen in MAY_HOLD)
 
