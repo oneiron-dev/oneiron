@@ -353,6 +353,8 @@ mod inference_snapshot_custody;
 pub(crate) mod install_identity;
 mod invocation_claims;
 mod key_custody;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::key_custody::custody_head_digest_for_test;
 mod key_encoding;
 mod known_history;
 pub(crate) mod legal_hold;

@@ -12,6 +12,7 @@ use super::{
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use oneiron_contracts::fingerprint::{LegacyDigest, LegacyPurpose, purposes};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
@@ -64,15 +65,24 @@ pub(super) fn check_pad(pad: Option<&PadCompartmentIdentity>, body: &BodyWire) -
 
 /// What a head's control compartment commits to for one compartment.
 pub(super) fn wire_digest(compartment: &CompartmentWire) -> Result<[u8; 32]> {
-    digest(COMPARTMENT_DIGEST_CONTEXT, compartment)
+    digest(purposes::key_custody::COMPARTMENT_DIGEST, compartment)
 }
 
-fn digest(context: &str, wire: &impl Serialize) -> Result<[u8; 32]> {
+/// A commitment under `purpose` over `wire`'s canonical encoding. The control
+/// compartment's root covers each, and the publication policy hashes the carried
+/// ones, so each keeps its bytes (K, PLAN-UC-04 stage 6.1).
+fn digest(purpose: LegacyPurpose, wire: &impl Serialize) -> Result<[u8; 32]> {
     let bytes = rmp_serde::to_vec_named(wire).map_err(|_| head_corrupt())?;
-    Ok(*blake3::Hasher::new_derive_key(context)
-        .update(&bytes)
-        .finalize()
-        .as_bytes())
+    Ok(LegacyDigest::new(purpose).raw(&bytes).finish())
+}
+
+/// A commitment under `purpose` over `wire`'s canonical encoding.
+#[cfg(oneiron_test_support)]
+pub(crate) fn custody_head_digest_for_test(
+    purpose: LegacyPurpose,
+    wire: &impl Serialize,
+) -> Result<[u8; 32]> {
+    digest(purpose, wire)
 }
 
 /// The root a control compartment commits to (FIX 5800): both counts, then
@@ -115,7 +125,7 @@ pub(super) fn committed(
         .collect::<Result<Vec<_>>>()?;
     let carried_digests = carried
         .iter()
-        .map(|wire| digest(CARRIED_DIGEST_CONTEXT, wire))
+        .map(|wire| digest(purposes::key_custody::CARRIED_DIGEST, wire))
         .collect::<Result<Vec<_>>>()?;
     Ok(digest_root(&digests, &carried_digests)? == *root)
 }
@@ -344,7 +354,7 @@ pub(super) fn eligible(
         if wire.wraps.is_empty() {
             continue;
         }
-        digests.push(digest(CARRIED_DIGEST_CONTEXT, &wire)?);
+        digests.push(digest(purposes::key_custody::CARRIED_DIGEST, &wire)?);
         wires.push(wire);
     }
     Ok((wires, digests))
@@ -361,7 +371,7 @@ pub(in crate::store::key_custody) fn carried_set_digest(
     }
     let mut digests = carried
         .iter()
-        .map(|pad| digest(CARRIED_DIGEST_CONTEXT, &pad.wire))
+        .map(|pad| digest(purposes::key_custody::CARRIED_DIGEST, &pad.wire))
         .collect::<Result<Vec<_>>>()?;
     digests.sort_unstable();
     let mut hasher = blake3::Hasher::new_derive_key(CARRIED_SET_CONTEXT);

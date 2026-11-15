@@ -92,6 +92,8 @@ mod storage_seal;
 mod transition;
 mod types;
 mod use_handle;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::control::input::custody_witness_digest_for_test;
 
 /// MessagePack keys the custody floor reads out of POLICY_MANIFEST bodies.
 mod floor_keys {

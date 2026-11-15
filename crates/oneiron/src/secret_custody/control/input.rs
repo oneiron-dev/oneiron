@@ -94,6 +94,8 @@ pub(crate) use self::door_rows::DoorInput;
 pub use self::stream::SealedInput;
 pub(crate) use self::stream::{InputDigests, SealedFrame, kept_input_in_txn};
 pub use self::surface_seal::{CustodyInputBinding, seal_custody_input};
+#[cfg(oneiron_test_support)]
+pub(crate) use self::witness::custody_witness_digest_for_test;
 pub(crate) use self::witness::{WitnessJoin, keep_witnessed_input_in_txn, witness_joined_in_txn};
 #[cfg(feature = "sync")]
 pub(crate) use self::witness::{
