@@ -35,6 +35,7 @@ pub mod connector_key_suspend;
 pub mod consent_graduation_demotion;
 pub mod consent_graduation_ramp_rows;
 pub mod consolidation;
+pub mod coreference_pact;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod derivation_floor;

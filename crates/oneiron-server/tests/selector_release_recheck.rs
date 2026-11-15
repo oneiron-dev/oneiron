@@ -30,15 +30,18 @@ use oneiron::authority::{
     CapabilitySlip, ForwardedCallerProof, HostSlipIssuer, MachineOwnership, MachineRole,
 };
 use oneiron::claim::CallerLocality;
+use oneiron::consent::AuthenticatedOwner;
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{
-    FederationGrant, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
-    own_device_residence_scope,
+    CoreferenceStatus, FederationGrant, FederationGrantPreset, FederationGrantRole, Scope,
+    ScopeAxis, coreference_share_consent, own_device_residence_scope, put_coreference_link,
+    unlink_coreference_link,
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP,
 };
+use oneiron::store::GateDecisionId;
 use oneiron::sync::schema::create_window_doc;
 use oneiron::sync::server_state::persist_window_snapshot;
 use oneiron::sync::transport::{self, window_sub_tags};
@@ -47,7 +50,8 @@ use oneiron::sync::{
     SyncSelector, SyncSelectorWorld, WindowKey, encode_selector_vv_request, encode_sync_selector,
     put_selector_test_federation_grant,
 };
-use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron::test_doors::coreference_pact::bind_active_pact_to_grant;
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::test_doors::selector_release::{arm, armed};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
@@ -901,6 +905,225 @@ fn a_selector_update_carrying_a_message_its_members_revoked_grant_admits_never_l
         )
         .await;
         assert_no_update(&mut socket, &fx.window).await;
+        assert!(!armed(&grant), "the hook ran as the answer was queued");
+    });
+}
+
+/// The embedded owner's proof, as an owner's own verb carries it.
+fn owner_proof(fx: &Fixture) -> AuthenticatedOwner {
+    fx.vault
+        .install_device_keystore(Arc::new(MemoryKeystore::new()));
+    let owner = fx.vault.ensure_embedded_owner_actor().unwrap();
+    fx.vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+        .unwrap()
+}
+
+/// A coreference release case's vault (SELECTOR-RELEASE-COREFERENCE-CONSENT
+/// = A, 15 Nov 22:23): two people joined by a Confirmed `same_as` link, the
+/// grant bound to an Active pact, the owner's consent to share the link into
+/// that pact, and the window persisted with all of them.
+struct CoreferenceFixture {
+    fx: Fixture,
+    person_a: EntityId,
+    person_b: EntityId,
+    consent: EntityId,
+    /// Every facet: the people and their link are in none.
+    selector: SyncSelector,
+}
+
+async fn coreference_fixture() -> CoreferenceFixture {
+    let fx = fixture().await;
+    let at = fx.window.start_timestamp().unwrap() + 86_400;
+    let occurred = TimeRange { start: at, end: at };
+    let person_a = EntityId::now();
+    let person_b = EntityId::now();
+    for (id, name) in [(person_a, "ana"), (person_b, "bea")] {
+        fx.vault
+            .put_entity(
+                &id,
+                ENTITY_TYPE_PERSON,
+                occurred,
+                at,
+                &rmp_serde::to_vec_named(&json!({"name": name})).unwrap(),
+            )
+            .unwrap();
+    }
+    let actor = WriteActor::new(person_a, EdgeActorClass::Human);
+    put_coreference_link(
+        &fx.vault,
+        &actor,
+        person_a,
+        person_b,
+        CoreferenceStatus::Confirmed,
+        occurred,
+        at,
+    )
+    .unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+    let pact = bind_active_pact_to_grant(&fx.vault, &issuer, fx.grant_id).unwrap();
+    let consent =
+        coreference_share_consent(&fx.vault, &actor, person_a, person_b, &pact, occurred, at)
+            .unwrap();
+    let doc = create_window_doc("home", &fx.window);
+    reverse_rematerialize(&fx.vault, &doc, &fx.window).unwrap();
+    persist_window_snapshot(&fx.vault, &fx.window, &doc).unwrap();
+    let selector = SyncSelector::new(
+        fx.grant_id,
+        fx.grant.member_ref,
+        SyncSelectorWorld::All,
+        vec![],
+        vec![],
+    );
+    CoreferenceFixture {
+        fx,
+        person_a,
+        person_b,
+        consent,
+        selector,
+    }
+}
+
+/// Whether `update`, imported whole into an empty window doc, carries a
+/// `same_as` edge between `a` and `b`, in either orientation.
+fn carries_link(window: &WindowKey, update: &[u8], a: EntityId, b: EntityId) -> bool {
+    let receiver = create_window_doc("receiver", window);
+    assert!(
+        receiver.import(update).unwrap().pending.is_none(),
+        "the UPDATE imports whole"
+    );
+    let (a, b) = (a.to_hex(), b.to_hex());
+    let joins = |key: &str| {
+        (key.starts_with(a.as_str()) && key.ends_with(b.as_str()))
+            || (key.starts_with(b.as_str()) && key.ends_with(a.as_str()))
+    };
+    let deep = receiver.get_deep_value();
+    deep.as_map()
+        .and_then(|root| root.get("edges"))
+        .and_then(|edges| edges.as_map())
+        .is_some_and(|edges| edges.keys().any(|key| joins(key.as_str())))
+}
+
+/// A selector answer carrying a link shared into the grant's pact leaves while the consent stands.
+#[test]
+fn a_selector_answer_carrying_a_consented_coreference_link_leaves() {
+    run_on_engine_stack("selector-release-coreference-guard", || async {
+        let case = coreference_fixture().await;
+        let fx = &case.fx;
+        let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&case.selector, &[]).unwrap(),
+        )
+        .await;
+        let update = wait_update(&mut socket, &fx.window).await;
+        assert!(
+            carries_link(&fx.window, &update, case.person_a, case.person_b),
+            "the standing consent's UPDATE carries the same_as link"
+        );
+        let mut residence = bound(fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        let index = rpc(
+            &mut residence,
+            2,
+            "residence.index",
+            json!({
+                "window": fx.window.as_str(),
+                "selector": encoded_selector(&case.selector),
+                "limit": 16
+            }),
+        )
+        .await;
+        assert!(index["items"].is_array(), "{index}");
+    });
+}
+
+/// A selector UPDATE carrying a coreference link its owner unlinks after it is made never leaves.
+#[test]
+fn a_selector_update_carrying_a_coreference_link_its_owner_unlinks_never_leaves() {
+    run_on_engine_stack("selector-release-coreference-unlink", || async {
+        let case = coreference_fixture().await;
+        let fx = &case.fx;
+        let owner = owner_proof(fx);
+        let vault = Arc::clone(&fx.vault);
+        let grant = fx.grant_id;
+        let (person_a, person_b) = (case.person_a, case.person_b);
+        arm(grant, move || {
+            unlink_coreference_link(&vault, &owner, person_a, person_b).unwrap();
+        });
+        assert!(armed(&grant), "the hook is armed before the fetch");
+        let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&case.selector, &[]).unwrap(),
+        )
+        .await;
+        assert_no_update(&mut socket, &fx.window).await;
+        assert!(!armed(&grant), "the hook ran as the answer was queued");
+    });
+}
+
+/// A selector UPDATE carrying a link whose share consent is retracted after it is made never leaves.
+#[test]
+fn a_selector_update_carrying_a_coreference_link_whose_share_consent_is_retracted_never_leaves() {
+    run_on_engine_stack("selector-release-coreference-retract", || async {
+        let case = coreference_fixture().await;
+        let fx = &case.fx;
+        let vault = Arc::clone(&fx.vault);
+        let grant = fx.grant_id;
+        let consent = case.consent;
+        arm(grant, move || {
+            vault
+                .retract_claim(&consent, vault.now_recorded_at())
+                .unwrap();
+        });
+        assert!(armed(&grant), "the hook is armed before the fetch");
+        let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&case.selector, &[]).unwrap(),
+        )
+        .await;
+        assert_no_update(&mut socket, &fx.window).await;
+        assert!(!armed(&grant), "the hook ran as the answer was queued");
+    });
+}
+
+/// A residence index carrying a coreference link its owner unlinks after it is made is refused.
+#[test]
+fn a_residence_index_carrying_a_coreference_link_its_owner_unlinks_is_refused() {
+    run_on_engine_stack("selector-release-coreference-index", || async {
+        let case = coreference_fixture().await;
+        let fx = &case.fx;
+        let owner = owner_proof(fx);
+        let vault = Arc::clone(&fx.vault);
+        let grant = fx.grant_id;
+        let (person_a, person_b) = (case.person_a, case.person_b);
+        arm(grant, move || {
+            unlink_coreference_link(&vault, &owner, person_a, person_b).unwrap();
+        });
+        assert!(armed(&grant), "the hook is armed before the call");
+        let mut socket = bound(fx, transport::RESIDENCE_PROTOCOL_VERSION).await;
+        send_rpc(
+            &mut socket,
+            2,
+            "residence.index",
+            json!({
+                "window": fx.window.as_str(),
+                "selector": encoded_selector(&case.selector),
+                "limit": 16
+            }),
+        )
+        .await;
+        let error = rpc_reply_within(&mut socket, 2, REPLY_WAIT)
+            .await
+            .expect_err("a reply queued before its link was unlinked is refused, never a result");
+        assert_eq!(error["code"], "RESULT_CHANGED", "{error}");
         assert!(!armed(&grant), "the hook ran as the answer was queued");
     });
 }
