@@ -369,6 +369,7 @@ pub(super) fn hold(
         session_ref: session.to_owned(),
         checkout_lease_token: lease,
         idempotency_key: format!("hold-{session}"),
+        cap_override_reason: None,
     }))
 }
 

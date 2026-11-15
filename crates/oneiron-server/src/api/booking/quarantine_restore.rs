@@ -88,6 +88,7 @@ pub(crate) async fn restore_quarantined_booking(
             constraint: submission.constraint.clone(),
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: Some(format!("{restore_ref}:hold")),
+            cap_override: None,
         }),
         Some(session),
         now,

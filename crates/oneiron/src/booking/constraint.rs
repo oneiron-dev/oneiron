@@ -317,6 +317,21 @@ pub trait SlotOracle: Send + Sync {
         self.solve(req)
     }
 
+    /// [`Self::solve`] with the event type's meeting caps lifted: the owner's
+    /// own hold past a full day, which a confirm records with its reason
+    /// (RULING BK-CAP-OVERRIDE-WHO = B). An oracle that cannot lift the caps
+    /// refuses, so no booking passes a cap it was never solved past.
+    ///
+    /// # Errors
+    ///
+    /// [`BookingError::SlotOracle`] here; as [`Self::solve`] where lifted.
+    fn solve_past_caps(&self, req: &SolveRequest) -> Result<SolveResult, BookingError> {
+        let _ = req;
+        Err(BookingError::SlotOracle(
+            "this slot oracle cannot solve past a meeting cap".to_owned(),
+        ))
+    }
+
     /// Re-solves for the existing booking `moving`, kept on `hosts`.
     fn solve_bound(
         &self,

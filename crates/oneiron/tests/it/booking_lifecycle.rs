@@ -331,6 +331,7 @@ fn hold_spec(fixture: &Fixture, session_key: SessionKey, slot: TimeRange) -> Hol
         constraint: None,
         lease: HoldLeaseSpec::Ordinary,
         idempotency_key: None,
+        cap_override: None,
     }
 }
 
@@ -1626,7 +1627,7 @@ fn booking_lifecycle_validator_is_exact() {
     }
     assert!(BookingVerb::parse("booking.approve").is_none());
 
-    // Exactly the four lifecycle predicates are family members, and the family
+    // Exactly the five lifecycle predicates are family members, and the family
     // door is the union with ONE-1823's configuration predicate.
     for predicate in BOOKING_LIFECYCLE_PREDICATES {
         assert!(is_booking_lifecycle_claim_predicate(predicate));

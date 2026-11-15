@@ -55,14 +55,21 @@ pub const BOOKING_SOURCE_PAGE_PREDICATE: &str = "booking.source_page";
 /// Exact predicate: the booking's live status.
 pub const BOOKING_STATUS_PREDICATE: &str = "booking.status";
 
+/// Exact predicate: the owner booked this past a full day, and why.
+pub const BOOKING_CAP_OVERRIDE_PREDICATE: &str = "booking.cap_override";
+
 /// The lifecycle claim family, as an exact table. A `booking.` prefix would
 /// silently adopt every future booking predicate into this validator.
-pub const BOOKING_LIFECYCLE_PREDICATES: [&str; 4] = [
+pub const BOOKING_LIFECYCLE_PREDICATES: [&str; 5] = [
     BOOKING_BOOKER_CONTACT_PREDICATE,
+    BOOKING_CAP_OVERRIDE_PREDICATE,
     BOOKING_EVENT_TYPE_REF_PREDICATE,
     BOOKING_SOURCE_PAGE_PREDICATE,
     BOOKING_STATUS_PREDICATE,
 ];
+
+/// The longest cap override reason, in bytes.
+pub const MAX_CAP_OVERRIDE_REASON_BYTES: usize = 4096;
 
 /// The passport `system` a booking's outbound calendar identity carries. One
 /// live passport per `(system × UID)` is CAL-02's invariant; this is the
@@ -137,6 +144,39 @@ pub struct HoldSpec {
     /// Retry hygiene only. It becomes the attempt-queue dedupe string and takes
     /// no part in mutual exclusion or in receipt identity.
     pub idempotency_key: Option<String>,
+    /// The owner's own hold past the event type's meeting caps, with its
+    /// reason. Only a transport that verified the vault's live owner sets it
+    /// (RULING BK-CAP-OVERRIDE-WHO = B); an attempt queued before it existed
+    /// reads `None`.
+    #[serde(default)]
+    pub cap_override: Option<BookingCapOverride>,
+}
+
+/// The owner's override of an event type's meeting caps for one booking: a
+/// full day still takes it, and its reason is recorded on the booking
+/// ([`BOOKING_CAP_OVERRIDE_PREDICATE`]).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookingCapOverride {
+    /// Why the owner books past the cap: 1 to
+    /// [`MAX_CAP_OVERRIDE_REASON_BYTES`] bytes, not blank, kept verbatim.
+    pub reason: String,
+}
+
+impl BookingCapOverride {
+    /// Checks the reason's shape.
+    ///
+    /// # Errors
+    ///
+    /// [`BookingError::InvalidConstraint`] for a blank or oversized reason.
+    pub fn validate(&self) -> Result<(), BookingError> {
+        if self.reason.trim().is_empty() || self.reason.len() > MAX_CAP_OVERRIDE_REASON_BYTES {
+            return Err(refused(
+                "a cap override reason must be 1 to 4096 bytes and not blank",
+            ));
+        }
+        Ok(())
+    }
 }
 
 /// Ask to convert a live hold into a booking.
@@ -226,6 +266,12 @@ pub struct SoftHoldRow {
     pub expires_at: u64,
     #[serde(with = "opt_digest_serde")]
     pub checkout_lease_hash: Option<[u8; 32]>,
+    /// The owner's override of the meeting caps this hold was taken under:
+    /// the confirm re-solves past the caps and records the reason. A row
+    /// written before the field existed reads `None` (STORED-CHANGE-RULE:
+    /// keep).
+    #[serde(default)]
+    pub cap_override: Option<BookingCapOverride>,
 }
 
 impl SoftHoldRow {
@@ -312,6 +358,15 @@ pub struct BookingSourcePageValue {
 #[serde(deny_unknown_fields)]
 pub struct BookingStatusValue {
     pub status: BookingStatus,
+    pub recorded_at: u64,
+}
+
+/// Value of a `booking.cap_override` claim: the owner booked this past a
+/// meeting cap, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookingCapOverrideValue {
+    pub reason: String,
     pub recorded_at: u64,
 }
 
@@ -404,7 +459,9 @@ fn validate_hold_spec(spec: &HoldSpec) -> Result<(), BookingError> {
     {
         validate_token_shape(&server_issued_lease.0)?;
     }
-    Ok(())
+    spec.cap_override
+        .as_ref()
+        .map_or(Ok(()), BookingCapOverride::validate)
 }
 
 fn validate_optional_constraint(constraint: Option<&ConstraintObject>) -> Result<(), BookingError> {

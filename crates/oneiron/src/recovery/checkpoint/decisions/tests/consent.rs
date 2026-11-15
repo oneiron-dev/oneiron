@@ -540,6 +540,7 @@ fn book(vault: &Vault, page: EntityId, booker: EntityId, start: u64) -> Result<C
         constraint: None,
         lease: HoldLeaseSpec::Ordinary,
         idempotency_key: None,
+        cap_override: None,
     };
     let held = match turn(vault, BookingVerbRequest::Hold(hold), slot)? {
         BookingVerbReceipt::Held(held) => held,

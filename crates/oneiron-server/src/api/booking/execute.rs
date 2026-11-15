@@ -223,8 +223,15 @@ async fn execute(
             Ok((response, listed))
         }
         BookingOperationRequest::Book(BookingBookInput::Hold(input)) => {
-            let (response, sources) =
-                execute_hold(server, page_ref, input, now, public_authority).await?;
+            let (response, sources) = execute_hold(
+                server,
+                page_ref,
+                input,
+                now,
+                public_authority,
+                transport.owner_verified,
+            )
+            .await?;
             let listed = listed.map(|mut rows| {
                 rows.extend(sources);
                 rows

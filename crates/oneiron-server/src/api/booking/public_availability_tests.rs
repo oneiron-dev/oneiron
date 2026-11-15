@@ -217,6 +217,7 @@ async fn queued_public_hold_loses_authority_before_the_lifecycle_writer() {
             constraint: None,
             lease: HoldLeaseSpec::Ordinary,
             idempotency_key: Some("queued-public".to_owned()),
+            cap_override: None,
         }),
         now,
         Some(authority),

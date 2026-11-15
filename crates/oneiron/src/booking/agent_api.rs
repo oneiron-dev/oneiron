@@ -224,6 +224,12 @@ pub struct BookingHoldInput {
     /// Replay hygiene only. Correctness comes from the home-node writer's
     /// revalidation, never from this key.
     pub idempotency_key: String,
+    /// The vault owner's own hold past the event type's daily or weekly
+    /// meeting cap, and why (1 to 4096 bytes). Only a caller the owner door
+    /// verifies may send it (RULING BK-CAP-OVERRIDE-WHO = B); anyone else
+    /// gets a 400. The reason is recorded on the booking.
+    #[serde(default)]
+    pub cap_override_reason: Option<String>,
 }
 
 /// The typed two-stage book flow.

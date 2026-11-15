@@ -184,6 +184,7 @@ pub(crate) fn execute_hold(
                 token_hash: token_digest(&token),
                 expires_at,
                 checkout_lease_hash,
+                cap_override: spec.cap_override.clone(),
             };
             HOLD.put(&vault.store, wtxn, &digest, &row)
                 .map_err(|error| engine_failure("meta write", error))?;
@@ -341,14 +342,20 @@ fn confirm_in_writer(
         return Err(refused("hold token does not match this session's hold"));
     }
 
-    // (3) Fresh availability, read while we hold the writer.
+    // (3) Fresh availability, read while we hold the writer. A hold the owner
+    // took past the meeting caps is re-solved past them, and only it.
     let solve_over = |window: crate::temporal::TimeRange| {
-        oracle.solve(&SolveRequest {
+        let request = SolveRequest {
             event_type: hold.event_type.clone(),
             window,
             constraint: hold.constraint.clone(),
             visitor_tz: hold.visitor_tz.clone(),
-        })
+        };
+        if hold.cap_override.is_some() {
+            oracle.solve_past_caps(&request)
+        } else {
+            oracle.solve(&request)
+        }
     };
     let solved = solve_over(confirm_solve_window(hold.slot)?)?;
     // The wide solve carries the alternatives, and the oracle offers the flex

@@ -45,6 +45,7 @@ pub(super) fn http_transport_context(
         authenticated_actor_ref: None,
         credential: Some(auth.principal().to_owned()),
         owner_grade: payer.owner_grade,
+        owner_verified: owner_verified(server, &auth),
         principal: payer.principal,
         requires_publication: auth.is_attested_booking_holder(),
         payer_guard: payer.guard,
@@ -108,6 +109,8 @@ pub(crate) struct BookingAdmissionContext {
     pub(super) actor_hash: Option<[u8; 32]>,
     pub(super) credential: Option<String>,
     pub(super) owner_grade: bool,
+    /// [`BookingTransportContext::owner_verified`].
+    pub(super) owner_verified: bool,
     pub(super) principal: Option<WriteActor>,
     /// Whether this request books only a page its owner published, through
     /// the public booking authority.
@@ -135,6 +138,7 @@ impl From<&BookingTransportContext> for BookingAdmissionContext {
             actor_hash,
             credential: transport.credential.clone(),
             owner_grade: transport.owner_grade,
+            owner_verified: transport.owner_verified,
             principal: transport.principal,
             requires_publication: transport.requires_publication,
             payer_guard: transport.payer_guard.clone(),
@@ -192,11 +196,20 @@ pub(crate) fn credential_transport_context(
         actor_hash: Some(booking_ip_hash(&format!("actor\0{}", auth.principal()))),
         credential: Some(auth.principal().to_owned()),
         owner_grade: payer.owner_grade,
+        owner_verified: owner_verified(server, auth),
         principal: payer.principal,
         requires_publication: true,
         payer_guard: payer.guard,
         transport: BookingTransport::Credential,
     })
+}
+
+/// Whether the owner door ([`crate::api::owner_routes::owner`]) verifies
+/// `auth` as the vault's live owner now: the check an owner act takes, never
+/// owner-grade breadth (the lead's OWNER-GRADE ruling, 15 Nov: "a full slip is
+/// a scope, not a Grant"). A refusal of any kind is not the owner.
+fn owner_verified(server: &SyncServer, auth: &CoreAuth) -> bool {
+    crate::api::owner_routes::owner(auth, server).is_ok()
 }
 
 /// The evidence a stale owner sign-in pays as himself on (FIX 5327): the
