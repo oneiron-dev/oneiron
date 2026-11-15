@@ -41,6 +41,7 @@ mod evaluate;
 mod hydrate;
 mod pack_store;
 mod rules;
+pub(crate) mod setting_keys;
 
 pub use self::amend::{
     ComplianceAmendmentClass, ComplianceAmendmentOutcome, classify_compliance_amendment,

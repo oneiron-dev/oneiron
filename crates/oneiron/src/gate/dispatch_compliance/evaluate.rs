@@ -207,6 +207,11 @@ pub(crate) struct ComplianceBinding {
     pub(crate) uncovered: bool,
     /// Every one of them whose requirement the dispatch's facts fail.
     pub(crate) failed: BTreeSet<(String, String, ComplianceRuleKind)>,
+    /// The owner requires a recorded consent before any send
+    /// (`campaign.contact_without_recorded_objection` = false) and the
+    /// dispatch's PERSON has none that opts in. The pack alone never sets it;
+    /// the campaign leg's binding does.
+    pub(crate) recorded_consent_missing: bool,
 }
 
 /// The rows `pack` binds `facts` to, and which of them block it, through the
@@ -230,6 +235,7 @@ pub(crate) fn compliance_binding(
             .filter(|row| evaluate_row(pack, row, facts).is_some())
             .map(key)
             .collect(),
+        recorded_consent_missing: false,
     }
 }
 
