@@ -89,9 +89,11 @@ impl SavedCredential {
 /// The grant basis a saved lane's live key read under (FIX 14344, Astra F2
 /// on #8029), kept beside its frozen Scope as a queued summary's
 /// declaration keeps it (`requester_owner_exemption`,
-/// `requester_relationship_grants`). A rebuild over the principal's own key
-/// never regains an owner standing the live key lacked, nor loses a row the
-/// live key's gate let through (`ScopedReadActorKey::within_native_basis`).
+/// `requester_relationship_grants`). A rebuild over the principal's own key,
+/// or over a current caller's, reads under the meet of that key and this
+/// basis (`ScopedReadActorKey::within_native_basis`): it never regains an
+/// owner standing the live key lacked, nor reads a row either gate refused
+/// (Sol R1/R2 on #8061).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
@@ -112,7 +114,9 @@ pub(crate) enum NativeOwnerStanding {
     /// A narrower credential's owner exemption, never the owner's floor:
     /// the owner's own attenuated credential (Sol F1 on #8061).
     Exemption,
-    /// The vault owner's full floor.
+    /// The vault owner's full floor. An exemption beside it is not
+    /// recorded, so a gate the floor read under binds its rebuild for every
+    /// row (Sol R2 on #8061).
     Floor,
 }
 
@@ -236,8 +240,8 @@ impl FrozenReadLane {
     /// credential's id, read Scope and records caveat, each agent Grant
     /// alternative alone, the asked worlds and the room facets are kept. A
     /// lane that keeps a Scope also keeps its key's grant basis
-    /// ([`NativeReadBasis`]). A key rebuilt from a frozen lane keeps the
-    /// credential it carries ([`SavedCredential`]). A channel caveat the lane
+    /// (`NativeReadBasis`). A key rebuilt from a frozen lane keeps the
+    /// credential it carries (`SavedCredential`). A channel caveat the lane
     /// did not meet freezes as a Scope that reads nothing, as the live lane
     /// read nothing under it.
     ///
@@ -456,7 +460,7 @@ impl FrozenReadLane {
     /// `key`, the principal's own live key, narrowed by this frozen lane in
     /// `txn`: held to the saved key's grant basis, the frozen Scope, records
     /// caveat, worlds and room facets, each only narrowing. A lane whose credential no longer holds
-    /// in `txn` ([`SavedCredential`]) reads nothing, and the rebuilt key
+    /// in `txn` (`SavedCredential`) reads nothing, and the rebuilt key
     /// carries that credential, so each later read judges it again in its
     /// own snapshot. The principal's own lane returns `key` unchanged; a
     /// lane that reads as its principal's own
