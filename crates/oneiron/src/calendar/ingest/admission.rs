@@ -471,8 +471,9 @@ impl PollAdmission<'_> {
     /// `STATUS:CANCELLED`): write `calendar.status` cancelled with basis
     /// `imported_cancel`, unless a live claim already says exactly that, and
     /// carry it to CAL-07 as pre-start cancellation evidence. Never writes
-    /// `confirmed` — resurrection is not a v1 basis. A booking's deposit is
-    /// refunded on every sighting, also when the status already stood.
+    /// `confirmed` — resurrection is not a v1 basis. A booking's deposit
+    /// refund commits first, on every sighting, also when the status already
+    /// stood.
     fn apply_imported_cancel(
         &mut self,
         event_ref: EntityId,
@@ -481,6 +482,7 @@ impl PollAdmission<'_> {
         if !event.cancelled {
             return Ok(());
         }
+        self.refund_host_cancelled_deposit(event_ref)?;
         let body = screen_body(event);
         let source_record_id = self.source_record_id(event);
         if let Some(status_ref) = self.admit_status_if_changed(
@@ -492,7 +494,7 @@ impl PollAdmission<'_> {
         )? {
             self.record_cancel_outcome(event_ref, status_ref)?;
         }
-        self.refund_host_cancelled_deposit(event_ref)
+        Ok(())
     }
 
     /// The multi-source law's conclusion: every live inbound passport
@@ -501,12 +503,15 @@ impl PollAdmission<'_> {
     /// provider tombstone. The EVENT row is never deleted. Only the explicit
     /// tombstone is cancellation evidence for CAL-07; an omission writes the
     /// status alone. The screen body is empty: absence carries no inbound
-    /// content to screen.
+    /// content to screen. The tombstone's deposit refund commits first.
     fn admit_absence_cancellation(
         &mut self,
         event_ref: EntityId,
         basis: CalendarStatusBasis,
     ) -> Result<(), CalendarError> {
+        if basis == CalendarStatusBasis::ImportedCancel {
+            self.refund_host_cancelled_deposit(event_ref)?;
+        }
         let status_ref = self.admit_status_if_changed(
             event_ref,
             &CalendarInboundBody::default(),
@@ -518,20 +523,19 @@ impl PollAdmission<'_> {
             CalendarStatus::Cancelled,
             basis,
         )?;
-        if basis != CalendarStatusBasis::ImportedCancel {
-            return Ok(());
-        }
-        if let Some(status_ref) = status_ref {
+        if let Some(status_ref) = status_ref
+            && basis == CalendarStatusBasis::ImportedCancel
+        {
             self.record_cancel_outcome(event_ref, status_ref)?;
         }
-        self.refund_host_cancelled_deposit(event_ref)
+        Ok(())
     }
 
     /// A VEVENT the passport already carries (or an older SEQUENCE of it):
     /// when it is an explicit cancellation, its booking's deposit refund is
-    /// asked again. The passport and the status commit before the refund
-    /// does, so a stop between them leaves the next read of the feed here,
-    /// and this is where the refund is repaired.
+    /// asked again. The passport commits before the refund does, so a stop
+    /// between them leaves the next read of the feed here, and this is where
+    /// the refund is repaired.
     fn repeat_host_cancel_refund(
         &self,
         event_ref: EntityId,
@@ -546,9 +550,12 @@ impl PollAdmission<'_> {
     /// The host cancelled the EVENT explicitly: a booking's deposit on it
     /// comes back whole (BK-DEPOSITS; RULING DEPOSIT-HOST-CANCEL-REFUND = A).
     /// An omission is no cancellation evidence and moves no money; an EVENT
-    /// with no deposit writes nothing. Asked on every sighting of the
-    /// cancellation, not only the one that changed the status: the refund is
-    /// its own commit after the status's, and the deposit step is idempotent.
+    /// with no deposit writes nothing. The refund commits before the
+    /// cancellation's status does, so the host's cancel is on record with its
+    /// full refund owed before a visitor's cancel can follow it: that cancel
+    /// then finds the refund owed and keeps it, while a visitor who cancelled
+    /// first keeps their own cancel's refund. Asked on every sighting of the
+    /// cancellation; the deposit step is idempotent.
     fn refund_host_cancelled_deposit(&self, event_ref: EntityId) -> Result<(), CalendarError> {
         #[cfg(oneiron_test_support)]
         if crate::test_doors::host_cancel_refund::take_stop_before_refund() {
@@ -557,7 +564,10 @@ impl PollAdmission<'_> {
         crate::booking::lifecycle::refund_deposit_on_host_cancel(self.vault, &event_ref, self.now)
             .map_err(|error| CalendarError::IcsIngest {
                 reason: error.to_string(),
-            })
+            })?;
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::host_cancel_refund::run_between_commits();
+        Ok(())
     }
 
     /// Carries one explicit imported cancellation into CAL-07 as
