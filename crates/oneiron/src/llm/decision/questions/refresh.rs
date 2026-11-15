@@ -394,11 +394,8 @@ fn source(
     // AccessGrants belong to the question principal, not the host caller.
     // The principal reads inside the lane its version was saved under, as
     // every other read of the question does (OF-506, FIX 1712).
-    let principal_key = read_lane.narrow_in_txn(
-        vault,
-        txn,
-        source_actor_key(vault, txn, principal, None)?.require_access_grants(Some(principal)),
-    )?;
+    let principal_key =
+        super::saved_reader::saved_source_key_in_txn(vault, txn, principal, read_lane)?;
     let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?
         .require_access_grants(Some(principal));
     // FIX 7461: each lane also reads under its own reader's live owner
