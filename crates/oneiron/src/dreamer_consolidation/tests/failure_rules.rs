@@ -218,7 +218,7 @@ fn resident_failure_rules_route_fatal_extraction_and_clamp_promotion() -> Result
             authored["rows"][1]["value"]["persons"] = serde_json::json!([]);
         }
         authored["rows"][1]["effector_eligible"] = stage_effector.into();
-        let value = super::super::value_projection::json_to_rmpv(&authored);
+        let value = crate::serialize::json_to_msgpack_value(&authored);
         crate::dreamer_consolidation::prepare_authored_claim(
             crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
             &value,
@@ -407,7 +407,7 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
     );
     let mut value: serde_json::Value = serde_json::from_slice(&rules).expect("valid rules");
     value["rows"][1]["effector_eligible"] = true.into();
-    let authored = super::super::value_projection::json_to_rmpv(&value);
+    let authored = crate::serialize::json_to_msgpack_value(&value);
     assert!(
         super::super::failure_rules::prepare_authored_claim(
             super::super::failure_rules::PREDICATE,
@@ -427,7 +427,7 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
     assert!(
         super::super::failure_rules::prepare_authored_claim(
             super::super::failure_rules::PREDICATE,
-            &super::super::value_projection::json_to_rmpv(&value),
+            &crate::serialize::json_to_msgpack_value(&value),
         )
         .is_err()
     );
@@ -445,7 +445,7 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
     assert!(
         super::super::failure_rules::prepare_authored_claim(
             super::super::failure_rules::PREDICATE,
-            &super::super::value_projection::json_to_rmpv(&value),
+            &crate::serialize::json_to_msgpack_value(&value),
         )
         .is_err()
     );
@@ -463,7 +463,7 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
                 ClaimCandidate::new(
                     crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
                     ClaimSubject::Entity(subject),
-                    super::super::value_projection::json_to_rmpv(&authored),
+                    crate::serialize::json_to_msgpack_value(&authored),
                     1.0,
                 ),
                 occurred(1),
@@ -484,7 +484,7 @@ fn resident_failure_rules_reject_unauthorized_or_unsafe_rows() -> Result<()> {
                 ClaimCandidate::new(
                     crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
                     ClaimSubject::Entity(dreamer.entity_ref()),
-                    super::super::value_projection::json_to_rmpv(&authored),
+                    crate::serialize::json_to_msgpack_value(&authored),
                     1.0,
                 ),
                 occurred(1),
@@ -521,7 +521,7 @@ fn pending_resident_rule_claim_does_not_activate_policy() -> Result<()> {
         ClaimCandidate::new(
             crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
             ClaimSubject::Entity(resident),
-            super::super::value_projection::json_to_rmpv(&authored),
+            crate::serialize::json_to_msgpack_value(&authored),
             1.0,
         ),
         occurred(1),
@@ -579,7 +579,7 @@ fn retracting_the_authoring_claim_takes_its_rules_out_of_force() -> Result<()> {
     let author = WriteActor::new(resident, EdgeActorClass::Agent);
     let authored: serde_json::Value =
         serde_json::from_slice(&rows(subject, turn, true)).expect("valid authored rows");
-    let value = super::super::value_projection::json_to_rmpv(&authored);
+    let value = crate::serialize::json_to_msgpack_value(&authored);
     let claim_id = EntityId::from_bytes([0x6a; 16])?;
     let call = SelfCall::MemoryPutClaim(SelfMemoryPutClaimCall::new(
         claim_id,
@@ -709,7 +709,7 @@ fn a_claim_retracted_during_the_call_leaves_the_reply_to_the_manifest() -> Resul
         ClaimCandidate::new(
             crate::dreamer_consolidation::DREAMER_FAILURE_RULES_PREDICATE,
             ClaimSubject::Entity(resident),
-            super::super::value_projection::json_to_rmpv(&authored),
+            crate::serialize::json_to_msgpack_value(&authored),
             1.0,
         ),
         occurred(21),

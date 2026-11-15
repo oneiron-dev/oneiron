@@ -523,5 +523,5 @@ fn decode_merged_value(response: &LlmResponse) -> Option<Value> {
     parsed
         .get("value")
         .filter(|value| !value.is_null())
-        .map(json_to_rmpv)
+        .map(json_to_msgpack_value)
 }

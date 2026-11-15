@@ -31,7 +31,7 @@ impl Memory<'_> {
             let now = self.vault.store.clock.now_recorded_at();
             crate::memory::witness::validate_witness_occurrence(now, learned_at)?;
         }
-        let data = encode_rmpv(&json_to_rmpv(&input.body))?;
+        let data = encode_rmpv(&json_to_msgpack_value(&input.body))?;
         let resolved_edges = self.resolve_structural_edges(input)?;
         // A text written from ASSETs is born under their one facet, with its
         // `DerivedFrom` edges (facet rule C); sources in two facets refuse it.

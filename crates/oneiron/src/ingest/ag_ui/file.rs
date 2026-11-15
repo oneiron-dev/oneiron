@@ -10,10 +10,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::core_write::CoreWriteLaneRef;
 use crate::edge::EdgeActorClass;
 use crate::ingest::admission::imported_candidate;
-use crate::ingest::{
-    ImportedEvidenceAdmission, ImportedEvidenceEntityResolution, json_to_msgpack_value,
-};
+use crate::ingest::{ImportedEvidenceAdmission, ImportedEvidenceEntityResolution};
 use crate::memory::{Memory, MemoryResult};
+use crate::serialize::json_to_msgpack_value;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, TimeRange, Vault};
 

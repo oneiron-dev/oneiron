@@ -19,8 +19,8 @@ use crate::dreamer_consolidation::provenance::PromotionCandidate;
 use crate::dreamer_consolidation::support::{
     SCOPE_PROJECT_KEY, TURN_BODY_FACET_REF_KEY, invalid_consolidation,
 };
-use crate::dreamer_consolidation::value_projection::json_to_rmpv;
 use crate::dreamer_promotion::DreamerRunContext;
+use crate::serialize::json_to_msgpack_value;
 use crate::temporal::TimeRange;
 use crate::write_envelope::ClaimCandidate;
 use crate::{EntityId, Result};
@@ -74,7 +74,7 @@ pub(super) fn note_candidate(
         invalid_consolidation("note candidate's predicate breaks the claim grammar")
     })?;
     let value = match item.get("value") {
-        Some(value) if !value.is_null() => json_to_rmpv(value),
+        Some(value) if !value.is_null() => json_to_msgpack_value(value),
         _ => return Err(invalid_consolidation("note candidate names no value")),
     };
     let confidence = item
@@ -120,7 +120,7 @@ pub(super) fn note_candidate(
         Value::Binary(note.facet.as_bytes().to_vec()),
     )];
     if let Some(topic) = item.get("topic_key").filter(|topic| !topic.is_null()) {
-        fields.push((Value::from("topic_key"), json_to_rmpv(topic)));
+        fields.push((Value::from("topic_key"), json_to_msgpack_value(topic)));
     }
     if note.project != crate::claim::default_project_id() {
         fields.push((

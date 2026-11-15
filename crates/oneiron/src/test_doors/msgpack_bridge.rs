@@ -6,7 +6,7 @@ use rmpv::Value;
 /// The JSON a claim class's schema checks for a claim value, when JSON holds the
 /// value exactly; else none.
 pub fn claim_value_json(value: &Value) -> Option<serde_json::Value> {
-    crate::store::claim_descriptors::json_value(value)
+    crate::serialize::msgpack_value_to_exact_json(value)
 }
 
 /// The JSON form of a vault-shape manifest body, when writing it back gives

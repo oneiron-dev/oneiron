@@ -13,6 +13,7 @@ use crate::engine_executor::SelfDispatchResponse;
 use crate::engine_executor::{
     JsCodeModeOutput, JsCodeModeStepOutcome, JsResultCall, JsResultTarget, StepCancellation,
 };
+use crate::serialize::json_to_msgpack_value;
 use crate::task_verb::sdk::{AgentVerb, RunVerb};
 use crate::{EntityId, Result};
 use describe::{names_one_target, result_ref, secret_handle};
@@ -205,7 +206,7 @@ pub(super) fn dispatch(state: &mut Bridge<'_>, name: &str, input: &str) -> Resul
             let call = SandboxCredentialCall::read_only(
                 args.operation,
                 SandboxCredentialHandle::new(args.credential_handle)?,
-                json_value(args.args),
+                json_to_msgpack_value(&args.args),
             )?;
             let result = admitted(cancel, || service.call_credential(call))?;
             Ok(json!({"operation": result.operation().as_str(), "credentialHandle": result.credential().as_str()}).to_string())
@@ -690,29 +691,6 @@ fn reply_body(outcome: &SelfDispatchOutcome, park: ParkReply) -> Result<Value> {
             ));
         }
     })
-}
-
-fn json_value(value: Value) -> rmpv::Value {
-    match value {
-        Value::Null => rmpv::Value::Nil,
-        Value::Bool(v) => rmpv::Value::Boolean(v),
-        Value::Number(v) => {
-            if let Some(v) = v.as_u64() {
-                rmpv::Value::from(v)
-            } else if let Some(v) = v.as_i64() {
-                rmpv::Value::from(v)
-            } else {
-                rmpv::Value::F64(v.as_f64().unwrap_or_default())
-            }
-        }
-        Value::String(v) => rmpv::Value::from(v),
-        Value::Array(v) => rmpv::Value::Array(v.into_iter().map(json_value).collect()),
-        Value::Object(v) => rmpv::Value::Map(
-            v.into_iter()
-                .map(|(k, v)| (rmpv::Value::from(k), json_value(v)))
-                .collect(),
-        ),
-    }
 }
 
 /// What a step returns beside its streamed result: whether it finished. A

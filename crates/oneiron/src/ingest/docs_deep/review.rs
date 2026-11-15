@@ -98,7 +98,7 @@ impl DeepWrite<'_> {
         .with_approval(approval);
         let (candidate, envelope) = crate::ingest::admission::imported_candidate(
             &claim.predicate,
-            crate::ingest::json_to_msgpack_value(&claim.value),
+            crate::serialize::json_to_msgpack_value(&claim.value),
             &claim.source_record_id,
             &admission,
         )?;

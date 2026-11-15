@@ -515,39 +515,6 @@ impl Keyword for MaxUtf8Bytes {
     }
 }
 
-/// A claim value as JSON, for a schema to check. `None` for what JSON cannot
-/// hold as it is: bytes, extension types, a map key that is not a string or
-/// is repeated, a non-UTF-8 string and a number that is not finite.
-pub(crate) fn json_value(value: &Value) -> Option<serde_json::Value> {
-    Some(match value {
-        Value::Nil => serde_json::Value::Null,
-        Value::Boolean(flag) => serde_json::Value::Bool(*flag),
-        Value::Integer(number) => match number.as_u64() {
-            Some(unsigned) => unsigned.into(),
-            None => number.as_i64()?.into(),
-        },
-        Value::F32(number) => serde_json::Number::from_f64(f64::from(*number))?.into(),
-        Value::F64(number) => serde_json::Number::from_f64(*number)?.into(),
-        Value::String(text) => text.as_str()?.into(),
-        Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(json_value).collect::<Option<Vec<_>>>()?)
-        }
-        Value::Map(entries) => {
-            let mut map = serde_json::Map::new();
-            for (key, item) in entries {
-                if map
-                    .insert(key.as_str()?.to_owned(), json_value(item)?)
-                    .is_some()
-                {
-                    return None;
-                }
-            }
-            serde_json::Value::Object(map)
-        }
-        Value::Binary(_) | Value::Ext(..) => return None,
-    })
-}
-
 pub(crate) fn compiled_row(predicate: &str) -> Option<ClaimClassDescriptorRow> {
     claim_class_descriptors()
         .into_iter()

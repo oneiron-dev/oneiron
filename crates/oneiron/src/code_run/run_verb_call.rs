@@ -10,6 +10,7 @@ use super::{
     JS_SAFE_INTEGER, MemoryClaimInput, MemoryEdgeInput, MemorySearchInput, MemorySupersedeInput,
     MemoryTimeRange, SelfCall, SelfMemoryPutClaimCall, SelfMemoryPutEdgeCall, SelfMemorySearchCall,
 };
+use crate::serialize::json_to_msgpack_value;
 use crate::task_verb::sdk::RunVerb;
 use crate::{ClaimCandidate, ClaimSubject, EdgeKind, EntityId, Error, Result, TimeRange};
 use serde_json::Value;
@@ -29,7 +30,7 @@ pub(crate) fn claim_put_call(args: MemoryClaimInput, now: u64) -> Result<SelfMem
     let candidate = ClaimCandidate::new(
         args.predicate,
         ClaimSubject::Entity(EntityId::from_hex(&args.subject)?),
-        json_value(args.value),
+        json_to_msgpack_value(&args.value),
         confidence.unwrap_or(1.0),
     );
     Ok(SelfMemoryPutClaimCall::new(
@@ -289,27 +290,4 @@ fn js_f32(value: f64) -> Result<f32> {
         return Err(failure("invalid guest number"));
     }
     Ok(value as f32)
-}
-
-fn json_value(value: Value) -> rmpv::Value {
-    match value {
-        Value::Null => rmpv::Value::Nil,
-        Value::Bool(v) => rmpv::Value::Boolean(v),
-        Value::Number(v) => {
-            if let Some(v) = v.as_u64() {
-                rmpv::Value::from(v)
-            } else if let Some(v) = v.as_i64() {
-                rmpv::Value::from(v)
-            } else {
-                rmpv::Value::F64(v.as_f64().unwrap_or_default())
-            }
-        }
-        Value::String(v) => rmpv::Value::from(v),
-        Value::Array(v) => rmpv::Value::Array(v.into_iter().map(json_value).collect()),
-        Value::Object(v) => rmpv::Value::Map(
-            v.into_iter()
-                .map(|(k, v)| (rmpv::Value::from(k), json_value(v)))
-                .collect(),
-        ),
-    }
 }

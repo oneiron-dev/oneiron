@@ -534,7 +534,7 @@ pub(super) fn deterministic_claim_id(
 /// Recursively sorts every `Value::Map`'s entries by their MessagePack-encoded
 /// key so canonical bytes are independent of map key order.
 ///
-/// `json_to_rmpv` preserves serde_json object order and the workspace enables
+/// `json_to_msgpack_value` preserves serde_json object order and the workspace enables
 /// serde_json `preserve_order`, so the LLM's key order flows verbatim into the
 /// candidate value. Without this, two semantically identical objects that
 /// differ only in key order encode differently and `detect_conflicts` sees a

@@ -309,7 +309,7 @@ fn resolve_proposal(
             })?,
         ),
     };
-    let value = json_to_rmpv(&parsed.value);
+    let value = json_to_msgpack_value(&parsed.value);
     let rel = match (corrects, parsed.rel) {
         (Some(prior), _) => prior.body.rel.clone(),
         (None, None) => scope
@@ -357,7 +357,7 @@ fn resolve_proposal(
     }
     let topic = match corrects {
         Some(prior) => prior_topic(prior.body.scope.as_ref()),
-        None => parsed.topic.as_ref().map(json_to_rmpv),
+        None => parsed.topic.as_ref().map(json_to_msgpack_value),
     };
     if let Some(topic) = topic {
         fields.push((Value::from("topic_key"), topic));

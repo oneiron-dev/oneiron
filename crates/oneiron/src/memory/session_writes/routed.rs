@@ -18,7 +18,7 @@
 //! them as TURNs (Engine 10-22: no new refusal).
 
 use super::super::session_reads::resolve_room_write_subject;
-use super::super::support::{id_from_optional_hex, json_to_rmpv, requested_approval};
+use super::super::support::{id_from_optional_hex, json_to_msgpack_value, requested_approval};
 use super::super::{
     AllRelationships, ClaimInput, ClaimRelationships, CommitReceipt, EntityRefReceipt,
     MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult, ScopedClaimInput,
@@ -323,11 +323,11 @@ impl Memory<'_> {
         let mut candidate = ClaimCandidate::new(
             input.predicate.clone(),
             ClaimSubject::Entity(subject),
-            json_to_rmpv(&input.value),
+            json_to_msgpack_value(&input.value),
             input.confidence,
         )
         .with_validity(input.valid_from, input.valid_to)
-        .with_scope(json_to_rmpv(&scope));
+        .with_scope(json_to_msgpack_value(&scope));
         if let Some(salience) = input.salience {
             candidate = candidate.with_salience(salience);
         }

@@ -157,9 +157,9 @@ impl Memory<'_> {
         let value = if input.predicate == crate::booking::BOOKING_PUBLIC_PAGE_PREDICATE {
             let mut claimed = input.value.clone();
             crate::booking::publication::stamp_publication_sponsor(&mut claimed, self.actor);
-            json_to_rmpv(&claimed)
+            json_to_msgpack_value(&claimed)
         } else {
-            json_to_rmpv(&input.value)
+            json_to_msgpack_value(&input.value)
         };
         let world = match &input.world_ref {
             Some(world_ref) => Some(self.resolve_ref(world_ref)?),
@@ -174,7 +174,7 @@ impl Memory<'_> {
                     .collect::<MemoryResult<crate::claim::RelationshipSet>>()
             })
             .transpose()?;
-        let scope_rmpv = input.scope.as_ref().map(json_to_rmpv);
+        let scope_rmpv = input.scope.as_ref().map(json_to_msgpack_value);
         let now = self.vault.store.clock.now_recorded_at();
         let occurred_at = input.occurred_at.unwrap_or(now);
         let learned_at = input.learned_at.unwrap_or(now);

@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use serde_json::Value;
 
-use super::admission::{imported_candidate, json_to_msgpack_value};
+use super::admission::imported_candidate;
 use super::{INGEST_SOURCE_REGISTRY, ImportedEvidenceAdmission, ImportedEvidenceEntityResolution};
 use crate::claim::ClaimApprovalStatus;
 use crate::consent::{
@@ -13,6 +13,7 @@ use crate::consent::{
 };
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
+use crate::serialize::json_to_msgpack_value;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
 
