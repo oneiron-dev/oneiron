@@ -42,6 +42,11 @@ pub const WIDEN_REJECTED: &str = "rejected";
 /// Domain of the effect digest a widen rejection's denial names.
 const WIDEN_REJECT_DIGEST_DOMAIN: &[u8] = b"oneiron/consent/widen-reject/v1";
 
+/// A member's filing while the owner's `consent.widen.member_proposals` is off, whether it was
+/// off at the door or turned off before the filing committed.
+const MEMBER_PROPOSALS_OFF: &str =
+    "member credential lacks widen proposal authority: consent.widen.member_proposals is off";
+
 /// How long a widen proposal may stay open for the owner's answer, in seconds: the value of the
 /// owner's key `consent.widen.max_open_secs`. It refuses zero and anything past
 /// [`Self::CEILING`].
@@ -179,7 +184,9 @@ pub(super) fn contact_disclosure_widen_delta(
     Ok(bytes)
 }
 impl Vault {
-    /// A verified agent may propose an action widening, but cannot grant it.
+    /// A verified agent, or a member's verified human credential while the owner's
+    /// `consent.widen.member_proposals` is on, may propose an action widening, but cannot grant
+    /// it.
     pub fn propose_action_widen(
         &self,
         credential: &VerifiedSlip,
@@ -190,7 +197,9 @@ impl Vault {
         self.propose_credential_widen(credential, WidenKind::Action, bound, owner_ref, expires_at)
     }
 
-    /// A verified agent may propose a disclosure widening, but cannot grant it.
+    /// A verified agent, or a member's verified human credential while the owner's
+    /// `consent.widen.member_proposals` is on, may propose a disclosure widening, but cannot
+    /// grant it.
     pub fn propose_disclosure_widen(
         &self,
         credential: &VerifiedSlip,
@@ -207,7 +216,9 @@ impl Vault {
         )
     }
 
-    /// A verified agent may propose an auto-confirm widening, but cannot grant it.
+    /// A verified agent, or a member's verified human credential while the owner's
+    /// `consent.widen.member_proposals` is on, may propose an auto-confirm widening, but cannot
+    /// grant it.
     pub fn propose_auto_confirm_widen(
         &self,
         credential: &VerifiedSlip,
@@ -242,10 +253,21 @@ impl Vault {
             )));
         }
         // An agent's credential files; a member's human one files only while the owner's
-        // `consent.widen.member_proposals` is on (rechecked in the filing writer).
+        // `consent.widen.member_proposals` is on (rechecked in the filing writer), and only in
+        // its holder's own hands: a slip handed to another key would file as the holder.
         let proposer_class = match claims.actor_class.as_deref() {
             Some("agent") => EdgeActorClass::Agent,
+            Some("human") if credential.is_transferred() => {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "transferred member credential cannot file a widen proposal",
+                )));
+            }
             Some("human") if self.widen_member_proposals_on()? => EdgeActorClass::Human,
+            Some("human") => {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    MEMBER_PROPOSALS_OFF,
+                )));
+            }
             _ => {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
                     "agent credential lacks widen proposal authority",
@@ -254,7 +276,11 @@ impl Vault {
         };
         if !credential.allows_verb(kind.label()) {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "agent credential lacks widen proposal authority",
+                if proposer_class == EdgeActorClass::Human {
+                    "member credential lacks widen proposal authority"
+                } else {
+                    "agent credential lacks widen proposal authority"
+                },
             )));
         }
         let proposer = crate::EntityId::from_hex(&claims.holder_ref).map_err(|_| {
@@ -286,7 +312,7 @@ impl Vault {
             EdgeActorClass::Agent | EdgeActorClass::Human
         ) {
             return Err(Error::Gate(GateError::InvalidConsentBound(
-                "widen proposer must be an agent",
+                "widen proposer must be an agent or a member",
             )));
         }
         if bound_catastrophe_class(&bound).is_some() {
@@ -310,7 +336,7 @@ impl Vault {
                     .value
             {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
-                    "widen proposer must be an agent",
+                    MEMBER_PROPOSALS_OFF,
                 )));
             }
             let raw = crate::ports::EntityStoreRead::port_entity_raw(
@@ -339,6 +365,16 @@ impl Vault {
         Ok(WIDEN_MEMBER_PROPOSALS
             .read_in_txn(self, &txn, &[], None)?
             .value)
+    }
+
+    /// The owner's `consent.widen.max_open_secs` as the last commit holds it: the longest a
+    /// proposal filed now may stay open, for a filer that sets its own expiry to the window.
+    pub(crate) fn widen_open_secs(&self) -> Result<u64> {
+        let txn = self.store.env.read_txn()?;
+        Ok(WIDEN_MAX_OPEN_SECS
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .secs())
     }
 
     /// Files one contact-disclosure offer, frozen by the clearance door, on

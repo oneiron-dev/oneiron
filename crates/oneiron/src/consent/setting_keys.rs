@@ -20,19 +20,21 @@ crate::setting::setting_keys! {
         kind: Kind::new(DisclosureOfferMode::default),
     };
     /// How long, in seconds, a widen proposal may stay open for the owner's answer: an action,
-    /// disclosure or auto-confirm widening, a contact-disclosure offer, and the engine's own
-    /// offer for a person's first entry into a room, which stays open this long. One hour unless
+    /// disclosure or auto-confirm widening, a contact-disclosure offer, and two filings that stay
+    /// open this long: the engine's own offer for a person's first entry into a room, and a grant
+    /// a non-owner's `vault.shape.apply` files for the owner. One hour unless
     /// the owner sets it, at most thirty days; a filing with a later expiry is refused. A shorter
     /// window leaves every open proposal its own expiry. Only the owner's answer settles a
     /// proposal, however long it stays open.
     pub(crate) WIDEN_MAX_OPEN_SECS: WidenOpenSecs = "consent.widen.max_open_secs" {
         kind: Kind::new(WidenOpenSecs::one_hour).tighter(lower_is_tighter::<WidenOpenSecs>),
     };
-    /// Whether a member may file a widen proposal: a live human credential that lists the
-    /// proposal's verb (`propose_action_widen`, `propose_disclosure_widen` or
-    /// `propose_auto_confirm_widen`) files as an agent's does. Off unless the owner turns it on.
-    /// A proposal confers nothing: only the owner's own answer settles it, and the credential it
-    /// was filed under never does.
+    /// Whether a member may file a widen proposal: a live human credential in its holder's own
+    /// hands that lists the proposal's verb (`propose_action_widen`, `propose_disclosure_widen`
+    /// or `propose_auto_confirm_widen`) files one of those three widenings as an agent's does.
+    /// The typed contact-disclosure offer (`vault.disclosure.offer`) stays an agent's. Off unless
+    /// the owner turns it on. A proposal confers nothing: only the owner's own answer settles it,
+    /// and the credential it was filed under never does.
     pub(crate) WIDEN_MEMBER_PROPOSALS: bool = "consent.widen.member_proposals" {
         kind: Kind::new(member_proposals_off)
             .strictest(member_proposals_off)
