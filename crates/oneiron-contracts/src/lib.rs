@@ -18,6 +18,7 @@ pub mod limits;
 pub mod memory;
 pub mod posterior;
 pub mod record_layout;
+pub mod register;
 pub mod registry;
 pub mod retrieval_quality;
 pub mod retrieval_telemetry;
@@ -28,6 +29,10 @@ pub mod serialize;
 pub mod temporal;
 pub mod wallet;
 pub mod write_envelope;
+
+// `#[derive(Register)]` writes `::oneiron_contracts::register::Register`; this makes that path
+// resolve inside this crate too.
+extern crate self as oneiron_contracts;
 
 // The same root aliases `oneiron` has, so moved code keeps its `crate::` paths.
 pub use crate::entity_id::EntityId;

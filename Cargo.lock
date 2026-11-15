@@ -8323,6 +8323,7 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-derive",
  "oneiron-hex",
  "rand 0.8.8",
  "rand_core 0.6.4",
@@ -8379,6 +8380,7 @@ dependencies = [
 name = "oneiron-derive"
 version = "0.1.0"
 dependencies = [
+ "oneiron-contracts",
  "proc-macro2",
  "quote",
  "syn 2.0.119",

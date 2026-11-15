@@ -18,6 +18,8 @@ blake3 = { workspace = true }
 heed = { workspace = true }
 # The machine-memory probe behind the memory-derived `[limits]` rows.
 libc = "0.2"
+# `#[derive(Register)]`, re-exported beside the trait in `register` (Fable pass 25).
+oneiron-derive = { version = "0.1.0", path = "../oneiron-derive" }
 # The one hex policy (lowercase canonical); `bytes_to_hex_lower` re-exports its encoder.
 oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 rand_core = { workspace = true }
