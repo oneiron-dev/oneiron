@@ -119,6 +119,8 @@ Inside its hours the seat's walk tries that rung before the rungs without
 hours, wherever the ladder lists it; a failure hands the call on as usual.
 Outside them the walk passes it at once, with no wait for the hours to open,
 and the receipt's `passed_over` row for it reads `"passed": "outside_hours"`.
+A run's live compaction fork is bound to the rung that answered the run only
+while the walk would take that rung, so never outside its hours.
 A model the vault's model manifest pins for the role is served at any hour:
 the pin names that one model, so there is no walk. A ladder whose every rung
 keeps hours is refused, so a call outside them always has a rung, as is

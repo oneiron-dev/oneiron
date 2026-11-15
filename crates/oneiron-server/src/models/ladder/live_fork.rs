@@ -27,8 +27,9 @@ impl OfferLadder {
     /// rung that answered the run's latest completed call, now (FIX 4933):
     /// a rung here at its offer and wire model that the walk does not pass
     /// over (one that rests, has its probation request out, its order
-    /// refuses, or would take the work off the device as a fallback). An
-    /// owner's fallback's rung is on no ladder here, so it takes none.
+    /// refuses, would take the work off the device as a fallback, or is
+    /// outside its daily hours). An owner's fallback's rung is on no ladder
+    /// here, so it takes none.
     pub(crate) fn takes_answering_rung(
         &self,
         answered: &LiveForkRung,
@@ -62,6 +63,7 @@ impl OfferLadder {
         let rung = &self.rungs[index];
         self.route_admitted(routes, index)
             && self.kept_on_device(index, request).is_none()
+            && !self.outside_hours(index)
             && self
                 .rests
                 .resting(&rung.offer.binding, &rung.wire_model)
@@ -75,8 +77,9 @@ impl OfferLadder {
     /// The rung a kept chat breakpoint names by ref (FIX 4465 D): this
     /// ladder's rung whose wire model and offer digest are the kept ones,
     /// under the kept provider and place, when its walk would take `request`
-    /// now. `None` when no rung here matches or the matching one rests or
-    /// is held: the breakpoint is not admitted again.
+    /// now. `None` when no rung here matches or the matching one rests, is
+    /// held or is outside its daily hours: the breakpoint is not admitted
+    /// again.
     pub(crate) fn live_rung_by_ref(
         &self,
         provider: &str,
