@@ -264,14 +264,19 @@ impl Memory<'_> {
         }
         // A caller-placed project (FIX WITNESS-TURN-NO-PROJECT-POSITION): a
         // leader-chat room settles its own, so one naming another refuses
-        // the turn; the same project is the leader settle above.
+        // the turn; the same project is the leader settle above. Without a
+        // leader project, the settle is a birth settle only: it also places
+        // a no-project append's new messages under an existing TURN's
+        // non-default project, and never moves a row born earlier.
         if let Some(caller_project) = plan.turn.project {
             if leader_project.is_some_and(|leader| leader != caller_project) {
                 return Err(Error::Record(crate::error::RecordError::ConversationDenied).into());
             }
             if leader_project.is_none() {
-                self.settle_witness_project_in_txn(wtxn, plan, caller_project)?;
+                self.settle_witness_project_in_txn(wtxn, plan, &admission, Some(caller_project))?;
             }
+        } else if leader_project.is_none() && matches!(sink, WitnessSink::Base(_)) {
+            self.settle_witness_project_in_txn(wtxn, plan, &admission, None)?;
         }
         // LAST statement in the transaction, deliberately: a witness
         // admitted on record must not commit base rows once the room has
@@ -355,22 +360,78 @@ impl Memory<'_> {
         Ok(())
     }
 
-    /// A caller-placed witness project: admitted against the caller's
-    /// credential, then settled onto the turn and the messages this write
-    /// lands, as a leader chat settles its own.
+    /// A witness project settled at birth only: admitted against the
+    /// caller's credential, then settled onto the TURN this write mints
+    /// and each MESSAGE this write lands new, as a leader chat settles its
+    /// own. A caller project on an existing TURN is a no-op for the TURN
+    /// only where its stored position already names that project; any
+    /// other stored position, including the default project and no stored
+    /// stamp, is refused as a restamp. With no caller project, an existing
+    /// TURN settled under a non-default project places this write's new
+    /// messages under that project, under the same admission; a TURN at
+    /// the default project, or with no stored stamp, keeps the landing
+    /// every witness has today. An exact retry stamps nothing.
     fn settle_witness_project_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         plan: &WitnessPlan<'_>,
-        project: EntityId,
+        admission: &WitnessAdmission<'_>,
+        caller_project: Option<EntityId>,
     ) -> MemoryResult<()> {
-        self.admit_witness_project_in_txn(wtxn, project)?;
-        let message_ids = plan.message_ids();
-        for id in std::iter::once(plan.turn_id).chain(message_ids.iter().copied()) {
+        let minted = matches!(admission.turn, AdmittedTurn::Mint { .. });
+        let (project, stamp_turn) = match (caller_project, minted) {
+            (Some(project), true) => {
+                self.admit_witness_project_in_txn(wtxn, project)?;
+                (project, true)
+            }
+            (Some(project), false) => {
+                let stored = crate::federation::record_scope::stored_witness_project(
+                    &self.vault.store,
+                    wtxn,
+                    plan.turn_id,
+                )?;
+                if stored != Some(project) {
+                    return Err(Error::InvalidClaimBody("record scope restamp refused").into());
+                }
+                self.admit_witness_project_in_txn(wtxn, project)?;
+                (project, false)
+            }
+            (None, true) => return Ok(()),
+            (None, false) => {
+                if !admission.has_new_messages() {
+                    return Ok(());
+                }
+                let stored = crate::federation::record_scope::stored_witness_project(
+                    &self.vault.store,
+                    wtxn,
+                    plan.turn_id,
+                )?;
+                let Some(project) = stored else {
+                    return Ok(());
+                };
+                if project == crate::claim::default_project_id() {
+                    return Ok(());
+                }
+                self.admit_witness_project_in_txn(wtxn, project)?;
+                (project, false)
+            }
+        };
+        if stamp_turn {
             crate::federation::record_scope::stamp_witness_project(
                 &self.vault.store,
                 wtxn,
-                id,
+                plan.turn_id,
+                project,
+            )?;
+        }
+        for (planned, exists) in plan.messages.iter().zip(&admission.message_exists) {
+            if *exists {
+                continue;
+            }
+            crate::federation::record_scope::stamp_witness_project(
+                &self.vault.store,
+                wtxn,
+                planned.id,
                 project,
             )?;
         }

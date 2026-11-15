@@ -547,6 +547,24 @@ pub(crate) fn stamp_leader_project(
     Ok(())
 }
 
+/// The project a stored witness TURN's birth position names: its stored
+/// scope's audience where that is exactly one project. `None` where the
+/// TURN carries no stored position, or its audience is not exactly one
+/// project, so no position is minted for a row a later write did not birth.
+pub(crate) fn stored_witness_project(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    id: EntityId,
+) -> Result<Option<EntityId>> {
+    let Some(scope) = stored_scope(store, txn, id, crate::registry::ENTITY_TYPE_TURN)? else {
+        return Ok(None);
+    };
+    Ok(match scope.audience {
+        ScopeAxis::Some(ids) if ids.len() == 1 => ids.into_iter().next().map(|id| id.0),
+        _ => None,
+    })
+}
+
 /// Settle a caller-placed witness TURN/MESSAGE onto its project (FIX
 /// WITNESS-TURN-NO-PROJECT-POSITION), after the witness's full batch
 /// succeeds. Opaque replicated rows cannot call this door and remain
