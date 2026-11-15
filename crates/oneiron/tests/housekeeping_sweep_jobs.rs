@@ -260,8 +260,10 @@ fn the_owner_sets_a_cadence_and_its_sweep_goes_on_from_now_at_that_cadence() {
     );
     assert_eq!(fx.due(sweep), Some(T0 + MINUTE + 2 * HOUR));
 
-    fx.set_cadence(sweep, json!({ "kind": "every", "secs": 0 }))
+    let zero = fx
+        .set_cadence(sweep, json!({ "kind": "every", "secs": 0 }))
         .expect_err("a cadence that never fires is refused");
+    assert!(zero.contains("can never fire"), "{zero}");
     let cadence = fx.cadence(sweep);
     assert_eq!(&cadence["secs"], &json!(2 * HOUR), "{cadence}");
     assert_eq!(fx.due(sweep), Some(T0 + MINUTE + 2 * HOUR), "nothing moved");
