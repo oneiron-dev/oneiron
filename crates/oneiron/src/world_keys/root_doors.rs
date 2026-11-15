@@ -432,9 +432,11 @@ impl Vault {
     /// [`Self::activate_owner_root`]'s transaction, in the caller's: the
     /// root's record, the marks, the pin and the re-wraps, with `secret` and
     /// `request` this install's own from [`Self::activation_prep`], plus R's
-    /// enrolment after the marks and the pin move (WAYBACK-R4-FIRST-KEY = B).
-    /// `authority` carries the true act surface for R's row; `predecessor`
-    /// was loaded before the write txn opened.
+    /// enrolment after the marks and the pin move (WAYBACK-R4-FIRST-KEY = B),
+    /// with the owner's earlier R keys revoked just before it
+    /// (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A). `authority` carries the true
+    /// act surface for R's row; `predecessor` was loaded before the write
+    /// txn opened and signs both.
     pub(super) fn activate_owner_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -490,20 +492,29 @@ impl Vault {
         // generation 0 as before. Old kits read as generation 0, and after a
         // rotation the same kit skips on generation 1.
         let found = self.recovery_authority_generations_in_txn(txn, seed, &vault_id)?;
-        let generation = match (found.live, found.enrolled) {
-            (Some((generation, _)), _) => generation,
+        let (generation, enrol) = match (found.live, found.enrolled) {
+            (Some((generation, _)), _) => (generation, false),
             (None, Some(_)) => return Err(authority_refused(REVOKED_AUTHORITY_KEY)),
-            (None, None) => {
-                self.enrol_recovery_authority_key_in_txn(
-                    txn,
-                    authority,
-                    secret.machine,
-                    seed,
-                    predecessor,
-                )?;
-                0
-            }
+            (None, None) => (0, true),
         };
+        let r_key =
+            RecoveryAuthoritySigner::from_seed(seed, &vault_id, generation)?.authority_key();
+        // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
+        // A): the owner's earlier R keys go first, so R's enrolment binds
+        // the owner on a self-hosted vault when a revoked R held their
+        // binding, as the root door's lost keys go before its successor.
+        // This kit's other generations are revoked already (the rotation
+        // revokes the one it replaces).
+        self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        if enrol {
+            self.enrol_recovery_authority_key_in_txn(
+                txn,
+                authority,
+                secret.machine,
+                seed,
+                predecessor,
+            )?;
+        }
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
             RecoveryAuthoritySigner::authority_seed(seed, &vault_id, generation),
