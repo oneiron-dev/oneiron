@@ -35,3 +35,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/lens/wire_ids.rs` | src | s | 2 struct · 1 enum · 2 fn | LensHandleRef, LensHandleRole | Bounded wire tokens shared by every other lens concern |
 | `src/lens/wire_limits.rs` | src | s | 1 crate-vis | — | Generic serde plumbing shared by the hand-rolled lens wire types: the externally-tagged map serializer their… |
 | `src/lib.rs` | src | s | 1 mod · 1 crate-vis | — | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… |
+| `tests/genui_interpolation_state_key.rs` | test | s | — | — | GENUI-INTERP-KEY: in a generated card, a text block's one escaped interpolation reads `$state` |
