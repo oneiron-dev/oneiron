@@ -12,13 +12,14 @@
 //! user; it starts every command of the run detached, in a network
 //! namespace of its own, as a user and group of its own with no
 //! supplementary group and no new privilege; it stages the upload in the
-//! client's directory and copies it into place as the guest's file, and
-//! copies the guest's frames out as the guest before it reads them; it
-//! sends the owner's key only to the API; and it deletes the machine at the
-//! end, with a key of its own and confirming its id. A refused create, a
-//! machine that fails to start, a confinement that cannot be made and a
-//! machine that stops mid-run never show a secret and leave no machine
-//! behind.
+//! client's directory and has the guest write it into place, and copies
+//! the guest's frames out as the guest before it reads them; it sends the
+//! owner's key only to the API; and it deletes the machine at the end, with
+//! a key of its own and confirming its id, and waits for the delete's
+//! operation to succeed. A refused create, a
+//! machine that fails to start, a confinement that cannot be made (the
+//! stand-in fails only a confined command) and a machine that stops mid-run
+//! never show a secret and leave no machine behind.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test sandbox_vendor_instabox`.
@@ -52,6 +53,11 @@ const KEY_VALUE: &str = "ibk_test_key_4d1f83";
 /// The machine the stand-in makes, and its create operation.
 const MACHINE: &str = "m_k7m2p9qr";
 const OPERATION: &str = "op_c3x8";
+/// The operation of the machine's delete.
+const DELETE_OPERATION: &str = "op_d1";
+/// What a copy-out's and an upload's shell run.
+const OUTPUT_TO_FILE: &str = r#"exec "$@" >"$0""#;
+const INPUT_FROM_FILE: &str = r#"exec "$@" <"$0" >/dev/null"#;
 const GUEST_FRAMES: &str = "/tmp/oneiron-batch/guest-frames";
 
 /// What every command of the run starts under.
@@ -89,10 +95,19 @@ fn detached(status_file: &str, argv: &[&str]) -> Value {
 
 /// The guest's frames, read as the guest into the client's file `copy`.
 fn copied_out(copy: &str) -> Value {
-    let mut copied = vec!["sh", "-c", r#"exec "$@" >"$0""#, copy];
+    let mut copied = vec!["sh", "-c", OUTPUT_TO_FILE, copy];
     copied.extend_from_slice(&CONFINEMENT);
     copied.extend_from_slice(&["cat", "--", GUEST_FRAMES]);
     json!(copied)
+}
+
+/// The host's opening, written as the guest from the client's file
+/// `staged`.
+fn placed_in(staged: &str) -> Value {
+    let mut placed = vec!["sh", "-c", INPUT_FROM_FILE, staged];
+    placed.extend_from_slice(&CONFINEMENT);
+    placed.extend_from_slice(&["tee", "--", "/tmp/oneiron-batch/host-frames"]);
+    json!(placed)
 }
 
 /// How the stand-in answers.
@@ -101,7 +116,8 @@ struct Script {
     refuse_create: bool,
     /// Whether the create's operation fails at its second poll.
     fail_start: bool,
-    /// Whether sudo refuses every confined command, which then exits 1.
+    /// Whether sudo refuses every confined command, which then exits 1. A
+    /// detached command without the confinement exits 0.
     refuse_confinement: bool,
     /// Whether the machine stops at the guest's (the second command's)
     /// second exit status poll.
@@ -141,8 +157,9 @@ struct StandIn {
     calls: Arc<Mutex<Vec<Call>>>,
     /// The polls of the create's operation so far.
     operation_polls: Arc<Mutex<u32>>,
-    /// Each started command's number (from 1), by its exit status file.
-    commands: Arc<Mutex<HashMap<String, u32>>>,
+    /// Each started command's number (from 1) and whether it starts in the
+    /// confinement, by its exit status file.
+    commands: Arc<Mutex<HashMap<String, (u32, bool)>>>,
     /// The polls of each exit status file so far.
     status_polls: Arc<Mutex<HashMap<String, u32>>>,
     /// The files the guest's frames were copied to.
@@ -197,9 +214,12 @@ impl StandIn {
             "setsid" => {
                 let mut commands = self.commands.lock().unwrap();
                 let number = u32::try_from(commands.len()).unwrap() + 1;
-                commands.insert(argv[5].to_owned(), number);
+                let confined = argv[6..].starts_with(&CONFINEMENT);
+                commands.insert(argv[5].to_owned(), (number, confined));
             }
-            "sh" => self.copies.lock().unwrap().push(argv[3].to_owned()),
+            "sh" if argv[2] == OUTPUT_TO_FILE => {
+                self.copies.lock().unwrap().push(argv[3].to_owned())
+            }
             _ => {}
         }
         exec_result()
@@ -209,7 +229,7 @@ impl StandIn {
         if self.copies.lock().unwrap().iter().any(|copy| copy == path) {
             return self.script.transcript.clone().into_response();
         }
-        let Some(&command) = self.commands.lock().unwrap().get(path) else {
+        let Some(&(command, confined)) = self.commands.lock().unwrap().get(path) else {
             return error(StatusCode::NOT_FOUND, "not_found", "no such file");
         };
         let poll = {
@@ -228,7 +248,7 @@ impl StandIn {
                 "the sandbox is stopped",
             );
         }
-        if self.script.refuse_confinement {
+        if self.script.refuse_confinement && confined {
             return "1\n".into_response();
         }
         "0\n".into_response()
@@ -296,12 +316,18 @@ async fn answer(
         ("DELETE", path) if path == machine => (
             StatusCode::ACCEPTED,
             Json(json!({
-                "id": "op_d1", "machineId": MACHINE, "type": "delete", "state": "queued",
-                "error": null, "createdAt": "2026-11-15T06:00:09Z",
+                "id": DELETE_OPERATION, "machineId": MACHINE, "type": "delete",
+                "state": "queued", "error": null, "createdAt": "2026-11-15T06:00:09Z",
                 "updatedAt": "2026-11-15T06:00:09Z",
             })),
         )
             .into_response(),
+        ("GET", path) if path == format!("/operations/{DELETE_OPERATION}") => Json(json!({
+            "id": DELETE_OPERATION, "machineId": MACHINE, "type": "delete",
+            "state": "succeeded", "error": null, "createdAt": "2026-11-15T06:00:09Z",
+            "updatedAt": "2026-11-15T06:00:10Z",
+        }))
+        .into_response(),
         _ => error(StatusCode::NOT_FOUND, "not_found", "no such route"),
     }
 }
@@ -411,6 +437,7 @@ fn a_switched_run_goes_to_instabox_with_the_key_only_at_its_api() {
             format!("POST {machine}/exec"),
             format!("{content} /tmp/oneiron-client/download-3"),
             format!("DELETE {machine}"),
+            format!("GET /operations/{DELETE_OPERATION}"),
         ]
     );
     {
@@ -428,7 +455,10 @@ fn a_switched_run_goes_to_instabox_with_the_key_only_at_its_api() {
             );
         }
         let create = calls.first().expect("the create");
-        let delete = calls.last().expect("the delete");
+        let delete = calls
+            .iter()
+            .find(|call| call.method == "DELETE")
+            .expect("the delete");
         let (Some(created), Some(deleted)) = (&create.idempotency_key, &delete.idempotency_key)
         else {
             panic!("each lifecycle call has its key");
@@ -512,21 +542,7 @@ fn a_switched_run_goes_to_instabox_with_the_key_only_at_its_api() {
                     "/tmp/oneiron-batch/workspace",
                 ],
             ),
-            &json!([
-                "sudo",
-                "-n",
-                "install",
-                "-o",
-                "70000",
-                "-g",
-                "70000",
-                "-m",
-                "0600",
-                "-T",
-                "--",
-                "/tmp/oneiron-client/upload-1",
-                "/tmp/oneiron-batch/host-frames",
-            ]),
+            &placed_in("/tmp/oneiron-client/upload-1"),
             &detached(
                 "/tmp/oneiron-client/status-2",
                 &[
@@ -588,6 +604,7 @@ fn a_machine_that_fails_to_start_is_deleted_unused() {
             operation.clone(),
             operation,
             format!("DELETE /machines/{MACHINE}"),
+            format!("GET /operations/{DELETE_OPERATION}"),
         ]
     );
 }
@@ -620,6 +637,7 @@ fn a_confinement_that_cannot_be_made_runs_nothing() {
             status.clone(),
             status,
             format!("DELETE {machine}"),
+            format!("GET /operations/{DELETE_OPERATION}"),
         ]
     );
 }
@@ -644,7 +662,10 @@ fn a_machine_that_stops_mid_run_is_deleted() {
         "nothing is downloaded: {calls:?}"
     );
     assert_eq!(
-        calls.last().map(String::as_str),
-        Some(format!("DELETE /machines/{MACHINE}").as_str())
+        calls[calls.len() - 2..],
+        [
+            format!("DELETE /machines/{MACHINE}"),
+            format!("GET /operations/{DELETE_OPERATION}"),
+        ]
     );
 }

@@ -16,8 +16,11 @@
 //! and this client refuses a sandbox answered without one. The sandbox has
 //! no internet access, so a vendor run has no egress (module doc of
 //! `VendorBatchBackend`), and no public traffic: no port of it answers
-//! without its traffic token. A template fixes a sandbox's resources, so the
-//! step's budget is kept by the guest itself, as on our own backends. E2B
+//! without its traffic token. A template fixes a sandbox's resources: the
+//! guest holds its program to the budget's processes and to its own memory
+//! limit, and the sandbox may have more memory than the budget (FIX
+//! [VENDOR-MEM-BUDGET]). The template is the owner's, named after the guest
+//! image's digest; E2B cannot show that it holds that image. E2B
 //! kills a sandbox at its timeout, which is the step's own time left plus
 //! [`LIFETIME_MARGIN`], so a lost run leaves nothing running.
 //!
@@ -35,14 +38,12 @@ use oneiron::code_sandbox::{SandboxProposalBody, SandboxVendor};
 use oneiron_agent_runtime::code_sandbox::microvm::{
     VendorCallBound, VendorSandboxClient, VendorSandboxId, VendorSandboxSpec,
 };
-use reqwest::blocking::{Body, Client, RequestBuilder, Response};
+use reqwest::blocking::{Body, Client, RequestBuilder};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use zeroize::Zeroizing;
 
-use super::vendor_http::{
-    CancellableReader, DELETE_TIMEOUT, OwnerVendorKey, VendorHttp, quoted, scrubbed,
-};
+use super::vendor_http::{Answer, CancellableReader, OwnerVendorKey, VendorHttp, quoted, scrubbed};
 
 /// The one vendor this client reaches.
 const VENDOR: SandboxVendor = SandboxVendor::E2b;
@@ -220,7 +221,10 @@ fn exit_status(
     let mut exit = None;
     loop {
         bound.cancel.check()?;
-        let Some((flags, message)) = next_envelope(stream, secrets)? else {
+        let next = next_envelope(stream, secrets);
+        // A wait the step's cancellation ended reads as a broken stream.
+        bound.cancel.check()?;
+        let Some((flags, message)) = next? else {
             break;
         };
         if flags & ENVELOPE_END_STREAM != 0 {
@@ -301,14 +305,8 @@ impl E2bClient {
         request: RequestBuilder,
         key: &str,
         bound: VendorCallBound<'_>,
-    ) -> oneiron::Result<Response> {
-        bound.cancel.check()?;
-        let response = request
-            .header("X-API-Key", key)
-            .timeout(HTTP.remaining(bound.deadline)?)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
-        HTTP.checked(response, &[key])
+    ) -> oneiron::Result<Answer> {
+        HTTP.send(request.header("X-API-Key", key), &[key], bound)
     }
 
     /// Sends one call to the daemon of `sandbox` on its access token inside
@@ -320,26 +318,24 @@ impl E2bClient {
         sandbox: &VendorSandboxId,
         token: &str,
         bound: VendorCallBound<'_>,
-    ) -> oneiron::Result<Response> {
-        bound.cancel.check()?;
-        let response = request
-            .header("X-Access-Token", token)
-            .header("E2b-Sandbox-Id", sandbox.as_str())
-            .header("E2b-Sandbox-Port", ENVD_PORT)
-            .timeout(HTTP.remaining(bound.deadline)?)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[token]))?;
-        HTTP.checked(response, &[token])
+    ) -> oneiron::Result<Answer> {
+        HTTP.send(
+            request
+                .header("X-Access-Token", token)
+                .header("E2b-Sandbox-Id", sandbox.as_str())
+                .header("E2b-Sandbox-Port", ENVD_PORT),
+            &[token],
+            bound,
+        )
     }
 
     fn kill_on(&self, http: &Client, key: &str, sandbox: &str) -> oneiron::Result<()> {
-        let response = http
-            .delete(self.sandbox_url(sandbox)?)
-            .header("X-API-Key", key)
-            .timeout(DELETE_TIMEOUT)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
-        HTTP.checked(response, &[key]).map(drop)
+        HTTP.send_delete(
+            http.delete(self.sandbox_url(sandbox)?)
+                .header("X-API-Key", key),
+            &[key],
+        )
+        .map(drop)
     }
 }
 
@@ -371,8 +367,7 @@ impl VendorSandboxClient for E2bClient {
             &key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
+        .json()?;
         let id = VendorSandboxId::new(HTTP.segment(&made.sandbox_id)?)?;
         // From here the sandbox is this run's to kill, on any failure.
         let token = made
@@ -467,13 +462,13 @@ impl VendorSandboxClient for E2bClient {
     ) -> oneiron::Result<()> {
         let (url, token) = self.daemon(sandbox, "files")?;
         let http = HTTP.client()?;
-        let response = Self::to_daemon(
+        Self::to_daemon(
             http.get(url).query(&[("path", path), ("username", USER)]),
             sandbox,
             &token,
             bound,
-        )?;
-        HTTP.copy_body(response, sink, &[token.as_str()], bound)
+        )?
+        .copy_to(sink)
     }
 
     fn delete(&self, sandbox: &VendorSandboxId) -> oneiron::Result<()> {

@@ -9,12 +9,16 @@
 //! machine gets none of the account's Secrets: no proxy Secret, no env
 //! Secret and no Vault delivery. Every create and delete carries an
 //! `Idempotency-Key` of its own, as InstaBox requires, and a delete confirms
-//! its machine's id.
+//! its machine's id. A create and a delete each return once InstaBox's
+//! operation for it has succeeded, not when InstaBox accepts it.
 //!
 //! InstaBox boots no OCI image. So the guest image reaches it as a snapshot
 //! the owner makes once from the image (`instabox snapshot import`), named
 //! `oneiron-guest-<first 12 hex of its digest>` as Daytona's and boat's
-//! snapshots and E2B's template are.
+//! snapshots and E2B's template are; InstaBox cannot show that it holds that
+//! image. The machine has InstaBox's default size: the guest holds its
+//! program to the budget's processes and to its own memory limit, and the
+//! machine may have more memory than the budget (FIX [VENDOR-MEM-BUDGET]).
 //!
 //! InstaBox has no egress setting, and every command and file write of its
 //! API runs as the machine's own user, who keeps the network. So each
@@ -35,11 +39,13 @@
 //! own directory refuses, and reads as root, following any link. So the
 //! client reads no file the guest can reach. Its files sit in a directory
 //! the machine's user makes at the run's start, which the guest cannot
-//! enter: an upload lands there and root then copies it into place as the
-//! guest's file; a download is first copied there by the guest's own user,
-//! so a link the guest leaves in place of its frames yields nothing the
-//! guest could not read itself; and each command's exit status is written
-//! there by the machine's user.
+//! enter: an upload lands there and the guest's own user then writes it
+//! into place from a redirection the machine's user opens; a download is
+//! first copied there by the guest's own user into a redirection the
+//! machine's user opens; and each command's exit status is written there by
+//! the machine's user. Neither root nor that user opens a path the guest can
+//! reach, so a link the guest leaves in place of a file yields nothing the
+//! guest could not read or write itself.
 //!
 //! InstaBox ends a waited command after 10 minutes. So each command starts
 //! detached, its exit status is written to a file of the client's when it
@@ -51,22 +57,23 @@
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::sync::Weak;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use oneiron::Vault;
 use oneiron::code_sandbox::{SandboxProposalBody, SandboxVendor};
+use oneiron::engine_executor::StepCancellation;
 use oneiron_agent_runtime::code_sandbox::microvm::{
     VendorCallBound, VendorSandboxClient, VendorSandboxId, VendorSandboxSpec,
 };
 use rand_core::{OsRng, RngCore as _};
 use reqwest::StatusCode;
-use reqwest::blocking::{Body, Client, RequestBuilder, Response};
+use reqwest::blocking::{Body, Client, RequestBuilder};
 use serde::Deserialize;
 use serde_json::json;
 
 use super::vendor_http::{
-    CancellableReader, ClientFiles, DELETE_TIMEOUT, MAKE_CLIENT_DIR, OwnerVendorKey, VendorHttp,
-    confined, install_as_guest, quoted, read_as_guest,
+    Answer, CancellableReader, ClientFiles, DELETE_TIMEOUT, MAKE_CLIENT_DIR, OwnerVendorKey,
+    VendorHttp, confined, quoted, read_as_guest, write_as_guest,
 };
 
 /// The one vendor this client reaches.
@@ -97,6 +104,10 @@ const DETACHED: &str =
 /// command (its arguments, which it never parses) with its output in the
 /// client's file `$0` names.
 const OUTPUT_TO_FILE: &str = r#"exec "$@" >"$0""#;
+/// The program an upload's shell runs as the machine's user: it runs the
+/// command (its arguments, which it never parses) with its input from the
+/// client's file `$0` names and its output discarded.
+const INPUT_FROM_FILE: &str = r#"exec "$@" <"$0" >/dev/null"#;
 /// The most bytes of an exit status file the client reads.
 const EXIT_STATUS_BYTES: u64 = 16;
 
@@ -126,6 +137,7 @@ pub(super) struct InstaboxClient {
 #[serde(rename_all = "camelCase")]
 struct Operation {
     id: String,
+    #[serde(default)]
     machine_id: String,
     state: String,
     #[serde(default)]
@@ -176,6 +188,14 @@ fn output_to_file<'a>(output: &'a str, argv: &[&'a str]) -> Vec<&'a str> {
     command
 }
 
+/// `argv` run by the machine's user with its input from the client's file
+/// `input`.
+fn input_from_file<'a>(input: &'a str, argv: &[&'a str]) -> Vec<&'a str> {
+    let mut command = vec!["sh", "-c", INPUT_FROM_FILE, input];
+    command.extend_from_slice(argv);
+    command
+}
+
 impl InstaboxClient {
     pub(super) fn new(vault: Weak<Vault>, key_name: String, endpoints: InstaboxEndpoints) -> Self {
         Self {
@@ -200,13 +220,8 @@ impl InstaboxClient {
         request: RequestBuilder,
         key: &str,
         bound: VendorCallBound<'_>,
-    ) -> oneiron::Result<Response> {
-        bound.cancel.check()?;
-        request
-            .header("X-API-Key", key)
-            .timeout(HTTP.remaining(bound.deadline)?)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))
+    ) -> oneiron::Result<Answer> {
+        HTTP.send_unchecked(request.header("X-API-Key", key), &[key], bound)
     }
 
     /// [`Self::sent`], keeping only an answer of success.
@@ -214,16 +229,18 @@ impl InstaboxClient {
         request: RequestBuilder,
         key: &str,
         bound: VendorCallBound<'_>,
-    ) -> oneiron::Result<Response> {
-        HTTP.checked(Self::sent(request, key, bound)?, &[key])
+    ) -> oneiron::Result<Answer> {
+        Self::sent(request, key, bound)?.checked()
     }
 
-    /// Polls the create `operation` until the machine runs.
-    fn started(
+    /// Polls `operation` until it has succeeded; `failure` says what a
+    /// failed one did not do.
+    fn succeeded(
         &self,
         http: &Client,
         key: &str,
         mut operation: Operation,
+        failure: &str,
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<()> {
         let url = format!(
@@ -239,17 +256,13 @@ impl InstaboxClient {
                     let reason = operation.error.map_or_else(String::new, |error| {
                         quoted(&format!("{}: {}", error.code, error.message), &[key])
                     });
-                    return Err(
-                        HTTP.failed(format!("the InstaBox machine did not start: {reason}"))
-                    );
+                    return Err(HTTP.failed(format!("the InstaBox machine {failure}: {reason}")));
                 }
                 _ => {}
             }
             HTTP.pause(wait, bound)?;
             wait = (wait * 2).min(LONGEST_POLL);
-            operation = Self::send(http.get(&url), key, bound)?
-                .json()
-                .map_err(|error| HTTP.http_failed(error, &[key]))?;
+            operation = Self::send(http.get(&url), key, bound)?.json()?;
         }
     }
 
@@ -273,8 +286,7 @@ impl InstaboxClient {
             key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key]))?;
+        .json()?;
         if result.timed_out {
             return Err(HTTP.failed("an InstaBox command ran past its time"));
         }
@@ -291,20 +303,23 @@ impl InstaboxClient {
         status_file: &str,
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<Option<i32>> {
-        let response = Self::sent(
+        let answer = Self::sent(
             http.get(self.machine_url(machine, "/files/content")?)
                 .query(&[("path", status_file)]),
             key,
             bound,
         )?;
-        if response.status() == StatusCode::NOT_FOUND {
+        if answer.status() == StatusCode::NOT_FOUND {
             return Ok(None);
         }
         let mut status = Vec::new();
-        HTTP.checked(response, &[key])?
+        let read = answer
+            .checked()?
             .take(EXIT_STATUS_BYTES)
-            .read_to_end(&mut status)
-            .map_err(|_| HTTP.failed("an InstaBox exit status could not be read"))?;
+            .read_to_end(&mut status);
+        // A wait the step's cancellation ended reads as a broken file.
+        bound.cancel.check()?;
+        read.map_err(|_| HTTP.failed("an InstaBox exit status could not be read"))?;
         std::str::from_utf8(&status)
             .ok()
             .and_then(|status| status.trim().parse().ok())
@@ -329,16 +344,24 @@ impl InstaboxClient {
         Ok(())
     }
 
+    /// Deletes `machine` and polls the delete's operation until it has
+    /// succeeded, inside the delete's own [`DELETE_TIMEOUT`], which neither
+    /// the step's deadline nor its cancellation shortens.
     fn delete_on(&self, http: &Client, key: &str, machine: &str) -> oneiron::Result<()> {
-        let response = http
-            .delete(self.machine_url(machine, "")?)
-            .header("X-API-Key", key)
-            .header("Idempotency-Key", idempotency_key())
-            .header("X-Confirm-Delete", HTTP.segment(machine)?)
-            .timeout(DELETE_TIMEOUT)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
-        HTTP.checked(response, &[key]).map(drop)
+        let uncancelled = StepCancellation::new();
+        let bound = VendorCallBound {
+            deadline: Instant::now() + DELETE_TIMEOUT,
+            cancel: &uncancelled,
+        };
+        let accepted: Operation = Self::send(
+            http.delete(self.machine_url(machine, "")?)
+                .header("Idempotency-Key", idempotency_key())
+                .header("X-Confirm-Delete", HTTP.segment(machine)?),
+            key,
+            bound,
+        )?
+        .json()?;
+        self.succeeded(http, key, accepted, "was not deleted", bound)
     }
 }
 
@@ -371,12 +394,11 @@ impl VendorSandboxClient for InstaboxClient {
             &key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
+        .json()?;
         let id = VendorSandboxId::new(HTTP.segment(&accepted.machine_id)?)?;
         // From here the machine is this run's to delete, on any failure.
         let ready = self
-            .started(&http, &key, accepted, bound)
+            .succeeded(&http, &key, accepted, "did not start", bound)
             .and_then(|()| self.make_client_dir(&http, &key, id.as_str(), bound));
         if let Err(error) = ready {
             if let Err(cleanup) = self.delete_on(&http, &key, id.as_str()) {
@@ -410,8 +432,8 @@ impl VendorSandboxClient for InstaboxClient {
             &key,
             bound,
         )?;
-        let install = install_as_guest(&staged, path);
-        let placed = self.waited(&http, &key, sandbox.as_str(), &install, bound)?;
+        let place = input_from_file(&staged, &write_as_guest(path));
+        let placed = self.waited(&http, &key, sandbox.as_str(), &place, bound)?;
         if placed != 0 {
             return Err(HTTP.failed(format!(
                 "an InstaBox upload could not be placed as the guest's file (exit {placed})"
@@ -472,13 +494,13 @@ impl VendorSandboxClient for InstaboxClient {
                 "an InstaBox download could not be copied out as the guest (exit {copied})"
             )));
         }
-        let response = Self::send(
+        Self::send(
             http.get(self.machine_url(sandbox.as_str(), "/files/content")?)
                 .query(&[("path", staged.as_str())]),
             &key,
             bound,
-        )?;
-        HTTP.copy_body(response, sink, &[key.as_str()], bound)
+        )?
+        .copy_to(sink)
     }
 
     fn delete(&self, sandbox: &VendorSandboxId) -> oneiron::Result<()> {

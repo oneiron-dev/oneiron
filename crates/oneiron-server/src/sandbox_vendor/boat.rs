@@ -14,8 +14,8 @@
 //! So the guest image reaches boat as a saved snapshot the owner makes once,
 //! of a VM holding the guest image's files at their paths, named
 //! `oneiron-guest-<first 12 hex of its digest>` as Daytona's snapshot and
-//! E2B's template are. The VM gets none of the account's secrets and is
-//! confined to itself (`noEnv`).
+//! E2B's template are; boat cannot show that it holds that image. The VM
+//! gets none of the account's secrets and is confined to itself (`noEnv`).
 //!
 //! boat has no egress setting, and the VM's own user `user` must keep its
 //! network, since boat's tunnel to the VM runs as that user. So every
@@ -36,9 +36,11 @@
 //! boat's file API reads and writes as `user`, and the guest's own directory
 //! refuses that user. So the client's files sit in a directory `user` makes
 //! at the run's start, which the guest cannot enter: an upload lands there
-//! and root then copies it into place as the guest's file; a download is
-//! first copied there by the guest's own user, so a link the guest leaves in
-//! place of its frames yields nothing the guest could not read itself.
+//! and the guest's own user then writes it into place from a redirection
+//! `user` opens; a download is first copied there by the guest's own user
+//! into a redirection `user` opens. Neither root nor `user` opens a path the
+//! guest can reach, so a link the guest leaves in place of a file yields
+//! nothing the guest could not read or write itself.
 //!
 //! A command runs detached and the client polls its status, so a guest may
 //! run past boat's cap on a waited command. The VM keeps no disk snapshot,
@@ -54,22 +56,23 @@ use oneiron::code_sandbox::{SandboxProposalBody, SandboxVendor};
 use oneiron_agent_runtime::code_sandbox::microvm::{
     VendorCallBound, VendorSandboxClient, VendorSandboxId, VendorSandboxSpec,
 };
-use reqwest::blocking::{Body, Client, RequestBuilder, Response};
+use reqwest::blocking::{Body, Client, RequestBuilder};
 use serde::Deserialize;
 use serde_json::json;
 use zeroize::Zeroizing;
 
 use super::vendor_http::{
-    CancellableReader, ClientFiles, DELETE_TIMEOUT, MAKE_CLIENT_DIR, OwnerVendorKey, VendorHttp,
-    confined, install_as_guest, quoted, read_as_guest,
+    Answer, CancellableReader, ClientFiles, MAKE_CLIENT_DIR, OwnerVendorKey, VendorHttp, confined,
+    quoted, read_as_guest, write_as_guest,
 };
 
 /// The one vendor this client reaches.
 const VENDOR: SandboxVendor = SandboxVendor::Boat;
 const HTTP: VendorHttp = VendorHttp(VENDOR);
-/// boat's smallest VM (2 vCPU, 4 GB): a snapshot does not fix a VM's size,
-/// and the step's budget is kept by the guest itself, as on our own
-/// backends.
+/// boat's smallest VM (2 vCPU, 4 GB): a snapshot does not fix a VM's size.
+/// The guest holds its program to the budget's processes and to its own
+/// memory limit; the VM may have more memory than the budget (FIX
+/// [VENDOR-MEM-BUDGET]).
 const MACHINE_TYPE: &str = "small";
 /// What a VM lives past the step's own time left, so boat stops one a lost
 /// run left soon after the run would have ended.
@@ -138,6 +141,16 @@ struct SignedUrl {
     url: String,
 }
 
+/// Where a command's standard streams go besides boat's log: each is a
+/// file of the client's, which `user`'s shell opens.
+#[derive(Clone, Copy)]
+enum Streams<'a> {
+    Log,
+    OutputTo(&'a str),
+    /// Input from the file, and the output discarded.
+    InputFrom(&'a str),
+}
+
 /// The scheme of `url`, in lower case.
 fn scheme(url: &str) -> Option<String> {
     url.split_once("://")
@@ -168,14 +181,8 @@ impl BoatClient {
         request: RequestBuilder,
         key: &str,
         bound: VendorCallBound<'_>,
-    ) -> oneiron::Result<Response> {
-        bound.cancel.check()?;
-        let response = request
-            .bearer_auth(key)
-            .timeout(HTTP.remaining(bound.deadline)?)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
-        HTTP.checked(response, &[key])
+    ) -> oneiron::Result<Answer> {
+        HTTP.send(request.bearer_auth(key), &[key], bound)
     }
 
     /// Polls the VM until it runs.
@@ -202,9 +209,7 @@ impl BoatClient {
             }
             HTTP.pause(wait, bound)?;
             wait = (wait * 2).min(LONGEST_POLL);
-            let answer: SandboxAnswer = Self::send(http.get(&url), key, bound)?
-                .json()
-                .map_err(|error| HTTP.http_failed(error, &[key]))?;
+            let answer: SandboxAnswer = Self::send(http.get(&url), key, bound)?.json()?;
             (state, reason) = (answer.sandbox.state, answer.sandbox.error);
         }
     }
@@ -231,8 +236,7 @@ impl BoatClient {
             key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key]))?;
+        .json()?;
         let url = Zeroizing::new(signed.url);
         let answered = scheme(&url);
         if answered.is_none() || answered != scheme(&self.endpoints.api) {
@@ -244,29 +248,29 @@ impl BoatClient {
     }
 
     /// Runs `argv` on `sandbox` through `user`'s shell, detached, with its
-    /// standard output to the client's file `output` when one is named, and
-    /// polls it to its exit code.
+    /// standard streams as `streams` says, and polls it to its exit code.
     fn command(
         &self,
         http: &Client,
         key: &str,
         sandbox: &str,
         argv: &[&str],
-        output: Option<&str>,
+        streams: Streams<'_>,
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<i32> {
-        let mut command = HTTP.command_line(argv)?;
-        if let Some(output) = output {
-            command = format!("{command} >{output}");
-        }
+        let line = HTTP.command_line(argv)?;
+        let command = match streams {
+            Streams::Log => line,
+            Streams::OutputTo(file) => format!("{line} >{file}"),
+            Streams::InputFrom(file) => format!("{line} <{file} >/dev/null"),
+        };
         let started: CommandStarted = Self::send(
             http.post(self.sandbox_url(sandbox, "/commands")?)
                 .json(&json!({ "command": command, "detached": true })),
             key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key]))?;
+        .json()?;
         let status_url = self.sandbox_url(sandbox, &format!("/commands/{}", started.process_id))?;
         let mut wait = FIRST_POLL;
         loop {
@@ -279,8 +283,7 @@ impl BoatClient {
                 key,
                 bound,
             )?
-            .json()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
+            .json()?;
             match (status.status.as_str(), status.exit_code) {
                 ("exited", Some(code)) => return Ok(code),
                 ("exited", None) => {
@@ -304,7 +307,7 @@ impl BoatClient {
         sandbox: &str,
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<()> {
-        let made = self.command(http, key, sandbox, &MAKE_CLIENT_DIR, None, bound)?;
+        let made = self.command(http, key, sandbox, &MAKE_CLIENT_DIR, Streams::Log, bound)?;
         if made != 0 {
             return Err(HTTP.failed(format!(
                 "the boat VM could not make the client's directory (exit {made})"
@@ -314,14 +317,13 @@ impl BoatClient {
     }
 
     fn delete_on(&self, http: &Client, key: &str, sandbox: &str) -> oneiron::Result<()> {
-        let response = http
-            .delete(self.sandbox_url(sandbox, "")?)
-            .bearer_auth(key)
-            .header("X-Ascii-Confirm-Delete", HTTP.segment(sandbox)?)
-            .timeout(DELETE_TIMEOUT)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &[key]))?;
-        HTTP.checked(response, &[key]).map(drop)
+        HTTP.send_delete(
+            http.delete(self.sandbox_url(sandbox, "")?)
+                .bearer_auth(key)
+                .header("X-Ascii-Confirm-Delete", HTTP.segment(sandbox)?),
+            &[key],
+        )
+        .map(drop)
     }
 }
 
@@ -384,17 +386,21 @@ impl VendorSandboxClient for BoatClient {
             inner: body.reader(),
             cancel: bound.cancel.clone(),
         };
-        bound.cancel.check()?;
-        let response = http
-            .put(url.as_str())
-            .header("Content-Type", "application/octet-stream")
-            .body(Body::sized(reader, body.len()))
-            .timeout(HTTP.remaining(bound.deadline)?)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &secrets))?;
-        HTTP.checked(response, &secrets)?;
-        let install = install_as_guest(&staged, path);
-        let placed = self.command(&http, &key, sandbox.as_str(), &install, None, bound)?;
+        HTTP.send(
+            http.put(url.as_str())
+                .header("Content-Type", "application/octet-stream")
+                .body(Body::sized(reader, body.len())),
+            &secrets,
+            bound,
+        )?;
+        let placed = self.command(
+            &http,
+            &key,
+            sandbox.as_str(),
+            &write_as_guest(path),
+            Streams::InputFrom(&staged),
+            bound,
+        )?;
         if placed != 0 {
             return Err(HTTP.failed(format!(
                 "a boat upload could not be placed as the guest's file (exit {placed})"
@@ -411,7 +417,14 @@ impl VendorSandboxClient for BoatClient {
     ) -> oneiron::Result<i32> {
         let key = self.key.read()?;
         let http = HTTP.client()?;
-        self.command(&http, &key, sandbox.as_str(), &confined(argv), None, bound)
+        self.command(
+            &http,
+            &key,
+            sandbox.as_str(),
+            &confined(argv),
+            Streams::Log,
+            bound,
+        )
     }
 
     fn download(
@@ -430,7 +443,7 @@ impl VendorSandboxClient for BoatClient {
             &key,
             sandbox.as_str(),
             &copy,
-            Some(staged.as_str()),
+            Streams::OutputTo(&staged),
             bound,
         )?;
         if copied != 0 {
@@ -440,14 +453,8 @@ impl VendorSandboxClient for BoatClient {
         }
         let url = self.signed_url(&http, &key, sandbox, "download-url", &staged, bound)?;
         let secrets = [key.as_str(), url.as_str()];
-        bound.cancel.check()?;
-        let response = http
-            .get(url.as_str())
-            .timeout(HTTP.remaining(bound.deadline)?)
-            .send()
-            .map_err(|error| HTTP.http_failed(error, &secrets))?;
-        let response = HTTP.checked(response, &secrets)?;
-        HTTP.copy_body(response, sink, &secrets, bound)
+        HTTP.send(http.get(url.as_str()), &secrets, bound)?
+            .copy_to(sink)
     }
 
     fn delete(&self, sandbox: &VendorSandboxId) -> oneiron::Result<()> {
