@@ -542,6 +542,7 @@ fn agent_proposed_head_does_not_override_human_head() -> Result<()> {
         locator: thread.anchor.locator.clone(),
         drift: thread.drift,
         body: thread.anchor.body.clone(),
+        sub_session: thread.sub_session_id,
     };
     let agent_head_id = vault.with_write_txn(|wtxn| {
         vault.write_thread_head_in_txn(
@@ -1054,6 +1055,7 @@ fn reanchor_honours_a_held_drift_head_and_never_moves_a_held_head() -> Result<()
             pinned_version: 1,
         }),
         body: drifting.anchor.body.clone(),
+        sub_session: drifting.sub_session_id,
     };
     let drift_id = vault.with_write_txn(|wtxn| {
         vault.write_thread_head_in_txn(

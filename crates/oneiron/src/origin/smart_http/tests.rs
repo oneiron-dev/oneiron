@@ -22,8 +22,11 @@ pub(super) fn fixture_intent_with_pointers(
     updates: Vec<RefUpdate>,
     lfs_pointers: Vec<LfsPushedPointer>,
 ) -> EntityId {
-    let stamp =
-        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
+    let stamp = DoorAdmissionStamp::from_principal(
+        EntityId::now(),
+        &EntityId::now().to_hex(),
+        crate::unix_seconds_now(),
+    );
     vault
         .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
         .expect("admission");
@@ -52,8 +55,11 @@ pub(super) fn fixture_attribution(
     vault: &Vault,
     outcome: &ReceivePackOutcome,
 ) -> ReceivePackAttribution {
-    let stamp =
-        DoorAdmissionStamp::from_principal(EntityId::now(), &EntityId::now().to_hex(), now_secs());
+    let stamp = DoorAdmissionStamp::from_principal(
+        EntityId::now(),
+        &EntityId::now().to_hex(),
+        crate::unix_seconds_now(),
+    );
     vault
         .record_receive_pack_admission(&outcome.repo_root, &stamp, DoorSeam::Landed)
         .expect("fixture admission evidence");
