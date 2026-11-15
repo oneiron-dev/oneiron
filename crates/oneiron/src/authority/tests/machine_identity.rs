@@ -741,11 +741,16 @@ fn a_mesh_address_bind_keeps_the_mark() {
 /// H336: an owner keeps binding mesh addresses past the 1,024 MACHINE rows
 /// the endpoint read once refused at (rule 5). Past the scan's threshold row
 /// the bind raises the owner's check. A lookup any endpoint key may make is
-/// a stranger's work: it stays bounded and raises none.
+/// a stranger's work: it stays bounded and raises none. This pins the walk,
+/// which runs only when the endpoint index cannot serve (census L3-28B;
+/// `tests/mesh_machine_endpoint_index.rs` covers the index).
 #[test]
 fn a_mesh_bind_reads_past_the_old_machine_cap() {
     const PAST_THE_OLD_CAP: usize = 1_025;
     let host = host();
+    host.vault
+        .drop_mesh_machine_endpoint_index_for_test()
+        .unwrap();
     let at = TimeRange { start: 1, end: 1 };
     for _ in 0..PAST_THE_OLD_CAP {
         host.vault

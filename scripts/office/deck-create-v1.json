@@ -1,0 +1,57 @@
+{
+  "case_set": "deck-create-v1",
+  "version": 1,
+  "template": "scripts/office/fixtures/deck-create-template.pptx",
+  "brief_version": "deck-create-v1",
+  "names": {
+    "text": "TextBox",
+    "table": "Table",
+    "chart": "Chart",
+    "picture": "Picture",
+    "figure": "Group",
+    "sheet": "Sheet1"
+  },
+  "cases": [
+    {
+      "id": "board-review",
+      "brief": "scripts/office/deck-create-v1/board-review.json"
+    },
+    {
+      "id": "long-title",
+      "brief": "scripts/office/deck-create-v1/long-title.json"
+    },
+    {
+      "id": "cjk-body",
+      "brief": "scripts/office/deck-create-v1/cjk-body.json"
+    },
+    {
+      "id": "dense-findings",
+      "brief": "scripts/office/deck-create-v1/dense-findings.json"
+    },
+    {
+      "id": "wide-table",
+      "brief": "scripts/office/deck-create-v1/wide-table.json"
+    },
+    {
+      "id": "quarter-chart",
+      "brief": "scripts/office/deck-create-v1/quarter-chart.json"
+    }
+  ],
+  "office": {
+    "timeout_seconds": 120,
+    "observer": "system-events",
+    "scripts": [
+      "deck_create_gate.py",
+      "deck_gate.py",
+      "deck_oracle.py",
+      "deck_session.py",
+      "deck_fit.applescript",
+      "powerpoint.applescript",
+      "powerpoint_windows.applescript",
+      "powerpoint_repair.applescript",
+      "powerpoint_dismiss.applescript",
+      "raster.swift",
+      "environment.json"
+    ]
+  }
+}
