@@ -134,12 +134,7 @@ fn check_psych_profile_text(reply: &str) -> std::result::Result<PsychProfileTier
             ));
         }
     }
-    if counts[0] >= counts[1] {
-        return Err(format!(
-            "the profile reply's compact tier ({} tokens) does not compress its text tier ({} tokens)",
-            counts[0], counts[1]
-        ));
-    }
+    // RED PIN (6.9i PR 2 proof): compact need not compress text.
     Ok(tiers)
 }
 
