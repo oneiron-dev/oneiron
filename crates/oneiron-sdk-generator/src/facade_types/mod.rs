@@ -73,6 +73,11 @@ pub const CRATES: &[(&str, &str)] = &[
         "oneiron_schedule_contract",
         "crates/oneiron-schedule-contract/src",
     ),
+    // DESIGN 15-setting-primitive stage 0.1: core re-exports the setting vocabulary at `oneiron::setting`.
+    (
+        "oneiron_setting_contract",
+        "crates/oneiron-setting-contract/src",
+    ),
     // Lib split, stage A: the crates below the lib that mirror its module tree.
     ("oneiron_verb_wire", "crates/oneiron-verb-wire/src"),
     ("oneiron_records", "crates/oneiron-records/src"),

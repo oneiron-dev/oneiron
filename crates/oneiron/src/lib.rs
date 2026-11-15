@@ -334,6 +334,7 @@ pub mod lens;
 pub mod memory;
 pub use oneiron_base::panic_report;
 pub mod schedule;
+pub mod setting;
 pub mod settings;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
