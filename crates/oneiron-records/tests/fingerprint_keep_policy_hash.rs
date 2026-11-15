@@ -11,7 +11,10 @@
 //!
 //! The known vector of `crates/oneiron/src/policy_model/tests/hosted_registration_relay.rs`
 //! (`the_policy_hash_encodes_every_length_in_a_fixed_eight_bytes`) is checked here as well,
-//! because that library test module does not build on main.
+//! because that library test module does not build on main. Its literal there was the v2
+//! digest: #5802 moved the hash to the v3 tag and the three row basis fields, and the module
+//! was already quarantined, so the old literal never ran. Both now hold the v3 digest, which
+//! was recomputed from the transcript in the purpose's doc, outside Rust.
 //!
 //! `cargo test --locked -p oneiron-records --all-features --test fingerprint_keep_policy_hash`.
 
@@ -230,7 +233,7 @@ fn the_policy_hash_keeps_the_known_vector() {
         jurisdiction: "test-jurisdiction".to_owned(),
         version: "2026-08-01".to_owned(),
         policy_hash: String::new(),
-        docs_url: "https://example.invalid/hosted-policy".to_owned(),
+        docs_url: "https://policy.example.test/hosted".to_owned(),
         rows: vec![HostedLegalRow {
             row_ref: "hosted:ncii".to_owned(),
             category: "ncii".to_owned(),
@@ -246,7 +249,7 @@ fn the_policy_hash_keeps_the_known_vector() {
         output_contract: Some(PolicyOutputContract::Binary),
         pattern_rules: vec![PolicyPatternRule::new("p.one", "x", "hosted_legal/ncii")],
     };
-    let known = "4e4df5d69b237d460e40bc05b87736f6d62b17b6c6f07f7488f8aaddb810dbc4";
+    let known = "8ae305d107a7fadbc2df0452405b00fa9df28bb4a5422ec1c9b7f16a44ee25ad";
     assert_eq!(policy.derive_policy_hash(), known);
     assert_eq!(
         <HostedLegalPolicy as base::MainPolicyHash>::derive_policy_hash(&policy),
