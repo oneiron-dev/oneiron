@@ -47,6 +47,7 @@ pub mod dreamer_partition_window;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
 pub mod fanout_admission;
+pub mod feed_prune;
 pub mod feeds;
 pub mod free_time_cycle_writer;
 #[cfg(feature = "sync")]
@@ -115,6 +116,7 @@ pub mod skill_package;
 pub mod skill_read_hold;
 pub mod source_audience;
 pub mod source_audience_binding;
+pub mod space_move_window;
 pub mod spend;
 pub mod split_phrase_carrier;
 pub mod steward;
