@@ -11,9 +11,11 @@
 //! up), B rebinds its marks to id_a and retires id_b (Engine RULING
 //! CUSTODY-MERGE-RETIRE-ACT = A, 15 Nov 20:51). Without the merge, B's mark
 //! still names id_b after the open, so the two merge cases fail. A duplicate
-//! the owner acted on (here: labelled) keeps both records
-//! (FILE-CUSTODY-DUP-UNOPENED = A); the guard case holds with and without
-//! the merge.
+//! the owner acted on (here: labelled), or one that left B (here: in a
+//! whole-vault copy B made), keeps both records (FILE-CUSTODY-DUP-UNOPENED
+//! = A); the guard cases hold with and without the merge. After a merge, B's
+//! known-value history no longer names its own record, and the finisher
+//! carries out the retirement the merge staged.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test file_custody_merge_after_rewrap`.
@@ -347,6 +349,25 @@ fn b_merges_its_own_record_into_a_custody_opened_by_a_rewrap() -> TestResult<()>
         view_b_after.status != Some(SecretCustodyStatus::Active),
         "B retired its own record: id_b is no longer a live record"
     );
+
+    // The merged record's known-value history goes, so no later match names
+    // it; A's record keeps the value's. The retirement the merge staged is
+    // one the finisher carries out: a merge writes no hard-delete marker,
+    // and a refused retirement would stop every later one.
+    let history_b = file_custody_marks::known_value_history_holders(&vault_b)?;
+    assert!(
+        !history_b.contains(&id_b),
+        "B's known-value history no longer names its merged record"
+    );
+    assert!(
+        history_b.contains(&id_a),
+        "B's known-value history names A's record, which holds the value"
+    );
+    let finished = file_custody_marks::finish_known_history_retirements(&vault_b);
+    assert!(
+        finished.is_ok(),
+        "the finisher retires the merged record's known-value history: {finished:?}"
+    );
     Ok(())
 }
 
@@ -531,12 +552,60 @@ fn b_merges_its_own_record_into_a_custody_opened_by_a_late_transition() -> TestR
         view_b_after.status != Some(SecretCustodyStatus::Active),
         "B retired its own record: id_b is no longer a live record"
     );
+
+    // The merged record's known-value history goes, so no later match names
+    // it; A's record keeps the value's. The retirement the merge staged is
+    // one the finisher carries out: a merge writes no hard-delete marker,
+    // and a refused retirement would stop every later one.
+    let history_b = file_custody_marks::known_value_history_holders(&vault_b)?;
+    assert!(
+        !history_b.contains(&id_b),
+        "B's known-value history no longer names its merged record"
+    );
+    assert!(
+        history_b.contains(&id_a),
+        "B's known-value history names A's record, which holds the value"
+    );
+    let finished = file_custody_marks::finish_known_history_retirements(&vault_b);
+    assert!(
+        finished.is_ok(),
+        "the finisher retires the merged record's known-value history: {finished:?}"
+    );
     Ok(())
 }
 
 /// A guard beside the two red cases: green on this head and after the fix.
 #[test]
 fn b_keeps_its_own_record_when_the_owner_labelled_it_before_the_open() -> TestResult<()> {
+    b_keeps_its_own_record_after_an_act_before_the_open("labelled", |vault_b, owner_b, handle_b| {
+        vault_b.set_secret_handle_label(owner_b, handle_b, Some("Deploy token"))?;
+        Ok(())
+    })
+}
+
+/// A guard: a whole-vault copy B made after its mint carries the record's
+/// value out of B (its archive holds every custody value it opens), so the
+/// record left B and keeps standing (CUSTODY-MERGE-RETIRE-ACT = A: no export
+/// row). Green on this head and after the fix.
+#[test]
+fn b_keeps_its_own_record_when_the_owner_exported_the_vault_before_the_open() -> TestResult<()> {
+    b_keeps_its_own_record_after_an_act_before_the_open(
+        "exported",
+        |vault_b, _owner_b, _handle_b| {
+            let _archive = vault_b.export_whole_vault(true)?;
+            Ok(())
+        },
+    )
+}
+
+/// B mints its own record of A's file key; then `act` (what the owner did,
+/// named by `done`) acts on that record, by its handle, before A's custody
+/// opens on B through a rewrap. A duplicate the owner acted on, or one that
+/// left B, keeps both records (FILE-CUSTODY-DUP-UNOPENED = A).
+fn b_keeps_its_own_record_after_an_act_before_the_open(
+    done: &str,
+    act: impl FnOnce(&Vault, &AuthenticatedOwner, &str) -> TestResult<()>,
+) -> TestResult<()> {
     // A and B: two machines of one owner.
     let dir_a = tempfile::tempdir()?;
     let vault_a = Arc::new(open_owner_vault(dir_a.path())?);
@@ -660,8 +729,8 @@ fn b_keeps_its_own_record_when_the_owner_labelled_it_before_the_open() -> TestRe
         "B has not opened A's custody yet: no transition stood"
     );
 
-    // The owner labels B's own record before A's custody opens on B: an
-    // owner act on it, so B keeps both records.
+    // The owner acts on B's own record before A's custody opens on B, so B
+    // keeps both records.
     let handle_b = vault_b
         .found_keys(&owner_b, false, 16)?
         .into_iter()
@@ -669,7 +738,7 @@ fn b_keeps_its_own_record_when_the_owner_labelled_it_before_the_open() -> TestRe
         .and_then(|notice| notice.keys.into_iter().next())
         .map(|card| card.handle)
         .ok_or("B names its own record in its found keys")?;
-    vault_b.set_secret_handle_label(&owner_b, &handle_b, Some("Deploy token"))?;
+    act(&vault_b, &owner_b, &handle_b)?;
 
     // The owner seals A's record to both machines: a rewrap request A
     // enacts in the same commit, signing the transition that rides the base
@@ -717,19 +786,19 @@ fn b_keeps_its_own_record_when_the_owner_labelled_it_before_the_open() -> TestRe
         "B opened A's custody: A's record is known and held here"
     );
 
-    // A duplicate the owner acted on keeps both records
-    // (FILE-CUSTODY-DUP-UNOPENED = A): B's mark still names its own record,
-    // and that record stays live beside A's.
+    // A duplicate the owner acted on, or one that left B, keeps both
+    // records (FILE-CUSTODY-DUP-UNOPENED = A): B's mark still names its own
+    // record, and that record stays live beside A's.
     let stored_b_after = vault_b.get(&asset)?.ok_or("B holds the file")?;
     assert_eq!(
         file_custody_marks::file_mark_custody(&vault_b, &stored_b_after)?,
         vec![id_b],
-        "B's mark for the file still names its own labelled record"
+        "B's mark for the file still names its own {done} record"
     );
     let view_b_after = vault_b.secret_custody_view(&owner_b, &name_b)?;
     assert!(
         view_b_after.status == Some(SecretCustodyStatus::Active),
-        "B keeps its own labelled record live beside A's"
+        "B keeps its own {done} record live beside A's"
     );
     Ok(())
 }
