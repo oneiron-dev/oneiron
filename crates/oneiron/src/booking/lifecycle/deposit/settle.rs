@@ -32,6 +32,10 @@ const DEPOSIT_SETTLE_ATTEMPTS: u32 = 8;
 /// try.
 const DEPOSIT_SETTLE_RETRY_SECONDS: u64 = 300;
 
+/// How long a settle row whose move the provider holds pending waits before
+/// it asks again.
+const DEPOSIT_SETTLE_PENDING_RECHECK_SECONDS: u64 = 3_600;
+
 /// One provider move a deposit owes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DepositSettleMove {
@@ -74,6 +78,11 @@ pub struct DepositSettleRequest<'a> {
 pub enum DepositProviderFailure {
     /// Worth another try: the network, a timeout, the provider's 5xx or 429.
     Transient(String),
+    /// The provider took the move and has not finished it (a refund it
+    /// holds pending). The deposit still owes the move; it is asked again
+    /// later and never fails for good on this answer, since the provider
+    /// ends the move one way or the other.
+    Pending(String),
     /// The provider refused the move itself; another try answers the same.
     Permanent(String),
 }
@@ -81,7 +90,7 @@ pub enum DepositProviderFailure {
 impl DepositProviderFailure {
     fn reason(&self) -> &str {
         match self {
-            Self::Transient(reason) | Self::Permanent(reason) => reason,
+            Self::Transient(reason) | Self::Pending(reason) | Self::Permanent(reason) => reason,
         }
     }
 }
@@ -91,12 +100,16 @@ impl DepositProviderFailure {
 pub trait DepositSettlementPort {
     /// Asks the provider for one move, and answers the amount it moved, in
     /// the currency's smallest unit: the amount the payment now has
-    /// captured for a capture (also when an earlier capture already stood),
-    /// the amount refunded for a refund, 0 for a void.
+    /// captured for a capture (also when an earlier capture already stood);
+    /// the amount refunded for a refund, once the provider has finished it;
+    /// for a void, 0, or the amount the payment had already captured when a
+    /// capture stood before the void (a capture whose reply was lost), which
+    /// the void cannot release and the deposit then owes back.
     ///
     /// # Errors
     ///
-    /// [`DepositProviderFailure`] when the provider did not do it.
+    /// [`DepositProviderFailure`] when the provider did not do it, or
+    /// [`DepositProviderFailure::Pending`] while it has not finished it.
     fn settle(&mut self, request: &DepositSettleRequest<'_>)
     -> Result<u64, DepositProviderFailure>;
 }
@@ -168,7 +181,9 @@ fn plan_settle(vault: &Vault, key: &[u8; 32], now_utc: u64) -> Result<SettlePlan
 /// what the deposit owes now: a cancel may have shrunk the capture, or
 /// released it all, while the call ran (the writer is not held across it).
 /// Then the provider holds more than the deposit keeps, and the difference
-/// is owed back at once, as a refund queued in this same commit.
+/// is owed back at once, as a refund queued in this same commit. A void that
+/// found the payment already captured (a capture whose reply was lost, then
+/// a cancel that released the deposit) owes that capture back the same way.
 fn record_settled(
     vault: &Vault,
     key: &[u8; 32],
@@ -198,11 +213,12 @@ fn record_settled(
                     }
                 }
             }
-            (DepositState::VoidDue, DepositSettleMove::Capture { .. }) if moved > 0 => {
-                DepositState::RefundDue {
-                    amount_minor: moved,
-                }
-            }
+            (
+                DepositState::VoidDue,
+                DepositSettleMove::Capture { .. } | DepositSettleMove::Void,
+            ) if moved > 0 => DepositState::RefundDue {
+                amount_minor: moved,
+            },
             (DepositState::VoidDue, DepositSettleMove::Void) => DepositState::Voided,
             (DepositState::RefundDue { .. }, DepositSettleMove::Refund { .. }) => {
                 DepositState::Refunded {
@@ -218,7 +234,12 @@ fn record_settled(
         row.updated_at = now_utc;
         put_deposit(vault, wtxn, key, &row)?;
         if refund_owed {
-            enqueue_settle(vault, wtxn, key, "capture-overtaken", now_utc)?;
+            let cause = if movement == DepositSettleMove::Void {
+                "void-found-captured"
+            } else {
+                "capture-overtaken"
+            };
+            enqueue_settle(vault, wtxn, key, cause, now_utc)?;
         }
         Ok(())
     })
@@ -300,6 +321,8 @@ pub struct BookingDepositSettlementDrain {
     pub settled_nothing: u32,
     /// Rows whose provider call failed and runs again later.
     pub retrying: u32,
+    /// Rows whose move the provider holds pending, asked again later.
+    pub pending: u32,
     /// Rows that failed for good.
     pub failed: u32,
 }
@@ -308,7 +331,9 @@ pub struct BookingDepositSettlementDrain {
 /// rows: each deposit's due move through `port`. A deposit still in its
 /// checkout window is queued again for the window's end, where an
 /// unconfirmed one is voided. A provider failure runs again five minutes
-/// later, and fails for good on a permanent refusal or the eighth claim.
+/// later, and fails for good on a permanent refusal or the eighth claim. A
+/// move the provider holds pending is asked again an hour later, however
+/// many claims it took.
 ///
 /// # Errors
 ///
@@ -360,6 +385,14 @@ pub fn run_booking_deposit_settlement<P: DepositSettlementPort>(
                     DepositSettleMove::Void => drain.voided += 1,
                     DepositSettleMove::Refund { .. } => drain.refunded += 1,
                 }
+            }
+            Ok(DepositSettleStep::Failed(DepositProviderFailure::Pending(reason))) => {
+                tracing::debug!(%reason, "booking deposit move is pending at the provider");
+                settle.requeue(
+                    &bounded(&reason, MAX_FAILURE_BYTES),
+                    now_utc.saturating_add(DEPOSIT_SETTLE_PENDING_RECHECK_SECONDS),
+                )?;
+                drain.pending += 1;
             }
             Ok(DepositSettleStep::Failed(DepositProviderFailure::Transient(reason)))
                 if record.attempt_count < DEPOSIT_SETTLE_ATTEMPTS =>
