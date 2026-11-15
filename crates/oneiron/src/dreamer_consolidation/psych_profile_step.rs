@@ -33,19 +33,19 @@ use oneiron_model::llm::{
 const PSYCH_MIRROR_SKILL: &str = include_str!("../../../../skills/psych-mirror/SKILL.md");
 
 /// The most tokens the `compact` tier may hold.
-pub const PSYCH_PROFILE_COMPACT_TOKEN_CAP: usize = 60;
+const PSYCH_PROFILE_COMPACT_TOKEN_CAP: usize = 60;
 /// The most tokens the `text` tier may hold.
-pub const PSYCH_PROFILE_TEXT_TOKEN_CAP: usize = 200;
+const PSYCH_PROFILE_TEXT_TOKEN_CAP: usize = 200;
 /// The most tokens the `narrative` tier may hold.
-pub const PSYCH_PROFILE_NARRATIVE_TOKEN_CAP: usize = 1200;
+const PSYCH_PROFILE_NARRATIVE_TOKEN_CAP: usize = 1200;
 
 /// The three tiers a checked profile reply gives, trimmed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct PsychProfileTiers {
-    pub compact: String,
-    pub text: String,
-    pub narrative: String,
+struct PsychProfileTiers {
+    compact: String,
+    text: String,
+    narrative: String,
 }
 
 /// One bound profile step's checked input, snapshotted in validation: the
@@ -89,7 +89,7 @@ fn skill_instruction() -> &'static str {
 /// # Errors
 ///
 /// The refusal, in words.
-pub fn check_psych_profile_reply(
+fn check_psych_profile_reply(
     response: &LlmResponse,
 ) -> std::result::Result<PsychProfileTiers, String> {
     let reply = super::step_charge::reply_text(response);
@@ -101,7 +101,7 @@ pub fn check_psych_profile_reply(
 /// # Errors
 ///
 /// The refusal, in words.
-pub fn check_psych_profile_text(reply: &str) -> std::result::Result<PsychProfileTiers, String> {
+fn check_psych_profile_text(reply: &str) -> std::result::Result<PsychProfileTiers, String> {
     let tiers: PsychProfileTiers = serde_json::from_str(reply.trim()).map_err(|error| {
         format!("the profile reply is not its JSON object of three strings: {error}")
     })?;

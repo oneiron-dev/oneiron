@@ -17,7 +17,7 @@ use oneiron::{Error, Result};
 use super::extraction_decisions::ExtractionDecisionResources;
 
 /// Owns one psych profile attempt's clock and charge sink for its bound step.
-pub struct PsychProfileAttemptLender {
+pub(crate) struct PsychProfileAttemptLender {
     /// Retains the prepared pass resources for every borrowed callback.
     resources: Arc<ExtractionDecisionResources>,
     /// Preserves the admitted attempt's original clock and finalize window.
@@ -34,7 +34,7 @@ impl PsychProfileAttemptLender {
     /// The profile job must hand this lender's charge sink to the same
     /// attempt's outcome, including a paid refused reply.
     #[must_use]
-    pub fn new(
+    pub(crate) fn new(
         resources: Arc<ExtractionDecisionResources>,
         context: &WakeAttemptContext<'_>,
     ) -> Self {
@@ -49,7 +49,7 @@ impl PsychProfileAttemptLender {
 
     /// Borrows the tally the bound step charges, for the outcome handoff.
     #[must_use]
-    pub fn charges(&self) -> &Mutex<StepChargeTally> {
+    pub(crate) fn charges(&self) -> &Mutex<StepChargeTally> {
         &self.charges
     }
 }
