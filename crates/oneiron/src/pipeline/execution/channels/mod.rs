@@ -383,13 +383,7 @@ impl PipelineBuilder<'_> {
             if let Some(query) = &self.phonetic_vector_search
                 && let Some(learned_results) =
                     self.run_stage(RetrievalSignal::Phonetic, stages.next(), || {
-                        self.phonetic_vector_results(
-                            rtxn,
-                            query,
-                            filter_config,
-                            &mut metadata_cache,
-                            &mut claim_gate,
-                        )
+                        self.phonetic_vector_results(rtxn, query, filter_config, &claim_gate)
                     })?
             {
                 if !diagnostics.succeeded.contains(&RetrievalSignal::Phonetic) {
