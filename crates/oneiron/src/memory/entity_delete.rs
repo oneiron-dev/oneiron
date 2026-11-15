@@ -443,7 +443,7 @@ fn role_delete_refusal(refusal: DeleteRefusal, owner_refusal: &MemoryError) -> M
         DeleteRefusal::NotOwnerOfItem
         | DeleteRefusal::OutOfAdminScope
         | DeleteRefusal::NoDeleteGrant
-        | DeleteRefusal::WorldAccessRow
+        | DeleteRefusal::AuthorityRow
         | DeleteRefusal::CredentialBounds
         | DeleteRefusal::Unreadable(_) => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,

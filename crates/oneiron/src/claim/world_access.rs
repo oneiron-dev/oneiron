@@ -199,9 +199,8 @@ pub(crate) fn holds_world_access_claim_in(
 }
 
 /// Whether a stored row of type `kind` with `body` (its bytes after the
-/// metadata header) is a world-access grant or default, open or closed. An
-/// agent never deletes one, whatever its delete Grant
-/// (`federation::require_delete_authority_in_txn`).
+/// metadata header) is a world-access grant or default, open or closed. Only
+/// a live owner deletes one (`federation::require_delete_authority_in_txn`).
 pub(crate) fn is_world_access_claim_row(kind: u8, body: &[u8]) -> bool {
     kind == crate::registry::ENTITY_TYPE_CLAIM
         && crate::claim::decode_claim_body(body, true)
