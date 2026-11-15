@@ -41,6 +41,7 @@ pub mod derivation_floor;
 pub mod derive;
 pub mod derive_conflict;
 pub mod derive_conflict_resolution;
+pub mod derive_person;
 pub mod derive_spans;
 pub mod derive_verbs;
 pub mod disclosure_word_sources;

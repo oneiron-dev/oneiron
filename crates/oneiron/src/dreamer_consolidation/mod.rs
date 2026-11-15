@@ -110,7 +110,10 @@ pub use executor::*;
 pub(crate) use executor::{
     cross_predicate_merge_unnamed, merged_candidate, recompute_kept_selection,
 };
-pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
+pub(crate) use extracted_people::{
+    delete_lineage_origin_in_txn, has_name_span, normalize_name_span, origin_in_txn,
+    pin_lineage_origin_in_txn, speaker_admissible_in_txn,
+};
 pub use gap::*;
 pub(crate) use neighbourhood::unpin_neighbourhood_in_txn;
 pub(crate) use partition::PartitionAudience;

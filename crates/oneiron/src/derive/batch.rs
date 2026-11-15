@@ -298,6 +298,19 @@ pub struct DerivedPsychProfile {
     pub profile: crate::psych_profile::PsychProfile,
 }
 
+/// A PERSON an agent found named in TURNs it reads (untangle 6.9h): the
+/// engine mints it as extraction does, under an id it derives, born where
+/// the words that name it are read.
+#[derive(Debug, Clone)]
+pub struct DerivedPerson {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The person's name, as the TURNs spell it.
+    pub name: String,
+    /// The TURNs that name the person.
+    pub evidence: Vec<ItemRef>,
+}
+
 /// One derived item. Each kind is one arm with a stager of its own.
 #[derive(Debug, Clone)]
 pub enum DerivationItem {
@@ -328,6 +341,8 @@ pub enum DerivationItem {
     /// A conflict resolution an extraction job stages: the Conflict item's
     /// set shape with the job's decision for that set.
     ConflictResolution(DerivedConflictResolution),
+    /// A PERSON named in TURNs.
+    Person(DerivedPerson),
 }
 
 impl DerivationItem {
@@ -346,6 +361,7 @@ impl DerivationItem {
             Self::Conflict(conflict) => &conflict.local,
             Self::Candidate(candidate) => &candidate.local,
             Self::ConflictResolution(resolution) => &resolution.local,
+            Self::Person(person) => &person.local,
         }
     }
 
@@ -364,18 +380,20 @@ impl DerivationItem {
             Self::Conflict(_) => "conflict",
             Self::Candidate(_) => "candidate",
             Self::ConflictResolution(_) => "conflict_resolution",
+            Self::Person(_) => "person",
         }
     }
 
     /// Whether the item's first landed row is one the item itself creates:
     /// a claim, a settlement's answer, a link's status claim, a topology
-    /// event, a conflict's marker, a candidate's claim. Only such an item
-    /// can be named by a later item: a later Settle item names a conflict's
-    /// marker by the Conflict
-    /// item's local name. Every other kind lands on a row that stood before
-    /// it (a supersession's replacement, an archived claim, a PERSON) or may
-    /// replay one (an evidence record, a profile at its address), and a name
-    /// for such a row would cite it with no version and no read of its own.
+    /// event, a conflict's marker, a candidate's claim, a person (never
+    /// minted at an id that stood before). Only such an item can be named by
+    /// a later item: a later Settle item names a conflict's marker by the
+    /// Conflict item's local name. Every other kind lands on a row that stood
+    /// before it (a supersession's replacement, an archived claim, a PERSON's
+    /// `about` lines) or may replay one (an evidence record, a profile at its
+    /// address), and a name for such a row would cite it with no version and
+    /// no read of its own.
     pub(super) const fn creates_row(&self) -> bool {
         matches!(
             self,
@@ -386,11 +404,13 @@ impl DerivationItem {
                 | Self::Conflict(_)
                 | Self::Candidate(_)
                 | Self::ConflictResolution(_)
+                | Self::Person(_)
         )
     }
 
-    /// The rows the item cites as its sources: a claim's evidence and an
-    /// evidence item's sources. A stored one needs its version in the batch.
+    /// The rows the item cites as its sources: a claim's evidence, an
+    /// evidence item's sources and the TURNs naming a person. A stored one
+    /// needs its version in the batch.
     fn cited(&self) -> &[ItemRef] {
         match self {
             Self::Claim(claim) => &claim.evidence,
@@ -399,6 +419,7 @@ impl DerivationItem {
             // its stager through the extraction read, never by
             // `derive/sources.rs`.
             Self::Conflict(_) | Self::Candidate(_) | Self::ConflictResolution(_) => &[],
+            Self::Person(person) => &person.evidence,
             _ => &[],
         }
     }
@@ -427,6 +448,7 @@ impl DerivationItem {
             // `derive/sources.rs`. A candidate item's versions are inside
             // its operand, likewise, as are a resolution item's.
             Self::Conflict(_) | Self::Candidate(_) | Self::ConflictResolution(_) => Vec::new(),
+            Self::Person(person) => person.evidence.iter().collect(),
         }
     }
 }

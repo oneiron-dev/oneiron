@@ -37,6 +37,7 @@ mod evidence;
 mod extraction_opening;
 mod extraction_set;
 mod link;
+mod person;
 mod record;
 mod revert;
 mod settle;
@@ -58,9 +59,9 @@ pub use artifact::{
 pub use batch::{
     DerivationBatch, DerivationItem, DerivationStamp, DerivedAboutLine, DerivedArchive,
     DerivedCandidate, DerivedClaim, DerivedConflict, DerivedConflictMember,
-    DerivedConflictResolution, DerivedEvidence, DerivedEvidenceSpans, DerivedPersonAbout,
-    DerivedPsychProfile, DerivedResolutionOutcome, DerivedSameAs, DerivedSettle, DerivedSettlement,
-    DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
+    DerivedConflictResolution, DerivedEvidence, DerivedEvidenceSpans, DerivedPerson,
+    DerivedPersonAbout, DerivedPsychProfile, DerivedResolutionOutcome, DerivedSameAs,
+    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
 };
 pub use candidate::{
     CANDIDATE_CONTESTS_HEAD, CANDIDATE_DUPLICATE, CANDIDATE_IMPORTED_EVIDENCE,
@@ -86,6 +87,9 @@ pub use conflict_resolution::{
 };
 pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_SPAN_UNBOUND, EVIDENCE_UNVERIFIED};
 pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
+pub use person::{
+    PERSON_ID_TAKEN, PERSON_NAME_UNREAD, PERSON_NEEDS_ATTEMPT, PERSON_SOURCE_INADMISSIBLE,
+};
 pub use record::{DerivationBatchRecord, ItemRecord};
 pub use revert::{
     DERIVE_REVERT_CONTENT_KIND, DeriveRevertReceipt, REVERT_CHANGED_SINCE, REVERT_INVERSE_REFUSED,
@@ -100,9 +104,9 @@ pub use wire::{
     DeriveArchiveInput, DeriveCandidateInput, DeriveClaimInput, DeriveCommitInput,
     DeriveCommitView, DeriveConflictInput, DeriveConflictMember, DeriveConflictResolutionInput,
     DeriveConflictResolutionOutcome, DeriveEvidenceInput, DeriveEvidenceSpans, DeriveItemInput,
-    DeriveItemView, DeriveLeftItemView, DeriveRef, DeriveRevertInput, DeriveRevertView,
-    DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput, DeriveStrengthSignals,
-    DeriveSupersedeInput, DeriveTopologyInput,
+    DeriveItemView, DeriveLeftItemView, DerivePersonInput, DeriveRef, DeriveRevertInput,
+    DeriveRevertView, DeriveSameAsInput, DeriveSettleInput, DeriveSettlementInput,
+    DeriveStrengthSignals, DeriveSupersedeInput, DeriveTopologyInput,
 };
 
 /// The provenance `surface` a derivation commit stamps on every row it

@@ -99,8 +99,17 @@ pub(in crate::dreamer_consolidation) fn original_try(
     origin_in_txn(vault, &txn, attempt)
 }
 
-/// [`original_try`] read in `txn`.
-fn origin_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, attempt: AttemptId) -> Result<AttemptId> {
+/// [`original_try`] read in `txn`. A derivation's Person item mints under it
+/// too, so every try of one lineage derives one id for one person.
+///
+/// # Errors
+///
+/// The queue's and the pin's read errors.
+pub(crate) fn origin_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    attempt: AttemptId,
+) -> Result<AttemptId> {
     let queue = AttemptQueue::new(vault);
     let mut seen = BTreeSet::from([*attempt.as_bytes()]);
     let mut first = attempt;

@@ -78,16 +78,28 @@ impl Memory<'_> {
         if !masked {
             return Ok(None);
         }
-        let values = bodies
-            .iter()
-            .filter_map(|body| super::support::decode_body_json(body))
-            .collect();
-        Ok(Some(LiftedKeys::of_json_in_txn(
-            store,
-            txn,
-            &serde_json::Value::Array(values),
-        )?))
+        Ok(Some(lifted_keys_of_bodies_in_txn(store, txn, bodies)?))
     }
+}
+
+/// The lifted keys a text projected from the stored record `bodies` holds,
+/// whoever reads it: those the marks of each string of those bodies name.
+/// An engine check of what a text says reads it with each of these as its
+/// handle, so a key no reader but the owner is served never counts.
+///
+/// # Errors
+///
+/// Storage errors, and a mark whose key span does not cut its text.
+pub(crate) fn lifted_keys_of_bodies_in_txn(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    bodies: &[Vec<u8>],
+) -> crate::Result<LiftedKeys> {
+    let values = bodies
+        .iter()
+        .filter_map(|body| super::support::decode_body_json(body))
+        .collect();
+    LiftedKeys::of_json_in_txn(store, txn, &serde_json::Value::Array(values))
 }
 
 impl Memory<'_> {

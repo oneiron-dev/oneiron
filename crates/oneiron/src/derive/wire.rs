@@ -18,8 +18,8 @@ use serde::{Deserialize, Serialize};
 use super::batch::{
     DerivationBatch, DerivationItem, DerivedArchive, DerivedCandidate, DerivedClaim,
     DerivedConflict, DerivedConflictMember, DerivedConflictResolution, DerivedEvidence,
-    DerivedEvidenceSpans as BatchSpans, DerivedResolutionOutcome, DerivedSameAs, DerivedSettle,
-    DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
+    DerivedEvidenceSpans as BatchSpans, DerivedPerson, DerivedResolutionOutcome, DerivedSameAs,
+    DerivedSettle, DerivedSettlement, DerivedSupersede, DerivedTopology, ItemRef,
 };
 use super::commit::{DerivationReceipt, ItemOutcome};
 use super::revert::DeriveRevertReceipt;
@@ -179,6 +179,22 @@ pub struct DeriveConflictResolutionInput {
     pub value: Option<serde_json::Value>,
 }
 
+/// A PERSON named in TURNs the caller reads: the engine derives its id,
+/// checks that the name is a bounded span of the words a TURN serves, and
+/// mints it where those words are read. The request names no id, target,
+/// audience or body.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DerivePersonInput {
+    /// The item's name inside its batch.
+    pub local: String,
+    /// The person's name, as the TURNs spell it.
+    pub name: String,
+    /// The stored TURNs that name the person, each with its version in the
+    /// batch's `sources`.
+    pub evidence: Vec<DeriveRef>,
+}
+
 /// One wire item: `{"kind": "<kind>", "spec": {...}}`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
@@ -199,6 +215,7 @@ pub enum DeriveItemInput {
     Candidate(DeriveCandidateInput),
     /// A job decision over one rebuilt extraction conflict set.
     ConflictResolution(DeriveConflictResolutionInput),
+    Person(DerivePersonInput),
 }
 
 impl DeriveItemInput {
@@ -325,6 +342,11 @@ impl DeriveItemInput {
                     outcome,
                 })
             }
+            Self::Person(person) => DerivationItem::Person(DerivedPerson {
+                local: person.local,
+                name: person.name,
+                evidence: refs(person.evidence),
+            }),
         })
     }
 }
