@@ -1090,6 +1090,48 @@ pub fn claim_lifecycle(vault: &Vault, id: EntityId) -> Result<Option<String>> {
 ///
 /// The vault's, and a `new` that is no stored claim.
 pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<EntityId> {
+    let marker = pair_conflict_marker(vault, new, old, "test.open_conflict")?;
+    land_conflict_marker(vault, marker.id, &marker.candidate, &marker.envelope)?;
+    Ok(marker.id)
+}
+
+/// Opens one conflict over the stored claims `members`, in that order: the
+/// marker [`open_conflict`] writes for the first two, naming every member in
+/// its evidence refs, under a fresh id. The settle reads the members in that
+/// order. Its id.
+///
+/// # Errors
+///
+/// The vault's, fewer than two members, and a first member that is no
+/// stored claim.
+pub fn open_conflict_over(vault: &Vault, members: &[EntityId]) -> Result<EntityId> {
+    let &[new, old, ..] = members else {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "a conflict names at least two members",
+        ));
+    };
+    let marker = pair_conflict_marker(vault, new, old, "test.open_conflict_over")?;
+    let refs = members
+        .iter()
+        .map(|member| rmpv::Value::Binary(member.as_bytes().to_vec()))
+        .collect();
+    let candidate = marker.candidate.with_evidence(rmpv::Value::Map(vec![(
+        rmpv::Value::from("refs"),
+        rmpv::Value::Array(refs),
+    )]));
+    let id = EntityId::now();
+    land_conflict_marker(vault, id, &candidate, &marker.envelope)?;
+    Ok(id)
+}
+
+/// The coaching marker naming `new` against `old`, as the Dreamer proposes it
+/// from the test surface `surface`.
+fn pair_conflict_marker(
+    vault: &Vault,
+    new: EntityId,
+    old: EntityId,
+    surface: &'static str,
+) -> Result<crate::claim::ConflictMarker> {
     use crate::claim::{ClaimApprovalStatus, ClaimSource};
     use crate::write_envelope::{WriteEnvelope, WriteProvenance};
     let raw = vault
@@ -1101,25 +1143,29 @@ pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<Enti
         ClaimSource::Generated,
         WriteProvenance::new(rmpv::Value::Map(vec![(
             rmpv::Value::from("surface"),
-            rmpv::Value::from("test.open_conflict"),
+            rmpv::Value::from(surface),
         )]))?,
         ClaimApprovalStatus::Proposed,
     );
-    let marker = crate::claim::conflict_marker(&new, &old, &body, &envelope)?;
+    crate::claim::conflict_marker(&new, &old, &body, &envelope)
+}
+
+/// Signs the marker `candidate` under `id` and lands it.
+fn land_conflict_marker(
+    vault: &Vault,
+    id: EntityId,
+    candidate: &crate::write_envelope::ClaimCandidate,
+    envelope: &crate::write_envelope::WriteEnvelope,
+) -> Result<()> {
     let now = vault.now_recorded_at();
     vault.with_write_txn_grouped(|txn| {
-        let mut envelope = marker.envelope.clone();
-        vault.sign_retained_machine_claim_in_txn(
-            txn,
-            &marker.id,
-            &marker.candidate,
-            &mut envelope,
-        )?;
+        let mut envelope = envelope.clone();
+        vault.sign_retained_machine_claim_in_txn(txn, &id, candidate, &mut envelope)?;
         vault
             .batch_in()
             .claim_candidate(
-                &marker.id,
-                marker.candidate.clone(),
+                &id,
+                candidate.clone(),
                 &envelope,
                 crate::TimeRange {
                     start: now,
@@ -1128,8 +1174,7 @@ pub fn open_conflict(vault: &Vault, new: EntityId, old: EntityId) -> Result<Enti
                 now,
             )
             .apply_recording_gate_decisions(txn)
-    })?;
-    Ok(marker.id)
+    })
 }
 
 /// Opens a conflict over `member` with one retained alternative whose value

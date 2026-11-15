@@ -280,7 +280,11 @@ pub(super) fn settle_coaching_in_txn(
         crate::dreamer_consolidation::ConflictSettlement::Keep(*new),
         &envelope,
         closer,
-        person,
+        if person {
+            crate::dreamer_consolidation::SettlementSettler::Person
+        } else {
+            crate::dreamer_consolidation::SettlementSettler::Delegate
+        },
         crate::dreamer_consolidation::KeepAs::Auto(&held),
         now,
     );

@@ -34,8 +34,8 @@ use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner
 use crate::dreamer_consolidation::{
     ConflictRevertReceipt, ConflictReviewScope, ConflictSettleOutcome, ConflictSettleReceipt,
     ConflictSettlement, KeepApproval, KeepAs, OpenConflict, SettledAnswer, SettlementApplied,
-    apply_settlement_in_txn, open_conflict_in_txn, open_conflicts_in_txn, revert_settlement_in_txn,
-    settled_answers_in_txn,
+    SettlementSettler, apply_settlement_in_txn, open_conflict_in_txn, open_conflicts_in_txn,
+    revert_settlement_in_txn, settled_answers_in_txn,
 };
 use crate::edge::EdgeActorClass;
 use crate::error::Error;
@@ -297,6 +297,13 @@ impl Memory<'_> {
         // A person's slip handed on to an agent's key is no person's: it
         // never closes user-stated truth or a restriction here.
         let person = self.acts_as_own_person();
+        let settler = if person {
+            SettlementSettler::Person
+        } else if dreamer {
+            SettlementSettler::Dreamer
+        } else {
+            SettlementSettler::Delegate
+        };
         let mut provenance = vec![
             (Value::from("surface"), Value::from(KIND)),
             (
@@ -337,7 +344,7 @@ impl Memory<'_> {
             settlement,
             &envelope,
             (!owner).then_some(actor),
-            person,
+            settler,
             keep_as,
             now,
         )? {
