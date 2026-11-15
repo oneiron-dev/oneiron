@@ -328,9 +328,10 @@ pub(crate) fn skill_repair_brief(
 /// brief offered (census L9-02): a path the brief did not carry whole (a new
 /// path, a script or hook, or a file listed by path only), the same path
 /// twice, more files or bytes than the bounds allow, a file's own text, a
-/// `policy.json` its instructions do not run
-/// ([`crate::skill_hub::validate_drafted_policy`]), or more than the gate's
-/// judge reads whole ([`validate_judged_arms`]).
+/// text that reads as a graph workflow program
+/// ([`crate::skill_hub::reads_as_graph_program`]), a `policy.json` its
+/// instructions do not run ([`crate::skill_hub::validate_drafted_policy`]),
+/// or more than the gate's judge reads whole ([`validate_judged_arms`]).
 pub(crate) fn validate_skill_draft(
     brief: &SkillOptimizeBrief,
     desc: &str,
@@ -446,6 +447,11 @@ fn validate_file_edits(brief: &SkillOptimizeBrief, files: &[SkillFileEdit]) -> R
             SKILL_OPTIMIZE_MAX_DRAFT_FILE_BYTES,
             "a drafted file must be non-empty UTF-8 text of at most 16 KiB",
         )?;
+        if crate::skill_hub::reads_as_graph_program(edit.content.as_bytes()) {
+            return Err(invalid(
+                "a drafted file never reads as a graph workflow program, which the engine runs stage by stage",
+            ));
+        }
         if edit.content == current {
             return Err(invalid(
                 "a drafted file that restates the current file is not an edit",
@@ -558,7 +564,7 @@ pub(crate) fn propose_skill_repair_in_txn(
         tier_verdict_in_txn(vault, &*wtxn, &brief.skill, &target)?,
     )?;
     if !files.is_empty() {
-        record.version = drafted_files_version(desc, files);
+        record.version = drafted_files_version(&target.version, desc, files);
     }
     let Value::Map(provenance) = &mut record.provenance else {
         return Err(invalid("invalid optimizer provenance"));
@@ -940,16 +946,23 @@ fn optimize_version(desc: &str) -> String {
 }
 
 /// The version of a draft that also replaces `files` (census L9-02): named
-/// by its instructions and each replaced file's path and text, so a draft
-/// that keeps the instructions still never collides with its target.
-fn drafted_files_version(desc: &str, files: &[SkillFileEdit]) -> String {
+/// by its target's version `base`, then its instructions and each replaced
+/// file's path and text, each part length-prefixed. The draft names only the
+/// files it moves, so the target's version stands for the rest of the tree:
+/// a later draft that moves the same files to the same text from another
+/// tree never repeats this version, and no text re-splits into other parts
+/// (review F4 of #7949).
+fn drafted_files_version(base: &str, desc: &str, files: &[SkillFileEdit]) -> String {
     let mut hasher = Sha256::new();
-    hasher.update(desc.as_bytes());
+    let mut part = |bytes: &[u8]| {
+        hasher.update((bytes.len() as u64).to_le_bytes());
+        hasher.update(bytes);
+    };
+    part(base.as_bytes());
+    part(desc.as_bytes());
     for file in files {
-        hasher.update([0_u8]);
-        hasher.update(file.path.as_bytes());
-        hasher.update([0_u8]);
-        hasher.update(file.content.as_bytes());
+        part(file.path.as_bytes());
+        part(file.content.as_bytes());
     }
     let hex = bytes_to_hex_lower(&hasher.finalize());
     format!(

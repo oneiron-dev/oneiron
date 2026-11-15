@@ -205,8 +205,9 @@ fn measure_with_owner(
         .get_skill_record(&target)?
         .ok_or(Error::EntityNotFound)?;
     // The goal the measurement reads under goes to the scorer with each
-    // offline case (review round 2 of #7614).
-    let (plan, edit_goal, goal_revision, judge) = {
+    // offline case (review round 2 of #7614), with each arm's instructions
+    // as the gate's judge reads them (review F3 of #7949).
+    let (plan, edit_goal, goal_revision, judge, instructions) = {
         let txn = vault.store.env.read_txn()?;
         let reader = goal_reader_in_txn(vault, &txn, owner)?;
         let definition = goal_definition_in_txn(vault, &txn, &target, Some(reader))?;
@@ -215,6 +216,9 @@ fn measure_with_owner(
             super::goal_axis::edit_goal_of(&definition),
             definition.revision,
             JudgeBinding::in_txn(vault, &txn, scorer.judge_revision())?,
+            super::rule_policy::gate_instruction_pair_in_txn(
+                vault, &txn, &target, &current, proposal, &staged,
+            ),
         )
     };
     if bandit
@@ -249,6 +253,7 @@ fn measure_with_owner(
         target,
         &current,
         &staged,
+        [instructions.0.as_str(), instructions.1.as_str()],
         &plan,
         scorer,
         bandit,

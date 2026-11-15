@@ -16,15 +16,17 @@ use oneiron::attempt_queue::{
 use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use oneiron::error::{ErrorKind, Result};
-use oneiron::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord};
+use oneiron::skill::{SkillGovernanceTier, SkillLifecycle, SkillRecord, SkillRole};
 use oneiron::skill_hub::{HubFile, HubPackage, SkillCapabilitySurface};
 use oneiron::skill_optimize::{
-    PROVENANCE_OPTIMIZE_EDITED_FILES_KEY, SkillEditDisposition, SkillEditDraft, SkillFileEdit,
-    SkillOptimizeAuthor, SkillOptimizeBrief, admit_optimized_skill_revision,
-    score_gate_skill_edit_in_cycle,
+    GoalAxisKind, GoalAxisSpec, PROVENANCE_OPTIMIZE_EDITED_FILES_KEY, SkillEditDisposition,
+    SkillEditDraft, SkillFileEdit, SkillOptimizeAuthor, SkillOptimizeBrief,
+    admit_optimized_skill_revision, preflight_skill_edit_offline_floors,
+    score_gate_skill_edit_in_cycle, set_skill_edit_goal_axes, skill_edit_goal,
 };
 use oneiron::test_doors::skill_optimize_files::{
-    draft_on_skill, enqueue_skill_optimize_attempt, marker_scorer, served_skill_package,
+    MARKER_FLOOR_AXIS, draft_on_skill, enqueue_skill_optimize_attempt, marker_scorer,
+    served_skill_package,
 };
 use oneiron::test_doors::skill_package::land_active_skill_with_files;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
@@ -88,6 +90,16 @@ fn fixture_with(
     desc: &str,
     files: Vec<HubFile>,
 ) -> (tempfile::TempDir, Vault, EntityId, SkillRecord) {
+    fixture_as(desc, files, None)
+}
+
+/// [`fixture_with`] for a skill of `role`; `None` keeps the record's
+/// default role.
+fn fixture_as(
+    desc: &str,
+    files: Vec<HubFile>,
+    role: Option<SkillRole>,
+) -> (tempfile::TempDir, Vault, EntityId, SkillRecord) {
     let temp = tempfile::tempdir().expect("vault directory");
     let vault = Vault::open(temp.path(), VaultConfig::default()).expect("vault");
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
@@ -116,6 +128,9 @@ fn fixture_with(
         )]),
     )
     .with_governance_tier(SkillGovernanceTier::Standard);
+    if let Some(role) = role {
+        record = record.with_role(role, None);
+    }
     record.content_hash = Some(
         HubPackage::new(
             record.clone(),
@@ -263,6 +278,43 @@ fn dense_json(word: &str, bytes: usize) -> String {
     }
     text.push_str(&format!("  \"{word}\"\n]\n"));
     text
+}
+
+/// A one-stage graph workflow program as `self.skills.graph` reads it,
+/// asking the saved question `question` (one byte repeated) over one unit.
+fn graph_program(question: u8) -> String {
+    let id = |byte: u8| {
+        EntityId::from_bytes([byte; 16])
+            .expect("entity id")
+            .to_hex()
+    };
+    let program = serde_json::json!({
+        "stages": [{
+            "question": { "id": id(question), "version": 1 },
+            "inputs": [{
+                "context": { "unit": id(0x93), "evidence": [id(0x94)] },
+                "answers": []
+            }]
+        }]
+    });
+    format!("{program:#}\n")
+}
+
+/// Drafts `files` on `skill` with the instructions kept, and returns the
+/// proposal the draft landed.
+fn propose_files(vault: &Vault, skill: &EntityId, files: &[(&str, &str)]) -> EntityId {
+    let now = vault.now_recorded_at();
+    let attempt = enqueue_skill_optimize_attempt(vault, None, now).expect("attempt");
+    draft_on_skill(
+        vault,
+        skill,
+        attempt,
+        &FixedAuthor::editing(DESC, files),
+        now,
+    )
+    .expect("a file draft lands")
+    .proposal
+    .expect("a file draft lands a proposal")
 }
 
 fn edited_files(record: &SkillRecord) -> Option<Vec<String>> {
@@ -666,4 +718,189 @@ fn a_file_draft_the_judge_cannot_read_whole_is_refused() {
     )
     .expect("one table fits the judge whole");
     assert!(outcome.proposal.is_some());
+}
+
+/// A task-type tree is the planner's tree. The team-shape skill carries it,
+/// and so does each project or promote fork of it, under a skill id that is
+/// not the head's (`team-shape.project.<hex>`, `team-shape.promote.<hex>`),
+/// and only the tree gate revises it (review F1 of #7949). Its file name is
+/// reserved for every skill: the brief never offers it and a draft naming
+/// it is refused, whatever the skill's id; a guide edit still lands.
+#[test]
+fn a_task_type_tree_is_never_draftable() {
+    const TREE: &str = "{\"types\": [\"research\"]}\n";
+    const EDITED_TREE: &str = "{\"types\": [\"research\", \"review\"]}\n";
+    let mut files = tree();
+    files.push(HubFile::new("task-type-tree.json", TREE));
+    let (_temp, vault, skill, _) = fixture_with(DESC, files);
+
+    let now = vault.now_recorded_at();
+    let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
+    let author = FixedAuthor::editing(DESC, &[("task-type-tree.json", EDITED_TREE)]);
+    let drafted = draft_on_skill(&vault, &skill, attempt, &author, now);
+    let offered: Vec<String> = author
+        .brief()
+        .files
+        .iter()
+        .map(|file| file.path.clone())
+        .collect();
+    assert!(
+        !offered
+            .iter()
+            .any(|offered| offered == "task-type-tree.json"),
+        "the brief offers no task-type tree: {offered:?}"
+    );
+    let error = drafted.expect_err("a draft naming the task-type tree is refused");
+    assert_eq!(error.kind(), ErrorKind::InvalidSkillBody, "{error}");
+
+    // No refusal left a proposal behind, and a guide edit still lands.
+    propose_files(&vault, &skill, &[("references/guide.md", EDITED_GUIDE)]);
+}
+
+/// A workflow skill's graph program is JSON data in its tree that
+/// `self.skills.graph` runs stage by stage from whatever path its caller
+/// names, so no extension or path marks it (review F2 of #7949). A draft
+/// never replaces a file that reads as one, and never turns another file
+/// into one: the brief withholds the program, and a draft replacing it, or
+/// writing a program over the guide, is refused; a guide edit still lands.
+#[test]
+fn a_graph_workflow_program_is_never_drafted() {
+    let mut files = tree();
+    files.push(HubFile::new("workflow.json", graph_program(0x91)));
+    let (_temp, vault, skill, _) = fixture_as(DESC, files, Some(SkillRole::Workflow));
+    let other_program = graph_program(0x92);
+    for path in ["workflow.json", "references/guide.md"] {
+        let now = vault.now_recorded_at();
+        let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
+        let author = FixedAuthor::editing(DESC, &[(path, other_program.as_str())]);
+        let drafted = draft_on_skill(&vault, &skill, attempt, &author, now);
+        let offered: Vec<String> = author
+            .brief()
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        assert!(
+            !offered.iter().any(|offered| offered == "workflow.json"),
+            "the brief offers no graph program: {offered:?}"
+        );
+        assert!(
+            offered
+                .iter()
+                .any(|offered| offered == "references/guide.md"),
+            "the brief still offers the guide: {offered:?}"
+        );
+        let error = drafted.expect_err("a draft replacing or writing a graph program is refused");
+        assert_eq!(error.kind(), ErrorKind::InvalidSkillBody, "{path}: {error}");
+    }
+
+    // No refusal left a proposal behind, and a guide edit still lands.
+    let proposal = propose_files(&vault, &skill, &[("references/guide.md", EDITED_GUIDE)]);
+    let package = served_skill_package(&vault, &proposal)
+        .unwrap()
+        .expect("the proposal has a package");
+    assert_eq!(
+        file(&package, "workflow.json"),
+        graph_program(0x91).as_bytes(),
+        "the program stays byte-exact"
+    );
+}
+
+/// The offline floors judge a file draft on the files it moves (review F3
+/// of #7949): the preflight scores each named floor on the gate's
+/// instruction pair, each replaced file with its own side's text, not on
+/// the description alone. Here the current guide names the marker the floor
+/// rewards and a file-only draft drops it: the floor regresses, and the
+/// preflight fails before any live run is routed to the draft.
+#[test]
+fn the_offline_floors_judge_a_file_draft_on_its_files() {
+    let mut files = tree();
+    files[1] = HubFile::new("references/guide.md", EDITED_GUIDE);
+    let (_temp, vault, skill, _) = fixture_with(DESC, files);
+    let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let owner = vault
+        .authenticate_owner(
+            owner,
+            "principal:fixture-owner",
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("authenticated owner");
+    let mut axes = skill_edit_goal(&vault, &skill).expect("goal").axes;
+    for name in ["honesty", MARKER_FLOOR_AXIS] {
+        if !axes.iter().any(|axis| axis.name == name) {
+            axes.push(GoalAxisSpec {
+                name: name.to_owned(),
+                kind: GoalAxisKind::Floor,
+            });
+        }
+    }
+    set_skill_edit_goal_axes(&vault, &owner, &skill, axes).expect("goal axes");
+
+    let proposal = propose_files(&vault, &skill, &[("references/guide.md", GUIDE)]);
+    let preflight = preflight_skill_edit_offline_floors(&vault, &proposal, &marker_scorer(MARKER))
+        .expect("preflight");
+    let (_, floor) = preflight
+        .offline
+        .iter()
+        .find(|(name, _)| name == MARKER_FLOOR_AXIS)
+        .expect("the floor is scored offline");
+    assert!(
+        floor.after < floor.before,
+        "the floor read the guide the draft replaced: {floor:?}"
+    );
+    assert!(
+        !preflight.passed,
+        "a file draft that regresses a floor fails the preflight"
+    );
+}
+
+/// A file draft's version names its target's version, then its parts, each
+/// length-prefixed (review F4 of #7949). A draft names only the files it
+/// moves, so without the target's version two trees of one skill could take
+/// one version; without lengths a text holding the separators re-splits
+/// into other parts. Here an admitted draft replaced the guide and the
+/// limits; a second draft on it folds both into the guide's new text, and
+/// may not repeat its target's version.
+#[test]
+fn a_file_draft_never_repeats_its_targets_version() {
+    const EDITED_LIMITS: &str = "{\"max_steps\": 6}\n";
+    let (_temp, vault, skill, _) = fixture();
+    let first = propose_files(
+        &vault,
+        &skill,
+        &[
+            ("references/guide.md", EDITED_GUIDE),
+            ("data/limits.json", EDITED_LIMITS),
+        ],
+    );
+    let now = vault.now_recorded_at();
+    let wake = enqueue_skill_optimize_attempt(&vault, Some("wake-1"), now + 10).expect("wake");
+    let verdict = score_gate_skill_edit_in_cycle(
+        &vault,
+        &first,
+        &marker_scorer(MARKER),
+        wake,
+        vault.now_recorded_at(),
+    )
+    .expect("gate");
+    assert_eq!(verdict.disposition, SkillEditDisposition::Accepted);
+    let admitted_at = vault.now_recorded_at();
+    admit_optimized_skill_revision(&vault, &first, at(admitted_at), admitted_at).expect("admitted");
+    let target = vault
+        .get_skill_record(&first)
+        .unwrap()
+        .expect("the admitted revision");
+    assert_eq!(target.lifecycle_status, SkillLifecycle::Active);
+
+    let folded = format!("{EDITED_GUIDE}\0data/limits.json\0{EDITED_LIMITS}");
+    let second = propose_files(&vault, &first, &[("references/guide.md", folded.as_str())]);
+    let staged = vault
+        .get_skill_record(&second)
+        .unwrap()
+        .expect("the second proposal");
+    assert_ne!(
+        staged.version, target.version,
+        "a draft never repeats its target's version"
+    );
 }

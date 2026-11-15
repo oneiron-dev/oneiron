@@ -139,7 +139,9 @@ pub use self::verdict::{
     PREDICATE_SKILL_SCAN_VERDICT, ScanCompleteness, ScanRiskLevel, ScanVerdict, SkillGovernance,
     SkillScanReceipt,
 };
-pub(crate) use fork_source::{draftable_skill_texts, validate_drafted_policy};
+pub(crate) use fork_source::{
+    draftable_skill_texts, reads_as_graph_program, validate_drafted_policy,
+};
 
 pub(crate) use self::index::{
     backfill_content_hash_index_if_needed, maintain_skill_content_hash_index_for_delete,

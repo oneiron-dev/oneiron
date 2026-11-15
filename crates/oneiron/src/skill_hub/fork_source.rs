@@ -4,7 +4,7 @@ use crate::dreamer_runner::maintenance::agent_health::{
     object_without_duplicates, reviewer_policy_effective_seeds,
 };
 use crate::skill::health_review::REVIEWER_POLICY_FILE;
-use crate::skill::team_shape_catalog::{TASK_TYPE_TREE_FILE, TEAM_SHAPE_SKILL_NAME};
+use crate::skill::team_shape_catalog::TASK_TYPE_TREE_FILE;
 use crate::skill_optimize::SkillFileEdit;
 use crate::store::skill_package::site_folder::{PROGRAMS_DIR, SITE_FILE};
 use crate::{Vault, entity_id::EntityId, error::Result, skill::SkillRecord};
@@ -70,11 +70,14 @@ fn is_dependency_manifest_path(path: &str) -> bool {
 /// script or hook, a dependency or package manifest
 /// ([`is_dependency_manifest_path`]), the callable's entry, a site skill's
 /// `site.json` and seed programs, which declare what the skill may reach,
-/// or the team-shape skill's task-type tree, which its own loop revises and
-/// its own gate judge reads. `SKILL.md` stands for its body below the
-/// engine-written
-/// frontmatter; a workflow skill's body is its `desc`, so a draft moves it
-/// through `desc` instead.
+/// or a task-type tree (`task-type-tree.json`), which the team-shape skill
+/// and each project or promote fork of it (`team-shape.project.<hex>`,
+/// `team-shape.promote.<hex>`) carry and only the tree gate revises
+/// (review F1 of #7949): the name is reserved for every skill.
+/// `SKILL.md` stands for its body below the engine-written frontmatter; a
+/// workflow skill's body is its `desc`, so a draft moves it through `desc`
+/// instead. A graph workflow program is also never drafted, by its content
+/// ([`reads_as_graph_program`]).
 pub(crate) fn draftable_skill_file(record: &SkillRecord, path: &str) -> bool {
     if record
         .call
@@ -96,12 +99,23 @@ pub(crate) fn draftable_skill_file(record: &SkillRecord, path: &str) -> bool {
         && !is_dependency_manifest_path(path)
         && path != SITE_FILE
         && !path.starts_with(PROGRAMS_DIR)
-        && !(record.skill_id == TEAM_SHAPE_SKILL_NAME && path == TASK_TYPE_TREE_FILE)
+        && path != TASK_TYPE_TREE_FILE
+}
+
+/// Whether `content` reads as a graph workflow program
+/// ([`crate::skill::GraphSkillProgram`]). `self.skills.graph` runs such a
+/// file stage by stage from whatever tree path its caller names, so no
+/// extension or path marks it (review F2 of #7949). A draft never replaces
+/// such a file, and never writes one: the brief withholds it, and the draft
+/// check and the write door refuse either way.
+pub(crate) fn reads_as_graph_program(content: &[u8]) -> bool {
+    serde_json::from_slice::<crate::skill::GraphSkillProgram>(content).is_ok()
 }
 
 /// Each file of `files` a draft may replace ([`draftable_skill_file`]) with
 /// its whole UTF-8 text, path-sorted; `SKILL.md` as its body below the
-/// frontmatter. A file that is not UTF-8 is not text and is left out.
+/// frontmatter. A file that is not UTF-8 is not text and is left out, and so
+/// is a graph workflow program ([`reads_as_graph_program`]).
 ///
 /// # Errors
 ///
@@ -112,7 +126,7 @@ pub(crate) fn draftable_skill_texts(
 ) -> Result<Vec<(String, String)>> {
     let mut texts = Vec::new();
     for file in files {
-        if !draftable_skill_file(record, &file.path) {
+        if !draftable_skill_file(record, &file.path) || reads_as_graph_program(&file.content) {
             continue;
         }
         let Ok(text) = std::str::from_utf8(&file.content) else {
@@ -338,7 +352,8 @@ pub(crate) fn validate_drafted_policy(policy: &[u8], text: &str) -> Result<()> {
 /// Replaces the file `edit` names in `files` with its text whole: for
 /// `SKILL.md`, the body below the frontmatter this revision already wrote.
 /// Only a file a draft may replace ([`draftable_skill_file`]) that the tree
-/// holds as text: never a new path.
+/// holds as text: never a new path, and never to or from a graph workflow
+/// program ([`reads_as_graph_program`]).
 fn replace_drafted_file(
     record: &SkillRecord,
     files: &mut [HubFile],
@@ -363,6 +378,11 @@ fn replace_drafted_file(
     } else {
         edit.content.clone().into_bytes()
     };
+    if reads_as_graph_program(&file.content) || reads_as_graph_program(&content) {
+        return Err(invalid(
+            "a drafted file edit never replaces or writes a graph workflow program",
+        ));
+    }
     file.content = content;
     Ok(())
 }

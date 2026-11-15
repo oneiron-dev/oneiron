@@ -173,8 +173,10 @@ fn preflight_with_owner(
     let edit_goal = super::goal_axis::edit_goal_of(&definition);
     let offline = crate::skill_optimize::goal_axes::score_offline_goal_axes(
         target,
-        &current,
-        &staged,
+        [
+            (&current, current_instructions.as_str()),
+            (&staged, staged_instructions.as_str()),
+        ],
         &plan.offline,
         &held_out,
         scorer,
