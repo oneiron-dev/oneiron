@@ -412,3 +412,37 @@ fn a_mark_no_rule_places_stays_withheld_whole() {
     assert_eq!(fixture.mark().as_deref(), Some(reason));
     assert_withheld(&fixture, reason);
 }
+
+#[test]
+fn a_credential_field_no_text_rule_places_stays_withheld_whole() {
+    // REVIEW-7800 round 2: the structured reading marks a credential field
+    // `sensitive_env`, the assignment rule's reason, but a value with no
+    // digit is no assignment the text rules place, so no span blanks it.
+    let body = br#"{"password":"Rivermoon"}"#.to_vec();
+    let fixture = ResultBodyFixture::new(body, 13..22);
+    assert_eq!(&fixture.body[fixture.secret.clone()], b"Rivermoon");
+    let reason = "gate.secret_scan.sensitive_env";
+    assert_eq!(fixture.mark().as_deref(), Some(reason));
+    for output in [fixture.slice(13, 22), fixture.slice(0, fixture.body.len())] {
+        assert_eq!(output["withheld"], "tainted_live", "{output}");
+        assert_eq!(output["taint"]["secret"], reason);
+        assert!(output.get("text").is_none(), "{output}");
+        assert!(output.get("redacted").is_none(), "{output}");
+    }
+    let card = fixture.raw(&fixture.reference(), None, json!({}));
+    assert!(card.get("redacted").is_none(), "{card}");
+    assert!(!card.to_string().contains("Rivermoon"), "{card}");
+}
+
+#[test]
+fn a_credential_field_the_assignment_rule_places_reads_redacted() {
+    let body = br#"{"password":"Rivermoon42"}"#.to_vec();
+    let fixture = ResultBodyFixture::new(body, 13..24);
+    assert_eq!(&fixture.body[fixture.secret.clone()], b"Rivermoon42");
+    assert_eq!(
+        fixture.mark().as_deref(),
+        Some("gate.secret_scan.sensitive_env")
+    );
+    let len = fixture.body.len();
+    assert_redacted_slice(&fixture.slice(0, len), 0, len, &fixture.masked());
+}
