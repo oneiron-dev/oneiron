@@ -266,12 +266,16 @@ pub(crate) fn row_phone_marked(raw: &[u8]) -> bool {
 /// is the source-audience walk's (a MESSAGE's TURN, a TURN's MESSAGEs, every
 /// `DerivedFrom`, a summary's or merge header's word sources, a scope
 /// summary's covers, a CLAIM's subject and every support), the rows the
-/// source-dependency index registers (a promoted CLAIM's cited MESSAGEs) and
-/// the summary a reply TURN or a merge header carries. Fail closed: carried
-/// bytes with no readable header, word sources that do not resolve, an
-/// association that does not decode, and a named word source not held here
-/// each count as phone words. An edge or a dependency to a row gone from
-/// this vault carries no words to judge, as in the source-audience walk.
+/// source-dependency index registers (a promoted CLAIM's cited MESSAGEs),
+/// the rows a model's prompt carried when it wrote the row's words (its
+/// birth's prompt inputs, R1 review 3 F2) and the summary a reply TURN or a
+/// merge header carries. Fail closed: carried bytes with no readable header
+/// or whose lineage does not resolve here for any reason (R1 review 3 F4:
+/// they are a peer's, so they withhold their own row and never fail the
+/// lane), word sources that do not resolve, an association that does not
+/// decode, and a named word source not held here each count as phone words.
+/// An edge, a dependency or a prompt input naming a row gone from this vault
+/// carries no words to judge, as in the source-audience walk.
 ///
 /// # Errors
 ///
@@ -313,10 +317,13 @@ impl PhoneLineagePass {
     ) -> Result<bool> {
         let mut walk = LineageWalk::default();
         // Carried bytes equal to the stored row's are judged with it below.
+        // Other carried bytes are a peer's: a lineage they name that does not
+        // resolve here, an error included (a summary body a stored document
+        // cannot resolve), withholds this row alone (R1 review 3 F4).
         if let Some(bytes) = carried
             && vault.get_raw_in(txn, id)?.as_deref() != Some(bytes)
         {
-            let Some(lineage) = row_lineage(vault, txn, id, bytes)? else {
+            let Ok(Some(lineage)) = row_lineage(vault, txn, id, bytes) else {
                 return Ok(true);
             };
             if walk.push_all(lineage) {
@@ -398,7 +405,7 @@ struct RowLineage {
     /// The rows `scope_summary::word_sources_in` names: each must be held.
     named: Vec<EntityId>,
     /// Every other row: the source-audience walk's, the source-dependency
-    /// index's, and a carried summary.
+    /// index's, the birth's prompt inputs, and a carried summary.
     recorded: Vec<EntityId>,
 }
 
@@ -431,6 +438,13 @@ fn row_lineage(
     recorded.extend(supports);
     recorded.extend(carried);
     recorded.extend(crate::ports::dependency_sources_in(&vault.store, txn, id)?);
+    // A row a model wrote from a prompt that carried phone words holds them
+    // (FIX 8192 prompt inputs; R1 review 3 F2: an exchange CLAIM's answer).
+    recorded.extend(crate::store::birth_record::prompted::prompt_sources_in_txn(
+        &vault.store,
+        txn,
+        id,
+    )?);
     Ok(Some(RowLineage { named, recorded }))
 }
 
