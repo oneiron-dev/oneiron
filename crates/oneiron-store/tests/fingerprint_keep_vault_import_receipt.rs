@@ -10,8 +10,9 @@
 //! `lanes/kimi/OPUS-UC04-FINGERPRINT/check/gen_keep_oracle.py`) and differing from them only
 //! in indentation; it takes the source type from the head, whose definition is unchanged.
 //!
-//! The module is in sync builds only:
-//! `cargo test --locked -p oneiron-store --all-features --test fingerprint_keep_vault_import_receipt`.
+//! The module is in sync builds only. The store's `sync` feature does not forward
+//! `oneiron-base/sync`, which the store's sync modules need, so a store-alone run names both:
+//! `cargo test --locked -p oneiron-store --features sync,oneiron-base/sync --test fingerprint_keep_vault_import_receipt`.
 #![cfg(feature = "sync")]
 
 use oneiron_contracts::entity_id::EntityId;
