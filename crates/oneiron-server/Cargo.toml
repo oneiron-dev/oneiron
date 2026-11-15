@@ -255,6 +255,12 @@ oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync"] }
 # The rolling tier enables test-support for the paid-leg TLS fake provider.
 oneiron-broker = { version = "0.1.0", path = "../oneiron-broker" }
 
+# The runner seat doors (`vault.runners.seats.*`) root their owner on a `MemoryKeystore` too.
+[[test]]
+name = "vault_runners_doors"
+path = "tests/vault_runners_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # Test-only constructors and fault-injection seams stay out of the shipped graph.
 [[test]]
 name = "it"
