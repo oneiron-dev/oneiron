@@ -12,7 +12,9 @@
 //! order alone, so both installs hold the same roster. A roster row also
 //! vouches for its own signer's rows below it in its ancestry, so a
 //! revocation on a withdrawal that reached the install past the floor lands
-//! there too (Sol review F1). A row that its own ancestry already shows its
+//! there too (Sol review F1). It vouches for nothing that grants: a machine
+//! mark that reached an install past the floor stays held there, though a
+//! handoff names it (Astra review F2). A row that its own ancestry already shows its
 //! signer past is still refused on every install (the control). A parent of
 //! another signer that this install's floor refuses still holds a roster row
 //! back (root FIX-LIST [ROSTER-ROW-CROSS-SIGNER-FLOORED-PARENT]).
@@ -23,10 +25,13 @@ use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AuthorityAttestation, AuthorityEntryHash, AuthorityFold,
     AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep, ROLE_ADMIN, ROLE_AGENT,
+    AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
+    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
+    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, ROLE_ADMIN, ROLE_AGENT,
     ROLE_OWNER, authority_entry_hash, authority_transcript, genesis_vault_id,
+    machine_profile_proof_transcript,
 };
-use oneiron::{TimeRange, Vault, VaultConfig};
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 const AT: TimeRange = TimeRange { start: 2, end: 2 };
 
@@ -110,6 +115,44 @@ fn enrolment(
         },
         signer,
     )
+}
+
+/// The owner's "yours" mark of `machine`, whose install key is
+/// `machine_key`: its first revision, signed by an owner roster key with no
+/// carrier, as a roster revision is.
+fn yours_mark(
+    vault_id: AuthorityVaultId,
+    machine: EntityId,
+    machine_key: &SigningKey,
+) -> AuthorityOp {
+    let machine_key_bytes = machine_key.verifying_key().to_bytes();
+    let device_class = MachineDeviceClass::Computer;
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = machine_key
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            machine,
+            &machine_key_bytes,
+            device_class,
+            &encryption_key,
+        ))
+        .to_bytes();
+    AuthorityOp::MachineProfile(MachineProfile {
+        machine,
+        owner: EntityId::now(),
+        machine_key: machine_key_bytes,
+        device_class,
+        encryption_key,
+        role: MachineRole::Owned(MachineOwnership::Yours),
+        revision: 1,
+        machine_proof,
+        seen_world_edits: BTreeSet::new(),
+        carrier: None,
+        act: None,
+    })
 }
 
 fn hash_of(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
@@ -334,6 +377,67 @@ fn a_revocation_on_a_withdrawal_past_the_floor_holds_in_either_arrival_order() {
         applied(&reversed.fold),
         all,
         "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
+}
+
+/// A roster row vouches for nothing that grants (Astra review F2): the
+/// owner marks machine M "yours" (sequence 1), on the mark hands the vault
+/// to a fresh owner key (2), and as a sibling of the mark enrols agent U
+/// (3). Install J receives U's enrolment first, so the mark reaches it below
+/// the owner's floor and lands restriction only: J must not count M as the
+/// owner's, though the handoff names the mark. Install I, which received the
+/// mark before the owner's later row, counts M. Both settle the handoff.
+#[test]
+fn a_handoff_on_a_mark_past_the_floor_leaves_the_machine_held() {
+    let owner = SigningKey::from_bytes(&[251; 32]);
+    let successor = SigningKey::from_bytes(&[252; 32]);
+    let agent = SigningKey::from_bytes(&[253; 32]);
+    let machine_key = SigningKey::from_bytes(&[254; 32]);
+    let machine = EntityId::now();
+    let (genesis, vault_id) = genesis(&owner, 255);
+    let mark = signed(
+        Some(vault_id),
+        1,
+        Some(&genesis),
+        yours_mark(vault_id, machine, &machine_key),
+        &owner,
+    );
+    let handoff = signed(
+        Some(vault_id),
+        2,
+        Some(&mark),
+        AuthorityOp::ReRoot {
+            new_device: device(key_of(&successor), ROLE_OWNER | ROLE_ADMIN),
+        },
+        &owner,
+    );
+    let enrol_agent = enrolment(vault_id, &genesis, &owner, 3, &agent);
+
+    let in_order = install_receiving(&[&genesis, &mark, &enrol_agent, &handoff]);
+    let reversed = install_receiving(&[&genesis, &enrol_agent, &mark, &handoff]);
+
+    for (name, install) in [("I (mark first)", &in_order), ("J (mark late)", &reversed)] {
+        assert!(
+            applied(&install.fold).contains(&hash_of(&handoff))
+                && is_live(&install.fold, &key_of(&successor)),
+            "install {name} settles the handoff to the successor; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+    assert!(
+        in_order.fold.trusted_machine(machine).is_some(),
+        "install I received the mark before the owner's later row and counts the machine as \
+         the owner's; puts {:?}, issues {:?}",
+        in_order.puts,
+        in_order.fold.issues
+    );
+    assert!(
+        reversed.fold.trusted_machine(machine).is_none(),
+        "install J received the mark past the owner's floor: the handoff on it must not make \
+         J count the machine as the owner's; puts {:?}, issues {:?}",
         reversed.puts,
         reversed.fold.issues
     );
