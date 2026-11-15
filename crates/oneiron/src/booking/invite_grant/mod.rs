@@ -32,6 +32,7 @@ mod codec;
 mod dispatch;
 mod mint;
 mod types;
+mod waitlist_offer;
 
 pub use self::authorization::{
     booking_page_grant_covers_recipient, booking_page_invites_authorizes,
@@ -55,6 +56,10 @@ pub(super) use self::dispatch::{
     NoConfirmInviteSink, dispatch_booking_cancel_invite_outcome,
     dispatch_booking_revision_invite_outcome, dispatch_confirm_booking_invite_outcome,
     sending_address,
+};
+pub(super) use self::waitlist_offer::dispatch_waitlist_offer;
+pub(crate) use self::waitlist_offer::{
+    admit_frozen_waitlist_offer_in_txn, page_grant_reaches_waitlist_offer_in_txn,
 };
 
 #[cfg(test)]

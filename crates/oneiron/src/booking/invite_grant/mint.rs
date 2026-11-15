@@ -126,13 +126,23 @@ pub(super) fn live_page_invite_grant(
         .env
         .read_txn()
         .map_err(|error| engine_failure("read transaction", error))?;
+    live_page_invite_grant_in_txn(vault, &rtxn, principal_ref, page_ref)
+}
+
+/// [`live_page_invite_grant`] through the caller's transaction.
+pub(super) fn live_page_invite_grant_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    principal_ref: &str,
+    page_ref: &EntityId,
+) -> Result<Option<(EntityId, StandingOutboundGrant)>, BookingError> {
     let wanted = StandingOutboundGrantScope::BookingPageInvites {
         page_ref: *page_ref,
     };
     // The principal's grants come in id order, so the first live match is
     // the deterministic one.
     Ok(
-        standing_outbound_grants_for_principal_in_txn(&vault.store, &rtxn, principal_ref)
+        standing_outbound_grants_for_principal_in_txn(&vault.store, rtxn, principal_ref)
             .map_err(|error| engine_failure("standing grant read", error))?
             .into_iter()
             .find(|grant| grant.is_active() && grant.scope == wanted)

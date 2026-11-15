@@ -16,8 +16,8 @@ use crate::store::Store;
 /// its row active under the current policy frontier, its principal the
 /// effect's actor, and its bound containing the effect
 /// ([`StandingOutboundGrant::covers_effect`]). A scoped MCP call is decided
-/// by its payload-aware check, and a booking page's invite by the page
-/// grant its dispatch door named.
+/// by its payload-aware check, and a booking page's invite or waitlist offer
+/// by the page grant its admission bound.
 pub(super) fn standing_outbound_grant_for_effect(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -86,14 +86,15 @@ pub(super) fn standing_outbound_grant_for_effect(
             }
             continue;
         }
-        // A booking-page grant covers only the invite the dispatch door's
-        // calendar admission bound to it and named here, never a verb.
-        if matches!(
-            grant.scope,
-            StandingOutboundGrantScope::BookingPageInvites { .. }
-        ) {
+        // A booking-page grant covers only a send its admission bound to it
+        // and named here, never a verb: the invite the calendar admission
+        // bound, or the one waitlist offer email the offer admission bound,
+        // to the contact of an entry on its page that holds a standing offer
+        // (RULING L3-13-OFFER-CHANNEL = A).
+        if let StandingOutboundGrantScope::BookingPageInvites { page_ref } = &grant.scope {
             if required_grant_id == Some(grant.id)
-                && effect.verb.trim() == crate::calendar::CALENDAR_INVITE_VERB
+                && (effect.verb.trim() == crate::calendar::CALENDAR_INVITE_VERB
+                    || waitlist_offer_send_reaches(store, txn, effect, page_ref)?)
             {
                 return Ok(Some(grant));
             }
@@ -109,6 +110,25 @@ pub(super) fn standing_outbound_grant_for_effect(
         }
     }
     Ok(None)
+}
+
+/// Whether `effect` is an `(email, send)` to the contact of an entry on
+/// `page_ref` that holds a standing waitlist offer.
+fn waitlist_offer_send_reaches(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    effect: &ExternalEffectGateInput,
+    page_ref: &EntityId,
+) -> Result<bool> {
+    if effect.channel.trim() != "email" || effect.verb.trim() != "send" {
+        return Ok(false);
+    }
+    let Some(recipient) = effect.counterparty.as_deref() else {
+        return Ok(false);
+    };
+    crate::booking::invite_grant::page_grant_reaches_waitlist_offer_in_txn(
+        store, txn, page_ref, recipient,
+    )
 }
 
 pub(super) fn is_mcp_effect_channel(channel: &str) -> bool {

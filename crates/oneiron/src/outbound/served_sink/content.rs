@@ -36,7 +36,8 @@ pub(super) fn trusted_contact_check_in_text(language: Option<&str>) -> &'static 
 
 impl Vault {
     /// The plain text an outbound content ref sends, when this engine has a
-    /// typed loader for it: an agent's connector reply body, a campaign
+    /// typed loader for it: an agent's connector reply body, a booking
+    /// waitlist offer while it stands, a campaign
     /// program step's filed body, approved representation content, a
     /// commitment reminder, a soft-confirm notice (scheduled by its bare
     /// notice id, FIX 1469), or a trusted contact's fixed check-in line: the
@@ -55,6 +56,10 @@ impl Vault {
         }
         if content_ref.starts_with(CONNECTOR_REPLY_BODY_PREFIX) {
             return self.connector_reply_body_text(content_ref);
+        }
+        // A booking waitlist offer, rendered from the offer while it stands.
+        if content_ref.starts_with(crate::booking::lifecycle::WAITLIST_OFFER_CONTENT_PREFIX) {
+            return crate::booking::lifecycle::waitlist_offer_text(self, content_ref);
         }
         if content_ref.starts_with(CAMPAIGN_STEP_BODY_PREFIX) {
             return self

@@ -30,7 +30,7 @@ use super::waitlist::{
 use super::{BookingContent, CHECKOUT_LEASE, CheckoutLeaseRow, LifecycleReceiptRow};
 use crate::booking::invite_grant::{
     dispatch_booking_cancel_invite_outcome, dispatch_booking_revision_invite_outcome,
-    dispatch_confirm_booking_invite_outcome,
+    dispatch_confirm_booking_invite_outcome, dispatch_waitlist_offer,
 };
 use crate::booking::{BookingError, RankedSlot, SlotOracle, SolveRequest};
 use crate::calendar::claims::{CalendarStatus, PREDICATE_CALENDAR_STATUS};

@@ -233,8 +233,7 @@ fn fresh_admission_in_txn(
         &prepared.payload,
         prepared.gate.provenance.actor_entity_ref,
     )?;
-    let required_grant_id = invite_admission
-        .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
+    let required_grant_id = booking_page_grant_in_txn(vault, txn, prepared, invite_admission)?
         .or_else(|| required_grant_id(&prepared.authorization));
     let posting_gate = vault.space_posting_gate_in_txn(txn, &prepared.payload, &prepared.gate)?;
     // DOOR-079 1a: a held connector call a code consent wait owns is
@@ -1066,8 +1065,32 @@ fn validate_new_replay(
     Ok(())
 }
 
-/// Scoped MCP authority prepared outside the writer. Calendar page grants
-/// instead come from calendar admission on this transaction's snapshot.
+/// The booking page grant a send's admission bound on this snapshot: a
+/// calendar invite's, else a waitlist offer email's (RULING
+/// L3-13-OFFER-CHANNEL = A). A send that names a waitlist offer it may not
+/// carry is refused here, as a calendar invite that fails its admission is.
+pub(super) fn booking_page_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    prepared: &PreparedEffect,
+    invite_admission: Option<&crate::calendar::CalendarInviteAdmission>,
+) -> Result<Option<crate::entity_id::EntityId>, IntentLedgerError> {
+    if let Some(grant) =
+        invite_admission.and_then(crate::calendar::CalendarInviteAdmission::page_grant)
+    {
+        return Ok(Some(grant));
+    }
+    crate::booking::invite_grant::admit_frozen_waitlist_offer_in_txn(
+        vault,
+        txn,
+        prepared.gate.provenance.actor_entity_ref,
+        &prepared.payload,
+    )
+    .map_err(|_| IntentLedgerError::InvalidInput("waitlist offer failed its admission"))
+}
+
+/// Scoped MCP authority prepared outside the writer. Booking page grants
+/// instead come from the booking admissions on this transaction's snapshot.
 pub(super) fn required_grant_id(
     authorization: &PreparedAuthorization,
 ) -> Option<crate::entity_id::EntityId> {

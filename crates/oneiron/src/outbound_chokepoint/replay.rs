@@ -341,10 +341,9 @@ fn send_pending_with_gate<T: OutboundTransport>(
         // this writer before its gate is re-evaluated; other effects pass through.
         crate::campaign::enrollment::admit_campaign_leg_in_txn(vault, &wtxn, &prepared.gate)?;
         let invite = super::admission::calendar_admission_in_txn(vault, &wtxn, prepared)?;
-        let required_grant_id = invite
-            .as_ref()
-            .and_then(crate::calendar::CalendarInviteAdmission::page_grant)
-            .or_else(|| super::admission::required_grant_id(&prepared.authorization));
+        let required_grant_id =
+            super::admission::booking_page_grant_in_txn(vault, &wtxn, prepared, invite.as_ref())?
+                .or_else(|| super::admission::required_grant_id(&prepared.authorization));
         let posting_gate =
             vault.space_posting_gate_in_txn(&wtxn, &prepared.payload, &prepared.gate)?;
         // FIX 6424 part 2a: or the press a pinned family kept for this row.

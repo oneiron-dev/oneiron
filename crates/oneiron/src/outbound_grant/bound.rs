@@ -85,9 +85,12 @@ pub enum StandingOutboundGrantScope {
         endpoint_allowlist: Vec<String>,
     },
     /// Bounded booking-page authority: `calendar.invite` for bookings that a
-    /// confirm persisted on exactly this page. The recipient binding is NOT in
-    /// this scope — the consent door resolves it from booking claims — so a
-    /// live grant never widens past the page it was minted for.
+    /// confirm persisted on exactly this page, and one `(email, send)` per
+    /// waitlist offer to the contact of an entry on this page that holds it
+    /// (RULING L3-13-OFFER-CHANNEL = A). The recipient binding is NOT in this
+    /// scope — the consent door resolves it from booking claims, and the offer
+    /// admission from the waitlist — so a live grant never widens past the
+    /// page it was minted for.
     BookingPageInvites { page_ref: EntityId },
 }
 

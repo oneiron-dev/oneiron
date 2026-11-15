@@ -107,7 +107,14 @@ pub use self::types::{
     WaitlistSpec,
 };
 pub(crate) use self::waitlist::erase_waitlist_contact_in_txn;
-pub use self::waitlist::waitlist_entry_event_type;
+pub use self::waitlist::{
+    WAITLIST_OFFER_CONTENT_PREFIX, waitlist_entry_event_type, waitlist_offer_text,
+};
+pub(in crate::booking) use self::waitlist::{WaitlistOfferMade, waitlist_offer_content_ref};
+pub(crate) use self::waitlist::{
+    offer_token_digest, offered_waitlist_contacts_in_txn, parse_waitlist_offer_content_ref,
+    standing_waitlist_offer_in_txn,
+};
 
 pub(crate) use self::confirmation_state::{
     bind_booking_invite_identity_in, booking_invite_identity, booking_invite_identity_in_txn,
