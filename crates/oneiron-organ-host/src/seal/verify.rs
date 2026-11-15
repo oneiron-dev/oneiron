@@ -91,7 +91,13 @@ impl HostedSealer<'_> {
                 code: "unbound_output".to_owned(),
             });
         }
-        prove_evidence(sealed, witness, &classification, achieved, &self.evidence_trust())
+        prove_evidence(
+            sealed,
+            witness,
+            &classification,
+            achieved,
+            &self.evidence_trust(),
+        )
     }
 
     /// What the host proves a seal's evidence against: its own anchors, the

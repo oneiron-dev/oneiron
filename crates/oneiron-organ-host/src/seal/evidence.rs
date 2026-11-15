@@ -12,9 +12,12 @@
 //!   written after the bound revision; read with lopdf, nothing else of the
 //!   PDF) holds every non-anchor certificate of the signer chain and of each
 //!   timestamp's authority chain, and for each certificate on those paths a
-//!   CRL or OCSP response its issuer signed, fresh at the material's time,
-//!   that does not list it. Every CRL and OCSP response in it must vouch for
-//!   one of them: a DSS carries only evidence the engine can vouch for.
+//!   CRL or OCSP response its issuer (or a responder it delegated to)
+//!   signed, fresh at the material's time (an OCSP responder's clock may run
+//!   the organ's 300 s ahead), that does not list it. A CRL or OCSP response
+//!   without nextUpdate proves nothing. Every CRL and OCSP response in it
+//!   must vouch for one of them: a DSS carries only evidence the engine can
+//!   vouch for.
 //! - B-LTA: a document timestamp after that DSS, covering every byte to the
 //!   end of the file but its own hole, passes the same RFC 3161 checks over
 //!   its two ranges; its time is the material's. Every document timestamp
@@ -46,6 +49,7 @@ use pkix_chain::{
 use sha2::{Digest, Sha256};
 use x509_cert::Certificate;
 use x509_cert::spki::AlgorithmIdentifierOwned;
+use x509_ocsp::{BasicOcspResponse, OcspResponse};
 
 use super::binding::{AdmittedRevision, unhex};
 use crate::resource_memory::{FloorLease, FloorRefusal, MachineFloor};
@@ -68,6 +72,10 @@ const ID_ISSUING_DISTRIBUTION_POINT: ObjectIdentifier = ObjectIdentifier::new_un
 /// How far a genTime may run ahead of the engine's clock: the organ's own
 /// bound (its `TS_GEN_TIME_MAX_SKEW_SECS`).
 const GEN_TIME_SKEW_SECS: u64 = 300;
+/// How far a responder's clock may run ahead of the material's time when it
+/// stamps an OCSP response: the organ's own bound (its
+/// `OCSP_PRODUCED_AT_MAX_SKEW_SECS`).
+const OCSP_SKEW_SECS: u64 = 300;
 /// The keys a DSS the engine vouches for may hold (ARCH-0064a: `/Certs`,
 /// `/OCSPs`, `/CRLs`; the seal writes no `/VRI`).
 const DSS_KEYS: [&[u8]; 4] = [b"Type", b"Certs", b"CRLs", b"OCSPs"];
@@ -165,7 +173,7 @@ pub(super) fn prove_evidence(
     for proof in std::iter::once(&signature_timestamp).chain(documents.iter().map(|d| &d.proof)) {
         chains.push(proof.chain.clone());
     }
-    let revocation = DssRevocation::new(&dss, at);
+    let revocation = DssRevocation::new(&dss, trust.anchors, at);
     let policy = ValidationPolicy::new(at);
     for chain in &chains {
         let unanchored: Vec<&Vec<u8>> = chain
@@ -348,7 +356,12 @@ fn prove_token(
         return None;
     }
     let chain: Vec<Certificate> = std::iter::once(authority)
-        .chain(certificates.iter().copied().filter(|cert| *cert != authority))
+        .chain(
+            certificates
+                .iter()
+                .copied()
+                .filter(|cert| *cert != authority),
+        )
         .cloned()
         .collect();
     pkix_chain::verify_time_stamper(
@@ -546,11 +559,7 @@ struct Dss {
 /// arrays name unfiltered streams written after `byte_end` and before it.
 /// `Ok(None)` when it is missing or not that; `Err` when its decodes found
 /// no memory before the deadline.
-fn read_dss(
-    sealed: &[u8],
-    byte_end: u64,
-    trust: &EvidenceTrust<'_>,
-) -> Result<Option<Dss>, ()> {
+fn read_dss(sealed: &[u8], byte_end: u64, trust: &EvidenceTrust<'_>) -> Result<Option<Dss>, ()> {
     let admission = trust.floor.as_ref().map(|floor| {
         Arc::new(FloorAdmission {
             floor: Arc::clone(floor),
@@ -589,7 +598,9 @@ fn dss_of(document: &lopdf::Document, sealed: &[u8], byte_end: u64) -> Option<Ds
     let dss_id = catalog.get(b"DSS").ok()?.as_reference().ok()?;
     let dss_at = offset(dss_id).filter(|at| *at >= byte_end)?;
     let dss = document.get_object(dss_id).ok()?.as_dict().ok()?;
-    if !dss.iter().all(|(key, _)| DSS_KEYS.contains(&key.as_slice()))
+    if !dss
+        .iter()
+        .all(|(key, _)| DSS_KEYS.contains(&key.as_slice()))
         || dss
             .get(b"Type")
             .is_ok_and(|kind| kind.as_name().ok() != Some(b"DSS".as_slice()))
@@ -626,16 +637,17 @@ fn dss_of(document: &lopdf::Document, sealed: &[u8], byte_end: u64) -> Option<Ds
 
 /// Revocation answered only from the DSS, at the material's time: a
 /// certificate is covered when one CRL or OCSP response its issuer (or the
-/// anchor) signed, fresh then, says it is not revoked; a revocation from
-/// such an item fails it. It records which items vouched for anything.
+/// anchor, or a responder the issuer delegated to) signed, fresh then, says
+/// it is not revoked; a revocation from such an item fails it. It records
+/// which items vouched for anything.
 struct DssRevocation {
     crls: Vec<Option<CrlChecker<DefaultVerifier>>>,
-    ocsps: Vec<Option<OcspChecker<DefaultVerifier>>>,
+    ocsps: Vec<Option<SkewedOcsp>>,
     used: Mutex<Vec<bool>>,
 }
 
 impl DssRevocation {
-    fn new(dss: &Dss, at: u64) -> Self {
+    fn new(dss: &Dss, anchors: &[Vec<u8>], at: u64) -> Self {
         let crls = dss
             .crls
             .iter()
@@ -658,10 +670,27 @@ impl DssRevocation {
                 CrlChecker::new(der, at, DefaultVerifier).ok()
             })
             .collect();
+        let responders: Vec<Certificate> = dss
+            .certs
+            .iter()
+            .chain(anchors)
+            .filter_map(|der| Certificate::from_der(der).ok())
+            .collect();
         let ocsps = dss
             .ocsps
             .iter()
-            .map(|der| OcspChecker::new(der, at, DefaultVerifier).ok())
+            .map(|der| {
+                let der = with_responders(der, &responders)?;
+                Some(SkewedOcsp {
+                    exact: OcspChecker::new(&der, at, DefaultVerifier).ok()?,
+                    ahead: OcspChecker::new(
+                        der,
+                        at.saturating_add(OCSP_SKEW_SECS),
+                        DefaultVerifier,
+                    )
+                    .ok()?,
+                })
+            })
             .collect();
         Self {
             used: Mutex::new(vec![false; dss.crls.len() + dss.ocsps.len()]),
@@ -727,6 +756,69 @@ impl RevocationChecker for DssRevocation {
         anchor: &TrustAnchor,
     ) -> pkix_revocation::Result<()> {
         self.answer(|item| item.check_revocation_against_anchor(cert, anchor))
+    }
+}
+
+/// The OCSP response with `responders` (the DSS certificates, then the
+/// anchors) appended to its own `certs`, which its signature does not cover.
+/// pkix's resolver looks for a delegated responder only there, the organ
+/// also in the DSS and the anchors (its `OcspContext`); in this order the
+/// host finds the one the organ found, and still requires it to carry
+/// id-kp-OCSPSigning and to be signed by the certificate's issuer.
+fn with_responders(der: &[u8], responders: &[Certificate]) -> Option<Vec<u8>> {
+    let mut response = OcspResponse::from_der(der).ok()?;
+    let Some(bytes) = response.response_bytes.as_mut() else {
+        // Not a successful response: the checker refuses it as it is.
+        return Some(der.to_vec());
+    };
+    let mut basic = BasicOcspResponse::from_der(bytes.response.as_bytes()).ok()?;
+    basic
+        .certs
+        .get_or_insert_with(Vec::new)
+        .extend(responders.iter().cloned());
+    bytes.response = OctetString::new(basic.to_der().ok()?).ok()?;
+    response.to_der().ok()
+}
+
+/// One DSS OCSP response, checked at the material's time and, when that
+/// finds it future-dated or not yet valid, again with the responder's clock
+/// up to [`OCSP_SKEW_SECS`] ahead: the organ admits a producedAt that far
+/// past its time, and a status a responder stamped a little later still
+/// says the certificate was not revoked then. A stale response stays stale.
+struct SkewedOcsp {
+    exact: OcspChecker<DefaultVerifier>,
+    ahead: OcspChecker<DefaultVerifier>,
+}
+
+impl SkewedOcsp {
+    fn either(
+        &self,
+        check: impl Fn(&OcspChecker<DefaultVerifier>) -> pkix_revocation::Result<()>,
+    ) -> pkix_revocation::Result<()> {
+        match check(&self.exact) {
+            Err(pkix_revocation::Error::OcspMalformed | pkix_revocation::Error::OcspExpired) => {
+                check(&self.ahead)
+            }
+            answer => answer,
+        }
+    }
+}
+
+impl RevocationChecker for SkewedOcsp {
+    fn check_revocation(
+        &self,
+        cert: &Certificate,
+        issuer: &Certificate,
+    ) -> pkix_revocation::Result<()> {
+        self.either(|ocsp| ocsp.check_revocation(cert, issuer))
+    }
+
+    fn check_revocation_against_anchor(
+        &self,
+        cert: &Certificate,
+        anchor: &TrustAnchor,
+    ) -> pkix_revocation::Result<()> {
+        self.either(|ocsp| ocsp.check_revocation_against_anchor(cert, anchor))
     }
 }
 

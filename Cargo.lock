@@ -8679,6 +8679,7 @@ dependencies = [
  "tokio",
  "toml 0.8.2",
  "x509-cert",
+ "x509-ocsp",
  "x509-tsp",
 ]
 
