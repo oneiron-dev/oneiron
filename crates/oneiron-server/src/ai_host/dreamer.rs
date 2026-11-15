@@ -29,9 +29,9 @@ use oneiron::llm::{HostInferenceContext, WorkCancel, WorkClass, WorkContext};
 use oneiron::settings::ReadDestination;
 use oneiron::task_verb::{RunnerDoneAnswer, RunnerDoneQuestion};
 use oneiron::{
-    DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerAttemptExecutor,
-    DreamerClaimAuthoringStrategy, DreamerRunnerStore, LlmBackend, Vault, WakeAttemptContext,
-    WakePassDeadline, WriteActor,
+    ConsolidationDecisions, DreamerAdmittedAttempt, DreamerAttemptExecution,
+    DreamerAttemptExecutor, DreamerClaimAuthoringStrategy, DreamerRunnerStore, LlmBackend, Vault,
+    WakeAttemptContext, WakePassDeadline, WriteActor,
 };
 use oneiron_driver::{
     AttachedPassFuture, AttemptQueueDeadlines, ConsolidationExecutorFactory, HintPusher,
@@ -55,7 +55,7 @@ mod task_lend;
 mod urgent_digest;
 use super::skill_author::CoachSkillAuthor;
 use super::status::{IdleReason, StatusCell, UnservedNote, UnservedReason, WorkState, WorkStatus};
-use crate::config::models::{DreamerSettings, ModelsConfig, role_key};
+use crate::config::models::{DreamerSettings, DreamerWording, ModelsConfig, role_key};
 use crate::decision_host::DecisionHost;
 use crate::models::{ModelRuntime, OfferLadder, RoleRefusal, RoleRoute, Seat};
 use crate::runtime::wall_clock_ms as now_ms;
@@ -367,6 +367,7 @@ async fn supervise(
             }),
             confession_instruction: settings.wording.confession().to_owned(),
             compaction_check_rubric: settings.compaction_check_rubric.clone(),
+            wording: settings.wording.clone(),
             windows,
             pass_deadline: None,
             device_cancel: None,
@@ -508,6 +509,9 @@ struct ObservedFactory {
     confession_instruction: String,
     /// A self-written compaction is checked against this rubric (FIX 4814).
     compaction_check_rubric: String,
+    /// The host's wording (FIX 8696): every pass's extraction prompt and
+    /// consolidation questions ask in it (ARCH-0026 #dreamer-seat-open).
+    wording: DreamerWording,
     windows: BTreeMap<ModelId, u64>,
     /// The weaver's narrative route: the model and window a resident that
     /// inherits dreams on, never its diary.
@@ -716,15 +720,27 @@ impl ObservedFactory {
             factory = factory.with_scope_summary_instruction(instruction.clone());
         }
         factory = factory.with_model_windows(self.windows.clone());
+        // The Dreamer's jobs bind each strength attempt in the served vault
+        // and run over that attempt's client (untangle 6.9c).
+        factory = factory.with_dreamer_job_vault(Arc::clone(&self.vault));
         if let Some(instruction) = &self.person_about_instruction {
             factory = factory.with_person_about_instruction(instruction.clone());
         }
-        if let Some(host) = host {
-            factory = factory.with_decisions(
-                host.consolidation_decisions()?
-                    .with_checker(host.auto_checker().cloned()),
-            );
-        }
+        let decisions = match host {
+            Some(host) => host
+                .consolidation_decisions()?
+                .with_checker(host.auto_checker().cloned()),
+            None => ConsolidationDecisions::shipped()?,
+        };
+        factory = factory.with_decisions(self.wording.apply_consolidation_wording(decisions));
+        // Which wording this pass asks in, so its run is traceable to the
+        // host file in force (ARCH-0026 #dreamer-seat-open).
+        tracing::info!(
+            target: "oneiron::dreamer",
+            extraction_prompt = self.wording.extraction_prompt_source(),
+            consolidation_wording = self.wording.consolidation_wording_source(),
+            "dreamer pass wording"
+        );
         // A subscribed Slack or LINE message wakes the agent it addressed,
         // which answers on the chat seat through the served sink (OF-519).
         // With no chat seat the wake is delivered and nothing answers.

@@ -339,6 +339,14 @@ pub const CONNECT_GUEST_ACTOR: &[u8] = b"oneiron/connect-guest-actor/v1";
 /// is the one.
 pub const FOREIGN_WORLD: &[u8] = b"oneiron.federation.foreign-world.v1";
 
+/// One statement of a copied inquiry answer, as the company vault lands it
+/// (`inquiry::landing`, INQUIRE-1 PR 6). Parts: the inquiry's id, the id of
+/// the member's PERSON, the member vault's id and the statement's place in
+/// the answer (u64 little-endian), so an inquiry re-sent to the same member
+/// lands each statement on the CLAIM it landed before, and an id re-used for
+/// another member never lands on the first member's copy.
+pub const INQUIRY_COPY_CLAIM: &[u8] = b"oneiron.inquiry.copy-claim.v1";
+
 /// The occurrence of an ASSET's current body file (`store::asset_body`, FIX
 /// 3677): one per ASSET, moved as its row changes. Parts: the ASSET.
 pub const ASSET_BODY_FILE: &[u8] = b"oneiron/asset-body-file/v1";
@@ -427,6 +435,11 @@ pub const SCOPE_SUMMARY_LANDING_ACTOR: &[u8] = b"oneiron.scope-summary.landing.a
 /// offering actor. No parts: policy binds this one engine writer.
 pub const PLUGIN_SECTION_FIT_INSTALL_ACTOR: &[u8] = b"oneiron.plugin-section.fit-install.actor.v1";
 
+/// The commitment lapse writer (`housekeeping::lapse_writer`), the System
+/// MACHINE a host-run lapse lands under, distinct from the owner and from the
+/// commitment projector. No parts: policy binds this one engine writer.
+pub const COMMITMENT_LAPSE_ACTOR: &[u8] = b"oneiron.commitment.lapse.actor.v1";
+
 /// The target of an owner's origin cut act (`authority::origin_cut_target`,
 /// FIX 15740). Parts: the repository's 32-byte portable id.
 pub const ORIGIN_CUT_TARGET: &[u8] = b"oneiron/origin-cut-target/v1";
@@ -464,7 +477,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 70] = [
+pub(crate) const ALL: [&[u8]; 72] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -527,6 +540,7 @@ pub(crate) const ALL: [&[u8]; 70] = [
     AGENT_PACK_TRAVEL,
     CONNECT_GUEST_ACTOR,
     FOREIGN_WORLD,
+    INQUIRY_COPY_CLAIM,
     ASSET_BODY_FILE,
     ASSET_BODY_HELD,
     ASSET_BODY_REVISION,
@@ -535,4 +549,5 @@ pub(crate) const ALL: [&[u8]; 70] = [
     VAD_ANNOTATION_CLAIM,
     ESIGN_DOCUMENT_COMMITMENT,
     RESIDENT_MESSAGE_ASK,
+    COMMITMENT_LAPSE_ACTOR,
 ];

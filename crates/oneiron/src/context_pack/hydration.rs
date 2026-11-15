@@ -268,7 +268,7 @@ pub(super) fn hydrate_entity(
     if let (Some(clamp), Some(body)) = (options.clamp, gated_claim_body)
         && !super::retained_copies::clamp_admits(
             clamp,
-            store.base(),
+            vault,
             rtxn,
             &id,
             ENTITY_TYPE_CLAIM,
@@ -320,6 +320,7 @@ pub(super) fn hydrate_entity(
 
     let edges = if options.include_edges {
         Some(load_entity_edges(
+            vault,
             store,
             rtxn,
             &id,
@@ -550,7 +551,7 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
 }
 
 /// `write_accepted`: the write door's scan has read and accepted `payload`.
-fn decode_entity_fields(
+pub(crate) fn decode_entity_fields(
     payload: &[u8],
     write_accepted: bool,
 ) -> Option<HashMap<String, serde_json::Value>> {

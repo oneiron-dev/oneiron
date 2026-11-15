@@ -75,6 +75,7 @@ fn registered_local_model_uses_the_stored_default_without_nested_lmdb_reader() {
         scores: Default::default(),
         fetched_at: Default::default(),
         tokens_per_o200k: None,
+        answer_tokens_per_o200k: None,
         stale_since: None,
         source_rows: None,
     };
