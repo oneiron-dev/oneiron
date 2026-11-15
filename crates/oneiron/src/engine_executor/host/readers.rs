@@ -274,7 +274,11 @@ impl RecordingJsHost<'_, '_> {
         let storage = self.storage.ok_or(Error::InvalidConfig(
             "executor result storage unavailable".into(),
         ))?;
-        let path = summarize_note_output_path(note, blake3::hash(text.as_bytes()).as_bytes());
+        // The spool's digest names the path: a NOTE this run already holds
+        // with these words is reused, and the spool is dropped unpublished.
+        let mut spool = storage.code_run_reply_spool()?;
+        spool.write(text.as_bytes())?;
+        let path = summarize_note_output_path(note, &spool.digest()?);
         let held = self
             .results
             .iter()
@@ -284,8 +288,6 @@ impl RecordingJsHost<'_, '_> {
         let output = match held {
             Some(output) => output,
             None => {
-                let mut spool = storage.code_run_reply_spool()?;
-                spool.write(text.as_bytes())?;
                 match storage.publish_code_run_reply(path, spool, self.run_id, &[note], None)? {
                     Ok(output) => {
                         self.captured.push(output.clone());
