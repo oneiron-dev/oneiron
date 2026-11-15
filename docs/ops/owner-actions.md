@@ -2536,8 +2536,8 @@ The app's policy actions have host verbs too. Each runs the same action as
 - `vault.settings.wake_policy.set` with `{"policy", "idempotency_key"}` runs
   `dreamer.wake_policy.set`, which needs the owner's own credential.
 - `vault.settings.inference_defaults` with `{}` runs `inference.defaults.read`.
-- `vault.settings.inference_defaults.replace` with `{"defaults", "idempotency_key"}` runs
-  `inference.defaults.replace`.
+- The inference defaults are the setting key `models.purpose_defaults`: the owner, or a person
+  who holds the policy power over them, sets them through `vault.settings.set`.
 
 The two inference verbs need the caller's Auto ceiling. Each answers with the action's
 `outcome`. A retry with the same idempotency key gets the first call's answer.

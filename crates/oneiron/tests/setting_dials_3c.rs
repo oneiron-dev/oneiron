@@ -1,14 +1,18 @@
 //! DESIGN 15-setting-primitive, stage 2 (SETTING-DIALS D3c; Engine RULING 21:39
 //! SETTING-DIALS-PURPOSE-DEFAULTS-POWERS = A): the inference defaults are one setting key,
 //! `models.purpose_defaults`, set through the one door under DEC-0005's policy power.
-//! - the owner's table lands, every reader reads it, and a clear brings back the shipped table;
+//! - the owner's table lands, the defaults reader reads it (every reader goes through
+//!   `read_effective_defaults`), and a clear brings back the shipped table;
 //! - a person who holds the policy power over `settings.inference_defaults` (an Admin whose
 //!   Owner-minted `policy.change` grant names its target) widens and narrows at once;
 //! - a member without that power asks, and the defaults stay as they are;
 //! - over a table the owner set, a policy holder's change asks (a key that reads one row keeps a
 //!   holder clear of the owner's row);
 //! - an agent holding the key's Grant line narrows at once and asks to widen, and an agent
-//!   without the line asks for a narrowing too.
+//!   without the line asks for a narrowing too;
+//! - the owner's change that names its act surface is signed on the key's own target, as the old
+//!   door signed it under the owner's proof, and one that names none signs nothing (stage 7a-1,
+//!   RULING SETTING-7A-SIGNED-ACT-BASE = A).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_dials_3c`.
 
@@ -21,6 +25,8 @@ use oneiron::authority::{ActSurface, MachineRole};
 use oneiron::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::llm::{PurposeDefaultTable, purpose_default_grant_target};
+use oneiron::policy_setting_doors::policy_setting_target;
+use oneiron::receipt::AuthorityAuditQuery;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, set_line};
 use oneiron::store::GateDecisionId;
@@ -191,7 +197,7 @@ impl Shared {
 }
 
 #[test]
-fn the_owner_sets_the_inference_defaults_as_one_setting_row_and_every_reader_reads_it() {
+fn the_owner_sets_the_inference_defaults_as_one_setting_row_and_the_reader_reads_it() {
     let shared = Shared::new();
     applied(shared.as_owner(&widened()));
     assert_eq!(
@@ -340,6 +346,30 @@ impl Rooted {
             .set_setting(SettingCaller::Agent(agent), change(table))
             .expect("the agent's change, applied or asked")
     }
+
+    /// The owner's setting acts on the main log, as the owner's audit lists them: each entry's
+    /// detail (`<key> set` or `<key> clear`) and its target (hex).
+    fn setting_acts(&self) -> Vec<(String, String)> {
+        self.vault
+            .authority_audit(
+                &self.owner_proof,
+                &AuthorityAuditQuery {
+                    limit: Some(500),
+                    ..AuthorityAuditQuery::default()
+                },
+            )
+            .expect("the owner's audit")
+            .rows
+            .into_iter()
+            .filter(|row| row.source_op == "policy_setting")
+            .map(|row| {
+                (
+                    row.detail.unwrap_or_default(),
+                    row.subject_ref.unwrap_or_default(),
+                )
+            })
+            .collect()
+    }
 }
 
 #[test]
@@ -363,4 +393,46 @@ fn an_agent_holding_the_keys_line_narrows_at_once_and_asks_to_widen() {
     );
     applied(rooted.as_agent(lined, &narrowed()));
     assert_eq!(defaults(), narrowed(), "the narrowing is in force");
+}
+
+#[test]
+fn the_owners_change_naming_its_surface_is_signed_on_the_keys_target() {
+    let fx = Rooted::new();
+    let before = fx.setting_acts();
+    applied(
+        fx.vault
+            .set_setting(
+                SettingCaller::Owner(&fx.owner_proof),
+                SetSetting {
+                    surface: Some(ActSurface::ThisInstall),
+                    ..change(&narrowed())
+                },
+            )
+            .expect("the owner's change"),
+    );
+    let signed: Vec<(String, String)> = fx
+        .setting_acts()
+        .into_iter()
+        .filter(|act| !before.contains(act))
+        .collect();
+    assert_eq!(
+        signed,
+        [(
+            format!("{KEY} set"),
+            policy_setting_target(KEY).expect("target").to_hex()
+        )],
+        "the resident action and PUT /v1/llm/defaults pass the owner's surface: one act"
+    );
+
+    let before = fx.setting_acts();
+    applied(
+        fx.vault
+            .set_setting(SettingCaller::Owner(&fx.owner_proof), change(&widened()))
+            .expect("the owner's change with no surface"),
+    );
+    assert_eq!(
+        fx.setting_acts(),
+        before,
+        "the CLI's change names no surface, and its old setter signed nothing"
+    );
 }

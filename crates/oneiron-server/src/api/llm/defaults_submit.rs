@@ -4,15 +4,18 @@
 //! power over the inference defaults moves them both ways, and over a table the owner set asks;
 //! anyone else's change asks through a check-in, and the defaults stay as they are. The
 //! credential's grade alone never replaces them. Once a holder approves the ask, the asker's same
-//! change with that check-in applies once (`vault.settings.set` with `check_in_ref`).
+//! change with that check-in applies once (`vault.settings.set` with `check_in_ref`). The owner's
+//! change is signed from where the owner spoke (FIX 4624, FIX 6465, stage 7a-1), as the old door
+//! signed it; a person's or an agent's change names no surface and signs nothing.
 
-use axum::http::StatusCode;
+use axum::http::{Extensions, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::llm::{PurposeDefaultTable, purpose_defaults_change};
 use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 
 use super::refusal;
+use crate::api::owner_routes::machine_routes::act_surface_admitted;
 use crate::{auth::CoreAuth, server::SyncServer};
 
 /// The reason a change through this route gives.
@@ -25,6 +28,7 @@ const ROUTE: &str = "PUT /v1/llm/defaults";
 pub(super) fn submit(
     server: &SyncServer,
     auth: &CoreAuth,
+    (headers, extensions): (&HeaderMap, &Extensions),
     table: &PurposeDefaultTable,
 ) -> Response {
     let vault = &server.vault;
@@ -44,11 +48,17 @@ pub(super) fn submit(
     } else {
         None
     };
-    let caller = match (&owner, &person) {
-        (Some(owner), _) => SettingCaller::Owner(owner),
-        (None, Some(person)) => SettingCaller::Person(person),
+    let (caller, request) = match (&owner, &person) {
+        (Some(owner), _) => (
+            SettingCaller::Owner(owner),
+            SetSetting {
+                surface: Some(act_surface_admitted(server, auth, headers, extensions)),
+                ..request
+            },
+        ),
+        (None, Some(person)) => (SettingCaller::Person(person), request),
         (None, None) => match auth.principal_entity() {
-            Some(principal) => SettingCaller::Agent(principal),
+            Some(principal) => (SettingCaller::Agent(principal), request),
             None => return refusal(StatusCode::FORBIDDEN, "owner_required"),
         },
     };

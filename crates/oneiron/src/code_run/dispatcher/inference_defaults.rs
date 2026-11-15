@@ -43,13 +43,24 @@ impl HostSelfDispatcher<'_> {
             {
                 hook(vault);
             }
-            let request = crate::setting::SetSetting {
+            let change = crate::setting::SetSetting {
                 why: Some(REPLACE_ACTION.to_owned()),
                 ..crate::llm::purpose_defaults_change(&next)?
             };
-            let caller = match self.owner_proof {
-                Some(owner) => crate::setting::SettingCaller::Owner(owner),
-                None => crate::setting::SettingCaller::Agent(self.actor.entity_ref()),
+            // The owner's change is signed from where the owner's say-so reached this install,
+            // as the old door signed it under the owner's proof alone (FIX 4624, stage 7a-1).
+            let (caller, request) = match self.owner_proof {
+                Some(owner) => (
+                    crate::setting::SettingCaller::Owner(owner),
+                    crate::setting::SetSetting {
+                        surface: self.owner_surface,
+                        ..change
+                    },
+                ),
+                None => (
+                    crate::setting::SettingCaller::Agent(self.actor.entity_ref()),
+                    change,
+                ),
             };
             // The check above read its own snapshot. The ceiling is judged again in the write
             // that changes the key, so a narrowing committed in between holds the rows (H147).

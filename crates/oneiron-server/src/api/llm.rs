@@ -133,6 +133,8 @@ async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) ->
 
 async fn replace_defaults(
     auth: CoreAuth,
+    headers: axum::http::HeaderMap,
+    extensions: axum::http::Extensions,
     State(server): State<Arc<SyncServer>>,
     Json(table): Json<oneiron::llm::PurposeDefaultTable>,
 ) -> Response {
@@ -158,7 +160,7 @@ async fn replace_defaults(
     }
     // FIX 8211: the setting door judges the caller in its write: the owner's
     // and a policy-power holder's table lands; anyone else's change asks.
-    defaults_submit::submit(&server, &auth, table.table())
+    defaults_submit::submit(&server, &auth, (&headers, &extensions), table.table())
 }
 
 /// Admits a raw call: the owner, or an agent whose live Grant the owner
