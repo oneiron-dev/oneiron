@@ -57,7 +57,16 @@ impl Memory<'_> {
                 ],
             ));
         }
-        if type_byte == ENTITY_TYPE_PERSON && self.actor_class != EdgeActorClass::Human {
+        // Restriction wave 7 (C27): an agent passes to the in-transaction
+        // check, which mints a PERSON only while the owner's setting
+        // `memory.person.agent_may_mint` is on and the agent's own live Grant
+        // names this put's verb. Any other non-human class is refused here.
+        if type_byte == ENTITY_TYPE_PERSON
+            && !matches!(
+                self.actor_class,
+                EdgeActorClass::Human | EdgeActorClass::Agent
+            )
+        {
             return Err(MemoryError::new(
                 MEMORY_CODE_FORBIDDEN,
                 format!(

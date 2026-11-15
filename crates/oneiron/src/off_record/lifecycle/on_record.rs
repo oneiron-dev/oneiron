@@ -1,6 +1,8 @@
 //! A stretch on record (ARCH-0052 D5). The vault's owner, alone or in the
 //! room, or in a room any holder of this vault's write grant
-//! (#d5-save-grant), may put its stretch on record ("from here on"): later
+//! (#d5-save-grant), or alone the holder who entered it while the owner's
+//! setting `off_record.flip_alone.by_holder` is on (restriction wave 7,
+//! C24), may put its stretch on record ("from here on"): later
 //! turns land in this vault. The saving stays bound to them. Every landing
 //! checks again, in its own transaction, that they still own this vault on a
 //! live proof, or hold its grant on a live slip, and, in a room, are still in
@@ -18,7 +20,7 @@ use crate::session_overlay::{RouteTarget, SessionWriteRoute};
 
 use super::registry::session_entry_state;
 use super::room::{Hearing, is_member_in_txn, post_notice};
-use super::save_grant::SaveGrant;
+use super::save_grant::{SaveGrant, flip_alone_admitted_in_txn};
 use super::session::OffRecordSession;
 use super::types::{OffRecordMode, OffRecordNoticeAct};
 
@@ -69,7 +71,13 @@ impl OnRecordSaver {
             return Ok(false);
         };
         match self.seat {
-            None => Ok(true),
+            // Alone, a holder's saving lasts while the owner's setting
+            // `off_record.flip_alone.by_holder` that let them flip stays on
+            // (restriction wave 7, C24); the owner's lasts on their proof.
+            None => match self.proof {
+                SaverProof::Grant(_) => flip_alone_admitted_in_txn(vault, txn),
+                SaverProof::Owner(_) => Ok(true),
+            },
             Some((room, joined)) => Ok(is_member_in_txn(vault, txn, room, actor)?
                 && vault.current_join_in_txn(txn, room, actor)? == Some(joined)),
         }

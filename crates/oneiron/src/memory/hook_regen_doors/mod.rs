@@ -10,17 +10,21 @@
 //!
 //! Authority is the owner's live proof (`Memory::hook_regen_owner`), from
 //! any surface the owner is authenticated on, checked before any binding
-//! resolves.
+//! resolves; on due, get and adopt, an agent's own Grant naming the verb
+//! reads and adopts an identical candidate instead while the owner's setting
+//! `memory.hook_regen.agent_may_adopt` is on (restriction wave 7, C41).
 
+pub(crate) mod setting_keys;
 mod types;
 
 pub use types::*;
 
 use super::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MEMORY_CODE_MODEL_UNAVAILABLE, Memory,
-    MemoryError, MemoryResult,
+    MemoryError, MemoryResult, verify_actor_binding_in_txn,
 };
 use crate::EntityId;
+use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::runtime_hooks::{
     HookBodyRuntime, HookRegenActor, HookRegenCancel, HookRegenReceipt, HookRegenerator,
@@ -29,6 +33,7 @@ use crate::runtime_hooks::{
 use crate::skill_hub::pack_catalog::{HookAuthor, PackHookBinding};
 use crate::skill_hub::pack_catalog::{PackInstallDisposition, PackInstallReceipt};
 use serde::{Deserialize, Serialize};
+use setting_keys::HOOK_REGEN_AGENT_MAY_ADOPT;
 
 /// The one refusal for a binding this caller cannot read the regen of:
 /// unknown, or resting on a row this credential does not read. Neither is
@@ -49,6 +54,19 @@ fn is_body_hash(hash: &str) -> bool {
         && hash
             .bytes()
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// The regen doors' refusal of an agent caller they do not admit.
+fn hook_regen_agent_refused(verb: &str, why: &str) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!(
+            "{verb} takes the vault owner's own proof, or an agent's own Grant that names it while the owner's setting memory.hook_regen.agent_may_adopt is on: {why}"
+        ),
+        &[
+            "Call with your own owner credential, or have the owner turn on memory.hook_regen.agent_may_adopt and grant this agent the verb by name.",
+        ],
+    )
 }
 
 /// An adoption the record refuses (no candidate pending, not the candidate
@@ -89,6 +107,58 @@ impl Memory<'_> {
         !self.writes_generated()
     }
 
+    /// The agent arm of the due, get and adopt doors (restriction wave 7,
+    /// C41): this handle is an agent's, the owner's setting
+    /// `memory.hook_regen.agent_may_adopt` reads true in `txn`, and one live
+    /// Grant a live owner gave the agent confers now and lists `verb` by
+    /// name; the credential it presented must still be live. Anything else
+    /// is FORBIDDEN. The adopt arm enacts with no stamp, so only an
+    /// identical candidate adopts; a differing one waits on the owner's
+    /// stamp, refused as today.
+    fn admit_hook_regen_agent_in_txn(&self, txn: &heed::RoTxn<'_>, verb: &str) -> MemoryResult<()> {
+        verify_actor_binding_in_txn(self.vault(), txn, self.actor(), self.actor_class())?;
+        if self.actor_class() != crate::EdgeActorClass::Agent {
+            return Err(hook_regen_agent_refused(
+                verb,
+                "only the owner's own proof or an agent's own Grant reads hook regen",
+            ));
+        }
+        if let Some(slip) = self.presented_credential()
+            && !self.vault().capability_slip_is_live_in_txn(txn, slip)?
+        {
+            return Err(hook_regen_agent_refused(
+                verb,
+                "the caller's credential is no longer live",
+            ));
+        }
+        let key_on = HOOK_REGEN_AGENT_MAY_ADOPT
+            .read_in_txn(self.vault(), txn, &[], None)?
+            .value;
+        if !key_on {
+            return Err(hook_regen_agent_refused(
+                verb,
+                "the owner's setting memory.hook_regen.agent_may_adopt is off",
+            ));
+        }
+        let standing = principal_standing_or_lapse_in_txn(
+            self.vault(),
+            txn,
+            self.actor(),
+            self.actor_class(),
+            verb,
+        )?;
+        match standing.map(|standing| standing.grant) {
+            Ok(Some(_)) => Ok(()),
+            Err(NoStanding::PactStandingLapsed) => {
+                Err(hook_regen_agent_refused(verb, PACT_STANDING_LAPSED))
+            }
+            Ok(None) | Err(NoStanding::NotStanding) => Err(hook_regen_agent_refused(
+                verb,
+                "no live Grant from a live owner names this agent and lists the verb",
+            )),
+        }
+    }
+
     /// Whether this credential reads each of `rows` that exists.
     fn hook_regen_reads(&self, rows: [EntityId; 3]) -> MemoryResult<bool> {
         for row in rows {
@@ -124,7 +194,31 @@ impl Memory<'_> {
     /// binding resting on a row this credential does not read is left out,
     /// never named.
     pub fn hooks_regen_due_as(&self, owner: &AuthenticatedOwner) -> MemoryResult<Vec<EntityId>> {
-        self.hook_regen_owner(owner)?;
+        self.hooks_regen_due_as_reader(Some(owner))
+    }
+
+    /// [`Self::hooks_regen_due_as`] for the owner's proof or, without one,
+    /// an agent's own Grant naming `vault.hooks.regen.due` while the owner's
+    /// setting `memory.hook_regen.agent_may_adopt` is on. The read is the
+    /// owner's read on this credential: the owner path reads nothing
+    /// owner-specific, and a binding resting on a row this credential does
+    /// not read stays unnamed either way.
+    pub fn hooks_regen_due_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+    ) -> MemoryResult<Vec<EntityId>> {
+        match owner {
+            Some(owner) => self.hook_regen_owner(owner)?,
+            None => {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                self.admit_hook_regen_agent_in_txn(&txn, "vault.hooks.regen.due")?;
+            }
+        }
         let due = self.vault.hooks_due_for_regen()?;
         let mut listed = Vec::with_capacity(due.len());
         for (id, row) in self.vault.pack_hook_bindings()? {
@@ -148,7 +242,30 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: HookRegenBindingRequest,
     ) -> MemoryResult<Option<HookRegenView>> {
-        self.hook_regen_owner(owner)?;
+        self.hooks_regen_record_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::hooks_regen_record_as`] for the owner's proof or, without
+    /// one, an agent's own Grant naming `vault.hooks.regen.get` while the
+    /// owner's setting `memory.hook_regen.agent_may_adopt` is on. The read
+    /// is the owner's read on this credential.
+    pub fn hooks_regen_record_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: HookRegenBindingRequest,
+    ) -> MemoryResult<Option<HookRegenView>> {
+        match owner {
+            Some(owner) => self.hook_regen_owner(owner)?,
+            None => {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                self.admit_hook_regen_agent_in_txn(&txn, "vault.hooks.regen.get")?;
+            }
+        }
         self.hook_regen_binding(input.binding)?;
         Ok(self
             .vault
@@ -167,15 +284,42 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: HookRegenAdoptRequest,
     ) -> MemoryResult<PackPutReceipt> {
-        self.hook_regen_owner(owner)?;
+        self.hooks_regen_adopt_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::hooks_regen_adopt_as`] for the owner's proof or, without one,
+    /// an agent's own Grant naming `vault.hooks.regen.adopt` while the
+    /// owner's setting `memory.hook_regen.agent_may_adopt` is on. The agent
+    /// arm enacts with no stamp, through the hook author's own agent put, so
+    /// only a hook a resident agent authored adopts here and only its
+    /// identical candidate; a differing candidate keeps the record's stamp
+    /// refusal, and any other author's regen is the owner's adopt.
+    pub fn hooks_regen_adopt_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: HookRegenAdoptRequest,
+    ) -> MemoryResult<PackPutReceipt> {
+        match owner {
+            Some(owner) => self.hook_regen_owner(owner)?,
+            None => {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                self.admit_hook_regen_agent_in_txn(&txn, "vault.hooks.regen.adopt")?;
+            }
+        }
         if !is_body_hash(&input.candidate_hash) {
             return Err(MemoryError::bad_request(
                 "candidate_hash is the pending candidate body's BLAKE3, 64 lowercase hex",
             ));
         }
         self.hook_regen_binding(input.binding)?;
-        let put = PackPutReceipt::from(
-            self.vault
+        let put = PackPutReceipt::from(match owner {
+            Some(owner) => self
+                .vault
                 .adopt_hook_regen(
                     owner,
                     input.binding,
@@ -183,7 +327,30 @@ impl Memory<'_> {
                     self.hook_regen_stamped(),
                 )
                 .map_err(adopt_refusal)?,
-        );
+            None => {
+                // A granted agent installs through the hook author's own
+                // agent put, which writes no other author's binding: only a
+                // hook a resident agent authored adopts here.
+                let authored_by_agent =
+                    self.vault
+                        .pack_hook_bindings()?
+                        .into_iter()
+                        .any(|(id, row)| {
+                            id == input.binding && matches!(row.author, HookAuthor::Agent { .. })
+                        });
+                if !authored_by_agent {
+                    return Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "vault.hooks.regen.adopt on a hook no resident agent authored takes the vault owner's own proof",
+                        &["The owner's adopt enacts any author's pending candidate."],
+                    ));
+                }
+                let agent = self.write_actor();
+                self.vault
+                    .adopt_hook_regen_as_granted_agent(&agent, input.binding, &input.candidate_hash)
+                    .map_err(adopt_refusal)?
+            }
+        });
         self.produced_from_put(&put);
         Ok(put)
     }

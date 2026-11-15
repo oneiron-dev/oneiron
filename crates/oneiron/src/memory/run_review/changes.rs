@@ -362,6 +362,17 @@ impl Memory<'_> {
         owner: &AuthenticatedOwner,
         input: &RunChangesRequest,
     ) -> MemoryResult<RunChanges> {
+        self.run_changes_as_reader(Some(owner), input)
+    }
+
+    /// [`Self::run_changes_as_owner`] for the owner's proof or, without
+    /// one, an agent's own Grant naming `vault.runs.changes.get` while the
+    /// owner's setting `memory.run_review.agent_may_read` is on.
+    pub fn run_changes_as_reader(
+        &self,
+        owner: Option<&AuthenticatedOwner>,
+        input: &RunChangesRequest,
+    ) -> MemoryResult<RunChanges> {
         let run = run_key(&input.run_id)?;
         let txn = self
             .vault()
@@ -369,7 +380,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        require_owner(self, &txn, owner)?;
+        admit_run_reader(self, &txn, owner, "vault.runs.changes.get")?;
         let changes = run_changes_in_txn(&self.vault().store, &txn, &run)?;
         self.produced_from(
             changes

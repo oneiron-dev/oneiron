@@ -5,7 +5,10 @@
 //! and the owner's run of a hook's intent on this host's seat (FIX 4688).
 //! HTTP, SDK, MCP and code mode all take the owner's proof here, from whichever surface the owner is
 //! authenticated on, through the gate `door_admits` runs before any hook;
-//! the engine door revalidates it and acts as that caller. No record or
+//! the engine door revalidates it and acts as that caller, except on due,
+//! get and adopt, which take an agent credential to the engine instead while
+//! the owner's setting `memory.hook_regen.agent_may_adopt` is on
+//! (restriction wave 7, C41). No record or
 //! table is read outside the engine door.
 use std::sync::Arc;
 
@@ -14,12 +17,13 @@ use oneiron::memory::hook_regen_doors::{
     HookRegenAdoptRequest, HookRegenBindingRequest, HookRegenCancelRequest,
     HookRegenHistoryRequest, HookRegenRevertRequest, HookRegenView,
 };
+use oneiron::memory::{Memory, MemoryResult};
 use oneiron::runtime_hooks::{HookRegenCancel, HookRegenReceipt};
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
 
 use super::host_doors::no_hook_sandbox;
-use super::host_doors::support::Listed;
 use super::host_doors::support::owner_listing::as_owner;
+use super::host_doors::support::{Listed, credential_listing};
 use crate::ai_host::hook_regen::ServedHookRegenerator;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -45,11 +49,41 @@ const HISTORY_VERB: &str = "vault.hooks.regen.history";
 /// The run's public spelling.
 const RUN_VERB: &str = "vault.hooks.regen.run";
 
+/// The due, get and adopt doors for an agent credential (restriction
+/// wave 7, C41): the caller's own handle with no owner proof; the engine
+/// judges the Grant and the owner's setting. The preflight admitted only
+/// the credential's bound actor.
+async fn as_granted_agent<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&Memory<'_>) -> MemoryResult<T> + Send + 'static,
+) -> Listed<T> {
+    let caller =
+        match super::facade_actor(server, auth).map_err(super::FacadeApiError::into_memory_error) {
+            Ok(caller) => caller,
+            Err(error) => return (Err(error), Vec::new()),
+        };
+    credential_listing(server, auth, caller, verb, move |_, _, memory| act(&memory)).await
+}
+
+/// Whether this call reads through the agent arm: an agent credential that
+/// is not owner-grade, as the preflight admitted it.
+fn agent_reads(auth: &CoreAuth) -> bool {
+    auth.actor_class() == Some("agent") && !auth.is_owner_grade()
+}
+
 pub(crate) async fn vault_hooks_regen_due(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     _input: EmptyRequest,
 ) -> Listed<Vec<EntityId>> {
+    if agent_reads(auth) {
+        return as_granted_agent(server, auth, DUE_VERB, |memory| {
+            memory.hooks_regen_due_as_reader(None)
+        })
+        .await;
+    }
     as_owner(server, auth, DUE_VERB, |memory, owner| {
         memory.hooks_regen_due_as(owner)
     })
@@ -61,6 +95,12 @@ pub(crate) async fn vault_hooks_regen_get(
     auth: &CoreAuth,
     input: HookRegenBindingRequest,
 ) -> Listed<Option<HookRegenView>> {
+    if agent_reads(auth) {
+        return as_granted_agent(server, auth, GET_VERB, move |memory| {
+            memory.hooks_regen_record_as_reader(None, input)
+        })
+        .await;
+    }
     as_owner(server, auth, GET_VERB, move |memory, owner| {
         memory.hooks_regen_record_as(owner, input)
     })
@@ -72,6 +112,12 @@ pub(crate) async fn vault_hooks_regen_adopt(
     auth: &CoreAuth,
     input: HookRegenAdoptRequest,
 ) -> Listed<PackPutReceipt> {
+    if agent_reads(auth) {
+        return as_granted_agent(server, auth, ADOPT_VERB, move |memory| {
+            memory.hooks_regen_adopt_as_reader(None, input)
+        })
+        .await;
+    }
     as_owner(server, auth, ADOPT_VERB, move |memory, owner| {
         memory.hooks_regen_adopt_as(owner, input)
     })

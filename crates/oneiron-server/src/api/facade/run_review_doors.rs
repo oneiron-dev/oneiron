@@ -1,6 +1,10 @@
 //! The owner's read of a run's changes, cross-kind review and run
 //! compensation, on the caller's own credential handle. The facade refuses a
-//! non-owner before any hook runs.
+//! non-owner before any hook runs, except on the three reads an agent's own
+//! Grant may open under the owner's setting (restriction wave 7, C28):
+//! `vault.runs.changes.get`, `vault.runs.review` and `vault.runs.settlement`
+//! take an agent credential to the engine, which judges its Grant and the
+//! key; settle and revert stay the owner's alone.
 //! A settlement or a revert records where his request reached this install
 //! (`surface`, the host's own reading of it): audit only (FIX 4650).
 
@@ -38,12 +42,21 @@ pub(crate) async fn vault_runs_changes_get(
     input: RunChangesRequest,
 ) -> Listed<RunChanges> {
     const VERB: &str = "vault.runs.changes.get";
+    // Restriction wave 7 (C28): an agent credential reads through the
+    // engine, which judges its Grant and the owner's setting; the
+    // preflight admitted only its bound actor.
+    if auth.actor_class() == Some("agent") && !auth.is_owner_grade() {
+        return credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+            memory.run_changes_as_reader(None, &input)
+        })
+        .await;
+    }
     let proof = match reviewer(server, auth) {
         Ok(proof) => proof,
         Err(refusal) => return refused(refusal),
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.run_changes_as_owner(&proof, &input)
+        memory.run_changes_as_reader(Some(&proof), &input)
     })
     .await
 }
@@ -56,12 +69,21 @@ pub(crate) async fn vault_runs_review(
     input: RunReviewRequest,
 ) -> Listed<RunReview> {
     const VERB: &str = "vault.runs.review";
+    // Restriction wave 7 (C28): an agent credential reads through the
+    // engine, which judges its Grant and the owner's setting; the
+    // preflight admitted only its bound actor.
+    if auth.actor_class() == Some("agent") && !auth.is_owner_grade() {
+        return credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+            memory.review_run_as_reader(None, &input)
+        })
+        .await;
+    }
     let proof = match reviewer(server, auth) {
         Ok(proof) => proof,
         Err(refusal) => return refused(refusal),
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.review_run_as_owner(&proof, &input)
+        memory.review_run_as_reader(Some(&proof), &input)
     })
     .await
 }
@@ -95,12 +117,21 @@ pub(crate) async fn vault_runs_settlement(
     input: RunSettlementRequest,
 ) -> Listed<RunSettlement> {
     const VERB: &str = "vault.runs.settlement";
+    // Restriction wave 7 (C28): an agent credential reads through the
+    // engine, which judges its Grant and the owner's setting; the
+    // preflight admitted only its bound actor.
+    if auth.actor_class() == Some("agent") && !auth.is_owner_grade() {
+        return credential_listing(server, auth, caller, VERB, move |_, _, memory| {
+            memory.run_settlement_as_reader(None, &input)
+        })
+        .await;
+    }
     let proof = match reviewer(server, auth) {
         Ok(proof) => proof,
         Err(refusal) => return refused(refusal),
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        memory.run_settlement_as_owner(&proof, &input)
+        memory.run_settlement_as_reader(Some(&proof), &input)
     })
     .await
 }
