@@ -289,11 +289,13 @@ impl Vault {
     /// escrow must name the recipient it was sealed
     /// to, so the act never moves an escrow (the world kit's included) to
     /// another key; a presented password or passkey must be one whose wrap
-    /// opened in [`Self::prepare_data_key_generation`]. The caller holds the
-    /// custody publication policy lock (`Store::custody_policy_guard`) from
-    /// before the prepare until after [`Self::finish_data_key_generation`],
-    /// so no custody publication pass seals a head under the replaced key
-    /// after the act.
+    /// opened in [`Self::prepare_data_key_generation`]. No custody head is
+    /// sealed under the replaced key after the act whatever the caller holds:
+    /// a seal checks its recipients' key against the stored state after its
+    /// census. A caller that holds the custody publication policy lock
+    /// (`Store::custody_policy_guard`) from before the prepare until after
+    /// [`Self::finish_data_key_generation`] also spares a pass that would
+    /// stay pending for it.
     pub(crate) fn start_data_key_generation_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -509,9 +511,9 @@ impl Vault {
             ));
         }
         // No custody publication pass runs from here until the new key is
-        // held: a pass that read the old key's subkey would seal under it a
-        // head naming what the new generation covers. Released at the
-        // finish, before the door's later work, which may publish.
+        // held, so none reads the old key's subkey and then stays pending at
+        // its seal's check of the stored key. Released at the finish, before
+        // the door's later work, which may publish.
         let custody_policy = self.store.custody_policy_guard();
         let draft = self.prepare_data_key_generation(ways)?;
         let transition = self.begin_wrap_transition()?;
