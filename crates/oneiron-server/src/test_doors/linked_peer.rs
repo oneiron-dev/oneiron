@@ -15,6 +15,10 @@ use serde_json::Value;
 use crate::cloud_registration::{Failure, PeerControl, PeerReport, PeerState};
 use crate::server::SyncServer;
 
+/// What the scripted control plane does with a link before it answers: a
+/// peer that redeems it first, say.
+pub type OnCreate = Box<dyn FnMut(&str) + Send>;
+
 /// A control plane the test scripts: it keeps each call it took, takes or
 /// refuses each as the test sets, and reports the peer as the test sets.
 #[derive(Default)]
@@ -24,6 +28,8 @@ pub struct ScriptedControlPlane {
     pub links: Mutex<Vec<String>>,
     /// The peer ids it took a removal of, in order.
     pub removals: Mutex<Vec<String>>,
+    /// Runs with each link it is handed, before it answers.
+    pub on_create: Mutex<Option<OnCreate>>,
     /// It refuses every peer request (a 503) once it has seen its link.
     pub refuse_create: AtomicBool,
     /// Every removal is lost on the way (no answer).
@@ -38,14 +44,20 @@ impl PeerControl for ScriptedControlPlane {
     }
 
     fn create(&self, pairing_link: &str) -> Result<String, Failure> {
-        let mut links = self.links.lock().expect("scripted links");
-        links.push(pairing_link.to_owned());
+        let handed = {
+            let mut links = self.links.lock().expect("scripted links");
+            links.push(pairing_link.to_owned());
+            links.len()
+        };
+        if let Some(on_create) = self.on_create.lock().expect("scripted hook").as_mut() {
+            on_create(pairing_link);
+        }
         if self.refuse_create.load(Ordering::SeqCst) {
             return Err(Failure::Unavailable(Some(
                 "the control plane is down".to_owned(),
             )));
         }
-        Ok(format!("peer-{}", links.len()))
+        Ok(format!("peer-{handed}"))
     }
 
     fn report(&self, _peer_id: &str) -> Result<PeerReport, Failure> {

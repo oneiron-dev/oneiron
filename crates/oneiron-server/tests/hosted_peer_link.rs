@@ -15,9 +15,12 @@
 //! control plane lost is asked again by the next unlink, and so is a machine
 //! removal this install could not sign, while the control plane is still
 //! asked. A link the control plane refuses, or one unlinked before it is
-//! redeemed, can no longer be redeemed. The link keeps its origin's path;
-//! an origin with a query or a fragment is refused before anything is
-//! minted. A vault holds one hosted peer at a time.
+//! redeemed, can no longer be redeemed, and a peer that redeemed it before
+//! the refusal is revoked as an unlink revokes it. The link keeps its
+//! origin's path; an origin a hosted peer does not reach (not https, a
+//! loopback or private address) or one with a query or a fragment is
+//! refused before anything is minted. A vault holds one hosted peer at a
+//! time.
 //!
 //! On unmodified main the file does not build: there is no
 //! `test_doors::linked_peer`.
@@ -33,8 +36,8 @@
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
 
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
@@ -189,6 +192,16 @@ fn redeem(
     line: &str,
     request: &oneiron::authority::MachineEnrolmentRequest,
 ) -> oneiron::Result<CapabilitySlip> {
+    redeem_at(&host.vault, &host.issuer, line, request)
+}
+
+/// [`redeem`] at `vault` under its `issuer`.
+fn redeem_at(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    line: &str,
+    request: &oneiron::authority::MachineEnrolmentRequest,
+) -> oneiron::Result<CapabilitySlip> {
     let (origin, code, holder, pin) = parse_pinned_pairing_link(line)?;
     assert_eq!(
         origin, ORIGIN,
@@ -197,9 +210,9 @@ fn redeem(
     let pairing_key = SigningKey::from_bytes(&[0x2c; 32]);
     let device_key = pairing_key.verifying_key().to_bytes();
     let transcript = pairing_binding_transcript_pinned(&code, &device_key, &holder, pin.as_ref())?;
-    host.vault
+    vault
         .redeem_machine_pairing_link(
-            &host.issuer,
+            issuer,
             &code,
             &holder,
             device_key,
@@ -460,13 +473,18 @@ fn a_machine_removal_this_install_cannot_sign_still_asks_the_control_plane_and_s
 }
 
 #[test]
-fn a_link_keeps_its_origins_path_and_refuses_a_query_or_fragment() {
+fn a_link_keeps_its_origins_path_and_refuses_one_no_hosted_peer_reaches() {
     run_on_engine_stack(async {
         let host = host();
         let control = ScriptedControlPlane::default();
         for origin in [
             "https://laptop.example#pair",
             "https://laptop.example/?via=mail",
+            "http://laptop.example",
+            "http://127.0.0.1:8080",
+            "https://localhost",
+            "https://10.0.0.5",
+            "https://[::1]",
         ] {
             assert_eq!(
                 linked_peer::link(&host.server, &host.owner, origin, &control),
@@ -490,5 +508,45 @@ fn a_link_keeps_its_origins_path_and_refuses_a_query_or_fragment() {
         let (origin, ..) =
             parse_pinned_pairing_link(&handed_link(&control)).expect("the handed link parses");
         assert_eq!(origin, "https://laptop.example/oneiron");
+    });
+}
+
+#[test]
+fn a_peer_that_redeemed_before_its_create_was_refused_is_revoked() {
+    run_on_engine_stack(async {
+        let host = host();
+        let control = ScriptedControlPlane::default();
+        let (peer, request) = Peer::new(&host);
+        let redeemed = Arc::new(Mutex::new(None));
+        {
+            let vault = Arc::clone(&host.vault);
+            let redeemed = Arc::clone(&redeemed);
+            *control.on_create.lock().expect("scripted hook") =
+                Some(Box::new(move |line: &str| {
+                    let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
+                    let slip = redeem_at(&vault, &issuer, line, &request)
+                        .expect("the peer redeems before the control plane answers");
+                    *redeemed.lock().expect("the early slip") = Some(slip);
+                }));
+        }
+        control.refuse_create.store(true, Ordering::SeqCst);
+
+        let refusal = host.link(&control).expect_err("the control plane refuses");
+        assert!(refusal.starts_with("ControlPlane("), "{refusal}");
+        let slip = redeemed
+            .lock()
+            .expect("the early slip")
+            .take()
+            .expect("the peer redeemed its link");
+        assert!(
+            !host.slip_is_live(&slip),
+            "the early peer's slip is revoked"
+        );
+        let folded = host.fold_machine(peer.machine).expect("the peer's machine");
+        assert!(
+            folded.roster.as_ref().is_some_and(|roster| roster.removed),
+            "its machine is removed"
+        );
+        assert_eq!(host.status(&control)["state"], "not_linked");
     });
 }

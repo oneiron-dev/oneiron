@@ -111,7 +111,7 @@ fn link_refusal(refusal: LinkRefusal) -> ApiError {
             "Start `oneiron serve` with ONEIRON_MESH_BIND set.",
         ),
         LinkRefusal::OriginNotRedeemable => ApiError::bad_request(
-            "origin must be an https:// origin, or http:// on this machine, with no query or fragment",
+            "origin must be an https:// origin the hosted peer reaches (no loopback or private address), with no query or fragment",
             Some("origin"),
         ),
         LinkRefusal::NoHostIssuer => conflict(

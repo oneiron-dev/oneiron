@@ -9,8 +9,10 @@
 //! together ([`oneiron::Vault::issue_linked_peer_link`]) and hands the
 //! control plane the link's one-line form, at the origin the peer redeems it
 //! at, as `oneiron device enrol` does; the redeem records the machine it
-//! enrolled. A control plane that does not take the request leaves nothing:
-//! the link is spent unread and the row dropped.
+//! enrolled. A control plane that does not take the request, or whose
+//! answer is lost, may have handed the link on first: the link is revoked
+//! here as an unlink revokes it, and the row dropped. One link act runs at a
+//! time, so a link's request and an unlink never act on each other's row.
 //!
 //! An unlink (RULING L10-16-UNLINK = A) revokes the peer here at once: its
 //! machine is removed, which is terminal, its mesh pairing and grants are
@@ -22,6 +24,9 @@
 //! removal the roster refused (this install carrying no live profile to sign
 //! the owner's act, for one): the peer's slips are revoked all the same, and
 //! the control plane is still asked.
+
+use std::net::{IpAddr, Ipv4Addr};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use oneiron::authority::{
     ActSurface, FoldedMachine, LinkedPeer, LinkedPeerIssued, MachineRole,
@@ -43,6 +48,15 @@ pub(crate) const PEER_ERASURE: &str = "The control plane erases the hosted peer'
 /// The slip id no slip has (each is random), so a holder's revoke keeps
 /// none of its slips.
 const KEEP_NO_SLIP: [u8; 32] = [0; 32];
+
+/// One link act at a time in this process: a link's control-plane request
+/// and an unlink never interleave, so neither acts on a row the other made
+/// or took half way (a late answer to a link an unlink already took, say).
+static LINK_ACTS: Mutex<()> = Mutex::new(());
+
+fn link_acts() -> MutexGuard<'static, ()> {
+    LINK_ACTS.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// The vault's linked-peer row as the owner reads it.
 #[derive(Debug, Serialize)]
@@ -103,13 +117,15 @@ pub(crate) enum LinkRefusal {
     /// This serve runs no mesh listener, and the peer dials this machine
     /// over the mesh (canon 0024: "The link rides the iroh mesh").
     MeshListenerRequired,
-    /// The origin is neither `https://` nor `http://` on this machine, so
-    /// no peer's redeem would go there, or it carries a query or a fragment,
-    /// which the one-line link cannot.
+    /// The origin is not one a hosted peer redeems at: not `https://`, or at
+    /// a loopback or private address, which from the cloud names the peer's
+    /// own network; or it carries a query or a fragment, which the one-line
+    /// link cannot.
     OriginNotRedeemable,
     /// The host holds no slip issuer, so no link can be signed.
     NoHostIssuer,
-    /// The control plane did not take the request; nothing is left here.
+    /// The control plane did not take the request, or its answer was lost:
+    /// the link is revoked here as an unlink revokes it.
     ControlPlane(String),
 }
 
@@ -190,7 +206,7 @@ pub(crate) struct UnlinkReceipt {
 /// the control plane the link's one-line form at `origin`. Nothing is
 /// minted unless the vault holds no linked peer, `control` is the live
 /// registration's peer calls, `mesh_listener` says this serve's mesh
-/// listener runs, and the peer's redeem would go to `origin`.
+/// listener runs, and `origin` is one a hosted peer redeems at.
 ///
 /// # Errors
 /// The owner proof's own; storage faults.
@@ -202,6 +218,7 @@ pub(crate) fn link(
     control: Result<&dyn PeerControl, String>,
     mesh_listener: bool,
 ) -> oneiron::Result<Result<LinkedPeerView, LinkRefusal>> {
+    let _acts = link_acts();
     let vault = server.vault();
     if vault.linked_peer_as_owner(owner)?.is_some() {
         return Ok(Err(LinkRefusal::AlreadyLinked));
@@ -218,10 +235,7 @@ pub(crate) fn link(
     };
     // The peer redeems at the origin's path, as `oneiron device enrol` does;
     // a query or a fragment would not survive the one-line link.
-    if !crate::device_sync::enrolment::redeemable(&origin)
-        || origin.query().is_some()
-        || origin.fragment().is_some()
-    {
+    if !peer_reaches(&origin) || origin.query().is_some() || origin.fragment().is_some() {
         return Ok(Err(LinkRefusal::OriginNotRedeemable));
     }
     let Some(issuer) = server.host_issuer() else {
@@ -242,20 +256,28 @@ pub(crate) fn link(
         link.pin.as_ref(),
     ));
     match control.create(line.as_str()) {
-        Ok(peer_id) => match vault.record_linked_peer_id_as_owner(owner, &peer_id)? {
-            Some(peer) => Ok(Ok(LinkedPeerView::from(&peer))),
-            // An unlink ran while the request did: the peer it made goes too.
-            None => {
-                let removal = control.remove(&peer_id).map_err(|failure| failure.reason());
-                Ok(Err(LinkRefusal::ControlPlane(format!(
-                    "an unlink ran while the link did; the peer's removal: {}",
-                    removal.err().as_deref().unwrap_or("accepted")
-                ))))
+        Ok(peer_id) => {
+            match vault.record_linked_peer_id_as_owner(issuer, owner, &code, &peer_id)? {
+                Some(peer) => Ok(Ok(LinkedPeerView::from(&peer))),
+                // This link's row is gone (an unlink took it): the peer it made
+                // goes too.
+                None => {
+                    let removal = control.remove(&peer_id).map_err(|failure| failure.reason());
+                    Ok(Err(LinkRefusal::ControlPlane(format!(
+                        "an unlink ran while the link did; the peer's removal: {}",
+                        removal.err().as_deref().unwrap_or("accepted")
+                    ))))
+                }
             }
-        },
+        }
+        // The control plane may have handed the peer its link before its
+        // answer was refused or lost, and the peer may have redeemed it.
         Err(failure) => {
-            vault.unlink_linked_peer_as_owner(owner)?;
-            vault.forget_linked_peer_as_owner(owner)?;
+            if let Some(peer) = vault.unlink_linked_peer_as_owner(owner)?
+                && revoke_here(server, owner, surface, &peer)?.settled()
+            {
+                vault.forget_linked_peer_as_owner(owner)?;
+            }
             Ok(Err(LinkRefusal::ControlPlane(failure.reason())))
         }
     }
@@ -314,29 +336,12 @@ pub(crate) fn unlink(
     surface: ActSurface,
     control: Result<&dyn PeerControl, String>,
 ) -> oneiron::Result<Option<UnlinkReceipt>> {
+    let _acts = link_acts();
     let vault = server.vault();
     let Some(peer) = vault.unlink_linked_peer_as_owner(owner)? else {
         return Ok(None);
     };
-    let issuer = server.host_issuer();
-    // Its slips go first: nothing after this can leave one live.
-    let slips_revoked = match issuer {
-        Some(issuer) => vault
-            .revoke_held_capability_slips(issuer, &peer.holder.to_hex(), KEEP_NO_SLIP)?
-            .len(),
-        None => 0,
-    };
-    let mut mesh_revoked = false;
-    let machine_removal = match peer.machine {
-        None => MachineRemoval::NoMachine,
-        Some(machine) => {
-            let removal = remove_machine(vault, owner, surface, machine)?;
-            if let Some(issuer) = issuer {
-                mesh_revoked = vault.revoke_removed_machine_mesh(issuer, machine)?;
-            }
-            removal
-        }
-    };
+    let revoked = revoke_here(server, owner, surface, &peer)?;
     let removal = match (&peer.peer_id, control) {
         (None, _) => PeerRemoval::NothingToRemove,
         (Some(peer_id), Ok(control)) => match control.remove(peer_id) {
@@ -350,7 +355,7 @@ pub(crate) fn unlink(
     if matches!(
         removal,
         PeerRemoval::Accepted | PeerRemoval::NothingToRemove
-    ) && !matches!(machine_removal, MachineRemoval::Refused { .. })
+    ) && revoked.settled()
     {
         vault.forget_linked_peer_as_owner(owner)?;
     }
@@ -360,12 +365,96 @@ pub(crate) fn unlink(
         machine: peer
             .machine
             .map(|machine| PeerMachine::of(machine, fold.machine(machine))),
-        machine_removal,
-        mesh_revoked,
-        slips_revoked,
+        machine_removal: revoked.machine_removal,
+        mesh_revoked: revoked.mesh_revoked,
+        slips_revoked: revoked.slips_revoked,
         removal,
         erasure: PEER_ERASURE,
     }))
+}
+
+/// What an unlink did here, before the control plane is asked.
+struct RevokedHere {
+    slips_revoked: usize,
+    machine_removal: MachineRemoval,
+    mesh_revoked: bool,
+}
+
+impl RevokedHere {
+    /// Whether nothing is owed here: only a refused machine removal is.
+    const fn settled(&self) -> bool {
+        !matches!(self.machine_removal, MachineRemoval::Refused { .. })
+    }
+}
+
+/// Revokes the peer here at once. Every slip its holder or its machine
+/// holds goes first, its mesh pairing and grants among them (the machine
+/// holds those), so nothing after this, a refused removal included, leaves
+/// one live. Then its machine is removed and its mesh binding revoked.
+fn revoke_here(
+    server: &SyncServer,
+    owner: &AuthenticatedOwner,
+    surface: ActSurface,
+    peer: &LinkedPeer,
+) -> oneiron::Result<RevokedHere> {
+    let vault = server.vault();
+    let issuer = server.host_issuer();
+    let mut slips_revoked = 0_usize;
+    if let Some(issuer) = issuer {
+        for holder in std::iter::once(peer.holder).chain(peer.machine) {
+            let revoked =
+                vault.revoke_held_capability_slips(issuer, &holder.to_hex(), KEEP_NO_SLIP)?;
+            slips_revoked = slips_revoked.saturating_add(revoked.len());
+        }
+    }
+    let mut mesh_revoked = false;
+    let machine_removal = match peer.machine {
+        None => MachineRemoval::NoMachine,
+        Some(machine) => {
+            let removal = remove_machine(vault, owner, surface, machine)?;
+            if let Some(issuer) = issuer {
+                mesh_revoked = vault.revoke_removed_machine_mesh(issuer, machine)?;
+            }
+            removal
+        }
+    };
+    Ok(RevokedHere {
+        slips_revoked,
+        machine_removal,
+        mesh_revoked,
+    })
+}
+
+/// Whether a hosted peer redeems at `origin`: `https://`, whose name and
+/// certificate its client verifies, at a host that is not a loopback or
+/// private address. From the cloud those name the peer's own network, never
+/// this machine. A name that resolves to a private address is the control
+/// plane's egress to refuse.
+fn peer_reaches(origin: &reqwest::Url) -> bool {
+    let Some(host) = origin.host_str() else {
+        return false;
+    };
+    let host = host.trim_matches(['[', ']']);
+    let reachable = match host.parse::<IpAddr>() {
+        Ok(IpAddr::V4(ip)) => !local_ipv4(ip),
+        Ok(IpAddr::V6(ip)) => {
+            !(ip.is_loopback()
+                || ip.is_unspecified()
+                || ip.is_unique_local()
+                || ip.is_unicast_link_local()
+                || ip.to_ipv4_mapped().is_some_and(local_ipv4))
+        }
+        Err(_) => {
+            let name = host.trim_end_matches('.').to_ascii_lowercase();
+            name != "localhost" && !name.ends_with(".localhost")
+        }
+    };
+    origin.scheme() == "https" && reachable
+}
+
+/// Whether `ip` is this machine's or a private network's.
+const fn local_ipv4(ip: Ipv4Addr) -> bool {
+    ip.is_loopback() || ip.is_private() || ip.is_link_local() || ip.is_unspecified()
 }
 
 /// Removes the peer's machine from the roster, unless a removal already

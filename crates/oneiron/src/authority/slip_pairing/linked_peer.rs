@@ -125,23 +125,27 @@ impl Vault {
         LINKED_PEER.get(&self.store, &txn, &())
     }
 
-    /// Records the peer's id at the control plane, which took the link. A
-    /// row an unlink already reached keeps no id it did not have; `None`
-    /// when no linked, unlinked-free row stands.
+    /// Records the peer's id at the control plane on the row of the link it
+    /// took: the one whose code is `code`, matched by its keyed hash, so an
+    /// id never lands on another link's row. A row an unlink already reached
+    /// keeps no id it did not have; `None` when no such row stands.
     ///
     /// # Errors
     /// The owner proof's own; storage faults.
     pub fn record_linked_peer_id_as_owner(
         &self,
+        issuer: &HostSlipIssuer,
         owner: &crate::consent::AuthenticatedOwner,
+        code: &str,
         peer_id: &str,
     ) -> Result<Option<LinkedPeer>> {
+        let link_key = pairing_row_key(issuer, code)?;
         let mut txn = self.store.env.write_txn()?;
         owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let Some(mut peer) = LINKED_PEER.get(&self.store, &txn, &())? else {
             return Ok(None);
         };
-        if peer.unlinked_at.is_some() {
+        if peer.link_key != link_key || peer.unlinked_at.is_some() {
             return Ok(None);
         }
         peer.peer_id = Some(peer_id.to_owned());
