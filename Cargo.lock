@@ -8495,7 +8495,11 @@ dependencies = [
 name = "oneiron-keystore"
 version = "0.1.0"
 dependencies = [
+ "block2",
  "core-foundation 0.10.1",
+ "objc2",
+ "objc2-foundation",
+ "objc2-local-authentication",
  "security-framework",
  "security-framework-sys",
  "tempfile",
