@@ -133,7 +133,8 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 10_000,
-                &body_bytes
+                None,
+                &body_bytes,
             )
             .commit()
             .is_err(),
@@ -155,7 +156,8 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 10_000,
-                &crate::claim::encode_claim_body(&laundered).unwrap()
+                None,
+                &crate::claim::encode_claim_body(&laundered).unwrap(),
             )
             .commit()
             .is_err(),
@@ -192,6 +194,9 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
     let handoff =
         crate::claim::history_projection::trusted_machine_handoff(&vault.store, &local_txn, id)
             .unwrap();
+    let history_rows =
+        crate::claim::history_projection::machine_history_rows(&vault.store, &local_txn, id)
+            .unwrap();
     drop(local_txn);
     let scope = handoff.scope.clone();
     let expected_signer = issuer.public_key();
@@ -201,6 +206,7 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
         expected_signer: &expected_signer,
         scope: &scope,
         previous_handoff_hash: handoff.previous_handoff_hash,
+        previous_heads: history_rows.previous_heads(),
         challenge: &handoff.challenge,
     };
     assert!(
@@ -220,6 +226,7 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
             crate::registry::ENTITY_TYPE_CLAIM,
             at,
             10_000,
+            None,
             &body_bytes,
         )
         .commit()
@@ -262,6 +269,7 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
                     end: header.occurred_end,
                 },
                 header.learned_at,
+                None,
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
             )
             .commit()
@@ -292,7 +300,8 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 10_000,
-                &body_bytes
+                None,
+                &body_bytes,
             )
             .commit()
             .is_err(),
@@ -340,6 +349,7 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
             crate::registry::ENTITY_TYPE_CLAIM,
             at,
             10_000,
+            None,
             &unbound_bytes,
         )
         .commit()
@@ -379,7 +389,8 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 10_000,
-                &crate::claim::encode_claim_body(&spoof).unwrap()
+                None,
+                &crate::claim::encode_claim_body(&spoof).unwrap(),
             )
             .commit()
             .is_err()
@@ -456,7 +467,8 @@ fn machine_enrollment_and_signed_claim_verify_at_all_write_doors() {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 10_000,
-                &body_bytes
+                None,
+                &body_bytes,
             )
             .commit()
             .is_err(),
@@ -507,6 +519,7 @@ fn unsigned_machine_claim_stays_quarantined_when_actor_arrives_after_replay() {
             crate::registry::ENTITY_TYPE_CLAIM,
             at,
             10,
+            None,
             &bytes,
         )
         .commit()
@@ -698,7 +711,14 @@ fn owner_approval_and_machine_supersession_follow_signed_history() {
     assert!(
         vault
             .batch()
-            .put_replicated(&id, crate::registry::ENTITY_TYPE_CLAIM, at, 10, &original)
+            .put_replicated(
+                &id,
+                crate::registry::ENTITY_TYPE_CLAIM,
+                at,
+                10,
+                None,
+                &original
+            )
             .commit()
             .is_err(),
         "stale valid Proposed birth cannot roll back owner approval"
@@ -749,7 +769,8 @@ fn owner_approval_and_machine_supersession_follow_signed_history() {
                 crate::registry::ENTITY_TYPE_CLAIM,
                 at,
                 10,
-                &crate::claim::encode_claim_body(&old_birth).unwrap()
+                None,
+                &crate::claim::encode_claim_body(&old_birth).unwrap(),
             )
             .commit()
             .is_err()
@@ -951,7 +972,7 @@ fn orphan_peer_transition_is_quarantined_before_it_can_poison_a_target() {
     let body = crate::claim::encode_claim_body(&record).unwrap();
     let result = vault
         .batch()
-        .put_replicated(&id, crate::registry::ENTITY_TYPE_CLAIM, at, 1, &body)
+        .put_replicated(&id, crate::registry::ENTITY_TYPE_CLAIM, at, 1, None, &body)
         .commit();
     assert!(matches!(
         result,

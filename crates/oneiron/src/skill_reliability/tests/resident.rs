@@ -148,13 +148,35 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
     }
     let rows = run_attribution_projector(&vault, 0)?;
     project_skill_reliability(&vault, &rows)?;
-    let ranked = rank_resident_skill_versions(&vault, &a, &[a_old, a_new], "fixture/model@1")?;
+    let ranked = rank_resident_skill_versions(
+        &vault,
+        &a,
+        &[a_old, a_new],
+        "fixture/model@1",
+        &reliability_query(),
+    )?;
     assert_eq!(ranked[0].0, a_new);
     assert!(ranked[0].1 > ranked[1].1);
     assert!(
-        rank_resident_skill_versions(&vault, &a, &[a_old, b_version], "fixture/model@1").is_err()
+        rank_resident_skill_versions(
+            &vault,
+            &a,
+            &[a_old, b_version],
+            "fixture/model@1",
+            &reliability_query(),
+        )
+        .is_err()
     );
-    assert!(rank_resident_skill_versions(&vault, &a, &[a_old, base], "fixture/model@1").is_err());
+    assert!(
+        rank_resident_skill_versions(
+            &vault,
+            &a,
+            &[a_old, base],
+            "fixture/model@1",
+            &reliability_query(),
+        )
+        .is_err()
+    );
     let EnqueueOutcome::Enqueued(selection) = queue.enqueue(EnqueueAttempt {
         kind: "resident.selected".into(),
         payload: Vec::new(),
@@ -183,6 +205,7 @@ fn version_bandit_ranks_only_one_residents_forks_and_own_receipts() -> Result<()
             "resident-selected",
             leased.attempt_count,
             "fixture/model@1",
+            &reliability_query(),
             40,
         )?
         .expect("candidate");

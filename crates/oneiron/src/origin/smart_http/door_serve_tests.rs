@@ -1,6 +1,7 @@
 //! Serve command and door tests: closed env/argv, vetted hook, unlandable names,
 //! framed blobs, coordinator, door request parse, repo names, noop seam, dial.
 
+use super::protected_ref_confirm::ProtectedRefPasses;
 use super::tests::{git, landing_outcome, landing_time, seeded_repo, temp_vault};
 use super::*;
 use crate::credential_door::PushedBlob;
@@ -262,7 +263,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
             &actor.to_hex(),
             &unpinned_repo_ref(&root),
             IpAddr::V4(Ipv4Addr::LOCALHOST),
-            now_secs(),
+            crate::unix_seconds_now(),
         )
         .expect("noop stamp");
     vault
@@ -325,7 +326,7 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
                     provenance_claim_id: attribution.provenance_claim_id,
                     actor_id: actor,
                     occurred: landing_time(),
-                    learned_at: now_secs(),
+                    learned_at: crate::unix_seconds_now(),
                 }
             )
             .is_err(),
@@ -333,7 +334,13 @@ fn smart_http_noop_evidence_never_claims_landed_policy_or_scanning() {
     );
     assert!(
         vault
-            .record_receive_pack_intent(&unpinned_repo_ref(&root), &stamp, &door)
+            .record_receive_pack_intent(
+                &unpinned_repo_ref(&root),
+                &stamp,
+                &door,
+                None,
+                &ProtectedRefPasses::default()
+            )
             .is_err()
     );
     assert!(

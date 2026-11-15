@@ -34,12 +34,14 @@ fn read_saved(
         WeaveDigestReader::Person(id)
         | WeaveDigestReader::Owner(id)
         | WeaveDigestReader::Agent(id) => id,
+        WeaveDigestReader::Admin(key) => key.actor(),
     };
     let scoped = vault.scoped_read(ScopedReadActorKey::new(id.to_hex()).unwrap());
     let role = match reader {
         WeaveDigestReader::Person(id) => WeaveReader::Person(id),
         WeaveDigestReader::Owner(_) => WeaveReader::Owner(owner),
         WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
+        WeaveDigestReader::Admin(_) => unreachable!("read_saved never serves an Admin reader"),
     };
     scoped.read_weave_digest(role, due)
 }
@@ -392,6 +394,7 @@ fn erased_upstream_source_scrubs_derived_claim_digest_even_after_regeneration() 
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred: TimeRange { start: 2, end: 2 },
             learned_at: 2,
+            row_version: 0,
             body: encode_claim_body(&claim("new source"))?,
         };
         // The record is a regeneration fixture. The production regeneration
@@ -651,6 +654,7 @@ fn saved_private_claim_cannot_be_authorized_by_a_new_public_revision() -> Result
             entity_type: crate::registry::ENTITY_TYPE_CLAIM,
             occurred: TimeRange { start: 2, end: 2 },
             learned_at: 2,
+            row_version: 0,
             body: encode_claim_body(&public)?,
         };
         // Controlled revision change in the fixture: scope checks must not

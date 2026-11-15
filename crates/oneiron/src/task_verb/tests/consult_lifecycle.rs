@@ -168,6 +168,7 @@ fn result_contract_is_addressed_and_partitioned() {
                     evidence_refs: Vec::new(),
                 },
                 completed_at: CONSULT_NOW + 10,
+                measured_spend: None,
             },
         )
         .expect_err("an answer without evidence is not an answer");
@@ -238,6 +239,7 @@ fn standalone_consult_with_option_replays_identically() {
             evidence_refs: vec![question],
         },
         completed_at: CONSULT_NOW + 10,
+        measured_spend: None,
     };
     let facade = vault.memory(peer, EdgeActorClass::Agent);
     let first = facade
@@ -272,8 +274,7 @@ fn answer_and_expiry_contend_for_one_local_transition() {
         .expect("the first consult is answered before the deadline");
 
     let report = vault
-        .memory(asker, EdgeActorClass::Agent)
-        .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
+        .settle_due_consults(CONSULT_DEADLINE + 1, &|_| Ok(Some(digest_route())))
         .expect("sweep the due consults");
     let late = peer_facade
         .land_consult_result(
@@ -389,13 +390,12 @@ fn expiry_digest_is_once_per_task_and_recovers_from_the_crash_window() {
     let asker = own_agent(&vault);
     grant_outbound(&vault, asker, 0xD1);
     let (task_ref, _peer, _question) = open_consult(&vault);
-    let facade = vault.memory(asker, EdgeActorClass::Agent);
 
-    let first = facade
-        .settle_due_consults(CONSULT_DEADLINE + 1, &digest_route())
+    let first = vault
+        .settle_due_consults(CONSULT_DEADLINE + 1, &|_| Ok(Some(digest_route())))
         .expect("first sweep expires and notifies");
-    let second = facade
-        .settle_due_consults(CONSULT_DEADLINE + 2, &digest_route())
+    let second = vault
+        .settle_due_consults(CONSULT_DEADLINE + 2, &|_| Ok(Some(digest_route())))
         .expect("second sweep is a no-op");
     let sends_after_two_sweeps = vault.connector_send_tasks().expect("connector sends").len();
 
@@ -415,8 +415,8 @@ fn expiry_digest_is_once_per_task_and_recovers_from_the_crash_window() {
             .expect("clear the follow-up marker");
         wtxn.commit().expect("commit");
     }
-    let recovered = facade
-        .settle_due_consults(CONSULT_DEADLINE + 3, &digest_route())
+    let recovered = vault
+        .settle_due_consults(CONSULT_DEADLINE + 3, &|_| Ok(Some(digest_route())))
         .expect("the sweep re-drives an undigested expiry");
     let sends_after_recovery = vault.connector_send_tasks().expect("connector sends").len();
 
@@ -522,14 +522,9 @@ fn consult_task_syncs_and_no_attempt_row_follows_it() {
 fn a_consult_answer_lands_only_inside_its_deadline_on_the_engine_clock() {
     let clock = crate::ports::ManualClock::new(CONSULT_NOW + 10);
     let dir = tempfile::tempdir().expect("tempdir");
-    let vault = Vault::open(
-        dir.path(),
-        VaultConfig {
-            store_clock: clock.bundle(),
-            ..VaultConfig::default()
-        },
-    )
-    .expect("open vault");
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("open vault");
     let asker = own_agent(&vault);
     grant_outbound(&vault, asker, 0xD1);
     let (on_time, peer, question) = open_consult(&vault);

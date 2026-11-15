@@ -17,16 +17,20 @@ fn input() -> WitnessTurn {
     WitnessTurn {
         conversation_ref: EntityId::now().to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
+        thread_audience: None,
         occurred_at: 10,
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author: WitnessAuthor::User,
             message_type: "dialogue".to_owned(),
             content: String::new(),
+            parts: None,
             metadata: None,
             is_visible: true,
             order: 0,
+            quote: None,
         }],
+        assertions: Default::default(),
     }
 }
 fn streamed(cadence: StreamCadence) -> MessageWriteMode {

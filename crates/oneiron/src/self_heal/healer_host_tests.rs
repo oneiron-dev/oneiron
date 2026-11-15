@@ -36,6 +36,7 @@ fn external_runner_reads_failure_corpus_and_patch_release_is_human_only() {
     let event = DiagnosticEvent {
         detector_id: "test.failure".into(),
         event_class: DiagnosticEventClass::TestFailure,
+        signal: None,
         actor_class: "system".into(),
         actor_ref: None,
         source: DiagnosticSourceKind::Receipt,
@@ -215,6 +216,7 @@ fn counted_burst_stays_proposed_one_check_and_one_reversal() {
     v.snapshot_checkpoint(&checkpoint, 100).unwrap();
     let (restored, _) = Vault::restore_checkpoint(
         &checkpoint,
+        &v.checkpoint_key().unwrap(),
         &backup_dir.path().join("restored"),
         crate::VaultConfig::device(),
         crate::recovery::checkpoint::RestoreReason::Restore,
@@ -304,6 +306,7 @@ fn healer_diagnostic_events_read_returns_its_receipt() {
     let event = DiagnosticEvent {
         detector_id: "test.failure".into(),
         event_class: DiagnosticEventClass::TestFailure,
+        signal: None,
         actor_class: "system".into(),
         actor_ref: None,
         source: DiagnosticSourceKind::Receipt,

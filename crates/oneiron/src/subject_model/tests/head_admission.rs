@@ -123,11 +123,11 @@ fn scoped_subject_history_is_not_a_supersession_target() -> Result<()> {
     })
 }
 
-// FIX [LIBTEST-QUARANTINE-SUBJECT-MODEL-TESTS-HEAD-ADMISSION-ITEMS]: the lib test target's type check fails here (1 errors: E0308 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn relational_subject_history_is_not_a_supersession_target() -> Result<()> {
-    assert_excluded_history_survives(|body| body.rel = Some(entity(0x88)))
+    assert_excluded_history_survives(|body| {
+        body.rel = Some(crate::claim::RelationshipSet::from([entity(0x88)]));
+    })
 }
 
 #[test]

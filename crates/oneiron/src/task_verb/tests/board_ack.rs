@@ -1203,10 +1203,12 @@ fn a_restore_goes_ahead_past_a_failure_acknowledged_since() {
     let backups = crate::test_support::restore_tempdir();
     let image = backups.path().join("backup");
     vault.snapshot_checkpoint(&image, 130).expect("backup");
+    let key = vault.checkpoint_key().expect("derive the checkpoint key");
 
     assert!(facade.tasks_update(task_ref).expect("ack task").acked);
     let (restored, _) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &key,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,
@@ -1575,6 +1577,7 @@ fn both_entry_points_follow_the_in_transaction_ownership_answer() {
             trigger_ref: "s1".to_owned(),
             job_ref: None,
             occurred_at: Some(120),
+            mention: None,
         })
         .expect("schedule send");
     let connector = vault.connector_send_tasks().expect("connector tasks")[0].task_ref;

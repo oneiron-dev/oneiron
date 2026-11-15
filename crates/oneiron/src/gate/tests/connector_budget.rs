@@ -131,8 +131,6 @@ fn connector_key_revoked_tuple_resolution_after_reregister() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CONNECTOR-BUDGET-ITEMS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     let (_tmp, vault) = temp_vault();
@@ -171,15 +169,19 @@ fn connector_key_normalization_governs_hyphenated_channel() -> Result<()> {
     // The ordinary never-list compiler retains the raw operand, but matching
     // uses the normalized stored connector for ordinary rows.
     let pending = vault.propose_connector_charter(&key_id, "never send on Slack-Chat", 1_001)?;
-    vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", 1_002)?;
+    vault.approve_connector_charter(
+        &key_id,
+        pending.text_hash,
+        pending.compiled_hash,
+        "owner",
+        1_002,
+    )?;
     let (decision, charge) = check_effect(&vault, &effect, &policy)?;
     assert_eq!(decision.outcome(), GateOutcome::Deny);
     assert!(charge.is_none(), "never-list deny must not reach budgets");
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CONNECTOR-BUDGET-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn gate_ledger_accepts_only_pinned_receipt_reason_prefix_families() {
     let (_tmp, vault) = temp_vault();
@@ -203,6 +205,7 @@ fn gate_ledger_accepts_only_pinned_receipt_reason_prefix_families() {
                     grant_ref: None,
                     diff_handle: vec![0xAA],
                     read_frontier_hash: [0; 32],
+                    context: Default::default(),
                     redacted_at: None,
                 },
             )
