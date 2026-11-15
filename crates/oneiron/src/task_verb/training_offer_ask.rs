@@ -533,6 +533,7 @@ fn issue_one(
             conversation_ref: route.conversation.to_hex(),
             turn_ref: Some(route.turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(route.message.to_hex()),
                 author: WitnessAuthor::Companion,

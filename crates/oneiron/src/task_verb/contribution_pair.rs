@@ -233,6 +233,7 @@ fn issue(
             conversation_ref: presentation.conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 // A new TURN needs one non-system speaker: the Coach speaks

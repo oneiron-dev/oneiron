@@ -90,6 +90,7 @@ fn spoken(room: EntityId, turn: EntityId, at: u64) -> WitnessTurn {
         conversation_ref: room.to_hex(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(EntityId::now().to_hex()),
             author: WitnessAuthor::User,

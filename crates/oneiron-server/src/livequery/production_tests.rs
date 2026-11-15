@@ -160,6 +160,7 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
             occurred_at: AT,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap()
 }
@@ -2245,6 +2246,7 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                 occurred_at: AT,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .unwrap();
         let id_of = |short_id: &str| {

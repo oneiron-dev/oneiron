@@ -718,6 +718,7 @@ pub(super) fn witness_vad_message_fixture(
             occurred_at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("witness fixture turn");
 }

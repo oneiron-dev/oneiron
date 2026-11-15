@@ -52,7 +52,7 @@ pub(crate) use self::stamping::{
     has_stored_position, restrict_stamp_in_txn, room_row_placed, settle_epoch_birth,
     settle_source_birth, stage_session_position, stamp_blob_project, stamp_import_audience_birth,
     stamp_leader_project, stamp_put, stamp_queue_check_exhaust_birth, stamp_task_birth,
-    stamp_task_fact, unstage_session_position,
+    stamp_task_fact, stamp_witness_project, unstage_session_position,
 };
 pub(crate) use comm_source::{ScopedCommRead, read_scoped_comm_in_txn};
 

@@ -513,6 +513,7 @@ impl Memory<'_> {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: Some(message.to_hex()),
                     author,

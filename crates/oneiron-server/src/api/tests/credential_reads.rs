@@ -101,6 +101,7 @@ fn room() -> Room {
                 occurred_at: at,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .expect("speak");
     }
@@ -780,6 +781,7 @@ fn room_turn(
         occurred_at: at,
         assertions: Default::default(),
         thread_audience: None,
+        project: None,
     }
 }
 

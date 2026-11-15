@@ -264,6 +264,7 @@ impl Memory<'_> {
                 conversation_ref: question.conversation.to_hex(),
                 turn_ref: Some(question.turn.to_hex()),
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: Some(question.message.to_hex()),
                     // The held call's caller asks; generated code speaks as

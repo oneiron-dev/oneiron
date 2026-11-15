@@ -135,6 +135,7 @@ async fn message_stream_local_host_relay_is_live_without_a_sync_client() {
         }],
         assertions: Default::default(),
         thread_audience: None,
+        project: None,
     };
     let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
     let handle = memory

@@ -42,6 +42,7 @@ fn speak(
             }],
             occurred_at: 2,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("room speech");
@@ -259,6 +260,7 @@ fn confirmed_card_in_thread_mints_exact_terms_and_rejects_sibling_and_retired_ow
             }],
             occurred_at: 2,
             thread_audience: None,
+            project: None,
             assertions: Default::default(),
         })
         .expect("second message in thread turn");

@@ -507,6 +507,7 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             thread_audience,
+            project: None,
             messages: self.messages.lower()?,
             occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
             assertions: assertions.unwrap_or_default(),

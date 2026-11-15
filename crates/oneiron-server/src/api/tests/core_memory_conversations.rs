@@ -1250,6 +1250,7 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
             occurred_at: at,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap();
     let bearer = owner_reader_bearer(&server);

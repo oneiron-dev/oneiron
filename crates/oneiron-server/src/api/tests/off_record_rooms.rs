@@ -1379,6 +1379,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
             occurred_at: 50,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .unwrap();
     for (id, reason) in [
@@ -1423,6 +1424,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
                     occurred_at: 90,
                     assertions: Default::default(),
                     thread_audience: None,
+                    project: None,
                 },
                 None,
                 None,

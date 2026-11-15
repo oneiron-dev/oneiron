@@ -127,6 +127,7 @@ fn trunk_turn(vault: &Vault, room: EntityId) -> (WitnessTurn, EntityId, EntityId
         conversation_ref: room.to_hex(),
         turn_ref: Some(turn.to_hex()),
         thread_audience: None,
+        project: None,
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,

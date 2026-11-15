@@ -231,6 +231,7 @@ fn owner_public_stamped_inferred_claim_parks_proposed() {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,

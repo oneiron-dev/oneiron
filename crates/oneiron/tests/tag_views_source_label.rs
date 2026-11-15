@@ -237,6 +237,7 @@ fn tagged_fixture() -> Fixture {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![
                 message(
                     shared_message,
@@ -459,6 +460,7 @@ fn a_mentions_hit_never_points_at_a_mention_outside_the_readers_relationship() {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![
                 message(r_message, 0, "Mirela called.", fixture.relationship),
                 message(s_message, 1, "She is fine.", fixture.shared),

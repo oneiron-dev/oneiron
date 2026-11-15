@@ -101,6 +101,7 @@ impl WitnessTurnInput {
             conversation_ref: self.conversation_ref,
             turn_ref: self.turn_ref,
             thread_audience: self.thread_audience,
+            project: None,
             messages,
             occurred_at,
             assertions: self.assertions,

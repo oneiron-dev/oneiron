@@ -153,6 +153,7 @@ impl Seed {
             conversation_ref: self.conversation.to_hex(),
             turn_ref: Some(self.turn.to_hex()),
             thread_audience: self.thread_audience.clone(),
+            project: None,
             messages: vec![self.message_with_parts(content, parts)],
             occurred_at: self.occurred_at,
             assertions: self.assertions.clone(),

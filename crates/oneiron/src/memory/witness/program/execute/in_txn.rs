@@ -262,6 +262,17 @@ impl Memory<'_> {
         if let Some(project) = leader_project {
             self.settle_leader_chats_in_txn(wtxn, plan, project)?;
         }
+        // A caller-placed project (FIX WITNESS-TURN-NO-PROJECT-POSITION): a
+        // leader-chat room settles its own, so one naming another refuses
+        // the turn; the same project is the leader settle above.
+        if let Some(caller_project) = plan.turn.project {
+            if leader_project.is_some_and(|leader| leader != caller_project) {
+                return Err(Error::Record(crate::error::RecordError::ConversationDenied).into());
+            }
+            if leader_project.is_none() {
+                self.settle_witness_project_in_txn(wtxn, plan, caller_project)?;
+            }
+        }
         // LAST statement in the transaction, deliberately: a witness
         // admitted on record must not commit base rows once the room has
         // flipped back off record (K10). Every earlier row rolls back with
@@ -340,6 +351,76 @@ impl Memory<'_> {
                 self.actor,
                 project,
             )?;
+        }
+        Ok(())
+    }
+
+    /// A caller-placed witness project: admitted against the caller's
+    /// credential, then settled onto the turn and the messages this write
+    /// lands, as a leader chat settles its own.
+    fn settle_witness_project_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        plan: &WitnessPlan<'_>,
+        project: EntityId,
+    ) -> MemoryResult<()> {
+        self.admit_witness_project_in_txn(wtxn, project)?;
+        let message_ids = plan.message_ids();
+        for id in std::iter::once(plan.turn_id).chain(message_ids.iter().copied()) {
+            crate::federation::record_scope::stamp_witness_project(
+                &self.vault.store,
+                wtxn,
+                id,
+                project,
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Whether the caller's credential admits placing this turn under
+    /// `project`: its slip audience covers the project. Shaped like the
+    /// scoped-claim position check: a transport caller with no credential
+    /// is refused, while the in-process host's own handle needs none, and
+    /// a bound slip must still be live, held by this actor, and grant a
+    /// write.
+    fn admit_witness_project_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        project: EntityId,
+    ) -> MemoryResult<()> {
+        let refused = || {
+            MemoryError::new(
+                MEMORY_CODE_FORBIDDEN,
+                "the caller credential does not admit this turn's project",
+                &["Witness without a project, or under a credential whose audience covers it."],
+            )
+        };
+        let Some(proof) = self.read_proof.as_ref() else {
+            return if self.transport_invocation {
+                Err(refused())
+            } else {
+                Ok(())
+            };
+        };
+        if proof.claims().holder_ref != self.actor.to_hex()
+            || !proof.claims().records.is_empty()
+            || !proof.claims().channels.is_empty()
+            || !self.vault.capability_slip_is_live_in_txn(txn, proof)?
+        {
+            return Err(refused());
+        }
+        if !["core:write", "write", "core:propose"]
+            .into_iter()
+            .any(|verb| proof.allows_verb(verb))
+        {
+            return Err(refused());
+        }
+        if !proof
+            .scope()
+            .audience
+            .contains(&crate::federation::ScopeId(project))
+        {
+            return Err(refused());
         }
         Ok(())
     }

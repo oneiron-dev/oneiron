@@ -357,6 +357,7 @@ impl Memory<'_> {
                 conversation_ref: room.to_hex(),
                 turn_ref: None,
                 thread_audience: None,
+                project: None,
                 messages: vec![WitnessMessage {
                     id: None,
                     author,

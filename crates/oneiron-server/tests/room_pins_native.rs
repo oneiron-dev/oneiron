@@ -262,6 +262,7 @@ fn speak_trunk(
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
@@ -294,6 +295,7 @@ fn speak_thread(
             conversation_ref: room.to_hex(),
             turn_ref: Some(thread.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

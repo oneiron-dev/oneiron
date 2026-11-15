@@ -90,6 +90,7 @@ fn facets() -> Facets {
                 occurred_at: 2,
                 assertions: Default::default(),
                 thread_audience: None,
+                project: None,
             })
             .expect("speak");
         Room {

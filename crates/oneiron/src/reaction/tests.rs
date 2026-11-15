@@ -61,6 +61,7 @@ pub(super) fn witness(vault: &Vault, room: EntityId, author: EntityId, text: &st
             conversation_ref: room.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             occurred_at: 10,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),

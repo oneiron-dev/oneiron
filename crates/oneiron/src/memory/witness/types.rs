@@ -120,6 +120,16 @@ pub struct WitnessTurn {
     /// room does.
     #[serde(default)]
     pub thread_audience: Option<std::collections::BTreeSet<crate::EntityId>>,
+    /// The PROJECT this turn is born under (FIX
+    /// WITNESS-TURN-NO-PROJECT-POSITION): its TURN and MESSAGE rows take it
+    /// as their record audience at birth, so claims the Dreamer derives
+    /// from them inherit it instead of the default project. Admitted only
+    /// when the caller's slip audience covers it; a transport caller with
+    /// no credential, a session overlay witness, and a leader-chat room
+    /// naming another project refuse it. Absent ⇒ the default project, as
+    /// every witness lands today.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<crate::EntityId>,
     /// Messages, all attributed to the bound actor unless `System`.
     ///
     /// A TURN is the maximal consecutive run of ONE speaker, so every

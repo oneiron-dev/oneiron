@@ -452,6 +452,7 @@ fn exchange(fixture: &RoomFixture, placement: ReplySitting) -> TestResult<Exchan
             conversation_ref: fixture.room.to_hex(),
             turn_ref: Some(reply_turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: WitnessAuthor::Companion,
@@ -522,6 +523,7 @@ fn answer_retry(
             conversation_ref: action.conversation.to_hex(),
             turn_ref: None,
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::Companion,

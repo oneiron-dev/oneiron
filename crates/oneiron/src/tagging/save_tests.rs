@@ -182,6 +182,7 @@ fn turn(turn_ref: &str, messages: &[(u32, &str)]) -> WitnessTurn {
             })
             .collect(),
         thread_audience: None,
+        project: None,
         assertions: Default::default(),
     }
 }

@@ -699,6 +699,7 @@ impl Import<'_> {
             conversation_ref: self.conversation_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
             thread_audience: None,
+            project: None,
             messages,
             occurred_at: occurred[0],
             assertions: Default::default(),

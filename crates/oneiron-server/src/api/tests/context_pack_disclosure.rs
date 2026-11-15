@@ -1053,6 +1053,7 @@ async fn a_room_with_the_owners_own_agent_reads_its_own_history() {
             occurred_at: 2,
             assertions: Default::default(),
             thread_audience: None,
+            project: None,
         })
         .expect("speak");
 

@@ -209,6 +209,7 @@ fn outsider_reads(metadata: impl FnOnce(EntityId) -> Option<serde_json::Value>) 
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![
                 message(EntityId::now(), 0, "Good morning.", None),
                 message(

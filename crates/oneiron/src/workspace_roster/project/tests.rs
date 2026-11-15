@@ -347,6 +347,7 @@ fn mint_fixture(
             conversation_ref: room.to_hex(),
             turn_ref: Some(EntityId::now().to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![crate::memory::WitnessMessage {
                 id: Some(message.to_hex()),
                 author: crate::memory::WitnessAuthor::User,

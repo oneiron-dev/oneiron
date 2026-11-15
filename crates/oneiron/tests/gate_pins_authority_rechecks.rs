@@ -542,6 +542,7 @@ fn g83_a_room_turn_writes_into_its_bound_room() -> TestResult {
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,

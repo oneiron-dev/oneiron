@@ -142,6 +142,7 @@ fn save_as(vault: &Vault, author: EntityId, text: &str, name: &str) -> (EntityId
         conversation_ref: ROOM.into(),
         turn_ref: Some(TURN.to_owned()),
         thread_audience: None,
+        project: None,
         occurred_at: now_seconds(),
         messages: vec![WitnessMessage {
             id: None,
@@ -1133,6 +1134,7 @@ fn witness_then_embed(vault: &Vault, owner: EntityId, text: &str) -> EntityId {
             conversation_ref: ROOM.into(),
             turn_ref: Some(TURN.to_owned()),
             thread_audience: None,
+            project: None,
             occurred_at: now_seconds(),
             messages: vec![WitnessMessage {
                 id: None,

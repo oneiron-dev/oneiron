@@ -547,6 +547,72 @@ pub(crate) fn stamp_leader_project(
     Ok(())
 }
 
+/// Settle a caller-placed witness TURN/MESSAGE onto its project (FIX
+/// WITNESS-TURN-NO-PROJECT-POSITION), after the witness's full batch
+/// succeeds. Opaque replicated rows cannot call this door and remain
+/// unstamped.
+///
+/// The birth position is immutable (see `stamp_put`): this door only moves
+/// the record's own default birth stamp to the witnessed project, or
+/// confirms the project stamp it already carries. Any other prior position
+/// is refused. Like `stamp_leader_project` it settles only the audience;
+/// the birth facet stays the row's own.
+pub(crate) fn stamp_witness_project(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    id: EntityId,
+    project: EntityId,
+) -> Result<()> {
+    let raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &id)?
+        .ok_or(Error::EntityNotFound)?;
+    let header = EntityMetadataHeader::parse(&raw)
+        .ok_or(Error::CorruptedIndex("witness project scope header"))?;
+    let kind = header.entity_type;
+    if !matches!(
+        kind,
+        crate::registry::ENTITY_TYPE_TURN | crate::registry::ENTITY_TYPE_MESSAGE
+    ) {
+        return Err(Error::InvalidEntityType(kind));
+    }
+    let prior = SCOPE_RECORD.get(store, txn, &id)?;
+    let (facet, position) = match &prior {
+        Some(stamp) if stamp.version == 2 && stamp.kind == kind => (
+            EntityId::from_bytes(stamp.birth_facet)
+                .map_err(|_| Error::CorruptedIndex("witness project birth facet"))?,
+            stamp.scope.clone(),
+        ),
+        Some(_) => {
+            return Err(Error::InvalidClaimBody("record scope restamp refused"));
+        }
+        None => {
+            let facet = crate::claim::substrate_facet_id(id)?;
+            (facet, default_stamp(kind, facet))
+        }
+    };
+    let default_audience = singleton(ScopeId(crate::claim::default_project_id()));
+    if position.audience != default_audience && position.audience != singleton(ScopeId(project)) {
+        return Err(Error::InvalidClaimBody("record scope restamp refused"));
+    }
+    let mut scope = position.clone();
+    scope.audience = singleton(ScopeId(project));
+    if prior.as_ref().is_some_and(|stamp| stamp.scope == scope) {
+        return Ok(());
+    }
+    bump_scope_revision(store, txn)?;
+    SCOPE_RECORD.put(
+        store,
+        txn,
+        &id,
+        &Stamp {
+            version: 2,
+            kind,
+            birth_facet: *facet.as_bytes(),
+            scope,
+        },
+    )?;
+    Ok(())
+}
+
 /// Births an imported claim into its topic's standing import audience (OF-492).
 /// `scope` is the claim's opaque scope as promotion is about to sign it, and
 /// `import_review` the history import its cited words came from. When the

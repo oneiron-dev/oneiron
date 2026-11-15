@@ -65,6 +65,7 @@ fn a_message_the_write_door_refuses_gives_the_sieve_no_span() -> TestResult {
             conversation_ref: EntityId::now().to_hex(),
             turn_ref: Some(turn.to_hex()),
             thread_audience: None,
+            project: None,
             occurred_at: at,
             messages: vec![
                 message(clean, CLEAN, 0, None),
