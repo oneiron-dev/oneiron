@@ -293,7 +293,7 @@ fn admit_host_job(fixture: &Fixture) -> TestResult<Option<Box<DreamerAdmittedAtt
     match outcome {
         DreamerAdmissionOutcome::Admitted(attempt) => Ok(Some(attempt)),
         DreamerAdmissionOutcome::Empty => Ok(None),
-        DreamerAdmissionOutcome::BudgetExhausted(_) => panic!("the host budget is not spent"),
+        other => panic!("the host budget is not spent: {other:?}"),
     }
 }
 

@@ -52,7 +52,7 @@ fn stored_answer(
 }
 
 /// Runs one leased `coach.eval_repair_seed` attempt.
-pub(super) fn run(
+pub(in crate::ai_host) fn run(
     server: &SyncServer,
     admitted: &DreamerAdmittedAttempt,
     now: u64,
