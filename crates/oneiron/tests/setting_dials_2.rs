@@ -311,6 +311,9 @@ fn an_owner_set_description_policy_is_what_routing_reads() {
     );
 }
 
+/// The one change from the table (Engine RULING SETTING-RESIDENT-ROUTES-CLEAR = A, 18:57): a
+/// narrowing a later manifest drops is kept, read as the pin, and is in force again once a still
+/// later manifest admits it.
 #[test]
 fn a_resident_route_narrows_only_while_the_manifest_admits_it() {
     let fx = Fixture::rooted();
@@ -325,9 +328,20 @@ fn a_resident_route_narrows_only_while_the_manifest_admits_it() {
         fx.vault.model_route(ModelSlot::Llm).expect("read"),
         Some(ModelLocality::OnDevice)
     );
+    // A set never stores a widening: not past a slot's pin, not past any slot's pin from the
+    // row with no item, and not on a slot that is no model slot.
     refused(&me, SET, set(ROUTE, Some("llm"), json!("third_party")));
     refused(&me, SET, set(ROUTE, Some("oneironer"), json!("own_server")));
+    refused(&me, SET, set(ROUTE, None, json!("own_server")));
     refused(&me, SET, set(ROUTE, Some("gpu"), json!("on_device")));
+    assert_eq!(
+        get(&me, ROUTE, Some("llm"))["value"],
+        json!("on_device"),
+        "a refused route changes no row"
+    );
+    for item in ["embedder", "oneironer"] {
+        assert_eq!(get(&me, ROUTE, Some(item))["value"], Value::Null, "{item}");
+    }
     assert_eq!(
         fx.vault.model_route(ModelSlot::Llm).expect("read"),
         Some(ModelLocality::OnDevice),
