@@ -96,7 +96,7 @@ async fn page(
             );
             super::first_party_html::isolated_html(csp, html)
         }
-        Ok(Ok(false)) => refused(&server, "GET"),
+        Ok(Ok(false)) => refused(&server, "GET").await,
         Ok(Err(_)) | Err(_) => unavailable(),
     }
 }
@@ -127,7 +127,7 @@ async fn redeem(
             "You are unsubscribed: this list sends you no more email.",
         )
             .into_response(),
-        Ok(Ok(OneClickUnsubscribeOutcome::NotRecognized)) => refused(&server, "POST"),
+        Ok(Ok(OneClickUnsubscribeOutcome::NotRecognized)) => refused(&server, "POST").await,
         Ok(Err(error)) => {
             tracing::warn!(
                 kind = ?error.kind(),
@@ -170,12 +170,13 @@ fn is_one_click_body(headers: &HeaderMap, body: &[u8]) -> bool {
 /// One answer for every link that does not verify: malformed, minted by no
 /// key of this vault, or on a vault with no key. Each counts in the wire
 /// window under no caller, so guesses at a mac ask the call-volume question;
-/// none is refused for its rate.
-fn refused(server: &SyncServer, method: &str) -> Response {
-    let _ = server.wire_telemetry.record_capability_refusal(
-        &format!("{method} {ONE_CLICK_ROUTE}"),
-        oneiron_vault_contract::now_ts(),
-    );
+/// none is refused for its rate. The count waits on the blocking pool, as the
+/// wire observer's does.
+async fn refused(server: &Arc<SyncServer>, method: &'static str) -> Response {
+    crate::wire_telemetry::record_on_blocking_pool(server, move |telemetry, now| {
+        telemetry.record_capability_refusal(&format!("{method} {ONE_CLICK_ROUTE}"), now)
+    })
+    .await;
     (
         StatusCode::NOT_FOUND,
         "this unsubscribe link is not known here",

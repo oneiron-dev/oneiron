@@ -11,7 +11,7 @@ pub(crate) async fn observe_http(
         .extensions()
         .get::<axum::extract::MatchedPath>()
         .map_or("unmatched", axum::extract::MatchedPath::as_str);
-    let verb = format!("{} {route}", request.method());
+    let verb = format!("{} {route}", method_label(request.method()));
     // An MCP envelope counts on its matched route alone, under no caller,
     // whether it came over HTTP or a held socket: the call it carries counts
     // once at the gateway, under the caller it resolves and the tool it
@@ -23,9 +23,10 @@ pub(crate) async fn observe_http(
     ];
     if request.method() == axum::http::Method::POST && surfaces.contains(&route) {
         start_window_receipts(&server);
-        let _ = server
-            .wire_telemetry
-            .record_mcp_envelope(&verb, oneiron_vault_contract::now_ts());
+        record_on_blocking_pool(&server, move |telemetry, now| {
+            telemetry.record_mcp_envelope(&verb, now)
+        })
+        .await;
         return next.run(request).await;
     }
     // The request's one caller, as its door takes it: on a managed vault the
@@ -53,12 +54,42 @@ pub(crate) async fn observe_http(
             // counts as the owner's own (FIX 1087).
             None if a.is_owner_grade() => embedded_owner().unwrap_or(a.principal()),
             None => a.principal(),
-        });
+        })
+        .to_owned();
     start_window_receipts(&server);
-    let _ = server
-        .wire_telemetry
-        .record(&verb, actor, oneiron_vault_contract::now_ts());
+    record_on_blocking_pool(&server, move |telemetry, now| {
+        telemetry.record(&verb, &actor, now)
+    })
+    .await;
     next.run(request).await
+}
+
+/// The method as the wire window names it: one of the nine methods HTTP
+/// defines (RFC 9110 section 9, and PATCH, RFC 5789), or `OTHER` for any
+/// extension method, which the router refuses only after this observer has
+/// counted the call. A route so has at most ten labels however many methods
+/// its callers invent (FIX [WIRE-TELEMETRY-METHOD-LABELS-UNBOUNDED]).
+fn method_label(method: &axum::http::Method) -> &str {
+    match method.as_str() {
+        standard @ ("GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "CONNECT" | "OPTIONS"
+        | "TRACE" | "PATCH") => standard,
+        _ => "OTHER",
+    }
+}
+
+/// Runs one count on the blocking pool and waits for it. A window's rollover
+/// keeps the window, and a crossing keeps a question, both through the
+/// vault's write door under the counter's std mutex, so the wait holds a
+/// blocking thread, never one of the runtime's workers (FIX
+/// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]). The count still lands before
+/// the caller goes on. A count that fails is telemetry lost, never a refusal.
+pub(crate) async fn record_on_blocking_pool(
+    server: &Arc<crate::server::SyncServer>,
+    count: impl FnOnce(&super::WireTelemetry, u64) -> oneiron::Result<()> + Send + 'static,
+) {
+    let server = Arc::clone(server);
+    let now = oneiron_vault_contract::now_ts();
+    let _ = tokio::task::spawn_blocking(move || count(&server.wire_telemetry, now)).await;
 }
 
 /// The vault owner's actor id, as `Vault::ensure_embedded_owner_actor` makes

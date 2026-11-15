@@ -827,7 +827,7 @@ impl Drop for WireTelemetry {
 }
 
 mod http;
-pub(crate) use self::http::{observe_http, start_window_receipts};
+pub(crate) use self::http::{observe_http, record_on_blocking_pool, start_window_receipts};
 
 #[cfg(test)]
 mod tests;
