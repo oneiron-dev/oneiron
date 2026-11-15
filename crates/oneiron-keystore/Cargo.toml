@@ -15,6 +15,7 @@ doctest = false
 # from Linux (scripts/ci/check_keystore_apple_target.sh; no CI job runs it yet),
 # so nothing here may need a C toolchain or an SDK at build time.
 [dependencies]
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 thiserror = { workspace = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
