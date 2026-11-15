@@ -265,6 +265,8 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     vault.backfill_mesh_machine_endpoint_index(true)?;
     // Restored PROJECT rows bypassed the staging hook: keep their chains.
     vault.capture_project_revisions(true)?;
+    // Restored campaign.member claims bypassed the member index's writer.
+    vault.backfill_campaign_member_index(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;
     crate::edit_distance::routing::rebuild_routing_projection(vault)?;
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;

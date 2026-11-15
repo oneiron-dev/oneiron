@@ -689,7 +689,7 @@ fn mint_paired_credential(
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// Creates a pairing link on the running server and prints it.
