@@ -17,8 +17,8 @@ use zeroize::Zeroizing;
 
 use super::super::{byte_values, shapes};
 use super::body::BodyForm;
-use super::wipe::PlanTree;
-use crate::file_secret_marks::FILLER;
+use super::wipe::{PlanTree, wipe_value};
+use crate::file_secret_marks::{FILLER, HeldForm, phrase_items};
 
 /// One recovery phrase a reading found split over a leaf.
 pub(super) struct SplitPhrase {
@@ -94,6 +94,14 @@ enum Cut {
     Handle(usize),
 }
 
+impl Placement {
+    /// Whether the array reads as one phrase and nothing else, so its handle
+    /// stands for the array whole.
+    pub(super) const fn is_whole(&self) -> bool {
+        self.whole
+    }
+}
+
 impl ArrayText {
     /// `items` read as one text, as the field walk reads an array before its
     /// items: `None` when it reads none (no byte values, fewer than two text
@@ -152,6 +160,29 @@ impl ArrayText {
     /// between them, and its span in the text.
     pub(super) fn phrases(&self) -> Vec<(Zeroizing<Vec<u8>>, Range<usize>)> {
         phrases_in(&self.text)
+    }
+
+    /// The run of items the phrase at `span` covers whole: string items one
+    /// after another, each read in full, whose place one item holding its
+    /// handle takes (`written`). `None` when the span cuts into an item,
+    /// covers a byte string or byte values, or skips an item.
+    pub(super) fn covered_run(&self, span: &Range<usize>) -> Option<Range<usize>> {
+        let mut run: Option<Range<usize>> = None;
+        for piece in &self.pieces {
+            if span.end <= piece.text.start || span.start >= piece.text.end {
+                continue;
+            }
+            if !piece.string || piece.text.start < span.start || piece.text.end > span.end {
+                return None;
+            }
+            let item = piece.item?;
+            run = match run {
+                None => Some(item..item + 1),
+                Some(run) if run.end == item => Some(run.start..item + 1),
+                Some(_) => return None,
+            };
+        }
+        run
     }
 
     /// How the array is written once the phrase at each of `spans` takes a
@@ -258,6 +289,44 @@ impl ArrayPiece {
         }
         bytes
     }
+}
+
+/// How `part`, which the handle of `phrase` replaces whole, wrote that
+/// phrase: one word per string item, or as its byte values, when the phrase
+/// alone gives back those items, so a restore puts the array back; else as
+/// its own text (FIX SEALED-PHRASE-ARRAY-RESTORE-AS-TEXT). The key records
+/// only this form, never where a word ends: a word's length narrows the
+/// search for a phrase.
+pub(super) fn whole_phrase_form(part: &Value, phrase: &[u8]) -> HeldForm {
+    let Value::Array(items) = part else {
+        return HeldForm::Raw;
+    };
+    [HeldForm::PhraseWords, HeldForm::PhraseByteValues]
+        .into_iter()
+        .find(|held| gives_back(phrase, *held, items))
+        .unwrap_or(HeldForm::Raw)
+}
+
+/// How `run`, a run of an array's items that one item holding the handle of
+/// `phrase` replaces, wrote that phrase: one word per string item when the
+/// phrase alone gives back those items, so a restore puts them back in its
+/// place; else as its own text.
+pub(super) fn run_phrase_form(run: &[Value], phrase: &[u8]) -> HeldForm {
+    if gives_back(phrase, HeldForm::PhraseWordRun, run) {
+        HeldForm::PhraseWordRun
+    } else {
+        HeldForm::Raw
+    }
+}
+
+/// Whether `phrase`, held as `held`, gives back `items` as written.
+fn gives_back(phrase: &[u8], held: HeldForm, items: &[Value]) -> bool {
+    let Ok(Some(mut rebuilt)) = phrase_items(phrase, held) else {
+        return false;
+    };
+    let same = rebuilt == items;
+    rebuilt.iter_mut().for_each(wipe_value);
+    same
 }
 
 /// An array item of the same kind as `item` that holds `bytes`.
