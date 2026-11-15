@@ -36,7 +36,7 @@ pub(super) fn saved_reader_in_txn(
 ///
 /// # Errors
 /// As [`saved_reader_in_txn`].
-pub(super) fn saved_reader(
+pub(crate) fn saved_reader(
     vault: &Vault,
     principal: EntityId,
     read_lane: &FrozenReadLane,
