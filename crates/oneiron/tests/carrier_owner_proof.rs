@@ -15,31 +15,38 @@
 //! proof waits for the owner's confirm. This file covers the shared
 //! owner-choice gate (a home pick) and a machine removal.
 //!
-//! Pure folds over hand-signed rows: a self-host genesis root key, the root's
+//! Strict (the lead's ruling 15 Nov 13:2x, CARRIER-GRANDFATHER = C): a
+//! machine the owner's own laptop paired with no owner key's proof is held as
+//! well, until the owner confirms it on an owner device.
+//!
+//! Pure folds over hand-signed rows: a genesis root key, the root's
 //! registration of a hosted node, and the node's own answer, home pick or
-//! removal of another machine.
+//! removal of another machine; or the root's registration of the owner's
+//! laptop and the laptop's pairing of a new machine.
 
 #![cfg(oneiron_test_support)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use ed25519_dalek::{Signer, SigningKey};
-use oneiron::EntityId;
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityAttestation, AuthorityEntryHash,
     AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier,
     AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineOwnership,
-    MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_OWNER,
-    authority_entry_hash, authority_transcript, fold_authority_log, genesis_vault_id,
-    machine_profile_proof_transcript,
+    MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER,
+    authority_entry_hash, authority_transcript, fold_authority_log, fold_authority_log_for_posture,
+    genesis_vault_id, machine_profile_proof_transcript,
 };
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
+use oneiron::{EntityId, HostingPrivacyPosture};
 use oneiron_authority::authority::{HomeNodePick, home_pick_target, machine_answer_revision};
 
 const ROOT_SEED: u8 = 61;
 const NODE_SEED: u8 = 62;
 const VICTIM_SEED: u8 = 63;
+const LAPTOP_SEED: u8 = 64;
+const PAIRED_SEED: u8 = 65;
 
 /// The node the owner's home pick names in test 3.
 const PICKED_NODE: u64 = 7;
@@ -98,40 +105,63 @@ fn hash(row: &AuthorityLogEntry) -> AuthorityEntryHash {
     authority_entry_hash(row).expect("a hash")
 }
 
-/// A self-host vault whose root registered one hosted node, and that node's
-/// own answer `Owned(Yours)` about itself, cosigned by each of `cosigners`.
+/// The genesis row of a vault whose root key `root` holds `roles` at `tier`.
+fn genesis_row(root: &SigningKey, roles: u16, tier: AuthorityTier) -> AuthorityLogEntry {
+    signed(
+        None,
+        0,
+        Vec::new(),
+        AuthorityOp::Genesis {
+            device: DeviceAuthority {
+                key: key_of(root),
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier,
+                roles,
+            },
+            genesis_nonce: [196; 32],
+            recovery: GenesisRecoveryStep::Saved([1; 32]),
+        },
+        root,
+        &[],
+    )
+}
+
+/// A vault whose root registered one hosted node, and that node's own
+/// answer, home pick or removal, cosigned by each of `cosigners`.
 struct HostedNodeAnswer {
     root: SigningKey,
     node: SigningKey,
     machine: EntityId,
     rows: Vec<AuthorityLogEntry>,
+    /// A managed host's vault: its root is the host's custodial key, and
+    /// replicas fold under the hosted posture.
+    hosted: bool,
 }
 
 impl HostedNodeAnswer {
+    /// A self-host vault: its root is an owner-held key.
     fn new() -> Self {
+        Self::with_root(ROLE_OWNER | ROLE_ADMIN, AuthorityTier::Software, false)
+    }
+
+    /// A managed host's vault whose only owner key is the host's custodial
+    /// root, so no owner device key is enrolled.
+    fn on_a_hosted_vault() -> Self {
+        Self::with_root(
+            ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+            AuthorityTier::CloudCustodial,
+            true,
+        )
+    }
+
+    fn with_root(roles: u16, tier: AuthorityTier, hosted: bool) -> Self {
         let root = signing(ROOT_SEED);
         let node = signing(NODE_SEED);
-        let genesis = signed(
-            None,
-            0,
-            Vec::new(),
-            AuthorityOp::Genesis {
-                device: DeviceAuthority {
-                    key: key_of(&root),
-                    transport_key_binding: [7; 32],
-                    attestation: AuthorityAttestation {
-                        kind: "SoftwareArgon2id".to_owned(),
-                        evidence: vec![1, 2, 3],
-                    },
-                    tier: AuthorityTier::Software,
-                    roles: ROLE_OWNER | ROLE_ADMIN,
-                },
-                genesis_nonce: [196; 32],
-                recovery: GenesisRecoveryStep::Saved([1; 32]),
-            },
-            &root,
-            &[],
-        );
+        let genesis = genesis_row(&root, roles, tier);
         let vault_id = genesis_vault_id(&genesis).expect("the vault id");
         let machine = EntityId::from_bytes([0x70; 16]).expect("an id");
         let registration = signed(
@@ -154,11 +184,28 @@ impl HostedNodeAnswer {
             node,
             machine,
             rows: vec![genesis, registration],
+            hosted,
         }
     }
 
     fn vault_id(&self) -> AuthorityVaultId {
         genesis_vault_id(&self.rows[0]).expect("the vault id")
+    }
+
+    /// The fold of the rows, under the hosted posture on a managed host's
+    /// vault.
+    fn fold(&self) -> AuthorityFold {
+        if self.hosted {
+            fold_authority_log_for_posture(
+                &self.rows,
+                &BTreeMap::new(),
+                1,
+                &BTreeMap::new(),
+                HostingPrivacyPosture::Hosted,
+            )
+        } else {
+            fold_authority_log(&self.rows)
+        }
     }
 
     /// The node carries its own answer `Owned(Yours)` on the registration,
@@ -189,7 +236,7 @@ impl HostedNodeAnswer {
         );
         self.rows.push(answer);
         let node_key = self.node.verifying_key().to_bytes();
-        (fold_authority_log(&self.rows), self.machine, node_key)
+        (self.fold(), self.machine, node_key)
     }
 
     /// The node carries the owner's home pick of [`PICKED_NODE`] on the
@@ -218,7 +265,7 @@ impl HostedNodeAnswer {
             cosigners,
         );
         self.rows.push(pick);
-        fold_authority_log(&self.rows)
+        self.fold()
     }
 
     /// The root registers a second machine, an execution node, and the node
@@ -268,7 +315,110 @@ impl HostedNodeAnswer {
             &[],
         );
         self.rows.push(removal);
-        (fold_authority_log(&self.rows), victim)
+        (self.fold(), victim)
+    }
+}
+
+/// A self-host vault whose root registered the owner's laptop as the owner's
+/// machine, and the laptop's pairing of a new machine, carried by the
+/// laptop's own install key with no cosign: every paired machine today.
+struct PairedMachine {
+    root: SigningKey,
+    laptop: SigningKey,
+    laptop_machine: EntityId,
+    paired: SigningKey,
+    paired_machine: EntityId,
+    rows: Vec<AuthorityLogEntry>,
+}
+
+impl PairedMachine {
+    fn new() -> Self {
+        let root = signing(ROOT_SEED);
+        let laptop = signing(LAPTOP_SEED);
+        let paired = signing(PAIRED_SEED);
+        let genesis = genesis_row(&root, ROLE_OWNER | ROLE_ADMIN, AuthorityTier::Software);
+        let vault_id = genesis_vault_id(&genesis).expect("the vault id");
+        let laptop_machine = EntityId::from_bytes([0x73; 16]).expect("an id");
+        let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+        let registration = signed(
+            Some(vault_id),
+            1,
+            vec![hash(&genesis)],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                laptop_machine,
+                &laptop,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                None,
+            )),
+            &root,
+            &[],
+        );
+        // The paired machine has no revision yet, so the pairing saw the
+        // zero revision.
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::Pairing,
+            paired_machine,
+            ActSurface::ThisInstall,
+            [0; 32],
+        );
+        let pairing = signed(
+            Some(vault_id),
+            1,
+            vec![hash(&registration)],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                paired_machine,
+                &paired,
+                MachineRole::Owned(MachineOwnership::Yours),
+                1,
+                Some((laptop_machine, act)),
+            )),
+            &laptop,
+            &[],
+        );
+        Self {
+            root,
+            laptop,
+            laptop_machine,
+            paired,
+            paired_machine,
+            rows: vec![genesis, registration, pairing],
+        }
+    }
+
+    /// The owner confirms the paired machine on an owner device: the laptop
+    /// carries the owner's answer `Owned(Yours)` again at revision 2, over
+    /// the pairing, cosigned by each of `cosigners`.
+    fn confirm(mut self, cosigners: &[&SigningKey]) -> AuthorityFold {
+        let vault_id = genesis_vault_id(&self.rows[0]).expect("the vault id");
+        let pairing = hash(&self.rows[2]);
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::MachineAnswer,
+            self.paired_machine,
+            ActSurface::ThisInstall,
+            machine_answer_revision([pairing]),
+        );
+        let confirm = signed(
+            Some(vault_id),
+            2,
+            vec![pairing],
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                self.paired_machine,
+                &self.paired,
+                MachineRole::Owned(MachineOwnership::Yours),
+                2,
+                Some((self.laptop_machine, act)),
+            )),
+            &self.laptop,
+            cosigners,
+        );
+        self.rows.push(confirm);
+        fold_authority_log(&self.rows)
     }
 }
 
@@ -404,6 +554,86 @@ fn a_hosted_nodes_unproven_removal_of_another_machine_waits() {
     assert!(
         head.is_live(),
         "the victim's registration still stands: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 3, hosted guard (the lead's ruling 15 Nov 13:2x,
+/// CARRIER-HOSTED-WEB-ACTS = C): item 2 waits for an enrolled owner device
+/// key on a managed host's vault. With none, the node's pick lands as today.
+/// Main: the pick lands.
+#[test]
+fn a_hosted_nodes_unproven_home_pick_lands_on_a_hosted_vault_with_no_owner_device_key() {
+    let fold = HostedNodeAnswer::on_a_hosted_vault().pick_home(&[]);
+    assert_eq!(
+        home_pick_in_force(&fold),
+        Some(PICKED_NODE),
+        "a hosted vault with no enrolled owner device key keeps today's pick: {:?}",
+        fold.issues
+    );
+}
+
+/// Item 1 on a managed host's vault (CARRIER-HOSTED-WEB-ACTS = C: item 1
+/// applies everywhere). The host's custodial root is no owner key, so neither
+/// the node's own answer nor the same answer cosigned by that root makes the
+/// node mine. Main: the bare answer makes the node mine.
+#[test]
+fn a_custodial_roots_cosign_proves_nothing_on_a_hosted_vault() {
+    let (fold, machine, node_key) = HostedNodeAnswer::on_a_hosted_vault().answer_yours(&[]);
+    assert!(
+        !mine(&fold, machine, &node_key),
+        "a hosted node's own answer on a hosted vault, with no owner key's proof, never makes it mine"
+    );
+    let answer = HostedNodeAnswer::on_a_hosted_vault();
+    let root = answer.root.clone();
+    let (fold, machine, node_key) = answer.answer_yours(&[&root]);
+    assert!(
+        !mine(&fold, machine, &node_key),
+        "the host's custodial root proves nothing for the owner: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 4 of the row (strict, CARRIER-GRANDFATHER = C). Main: the pairing
+/// makes the machine mine.
+#[test]
+fn a_machine_paired_without_an_owner_keys_proof_is_held() {
+    let paired = PairedMachine::new();
+    let fold = fold_authority_log(&paired.rows);
+    let laptop_key = paired.laptop.verifying_key().to_bytes();
+    assert!(
+        mine(&fold, paired.laptop_machine, &laptop_key),
+        "the root's registration of the laptop stands: {:?}",
+        fold.issues
+    );
+    let paired_key = paired.paired.verifying_key().to_bytes();
+    assert!(
+        !mine(&fold, paired.paired_machine, &paired_key),
+        "a pairing the owner's laptop carried with no owner key's proof is held, not mine"
+    );
+}
+
+/// Test 4, the confirm. The owner's answer again, cosigned by the live
+/// owner-held root, makes the held machine mine, and the fold trusts the
+/// confirmed revision. Main: the fold refuses the cosigned confirm, so the
+/// revision it trusts stays the unproven pairing.
+#[test]
+fn an_owner_key_cosigned_confirm_over_a_held_pairing_makes_the_machine_mine() {
+    let paired = PairedMachine::new();
+    let root = paired.root.clone();
+    let paired_machine = paired.paired_machine;
+    let paired_key = paired.paired.verifying_key().to_bytes();
+    let fold = paired.confirm(&[&root]);
+    assert!(
+        mine(&fold, paired_machine, &paired_key),
+        "the confirmed machine is mine: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.trusted_machine(paired_machine)
+            .map(|trusted| trusted.profile.revision),
+        Some(2),
+        "the fold trusts the owner key's confirm, not the held pairing: {:?}",
         fold.issues
     );
 }
