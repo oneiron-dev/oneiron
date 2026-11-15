@@ -72,6 +72,10 @@ pub(super) struct CorpusInfo {
 #[derive(Serialize)]
 pub(super) struct System {
     pub(super) name: String,
+    /// `measured`, or `not_ready` (with `reason`, and no rows) for a system
+    /// whose adapter failed to reset, take any turn or settle.
+    pub(super) status: &'static str,
+    pub(super) reason: Option<String>,
     /// Turns the system took in (a failed write is not counted).
     pub(super) documents: usize,
     pub(super) ingest: Summary,
@@ -96,8 +100,11 @@ pub(super) struct Row {
     pub(super) grade: String,
     /// The `as_of` the question was asked at: the end of its life's last day.
     pub(super) as_of: u64,
-    /// Client round trip on loopback.
+    /// The bench's round trip.
     pub(super) ms: f64,
+    /// An external system's own timing of its call, as its adapter reports
+    /// it (`None` for Oneiron, whose `ms` is already on loopback).
+    pub(super) system_ms: Option<f64>,
     pub(super) items: usize,
     pub(super) partial: bool,
     pub(super) error: Option<String>,
@@ -113,6 +120,7 @@ pub(super) struct Row {
 /// What one system answered to one question.
 pub(super) struct Answer {
     pub(super) ms: f64,
+    pub(super) system_ms: Option<f64>,
     pub(super) partial: bool,
     /// Each returned item's texts, in rank order.
     pub(super) items: Vec<Vec<String>>,
@@ -143,6 +151,7 @@ impl Row {
             grade: grade.to_owned(),
             as_of: life.end,
             ms: answer.ms,
+            system_ms: answer.system_ms,
             items: answer.items.len(),
             partial: answer.partial,
             error: answer.error,
@@ -190,6 +199,24 @@ pub(super) struct GradeSummary {
     /// Over every row of the grade, with canon's corpus-size floor
     /// (ARCH-0042 #speedup-integrity-h: no latency below 1,000 documents).
     pub(super) latency: Summary,
+    /// The same over the rows' `system_ms`, when the system reports it.
+    pub(super) system_latency: Option<Summary>,
+}
+
+/// The floored summary of the rows' `system_ms`, when any row has one.
+fn system_latency(rows: &[&Row], documents: usize) -> Option<Summary> {
+    let samples = rows
+        .iter()
+        .filter_map(|row| {
+            row.system_ms.map(|ms| Sample {
+                ms,
+                error: row.error.clone(),
+                partial: row.partial,
+                items: row.items,
+            })
+        })
+        .collect::<Vec<_>>();
+    (!samples.is_empty()).then(|| Summary::of(&samples, 0.0).below_corpus_floor(documents))
 }
 
 fn rate(hits: usize, of: usize) -> Option<f64> {
@@ -241,6 +268,7 @@ pub(super) fn summarize(
                 by_set,
                 latency: Summary::of(&samples, seconds.get(grade).copied().unwrap_or(0.0))
                     .below_corpus_floor(documents),
+                system_latency: system_latency(&of_grade, documents),
             }
         })
         .collect()

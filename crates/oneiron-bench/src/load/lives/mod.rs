@@ -6,12 +6,14 @@
 //! screen's lives, and the seeded pick grows to at least 1,000 turns so the
 //! latency clears canon's corpus floor (L9-36-STORE = B); the accuracy column
 //! here is context accuracy, with no model (L9-36-ACCURACY = C, its first
-//! column). This change measures the Oneiron store; other systems plug in
-//! through the adapter seam that follows it (L9-36-COMPETITORS = A).
+//! column). The Oneiron store always runs first; every other system plugs in
+//! through one adapter protocol, `--system <name>=<url>` (L9-36-COMPETITORS
+//! = A: the seam here, each competitor's adapter its own row).
 //!
 //! The lives stay outside the repository: pass their files or directories.
 
 mod corpus;
+mod external;
 mod oneiron;
 mod report;
 mod score;
@@ -32,6 +34,7 @@ const USAGE: &str = "usage: oneiron-bench load lives (--server <oneiron-server> 
   [--life ID]... | [--sample N] [--seed 7] [--min-turns 1000]\n\
   [--grades call,light,medium] [--limit 10] [--settle-max-seconds 300]\n\
   [--drain-settle-seconds 35] [--embedder-api-key-env NAME] [--server-env KEY=VALUE]...\n\
+  [--system <name>=<adapter-url>]...\n\
   <embedder>: none | local | endpoint=<url>,<model-key>,<model-id@revision>,<dimensions>";
 
 const LINUX_ONLY: &str = "load lives --server reads the server's /proc files: run it on Linux, or check the harness with --in-process";
@@ -57,6 +60,8 @@ pub(super) struct Plan {
     pub(super) settle_max: Duration,
     pub(super) drain_settle: Duration,
     pub(super) server_env: Vec<(String, String)>,
+    /// The other systems, each behind its adapter, run after Oneiron.
+    systems: Vec<external::External>,
 }
 
 /// `--embedder`'s value, with `--embedder-api-key-env`'s NAME.
@@ -109,6 +114,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
     let mut settle_max = Duration::from_secs(300);
     let mut drain_settle = Duration::from_secs(35);
     let mut server_env = Vec::new();
+    let mut systems = Vec::<external::External>::new();
     let mut it = args.iter();
     while let Some(flag) = it.next() {
         if flag == "--in-process" {
@@ -136,6 +142,13 @@ fn parse(args: &[String]) -> Result<Plan, String> {
             "--limit" => limit = num(value)?.max(1),
             "--settle-max-seconds" => settle_max = Duration::from_secs(num(value)? as u64),
             "--drain-settle-seconds" => drain_settle = Duration::from_secs(num(value)? as u64),
+            "--system" => {
+                let system = external::external(value)?;
+                if systems.iter().any(|s| s.name == system.name) {
+                    return Err(format!("--system {}: named twice", system.name));
+                }
+                systems.push(system);
+            }
             "--server-env" => {
                 let (k, v) = value.split_once('=').ok_or("--server-env is KEY=VALUE")?;
                 server_env.push((k.to_owned(), v.to_owned()));
@@ -189,6 +202,7 @@ fn parse(args: &[String]) -> Result<Plan, String> {
         settle_max,
         drain_settle,
         server_env,
+        systems,
     })
 }
 
@@ -234,6 +248,7 @@ fn plan_echo(plan: &Plan) -> serde_json::Value {
         "drain_settle_seconds": plan.drain_settle.as_secs(),
         // Names only: values (often credentials) stay in the spawned server's environment.
         "server_env": plan.server_env.iter().map(|(k, _)| k).collect::<Vec<_>>(),
+        "systems": plan.systems.iter().map(|s| json!({"name": s.name, "url": s.url.as_str()})).collect::<Vec<_>>(),
     })
 }
 
@@ -261,7 +276,7 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
     ));
     let (server, system) = oneiron::measure(&plan, &lives)?;
     host.load_end = loadavg();
-    let report = Report {
+    let mut report = Report {
         bench: "oneiron-bench lives v1",
         label: plan.label.clone(),
         started_unix,
@@ -294,6 +309,20 @@ pub(super) fn run(args: &[String]) -> Result<(), String> {
         systems: vec![system],
     };
     write(&plan, &report)?;
+    // One store name per pick, the same at every adapter.
+    let mut picked = blake3::Hasher::new();
+    for life in &lives {
+        picked.update(life.key.as_bytes());
+        picked.update(b"\n");
+    }
+    let store = format!("lives-v1-{}", &picked.finalize().to_hex()[..16]);
+    for system in &plan.systems {
+        report
+            .systems
+            .push(external::measure(&plan, system, &lives, &store));
+        report.host.load_end = loadavg();
+        write(&plan, &report)?;
+    }
     say(&format!("wrote {}", plan.out.display()));
     Ok(())
 }

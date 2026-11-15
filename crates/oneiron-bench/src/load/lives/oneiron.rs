@@ -218,12 +218,14 @@ fn ask(plan: &Plan, agent: &Agent, lives: &[Life]) -> (Vec<Row>, BTreeMap<String
                 let answer = match result {
                     Ok(pack) => Answer {
                         ms,
+                        system_ms: None,
                         partial: pack["retrieval_meta"]["partial"].as_bool() == Some(true),
                         items: texts(&pack),
                         error: None,
                     },
                     Err(error) => Answer {
                         ms,
+                        system_ms: None,
                         partial: false,
                         items: Vec::new(),
                         error: Some(error),
@@ -290,6 +292,8 @@ pub(super) fn measure(plan: &Plan, lives: &[Life]) -> Result<(Server, System), S
         server,
         System {
             name: "oneiron".to_owned(),
+            status: "measured",
+            reason: None,
             documents,
             ingest: ingest.below_corpus_floor(documents),
             settle_seconds,

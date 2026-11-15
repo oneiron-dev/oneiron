@@ -202,6 +202,26 @@ $B/oneiron-bench load lives --server $B/oneiron-server --embedder none \
   GPU model every system uses (`--embedder-api-key-env NAME` when the endpoint
   wants a key; the bench passes the name, never the key). A network endpoint
   is declared `owner-server`.
+- **Other systems** (`--system <name>=<adapter-url>`, repeatable) run after
+  the Oneiron store, each through a thin adapter over the system's own SDK
+  that speaks one JSON protocol:
+  - `POST /v1/lives/reset {store}`;
+  - `POST /v1/lives/ingest {store, conversation, at, turn: {id, role, text}}`
+    → `{system_ms?}`, with every turn's conversation id, time and text as
+    the Oneiron store gets them (`role` is `user`, `assistant` or `tool`);
+  - `POST /v1/lives/settle {store}` → `{ready}`, polled every second for up
+    to `--settle-max-seconds`;
+  - `POST /v1/lives/search {store, query, k, as_of}` →
+    `{items: [{text}], system_ms?}`, once per question per grade.
+
+  `ms` is the bench's round trip and `system_ms` the adapter's own timing of
+  the system's call, so network time sits apart from server time; each grade
+  summarises both. An adapter URL is https, or plain http on loopback, with
+  no credentials, query or fragment; an adapter takes any key from an
+  environment variable it names, never from the bench. A system that fails
+  to reset, takes no turn or never settles is reported `not_ready` with its
+  reason and no rows, and the other systems still run. The store name is
+  `lives-v1-` plus 16 hex of the picked keys, the same at every adapter.
 - **`--in-process`** serves the engine linked into the bench (with its
   `test-support` features) on loopback and calls it as the vault owner, on any
   platform. Its timings are for checking the harness only and are never a
