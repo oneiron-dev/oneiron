@@ -906,3 +906,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/vault_key/escrow.rs` | src | s | 1 struct · 1 enum · 1 re-export | EscrowAddWarning, EscrowAdded | Moved from `crates/oneiron/src/world_keys/vault_key/escrow.rs` (lib split R1: record types below the lib) |
 | `src/world_keys/vault_key/mod.rs` | src | s | 2 mod · 6 re-export | — | — |
 | `src/world_keys/vault_key/state.rs` | src | s | 1 enum · 4 fn · 6 const | UnlockSecret | Moved from `crates/oneiron/src/world_keys/vault_key/state.rs` (lib split R1: record types below the lib) |
+| `tests/identity_ask_key_hex.rs` | test | s | — | — | The identity ask key's hex form (UC-07 PR 8; FIX [IDENTITY-ASK-KEY-ACCEPTS-SIGN]) |

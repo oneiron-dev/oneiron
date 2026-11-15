@@ -134863,6 +134863,14 @@
       "enum": 1,
       "fn": 4
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/identity_ask_key_hex.rs",
+     "purpose": "The identity ask key's hex form (UC-07 PR 8; FIX [IDENTITY-ASK-KEY-ACCEPTS-SIGN])",
+     "surface": {}
     }
    ],
    "modules": {
@@ -135640,7 +135648,7 @@
    "over_bar": 0,
    "purpose": "Engine-internal, not a public interface: the stored record types below `oneiron` (lib split, stage A), the…",
    "source_files": 895,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-remote": {
    "files": [
