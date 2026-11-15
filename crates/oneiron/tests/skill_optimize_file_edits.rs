@@ -42,9 +42,11 @@ const EDITED_BODY: &str = "Follow references/guide.md step by step, then report.
 /// A rule skill's text naming a dial of its `policy.json` at 4.
 const POLICY_DESC: &str =
     "Follow the guide and report; stop a loop after health.loop.repeats at 4 rounds.";
-/// The `policy.json` beside [`POLICY_DESC`], holding 5 for that dial, as a
-/// draft that replaced the file leaves it.
-const POLICY: &str = "{\"health.loop.repeats\": 5}\n";
+/// The `policy.json` beside [`POLICY_DESC`], holding the 4 its text names.
+const POLICY: &str = "{\"health.loop.repeats\": 4}\n";
+/// [`POLICY_DESC`] with the dial moved to 6.
+const POLICY_DESC_AT_6: &str =
+    "Follow the guide and report; stop a loop after health.loop.repeats at 6 rounds.";
 
 fn at(now: u64) -> TimeRange {
     TimeRange {
@@ -252,6 +254,17 @@ fn split_skill_md(content: &[u8]) -> (String, String) {
     (front[..end].to_owned(), front[end + 5..].to_owned())
 }
 
+/// A JSON array of `word` strings, one per line, of about `bytes` bytes:
+/// dense in quotes and newlines, which the judge's JSON state escapes.
+fn dense_json(word: &str, bytes: usize) -> String {
+    let mut text = String::from("[\n");
+    while text.len() + 2 * word.len() + 16 < bytes {
+        text.push_str(&format!("  \"{word}\",\n"));
+    }
+    text.push_str(&format!("  \"{word}\"\n]\n"));
+    text
+}
+
 fn edited_files(record: &SkillRecord) -> Option<Vec<String>> {
     let rmpv::Value::Map(entries) = &record.provenance else {
         panic!("provenance is a map");
@@ -451,13 +464,15 @@ fn an_instructions_only_edit_keeps_every_file_but_the_description() {
     assert_eq!(body, BODY);
 }
 
-/// A draft re-derives a rule skill's `policy.json` only for a dial its text
-/// moves (FIX 10878): a dial the text names as its parent named it keeps the
-/// file's value, so a draft that keeps the text, or rewords it around the
-/// same number, never undoes a `policy.json` an earlier draft replaced.
+/// A rule skill's `policy.json` holds each number its text names (FIX
+/// 10878; cold read N3 of #7949): a draft whose text moves the number moves
+/// the dial, a file edit that keeps the text keeps the file, and a drafted
+/// `policy.json` lands only when it is one JSON object, with no key named
+/// twice, that holds the numbers the final text names, so no revision's
+/// text names a dial value its file does not run.
 #[test]
-fn a_draft_moves_only_the_policy_dial_its_text_moves() {
-    let drafted_policy = |desc: &str, files: &[(&str, &str)]| -> Vec<u8> {
+fn a_drafted_policy_json_holds_the_numbers_its_text_names() {
+    let drafted_policy = |desc: &str, files: &[(&str, &str)]| -> Result<Vec<u8>> {
         let (_temp, vault, skill, _) = fixture_with(POLICY_DESC, policy_tree());
         let now = vault.now_recorded_at();
         let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
@@ -467,37 +482,160 @@ fn a_draft_moves_only_the_policy_dial_its_text_moves() {
             attempt,
             &FixedAuthor::editing(desc, files),
             now,
-        )
-        .expect("drafted")
+        )?
         .proposal
         .expect("the draft lands a proposal");
         let package = served_skill_package(&vault, &proposal)
             .unwrap()
             .expect("the proposal has a package");
-        file(&package, "policy.json").to_vec()
+        Ok(file(&package, "policy.json").to_vec())
     };
+    let policy_at = |repeats: u32| format!("{{\"health.loop.repeats\": {repeats}}}\n");
 
     assert_eq!(
-        drafted_policy(POLICY_DESC, &[("SKILL.md", EDITED_BODY)]),
+        drafted_policy(POLICY_DESC, &[("SKILL.md", EDITED_BODY)]).expect("drafted"),
         POLICY.as_bytes(),
-        "a file edit that keeps the text keeps the dial the file holds"
+        "a file edit that keeps the text keeps the file"
     );
-    assert_eq!(
-        drafted_policy(
-            "Follow the guide, check each step, then report; stop a loop after health.loop.repeats at 4 rounds.",
-            &[],
-        ),
-        POLICY.as_bytes(),
-        "a text reworded around the same number moves no dial"
-    );
-    let moved: serde_json::Value = serde_json::from_slice(&drafted_policy(
-        "Follow the guide and report; stop a loop after health.loop.repeats at 6 rounds.",
-        &[],
-    ))
-    .expect("policy.json is JSON");
+    let moved: serde_json::Value =
+        serde_json::from_slice(&drafted_policy(POLICY_DESC_AT_6, &[]).expect("drafted"))
+            .expect("policy.json is JSON");
     assert_eq!(
         moved["health.loop.repeats"].as_f64(),
         Some(6.0),
         "a text that moves the number moves the dial: {moved}"
     );
+    assert_eq!(
+        drafted_policy(POLICY_DESC_AT_6, &[("policy.json", policy_at(6).as_str())])
+            .expect("drafted"),
+        policy_at(6).as_bytes(),
+        "a drafted policy.json that holds its text's number lands as drafted"
+    );
+    let error = drafted_policy(POLICY_DESC, &[("policy.json", policy_at(9).as_str())])
+        .expect_err("a drafted policy.json at another number than its text names is refused");
+    assert_eq!(error.kind(), ErrorKind::InvalidSkillBody, "{error}");
+    for (policy, shape) in [
+        ("[4]\n", "not one JSON object"),
+        (
+            "{\"health.loop.repeats\": 9, \"health.loop.repeats\": 4}\n",
+            "a key named twice",
+        ),
+    ] {
+        let error = drafted_policy(POLICY_DESC, &[("policy.json", policy)])
+            .expect_err("a drafted policy.json its reader sets aside whole is refused");
+        assert_eq!(
+            error.kind(),
+            ErrorKind::InvalidSkillBody,
+            "{shape}: {error}"
+        );
+    }
+}
+
+/// A dependency or package manifest chooses the third-party code a skill's
+/// scripts install and run, and an optimizer revision runs no advisory scan
+/// (cold read N2 of #7949): the brief never offers one, and a draft naming
+/// one is refused like a script.
+#[test]
+fn a_dependency_manifest_is_never_draftable() {
+    let mut files = tree();
+    files.push(HubFile::new("requirements.txt", "requests==2.31.0\n"));
+    files.push(HubFile::new(
+        "package.json",
+        "{\"dependencies\": {\"left-pad\": \"1.3.0\"}}\n",
+    ));
+    let (_temp, vault, skill, _) = fixture_with(DESC, files);
+    for (path, content) in [
+        ("requirements.txt", "requests==2.5.0\n"),
+        (
+            "package.json",
+            "{\"dependencies\": {\"left-pad\": \"1.0.0\"}}\n",
+        ),
+    ] {
+        let now = vault.now_recorded_at();
+        let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
+        let author = FixedAuthor::editing(DESC, &[(path, content)]);
+        let drafted = draft_on_skill(&vault, &skill, attempt, &author, now);
+        let offered: Vec<String> = author
+            .brief()
+            .files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        assert!(
+            !offered
+                .iter()
+                .any(|offered| offered == "requirements.txt" || offered == "package.json"),
+            "the brief offers no dependency manifest: {offered:?}"
+        );
+        let error = drafted.expect_err("a draft naming a dependency manifest is refused");
+        assert_eq!(error.kind(), ErrorKind::InvalidSkillBody, "{path}: {error}");
+    }
+
+    // No refusal left a proposal behind, and a data file edit still lands.
+    let now = vault.now_recorded_at();
+    let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
+    let outcome = draft_on_skill(
+        &vault,
+        &skill,
+        attempt,
+        &FixedAuthor::editing(DESC, &[("references/guide.md", EDITED_GUIDE)]),
+        now,
+    )
+    .expect("a valid edit lands");
+    assert!(outcome.proposal.is_some());
+}
+
+/// The held-out gate judges each arm through a decision state of at most
+/// 64 KiB, which a larger state is cut to fit, keeping a prefix of the
+/// instructions (cold read N1 of #7949). A draft whose files, each and all
+/// inside the brief's bounds, would carry its arm past half that bound is
+/// refused at the draft door, so the judge never scores a prefix that stops
+/// before the last file; one such file fits and lands.
+#[test]
+fn a_file_draft_the_judge_cannot_read_whole_is_refused() {
+    const TABLE_BYTES: usize = 14 * 1024;
+    let tables: Vec<String> = (1..=4).map(|n| format!("data/table-{n}.json")).collect();
+    let mut files = tree();
+    for table in &tables {
+        files.push(HubFile::new(
+            table.as_str(),
+            dense_json("step", TABLE_BYTES),
+        ));
+    }
+    let (_temp, vault, skill, _) = fixture_with(DESC, files);
+    let edited: Vec<String> = (1..=4)
+        .map(|n| dense_json(if n == 4 { MARKER } else { "next" }, TABLE_BYTES))
+        .collect();
+    let edits: Vec<(&str, &str)> = tables
+        .iter()
+        .zip(&edited)
+        .map(|(path, content)| (path.as_str(), content.as_str()))
+        .collect();
+
+    let now = vault.now_recorded_at();
+    let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
+    let author = FixedAuthor::editing(DESC, &edits);
+    let drafted = draft_on_skill(&vault, &skill, attempt, &author, now);
+    let whole = author
+        .brief()
+        .files
+        .iter()
+        .filter(|file| file.path.starts_with("data/table-") && file.content.is_some())
+        .count();
+    assert_eq!(whole, 4, "the brief carries every table whole");
+    let error = drafted.expect_err("a draft the judge cannot read whole is refused");
+    assert_eq!(error.kind(), ErrorKind::InvalidSkillBody, "{error}");
+
+    // No refusal left a proposal behind, and one table fits the judge whole.
+    let now = vault.now_recorded_at();
+    let attempt = enqueue_skill_optimize_attempt(&vault, None, now).expect("attempt");
+    let outcome = draft_on_skill(
+        &vault,
+        &skill,
+        attempt,
+        &FixedAuthor::editing(DESC, &edits[3..]),
+        now,
+    )
+    .expect("one table fits the judge whole");
+    assert!(outcome.proposal.is_some());
 }
