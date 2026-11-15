@@ -182,11 +182,13 @@ pub(super) struct OwnerChoiceOp<'a, P> {
 /// What a valid choice does to its register ([`OwnerChoiceState::land`]).
 pub(super) enum OwnerChoiceLanding<P> {
     /// Valid without effect: its carrier was not admitted, or its owner not
-    /// live, at its parents.
+    /// live, at its parents. A kind's adapter may refuse more (a setting's
+    /// act on a target that is another setting's own).
     Refused(AuthorityEntryHash),
     /// Valid, and waiting for the owner's proof: an admitted carrier that is
-    /// not the owner's machine delivered it with none, where such a carrier
-    /// needs one (row CARRIER-OWNER-PROOF). It supersedes nothing.
+    /// not the owner's machine delivered it with none where the vault asks
+    /// for an owner key (row CARRIER-OWNER-PROOF), or it is a choice only an
+    /// owner key may make and came with none. It supersedes nothing.
     Waiting {
         target: EntityId,
         hash: AuthorityEntryHash,

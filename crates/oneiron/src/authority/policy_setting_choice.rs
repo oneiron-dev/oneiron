@@ -57,7 +57,8 @@ pub(crate) struct FoldedPolicySettings {
     /// entry.
     pub(crate) targets: BTreeMap<EntityId, FoldedOwnerChoice<[u8; 32]>>,
     /// Well-signed acts without effect: their carrier was not admitted, or
-    /// their owner not live, at their parents.
+    /// their owner not live, at their parents; and each act of another
+    /// setting that named the web sign-in setting's target.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
 }
 

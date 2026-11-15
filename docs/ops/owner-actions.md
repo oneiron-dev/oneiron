@@ -1468,9 +1468,10 @@ Leaving their messages out works from any machine. Letting them back in (`"leave
 widens what is shared, so the vault asks for more: once the vault has held an owner key, a machine
 that is not the owner's and holds no owner key refuses it (409, state `owner_key_required`) and
 stores nothing; the person makes that choice on an owner device. Removing the last owner key does
-not end this: the vault keeps asking for an owner key until one is enrolled again or the owner
-switches the vault back to web sign-in. A vault that never held an owner key takes it from any
-machine, as before.
+not end this: the vault still asks for an owner key, so the choice needs a newly enrolled one. Only
+the owner's switch of the vault back to web sign-in ends the asking, and it holds until another
+owner key is enrolled or the setting is changed again. A vault that never held an owner key takes
+it from any machine, as before.
 
 Turning the setting off, or opting out, stops new sharing: held offers are refused at release, and
 nothing already shared is withdrawn; it follows the intake's retention. A deleted conversation or
