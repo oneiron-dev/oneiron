@@ -228,8 +228,9 @@ pub(crate) fn erase_export_audit_owed_actor_in_txn(
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> crate::Result<()> {
+    // RED PROOF ONLY (never for main): the erase scrubs nothing.
     for (export, mut owed) in OWED.scan(&vault.store, wtxn)? {
-        if owed.threads.forget_actor(actor) {
+        if actor.to_hex().is_empty() && owed.threads.forget_actor(actor) {
             OWED.put(&vault.store, wtxn, &export, &owed)?;
         }
     }
