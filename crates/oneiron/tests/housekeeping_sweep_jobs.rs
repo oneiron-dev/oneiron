@@ -5,9 +5,10 @@
 //! - a handle's first pass arms and runs every engine sweep, and reports the host-only ones; the
 //!   next pass finds each due a cadence later;
 //! - a job that starts once a pass, as a sweep does, goes on at the next pass when it stopped at
-//!   its bound;
-//! - a cadence row this build cannot read never fails the pass: its sweep is armed from the
-//!   key's default;
+//!   its bound, and a run of it that never finished does not take its start in the pass that
+//!   finds it;
+//! - a cadence row this build cannot read never fails the pass: a sweep never armed is armed
+//!   from the key's default, and a job already armed keeps its arming and the run asked of it;
 //! - queuing an erasure obligation makes the erasure sweep due an hour after its last run, or at
 //!   once when that hour has passed;
 //! - the owner sets a cadence: its job is armed again in that write and goes on from now, and a
@@ -32,8 +33,9 @@ use oneiron::setting::SettingScope;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::schedule::{
-    arm_as_engine, cadence_jobs, cadence_jobs_not_engine_armed, due_at, note_sweep_deadline,
-    pull_for_queued_erase_obligation, seen,
+    arm_as_engine, arm_cadence_jobs, cadence_jobs, cadence_jobs_not_engine_armed, due_at,
+    note_sweep_deadline, plant_start_marker, pull_for_queued_erase_obligation,
+    request_cadence_runs, seen,
 };
 use oneiron::test_doors::setting::plant_undecodable_row;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -442,6 +444,69 @@ fn a_cadence_row_this_build_cannot_read_arms_its_sweep_from_the_default() {
     for (other, _) in CADENCES {
         assert!(fx.due(other).is_some(), "{}: armed", other.code());
     }
+}
+
+#[test]
+fn a_run_of_a_once_a_pass_job_that_never_finished_does_not_take_its_start_in_the_pass() {
+    let fx = Fixture::rooted();
+    arm_as_engine(
+        &fx.vault,
+        "test.once",
+        None,
+        Trigger::Every {
+            secs: HOUR,
+            first_at: None,
+        },
+    )
+    .expect("the engine arms a drain that starts once a pass");
+    fx.pass();
+    assert_eq!(seen(&fx.vault, "test.once").len(), 1);
+    plant_start_marker(&fx.vault, "test.once", None, T0)
+        .expect("its next run starts and the process dies before the run ends");
+    fx.at(T0 + HOUR);
+    fx.pass();
+    assert_eq!(
+        seen(&fx.vault, "test.once").len(),
+        2,
+        "the pass counts the run that never finished as a failure, and the job runs in it"
+    );
+}
+
+#[test]
+fn a_cadence_row_this_build_cannot_read_leaves_an_armed_job_as_it_is() {
+    let fx = Fixture::rooted();
+    arm_cadence_jobs(&fx.vault).expect("the engine arms the test cadence job, daily");
+    let applied = invoke(
+        &fx.as_owner(),
+        SET,
+        json!({
+            "key": "test.job_cadence",
+            "scope": { "kind": "vault" },
+            "value": { "kind": "every", "secs": HOUR },
+        }),
+    )
+    .expect("the owner sets an hourly cadence");
+    assert_eq!(applied["status"], json!("applied"), "{applied}");
+    assert_eq!(
+        request_cadence_runs(&fx.vault).expect("the engine asks for a run"),
+        1
+    );
+    plant_undecodable_row(&fx.vault, "test.job_cadence", SettingScope::Vault)
+        .expect("a row this build cannot read");
+    arm_cadence_jobs(&fx.vault).expect("the next handle's arming");
+    fx.vault
+        .run_due(HousekeepingBudget::unbounded())
+        .expect("the runner");
+    let runs: Vec<bool> = seen(&fx.vault, "test.cadence")
+        .iter()
+        .map(|run| run.requested)
+        .collect();
+    assert_eq!(runs, vec![true], "the run asked for is still asked for");
+    assert_eq!(
+        due_at(&fx.vault, "test.cadence", None).expect("the due time"),
+        Some(T0 + HOUR),
+        "the hourly arming it had, not the daily default"
+    );
 }
 
 #[test]

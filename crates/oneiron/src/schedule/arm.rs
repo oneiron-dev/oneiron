@@ -455,8 +455,9 @@ fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Resul
 /// force, in one write. The host's pass calls it on its handle's first pass for every such job; a
 /// job already armed with that trigger keeps its due time. A value in force this build cannot
 /// read or arm (a row a later build wrote, a zone this build does not know, a wall time with no
-/// occurrence ahead) is logged, and its job is armed from the key's default: one cadence never
-/// holds the others, and no job is left unarmed.
+/// occurrence ahead) is logged: a job already armed keeps the arming it has (its due time, its
+/// walk, its backoff and a run asked for), and a job never armed is armed from the key's
+/// default. One cadence never holds the others, and no job is left unarmed.
 ///
 /// # Errors
 ///
@@ -478,12 +479,20 @@ pub(crate) fn arm_setting_jobs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Re
                         ErrorKind::InvalidConfig | ErrorKind::CorruptedIndex
                     ) =>
                 {
-                    tracing::warn!(
-                        job = spec.code,
-                        %error,
-                        "schedule: the cadence in force cannot be armed; the job is armed from the key's default"
-                    );
-                    arm_in_txn(vault, txn, spec, None, key.kind.default_typed())?;
+                    if ROWS.get(&vault.store, txn, &row_key(spec.code, None))?.is_some() {
+                        tracing::warn!(
+                            job = spec.code,
+                            %error,
+                            "schedule: the cadence in force cannot be armed; the job keeps the arming it has"
+                        );
+                    } else {
+                        tracing::warn!(
+                            job = spec.code,
+                            %error,
+                            "schedule: the cadence in force cannot be armed; the job is armed from the key's default"
+                        );
+                        arm_in_txn(vault, txn, spec, None, key.kind.default_typed())?;
+                    }
                 }
                 armed => armed?,
             }
@@ -588,6 +597,31 @@ pub(crate) fn finished_at_in_txn(
     Ok(ROWS
         .get(store, txn, &row_key(job, subject))?
         .map(|row| row.finished_at))
+}
+
+/// A run of `job` about `subject` started at `at` and never finished, as a crash or a kill leaves
+/// it: its start marker. Nothing when the job is not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn plant_start_marker_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    let key = row_key(job, subject);
+    let Some(prior) = ROWS.get(store, txn, &key)? else {
+        return Ok(());
+    };
+    let row = ScheduleRow {
+        started_at: Some(at),
+        ..prior.clone()
+    };
+    store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
 }
 
 /// When `job` about `subject` is next due, or `None` when it is not armed: a requested run's

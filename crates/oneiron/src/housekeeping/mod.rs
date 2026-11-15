@@ -284,26 +284,20 @@ impl Vault {
         access: &AccessSnapshot,
     ) -> Result<HousekeepingReport> {
         let started_at = self.now_recorded_at();
-        // The flag is taken before the arming, so two passes of one handle never both ask for
-        // the runs at each start; an arming or a request that fails gives it back for the next.
-        let first_pass = !std::mem::replace(
-            &mut self
+        {
+            // The arming and the requests run under the pass lock, so a second pass of one handle
+            // waits for them; the flag is set once both are done, so an arming or a request that
+            // fails or panics is made again at the next pass. The runner takes the same lock
+            // before its writes, so the lock order is unchanged.
+            let mut passes = self
                 .housekeeping
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .first_pass_done,
-            true,
-        );
-        if first_pass {
-            // The requests are durable: a pass the budget cuts short leaves them for the next.
-            let asked = crate::schedule::arm_setting_jobs(self, is_cadence_job)
-                .and_then(|()| crate::schedule::request_runs(self, |spec| spec.at_open));
-            if let Err(error) = asked {
-                self.housekeeping
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .first_pass_done = false;
-                return Err(error);
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !passes.first_pass_done {
+                // The requests are durable: a pass the budget cuts short leaves them for the next.
+                crate::schedule::arm_setting_jobs(self, is_cadence_job)?;
+                crate::schedule::request_runs(self, |spec| spec.at_open)?;
+                passes.first_pass_done = true;
             }
         }
         if asked == Asked::All {

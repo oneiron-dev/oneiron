@@ -38,6 +38,8 @@ pub use oneiron_schedule_contract::{
 };
 
 pub use self::arm::ScheduleView;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::arm::plant_start_marker_in_txn;
 pub(crate) use self::arm::{
     ScheduleCaller, arm_in_txn, arm_setting_jobs, due_at_in_txn, due_by_in_txn,
     erase_schedule_actor_in_txn, erase_schedule_subject_in_txn, finished_at_in_txn,

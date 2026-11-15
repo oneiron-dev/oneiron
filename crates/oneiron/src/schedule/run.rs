@@ -148,7 +148,17 @@ impl Vault {
                 break;
             };
             let run = self.run_one(&key, due_at, pass)?;
-            if job_named(&run.job).is_some_and(|spec| spec.once_per_pass) {
+            // Only a run that started takes a once-a-pass job's start: an interrupted run's
+            // cleared marker, a lapsed occurrence or a withdrawn arming ran nothing, and the job
+            // runs in this pass when it is due.
+            let started = !matches!(
+                run.outcome,
+                JobOutcome::Interrupted
+                    | JobOutcome::Lapsed
+                    | JobOutcome::Withdrawn
+                    | JobOutcome::UnknownJob
+            );
+            if started && job_named(&run.job).is_some_and(|spec| spec.once_per_pass) {
                 ran_once.push(key);
             }
             report.runs.push(run);
