@@ -146,6 +146,20 @@ pub fn holds_full_copy(vault: &Vault, machine: EntityId) -> Result<bool> {
     Ok(vault.authority_fold()?.holds_full_copy(machine))
 }
 
+/// The full-copy mark this install's connection writes once a home session's
+/// first round completes under sync all, with `configured` the host's
+/// configured mode (L7-47).
+///
+/// # Errors
+///
+/// A mark the fold refuses; storage errors.
+pub fn mark_first_round_full_copy(
+    vault: &Vault,
+    configured: crate::sync::SyncResidenceMode,
+) -> Result<Option<AuthorityEntryHash>> {
+    vault.mark_first_round_full_copy(configured)
+}
+
 /// The peer order over `granted` in one snapshot: every machine that holds
 /// a full copy before every machine that does not, and the election's order
 /// within each group.

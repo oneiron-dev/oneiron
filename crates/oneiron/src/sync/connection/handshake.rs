@@ -753,7 +753,10 @@ impl SyncConnection {
             && client.config.residence_mode == crate::sync::SyncResidenceMode::All
         {
             let vault = Arc::clone(self.manager.vault());
-            match tokio::task::spawn_blocking(move || vault.declare_full_copy(true)).await {
+            let configured = self.config.client_config.residence_mode;
+            match tokio::task::spawn_blocking(move || vault.mark_first_round_full_copy(configured))
+                .await
+            {
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => tracing::warn!(
                     kind = ?error.kind(),

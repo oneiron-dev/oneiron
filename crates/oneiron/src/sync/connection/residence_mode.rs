@@ -22,6 +22,7 @@ use tokio::sync::mpsc;
 
 use super::SyncConnection;
 use crate::Vault;
+use crate::authority::AuthorityEntryHash;
 use crate::sync::client::{SyncEvent, SyncResidenceMode};
 
 /// CALLS renegotiate at once: a residence-mode change reconnects with the
@@ -96,5 +97,20 @@ impl SyncConnection {
             );
         }
         Ok(())
+    }
+}
+
+impl Vault {
+    /// L7-47: the full-copy mark a home session's first round earns once it
+    /// completes under sync all: held. `configured` is the host's configured
+    /// mode.
+    ///
+    /// # Errors
+    /// As [`Self::declare_full_copy`].
+    pub(crate) fn mark_first_round_full_copy(
+        &self,
+        _configured: SyncResidenceMode,
+    ) -> crate::error::Result<Option<AuthorityEntryHash>> {
+        self.declare_full_copy(true)
     }
 }
