@@ -138,11 +138,13 @@ pub fn image_slip_issuers(
     image.slip_issuers_for_test()
 }
 
-/// A host-family join of `world`'s side leaves: a side row of that world,
-/// which no main-log row may name as a parent.
-pub fn world_frontier_join_op(world: EntityId) -> AuthorityOp {
+/// An install-family join of `world`'s side leaves for `carrier`: a side row
+/// of that world, which no main-log row may name as a parent. Signed by a key
+/// that is no install key of `carrier`'s, it folds rejected (its signer is
+/// not in its ancestry), a side row still.
+pub fn world_frontier_join_op(world: EntityId, carrier: EntityId) -> AuthorityOp {
     AuthorityOp::FrontierJoin(crate::authority::FrontierJoin {
-        family: crate::authority::FrontierJoinFamily::Host,
+        family: crate::authority::FrontierJoinFamily::Install(carrier),
         scope: crate::authority::FrontierJoinScope::World(world),
     })
 }

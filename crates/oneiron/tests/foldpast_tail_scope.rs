@@ -73,9 +73,19 @@ fn checkpoint_and_adopt(home: &Vault, issuer: &HostSlipIssuer) -> (Vault, tempfi
     for hash in &image.covered {
         assert!(image_fold.valid_entries.contains(hash), "covered row valid");
     }
+    adopt_image(home, &head, &image)
+}
+
+/// Opens an empty adopter of `image`, the attested image `head` that `home`
+/// keeps, and folds its empty tail.
+fn adopt_image(
+    home: &Vault,
+    head: &[u8; 32],
+    image: &AuthorityCheckpointV2,
+) -> (Vault, tempfile::TempDir) {
     let bytes = image.encode().expect("image encodes");
     let attestations = home
-        .authority_checkpoint_attestations(&head)
+        .authority_checkpoint_attestations(head)
         .expect("attestations");
     assert!(!attestations.is_empty(), "image is attested");
     let pin = home
@@ -90,7 +100,7 @@ fn checkpoint_and_adopt(home: &Vault, issuer: &HostSlipIssuer) -> (Vault, tempfi
         OpenOptions::default().adopt_storage_id(storage_id),
     )
     .expect("adopting opens");
-    match image.building_pin {
+    match image.building_pin.clone() {
         Some(root) => {
             let fixed = pin.digest().expect("pin digest");
             adopting
@@ -412,11 +422,20 @@ fn successor_image_past_a_rejected_owner_enrollment_keeps_the_whole_history_issu
     );
 }
 
-#[test]
-fn successor_image_past_an_owner_enrollment_off_a_world_side_row_keeps_the_whole_history_issuers() {
+/// Home rooted with one agent row and two concurrent agent rows on it, all
+/// stored, with the sequence past both and their hashes, sorted: the heads a
+/// join of both names.
+struct ConcurrentHome {
+    home: Vault,
+    issuer: HostSlipIssuer,
+    home_dir: tempfile::TempDir,
+    next_seq: u64,
+    heads: Vec<[u8; 32]>,
+}
+
+/// Roots home and stores two concurrent agent rows on its agent row.
+fn concurrent_home() -> ConcurrentHome {
     let (home, issuer, home_dir) = root_home();
-    // Two concurrent host rows, a world's side join of them and a main row
-    // of them: the image's frontier is the side row and the main row.
     let first = sign_next_host_op(
         &home,
         &issuer,
@@ -435,60 +454,50 @@ fn successor_image_past_an_owner_enrollment_off_a_world_side_row_keeps_the_whole
         first.parent_hashes.clone(),
     )
     .expect("sign second");
-    let mut both = vec![
+    let mut heads = vec![
         authority_entry_hash(&first).expect("first hash"),
         authority_entry_hash(&second).expect("second hash"),
     ];
-    both.sort_unstable();
-    let side = oneiron::test_doors::foldpast::sign_host_op_at(
-        &home,
-        &issuer,
-        oneiron::test_doors::foldpast::world_frontier_join_op(EntityId::now()),
-        first.seq + 2,
-        both.clone(),
-    )
-    .expect("sign side join");
-    let main = oneiron::test_doors::foldpast::sign_host_op_at(
-        &home,
-        &issuer,
-        AuthorityOp::EnrollDevice {
-            device: fresh_device(0x58, ROLE_AGENT),
-        },
-        first.seq + 3,
-        both,
-    )
-    .expect("sign main row");
-    put_signed_entries(&home, &[first.clone(), second, side.clone(), main.clone()])
-        .expect("store the covered rows");
-    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
-    let fixture = Fixture {
+    heads.sort_unstable();
+    let next_seq = first.seq + 2;
+    put_signed_entries(&home, &[first, second]).expect("store the concurrent rows");
+    ConcurrentHome {
         home,
-        adopting,
         issuer,
-        _home_dir: home_dir,
-        _adopt_dir: adopt_dir,
-    };
-    // An owner enrollment the host root signs on the whole frontier, the
-    // side row among it: a main-log row that hangs off a world's side row.
-    let device = fresh_device(0x59, ROLE_OWNER);
-    let key = device.key.clone();
-    let mut parents = vec![
-        authority_entry_hash(&side).expect("side hash"),
-        authority_entry_hash(&main).expect("main hash"),
-    ];
-    parents.sort_unstable();
-    let tail = oneiron::test_doors::foldpast::sign_host_op_at(
-        &fixture.home,
-        &fixture.issuer,
-        AuthorityOp::EnrollDevice { device },
-        first.seq + 4,
-        parents,
+        home_dir,
+        next_seq,
+        heads,
+    }
+}
+
+/// A world's side join of `heads` that the host root signs at `seq` for an
+/// install: a side row the fold rejects.
+fn rejected_side_join(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    seq: u64,
+    heads: Vec<[u8; 32]>,
+) -> AuthorityLogEntry {
+    oneiron::test_doors::foldpast::sign_host_op_at(
+        vault,
+        issuer,
+        oneiron::test_doors::foldpast::world_frontier_join_op(EntityId::now(), EntityId::now()),
+        seq,
+        heads,
     )
-    .expect("sign tail");
-    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store tail on home");
-    put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
-        .expect("store tail on adopting");
-    let hash = authority_entry_hash(&tail).expect("tail hash");
+    .expect("sign side join")
+}
+
+/// Asserts that both folds reject `enrollment`, an owner enrollment of `key`
+/// the host root signed on a world's side row, that home's image over its
+/// whole history leaves `key` out of its slip issuers, and that the adopting
+/// vault's successor image keeps home's issuers.
+fn assert_successor_keeps_home_issuers(
+    fixture: &Fixture,
+    enrollment: &AuthorityLogEntry,
+    key: &AuthorityKey,
+) {
+    let hash = authority_entry_hash(enrollment).expect("enrollment hash");
     let home_fold = fixture.home.authority_fold().expect("home folds tail");
     let adopting_fold = fixture
         .adopting
@@ -507,7 +516,7 @@ fn successor_image_past_an_owner_enrollment_off_a_world_side_row_keeps_the_whole
         &fixture.issuer,
     ));
     assert!(
-        !home_issuers.contains(&key),
+        !home_issuers.contains(key),
         "home's consent structure reads only the rows its fold judges"
     );
     let successor = written_image(&fixture.adopting, &fixture.issuer);
@@ -516,6 +525,125 @@ fn successor_image_past_an_owner_enrollment_off_a_world_side_row_keeps_the_whole
         home_issuers,
         "the successor image keeps home's slip issuers"
     );
+}
+
+#[test]
+fn successor_image_past_an_owner_enrollment_off_a_world_side_row_keeps_the_whole_history_issuers() {
+    let ConcurrentHome {
+        home,
+        issuer,
+        home_dir,
+        next_seq,
+        heads,
+    } = concurrent_home();
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    // A tail of a world's side join of the image's frontier and an owner
+    // enrollment the host root signs on it: a main-log row that hangs off a
+    // world's side row.
+    let side = rejected_side_join(&fixture.home, &fixture.issuer, next_seq, heads);
+    let device = fresh_device(0x59, ROLE_OWNER);
+    let key = device.key.clone();
+    let enrollment = oneiron::test_doors::foldpast::sign_host_op_at(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::EnrollDevice { device },
+        next_seq + 1,
+        vec![authority_entry_hash(&side).expect("side hash")],
+    )
+    .expect("sign enrollment");
+    let tail = [side, enrollment.clone()];
+    put_signed_entries(&fixture.home, &tail).expect("store tail on home");
+    put_signed_entries(&fixture.adopting, &tail).expect("store tail on adopting");
+    assert_successor_keeps_home_issuers(&fixture, &enrollment, &key);
+}
+
+#[test]
+fn successor_image_past_a_covered_owner_enrollment_off_a_world_side_row_keeps_the_whole_history_issuers()
+ {
+    let ConcurrentHome {
+        home,
+        issuer,
+        home_dir,
+        next_seq,
+        heads,
+    } = concurrent_home();
+    // Covered: a world's side join, an owner enrollment the host root signs
+    // on it (a main-log row off a world's side row, which the image carries
+    // whole), and a main agent row beside them. The image keeps the issues.
+    let side = rejected_side_join(&home, &issuer, next_seq, heads.clone());
+    let device = fresh_device(0x5a, ROLE_OWNER);
+    let key = device.key.clone();
+    let enrollment = oneiron::test_doors::foldpast::sign_host_op_at(
+        &home,
+        &issuer,
+        AuthorityOp::EnrollDevice { device },
+        next_seq + 1,
+        vec![authority_entry_hash(&side).expect("side hash")],
+    )
+    .expect("sign enrollment");
+    let main = oneiron::test_doors::foldpast::sign_host_op_at(
+        &home,
+        &issuer,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x5b, ROLE_AGENT),
+        },
+        next_seq + 2,
+        heads,
+    )
+    .expect("sign main row");
+    put_signed_entries(&home, &[side, enrollment.clone(), main.clone()])
+        .expect("store the covered rows");
+    let head = home
+        .write_authority_checkpoint_v2(&issuer)
+        .expect("write image");
+    let image = home
+        .authority_checkpoint_v2(&head)
+        .expect("read image")
+        .expect("image some");
+    assert!(
+        !image.fold().issues.is_empty(),
+        "the image keeps its issues"
+    );
+    let (adopting, adopt_dir) = adopt_image(&home, &head, &image);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    // An agent enrollment on the main row, a kind that folds past any image.
+    let tail = oneiron::test_doors::foldpast::sign_host_op_at(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x5c, ROLE_AGENT),
+        },
+        next_seq + 3,
+        vec![authority_entry_hash(&main).expect("main hash")],
+    )
+    .expect("sign tail");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store tail on home");
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+        .expect("store tail on adopting");
+    let hash = authority_entry_hash(&tail).expect("tail hash");
+    assert!(
+        fixture
+            .adopting
+            .authority_fold()
+            .expect("adopting folds tail")
+            .valid_entries
+            .contains(&hash),
+        "the agent enrollment folds past the image"
+    );
+    assert_successor_keeps_home_issuers(&fixture, &enrollment, &key);
 }
 
 #[test]
