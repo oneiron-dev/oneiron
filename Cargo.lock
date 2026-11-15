@@ -9034,6 +9034,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "oneiron-side-key-derive"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "oneiron-skill-attribution"
 version = "0.1.0"
 dependencies = [
@@ -9071,6 +9080,7 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-hex",
  "oneiron-model",
+ "oneiron-side-key-derive",
  "oneiron-skill-attribution",
  "oneiron-vault-contract",
  "pinyin",

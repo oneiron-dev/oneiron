@@ -1,0 +1,22 @@
+[package]
+name = "oneiron-side-key-derive"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Derive for oneiron-store's SideKey: a stored side-table key declares its parts once"
+publish = false
+
+# A leaf proc-macro crate: no oneiron-* dependency. The code it writes names
+# `::oneiron_store::side_table::key`, which re-exports this derive.
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = "2"
+
+[lints]
+workspace = true
