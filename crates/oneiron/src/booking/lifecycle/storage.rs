@@ -10,6 +10,7 @@ use crate::booking::BookingError;
 use crate::side_table::{self, SideTable, VersionedNamed};
 use crate::temporal::TimeRange;
 use crate::{EntityId, Vault};
+use oneiron_contracts::msgpack;
 
 /// One session's active soft hold. Key: hash32 (session-key digest).
 pub(in crate::booking) const HOLD: SideTable<
@@ -124,7 +125,7 @@ const RECEIPT_KEY_DOMAIN: &[u8] = b"oneiron.booking.receipt.v1\0";
 pub(super) fn encode_row<T: Serialize>(value: &T) -> Result<Vec<u8>, BookingError> {
     let mut out = vec![LIFECYCLE_ROW_VERSION];
     out.extend(
-        rmp_serde::to_vec_named(value)
+        msgpack::encode_row(value)
             .map_err(|error| refused(format!("lifecycle row does not encode: {error}")))?,
     );
     Ok(out)
@@ -137,7 +138,7 @@ pub(super) fn decode_row<T: DeserializeOwned>(raw: &[u8]) -> Result<T, BookingEr
     if version != LIFECYCLE_ROW_VERSION {
         return Err(refused("lifecycle row version is unsupported"));
     }
-    rmp_serde::from_slice(body)
+    msgpack::decode_row(body)
         .map_err(|error| refused(format!("lifecycle row does not decode: {error}")))
 }
 

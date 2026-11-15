@@ -54,6 +54,7 @@ pub mod proposal_text;
 pub mod publisher;
 pub mod reservoir;
 pub mod routing;
+mod stored_row;
 mod text_ref;
 
 pub(crate) use text_ref::{

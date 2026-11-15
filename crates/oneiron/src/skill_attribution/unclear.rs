@@ -21,6 +21,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use oneiron_contracts::msgpack;
 
 use super::types::{AttributionLane, AttributionVerdict, UnclearNote, UnclearReason};
 
@@ -189,12 +190,12 @@ impl StoredContext {
 
 impl RawValue for StoredUnclear {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        rmp_serde::to_vec_named(self)
+        msgpack::encode_row(self)
             .map_err(|_| CodecError::Value(Error::InvariantViolation(ROW_LABEL)))
     }
 
     fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: Self = rmp_serde::from_slice(bytes)
+        let row: Self = msgpack::decode_row(bytes)
             .map_err(|_| CodecError::Value(Error::CorruptedIndex(ROW_LABEL)))?;
         if row.v != ROW_VERSION {
             return Err(CodecError::Value(Error::CorruptedIndex(ROW_LABEL)));

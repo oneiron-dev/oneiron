@@ -195,8 +195,8 @@ use self::cleanup_types::{
     live_slots,
 };
 use self::codec_receipts::{
-    candidate_slot, candidate_value, decode_proposal, decode_row, encode_row, field, fresh_row_id,
-    id_list, id_value_list, put_digest_in_txn, put_proposal_in_txn,
+    candidate_slot, candidate_value, decode_proposal, decode_row, field, fresh_row_id, id_list,
+    id_value_list, put_digest_in_txn, put_proposal_in_txn,
 };
 use self::tripwire::{
     CLEANUP_CHECKS, apply_archives_in_txn, cleanup_posture_in_txn, run_cleanup_candidates_in_txn,
@@ -244,3 +244,11 @@ pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,
     refresh_archived_attempt_in_txn, restore_task_attempts,
 };
+
+/// The receipt-row decoder (`codec_receipts::decode_row`) for the trailing-bytes test door. Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn receipt_row_decode_for_test(
+    raw: &[u8],
+) -> crate::Result<Vec<(rmpv::Value, rmpv::Value)>> {
+    codec_receipts::decode_row(raw, "vault cleanup test row")
+}

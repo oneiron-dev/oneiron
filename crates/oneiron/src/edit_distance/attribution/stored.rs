@@ -3,11 +3,12 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::edit_distance::stored_row::versioned_row_codec;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::learning::TypeRef;
 use crate::llm::decision::DecisionReceipt;
-use crate::side_table::{self, CodecError, FixedSideKey, HexId, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::{self, FixedSideKey, HexId, Raw, SideKey, SideTable};
 use crate::skill_attribution::AuditBatch;
 
 // ---------------------------------------------------------------------------
@@ -310,41 +311,12 @@ pub(super) struct StoredAudit {
 // Shared helpers
 // ---------------------------------------------------------------------------
 
-pub(super) fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
-}
-
-pub(super) fn decode_row<T: serde::de::DeserializeOwned>(
-    raw: &[u8],
-    label: &'static str,
-) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
-}
-
-macro_rules! row_codec {
-    ($ty:ty, $label:expr) => {
-        impl RawValue for $ty {
-            fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-                Ok(encode_row(self, $label)?)
-            }
-
-            fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-                let row: $ty = decode_row(bytes, $label)?;
-                if row.v != ROW_VERSION {
-                    return Err(CodecError::Value(Error::CorruptedIndex($label)));
-                }
-                Ok(row)
-            }
-        }
-    };
-}
-
-row_codec!(StoredEvidence, EVIDENCE_ROW_LABEL);
-row_codec!(StoredJudgment, JUDGMENT_ROW_LABEL);
-row_codec!(StoredAmendmentCause, CAUSE_ROW_LABEL);
-row_codec!(StoredPreference, PREFERENCE_ROW_LABEL);
-row_codec!(StoredTarget, TARGET_ROW_LABEL);
-row_codec!(StoredAudit, AUDIT_ROW_LABEL);
+versioned_row_codec!(StoredEvidence, EVIDENCE_ROW_LABEL, ROW_VERSION);
+versioned_row_codec!(StoredJudgment, JUDGMENT_ROW_LABEL, ROW_VERSION);
+versioned_row_codec!(StoredAmendmentCause, CAUSE_ROW_LABEL, ROW_VERSION);
+versioned_row_codec!(StoredPreference, PREFERENCE_ROW_LABEL, ROW_VERSION);
+versioned_row_codec!(StoredTarget, TARGET_ROW_LABEL, ROW_VERSION);
+versioned_row_codec!(StoredAudit, AUDIT_ROW_LABEL, ROW_VERSION);
 
 pub(super) fn hex_entity(hex: &str, label: &'static str) -> Result<EntityId> {
     EntityId::from_hex(hex).map_err(|_| Error::CorruptedIndex(label))

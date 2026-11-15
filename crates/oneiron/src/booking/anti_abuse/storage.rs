@@ -7,6 +7,7 @@ use serde::de::DeserializeOwned;
 
 use crate::booking::BookingError;
 use crate::side_table::{self, Raw, SideTable};
+use oneiron_contracts::msgpack;
 
 use super::rules::BookingAntiAbuseRuleRow;
 
@@ -128,7 +129,7 @@ pub(super) fn engine_failure<E: Into<crate::Error>>(what: &str, error: E) -> Boo
 pub(super) fn encode_row<T: Serialize>(value: &T) -> Result<Vec<u8>, BookingError> {
     let mut out = vec![ANTI_ABUSE_WIRE_VERSION];
     out.extend(
-        rmp_serde::to_vec_named(value)
+        msgpack::encode_row(value)
             .map_err(|error| refused(format!("booking anti-abuse row does not encode: {error}")))?,
     );
     Ok(out)
@@ -141,7 +142,7 @@ pub(super) fn decode_row<T: DeserializeOwned>(raw: &[u8]) -> Result<T, BookingEr
     if version != ANTI_ABUSE_WIRE_VERSION {
         return Err(refused("booking anti-abuse row version is unsupported"));
     }
-    rmp_serde::from_slice(body)
+    msgpack::decode_row(body)
         .map_err(|error| refused(format!("booking anti-abuse row does not decode: {error}")))
 }
 

@@ -58,11 +58,9 @@
 //! projects, which is how "every transition is receipted" is mechanical rather
 //! than remembered.
 
-use serde::Serialize;
-
+use crate::edit_distance::stored_row::versioned_row_codec;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 
 // ---------------------------------------------------------------------------
 // Tables
@@ -101,43 +99,17 @@ const THRESHOLD_ROW_LABEL: &str = "graduation threshold row";
 
 const ANSWER_ROW_LABEL: &str = "graduation answer row";
 
-fn encode_row<T: Serialize>(row: &T, label: &'static str) -> Result<Vec<u8>> {
-    rmp_serde::to_vec_named(row).map_err(|_| Error::InvariantViolation(label))
-}
+// The quarantined tests module names `encode_row` through `use super::*`.
+#[cfg(test)]
+use crate::edit_distance::stored_row::encode_row;
 
-fn decode_row<T: serde::de::DeserializeOwned>(raw: &[u8], label: &'static str) -> Result<T> {
-    rmp_serde::from_slice(raw).map_err(|_| Error::CorruptedIndex(label))
-}
+versioned_row_codec!(answers::StoredAnswer, ANSWER_ROW_LABEL, ROW_VERSION);
 
-impl RawValue for answers::StoredAnswer {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, ANSWER_ROW_LABEL)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: Self = decode_row(bytes, ANSWER_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(ANSWER_ROW_LABEL)));
-        }
-        Ok(row)
-    }
-}
-
-impl RawValue for threshold_policy::StoredThresholdRow {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, THRESHOLD_ROW_LABEL)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: Self = decode_row(bytes, THRESHOLD_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(
-                THRESHOLD_ROW_LABEL,
-            )));
-        }
-        Ok(row)
-    }
-}
+versioned_row_codec!(
+    threshold_policy::StoredThresholdRow,
+    THRESHOLD_ROW_LABEL,
+    ROW_VERSION
+);
 
 mod answers;
 mod pattern;

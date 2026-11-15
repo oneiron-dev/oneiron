@@ -2,13 +2,12 @@
 //! Entry: `invalid_consolidation`, the module's validation error builder.
 //! Definitions are local to this module.
 
-use std::io::Cursor;
-
 use rmpv::Value;
 
 use crate::dreamer_runner::DreamerConsolidationScope;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use oneiron_contracts::msgpack;
 
 /// Domain for phase-2 candidate-bucket hashes (pinned, design D6). v2 added
 /// the project axis to the bucket key.
@@ -111,15 +110,18 @@ pub(super) fn hash_optional_entity(hasher: &mut blake3::Hasher, entity: Option<&
 // ---------------------------------------------------------------------------
 
 pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, value)
-        .map_err(|_| invalid_consolidation("dreamer consolidation MessagePack encode failed"))?;
-    Ok(encoded)
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn decode_value(raw: &[u8]) -> Result<Value> {
-    rmpv::decode::read_value(&mut Cursor::new(raw))
+    msgpack::decode(raw)
         .map_err(|_| invalid_consolidation("dreamer consolidation MessagePack decode failed"))
+}
+
+/// [`decode_value`] for the trailing-bytes test door (`test_doors::msgpack_trailing`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn consolidation_value_decode_for_test(raw: &[u8]) -> Result<Value> {
+    decode_value(raw)
 }
 
 pub(super) fn expect_map<'v>(

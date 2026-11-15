@@ -32,14 +32,13 @@ use super::run_record::{KEY_REVERT, KEY_SNAPSHOT};
 use super::run_snapshot::{KEY_AFTER, KEY_BEFORE, KEY_ENTRIES, KEY_REVISION};
 use super::{
     CleanupKind, KEY_ARCHIVED, KEY_CANDIDATES, KEY_ENTITY, KEY_KIND, KEY_REJECTED, KEY_SKIPPED,
-    encode_row, field,
+    field,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
 use crate::store::attempt_id::AttemptId;
-
-const ERASE_LABEL: &str = "vault cleanup erase";
+use oneiron_contracts::msgpack;
 
 /// What a walk met that does not read: rows deleted by their key, and
 /// listing slots left erased.
@@ -248,7 +247,7 @@ fn visit(
         return Ok(());
     };
     if scrub(&mut row, &mut unreadable.slots) {
-        let encoded = encode_row(&Value::Map(row), ERASE_LABEL)?;
+        let encoded = msgpack::encode(&Value::Map(row));
         listing.put_unindexed(store, txn, key, &encoded)?;
     }
     Ok(())

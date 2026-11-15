@@ -17,15 +17,16 @@ use super::model::{
     StoredSkillEdit, SubstitutionClass, SubstitutionCluster,
 };
 use super::observed::observed_support_in_txn;
-use super::store::{SKILL_EDIT, decode_row, encode_row, mined_skill_edit_in_txn};
+use super::store::{SKILL_EDIT, encode_row, mined_skill_edit_in_txn};
 use crate::Vault;
 use crate::claim::{ClaimApprovalStatus, ClaimSource, ClaimSubject};
 use crate::dreamer_consolidation::{ConsolidationEvidenceEnvelope, encode_consolidation_evidence};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
+use crate::edit_distance::stored_row::versioned_row_codec;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::side_table::{self, Raw, SideTable};
 use crate::temporal::TimeRange;
 use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 
@@ -34,21 +35,7 @@ use crate::write_envelope::{ClaimCandidate, WriteEnvelope, WriteProvenance};
 pub(super) const MINT_MARK: SideTable<[u8; 32], StoredMintMark, Raw> =
     SideTable::new(&side_table::EDIT_DISTANCE_MINER_MINT_MARK);
 
-impl RawValue for StoredMintMark {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(encode_row(self, MINT_MARK_ROW_LABEL)?)
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let row: StoredMintMark = decode_row(bytes, MINT_MARK_ROW_LABEL)?;
-        if row.v != ROW_VERSION {
-            return Err(CodecError::Value(Error::CorruptedIndex(
-                MINT_MARK_ROW_LABEL,
-            )));
-        }
-        Ok(row)
-    }
-}
+versioned_row_codec!(StoredMintMark, MINT_MARK_ROW_LABEL, ROW_VERSION);
 
 // ---------------------------------------------------------------------------
 // The chooser

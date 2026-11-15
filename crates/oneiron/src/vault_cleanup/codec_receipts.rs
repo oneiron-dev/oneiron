@@ -22,6 +22,7 @@ use crate::store::attempt_id::AttemptId;
 use crate::store::receipt_row::{
     ReceiptKind, ReceiptQuery, ReceiptRecord, hex_lower, retain_newest_receipt,
 };
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 use std::collections::BTreeMap;
 
@@ -40,19 +41,8 @@ pub(super) fn fresh_row_id(vault: &Vault) -> Result<EntityId> {
     vault.store.clock.entity_id()
 }
 
-pub(super) fn encode_row(row: &Value, label: &'static str) -> Result<Vec<u8>> {
-    let mut encoded = Vec::new();
-    rmpv::encode::write_value(&mut encoded, row).map_err(|_| Error::CorruptedIndex(label))?;
-    Ok(encoded)
-}
-
 pub(super) fn decode_row(raw: &[u8], label: &'static str) -> Result<Vec<(Value, Value)>> {
-    let value = rmpv::decode::read_value(&mut std::io::Cursor::new(raw))
-        .map_err(|_| Error::CorruptedIndex(label))?;
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(Error::CorruptedIndex(label)),
-    }
+    msgpack::decode_map(raw).map_err(|_| Error::CorruptedIndex(label))
 }
 
 pub(super) fn field<'a>(entries: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
@@ -161,7 +151,7 @@ pub(super) fn put_proposal_in_txn(
             ),
         ),
     ]);
-    let encoded = encode_row(&row, PROPOSAL_ROW_LABEL)?;
+    let encoded = msgpack::encode(&row);
     // Its candidates are indexed with it, so an erase finds it (FIX 7616).
     super::entity_rows::put_in_txn(
         &vault.store,
@@ -250,7 +240,7 @@ pub(super) fn put_digest_in_txn(
             integrity_teeth_value(teeth),
         ));
     }
-    let encoded = encode_row(&Value::Map(row), DIGEST_ROW_LABEL)?;
+    let encoded = msgpack::encode(&Value::Map(row));
     // Its slots are indexed with it, so an erase finds it (FIX 7616).
     super::entity_rows::put_in_txn(
         &vault.store,
