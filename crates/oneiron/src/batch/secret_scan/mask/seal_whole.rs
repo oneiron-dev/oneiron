@@ -7,7 +7,9 @@
 //! a body read as text, is sealed whole and keeps `[secret sc12]`. The rest
 //! of the write is kept. A hit spread over a value's parts (a key one line
 //! per item) seals the value that holds all of it, never a part whose
-//! stand-in only breaks the hit's pattern.
+//! stand-in only breaks the hit's pattern. Past [`MAX_SEALS_PER_OP`] seals
+//! in one op, each top-level part of a member that still reads as a hit is
+//! sealed whole, so a write of many hits lands too (REVIEW-7651 P1).
 //!
 //! The plan chooses each seal on its copy, by op and place, with a stand-in
 //! there, and reads the copy again. Once the plan's own values are minted
@@ -60,9 +62,10 @@ use crate::write_envelope::ClaimCandidate;
 
 mod seal_file;
 
-/// The most values one op, or one part of a row, seals; a copy still read
-/// as a hit past them refuses the write. Each seal clears a value that
-/// reads as a hit alone.
+/// The most values one op, or one part of a row, seals one at a time, each
+/// a value that reads as a hit alone. Past them, each top-level part that
+/// still reads as one is sealed whole (`seal_until_clean`), so the reads
+/// stay bounded and the write still lands.
 const MAX_SEALS_PER_OP: usize = 64;
 
 /// Where a seal sits in the one value of an op or a part that holds it.
@@ -129,7 +132,13 @@ pub(super) fn plan_seals(
         if !sealable(op) {
             return Err(refusal);
         }
-        let taken = seal_until_clean(op, refusal, |op| seal_in(op, kept), clean)?;
+        let taken = seal_until_clean(
+            op,
+            refusal,
+            |op| seal_in(op, kept),
+            |op| seal_rest_in(op, kept),
+            clean,
+        )?;
         seals.extend(taken.into_iter().map(|(member, at, reason)| Seal {
             index,
             member,
@@ -164,7 +173,13 @@ pub(super) fn plan_part_seals(
         }
         let read = |bytes: &[u8]| hit(kept, record, bytes);
         let clean = |part: &SidePart| part.scan(kept, record).is_ok();
-        let taken = seal_until_clean(part, refusal, |part| seal_part(part, &read), clean)?;
+        let taken = seal_until_clean(
+            part,
+            refusal,
+            |part| seal_part(part, &read),
+            |part| seal_part_rest(part, &read),
+            clean,
+        )?;
         seals.extend(taken.into_iter().map(|(at, reason)| Seal {
             index,
             member: 0,
@@ -181,7 +196,11 @@ pub(super) fn plan_part_seals(
 /// minted, and no value the owner kept is read.
 pub(super) fn predict_body_seals(copy: &mut Vec<u8>, refusal: Error) -> Result<()> {
     let seal = |copy: &mut Vec<u8>| seal_body_copy(copy, &write_payload_hit);
-    seal_until_clean(copy, refusal, seal, |copy| scan_write_payload(copy).is_ok()).map(drop)
+    let rest = |copy: &mut Vec<u8>| seal_body_parts_copy(copy, &write_payload_hit);
+    seal_until_clean(copy, refusal, seal, rest, |copy| {
+        scan_write_payload(copy).is_ok()
+    })
+    .map(drop)
 }
 
 /// [`predict_body_seals`] for a text field's text, which the door seals
@@ -190,17 +209,29 @@ pub(super) fn predict_text_seals(copy: &mut Vec<u8>, refusal: Error) -> Result<(
     let seal = |copy: &mut Vec<u8>| -> Result<Option<&'static str>> {
         Ok(seal_bytes_copy(copy, &write_payload_hit))
     };
-    seal_until_clean(copy, refusal, seal, |copy| scan_write_payload(copy).is_ok()).map(drop)
+    let rest = |copy: &mut Vec<u8>| -> Result<Vec<&'static str>> {
+        Ok(seal_bytes_copy(copy, &write_payload_hit)
+            .into_iter()
+            .collect())
+    };
+    seal_until_clean(copy, refusal, seal, rest, |copy| {
+        scan_write_payload(copy).is_ok()
+    })
+    .map(drop)
 }
 
 /// Seals `item`, a plan's copy, one value at a time with `seal_once` until
-/// `clean` reads it clean, and returns each seal in order. With no value
-/// left that reads as a hit alone, or with [`MAX_SEALS_PER_OP`] taken and
-/// the copy still a hit, it is `refusal`.
+/// `clean` reads it clean, and returns each seal in order. With
+/// [`MAX_SEALS_PER_OP`] taken and the copy still a hit, `seal_rest` seals
+/// whole each top-level part that still reads as one, and `seal_once` takes
+/// one more seal if the copy still reads as a hit (a value that does only as
+/// its parts sit together). With no value left that reads as a hit alone,
+/// or the copy still a hit after that, it is `refusal`.
 fn seal_until_clean<T: ?Sized, S>(
     item: &mut T,
     refusal: Error,
     seal_once: impl Fn(&mut T) -> Result<Option<S>>,
+    seal_rest: impl FnOnce(&mut T) -> Result<Vec<S>>,
     clean: impl Fn(&T) -> bool,
 ) -> Result<Vec<S>> {
     let mut seals = Vec::new();
@@ -213,7 +244,19 @@ fn seal_until_clean<T: ?Sized, S>(
             return Ok(seals);
         }
     }
-    Err(refusal)
+    seals.extend(seal_rest(&mut *item)?);
+    if clean(&*item) {
+        return Ok(seals);
+    }
+    let Some(seal) = seal_once(&mut *item)? else {
+        return Err(refusal);
+    };
+    seals.push(seal);
+    if clean(&*item) {
+        Ok(seals)
+    } else {
+        Err(refusal)
+    }
 }
 
 /// The bytes of `op` when it puts a file its writer wrote, which the plan
@@ -284,6 +327,46 @@ fn seal_in(op: &mut BatchOp, kept: &KeptValues) -> Result<Option<(usize, SealIn,
     }
 }
 
+/// Past the seal budget, seals whole each top-level part of each member of
+/// `op`, the plan's copy, that still reads as a hit ([`seal_parts_copy`]),
+/// and returns them as [`seal_in`] returns one. A text field is sealed
+/// whole, as [`seal_in`] seals it.
+fn seal_rest_in(op: &mut BatchOp, kept: &KeptValues) -> Result<Vec<(usize, SealIn, &'static str)>> {
+    match op {
+        BatchOp::Text { id, fields } => {
+            let record = *id;
+            let read = |bytes: &[u8]| hit(kept, &record, bytes);
+            Ok(fields
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(index, (_, text))| {
+                    seal_text_copy(text, &read).map(|reason| (index, SealIn::Text, reason))
+                })
+                .collect())
+        }
+        BatchOp::Put { id, data, .. } => {
+            let record = *id;
+            let read = |bytes: &[u8]| hit(kept, &record, bytes);
+            Ok(seal_body_parts_copy(data, &read)?
+                .into_iter()
+                .map(|(path, reason)| (0, SealIn::Body(path), reason))
+                .collect())
+        }
+        BatchOp::ClaimCandidate { id, candidate, .. } => {
+            let record = *id;
+            let read = |bytes: &[u8]| hit(kept, &record, bytes);
+            let mut seals = Vec::new();
+            for (index, value) in candidate.values_mut().enumerate() {
+                for (path, reason) in seal_parts_copy(value, BodyForm::MessagePack, &read)? {
+                    seals.push((index, SealIn::Value(path), reason));
+                }
+            }
+            Ok(seals)
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
 /// [`seal_in`] for one part of a row: a text is sealed whole, a body as a
 /// put's body is, and a value at its smallest value that reads as the hit
 /// alone.
@@ -298,6 +381,28 @@ fn seal_part(
         }
         SidePart::Value(value) => seal_tree_copy(value, BodyForm::MessagePack, read)?
             .map(|(path, reason)| (SealIn::Value(path), reason)),
+    })
+}
+
+/// [`seal_rest_in`] for one part of a row: a text is sealed whole, a body
+/// and a value part by top-level part.
+fn seal_part_rest(
+    part: &mut SidePart,
+    read: &dyn Fn(&[u8]) -> Option<&'static str>,
+) -> Result<Vec<(SealIn, &'static str)>> {
+    Ok(match part {
+        SidePart::Text(text) => seal_text_copy(text, read)
+            .map(|reason| (SealIn::Text, reason))
+            .into_iter()
+            .collect(),
+        SidePart::Body(data) => seal_body_parts_copy(data, read)?
+            .into_iter()
+            .map(|(path, reason)| (SealIn::Body(path), reason))
+            .collect(),
+        SidePart::Value(value) => seal_parts_copy(value, BodyForm::MessagePack, read)?
+            .into_iter()
+            .map(|(path, reason)| (SealIn::Value(path), reason))
+            .collect(),
     })
 }
 
@@ -362,6 +467,57 @@ fn seal_tree_copy(
     };
     stand_in_at(tree, &path)?;
     Ok(Some((path, reason)))
+}
+
+/// Puts the stand-in in place of each top-level part of `tree`, on a plan's
+/// copy, that reads as a hit alone, with one read of each, and returns
+/// their paths and reasons; a `tree` with no parts takes it whole when it
+/// reads as a hit. Past the seal budget, a value of many hits takes one
+/// seal per part, not one per hit.
+fn seal_parts_copy(
+    tree: &mut Value,
+    form: BodyForm,
+    read: &dyn Fn(&[u8]) -> Option<&'static str>,
+) -> Result<Vec<(Vec<usize>, &'static str)>> {
+    let mut hits = Vec::new();
+    let steps = parts(tree);
+    if steps.is_empty()
+        && let Some(reason) = value_hit(tree, form, read)?
+    {
+        hits.push((Vec::new(), reason));
+    }
+    for (step, part) in steps {
+        if let Some(reason) = value_hit(part, form, read)? {
+            hits.push((vec![step], reason));
+        }
+    }
+    for (path, _) in &hits {
+        stand_in_at(tree, path)?;
+    }
+    Ok(hits)
+}
+
+/// [`seal_parts_copy`] for `data`, a body on a plan's copy; a body read as
+/// text, or one no decoder reads, is sealed whole, as [`seal_body_copy`]
+/// seals it.
+fn seal_body_parts_copy(
+    data: &mut Vec<u8>,
+    read: &dyn Fn(&[u8]) -> Option<&'static str>,
+) -> Result<Vec<(Option<Vec<usize>>, &'static str)>> {
+    let Some((mut tree, form)) = body_tree(data) else {
+        return Ok(seal_bytes_copy(data, read)
+            .map(|reason| (None, reason))
+            .into_iter()
+            .collect());
+    };
+    let sealed = seal_parts_copy(&mut tree.0, form, read)?;
+    if !sealed.is_empty() {
+        replace_wiped(data, encode_body(&tree.0, form)?);
+    }
+    Ok(sealed
+        .into_iter()
+        .map(|(path, reason)| (Some(path), reason))
+        .collect())
 }
 
 /// The reason the door's rules read `bytes` of `record` with, each value
