@@ -161,3 +161,26 @@ pub fn disconnect_action(connect: &FederationLifecycleAction) -> FederationLifec
         pact_nonce: [0xC5; 16],
     }
 }
+
+/// Signs `op` as the host root's row at `seq` on `parents`, without storing
+/// it: a row on a parent no head names, such as a rejected one.
+///
+/// # Errors
+///
+/// The fold's and the signer's.
+pub fn sign_host_op_at(
+    vault: &Vault,
+    issuer: &HostSlipIssuer,
+    op: AuthorityOp,
+    seq: u64,
+    parents: Vec<crate::authority::AuthorityEntryHash>,
+) -> Result<AuthorityLogEntry> {
+    vault.sign_host_op_at_for_test(issuer, op, seq, parents)
+}
+
+/// The slip issuers `image`'s sequence index holds.
+pub fn image_slip_issuers(
+    image: &crate::authority::AuthorityCheckpointV2,
+) -> std::collections::BTreeSet<crate::authority::AuthorityKey> {
+    image.slip_issuers_for_test()
+}

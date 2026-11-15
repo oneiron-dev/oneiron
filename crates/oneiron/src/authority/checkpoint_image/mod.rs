@@ -196,6 +196,13 @@ pub(super) fn covered_of(bytes: &[u8]) -> Result<Vec<AuthorityEntryHash>> {
 }
 
 impl AuthorityCheckpointV2 {
+    /// The slip issuers this image's sequence index holds, for a test that
+    /// compares two images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn slip_issuers_for_test(&self) -> BTreeSet<AuthorityKey> {
+        self.safety.issuers.clone()
+    }
+
     /// The canonical bytes: the v2 domain, then named MessagePack, after the
     /// shape check. There is no total-image policy ceiling.
     pub fn encode(&self) -> Result<Vec<u8>> {
