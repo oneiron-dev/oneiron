@@ -142,8 +142,8 @@ pub use selector::GuestDocumentShareRequest;
 pub use selector::put_selector_test_federation_grant;
 pub use selector::{
     DEFAULT_FEDERATED_CONFIDENCE_SCALE, FederationAdmissionRole, PeerConfidence, RequestedAxis,
-    SYNC_SELECTOR_SCHEMA_VERSION, SelectorReleaseBasis, SelectorVvRequest, SyncSelector,
-    SyncSelectorWorld, admit_federated_window_update, authorize_sync_selector,
+    SYNC_SELECTOR_SCHEMA_VERSION, SelectorReaderReach, SelectorReleaseBasis, SelectorVvRequest,
+    SyncSelector, SyncSelectorWorld, admit_federated_window_update, authorize_sync_selector,
     decode_selector_vv_request, decode_sync_selector, encode_selector_vv_request,
     encode_sync_selector, filtered_window_doc, filtered_window_doc_for,
     filtered_window_doc_for_peer,

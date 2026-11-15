@@ -338,6 +338,13 @@ pub(crate) fn meet_clearance(
 }
 
 impl ScopedReadActorKey {
+    /// The principal whose access grants and relationship memberships a
+    /// read under this key loads: what a forwarded search's answer is judged
+    /// again under where it leaves (SELECTOR-RELEASE-POINT = B).
+    pub(crate) fn access_principal(&self) -> Option<EntityId> {
+        self.principal_ref
+    }
+
     #[must_use]
     pub fn new(actor_ref: impl Into<String>) -> Option<Self> {
         Self::from_parts(actor_ref.into(), None)

@@ -48,6 +48,7 @@ pub(super) fn search_pages(
     budgets: ResidenceOperationBudgets,
     attribution: &mut Option<ForwardedAttribution>,
     off_carrier: &mut bool,
+    reader: &mut Option<oneiron::sync::SelectorReaderReach>,
 ) -> Result<Answer, AppError> {
     let selector_wire = base64::engine::general_purpose::STANDARD
         .decode(&input.selector)
@@ -63,6 +64,12 @@ pub(super) fn search_pages(
     *off_carrier = forwarded
         .as_ref()
         .is_some_and(|forwarded| forwarded.locality == oneiron::claim::CallerLocality::OffDevice);
+    // The caller's own access grants decide what it reads, beside the
+    // selector's ceiling: taken before the read, so its answer leaves only
+    // while they stand (SELECTOR-RELEASE-POINT = B).
+    *reader = forwarded.as_ref().and_then(|caller| {
+        oneiron::sync::SelectorReaderReach::take(&server.vault, &caller.read_key())
+    });
     let admission = match &forwarded {
         Some(caller) => caller.admission(server, peer, &selector)?,
         None => admitted(server, auth, peer, &selector)?,

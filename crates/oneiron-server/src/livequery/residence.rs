@@ -454,6 +454,8 @@ pub(super) fn run(
     // and whether it sits off the carrying device (FIX 11991).
     let mut attribution = None;
     let mut off_carrier = false;
+    // A forwarded search's caller reach, taken before its read.
+    let mut reader = None;
     let result = (|| {
         auth.require(CoreScope::Read)?;
         if !auth.credential_is_live(server.vault.as_ref()) {
@@ -474,6 +476,7 @@ pub(super) fn run(
                 budgets,
                 &mut attribution,
                 &mut off_carrier,
+                &mut reader,
             ),
             "residence.media_vectors" => {
                 media_vectors::media_vectors(server, auth, peer, request.params)
@@ -535,7 +538,12 @@ pub(super) fn run(
         request.request_id,
         result,
     )
-    .map(|reply| (reply.released_off_carrier(off_carrier), basis))
+    .map(|reply| {
+        (
+            reply.released_off_carrier(off_carrier),
+            basis.map(|basis| basis.reading_for(reader)),
+        )
+    })
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {
