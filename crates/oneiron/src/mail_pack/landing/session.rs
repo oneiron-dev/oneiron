@@ -158,7 +158,7 @@ impl Landing<'_> {
         };
         let conversation_shell = session.overlay_conversation_shell()?;
         let staged = session.overlay_write_routed(route, |wtxn, apply| {
-            self.owner.revalidate_in_txn(vault, wtxn).map_err(&refuse)?;
+            self.owner.revalidate_in_txn(vault, wtxn)?;
             let active = SOURCES
                 .get(&vault.store, wtxn, &source)?
                 .is_some_and(|current| current.status == MailSourceStatus::Active);
