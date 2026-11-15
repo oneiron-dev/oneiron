@@ -67,18 +67,9 @@ impl WidenKind {
     }
 }
 
-/// A proposal receipt confers no authority. It is not a ConsentGrant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct WidenProposal {
-    pub proposal_ref: String,
-    pub canonical_delta: Vec<u8>,
-    pub proposer: String,
-    pub owner_ref: String,
-    pub created_at: u64,
-    pub expires_at: u64,
-    pub decision_id: [u8; 16],
-}
+#[doc(hidden)]
+pub use oneiron_records::consent::widen::WidenProposal;
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct StoredProposal {
