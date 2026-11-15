@@ -391,7 +391,7 @@ fn scorecard_pack_embed_refuses_an_answer_under_another_transform() {
     // another one: no vector of the slice may be pinned as the listed transform.
     let stub = Stub::start(Some(1));
     let dir = tempfile::tempdir().expect("embed fixture dir");
-    write_search_slice(dir.path(), false);
+    write_slice(dir.path(), "search", false);
     let manifest_before = std::fs::read(dir.path().join("search.json")).expect("manifest");
     let pack_dir = dir.path().to_str().expect("fixture dir").to_owned();
     let result = scorecard(&[
