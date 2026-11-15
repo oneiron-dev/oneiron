@@ -346,6 +346,10 @@ pub struct ClaimView {
     pub claim_scope: crate::ClaimScope,
     /// Host-stamped provenance, with unreadable input refs withheld.
     pub made_by: Option<crate::MadeBy>,
+    /// The org the maker ran as its house when it made the claim, as 32-hex:
+    /// the claim reads "pr2, for <org>" (HOUSE-BIND = A). Read, never stored.
+    #[uniffi(default = None)]
+    pub for_org: Option<String>,
     /// Typed claim record ref, when available.
     pub claim: Option<crate::RecordRef>,
     /// Validity window start (Unix seconds).

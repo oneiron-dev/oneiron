@@ -70,6 +70,13 @@ pub struct ClaimView {
     pub claim_scope: ClaimScope,
     /// Original host-stamped Rule A provenance.
     pub made_by: Option<crate::provenance::made_by::MadeBy>,
+    /// The org `made_by`'s actor ran as its house when it made the claim, as
+    /// 32-hex (HOUSE-BIND = A, ARCH-0063 #house-bind, FIX
+    /// SPEAKER-BYLINE-FOR-ORG-CLAIMS): the claim reads "pr2, for <org>". Read
+    /// from the house link receipts at `made_by.at` on each read, never
+    /// stored. `None` for a claim with no birth, or whose maker ran no org then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub for_org: Option<String>,
     /// Validity window start.
     pub valid_from: Option<u64>,
     /// Validity window end.
@@ -710,6 +717,8 @@ impl Memory<'_> {
             serde_json::Value::String(text) => claim.with_label(text),
             other => claim.with_label(&other.to_string()),
         };
+        let made_by = self.collection_view(id)?.and_then(|view| view.made_by);
+        let for_org = self.claim_for_org(made_by.as_ref())?;
         Ok(ClaimView {
             claim: Some(claim),
             claim_ref: id.to_hex(),
@@ -728,12 +737,39 @@ impl Memory<'_> {
             world_ref: body.world.map(|world| world.to_hex()),
             scope,
             claim_scope: ClaimScope::of_body(body),
-            made_by: self.collection_view(id)?.and_then(|view| view.made_by),
+            made_by,
+            for_org,
             valid_from: body.valid_from,
             valid_to: body.valid_to,
             salience: body.salience,
             stale: body.stale,
         })
+    }
+
+    /// [`ClaimView::for_org`]: the org the claim's maker ran as its house at
+    /// its birth's `at`, as the room half reads a turn's speaker
+    /// (`turns_for_org`). Its own snapshot opens after the claim's reads have
+    /// closed theirs (one read snapshot per thread).
+    fn claim_for_org(
+        &self,
+        made_by: Option<&crate::provenance::made_by::MadeBy>,
+    ) -> MemoryResult<Option<String>> {
+        let Some(made_by) = made_by else {
+            return Ok(None);
+        };
+        let txn = self
+            .vault
+            .store
+            .env
+            .read_txn()
+            .map_err(crate::Error::from)?;
+        Ok(crate::workspace_roster::house_org_at_in_txn(
+            self.vault,
+            &txn,
+            made_by.process.actor,
+            made_by.at,
+        )?
+        .map(|org| org.to_hex()))
     }
 
     /// The receipt of a structural write of `id`, whose kind the caller does
