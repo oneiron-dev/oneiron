@@ -28,7 +28,7 @@ use oneiron_store::query_memos::VerdictMemoKey;
 use oneiron_store::side_table::key::{HexId, SideKey};
 use sha2::{Digest, Sha256};
 
-const STORE_TABLE_SHA256: &str = "56e98ee0a04b617ab56c9e33c5b095e826cec6771df67a184d22f9282e1038ba";
+const STORE_TABLE_SHA256: &str = "9477a35642d244f6a5e9550d95504bad5a6fca31a6fc2163a72ba949195d5783";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";
@@ -189,8 +189,12 @@ fn store_keys_spell_and_read_as_the_hand_impls() {
             .collect(),
         std::slice::from_ref(&empty),
     );
+    // `[type byte, 0xff x 15]` is a reserved id only when the type byte is registered with a short
+    // id prefix: 1 (TURN) is, 7 is not, so the second id reads.
     let mut reserved_entity = [0xff_u8; 16];
-    reserved_entity[0] = 7;
+    reserved_entity[0] = 1;
+    let mut unregistered_type_entity = [0xff_u8; 16];
+    unregistered_type_entity[0] = 7;
     pin(
         &mut table,
         "VerdictMemoKey",
@@ -229,6 +233,10 @@ fn store_keys_spell_and_read_as_the_hand_impls() {
             (
                 "reserved_entity",
                 joined(&[id_a().as_bytes(), &reserved_entity, &one_32]),
+            ),
+            (
+                "unregistered_type_entity",
+                joined(&[id_a().as_bytes(), &unregistered_type_entity, &one_32]),
             ),
             empty.clone(),
         ],
