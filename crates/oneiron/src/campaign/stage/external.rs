@@ -8,7 +8,11 @@ use super::projector::{
     StageProjectResult, StageProjectorInput, invalid, live_stage_head_in,
     project_stage_transition_in_txn,
 };
-use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageKey};
+use crate::calendar::claims::decode_event_outcome_value;
+use crate::calendar::outcome::{EventOutcome, PREDICATE_CALENDAR_EVENT_OUTCOME};
+use crate::campaign::claims::{CrmStageValue, EvidenceBasis, StageEvidenceClass, StageKey};
+use crate::claim::claim_surfaceable;
+use crate::registry::{ENTITY_TYPE_EVENT, ENTITY_TYPE_MESSAGE};
 use crate::{EntityId, Result, Vault};
 
 pub use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
@@ -28,9 +32,10 @@ pub use crate::write_envelope::cohort_claims::ladder::ExternalStageEvidenceHook;
 /// # Errors
 ///
 /// [`Error::InvalidClaimBody`](crate::Error::InvalidClaimBody) when the hook carries no evidence references,
-/// when its class disagrees with the configured transition, or when an
-/// owner-attested basis is not admissible (see `require_owner_attestable`).
-/// Projector and storage errors propagate.
+/// when its class disagrees with the configured transition, when an
+/// owner-attested basis is not admissible (see `require_owner_attestable`), or
+/// when the references do not re-read as the source their class names (see
+/// `require_source_evidence`). Projector and storage errors propagate.
 pub fn apply_external_stage_evidence(
     vault: &Vault,
     definition: &StageLadderDefinition,
@@ -70,6 +75,7 @@ pub(crate) fn apply_external_stage_evidence_in_txn(
     if hook.evidence.basis == EvidenceBasis::OwnerAttested {
         require_owner_attestable(definition, rule)?;
     }
+    require_source_evidence(vault, txn, hook.evidence.class, &hook.evidence.evidence_refs)?;
     project_stage_transition_in_txn(
         vault,
         txn,
@@ -88,6 +94,114 @@ pub(crate) fn apply_external_stage_evidence_in_txn(
         mode,
         envelope,
     )
+}
+
+/// Re-reads the source a vault-owned evidence class names, so declaring the
+/// class and citing any reference cannot stand in for the evidence itself.
+///
+/// A meaningful reply is a MESSAGE, a booking is an EVENT (the row calendar
+/// ingestion writes from its ICS source), and a held call is a live
+/// `calendar.event_outcome` claim that says `held` — cited by the claim
+/// itself or by its EVENT, as the outcome door cites it. Silence stays
+/// silence: an EVENT with no held outcome earns no held stage here either.
+///
+/// The remaining classes name sources some other owner records — a document
+/// and its send receipt, the counterparty ledger, a task list, a recurring
+/// commitment — and their truth stays with that owner, so this ingress keeps
+/// checking only that a reference is present for them.
+fn require_source_evidence(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    class: StageEvidenceClass,
+    evidence_refs: &[EntityId],
+) -> Result<()> {
+    match class {
+        StageEvidenceClass::MeaningfulReply => {
+            if evidence_has_entity_type(vault, txn, evidence_refs, ENTITY_TYPE_MESSAGE)? {
+                Ok(())
+            } else {
+                Err(invalid(
+                    "meaningful reply evidence requires a MESSAGE evidence ref",
+                ))
+            }
+        }
+        StageEvidenceClass::CalendarEvent => {
+            if evidence_has_entity_type(vault, txn, evidence_refs, ENTITY_TYPE_EVENT)? {
+                Ok(())
+            } else {
+                Err(invalid(
+                    "calendar event evidence requires an EVENT evidence ref",
+                ))
+            }
+        }
+        StageEvidenceClass::CalendarEventOutcome => {
+            if evidence_has_held_outcome(vault, txn, evidence_refs)? {
+                Ok(())
+            } else {
+                Err(invalid(
+                    "calendar event outcome evidence requires a held outcome",
+                ))
+            }
+        }
+        StageEvidenceClass::DocumentArtifactAndSendReceipt
+        | StageEvidenceClass::CounterpartyLedger
+        | StageEvidenceClass::TaskListProgress
+        | StageEvidenceClass::RecurringCommitment => Ok(()),
+    }
+}
+
+/// Whether any cited reference is a stored entity of `entity_type`.
+fn evidence_has_entity_type(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    evidence_refs: &[EntityId],
+    entity_type: u8,
+) -> Result<bool> {
+    for reference in evidence_refs {
+        if vault.get_entity_type_in_txn(txn, reference)? == Some(entity_type) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Whether any cited reference carries a live `held` outcome: the outcome
+/// claim itself, or an EVENT one of its claims is that claim.
+fn evidence_has_held_outcome(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    evidence_refs: &[EntityId],
+) -> Result<bool> {
+    for reference in evidence_refs {
+        if is_held_outcome_claim(vault, txn, reference)? {
+            return Ok(true);
+        }
+        if vault.get_entity_type_in_txn(txn, reference)? != Some(ENTITY_TYPE_EVENT) {
+            continue;
+        }
+        for claim_ref in vault.claims_for_subject_in_txn(txn, reference)? {
+            if is_held_outcome_claim(vault, txn, &claim_ref)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+/// Whether `claim_ref` is a live `calendar.event_outcome` claim that says
+/// `held`, read as a reader about to act on it would read it.
+fn is_held_outcome_claim(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    claim_ref: &EntityId,
+) -> Result<bool> {
+    let Some(body) = vault.get_claim_for_effect_in_txn(txn, claim_ref)? else {
+        return Ok(false);
+    };
+    if body.predicate != PREDICATE_CALENDAR_EVENT_OUTCOME || !claim_surfaceable(&body) {
+        return Ok(false);
+    }
+    Ok(decode_event_outcome_value(&body.value)?.outcome == EventOutcome::Held)
 }
 
 /// Enforces "stages past `proposal_sent` accept owner-attested basis" WITHOUT
