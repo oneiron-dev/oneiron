@@ -352,6 +352,15 @@ impl AuthenticatedOwner {
             .or(self.person_credential.as_deref())
     }
 
+    /// The id of the person's own slip a transport bound this proof to
+    /// ([`Vault::bind_person_credential`]); `None` for a proof bound to
+    /// none, an owner's credential included.
+    pub(crate) fn person_credential_slip(&self) -> Option<[u8; 32]> {
+        self.person_credential
+            .as_deref()
+            .map(|credential| credential.claims().slip_id)
+    }
+
     pub(super) fn stamp(&self) -> ConsentOwnerStamp {
         ConsentOwnerStamp {
             actor: self.actor,

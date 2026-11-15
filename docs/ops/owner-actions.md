@@ -1476,7 +1476,9 @@ the owner's switch of the vault back to web sign-in ends the asking, and it hold
 owner key is enrolled or the setting is changed again. A person who is not the vault's owner can
 instead prove the choice with their own slip key: the body's `"person_proof": {"slip": "<64 hex>",
 "signature": "<128 hex>"}` is their device's signature, with the binding key of one of their own
-human slips, over the choice (`"seen"` is then required). The slip must be live when they choose:
+human slips, over the choice (`"seen"` is then required). `GET /me` names the `vault_id` and
+`slip` the proof signs, and the client's device signs them with `leave_out` and `seen` under that
+slip's binding key. The slip must be live when they choose:
 an expired or revoked slip's key proves no new choice. With it, letting their messages back in
 lands from any machine. An opt-out needs no proof: one sent with it is dropped unchecked, so it
 never refuses the opt-out. The vault owner proves with an owner key, never a slip key. A vault that
