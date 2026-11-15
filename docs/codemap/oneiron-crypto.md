@@ -20,7 +20,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/backup/inspect.rs` | src | m | 2 struct · 6 fn · 6 const | BackupEvidence, BackupTailEvidence | Evidence of one sealed artifact, read in one pass with no key: its clear prelude, key header and signed… |
 | `src/backup/mod.rs` | src | s | 7 re-export | — | The clear parts of the engine's sealed checkpoint and backup artifacts (`ONEIRONS` files): the artifact… |
 | `src/backup/prelude.rs` | src | s | 2 struct · 1 enum · 7 fn · 7 const · 2 crate-vis | ArtifactPrelude, BackupHead, RegistryMatch | The fixed prelude every sealed artifact starts with, and the registry binding a version 2 prelude carries… |
-| `src/backup/wire.rs` | src | s | 3 struct · 2 enum · 8 fn · 2 const | ArtifactKind, KeyHeader, KeyHeaderWrap, VaultKeyWrapInfo, VaultKeyWrapKind | The artifact kinds and the key header's wire form (moved from the engine's `recovery::checkpoint::artifact`… |
+| `src/backup/wire.rs` | src | s | 3 struct · 3 enum · 10 fn · 2 const | ArtifactKind, KeyHeader, KeyHeaderWrap, RecoveryPreset, VaultKeyWrapInfo, VaultKeyWrapKind | The artifact kinds and the key header's wire form (moved from the engine's `recovery::checkpoint::artifact`… |
 | `src/codec.rs` | src | s | 13 crate-vis | — | Canonical encoding primitives: big-endian integers, fixed-size fields and length-prefixed byte strings… |
 | `src/envelope/hybrid.rs` | src | s | 3 crate-vis | — | The `kem-x25519-mlkem1024-v1` capsule: ML-KEM-1024 (FIPS 203) and X25519 (RFC 7748) combined with the… |
 | `src/envelope/hybrid/tests.rs` | test | s | — | — | Every combiner input reaches the output: changing any one of them alone changes the wrap secret (the… |
