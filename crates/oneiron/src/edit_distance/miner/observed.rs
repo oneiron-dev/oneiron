@@ -20,7 +20,7 @@ use std::collections::BTreeSet;
 
 use super::model::SubstitutionCluster;
 use crate::Vault;
-use crate::claim::{OBSERVED_PREFERENCE_MIN_OBSERVATIONS, OBSERVED_PREFERENCE_MIN_SESSIONS};
+use crate::claim::observed_preference_bar_in_txn;
 use crate::compaction::turn_session_membership_in_txn;
 use crate::edit_distance::delta::captured_amendment_delta_in_txn;
 use crate::edit_distance::text_ref::retained_proposal_in_txn;
@@ -29,10 +29,11 @@ use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
-/// Whether `cluster`'s receipts join to at least
-/// [`OBSERVED_PREFERENCE_MIN_OBSERVATIONS`] distinct observations across at
-/// least [`OBSERVED_PREFERENCE_MIN_SESSIONS`] distinct sessions, read on the
-/// emitting writer's snapshot.
+/// Whether `cluster`'s receipts join to enough distinct observations across
+/// enough distinct sessions for a preference about `cluster.actor`
+/// ([`observed_preference_bar_in_txn`]: ARCH-0003's three across two, or the
+/// owner's own bar for a preference about the owner), read on the emitting
+/// writer's snapshot.
 ///
 /// # Errors
 ///
@@ -50,8 +51,8 @@ pub(super) fn observed_support_in_txn(
             sessions.insert(session);
         }
     }
-    Ok(observations.len() >= OBSERVED_PREFERENCE_MIN_OBSERVATIONS
-        && sessions.len() >= OBSERVED_PREFERENCE_MIN_SESSIONS)
+    Ok(observed_preference_bar_in_txn(vault, txn, &cluster.actor)?
+        .met_by(observations.len(), sessions.len()))
 }
 
 /// The source TURN and its SESSION behind one cited receipt, when every link

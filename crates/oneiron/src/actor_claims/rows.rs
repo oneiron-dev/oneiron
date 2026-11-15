@@ -23,9 +23,83 @@ pub const ACTOR_EDIT_COST_SCOPE_KEY: &str = "scope";
 /// distillation is budgeted and audited as its own class instead of hiding
 /// inside consolidation's totals.
 pub const ACTOR_DISTILL_CALL_PURPOSE_NAME: &str = "actor_session_distill";
-/// Maximum UTF-8 length of a note. Notes are craft memory, not transcripts —
-/// a row that needs more than this is citing, not distilling.
+/// The default of the owner's `actor_claims.note.max_bytes`: the most UTF-8
+/// bytes a note this vault writes holds. Notes are craft memory, not
+/// transcripts — a row that needs more than this is citing, not distilling.
 pub const ACTOR_NOTE_MAX_BYTES: usize = 1024;
+/// The most UTF-8 bytes any actor note holds, whoever wrote it: the bound the
+/// structural check holds every stored, imported or peer row to, and the
+/// ceiling of the owner's cap (Engine RULING RESTRICTION-WAVE-8-ROWS, C95 = A).
+/// A note written under a raised cap still validates once the cap is lowered.
+pub const ACTOR_NOTE_CEILING_BYTES: usize = 16384;
+/// The least the owner's cap may be: one UTF-8 character's most bytes, so the
+/// distiller's splitter always cuts at least one whole character.
+pub const ACTOR_NOTE_FLOOR_BYTES: usize = 4;
+
+/// The value of `actor_claims.note.max_bytes`: the most UTF-8 bytes a note
+/// this vault writes holds, within [`ACTOR_NOTE_FLOOR_BYTES`] and
+/// [`ACTOR_NOTE_CEILING_BYTES`].
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub(crate) struct ActorNoteMaxBytes(pub(crate) u32);
+
+impl crate::setting::SettingValue for ActorNoteMaxBytes {
+    /// A cap is within [`ACTOR_NOTE_FLOOR_BYTES`] and [`ACTOR_NOTE_CEILING_BYTES`].
+    fn check(self) -> Result<Self> {
+        if usize::try_from(self.0)
+            .is_ok_and(|cap| (ACTOR_NOTE_FLOOR_BYTES..=ACTOR_NOTE_CEILING_BYTES).contains(&cap))
+        {
+            Ok(self)
+        } else {
+            Err(crate::error::Error::InvalidConfig(format!(
+                "an actor note cap is between {ACTOR_NOTE_FLOOR_BYTES} and \
+                 {ACTOR_NOTE_CEILING_BYTES} bytes"
+            )))
+        }
+    }
+}
+
+/// The owner's cap on a note this vault writes, read in `txn`
+/// ([`ACTOR_NOTE_MAX_BYTES`] by default).
+///
+/// # Errors
+///
+/// Storage errors, and an unreadable cap row.
+pub(crate) fn actor_note_max_bytes_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<usize> {
+    let cap = super::setting_keys::NOTE_MAX_BYTES
+        .read_in_txn(vault, txn, &[], None)?
+        .value
+        .0;
+    Ok(usize::try_from(cap).unwrap_or(ACTOR_NOTE_CEILING_BYTES))
+}
+
+impl crate::Vault {
+    /// The owner's cap on a note this vault writes: the most UTF-8 bytes one
+    /// actor note holds ([`ACTOR_NOTE_MAX_BYTES`] by default). A distiller
+    /// outside the crate drops a longer note before it writes.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors, and an unreadable cap row.
+    pub fn actor_note_max_bytes(&self) -> Result<usize> {
+        let txn = self.store.env.read_txn()?;
+        actor_note_max_bytes_in_txn(self, &txn)
+    }
+}
 /// The failure mode `ExecutionLapse` names.
 ///
 /// SK-04 routes `ExecutionLapse` on exactly one fact pattern: a FAILED attempt
@@ -135,11 +209,15 @@ impl ActorClaimRow {
     /// MEANING as far as the ledger can see it: `"  Cite the receipt  "` and
     /// `"cite the receipt"` are the same standing fact and must not become two
     /// rows.
-    pub(super) fn value_and_scope(&self) -> Result<(Value, Option<Value>)> {
+    /// The row's claim value and pair scope; a note is normalized and held to
+    /// `max_bytes`, the owner's cap ([`actor_note_max_bytes_in_txn`]).
+    pub(super) fn value_and_scope(&self, max_bytes: usize) -> Result<(Value, Option<Value>)> {
         match self {
             Self::Lesson { text, .. }
             | Self::FailureMode { text, .. }
-            | Self::ScopeNote { text, .. } => Ok((Value::from(normalize_note(text)?), None)),
+            | Self::ScopeNote { text, .. } => {
+                Ok((Value::from(normalize_note(text, max_bytes)?), None))
+            }
             Self::SkillFit { skill, fit, .. } => {
                 if !valid_unit_interval(*fit) {
                     return Err(invalid("actor.skill_fit must be a finite fit in 0..=1"));
@@ -149,13 +227,14 @@ impl ActorClaimRow {
         }
     }
 }
-/// Trims and collapses interior whitespace; rejects an empty or oversized note.
-pub(super) fn normalize_note(text: &str) -> Result<String> {
+/// Trims and collapses interior whitespace; rejects an empty note, and one
+/// over `max_bytes` (a writer's cap, or the structural ceiling).
+pub(super) fn normalize_note(text: &str, max_bytes: usize) -> Result<String> {
     let normalized = text.split_whitespace().collect::<Vec<_>>().join(" ");
     if normalized.is_empty() {
         return Err(invalid("actor note must be non-empty"));
     }
-    if normalized.len() > ACTOR_NOTE_MAX_BYTES {
+    if normalized.len() > max_bytes {
         return Err(invalid("actor note exceeds the note length bound"));
     }
     Ok(normalized)

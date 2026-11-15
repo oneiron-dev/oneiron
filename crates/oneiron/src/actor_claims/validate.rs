@@ -11,9 +11,9 @@ use crate::error::Result;
 use super::candidate::{is_resident_craft_candidate, is_resident_craft_verdict};
 use super::invalid;
 use super::rows::{
-    ACTOR_CLAIM_LINEAGE_KEY, ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_SKILL_FIT_SCOPE_KEY,
-    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, PREDICATE_ACTOR_SCOPE_NOTE,
-    PREDICATE_ACTOR_SKILL_FIT, normalize_note, valid_unit_interval,
+    ACTOR_CLAIM_LINEAGE_KEY, ACTOR_EDIT_COST_SCOPE_KEY, ACTOR_NOTE_CEILING_BYTES,
+    ACTOR_SKILL_FIT_SCOPE_KEY, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON,
+    PREDICATE_ACTOR_SCOPE_NOTE, PREDICATE_ACTOR_SKILL_FIT, normalize_note, valid_unit_interval,
 };
 
 // ---------------------------------------------------------------------------
@@ -95,7 +95,9 @@ pub(crate) fn validate_actor_claim_structure(body: &ClaimBody) -> Result<()> {
             let Some(text) = body.value.as_str() else {
                 return Err(invalid("actor note value must be a string"));
             };
-            if normalize_note(text)? != text {
+            // The fixed ceiling, never the owner's cap: a row written under a
+            // raised cap stays valid once the cap is lowered.
+            if normalize_note(text, ACTOR_NOTE_CEILING_BYTES)? != text {
                 return Err(invalid("actor note value must be normalized"));
             }
             None

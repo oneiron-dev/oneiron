@@ -54,7 +54,7 @@ pub(super) fn stage_in_txn(
     let meet = evidence_meet_in_txn(vault, txn, &evidence)?;
     let beside_stated = meet == ClaimSource::Generated
         && is_preference_predicate(&claim.predicate)
-        && observed_preference_support_in_txn(vault, txn, &evidence)?;
+        && observed_preference_support_in_txn(vault, txn, &subject, &evidence)?;
     let source = if beside_stated {
         ClaimSource::Observed
     } else {

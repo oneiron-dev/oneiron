@@ -94,6 +94,7 @@ mod distill;
 mod evidence;
 mod imported_chat;
 mod rows;
+pub(crate) mod setting_keys;
 mod validate;
 mod write;
 

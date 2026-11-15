@@ -49,7 +49,9 @@ use crate::{
 
 use super::evidence::KEY_AT;
 use super::invalid;
-use super::rows::{ACTOR_NOTE_MAX_BYTES, PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON};
+use super::rows::{
+    PREDICATE_ACTOR_FAILURE_MODE, PREDICATE_ACTOR_LESSON, actor_note_max_bytes_in_txn,
+};
 use super::validate::{actor_claim_lineage, native_actor_source};
 use super::write::{actor_claim_facet_in_txn, require_actor_entity, scope_with_lineage};
 
@@ -194,10 +196,11 @@ pub(crate) fn write_resident_craft_candidates_in_txn(
     }
     let evidence = candidate_evidence(attempt, at);
     let scope = scope_with_lineage(None, ClaimSource::Generated);
+    let max_bytes = actor_note_max_bytes_in_txn(vault, wtxn)?;
     let mut written = Vec::new();
     for candidate in candidates {
         let predicate = candidate.predicate();
-        for part in note_parts(candidate.text()) {
+        for part in note_parts(candidate.text(), max_bytes) {
             if !standing.insert((predicate.to_owned(), part.clone())) {
                 continue;
             }
@@ -724,19 +727,20 @@ fn candidate_evidence(attempt: AttemptId, at: u64) -> Value {
     ])
 }
 
-/// `text` whitespace-folded, in consecutive parts a note row holds, split at
-/// word boundaries (a single word longer than a row splits at a character
+/// `text` whitespace-folded, in consecutive parts of at most `max_bytes` (the
+/// owner's cap, at least one UTF-8 character's 4 bytes), split at word
+/// boundaries (a single word longer than a row splits at a character
 /// boundary). Nothing is dropped; a blank note has no parts.
-fn note_parts(text: &str) -> Vec<String> {
+fn note_parts(text: &str, max_bytes: usize) -> Vec<String> {
     let mut parts = Vec::new();
     let mut part = String::new();
     for word in text.split_whitespace() {
-        if !part.is_empty() && part.len() + 1 + word.len() > ACTOR_NOTE_MAX_BYTES {
+        if !part.is_empty() && part.len() + 1 + word.len() > max_bytes {
             parts.push(std::mem::take(&mut part));
         }
         let mut word = word;
-        while word.len() > ACTOR_NOTE_MAX_BYTES {
-            let mut cut = ACTOR_NOTE_MAX_BYTES;
+        while word.len() > max_bytes {
+            let mut cut = max_bytes;
             while !word.is_char_boundary(cut) {
                 cut -= 1;
             }
