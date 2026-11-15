@@ -573,7 +573,7 @@ impl Vault {
     /// with each one's header and body), by `(learned_at, id)`; `None` when
     /// the sitting has no membership row at all, as one recorded before
     /// them has none.
-    fn member_turns_in_txn(
+    pub(crate) fn member_turns_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         session: &EntityId,

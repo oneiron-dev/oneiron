@@ -26,6 +26,22 @@
 //! proposal to send, not a fact about an EVENT. A `calendar.follow_up` claim
 //! this door did not write (a consolidation's, an import's) carries no `mfu:`
 //! run and no draft value, so it mints no token and sends nothing.
+//!
+//! The drafts' producer is the `producer` module: a transcript SESSION's
+//! landing queues one drafting attempt, and a host worker's model drafts the
+//! follow-ups the owner promised in it ([`run_meeting_follow_up_drafting`]).
+
+mod producer;
+
+pub(crate) use producer::enqueue_meeting_follow_up_drafting_in_txn;
+pub use producer::{
+    MEETING_FOLLOW_UP_DRAFT_ATTEMPT_KIND, MEETING_FOLLOW_UP_INSTRUCTION,
+    MEETING_FOLLOW_UP_MAX_DRAFTS, MEETING_FOLLOW_UP_MAX_RECIPIENTS,
+    MEETING_FOLLOW_UP_MAX_TRANSCRIPT_BYTES, MeetingFollowUpDraftPayload, MeetingFollowUpDrafter,
+    MeetingFollowUpRead, MeetingFollowUpRecipient, MeetingFollowUpRequest,
+    MeetingFollowUpRunOutcome, MeetingFollowUpSilence, MeetingFollowUpSource, MeetingFollowUpTurn,
+    run_meeting_follow_up_drafting,
+};
 
 use rmpv::Value;
 
@@ -141,20 +157,36 @@ pub fn write_meeting_follow_up_draft(
     attempt_id: AttemptId,
     draft: &MeetingFollowUpDraft,
 ) -> Result<EntityId> {
+    vault.with_write_txn_grouped(|wtxn| {
+        write_meeting_follow_up_draft_in_txn(vault, wtxn, author, attempt_id, draft)
+    })
+}
+
+/// [`write_meeting_follow_up_draft`] in the caller's writer.
+pub(crate) fn write_meeting_follow_up_draft_in_txn(
+    vault: &Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    author: WriteActor,
+    attempt_id: AttemptId,
+    draft: &MeetingFollowUpDraft,
+) -> Result<EntityId> {
     validate_text(&draft.text)?;
     if draft.turn_refs.is_empty() {
         return Err(Error::InvalidClaimBody(
             "meeting follow-up cites no transcript turn",
         ));
     }
-    match author.actor_class() {
-        EdgeActorClass::Agent => {}
-        EdgeActorClass::System if author == vault.dreamer_authority()? => {}
-        _ => {
-            return Err(Error::InvalidClaimBody(
-                "meeting follow-up author must be an agent or the vault Dreamer",
-            ));
+    let author_admitted = match author.actor_class() {
+        EdgeActorClass::Agent => true,
+        EdgeActorClass::System => {
+            author == vault.dreamer_authority_in_txn(wtxn, vault.now_recorded_at())?
         }
+        _ => false,
+    };
+    if !author_admitted {
+        return Err(Error::InvalidClaimBody(
+            "meeting follow-up author must be an agent or the vault Dreamer",
+        ));
     }
     let claim_id = meeting_follow_up_claim_id(draft);
     let run_id = meeting_follow_up_run_id(&draft.session_ref);
@@ -182,34 +214,32 @@ pub fn write_meeting_follow_up_draft(
         },
     ));
     let now = vault.now_recorded_at();
-    vault.with_write_txn_grouped(|wtxn| {
-        if let Some(landed) = vault.get_claim_in_txn(&*wtxn, &claim_id)? {
-            return match_landed_draft(&landed, draft, &value, &run_id).map(|()| claim_id);
-        }
-        require_transcript_evidence(vault, &*wtxn, draft)?;
-        // The ONE write door: a raw claim write would omit the pending
-        // consent row, and with it the owner's inbox approval.
-        vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
-        vault
-            .batch_in()
-            .claim_candidate(
-                &claim_id,
-                candidate,
-                &envelope,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-            )
-            .apply_recording_gate_decisions(wtxn)?;
-        vault
-            .get_claim_in_txn(&*wtxn, &claim_id)?
-            .ok_or(Error::InvalidClaimBody(
-                "meeting follow-up draft is missing inside its own write transaction",
-            ))?;
-        Ok(claim_id)
-    })
+    if let Some(landed) = vault.get_claim_in_txn(&*wtxn, &claim_id)? {
+        return match_landed_draft(&landed, draft, &value, &run_id).map(|()| claim_id);
+    }
+    require_transcript_evidence(vault, &*wtxn, draft)?;
+    // The ONE write door: a raw claim write would omit the pending
+    // consent row, and with it the owner's inbox approval.
+    vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
+    vault
+        .batch_in()
+        .claim_candidate(
+            &claim_id,
+            candidate,
+            &envelope,
+            TimeRange {
+                start: now,
+                end: now,
+            },
+            now,
+        )
+        .apply_recording_gate_decisions(wtxn)?;
+    vault
+        .get_claim_in_txn(&*wtxn, &claim_id)?
+        .ok_or(Error::InvalidClaimBody(
+            "meeting follow-up draft is missing inside its own write transaction",
+        ))?;
+    Ok(claim_id)
 }
 
 /// The session must be a SESSION, the recipient a PERSON, and every cited

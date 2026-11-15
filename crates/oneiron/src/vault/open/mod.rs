@@ -27,7 +27,7 @@ pub(crate) use self::engine_seed_identities::EngineSeedIdentities;
 
 /// `name` of the embedded owner PERSON — the one field the PERSON projection
 /// profile reads at every profile level.
-const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
+pub(crate) const EMBEDDED_OWNER_ACTOR_NAME: &str = "Vault owner";
 
 /// The hooks every open door below passes to its store: the one place the
 /// vault names the engine's implementation.
