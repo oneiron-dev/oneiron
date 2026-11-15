@@ -1813,7 +1813,7 @@ fn quarantine_retry_after_rejection_replays_without_reappending() {
                 wtxn,
                 &claim_ref,
                 2,
-                "rejected",
+                crate::store::gate_reason::GateReceiptOutcome::Rejected,
                 vec!["gate.pending.bundle_rejected".to_owned()],
                 None,
             )

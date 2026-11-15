@@ -20,6 +20,7 @@ use crate::inbox::{
     RestoreMemberVerdict, RestoreMemberWait, RestoredMemberSettle,
 };
 use crate::ports::EntityStoreRead;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 /// Reason code of the bundle receipt an accept-all appends.
 const RESTORE_SETTLE_APPROVED: &str = "gate.restore.settle.approved";
@@ -320,10 +321,14 @@ impl Memory<'_> {
         }
         // The act's one proposal outcome over its settled members (ARCH-0040
         // `:302`), anchored to them as a run settlement's is (FIX 11002).
-        let mut record = crate::memory::authorship::decision(
+        let receipt = crate::memory::authorship::decision(
             actor,
             "proposal_outcome",
-            if approve { "approved" } else { "rejected" },
+            if approve {
+                GateReceiptOutcome::Approved
+            } else {
+                GateReceiptOutcome::Rejected
+            },
             if approve {
                 RESTORE_SETTLE_APPROVED
             } else {
@@ -333,6 +338,7 @@ impl Memory<'_> {
             run.as_bytes().to_vec(),
             now,
         );
+        let mut record = self.vault().store.mint_gate_receipt_in_txn(txn, receipt)?;
         crate::gate::append_reviewed_run_decision_in_txn(
             self.vault(),
             txn,

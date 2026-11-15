@@ -27,6 +27,7 @@ use super::*;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::consent::bundle_projection::GateConsentBundleAction;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 mod authority;
 use authority::ClaimSettler;
@@ -599,20 +600,20 @@ impl Memory<'_> {
                 if action == GateConsentBundleAction::Approve && (settled.dreamer_run || vetting) {
                     self.vault.owe_settled_claim_vads_in_txn(wtxn, &[id])?;
                 }
-                let mut record = crate::memory::authorship::decision(
+                let mut receipt = crate::memory::authorship::decision(
                     actor,
                     CLAIM_SETTLEMENT_CONTENT_KIND,
                     match action {
-                        GateConsentBundleAction::Approve => "approved",
-                        GateConsentBundleAction::Decline => "rejected",
+                        GateConsentBundleAction::Approve => GateReceiptOutcome::Approved,
+                        GateConsentBundleAction::Decline => GateReceiptOutcome::Rejected,
                     },
                     reason.as_str(),
                     Some(id),
                     reviewed.digest.to_vec(),
                     now,
                 );
-                record.read_frontier_hash = reviewed.frontier;
-                record.grant_ref = authorized.grant_ref;
+                receipt.basis = crate::store::PolicyBasis::frontier(reviewed.frontier);
+                receipt.grant_ref = authorized.grant_ref;
                 // FIX 7499, 7500: the reviewed candidate's read context, and
                 // the loop links of the pending decision it answers.
                 let pending = reviewed.pending.as_ref().and_then(|pending| {
@@ -622,7 +623,7 @@ impl Memory<'_> {
                         .ok()
                         .flatten()
                 });
-                record.context = crate::store::GateDecisionContext {
+                receipt.context = crate::store::GateDecisionContext {
                     read: crate::store::GateDecisionReadContext::claim(&id, &reviewed.body)
                         .map(|read| {
                             let anchors = crate::conversation::gate_claim_anchors_in(
@@ -641,9 +642,7 @@ impl Memory<'_> {
                         .map(crate::store::GateDecisionContext::answering)
                         .unwrap_or_default()
                 };
-                self.vault
-                    .store
-                    .append_gate_decision_in_txn(wtxn, &record)?;
+                let record = self.vault.store.record_gate_receipt_in_txn(wtxn, receipt)?;
                 Ok((settled, record, reviewed.parked_retract))
             });
         let (settled, record, parked_retract) = written?;

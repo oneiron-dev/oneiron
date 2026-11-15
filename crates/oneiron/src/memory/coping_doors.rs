@@ -6,6 +6,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::write_envelope::coping_outcome::{
     COPING_OUTCOME_PREDICATE, CopingOutcomeValue, coping_outcome_value, decode_coping_outcome_claim,
 };
@@ -151,10 +152,10 @@ impl Memory<'_> {
                 .vault
                 .get_claim_in_txn(txn, &result.active_claim_id)?
                 .ok_or(Error::EntityNotFound)?;
-            let decision = super::authorship::decision(
+            let receipt = super::authorship::decision(
                 self.write_actor(),
                 "coping_outcome",
-                "approved",
+                GateReceiptOutcome::Approved,
                 "gate.affect.coping.turn_vad",
                 Some(result.active_claim_id),
                 blake3::hash(&crate::claim::encode_claim_body(&active)?)
@@ -162,9 +163,7 @@ impl Memory<'_> {
                     .to_vec(),
                 now,
             );
-            self.vault
-                .store
-                .append_gate_decision_in_txn(txn, &decision)?;
+            let record = self.vault.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(CopingOutcomeReceipt {
                 outcome: self.coping_outcome_view_in_txn(txn, result.active_claim_id, &active)?,
                 superseded_claim_refs: result
@@ -172,7 +171,7 @@ impl Memory<'_> {
                     .iter()
                     .map(EntityId::to_hex)
                     .collect(),
-                receipt_ref: format!("gate:{}", decision.decision_id.to_hex()),
+                receipt_ref: format!("gate:{}", record.decision_id.to_hex()),
             })
         })
     }

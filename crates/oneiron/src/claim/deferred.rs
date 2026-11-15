@@ -2,9 +2,13 @@
 use super::{ClaimApprovalStatus, ClaimBody, ClaimSource, encode_claim_body};
 use crate::gate::{GateReasonCode, PolicyCriticality};
 use crate::side_table::{Named, SideTable};
-use crate::store::{GateDecisionId, GateDecisionRecord, PendingGateConsentRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{
+    GateDecisionRecord, GateReceipt, PendingGateConsentRecord, PolicyBasis, ReceiptActor,
+};
 use crate::write_envelope::WriteEnvelope;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::RecordedSeconds;
 use serde::{Deserialize, Serialize};
 
 mod retract;
@@ -332,27 +336,19 @@ impl Vault {
                 ],
             ),
         };
-        let mut record = GateDecisionRecord {
-            version: 0,
-            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-            created_at: now,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![reason_code.to_owned()],
-            receipt_reasons,
-            system_notices: Vec::new(),
-            actor_class: owner.actor_class().gate_actor_class().to_owned(),
-            actor_ref: Some(owner.entity_ref().to_hex()),
-            content_kind: "claim".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: Some(*new.as_bytes()),
-            grant_ref: None,
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Allow,
+            "claim",
+            reason_code,
+            ReceiptActor::Row(owner),
             diff_handle,
-            read_frontier_hash,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store
-            .append_fresh_gate_decision_in_txn(txn, &mut record)
+            PolicyBasis::frontier(read_frontier_hash),
+        );
+        receipt.receipt_reasons = receipt_reasons;
+        receipt.about = Some(*new);
+        receipt.decided_at = Some(RecordedSeconds::from_secs(now));
+        self.store.record_gate_receipt_in_txn(txn, receipt)?;
+        Ok(())
     }
 
     /// Re-evaluate an ordinary parked replacement for Auto and close the
@@ -502,10 +498,12 @@ impl Vault {
             && pending.reason_codes == [reason(&proposal.action, critical)];
         let parked_by = self.store.gate_decision_in_txn(txn, pending.decision_id)?;
         let parker = Parker {
-            actor_class: parked_by
-                .as_ref()
-                .map_or_else(|| "system".to_owned(), |record| record.actor_class.clone()),
-            actor_ref: parked_by.and_then(|record| record.actor_ref),
+            // The new pending row keeps the class and ref of the row it
+            // replaces.
+            actor: parked_by.map_or(ReceiptActor::Engine, |record| ReceiptActor::Verbatim {
+                class: record.actor_class,
+                actor_ref: record.actor_ref,
+            }),
             run: pending.dreamer_run_id.clone(),
             // A re-staged row is a new pending decision, so a critical
             // confirm it newly needs gets its whole window.
@@ -616,7 +614,7 @@ impl Vault {
                     txn,
                     id,
                     now,
-                    "superseded",
+                    GateReceiptOutcome::Superseded,
                     vec!["gate.supersede.contradiction_closure".to_owned()],
                     None,
                     // Keep the outer Clear's existing obligation result.
@@ -687,10 +685,7 @@ pub(super) fn put_pending(
     }
     let actor = envelope.map(WriteEnvelope::actor);
     let parker = Parker {
-        actor_class: actor
-            .map_or("system", |actor| actor.actor_class().gate_actor_class())
-            .to_owned(),
-        actor_ref: actor.map(|actor| actor.entity_ref().to_hex()),
+        actor: actor.map_or(ReceiptActor::Engine, ReceiptActor::Row),
         run: envelope.and_then(|envelope| match envelope.provenance().value() {
             rmpv::Value::Map(rows) => rows
                 .iter()
@@ -706,8 +701,7 @@ pub(super) fn put_pending(
 
 /// Who parked a deferred action, the run review it shows in, and when.
 struct Parker {
-    actor_class: String,
-    actor_ref: Option<String>,
+    actor: ReceiptActor,
     run: Option<String>,
     created_at: u64,
 }
@@ -742,26 +736,17 @@ fn park(
         diff_handle = critical_diff(&diff_handle, &encoded);
     }
     let reason = reason(&proposal.action, proposal.critical);
-    let record = GateDecisionRecord {
-        version: 0,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: "pending".to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: parker.actor_class,
-        actor_ref: parker.actor_ref,
-        content_kind: "claim".to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: Some(*id.as_bytes()),
-        grant_ref: None,
-        diff_handle: diff_handle.clone(),
-        read_frontier_hash,
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Pending,
+        "claim",
+        reason,
+        parker.actor,
+        diff_handle.clone(),
+        PolicyBasis::frontier(read_frontier_hash),
+    );
+    receipt.about = Some(*id);
+    receipt.decided_at = Some(RecordedSeconds::from_secs(now));
+    let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     vault.store.put_pending_gate_consent_in_txn(
         txn,
         &PendingGateConsentRecord {

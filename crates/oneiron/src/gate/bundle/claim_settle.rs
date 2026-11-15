@@ -447,14 +447,12 @@ fn close_settled_tray_row_in_txn(
         None => crate::store::TrayRemoval::Unanswered,
     };
     let (outcome, reason) = match action {
-        GateConsentBundleAction::Approve => (
-            GATE_BUNDLE_MEMBER_OUTCOME_APPROVED,
-            CLAIM_SETTLE_REASON_APPROVED,
-        ),
-        GateConsentBundleAction::Decline => (
-            GATE_BUNDLE_MEMBER_OUTCOME_REJECTED,
-            CLAIM_SETTLE_REASON_DECLINED,
-        ),
+        GateConsentBundleAction::Approve => {
+            (GateReceiptOutcome::Approved, CLAIM_SETTLE_REASON_APPROVED)
+        }
+        GateConsentBundleAction::Decline => {
+            (GateReceiptOutcome::Rejected, CLAIM_SETTLE_REASON_DECLINED)
+        }
     };
     vault.store.close_pending_gate_consent_as_in_txn(
         wtxn,

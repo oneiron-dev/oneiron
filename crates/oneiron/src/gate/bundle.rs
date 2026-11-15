@@ -15,6 +15,7 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
@@ -64,8 +65,6 @@ pub const GATE_BUNDLE_REASON_DECLINED: &str = "gate.bundle.declined";
 
 /// Per-member resolution outcomes, in the pending-consent tray's existing
 /// vocabulary — the bundle adds a unit receipt, not a second claim history.
-const GATE_BUNDLE_MEMBER_OUTCOME_APPROVED: &str = "approved";
-const GATE_BUNDLE_MEMBER_OUTCOME_REJECTED: &str = "rejected";
 
 /// `grant_ref` prefix binding each per-member receipt to its bundle.
 const GATE_BUNDLE_REF_PREFIX: &str = "bundle:";
@@ -379,14 +378,12 @@ impl Vault {
             let actor = WriteActor::new(actor, EdgeActorClass::Human);
             let bundle_ref = gate_consent_bundle_ref(&bundle_id);
             let (member_outcome, member_reason) = match action {
-                GateConsentBundleAction::Approve => (
-                    GATE_BUNDLE_MEMBER_OUTCOME_APPROVED,
-                    GATE_BUNDLE_REASON_APPROVED,
-                ),
-                GateConsentBundleAction::Decline => (
-                    GATE_BUNDLE_MEMBER_OUTCOME_REJECTED,
-                    GATE_BUNDLE_REASON_DECLINED,
-                ),
+                GateConsentBundleAction::Approve => {
+                    (GateReceiptOutcome::Approved, GATE_BUNDLE_REASON_APPROVED)
+                }
+                GateConsentBundleAction::Decline => {
+                    (GateReceiptOutcome::Rejected, GATE_BUNDLE_REASON_DECLINED)
+                }
             };
 
             let mut ops = Vec::with_capacity(members.len());

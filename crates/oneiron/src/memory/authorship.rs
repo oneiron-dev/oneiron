@@ -4,9 +4,11 @@ use crate::claim::ClaimBody;
 use crate::consent::{ActionClass, ActionEnvelope, ActorBound, AuthenticatedOwner, GrantBound};
 use crate::edge::EdgeActorClass;
 use crate::error::{ClaimError, Error, Result};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
+use oneiron_contracts::RecordedSeconds;
 
 pub(crate) fn authority_denied(reason: &'static str) -> Error {
     Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
@@ -382,34 +384,30 @@ impl super::Memory<'_> {
     }
 }
 
+/// A memory settlement's Gate receipt draft: `actor` decided `outcome` on
+/// `kind` for `reason`, about `target`, at `now` (the caller's clock, in
+/// seconds). It reads no policy; a caller that judged against a frontier
+/// sets `basis`. The store mints the id.
 pub(super) fn decision(
     actor: WriteActor,
-    kind: &str,
-    outcome: &str,
+    kind: &'static str,
+    outcome: GateReceiptOutcome,
     reason: &str,
     target: Option<EntityId>,
     digest: Vec<u8>,
     now: u64,
-) -> GateDecisionRecord {
-    GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::now(),
-        created_at: now,
-        outcome: outcome.to_owned(),
-        reason_codes: vec![reason.to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: actor.actor_class().gate_actor_class().to_owned(),
-        actor_ref: Some(actor.entity_ref().to_hex()),
-        content_kind: kind.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: target.map(|id| *id.as_bytes()),
-        grant_ref: None,
-        diff_handle: digest,
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    }
+) -> GateReceipt {
+    let mut receipt = GateReceipt::new(
+        outcome,
+        kind,
+        reason,
+        ReceiptActor::Row(actor),
+        digest,
+        PolicyBasis::NOT_READ,
+    );
+    receipt.about = target;
+    receipt.decided_at = Some(RecordedSeconds::from_secs(now));
+    receipt
 }
 
 // EntityId deliberately has no global serde implementation.
@@ -466,11 +464,12 @@ pub(crate) fn explicit_claim_override_in_txn(
     let receipt = decision(
         actor,
         "memory_claim_override",
-        "approved",
+        GateReceiptOutcome::Approved,
         "gate.memory.explicit_owner_override",
         Some(target),
         blake3::hash(&bytes).as_bytes().to_vec(),
         now,
     );
-    vault.store.append_gate_decision_in_txn(txn, &receipt)
+    vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+    Ok(())
 }

@@ -7,6 +7,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::error::Error;
 use crate::gate::record_references::receipt_landed_prose;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::temporal::TimeRange;
 use crate::write_envelope::skill_record::{SkillLifecycle, SkillRecord};
 use rmpv::Value;
@@ -392,15 +393,23 @@ impl Memory<'_> {
         record.lifecycle_status = SkillLifecycle::Candidate;
         record.approval_status = ClaimApprovalStatus::Proposed;
         record.governance_tier = None;
-        let mut receipt = decision(
-            actor,
-            AUTHOR_KIND,
-            "recorded",
-            "gate.memory.skill_authored",
-            Some(id),
-            vec![1],
-            now,
-        );
+        // The proof names the row, and the row's handle hashes the record
+        // that holds the proof, so the row is minted first and appended last.
+        let mut receipt = self.vault.store.mint_gate_receipt_in_txn(
+            txn,
+            decision(
+                actor,
+                AUTHOR_KIND,
+                GateReceiptOutcome::Noted,
+                "gate.memory.skill_authored",
+                Some(id),
+                vec![1],
+                now,
+            ),
+        )?;
+        // The one settlement word outside the twelve outcomes: UC-03 1f-2
+        // writes `noted` here (D1 = A). Until then the row keeps its word.
+        receipt.outcome = String::from("recorded");
         let Value::Map(entries) = &mut record.provenance else {
             return Err(authority_denied("skill provenance must be a map").into());
         };

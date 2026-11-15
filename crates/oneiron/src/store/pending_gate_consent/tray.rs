@@ -8,7 +8,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
 use crate::store::EngineScan;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::scan_count::ScanCount;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
+use oneiron_contracts::RecordedSeconds;
 
 use super::Store;
 use super::records::{
@@ -16,7 +19,7 @@ use super::records::{
     encode_pending_gate_consent, vet_pending_gate_consent_record,
 };
 use super::sequence_sweep::SEQUENCE_INDEX;
-use super::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT};
+use super::{GateDecisionRecord, RETRIEVAL_RUNS_CAPACITY_HINT_LIMIT};
 
 /// Pending gate-consent tray row, keyed by claim id. Codec fixed `Raw` (see
 /// the declaration note): `RawValue` delegates to its owning codec.
@@ -240,7 +243,7 @@ impl Store {
             wtxn,
             claim_id,
             created_at,
-            "let_go",
+            GateReceiptOutcome::LetGo,
             vec!["gate.pending.gap_decayed".to_owned()],
             None,
         )
@@ -256,7 +259,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
         created_at: u64,
-        outcome: &str,
+        outcome: GateReceiptOutcome,
         reason_codes: Vec<String>,
         grant_ref: Option<String>,
     ) -> Result<Option<GateDecisionRecord>> {
@@ -282,7 +285,7 @@ impl Store {
         wtxn: &mut RwTxn<'_>,
         claim_id: &EntityId,
         created_at: u64,
-        outcome: &str,
+        outcome: GateReceiptOutcome,
         reason_codes: Vec<String>,
         grant_ref: Option<String>,
         removal: TrayRemoval,
@@ -299,28 +302,25 @@ impl Store {
         // FIX 7499, 7500: the resolution answers the original decision and
         // carries its read context and loop links.
         let context = crate::store::GateDecisionContext::answering(&original);
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: crate::store::GateDecisionId::from_bytes(self.clock.ulid()?),
-            created_at,
-            outcome: outcome.to_owned(),
+        // A resolution is a NEW decision, born unredacted: the draft has no
+        // `redacted_at`, so `original.redacted_at` never propagates.
+        let mut receipt = GateReceipt::with_reasons(
+            outcome,
+            original.content_kind,
             reason_codes,
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: original.actor_class,
-            actor_ref: original.actor_ref,
-            content_kind: original.content_kind,
-            policy_manifest_version: original.policy_manifest_version,
-            claim_id: Some(pending.claim_id),
-            grant_ref,
-            diff_handle: pending.diff_handle,
-            read_frontier_hash: pending.read_frontier_hash,
-            context,
-            // A resolution is a NEW decision, born unredacted: never propagate
-            // `original.redacted_at`.
-            redacted_at: None,
-        };
-        self.append_gate_decision_in_txn(wtxn, &record)?;
+            ReceiptActor::Verbatim {
+                class: original.actor_class,
+                actor_ref: original.actor_ref,
+            },
+            pending.diff_handle,
+            PolicyBasis::versioned(pending.read_frontier_hash, original.policy_manifest_version),
+        );
+        // The tray row is keyed by this claim and names it (checked at read).
+        receipt.about = Some(*claim_id);
+        receipt.grant_ref = grant_ref;
+        receipt.context = context;
+        receipt.decided_at = Some(RecordedSeconds::from_secs(created_at));
+        let record = self.record_gate_receipt_in_txn(wtxn, receipt)?;
         self.remove_pending_gate_consent_in_txn(wtxn, claim_id, removal)?;
         Ok(Some(record))
     }
