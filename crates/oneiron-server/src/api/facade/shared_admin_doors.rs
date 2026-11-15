@@ -28,9 +28,9 @@ pub(crate) async fn vault_org_admin_configure(
     .await
 }
 
-/// The owner's amend of a stored setup (RULING ORG-ADMIN-SETUP-AMEND = A):
-/// the Admins change, the powers keep or drop; the amend revalidates the
-/// owner's proof in its writer.
+/// The owner's amend of a stored setup (RULING ORG-ADMIN-SETUP-AMEND = B):
+/// the Admins and the named powers change; the amend revalidates the owner's
+/// proof in its writer.
 pub(crate) async fn vault_org_admin_amend(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

@@ -12,14 +12,6 @@ const ORG_ADMIN_POLICY: SideTable<HexId, OrgAdminPolicy, LegacyJson> =
 
 pub use crate::batch::shared_vault_write::OrgAdminPower;
 
-/// Whether the owner's amend may add a named power the stored setup lacks.
-/// Canon vault:18 (ARCH-0043:227): "Company Admins widen only named powers
-/// set at org setup. No one can grant missing powers." RULING
-/// ORG-ADMIN-SETUP-AMEND = A (Engine, 16 Nov 02:10): an amend replaces the
-/// Admins and keeps or drops powers; whether it may also add one is this one
-/// condition, which the lead's reading of vault:18 decides.
-const AMEND_MAY_ADD_POWERS: bool = false;
-
 /// Setup policy. Contains actor references, never member key material.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -115,13 +107,14 @@ impl Vault {
         Ok(())
     }
 
-    /// The owner amends the stored setup of `policy`'s organization (RULING
-    /// ORG-ADMIN-SETUP-AMEND = A, Engine 16 Nov 02:10): its Admins become
-    /// `policy`'s, and so do its powers, which may keep or drop the stored
-    /// ones but add none ([`AMEND_MAY_ADD_POWERS`]). The owner's own
-    /// credential is revalidated in the writer, as at setup. An organization
-    /// with no stored setup is refused: the setup door stores the first one.
-    /// Returns whether the stored setup changed.
+    /// The owner amends the stored setup of `policy`'s organization: its
+    /// Admins and its named powers become `policy`'s, so the owner may seat or
+    /// unseat an Admin and add or drop a power (RULING ORG-ADMIN-SETUP-AMEND,
+    /// the lead 16 Nov 02:1x = B: the owner may also add a power the stored
+    /// setup lacks; no Admin or agent path reaches this door). The owner's
+    /// own credential is revalidated in the writer, as at setup. An
+    /// organization with no stored setup is refused: the setup door stores
+    /// the first one. Returns whether the stored setup changed.
     pub fn amend_org_admin_as_owner(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -148,9 +141,6 @@ impl Vault {
         let stored = ORG_ADMIN_POLICY
             .get(&self.store, txn, &key)?
             .ok_or(OrgAdminError::NotConfigured)?;
-        if !AMEND_MAY_ADD_POWERS && !policy.powers.is_subset(&stored.powers) {
-            return Err(OrgAdminError::PowerOutsideSetup);
-        }
         if stored == *policy {
             return Ok(false);
         }

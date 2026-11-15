@@ -1,6 +1,6 @@
 {
   "name": "vault.org_admin.amend",
-  "description": "The owner amends an organization's stored Admin setup: it replaces the Admin identities and keeps or drops the named powers, and never adds a power the setup lacks.",
+  "description": "The owner amends an organization's stored Admin setup: it replaces the Admin identities and the named powers, adding or dropping either; no Admin or agent can amend it.",
   "input": "crate::task_verb::sdk::OrgAdminAmendRequest",
   "output": "crate::task_verb::sdk::OrgAdminAmended",
   "call": "crate::task_verb::sdk::amend_org_admin_as_owner(memory.vault(), &memory.embedded_owner(\"vault.org_admin.amend\")?, input)?",

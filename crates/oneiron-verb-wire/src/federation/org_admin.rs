@@ -14,10 +14,6 @@ pub enum OrgAdminError {
     /// stores the first one.
     #[error("organization administration is not configured")]
     NotConfigured,
-    /// An amend names a power the stored setup lacks (canon vault:18: no one
-    /// can grant missing powers).
-    #[error("an amend cannot add a named power the organization's setup lacks")]
-    PowerOutsideSetup,
     /// The named actor or power has not been granted.
     #[error("organization administration power denied")]
     Denied,

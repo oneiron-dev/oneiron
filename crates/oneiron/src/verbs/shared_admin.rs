@@ -115,11 +115,6 @@ fn org_error(error: OrgAdminError) -> MemoryError {
             "organization administration is not configured",
             &["Store the organization's setup first (vault.org_admin.configure)."],
         ),
-        OrgAdminError::PowerOutsideSetup => MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            "an amend cannot add a named power the organization's setup lacks",
-            &["An amend keeps or drops the setup's powers; it adds none."],
-        ),
         OrgAdminError::Denied => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "organization administration power denied",
@@ -144,7 +139,7 @@ pub fn configure_org_admin_as_owner(
 }
 
 /// `vault.org_admin.amend`: the owner replaces a stored setup's Admins and
-/// keeps or drops its powers (RULING ORG-ADMIN-SETUP-AMEND = A).
+/// named powers (RULING ORG-ADMIN-SETUP-AMEND = B, the lead 16 Nov 02:1x).
 pub fn amend_org_admin_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
