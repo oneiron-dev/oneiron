@@ -3,6 +3,7 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 pub const KEY_CONNECTOR: &str = "connector";
@@ -22,27 +23,19 @@ pub fn exact_map<'a>(
     required: &[&str],
     optional: &[&str],
 ) -> Result<Vec<(&'a str, &'a Value)>> {
-    let Value::Map(entries) = value else {
-        return Err(invalid("reaction value must be a map"));
-    };
-    let mut seen = Vec::with_capacity(entries.len());
-    for (key, value) in entries {
-        let key = key
-            .as_str()
-            .filter(|key| required.contains(key) || optional.contains(key))
-            .ok_or_else(|| invalid("reaction value key"))?;
-        if seen.iter().any(|(prior, _)| *prior == key) {
-            return Err(invalid("duplicate reaction value key"));
-        }
-        seen.push((key, value));
-    }
-    if required
+    let checked = msgpack::Entries::of(value)
+        .and_then(|map| map.exact_keys(required, optional))
+        .map_err(|error| match error {
+            msgpack::MsgpackError::NotMap => invalid("reaction value must be a map"),
+            msgpack::MsgpackError::DuplicateKey(_) => invalid("duplicate reaction value key"),
+            msgpack::MsgpackError::MissingKey(_) => invalid("missing reaction value key"),
+            _ => invalid("reaction value key"),
+        })?;
+    Ok(checked
+        .as_slice()
         .iter()
-        .any(|key| !seen.iter().any(|(seen, _)| seen == key))
-    {
-        return Err(invalid("missing reaction value key"));
-    }
-    Ok(seen)
+        .filter_map(|(key, value)| Some((key.as_str()?, value)))
+        .collect())
 }
 
 pub fn find<'a>(entries: &[(&str, &'a Value)], key: &str) -> Option<&'a Value> {
