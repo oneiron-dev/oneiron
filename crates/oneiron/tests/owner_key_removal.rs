@@ -9,6 +9,12 @@
 //!
 //! Real hosted vaults whose serving install holds its owner key, with a second
 //! machine and key enrolled for the device under test.
+//!
+//! Four sibling-branch cases: a key enrolled for two machines ends with
+//! either machine, removing a machine again ends a key enrolled for it on a
+//! branch the removal never saw, two removals that cross both show in the
+//! changes list, and a key enrolled as a device's and as the recovery root's
+//! ends with its machine.
 
 #![cfg(oneiron_test_support)]
 
@@ -17,10 +23,14 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityKey, AuthorityVaultId, CheckpointPolicyView, HostSlipIssuer,
-    LastDeviceKeyConfirmation, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
-    MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
-    MachineProfile, MachineRemoval, MachineRole, OwnerAct, OwnerKeyEnrollment, OwnerKeyRemoval,
+    AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
+    AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
+    AuthorityTier, AuthorityVaultId, CheckpointPolicyView, DeviceAuthority, EnrolledOwnerKeyKind,
+    HostSlipIssuer, LastDeviceKeyConfirmation, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRemoval, MachineRole,
+    OwnerAct, OwnerActKind, OwnerKeyChangeKind, OwnerKeyEnrollment, OwnerKeyRemoval, ROLE_OWNER,
+    authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
     machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
@@ -31,7 +41,11 @@ use oneiron::recovery::{
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
 use oneiron::world_keys::RecoveryRootSeed;
-use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
+use oneiron_authority::authority::{
+    OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OwnerKeyEnroll,
+    RECOVERY_AUTHORITY_POSSESSION_KIND, owner_key_enrollment_target,
+};
 
 /// The seed of the second machine's machine key.
 const JOINING_SEED: u8 = 68;
@@ -813,4 +827,839 @@ fn the_confirmed_removal_of_the_last_device_keys_machine_ends_the_key() {
             .live,
         "the last device key ends with its machine (AUTH-5 PR b)"
     );
+}
+
+/// The seed of the third machine's machine key.
+const MACHINE_C_SEED: u8 = 69;
+
+fn now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("a clock after 1970")
+        .as_secs()
+}
+
+impl RemovalVault {
+    /// Another machine's request to join this vault, for `machine_bytes`
+    /// with `seed`'s machine key: its own keys, and its own proof over them
+    /// for this vault.
+    fn joining_machine_with(&self, machine_bytes: [u8; 16], seed: u8) -> MachineEnrolmentRequest {
+        let vault_id = self
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .vault_id
+            .expect("the vault is rooted");
+        let machine = EntityId::from_bytes(machine_bytes).expect("an id");
+        let profile = node_profile(
+            vault_id,
+            machine,
+            &signing(seed),
+            MachineRole::Unanswered,
+            1,
+            None,
+        );
+        MachineEnrolmentRequest {
+            vault_id,
+            machine,
+            machine_key: profile.machine_key,
+            device_class: profile.device_class,
+            encryption_key: profile.encryption_key,
+            machine_proof: profile.machine_proof,
+        }
+    }
+
+    /// The owner enrols the machine `machine_bytes` with `seed`'s machine
+    /// key as his. Answers the machine.
+    fn enrol_machine_with(&self, machine_bytes: [u8; 16], seed: u8) -> EntityId {
+        let request = self.joining_machine_with(machine_bytes, seed);
+        let landing = self
+            .vault
+            .enroll_machine(
+                &self.owner,
+                ActSurface::ThisInstall,
+                &request,
+                MachineRole::Owned(MachineOwnership::Yours),
+                None,
+            )
+            .expect("the owner enrols the machine");
+        assert!(
+            landing.held().is_none(),
+            "the machine stands with the owner's key"
+        );
+        request.machine
+    }
+
+    /// The owner enrols the raw key `signing_key` holds on `machine`
+    /// through the host predecessor. Answers the key and its enrolment.
+    fn enrol_owner_key_on_machine(
+        &self,
+        machine: EntityId,
+        signing_key: &SigningKey,
+    ) -> ([u8; 32], AuthorityEntryHash) {
+        let public_key = signing_key.verifying_key().to_bytes();
+        let authority = ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall);
+        let challenge = self
+            .vault
+            .owner_key_enrollment_challenge_as(&authority, machine, &public_key)
+            .expect("the key's challenge");
+        let receipt = self
+            .vault
+            .enrol_owner_signing_key_as_host(
+                &authority,
+                OwnerKeyEnrollment {
+                    machine,
+                    public_key,
+                    proof: signing_key.sign(&challenge).to_bytes().to_vec(),
+                },
+                &self.issuer,
+            )
+            .expect("the owner enrols the key on the machine");
+        assert_eq!(receipt.public_key, public_key, "the receipt names the key");
+        assert_eq!(receipt.machine, machine, "the receipt names the machine");
+        (public_key, receipt.entry)
+    }
+
+    /// The sibling enrolment row of the key `new_signing_key` holds for
+    /// `holder`, carried by `carrier`, with `attestation_kind` at
+    /// `timestamp`: `predecessor_signing_key` signs at `sequence` on
+    /// `parents`, the carrier's install key cosigns, and the new key proves
+    /// possession for the holder. Answers the row and its entry without
+    /// storing it.
+    fn sibling_enrolment_row(
+        &self,
+        parents: Vec<AuthorityEntryHash>,
+        sequence: u64,
+        predecessor_signing_key: &SigningKey,
+        carrier: EntityId,
+        carrier_signing_key: &SigningKey,
+        holder: EntityId,
+        new_signing_key: &SigningKey,
+        attestation_kind: &str,
+        timestamp: u64,
+    ) -> (AuthorityLogEntry, AuthorityEntryHash) {
+        let fold = self.vault.authority_fold().expect("authority fold");
+        let vault_id = fold.vault_id.expect("the vault is rooted");
+        let owner = self.vault.ensure_embedded_owner_actor().expect("the owner");
+        let public_key = new_signing_key.verifying_key().to_bytes();
+        let target =
+            owner_key_enrollment_target(&vault_id, &public_key).expect("the enrolment target");
+        let authority = ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall);
+        let challenge = self
+            .vault
+            .owner_key_enrollment_challenge_as(&authority, holder, &public_key)
+            .expect("the key's challenge");
+        let proof = new_signing_key.sign(&challenge).to_bytes().to_vec();
+        let operation = AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
+            act: OwnerAct::by_owner(
+                owner,
+                OwnerActKind::OwnerKeyEnrollment,
+                target,
+                ActSurface::ThisInstall,
+                OWNER_KEY_ENROLLMENT_SEEN,
+            ),
+            machine: holder,
+            carrier,
+            device: DeviceAuthority {
+                key: AuthorityKey::Ed25519(public_key),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: attestation_kind.to_owned(),
+                    evidence: proof,
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER,
+            },
+        });
+        let predecessor_key =
+            AuthorityKey::Ed25519(predecessor_signing_key.verifying_key().to_bytes());
+        let carrier_key = AuthorityKey::Ed25519(carrier_signing_key.verifying_key().to_bytes());
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: sequence,
+            parent_hashes: parents,
+            op: operation,
+            signer: AuthoritySignature {
+                suite: predecessor_key.suite(),
+                public_key: predecessor_key,
+                signature: vec![0; 64],
+            },
+            cosigns: vec![AuthoritySignature {
+                suite: carrier_key.suite(),
+                public_key: carrier_key,
+                signature: vec![0; 64],
+            }],
+            ts: timestamp,
+        };
+        let transcript = authority_transcript(&entry).expect("the transcript");
+        entry.signer.signature = predecessor_signing_key
+            .sign(&transcript)
+            .to_bytes()
+            .to_vec();
+        entry.cosigns[0].signature = carrier_signing_key.sign(&transcript).to_bytes().to_vec();
+        let enrolment = authority_entry_hash(&entry).expect("a hash");
+        (entry, enrolment)
+    }
+
+    /// The sibling enrolment of the key `new_signing_key` holds for `holder`,
+    /// carried by `carrier`: `predecessor_signing_key` signs at `sequence` on `parents`,
+    /// the carrier's install key cosigns, and the new key proves possession
+    /// for the holder. Stores it as the log holds it and answers its entry.
+    fn store_sibling_enrolment(
+        &self,
+        parents: Vec<AuthorityEntryHash>,
+        sequence: u64,
+        predecessor_signing_key: &SigningKey,
+        carrier: EntityId,
+        carrier_signing_key: &SigningKey,
+        holder: EntityId,
+        new_signing_key: &SigningKey,
+    ) -> AuthorityEntryHash {
+        let now = now_seconds();
+        let (entry, enrolment) = self.sibling_enrolment_row(
+            parents,
+            sequence,
+            predecessor_signing_key,
+            carrier,
+            carrier_signing_key,
+            holder,
+            new_signing_key,
+            OWNER_KEY_POSSESSION_KIND,
+            now,
+        );
+        self.vault
+            .put_authority_log_entry(
+                &entry,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            )
+            .expect("the sibling enrolment lands");
+        enrolment
+    }
+
+    /// The sibling revocation row of `revoked` at `timestamp`, signed by
+    /// `signer` at `sequence` on `parents` with no cosign. Answers the row
+    /// and its entry without storing it.
+    fn sibling_revoke_row(
+        &self,
+        parents: Vec<AuthorityEntryHash>,
+        sequence: u64,
+        signer: &SigningKey,
+        revoked: [u8; 32],
+        timestamp: u64,
+    ) -> (AuthorityLogEntry, AuthorityEntryHash) {
+        let fold = self.vault.authority_fold().expect("authority fold");
+        let vault_id = fold.vault_id.expect("the vault is rooted");
+        let signer_key = AuthorityKey::Ed25519(signer.verifying_key().to_bytes());
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: sequence,
+            parent_hashes: parents,
+            op: AuthorityOp::RevokeDevice {
+                revoked_key: AuthorityKey::Ed25519(revoked),
+            },
+            signer: AuthoritySignature {
+                suite: signer_key.suite(),
+                public_key: signer_key,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: timestamp,
+        };
+        let transcript = authority_transcript(&entry).expect("the transcript");
+        entry.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
+        let removal = authority_entry_hash(&entry).expect("a hash");
+        (entry, removal)
+    }
+
+    /// The authority log's heads: the rows no row names as a parent.
+    fn authority_heads(&self) -> Vec<AuthorityEntryHash> {
+        let rows: Vec<AuthorityLogEntry> = self
+            .vault
+            .export_signed_authority_history()
+            .expect("the signed history")
+            .iter()
+            .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
+            .collect();
+        let parents: BTreeSet<AuthorityEntryHash> = rows
+            .iter()
+            .flat_map(|row| row.parent_hashes.iter().copied())
+            .collect();
+        rows.iter()
+            .map(|row| authority_entry_hash(row).expect("a hash"))
+            .filter(|hash| !parents.contains(hash))
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
+    /// The signer's next sequence in the stored history.
+    fn next_sequence_for(&self, signer: &AuthorityKey) -> u64 {
+        self.vault
+            .export_signed_authority_history()
+            .expect("the signed history")
+            .iter()
+            .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
+            .filter(|row| row.signer_key() == signer)
+            .map(|row| row.seq + 1)
+            .max()
+            .unwrap_or(0)
+            .max(1)
+    }
+}
+
+#[test]
+fn a_key_enrolled_for_two_machines_ends_with_either_machine() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let machine_b = removal_vault.enrol_machine_with([0x76; 16], JOINING_SEED);
+    let machine_c = removal_vault.enrol_machine_with([0x77; 16], MACHINE_C_SEED);
+    let machine_c_signing_key = signing(MACHINE_C_SEED);
+    let predecessor_signing_key = SigningKey::from_bytes(&[76; 32]);
+    let install = removal_vault.install();
+    let (_, branch_parent) =
+        removal_vault.enrol_owner_key_on_machine(install, &predecessor_signing_key);
+    let shared_signing_key = SigningKey::from_bytes(&[77; 32]);
+    let shared_key = shared_signing_key.verifying_key().to_bytes();
+    let (_, first_enrolment) =
+        removal_vault.enrol_owner_key_on_machine(machine_b, &shared_signing_key);
+    let second_enrolment = removal_vault.store_sibling_enrolment(
+        vec![branch_parent],
+        1,
+        &predecessor_signing_key,
+        machine_c,
+        &machine_c_signing_key,
+        machine_c,
+        &shared_signing_key,
+    );
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&first_enrolment),
+        "a key enrolled for two machines counts both enrolments before either machine ends: the first enrolment counts"
+    );
+    assert!(
+        fold.valid_entries.contains(&second_enrolment),
+        "a key enrolled for two machines counts both enrolments before either machine ends: the second enrolment counts"
+    );
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    let matching_keys: Vec<_> = enrolled_keys
+        .iter()
+        .filter(|enrolled| enrolled.public_key == shared_key)
+        .collect();
+    assert_eq!(
+        matching_keys.len(),
+        1,
+        "a key enrolled for two machines lists once"
+    );
+    assert!(
+        matching_keys[0].live,
+        "a key enrolled for two machines stays live before either machine ends"
+    );
+    let kept_machine = matching_keys[0].machine;
+    assert!(
+        kept_machine == machine_b || kept_machine == machine_c,
+        "a key enrolled for two machines keeps one of its two enrolments"
+    );
+    let other_machine = if kept_machine == machine_b {
+        machine_c
+    } else {
+        machine_b
+    };
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            other_machine,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect(
+            "a machine removal ends every live device owner key that any counted enrolment names for that machine",
+        );
+    match machine_removal {
+        MachineRemoval::Written(receipt) => {
+            assert!(
+                receipt.landing.held().is_none(),
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine: the removal stands"
+            );
+            assert_eq!(
+                receipt.ended_keys,
+                vec![shared_key],
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine"
+            );
+            let enrolled_keys = removal_vault
+                .vault
+                .enrolled_owner_keys()
+                .expect("enrolled owner keys");
+            assert!(
+                !enrolled_keys
+                    .iter()
+                    .find(|enrolled| enrolled.public_key == shared_key)
+                    .expect("the shared key is enrolled")
+                    .live,
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine: the shared key ends"
+            );
+            assert!(
+                enrolled_keys
+                    .iter()
+                    .find(|enrolled| enrolled.public_key == first_key)
+                    .expect("the first key is enrolled")
+                    .live,
+                "a machine removal ends only the removed machine's keys: the other device's key stays live"
+            );
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!(
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine: another key remains, so no ask: {remaining:?}"
+            )
+        }
+    }
+}
+
+#[test]
+fn removing_a_machine_again_ends_a_key_enrolled_for_it_on_a_branch_the_removal_never_saw() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let second_signing_key = SigningKey::from_bytes(&[71; 32]);
+    let (machine_b, second_key) = removal_vault.enrol_second_machine_and_key(&second_signing_key);
+    let machine_c = removal_vault.enrol_machine_with([0x77; 16], MACHINE_C_SEED);
+    let machine_c_signing_key = signing(MACHINE_C_SEED);
+    let predecessor_signing_key = SigningKey::from_bytes(&[76; 32]);
+    let (predecessor_key, branch_parent) =
+        removal_vault.enrol_owner_key_on_machine(machine_c, &predecessor_signing_key);
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the owner removes the second machine");
+    match machine_removal {
+        MachineRemoval::Written(receipt) => {
+            assert!(
+                receipt.landing.held().is_none(),
+                "the removal stands with the owner's key"
+            );
+            assert_eq!(
+                receipt.ended_keys,
+                vec![second_key],
+                "a machine removal ends the machine's key"
+            );
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!("another key remains, so no ask: {remaining:?}")
+        }
+    }
+    let late_signing_key = SigningKey::from_bytes(&[78; 32]);
+    let late_key = late_signing_key.verifying_key().to_bytes();
+    let late_enrolment = removal_vault.store_sibling_enrolment(
+        vec![branch_parent],
+        1,
+        &predecessor_signing_key,
+        machine_c,
+        &machine_c_signing_key,
+        machine_b,
+        &late_signing_key,
+    );
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&late_enrolment),
+        "a key enrolled for a removed machine on a branch the removal never saw still counts"
+    );
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    assert!(
+        enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == late_key)
+            .expect("the late key is enrolled")
+            .live,
+        "a key enrolled for a removed machine on a branch the removal never saw stays live until the machine is removed again"
+    );
+    let head = fold
+        .machine(machine_b)
+        .and_then(|machine| machine.roster.as_ref())
+        .expect("the second machine stands on the roster");
+    assert!(
+        head.removed,
+        "the machine stays removed before it is removed again"
+    );
+    assert_eq!(
+        head.profile.role,
+        MachineRole::Removed,
+        "the machine stays removed before it is removed again"
+    );
+    let second_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect(
+            "when the fold already holds a machine removed, removing it again ends the live device owner keys that still name it",
+        );
+    match second_removal {
+        MachineRemoval::Written(receipt) => {
+            assert!(
+                receipt.landing.held().is_none(),
+                "when the fold already holds a machine removed, removing it again answers the removal as it stands"
+            );
+            assert_eq!(
+                receipt.ended_keys,
+                vec![late_key],
+                "when the fold already holds a machine removed, removing it again ends the live device owner keys that still name it"
+            );
+            assert!(
+                receipt.live_keys.is_empty(),
+                "when the fold already holds a machine removed, removing it again leaves no key of the machine live"
+            );
+            let enrolled_keys = removal_vault
+                .vault
+                .enrolled_owner_keys()
+                .expect("enrolled owner keys");
+            assert!(
+                !enrolled_keys
+                    .iter()
+                    .find(|enrolled| enrolled.public_key == late_key)
+                    .expect("the late key is enrolled")
+                    .live,
+                "when the fold already holds a machine removed, removing it again ends the key enrolled for it on the branch the removal never saw"
+            );
+            assert!(
+                enrolled_keys
+                    .iter()
+                    .find(|enrolled| enrolled.public_key == first_key)
+                    .expect("the first key is enrolled")
+                    .live,
+                "removing a machine again ends only that machine's keys: the other device's key stays live"
+            );
+            assert!(
+                enrolled_keys
+                    .iter()
+                    .find(|enrolled| enrolled.public_key == predecessor_key)
+                    .expect("the predecessor key is enrolled")
+                    .live,
+                "removing a machine again ends only that machine's keys: the predecessor key stays live"
+            );
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!("another key remains, so no ask: {remaining:?}")
+        }
+    }
+}
+
+#[test]
+fn two_removals_that_cross_both_show_in_the_changes_list() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let second_signing_key = SigningKey::from_bytes(&[72; 32]);
+    let (_, second_key) = removal_vault.enrol_second_machine_and_key(&second_signing_key);
+    let predecessor_signing_key = SigningKey::from_bytes(&[76; 32]);
+    let install = removal_vault.install();
+    let (predecessor_key, _) =
+        removal_vault.enrol_owner_key_on_machine(install, &predecessor_signing_key);
+    let parents = removal_vault.authority_heads();
+    assert!(
+        !parents.is_empty(),
+        "two removals that cross start from the heads after both enrolments"
+    );
+    let predecessor_sequence = removal_vault.next_sequence_for(&AuthorityKey::Ed25519(
+        predecessor_signing_key.verifying_key().to_bytes(),
+    ));
+    let second_sequence = removal_vault.next_sequence_for(&AuthorityKey::Ed25519(
+        second_signing_key.verifying_key().to_bytes(),
+    ));
+    let now = now_seconds();
+    let (first_entry, first_removal) = removal_vault.sibling_revoke_row(
+        parents.clone(),
+        predecessor_sequence,
+        &predecessor_signing_key,
+        second_key,
+        now,
+    );
+    let (second_entry, second_removal) = removal_vault.sibling_revoke_row(
+        parents,
+        second_sequence,
+        &second_signing_key,
+        predecessor_key,
+        now,
+    );
+    removal_vault
+        .vault
+        .put_authority_log_entries(&[
+            (
+                first_entry,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            ),
+            (
+                second_entry,
+                TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+            ),
+        ])
+        .expect("two removals that cross land in one batch");
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    assert!(
+        !enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == predecessor_key)
+            .expect("the first key is enrolled")
+            .live,
+        "two removals that cross end both keys: the first key ends"
+    );
+    assert!(
+        !enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == second_key)
+            .expect("the second key is enrolled")
+            .live,
+        "two removals that cross end both keys: the second key ends"
+    );
+    assert!(
+        enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == first_key)
+            .expect("the install key is enrolled")
+            .live,
+        "two removals that cross end only their two keys: the install key stays live"
+    );
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    assert!(
+        !fold.valid_entries.contains(&first_removal),
+        "two removals that cross count neither entry: the first removal is uncounted"
+    );
+    assert!(
+        !fold.valid_entries.contains(&second_removal),
+        "two removals that cross count neither entry: the crossing removal is uncounted"
+    );
+    let changes = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes");
+    let first_line = changes
+        .iter()
+        .find(|change| change.entry == first_removal && change.public_key == second_key)
+        .expect("two removals that cross both show in the changes list: the first removal shows");
+    assert_ne!(
+        first_line.change,
+        OwnerKeyChangeKind::Enrolled,
+        "two removals that cross both show in the changes list: the first line is no enrolment"
+    );
+    let crossing_line = changes
+        .iter()
+        .find(|change| change.entry == second_removal && change.public_key == predecessor_key)
+        .expect(
+            "two removals that cross both show in the changes list: the crossing removal shows",
+        );
+    assert_ne!(
+        crossing_line.change,
+        OwnerKeyChangeKind::Enrolled,
+        "two removals that cross both show in the changes list: the crossing line is no enrolment"
+    );
+}
+
+#[test]
+fn a_key_enrolled_as_a_devices_and_as_the_recovery_roots_ends_with_its_machine() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let machine_b = removal_vault.enrol_machine_with([0x76; 16], JOINING_SEED);
+    let machine_b_signing_key = signing(JOINING_SEED);
+    let predecessor_signing_key = SigningKey::from_bytes(&[76; 32]);
+    let install = removal_vault.install();
+    let (_, branch_parent) =
+        removal_vault.enrol_owner_key_on_machine(install, &predecessor_signing_key);
+    let shared_signing_key = SigningKey::from_bytes(&[77; 32]);
+    let shared_key = shared_signing_key.verifying_key().to_bytes();
+    let (_, device_enrolment) =
+        removal_vault.enrol_owner_key_on_machine(machine_b, &shared_signing_key);
+    let start = now_seconds();
+    let mut chosen = None;
+    for offset in 0..64u64 {
+        let timestamp = start + offset;
+        let (entry, hash) = removal_vault.sibling_enrolment_row(
+            vec![branch_parent],
+            1,
+            &predecessor_signing_key,
+            machine_b,
+            &machine_b_signing_key,
+            machine_b,
+            &shared_signing_key,
+            RECOVERY_AUTHORITY_POSSESSION_KIND,
+            timestamp,
+        );
+        if hash < device_enrolment {
+            chosen = Some((entry, hash, timestamp));
+            break;
+        }
+    }
+    let (recovery_entry, recovery_enrolment, recovery_time) = chosen.expect(
+        "a recovery enrolment hashes smaller than the device enrolment within 64 timestamps",
+    );
+    removal_vault
+        .vault
+        .put_authority_log_entry(
+            &recovery_entry,
+            TimeRange {
+                start: recovery_time,
+                end: recovery_time,
+            },
+            recovery_time,
+        )
+        .expect("the sibling recovery enrolment lands");
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&device_enrolment),
+        "a key enrolled as a device's and as the recovery root's counts both enrolments before its machine ends: the device enrolment counts"
+    );
+    assert!(
+        fold.valid_entries.contains(&recovery_enrolment),
+        "a key enrolled as a device's and as the recovery root's counts both enrolments before its machine ends: the recovery enrolment counts"
+    );
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    let matching_keys: Vec<_> = enrolled_keys
+        .iter()
+        .filter(|enrolled| enrolled.public_key == shared_key)
+        .collect();
+    assert_eq!(
+        matching_keys.len(),
+        1,
+        "a key enrolled as a device's and as the recovery root's lists once"
+    );
+    assert!(
+        matching_keys[0].live,
+        "a key enrolled as a device's and as the recovery root's stays live before its machine ends"
+    );
+    assert_eq!(
+        matching_keys[0].kind,
+        EnrolledOwnerKeyKind::RecoveryAuthority,
+        "a key enrolled as a device's and as the recovery root's keeps the recovery enrolment"
+    );
+    assert_eq!(
+        matching_keys[0].entry, recovery_enrolment,
+        "a key enrolled as a device's and as the recovery root's keeps the smaller entry"
+    );
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect(
+            "a machine removal ends every live device owner key that any counted enrolment names for that machine",
+        );
+    match machine_removal {
+        MachineRemoval::Written(receipt) => {
+            assert!(
+                receipt.landing.held().is_none(),
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine: the removal stands"
+            );
+            assert_eq!(
+                receipt.ended_keys,
+                vec![shared_key],
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine"
+            );
+            let enrolled_keys = removal_vault
+                .vault
+                .enrolled_owner_keys()
+                .expect("enrolled owner keys");
+            assert!(
+                !enrolled_keys
+                    .iter()
+                    .find(|enrolled| enrolled.public_key == shared_key)
+                    .expect("the shared key is enrolled")
+                    .live,
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine: the shared key ends"
+            );
+            assert!(
+                enrolled_keys
+                    .iter()
+                    .find(|enrolled| enrolled.public_key == first_key)
+                    .expect("the first key is enrolled")
+                    .live,
+                "a machine removal ends only the removed machine's keys: the other device's key stays live"
+            );
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!(
+                "a machine removal ends every live device owner key that any counted enrolment names for that machine: another key remains, so no ask: {remaining:?}"
+            )
+        }
+    }
 }
