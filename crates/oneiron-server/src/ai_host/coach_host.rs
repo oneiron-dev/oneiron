@@ -281,6 +281,24 @@ fn round(server: &SyncServer, renewal: &DigestRenewal) -> oneiron::Result<()> {
             },
             failed => failed,
         };
+        // A requested eval-authoring pass whose record still stands open
+        // keeps its lease unsettled: the error returns, the lease lapses,
+        // and the next admission recovers the record, instead of failing
+        // the lease over a record nothing revisits (FIX
+        // EVAL-AUTHORING-EXECUTE-UNRECORDED-END).
+        let ran = match ran {
+            Err(error)
+                if admitted.status.payload.attempt_type == COACH_EVAL_AUTHORING_FACET
+                    && super::eval_authoring::record_open(vault, &admitted) =>
+            {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "a requested eval-authoring pass left its record open; its lease lapses unsettled"
+                );
+                return Err(error);
+            }
+            ran => ran,
+        };
         let served = ran.is_ok();
         settle(vault, &store, &admitted, ran, BUDGET_ID)?;
         // A long round that keeps serving stays ready: each job it completes

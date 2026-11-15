@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use oneiron::dreamer_runner::maintenance::coach::COACH_EVAL_AUTHORING_FACET;
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, DreamerRunnerStore};
 
 use crate::server::SyncServer;
@@ -37,6 +38,8 @@ impl WakeExecutor {
         let server = Arc::clone(&self.server);
         let facet = admitted.status.payload.attempt_type.clone();
         let admitted = admitted.clone();
+        // The record check after a failed run reads the same admission.
+        let failed_admission = admitted.clone();
         match self
             .serve
             .spawn_blocking(move || {
@@ -62,12 +65,31 @@ impl WakeExecutor {
                 completed_units: 0,
                 step_bindings: Vec::new(),
             }),
-            Ok(Err(error)) => Ok(DreamerAttemptExecution::Failed {
-                reason: format!("{facet} failed: {:?}", error.kind()),
-                completed_units: 0,
-                budget_refusal: None,
-                step_bindings: Vec::new(),
-            }),
+            Ok(Err(error)) => {
+                // A requested pass whose record still stands open parks
+                // for a later pass instead of failing: its lease must
+                // never settle over an open record (FIX
+                // EVAL-AUTHORING-EXECUTE-UNRECORDED-END), and the next
+                // admission recovers it.
+                if facet == COACH_EVAL_AUTHORING_FACET
+                    && super::super::eval_authoring::record_open(
+                        self.server.vault(),
+                        &failed_admission,
+                    )
+                {
+                    Ok(DreamerAttemptExecution::Park {
+                        reason: "the requested pass left its record open".to_owned(),
+                        cause: oneiron::dreamer_runner::DreamerParkCause::Retry,
+                    })
+                } else {
+                    Ok(DreamerAttemptExecution::Failed {
+                        reason: format!("{facet} failed: {:?}", error.kind()),
+                        completed_units: 0,
+                        budget_refusal: None,
+                        step_bindings: Vec::new(),
+                    })
+                }
+            }
             Err(error) if error.is_panic() => std::panic::resume_unwind(error.into_panic()),
             Err(_) => Err(oneiron::Error::InvalidConfig(
                 "the Coach host worker stopped".into(),
