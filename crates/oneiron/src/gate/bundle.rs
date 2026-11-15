@@ -16,7 +16,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::gate_reason::GateReceiptOutcome;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::{GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
@@ -28,7 +28,6 @@ use crate::{
     run_tree::RunTreeAdapter,
 };
 
-use super::constants::POLICY_SCHEMA_VERSION;
 use super::definition_ceiling::agent_definition_ceiling_for_actor;
 use super::delegation_chain::evaluate_with_delegation_chain;
 use super::doors::{
@@ -50,12 +49,6 @@ mod pending_heal;
 
 /// Gate `content_kind` of the ONE durable receipt a bundle resolution appends.
 pub const GATE_BUNDLE_CONTENT_KIND: &str = "consent_bundle";
-
-/// Ledger outcome of an approved bundle.
-pub const GATE_BUNDLE_OUTCOME_APPROVED: &str = "bundle_approved";
-
-/// Ledger outcome of a declined bundle.
-pub const GATE_BUNDLE_OUTCOME_DECLINED: &str = "bundle_declined";
 
 /// Reason code stamped on the approved-bundle receipt.
 pub const GATE_BUNDLE_REASON_APPROVED: &str = "gate.bundle.approved";
@@ -590,33 +583,25 @@ impl Vault {
             if action == GateConsentBundleAction::Approve {
                 self.owe_settled_claim_vads_in_txn(wtxn, &member_claim_ids)?;
             }
-            let record = GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-                created_at: now,
-                outcome: match action {
-                    GateConsentBundleAction::Approve => GATE_BUNDLE_OUTCOME_APPROVED,
-                    GateConsentBundleAction::Decline => GATE_BUNDLE_OUTCOME_DECLINED,
-                }
-                .to_owned(),
-                reason_codes: vec![member_reason.to_owned()],
-                // `valid_gate_receipt_reason` admits only the counterparty /
-                // connector-key / effector-budget / charter families, so the
-                // bundle id, run id and member count ride the typed receipt
-                // and the content-bound `diff_handle` instead.
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: edge_actor_class_str(EdgeActorClass::Human).to_owned(),
-                actor_ref: Some(actor.entity_ref().to_hex()),
-                content_kind: GATE_BUNDLE_CONTENT_KIND.to_owned(),
-                policy_manifest_version: POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: bundle_id.to_vec(),
-                read_frontier_hash: frontier.finalize().into(),
-                context: decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids),
-                redacted_at: None,
-            };
+            // The bundle's own row records the owner's one answer for every
+            // member: `approved` or `rejected`, as each member's row (UC-03
+            // D1 = A; its reason `gate.bundle.approved` / `declined` keeps
+            // the word). `valid_gate_receipt_reason` admits only the
+            // counterparty / connector-key / effector-budget / charter
+            // families, so the bundle id, run id and member count ride the
+            // typed receipt and the content-bound `diff_handle` instead.
+            let mut receipt = GateReceipt::new(
+                member_outcome,
+                GATE_BUNDLE_CONTENT_KIND,
+                member_reason,
+                ReceiptActor::Row(actor),
+                bundle_id.to_vec(),
+                PolicyBasis::frontier(frontier.finalize().into()),
+            );
+            receipt.context =
+                decision_context::bundle(self, wtxn, dreamer_run_id, &member_claim_ids);
+            receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(now));
+            let record = self.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
             decision_context::append(self, wtxn, &record, &member_claim_ids)?;
 
             Ok((

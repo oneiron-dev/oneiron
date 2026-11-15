@@ -210,7 +210,7 @@ pub(super) struct ConsentRow {
 impl From<ConsentReceipt> for ConsentRow {
     fn from(receipt: ConsentReceipt) -> Self {
         Self {
-            outcome: receipt.gate_outcome(),
+            outcome: receipt.gate_outcome().as_str(),
             decision: receipt
                 .decision_id()
                 .as_bytes()

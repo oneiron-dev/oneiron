@@ -360,7 +360,13 @@ impl AgentDispatcher<'_> {
             // An agent's act is a board act, recorded beside the pending row
             // in the same writer; it mints no owner consent.
             BoardActor::Agent(_) => {
-                self.record_board_act_in_txn(&mut wtxn, &act, proposal, "approved", now)?;
+                self.record_board_act_in_txn(
+                    &mut wtxn,
+                    &act,
+                    proposal,
+                    GateReceiptOutcome::Approved,
+                    now,
+                )?;
             }
         }
         let outcome = match &input.target {
@@ -481,7 +487,13 @@ impl AgentDispatcher<'_> {
                     .deny_consent_in_txn(&mut wtxn, owner, proposal.consent.effect_digest)?;
             }
             BoardActor::Agent(_) => {
-                self.record_board_act_in_txn(&mut wtxn, &act, proposal, "denied", at)?;
+                self.record_board_act_in_txn(
+                    &mut wtxn,
+                    &act,
+                    proposal,
+                    GateReceiptOutcome::Rejected,
+                    at,
+                )?;
             }
         }
         WIDEN.put(self.vault, &mut wtxn, &key_hash, &record)?;

@@ -96,7 +96,7 @@ impl From<ConsentReceipt> for ConsentActReceipt {
     fn from(receipt: ConsentReceipt) -> Self {
         Self {
             decision_ref: Some(receipt.decision_id().to_hex()),
-            outcome: receipt.gate_outcome().to_owned(),
+            outcome: receipt.gate_outcome().as_str().to_owned(),
             reason_code: receipt.reason_code().to_owned(),
             grant_ref: crate::consent::consent_receipt_grant_ref(&receipt),
             diff_handle: crate::consent::consent_receipt_diff_handle(&receipt),

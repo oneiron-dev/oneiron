@@ -407,9 +407,6 @@ impl Memory<'_> {
                 now,
             ),
         )?;
-        // The one settlement word outside the twelve outcomes: UC-03 1f-2
-        // writes `noted` here (D1 = A). Until then the row keeps its word.
-        receipt.outcome = String::from("recorded");
         let Value::Map(entries) = &mut record.provenance else {
             return Err(authority_denied("skill provenance must be a map").into());
         };

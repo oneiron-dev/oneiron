@@ -253,7 +253,7 @@ fn gate_consent_bundle_approve_applies_every_member_with_one_receipt() -> Result
     assert_eq!(bundle_rows.len(), 1);
     let row = &bundle_rows[0];
     assert_eq!(row.decision_id, receipt.receipt_id);
-    assert_eq!(row.outcome, GATE_BUNDLE_OUTCOME_APPROVED);
+    assert_eq!(row.outcome, "approved");
     assert_eq!(row.reason_codes, vec![GATE_BUNDLE_REASON_APPROVED]);
     assert_eq!(row.claim_id, None);
     assert_eq!(row.diff_handle, bundle.bundle_id.to_vec());
@@ -320,7 +320,7 @@ fn gate_consent_bundle_decline_closes_every_member_with_one_receipt() -> Result<
     let bundle_rows = consent_bundle_receipts(&vault)?;
     assert_eq!(bundle_rows.len(), 1);
     assert_eq!(bundle_rows[0].decision_id, receipt.receipt_id);
-    assert_eq!(bundle_rows[0].outcome, GATE_BUNDLE_OUTCOME_DECLINED);
+    assert_eq!(bundle_rows[0].outcome, "rejected");
     assert_eq!(
         bundle_rows[0].reason_codes,
         vec![GATE_BUNDLE_REASON_DECLINED]

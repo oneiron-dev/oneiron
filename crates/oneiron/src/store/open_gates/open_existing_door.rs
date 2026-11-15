@@ -11,14 +11,15 @@ use crate::config::VaultConfig;
 use crate::error::{Error, Result};
 use crate::off_record::OffRecordSessionRegistry;
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{
     Diagnostics, GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_KEY,
-    GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX,
-    GATE_DECISION_LEDGER_VERSION, GateDecisionRecord, GateSystemNoticeRecord,
-    PENDING_GATE_CONSENT_KEY_PREFIX, RawDatabases, Store, StoreCore, StoreEnv, StoreHooks,
-    StoreOwner, active_write_txn_depth, decode_pending_gate_consent, gate_decision_upper_bound,
-    load_structural_kind_registry, pending_gate_consent_claim_id_from_key,
-    pending_gate_consent_upper_bound, seed_default_policy_manifest_in_txn,
+    GATE_DECISION_CLAIM_INDEX_BACKFILL_COMPLETE_VALUE, GATE_DECISION_KEY_PREFIX, GateReceipt,
+    GateSystemNoticeRecord, PENDING_GATE_CONSENT_KEY_PREFIX, PolicyBasis, RawDatabases,
+    ReceiptActor, Store, StoreCore, StoreEnv, StoreHooks, StoreOwner, active_write_txn_depth,
+    decode_pending_gate_consent, gate_decision_upper_bound, load_structural_kind_registry,
+    pending_gate_consent_claim_id_from_key, pending_gate_consent_upper_bound,
+    seed_default_policy_manifest_in_txn,
 };
 
 use super::embedding_transform_gates::verify_existing_embedding_transform;
@@ -432,37 +433,30 @@ impl Store {
         if read_frontier_hash == [0; 32] {
             return Err(Error::CorruptedIndex("default policy manifest frontier"));
         }
-        let receipt = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: crate::store::GateDecisionId::from_bytes(self.clock.ulid()?),
-            created_at: self.clock.now_recorded_at(),
-            outcome: "reseeded_after_loss".to_owned(),
-            reason_codes: vec!["gate.policy_manifest.reseeded_after_loss".to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: vec![GateSystemNoticeRecord {
-                notice_type: "policy_manifest_reseeded".to_owned(),
-                channel: "system".to_owned(),
-                voice: "owner".to_owned(),
-                audience: "owner".to_owned(),
-                body: "Default policy manifest was restored after loss.".to_owned(),
-                row_ref: Some(id.to_hex()),
-                setting_change_offer: None,
-                policy_plane: None,
-                policy_version: None,
-                docs_url: None,
-            }],
-            actor_class: "system".to_owned(),
-            actor_ref: None,
-            content_kind: "policy_manifest".to_owned(),
-            policy_manifest_version: crate::store::policy_record::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: id.as_bytes().to_vec(),
-            read_frontier_hash,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.append_gate_decision_in_txn(&mut wtxn, &receipt)?;
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Noted,
+            "policy_manifest",
+            "gate.policy_manifest.reseeded_after_loss",
+            ReceiptActor::Engine,
+            id.as_bytes().to_vec(),
+            PolicyBasis::frontier(read_frontier_hash),
+        );
+        receipt.notices = vec![GateSystemNoticeRecord {
+            notice_type: "policy_manifest_reseeded".to_owned(),
+            channel: "system".to_owned(),
+            voice: "owner".to_owned(),
+            audience: "owner".to_owned(),
+            body: "Default policy manifest was restored after loss.".to_owned(),
+            row_ref: Some(id.to_hex()),
+            setting_change_offer: None,
+            policy_plane: None,
+            policy_version: None,
+            docs_url: None,
+        }];
+        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(
+            self.clock.now_recorded_at(),
+        ));
+        self.record_gate_receipt_in_txn(&mut wtxn, receipt)?;
         Ok(wtxn.commit()?)
     }
 

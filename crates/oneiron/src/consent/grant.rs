@@ -51,22 +51,31 @@ pub(crate) fn code_wait_receipt_links_from_gate_record(
         },
         facts_digest: rest.get(48..80)?.try_into().ok()?,
     };
-    let receipt = if kind == CODE_WAIT_CONSUMED_KIND {
-        ConsentReceipt::CodeWaitConsumed {
-            decision_id: record.decision_id,
-            links,
-        }
+    // A row written before UC-03 1f-2 holds the wait's own word; a newer one
+    // holds `noted`. Both read as the same receipt (M-1: a held row keeps its
+    // meaning), and the kind byte and the reason code tell the two apart.
+    let (receipt, held_word) = if kind == CODE_WAIT_CONSUMED_KIND {
+        (
+            ConsentReceipt::CodeWaitConsumed {
+                decision_id: record.decision_id,
+                links,
+            },
+            "consumed",
+        )
     } else {
-        ConsentReceipt::CodeWaitSettled {
-            decision_id: record.decision_id,
-            links,
-            outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
-                kind & 0x0f,
-            )?,
-        }
+        (
+            ConsentReceipt::CodeWaitSettled {
+                decision_id: record.decision_id,
+                links,
+                outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
+                    kind & 0x0f,
+                )?,
+            },
+            "settled",
+        )
     };
     (record.content_kind == CONSENT_CONTENT_KIND
-        && record.outcome == receipt.gate_outcome()
+        && (record.outcome == receipt.gate_outcome().as_str() || record.outcome == held_word)
         && record.reason_codes.first().map(String::as_str) == Some(receipt.reason_code())
         && crate::consent::consent_receipt_diff_handle(&receipt) == record.diff_handle)
         .then_some(receipt)

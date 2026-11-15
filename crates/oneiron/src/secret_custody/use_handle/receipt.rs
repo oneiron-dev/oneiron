@@ -21,8 +21,10 @@ use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_custody::RunSecretHolder;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::vault::Vault;
+use crate::write_envelope::WriteActor;
 
 /// The Gate content kind of every use's record.
 const SECRET_USE_CONTENT_KIND: &str = "secret_use";
@@ -234,7 +236,6 @@ impl Used<'_> {
         send: SecretUseSend,
         presented: Option<SentPresentation>,
     ) -> Result<SecretUseReceipt> {
-        let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
         let generation = self.generation.to_be_bytes();
         let parts: [&[u8]; 5] = [
             USE_DIFF_DOMAIN,
@@ -273,36 +274,23 @@ impl Used<'_> {
             details.push(format!("presented:{}", presented.custody.to_hex()));
             details.push(format!("presented_generation:{}", presented.generation));
         }
-        let used_at = vault.with_write_txn_grouped(|txn| {
-            let created_at = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
-            let record = GateDecisionRecord {
-                version: GATE_DECISION_LEDGER_VERSION,
-                decision_id,
-                created_at,
-                outcome: match decision {
-                    SecretUseDecision::Used => "approved",
-                    SecretUseDecision::Refused => "denied",
-                }
-                .into(),
-                reason_codes: vec![SECRET_USE_REASON.into()],
-                receipt_reasons: Vec::new(),
-                system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                    SECRET_USE_CONTENT_KIND,
-                    details,
-                ),
-                actor_class: self.user.actor_class.gate_actor_class().into(),
-                actor_ref: Some(self.user.actor.to_hex()),
-                content_kind: SECRET_USE_CONTENT_KIND.into(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: digest.finalize().as_bytes().to_vec(),
-                read_frontier_hash: [0; 32],
-                context: Default::default(),
-                redacted_at: None,
-            };
-            vault.store.append_gate_decision_in_txn(txn, &record)?;
-            Ok(created_at)
+        let (decision_id, used_at) = vault.with_write_txn_grouped(|txn| {
+            let mut receipt = GateReceipt::new(
+                match decision {
+                    SecretUseDecision::Used => GateReceiptOutcome::Approved,
+                    // The custody rule refused the use (UC-03 D1 = A; the
+                    // `decision:refused` detail keeps the word).
+                    SecretUseDecision::Refused => GateReceiptOutcome::Deny,
+                },
+                SECRET_USE_CONTENT_KIND,
+                SECRET_USE_REASON,
+                ReceiptActor::Row(WriteActor::new(self.user.actor, self.user.actor_class)),
+                digest.finalize().as_bytes().to_vec(),
+                PolicyBasis::NOT_READ,
+            );
+            receipt.details = details;
+            let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+            Ok((record.decision_id, record.created_at))
         })?;
         Ok(SecretUseReceipt {
             handle: self.handle.clone(),

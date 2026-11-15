@@ -372,8 +372,9 @@ fn torn_open_simulation_reseeds_on_next_open_and_writes_receipt() -> Result<()> 
     let decisions = vault.gate_decisions(20)?;
     let decision = decisions
         .iter()
-        .find(|row| row.outcome == "reseeded_after_loss")
+        .find(|row| row.reason_codes == ["gate.policy_manifest.reseeded_after_loss"])
         .expect("reseed receipt");
+    assert_eq!(decision.outcome, "noted");
     assert_ne!(decision.read_frontier_hash, [0; 32]);
     assert!(decision.created_at > 0);
     assert!(decision.created_at >= reopen_started_at);
@@ -386,7 +387,7 @@ fn torn_open_simulation_reseeds_on_next_open_and_writes_receipt() -> Result<()> 
     assert_eq!(notice.notice_type, "policy_manifest_reseeded");
     let mut query = crate::receipt::ReceiptQuery::new(20);
     query.kinds.insert(crate::receipt::ReceiptKind::Gate);
-    query.outcome = Some("reseeded_after_loss".to_owned());
+    query.outcome = Some("noted".to_owned());
     query.start_at = Some(reopen_started_at);
     query.end_at = Some(reopen_finished_at);
     let receipts = vault.query_receipts(query)?;
@@ -436,7 +437,7 @@ fn valid_manifest_reopen_is_idempotent() -> Result<()> {
         vault
             .gate_decisions(20)?
             .iter()
-            .all(|row| row.outcome != "reseeded_after_loss")
+            .all(|row| row.reason_codes != ["gate.policy_manifest.reseeded_after_loss"])
     );
     Ok(())
 }

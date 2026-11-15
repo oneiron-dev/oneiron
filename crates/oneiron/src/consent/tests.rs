@@ -1429,7 +1429,7 @@ fn consent_receipts_project_into_the_gate_receipt_family() {
     let denied = vault.deny_consent(&owner, effect_digest).expect("deny");
     assert_eq!(denied.grant_ref(), None);
     assert_eq!(denied.reason_code(), CONSENT_REASON_DENIED);
-    assert_eq!(denied.gate_outcome(), "denied");
+    assert_eq!(denied.gate_outcome().as_str(), "rejected");
 
     // Every reason code is in the `gate.` namespace the ledger pins.
     for reason in [

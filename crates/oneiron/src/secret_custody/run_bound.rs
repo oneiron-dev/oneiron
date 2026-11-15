@@ -53,8 +53,10 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
 use crate::ports::ShortIdStoreRead;
 use crate::secret_lease::DoorInjectionReceipt;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::vault::Vault;
+use crate::write_envelope::WriteActor;
 
 /// The Gate reason code of the record each run-bound mint writes.
 pub const RUN_SECRET_FOUND_REASON: &str = "gate.secret.found";
@@ -611,29 +613,21 @@ impl RunRecord<'_> {
             digest.update(&(part.len() as u64).to_be_bytes());
             digest.update(part);
         }
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::from_bytes(store.clock.ulid()?),
-            created_at: crate::ports::recorded_at_in_txn(store, wtxn)?,
-            outcome: match found {
-                Found::Minted | Found::Used => "approved",
-                Found::Refused => "denied",
-            }
-            .into(),
-            reason_codes: vec![reason.into()],
-            receipt_reasons: Vec::new(),
-            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(kind, details),
-            actor_class: self.holder.actor_class.gate_actor_class().into(),
-            actor_ref: Some(self.holder.actor.to_hex()),
-            content_kind: kind.into(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: digest.finalize().as_bytes().to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        store.append_gate_decision_in_txn(wtxn, &record)
+        let mut receipt = GateReceipt::new(
+            match found {
+                Found::Minted | Found::Used => GateReceiptOutcome::Approved,
+                // The custody rule refused the use (UC-03 D1 = A; the
+                // record's details keep the word).
+                Found::Refused => GateReceiptOutcome::Deny,
+            },
+            kind,
+            reason,
+            ReceiptActor::Row(WriteActor::new(self.holder.actor, self.holder.actor_class)),
+            digest.finalize().as_bytes().to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.details = details;
+        store.record_gate_receipt_in_txn(wtxn, receipt)?;
+        Ok(())
     }
 }
