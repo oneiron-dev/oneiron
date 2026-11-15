@@ -9,11 +9,14 @@
 //! own token-cap error, so the ladder steps up past it (L2-31).
 //!
 //! The time left is read once the request is built, its images fitted (#7827
-//! review round 1): the budget and the transport's timeout are both what is
-//! left of the call then, and a call already out of time is never sent.
+//! review round 1), and again when its transport seals it to send, once the
+//! credential is in hand (round 2): the budget and the transport's timeout
+//! are both what is left of the call then, and a call already out of time is
+//! never sent. The broker leg's own key read is proved in
+//! `crates/oneiron-server/tests/system_one_broker_budget.rs`.
 //!
 //! Every row drives the public seat over a capturing transport: the exact body
-//! the seat built, and the reply a server would send.
+//! it sealed, and the reply a server would send.
 //!
 //! Fleet: `cargo test --locked -p oneiron-llm-systemone --all-features --test native_budget_wire`
 
@@ -44,27 +47,32 @@ struct Sent {
     timeouts: Mutex<Vec<Duration>>,
 }
 
-/// Keeps every request the seat sends and answers each with `reply`.
+/// Keeps every request the seat sends and answers each with `reply`. It
+/// waits `credential` first, as a transport whose credential is read on a
+/// blocking worker does, then seals the request.
 struct Capture {
     sent: Arc<Sent>,
     reply: Value,
+    credential: Duration,
 }
 
 impl SystemOneTransport for Capture {
     fn send<'a>(
         &'a self,
-        request: SystemOneHttpRequest,
+        mut request: SystemOneHttpRequest,
         _lease: &'a BudgetLease,
     ) -> SystemOneTransportFuture<'a> {
         Box::pin(async move {
+            std::thread::sleep(self.credential);
+            let sealed = request.seal()?;
             let body: Value =
-                serde_json::from_slice(&request.body).expect("the seat sends one JSON object");
+                serde_json::from_slice(&sealed.body).expect("the seat sends one JSON object");
             self.sent.bodies.lock().expect("capture lock").push(body);
             self.sent
                 .timeouts
                 .lock()
                 .expect("capture lock")
-                .push(request.time_left);
+                .push(sealed.time_left);
             Ok(SystemOneHttpResponse {
                 status: 200,
                 body: serde_json::to_vec(&self.reply).expect("reply bytes"),
@@ -75,6 +83,12 @@ impl SystemOneTransport for Capture {
 
 /// A seat over a capturing transport answering `reply`, and what it sent.
 fn seat(reply: Value) -> (SystemOneSeat, Arc<Sent>) {
+    seat_waiting(reply, Duration::ZERO)
+}
+
+/// [`seat`], its transport waiting `credential` for its credential before
+/// it seals each request.
+fn seat_waiting(reply: Value, credential: Duration) -> (SystemOneSeat, Arc<Sent>) {
     let sent = Arc::new(Sent::default());
     let seat = SystemOneSeat::with_transport(
         ENDPOINT.to_owned(),
@@ -83,6 +97,7 @@ fn seat(reply: Value) -> (SystemOneSeat, Arc<Sent>) {
         Box::new(Capture {
             sent: Arc::clone(&sent),
             reply,
+            credential,
         }),
     )
     .expect("a valid seat");
@@ -368,6 +383,76 @@ async fn a_call_out_of_time_once_its_images_are_fitted_is_never_sent() {
     let (pack, pack_sent) = seat(pack_answered());
     let error = pack
         .ask_pack(pack_request_with_photo(), &lease, time_left)
+        .await
+        .err()
+        .expect("a pack out of time is no answer");
+    assert!(is_timeout(&error), "a pack: timed out: {error:?}");
+
+    for (what, sent) in [("one question", sent), ("a pack", pack_sent)] {
+        assert!(
+            sent.bodies.lock().expect("capture lock").is_empty(),
+            "{what}: nothing is sent"
+        );
+    }
+}
+
+/// How long [`seat_waiting`]'s transport waits for its credential below.
+const CREDENTIAL_WAIT: Duration = Duration::from_millis(300);
+
+#[tokio::test]
+async fn the_budget_is_read_when_the_transport_seals_the_request() {
+    let lease = BudgetLease::for_test("seat");
+    let time_left = Duration::from_secs(5);
+
+    let (single, sent) = seat_waiting(answered(), CREDENTIAL_WAIT);
+    let single = single.with_native_budget(true);
+    single
+        .ask(request(), &lease, time_left)
+        .await
+        .expect("the seat answers");
+    let (pack, pack_sent) = seat_waiting(pack_answered(), CREDENTIAL_WAIT);
+    let pack = pack.with_native_budget(true);
+    pack.ask_pack(pack_request(), &lease, time_left)
+        .await
+        .expect("the pack answers");
+
+    for (what, sent) in [("one question", sent), ("a pack", pack_sent)] {
+        let bodies = sent.bodies.lock().expect("capture lock");
+        let timeouts = sent.timeouts.lock().expect("capture lock");
+        assert_eq!(bodies.len(), 1, "{what}: one request");
+        let budget = bodies[0]["budget_ms"].as_u64().expect("a budget");
+        assert!(
+            budget <= 4_700,
+            "{what}: the transport's wait for its credential is spent from the server's budget: {budget}"
+        );
+        assert!(
+            timeouts[0] <= time_left.saturating_sub(CREDENTIAL_WAIT),
+            "{what}: and from the transport's timeout: {:?}",
+            timeouts[0]
+        );
+        assert!(
+            u128::from(budget) <= timeouts[0].as_millis(),
+            "{what}: the server never gets more time than the transport waits"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_call_out_of_time_when_its_transport_seals_it_is_never_sent() {
+    let lease = BudgetLease::for_test("seat");
+    // 100 ms left; the credential alone takes 300.
+    let time_left = Duration::from_millis(100);
+
+    let (single, sent) = seat_waiting(answered(), CREDENTIAL_WAIT);
+    let error = single
+        .ask(request(), &lease, time_left)
+        .await
+        .err()
+        .expect("a call out of time is no answer");
+    assert!(is_timeout(&error), "one question: timed out: {error:?}");
+    let (pack, pack_sent) = seat_waiting(pack_answered(), CREDENTIAL_WAIT);
+    let error = pack
+        .ask_pack(pack_request(), &lease, time_left)
         .await
         .err()
         .expect("a pack out of time is no answer");

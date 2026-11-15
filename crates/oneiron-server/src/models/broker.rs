@@ -543,6 +543,18 @@ pub(super) async fn open_with_key_released(
         .map_err(broker_error)
 }
 
+/// Connects to the broker at `client` and reads the key `secret` at the
+/// door, for a caller that builds its call once the key is in hand (the
+/// System One seat seals its request then). Nothing reads the key before the
+/// broker is reached.
+pub(super) async fn connect_with_key(
+    client: &BrokerClient,
+    keys: &Arc<dyn KeyDoor>,
+    secret: &str,
+) -> LlmResult<(oneiron_broker::BrokerConnection, Zeroizing<Vec<u8>>)> {
+    connect_with_key_released(client, keys, secret, None, None).await
+}
+
 async fn connect_with_key_released(
     client: &BrokerClient,
     keys: &Arc<dyn KeyDoor>,

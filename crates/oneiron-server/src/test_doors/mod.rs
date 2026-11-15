@@ -20,4 +20,5 @@ pub mod replay_admission;
 pub mod resident_pump;
 pub mod siwc_seat;
 pub mod solved_runs;
+pub mod system_one_leg;
 pub mod workflow_park;
