@@ -102,7 +102,7 @@ pub(crate) fn queue_lens_callback(
             parent_attempt: None,
             dedupe_key: Some(key),
             run_id: Some(run_id),
-            now: super::unix_now(),
+            now: super::unix_seconds_now(),
         },
         AgentSpawnContext {
             context_spec: Some(spec),

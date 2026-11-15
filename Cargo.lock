@@ -8323,10 +8323,12 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-hex",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rand_distr 0.4.3",
  "rmp-serde",
+ "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -8383,6 +8385,7 @@ dependencies = [
  "expat-sys",
  "flate2",
  "harfrust",
+ "miniz_oxide 0.9.1",
  "oneiron-contracts",
  "png 0.18.1",
  "proptest",
@@ -8455,6 +8458,10 @@ dependencies = [
  "wasmtime",
  "wat",
 ]
+
+[[package]]
+name = "oneiron-hex"
+version = "0.1.0"
 
 [[package]]
 name = "oneiron-image"
@@ -8777,7 +8784,37 @@ dependencies = [
 name = "oneiron-records"
 version = "0.1.0"
 dependencies = [
+ "blake3",
+ "loro",
+ "oneiron-authority",
+ "oneiron-base",
+ "oneiron-browser",
+ "oneiron-code-source",
+ "oneiron-consent-state",
+ "oneiron-container",
+ "oneiron-contracts",
+ "oneiron-crypto",
+ "oneiron-delivery-vocabulary",
+ "oneiron-docedit",
+ "oneiron-lens-wire",
+ "oneiron-linkedin-policy",
+ "oneiron-model",
+ "oneiron-policy-vocabulary",
+ "oneiron-retrieval",
+ "oneiron-store",
  "oneiron-verb-wire",
+ "oneiron-wake-contract",
+ "oneiron-web-fetch",
+ "oneiron-xlsx-formula",
+ "reqwest 0.12.28",
+ "rmp-serde",
+ "rmpv",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 2.0.20",
+ "zeroize",
 ]
 
 [[package]]
@@ -8788,6 +8825,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "oneiron",
+ "oneiron-base",
  "oneiron-sdk-build",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
@@ -8938,6 +8976,7 @@ dependencies = [
  "objc2-foundation",
  "oneiron",
  "oneiron-agent-runtime",
+ "oneiron-base",
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
@@ -9041,9 +9080,11 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-crypto",
  "oneiron-docedit",
+ "oneiron-hex",
  "oneiron-model",
  "oneiron-skill-attribution",
  "oneiron-vault-contract",
+ "pinyin",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rmp-serde",
@@ -10018,6 +10059,12 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pinyin"
+version = "0.11.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e225f595052d9c46045755be4b8d7950b6d9f3c33e0c0b74ba58f11bbfa8c64b"
 
 [[package]]
 name = "pkcs1"
