@@ -853,10 +853,21 @@ impl Vault {
         &self,
         read: impl FnOnce(Option<&KnownValues>, &RoTxn<'_>) -> Result<T>,
     ) -> Result<T> {
+        let snapshot = self.known_snapshot()?;
+        read(snapshot.known(), snapshot.txn())
+    }
+
+    /// [`Self::with_known_snapshot`]'s snapshot and matcher, held by a
+    /// reader that serves several calls in that one snapshot (FIX
+    /// REPO-ASSET-KNOWN-PASS-NESTED-SNAPSHOT). Keep it short-lived, as the
+    /// closure form is: the custody read guard is held until it drops.
+    ///
+    /// # Errors
+    /// The pass's own.
+    pub(crate) fn known_snapshot(&self) -> Result<KnownSnapshot<'_>> {
         let snapshot = self.store.custody_snapshot()?;
-        let txn: &RoTxn<'_> = &snapshot;
-        let known = self.known_values_in_snapshot(txn)?;
-        read(known.as_ref(), txn)
+        let known = self.known_values_in_snapshot(&snapshot)?;
+        Ok(KnownSnapshot { known, snapshot })
     }
 
     /// The matcher of the history `txn` holds, a snapshot taken under the
@@ -871,6 +882,27 @@ impl Vault {
                 .port_short_id_reference(txn, holder)?
                 .map(|(handle, _)| handle))
         })
+    }
+}
+
+/// A snapshot taken under the custody read guard and the matcher built
+/// from it (FIX 8966): bytes read in it and the values matched against them
+/// are one state. The matcher is wiped first when it drops, then the
+/// snapshot closes, then the guard releases.
+pub(crate) struct KnownSnapshot<'a> {
+    known: Option<KnownValues>,
+    snapshot: super::key_custody::GuardedSnapshot<'a>,
+}
+
+impl<'a> KnownSnapshot<'a> {
+    /// The snapshot the matcher was built from.
+    pub(crate) fn txn(&self) -> &RoTxn<'a> {
+        &self.snapshot
+    }
+
+    /// The values custody knows in this snapshot; `None` when it knows none.
+    pub(crate) const fn known(&self) -> Option<&KnownValues> {
+        self.known.as_ref()
     }
 }
 

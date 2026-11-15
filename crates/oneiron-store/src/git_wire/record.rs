@@ -428,11 +428,5 @@ pub fn hash_field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
 }
 
 pub fn hex_lower(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0F) as usize] as char);
-    }
-    out
+    oneiron_hex::encode(bytes)
 }
