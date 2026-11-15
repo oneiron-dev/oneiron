@@ -274,3 +274,62 @@ pub(crate) fn touch_inflight(vault: &Vault, id: &IntentId) -> Result<(), IntentL
     txn.commit().map_err(crate::error::Error::from)?;
     crate::outbound_intent_ledger::force_sync(vault)
 }
+
+/// Test seam (`--cfg oneiron_test_support`): whether a new send is suppressed
+/// whose dedupe key an earlier send reserved `reserved_secs_ago` seconds
+/// before the vault's clock reads now. The earlier send is one settled
+/// ledger row holding that key's reservation, as admission keeps one; the
+/// write is never committed.
+#[cfg(oneiron_test_support)]
+pub(crate) fn resend_blocked_after(
+    vault: &Vault,
+    reserved_secs_ago: u64,
+) -> Result<bool, IntentLedgerError> {
+    use crate::outbound_intent_ledger::{
+        BudgetChargeMarker, IntentEscalationReason, IntentLedgerRecord, LedgerPayloadContext,
+        OutboundCallRequest, RecordedOutboundOutcome, insert_suppressed_in_txn,
+        stored_admission_in_txn,
+    };
+
+    let mut key = PREFIX.to_vec();
+    key.extend_from_slice(&[0x64; 32]);
+    let now_s = vault.store.clock.now_recorded_at();
+    let now_ms = now_s.saturating_mul(1000);
+    let request = OutboundCallRequest::new(
+        crate::attempt_queue::AttemptId::now(),
+        0,
+        "mail",
+        "send",
+        b"{}".to_vec(),
+        now_ms,
+    );
+    let mut earlier = IntentLedgerRecord::pending(
+        request,
+        false,
+        BudgetChargeMarker {
+            key_ref: None,
+            budget_class: crate::connector_key::budget_class::BudgetClass::Send,
+            matched_rows: Vec::new(),
+            sends_debit: 0,
+            accounted_at_ms: now_ms,
+        },
+    )?;
+    earlier.state = IntentState::Abandoned;
+    earlier.recorded_outcome = Some(RecordedOutboundOutcome::Abandoned(
+        IntentEscalationReason::DedupeSuppressed,
+    ));
+    let mut wtxn = vault.store.env.write_txn().map_err(Error::from)?;
+    let stored =
+        stored_admission_in_txn(vault, &mut wtxn, &earlier, &LedgerPayloadContext::default())?;
+    insert_suppressed_in_txn(vault, &mut wtxn, &stored)?;
+    reserve(
+        vault,
+        &mut wtxn,
+        &key,
+        &stored.id,
+        now_s.saturating_sub(reserved_secs_ago),
+    )?;
+    let suppressed = blocked(vault, &wtxn, &key, now_s)?;
+    wtxn.abort();
+    Ok(suppressed)
+}

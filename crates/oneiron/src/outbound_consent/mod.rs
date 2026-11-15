@@ -68,6 +68,10 @@ pub use self::connector_call_input_resume::{
     ConnectorResumeProtocol, ConnectorResumeState, OpenedConnectorResume,
 };
 pub(crate) use self::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::connector_call_pending::{
+    held_connector_call_settled, put_held_connector_call,
+};
 pub(crate) use self::connector_call_rebind::{
     code_wait_rebind_effects_in_txn, code_wait_retry_approval_in_txn,
 };

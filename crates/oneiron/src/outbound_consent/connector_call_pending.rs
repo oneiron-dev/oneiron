@@ -205,3 +205,56 @@ fn expired_reasons(stop: IntentEscalationReason) -> Vec<String> {
     }
     reasons
 }
+
+/// Test seam (`--cfg oneiron_test_support`): keeps a held call first held at
+/// `held_at_ms`, which the ledger never admitted, as a hold does, and returns
+/// its ref. Nothing asks the owner about it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_held_connector_call(vault: &Vault, held_at_ms: u64) -> crate::Result<EntityId> {
+    let call_ref = EntityId::now();
+    let pending = PendingConnectorCall {
+        name: "test-connector".to_owned(),
+        tool: "test_tool".to_owned(),
+        arguments: "{}".to_owned(),
+        mutation: super::tool_call::MutationIntent::ExplicitMutation,
+        grant_id: None,
+        attempt_id: crate::attempt_queue::AttemptId::now(),
+        call_seq: 0,
+        principal_ref: EntityId::now().to_hex(),
+        remember_context: None,
+        held_at_ms,
+        settled: None,
+        held_reasons: Vec::new(),
+        owner_ask_seq: None,
+        credential: None,
+        grant: None,
+        secret_use: None,
+        sweep_minted: false,
+        sweep_dry_run_forced: false,
+        live_use: false,
+        code_consent_wait: None,
+        source_rows: Some(Vec::new()),
+        approval: None,
+        input: None,
+        code: None,
+        sealed_arguments: None,
+        off_record: false,
+        paced_until: None,
+        agent_run: None,
+    };
+    vault.with_write_txn(|txn| PENDING_CALLS.put(&vault.store, txn, &call_ref, &pending))?;
+    Ok(call_ref)
+}
+
+/// Test seam (`--cfg oneiron_test_support`): whether the held call
+/// `call_ref` settled (expiry settles it), `None` when no row holds it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn held_connector_call_settled(
+    vault: &Vault,
+    call_ref: &EntityId,
+) -> crate::Result<Option<bool>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(PENDING_CALLS
+        .get(&vault.store, &txn, call_ref)?
+        .map(|row| row.settled.is_some()))
+}
