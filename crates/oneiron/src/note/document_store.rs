@@ -529,12 +529,9 @@ impl Memory<'_> {
                     ));
                 }
                 require_note_writer(self, txn, note)?;
-                crate::memory::verify_deletion_authority_in_txn(
-                    self.vault(),
-                    txn,
-                    self.actor(),
-                    self.actor_class(),
-                )?;
+                // A credential handed on to another key erases nothing as
+                // the owner (HANDED-ON-SLIP-PERSON; Astra review on #8434, F3).
+                self.verify_own_deletion_authority_in(txn)?;
                 // A held note keeps its history (OF-470).
                 self.vault()
                     .store

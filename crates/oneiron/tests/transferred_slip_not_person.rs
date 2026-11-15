@@ -13,21 +13,25 @@
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test transferred_slip_not_person`.
+#![cfg(oneiron_test_support)]
 
 use ed25519_dalek::Signer;
 use oneiron::authority::{HostSlipIssuer, SlipCaveat, VerifiedSlip};
+use oneiron::code_run::GatedActorWrite;
 use oneiron::memory::{
     CanAnswer, CanVerbGate, ClaimDemoteActionInput, ClaimDemoteRequest, ClaimInput,
     ExpressionPreferenceInput, MEMORY_CODE_FORBIDDEN, SafeDeleteReason, resolve_entity_ref,
 };
 use oneiron::note::TakeTarget;
+use oneiron::off_record::{OffRecordBackendClass, OffRecordSession};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::skill::{SkillLifecycle, SkillRecord};
+use oneiron::test_doors::code_run_claim_put::put_claim_as_code_run;
 use oneiron::verbs::{CanRequest, CanVerb, CanVerbRequest};
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
-    EdgeActorClass, EntityId, ExpressionPreferenceOrigin, ExpressionPreferenceValue, TimeRange,
-    Vault, VaultConfig,
+    EdgeActorClass, EntityId, ExpressionPreferenceOrigin, ExpressionPreferenceValue, RawEntityPut,
+    TimeRange, Vault, VaultConfig, WriteActor,
 };
 use rmpv::Value;
 use serde_json::json;
@@ -39,6 +43,12 @@ const NOTE: &str = "profile.note";
 
 /// The handed-on delete refusal.
 const HANDED_ON_DELETE: &str = "handed on to another key";
+/// A delivery window: it holds interrupts while its condition holds, so it
+/// restricts someone (`federation::claim_removal_widens_in`).
+const DELIVERY_WINDOW_CONTEXT: &str = "delivery_window.context";
+/// The refusal of a write over a restricting claim by no live owner in
+/// person (`memory::authorship::guard_existing_claim_in_txn`).
+const LIFTS_A_RESTRICTION: &str = "a claim that restricts someone's access";
 /// The self-grant refusal an override by no owner keeps.
 const CONFLICT_REVIEW: &str = "ask for conflict review";
 /// A `can` verb whose row takes a person's proof.
@@ -150,10 +160,12 @@ impl Fixture {
             .with_read_proof(slip)
     }
 
-    /// A Generated Auto `profile.note` about the subject on the raw door: no
-    /// envelope author, so never the owner's own row.
+    /// An Observed Auto `profile.note` about the subject on the raw door: no
+    /// envelope author, so never the owner's own row. Observed, because a
+    /// Generated Auto row needs an actor-bound permit no unattributed write
+    /// holds (Astra review on #8434, F4: the demotion pair failed in setup).
     fn raw_note(&self) -> EntityId {
-        let mut body = generated_body(NOTE, self.subject, Value::from("a note"));
+        let mut body = observed_body(NOTE, self.subject, Value::from("a note"));
         body.scope_facet = self.facet;
         let id = EntityId::now();
         self.vault
@@ -261,6 +273,90 @@ impl Fixture {
         answer.gate
     }
 
+    /// The owner's NOTE and its head frontier, for a history erase.
+    fn owner_note_frontier(&self) -> (EntityId, Vec<u8>) {
+        let note = EntityId::from_hex(&self.owner_take()).expect("note id");
+        let frontier = self
+            .vault
+            .note_document(note)
+            .expect("the NOTE's document")
+            .frontier;
+        (note, frontier)
+    }
+
+    /// An off-record room named `session_ref` and a PERSON the owner staged
+    /// in it, which base never held.
+    fn room_staged_person(&self, session_ref: &str) -> (OffRecordSession<'_>, EntityId) {
+        let room = self
+            .vault
+            .off_record_session_vault()
+            .enter(session_ref, OffRecordBackendClass::Local)
+            .expect("an off-record room");
+        let body = rmp_serde::to_vec_named(&json!({ "name": "a room person" })).expect("body");
+        let now = self.vault.now_recorded_at();
+        let id = EntityId::now();
+        self.vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .in_off_record_session(room.session_ref())
+            .raw_put_entity(RawEntityPut {
+                id,
+                entity_type: ENTITY_TYPE_PERSON,
+                occurred: TimeRange {
+                    start: now,
+                    end: now,
+                },
+                learned_at: now,
+                data: &body,
+            })
+            .expect("the owner stages a PERSON in the room");
+        (room, id)
+    }
+
+    /// The owner's own landed delivery window about the subject, by its
+    /// authenticated envelope: the owner's row to lift.
+    fn owner_delivery_window(&self) -> EntityId {
+        let input = ClaimInput {
+            predicate: DELIVERY_WINDOW_CONTEXT.to_owned(),
+            value: json!({ "schema_version": 1, "applies_to": "interrupt", "when": "asleep" }),
+            ..self.claim_input(self.subject, "", "user_stated")
+        };
+        let receipt = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .claim_upsert(&input)
+            .expect("the owner's delivery window lands");
+        assert_eq!(receipt.approval, "auto", "the owner's window lands at once");
+        self.claim_id(&receipt.claim_short_id)
+    }
+
+    /// A code run the host opened for the owner under `slip`, as the MCP
+    /// code door binds its opener (`with_opener_credential`), puts a NOTE at
+    /// `id` through the candidate writer its `vault.claims.put` lands by.
+    /// Returns the id that landed.
+    fn code_run_puts_a_note_at(
+        &self,
+        slip: &VerifiedSlip,
+        id: EntityId,
+    ) -> Result<EntityId, oneiron::Error> {
+        let actor = GatedActorWrite::new(
+            &self.vault,
+            WriteActor::new(self.owner, EdgeActorClass::Human),
+            "transferred-slip-run",
+        )
+        .expect("the run binds")
+        .with_opener_credential(slip)
+        .actor();
+        put_claim_as_code_run(
+            &self.vault,
+            actor,
+            id,
+            NOTE,
+            self.subject,
+            Value::from("a code run's note"),
+            LEARNED_AT,
+        )
+    }
+
     fn claim_id(&self, short_id: &str) -> EntityId {
         resolve_entity_ref(&self.vault, short_id).expect("the claim's id")
     }
@@ -296,7 +392,7 @@ fn person(vault: &Vault) -> EntityId {
     person
 }
 
-fn generated_body(predicate: &str, subject: EntityId, value: Value) -> ClaimBody {
+fn observed_body(predicate: &str, subject: EntityId, value: Value) -> ClaimBody {
     let mut body = ClaimBody::new(
         predicate,
         ClaimSubject::Entity(subject),
@@ -306,7 +402,7 @@ fn generated_body(predicate: &str, subject: EntityId, value: Value) -> ClaimBody
         ClaimLifecycleStatus::Active,
     )
     .expect("a claim body");
-    body.source = Some(ClaimSource::Generated);
+    body.source = Some(ClaimSource::Observed);
     body.scope = None;
     body
 }
@@ -609,4 +705,112 @@ fn the_owners_own_slip_answers_unchecked_for_a_persons_verb() {
     let slip = f.owner_slip(false);
 
     assert_eq!(f.person_verb_gate(&slip), CanVerbGate::Unchecked);
+}
+
+/// Red: a code run opened under a handed-on owner slip lifts no restriction
+/// the owner wrote (Astra review on #8434, F1: the dispatcher kept only the
+/// slip's lineage, so its write actor passed the owner-only restriction gate
+/// as the person).
+#[test]
+fn a_code_run_on_a_handed_on_owner_slip_never_lifts_the_owners_window() {
+    let f = Fixture::new();
+    let window = f.owner_delivery_window();
+    let slip = f.owner_slip(true);
+
+    let put = f.code_run_puts_a_note_at(&slip, window);
+
+    let stored = f.stored(window);
+    assert_eq!(
+        (stored.predicate.as_str(), stored.lifecycle),
+        (DELIVERY_WINDOW_CONTEXT, ClaimLifecycleStatus::Active),
+        "the delivery window still holds (put: {put:?})"
+    );
+    let refused = put.expect_err("a run under a handed-on slip lifts no restriction");
+    assert!(
+        refused.to_string().contains(LIFTS_A_RESTRICTION),
+        "the refusal names its reason: {refused:?}"
+    );
+}
+
+/// Guard: a code run opened under the owner's own slip still writes over
+/// the owner's own window.
+#[test]
+fn a_code_run_on_the_owners_own_slip_still_writes_over_the_owners_window() {
+    let f = Fixture::new();
+    let window = f.owner_delivery_window();
+    let slip = f.owner_slip(false);
+
+    f.code_run_puts_a_note_at(&slip, window)
+        .expect("the owner's own run writes over the owner's window");
+}
+
+/// Red: the handed-on handle erases no NOTE's history as the owner (Astra
+/// review on #8434, F3 B: `purge_note_history` asked the class alone).
+#[test]
+fn a_handed_on_owner_slip_never_purges_a_notes_history() {
+    let f = Fixture::new();
+    let (note, frontier) = f.owner_note_frontier();
+    let slip = f.owner_slip(true);
+
+    let refused = f
+        .owner_memory(&slip)
+        .purge_note_history(note, &frontier)
+        .expect_err("a handed-on owner slip erases no note history");
+
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains(HANDED_ON_DELETE),
+        "the refusal names the handover: {}",
+        refused.message
+    );
+}
+
+/// Guard: the owner's own slip still erases its NOTE's history.
+#[test]
+fn the_owners_own_slip_still_purges_a_notes_history() {
+    let f = Fixture::new();
+    let (note, frontier) = f.owner_note_frontier();
+    let slip = f.owner_slip(false);
+
+    f.owner_memory(&slip)
+        .purge_note_history(note, &frontier)
+        .expect("the owner's own slip erases the NOTE's history");
+}
+
+/// Red: the handed-on handle deletes no row an off-record room staged (Astra
+/// review on #8434, F3 A: the room's delete asked the class alone).
+#[test]
+fn a_handed_on_owner_slip_never_deletes_a_rooms_staged_row() {
+    let f = Fixture::new();
+    let (room, id) = f.room_staged_person("transferred-slip-room-delete");
+    let slip = f.owner_slip(true);
+
+    let refused = f
+        .owner_memory(&slip)
+        .in_off_record_session(room.session_ref())
+        .raw_delete_entity(&id)
+        .expect_err("a handed-on owner slip deletes nothing the room staged");
+
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN);
+    assert!(
+        refused.message.contains(HANDED_ON_DELETE),
+        "the refusal names the handover: {}",
+        refused.message
+    );
+}
+
+/// Guard: the owner's own slip still deletes a row the room staged.
+#[test]
+fn the_owners_own_slip_still_deletes_a_rooms_staged_row() {
+    let f = Fixture::new();
+    let (room, id) = f.room_staged_person("transferred-slip-room-own-delete");
+    let slip = f.owner_slip(false);
+
+    let deleted = f
+        .owner_memory(&slip)
+        .in_off_record_session(room.session_ref())
+        .raw_delete_entity(&id)
+        .expect("the owner's own slip deletes the room's row");
+
+    assert!(deleted, "the room's own delete ran");
 }
