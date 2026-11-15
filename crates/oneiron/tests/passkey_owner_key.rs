@@ -13,6 +13,12 @@
 //! another origin than the passkey's enrollment (a sibling under the same RP
 //! id), enrols nothing.
 //!
+//! A key only the passkey vouched for acts in part (lead ruling
+//! WEBPASSKEY-BLIND-SIGNATURE = B): it cannot fence the owner's device key
+//! and vouches for no further key until a non-passkey key, here a device
+//! key, vouches for it too; the passkey itself cannot confirm it. After
+//! that confirmation it acts as any owner root.
+//!
 //! The passkey is a software P-256 key here; each assertion is built as a
 //! browser's `navigator.credentials.get` returns it (authenticator data,
 //! client data JSON, DER signature).
@@ -32,6 +38,7 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::label_writers::embedded_owner;
+use oneiron::test_doors::passkey_vouch_limits::revoke_owner_key_signed_by;
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
 use p256::ecdsa::signature::Signer as _;
 use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
@@ -196,7 +203,19 @@ fn enrol_passkey(hosted: &HostedVault) -> oneiron::authority::OwnerPasskeyEnroll
 /// A fresh device key and its proof for `machine`, as a new device's
 /// keystore makes them.
 fn device_enrollment(hosted: &HostedVault, machine: oneiron::EntityId) -> OwnerKeyEnrollment {
-    let device = ed25519_dalek::SigningKey::from_bytes(&[0x6B; 32]);
+    keyed_enrollment(
+        hosted,
+        machine,
+        &ed25519_dalek::SigningKey::from_bytes(&[0x6B; 32]),
+    )
+}
+
+/// `device`'s enrollment input for `machine`: its key and its proof.
+fn keyed_enrollment(
+    hosted: &HostedVault,
+    machine: oneiron::EntityId,
+    device: &ed25519_dalek::SigningKey,
+) -> OwnerKeyEnrollment {
     let public_key = device.verifying_key().to_bytes();
     let challenge = hosted
         .vault
@@ -319,4 +338,133 @@ fn a_passkey_assertion_from_a_sibling_origin_vouches_for_nothing() {
         "the passkey enrolled at its own origin signs nothing made at a sibling's"
     );
     assert!(!hosted.live_owner_key(&device_key), "nothing was enrolled");
+}
+
+/// The owner's device key, held here: enrolled by the host root.
+fn owner_device() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[0x71; 32])
+}
+
+/// A key the host holds, which a mislabelled prompt had the passkey vouch for.
+fn host_held() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[0x6B; 32])
+}
+
+fn ed_key(key: &ed25519_dalek::SigningKey) -> AuthorityKey {
+    AuthorityKey::Ed25519(key.verifying_key().to_bytes())
+}
+
+/// A hosted vault with the owner's passkey and device key, and a host-held
+/// key that only the passkey vouched for. Answers the carrier.
+fn passkey_vouched_host_key(hosted: &HostedVault) -> oneiron::EntityId {
+    let machine = enrol_passkey(hosted).machine;
+    hosted
+        .vault
+        .enrol_owner_signing_key_as_host(
+            &hosted.owner(),
+            keyed_enrollment(hosted, machine, &owner_device()),
+            &hosted.issuer,
+        )
+        .expect("the owner's device key");
+    hosted
+        .vault
+        .enrol_owner_signing_key_as(
+            &hosted.owner(),
+            keyed_enrollment(hosted, machine, &host_held()),
+            passkey_roster_key(),
+            |transcript| Ok(passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)),
+        )
+        .expect("the passkey vouches for the host-held key");
+    assert!(
+        hosted.live_owner_key(&ed_key(&host_held())),
+        "guard: the passkey-vouched key is a live owner key"
+    );
+    machine
+}
+
+/// The host-held key signs a revoke of the owner's device key; true when
+/// it counted.
+fn host_key_revokes_device_key(hosted: &HostedVault) -> bool {
+    revoke_owner_key_signed_by(
+        &hosted.vault,
+        ed_key(&host_held()),
+        ed_key(&owner_device()),
+        |transcript| host_held().sign(transcript).to_bytes().to_vec(),
+    )
+    .unwrap_or(false)
+}
+
+#[test]
+fn a_key_only_a_passkey_vouched_for_cannot_fence_the_owners_device_key() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        !host_key_revokes_device_key(&hosted),
+        "a key only the passkey vouched for revokes no other owner key"
+    );
+    assert!(
+        hosted.live_owner_key(&ed_key(&owner_device())),
+        "the owner's device key stands"
+    );
+}
+
+#[test]
+fn once_a_device_key_confirms_it_the_passkey_vouched_key_acts() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    hosted
+        .vault
+        .confirm_owner_key_as(
+            &hosted.owner(),
+            keyed_enrollment(&hosted, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    assert!(
+        host_key_revokes_device_key(&hosted),
+        "after the confirmation the key acts as any owner root"
+    );
+    assert!(
+        !hosted.live_owner_key(&ed_key(&owner_device())),
+        "its revoke of the device key counted"
+    );
+}
+
+#[test]
+fn a_key_only_a_passkey_vouched_for_vouches_for_no_further_key() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    let further = ed25519_dalek::SigningKey::from_bytes(&[0x5C; 32]);
+    let refused = hosted.vault.enrol_owner_signing_key_as(
+        &hosted.owner(),
+        keyed_enrollment(&hosted, machine, &further),
+        ed_key(&host_held()),
+        |transcript| Ok(host_held().sign(transcript).to_bytes().to_vec()),
+    );
+    assert!(refused.is_err(), "an unconfirmed key vouches for nothing");
+    assert!(
+        !hosted.live_owner_key(&ed_key(&further)),
+        "nothing was enrolled"
+    );
+}
+
+#[test]
+fn a_passkey_does_not_confirm_the_key_it_vouched_for() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    let refused = hosted.vault.confirm_owner_key_as(
+        &hosted.owner(),
+        keyed_enrollment(&hosted, machine, &host_held()),
+        passkey_roster_key(),
+        |transcript| Ok(passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)),
+    );
+    assert!(
+        refused.is_err(),
+        "only a non-passkey key confirms a passkey's vouch"
+    );
+    assert!(
+        !host_key_revokes_device_key(&hosted),
+        "the key is still unconfirmed"
+    );
 }
