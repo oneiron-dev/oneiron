@@ -6,9 +6,7 @@ use super::types::{
     ReplayObservation, SimilarityScore,
 };
 use crate::EntityId;
-use crate::claim::{
-    ClaimBody, ClaimSource, ScopedRead, is_preference_predicate, observed_preference_support_in_txn,
-};
+use crate::claim::{ClaimBody, ClaimSource, ScopedRead};
 use crate::dreamer_consolidation::extraction_pack::BoundBranchRead;
 use crate::dreamer_consolidation::routing::{candidate_keys, cosine};
 use crate::dreamer_consolidation::{PromotionCandidate, candidate_probe_body};
@@ -55,10 +53,8 @@ pub(super) fn extraction_observation_facts(
             Some(facet) => facet,
             None => vault.default_facet_in_txn(txn)?,
         };
-        let meet = candidate.evidence.meet();
-        let observed = meet == ClaimSource::Generated
-            && is_preference_predicate(&fresh.predicate)
-            && observed_preference_support_in_txn(vault, txn, &candidate.evidence.refs())?;
+        let (meet, observed) =
+            BoundBranchRead::observation_qualification_in_txn(vault, txn, &candidate)?;
         facts.candidates.push(CandidateObservation {
             index,
             claim: candidate.claim_id.to_hex(),

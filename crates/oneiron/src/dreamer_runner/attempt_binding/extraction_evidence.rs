@@ -5,8 +5,8 @@ use super::extraction_execution::CheckedExtractionCall;
 use crate::EntityId;
 use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::dreamer_consolidation::extraction_pack::{
-    check_extraction_operands_in_txn, evidence_version_for_row, extraction_not_served,
-    map_candidate_alias, rebuild_checked_pack,
+    ExtractionRebuildContext, check_extraction_operands_in_txn, evidence_version_for_row,
+    extraction_not_served, map_candidate_alias, rebuild_checked_pack,
 };
 use crate::memory::{MemoryError, MemoryResult};
 use crate::snapshot_read::{extraction_reader_scope_in_txn, source_version_in_txn};
@@ -46,11 +46,15 @@ impl DreamerAttemptBinding {
                 &bound,
                 self.lease.attempt(),
                 &branch,
-                &read,
-                txn,
+                &ExtractionRebuildContext {
+                    memory: &memory,
+                    read: &read,
+                    txn,
+                    operands: &pack.candidates,
+                },
                 branch_subject,
             )
-            .map_err(|error| MemoryError::bad_request(error.to_string()))?;
+            .map_err(|error| MemoryError::bad_request(error.message))?;
             check_engine_claim_pins(&read, txn, &pack.listed, &rebuilt.listed)?;
             check_engine_claim_pins(&read, txn, &pack.priors, &rebuilt.priors)?;
             compare_pack_questions(&pack.questions, &rebuilt.questions, &rebuilt.candidate_ids)?;
