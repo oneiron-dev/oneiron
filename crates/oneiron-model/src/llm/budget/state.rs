@@ -24,6 +24,10 @@ pub(super) struct BudgetState {
     /// (`BudgetGuard::revise_ceiling`). `None` bounds nothing. It is not
     /// checkpointed: a restored meter's lease reads it again.
     pub(super) ceiling_units: Option<u64>,
+    /// The caller's id of the last overdraft grant this meter took
+    /// (`BudgetGuard::grant_overdraft`), so the same grant never widens it
+    /// twice. Checkpointed with the meter.
+    pub(super) overdraft_grant: Option<u64>,
     pub(super) used_units: u64,
     pub(super) reserved_units: u64,
     pub(super) next_lease_seq: u64,
@@ -66,6 +70,7 @@ impl BudgetState {
             reserve_units,
             on_budget_exhausted,
             ceiling_units: None,
+            overdraft_grant: None,
             used_units: 0,
             reserved_units: 0,
             next_lease_seq: 0,

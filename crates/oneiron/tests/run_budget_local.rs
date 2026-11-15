@@ -204,8 +204,9 @@ fn the_owners_continue_on_local_press_resumes_the_run_on_that_model_until_the_ne
     }
     assert_eq!(
         dispatcher
-            .run_overdraft_units(root.id)
-            .expect("overdraft read"),
+            .run_overdraft(root.id)
+            .expect("overdraft read")
+            .map(|overdraft| overdraft.cap_units),
         None,
         "continuing on the local model approves no overdraft"
     );
