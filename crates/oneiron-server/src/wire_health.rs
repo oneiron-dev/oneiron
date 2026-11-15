@@ -198,17 +198,20 @@ pub fn checks(vault: &Vault) -> Result<Vec<HealthCheck>> {
 
 /// Writes an asked or answered check back over its row, and whether it did.
 /// A row gone since the pass read it stays gone: an actor's erase takes its
-/// own-rate checks (FIX 3520), and a pass that read one before must not
-/// write it back.
-fn put_check(vault: &Vault, check: &HealthCheck) -> Result<bool> {
+/// own-rate and spend checks (FIX 3520), and a pass that read one before
+/// must not write it back. A row an erase scrubbed since the pass read it
+/// keeps its scrubbed crossing: the write takes the row's crossing over the
+/// pass's stale one, so the pass never names an erased actor again.
+fn put_check(vault: &Vault, check: &mut HealthCheck) -> Result<bool> {
     let key = format!("{CHECK}{}", check.subject);
-    let body = encode(check)?;
     vault.with_write_txn_grouped(|txn| {
-        let kept = vault.sync_state_get_in_write_txn(txn, &key)?.is_some();
-        if kept {
-            vault.sync_state_put_in_write_txn(txn, &key, &body)?;
-        }
-        Ok(kept)
+        let Some(row) = vault.sync_state_get_in_write_txn(txn, &key)? else {
+            return Ok(false);
+        };
+        check.crossing = decode::<HealthCheck>(&row)?.crossing;
+        let body = encode(check)?;
+        vault.sync_state_put_in_write_txn(txn, &key, &body)?;
+        Ok(true)
     })
 }
 
@@ -423,13 +426,39 @@ pub(crate) fn ask(server: &SyncServer, owner: EntityId, mut check: HealthCheck) 
             "the health check answered bot; the work it covers still runs"
         );
     }
-    if put_check(vault, &check)? || !matches!(check.state, CheckState::Asked { .. }) {
+    let asked_over = check.crossing.clone();
+    if !put_check(vault, &mut check)? {
+        if !matches!(check.state, CheckState::Asked { .. }) {
+            return Ok(());
+        }
+        // An actor's erase took the check while the ladder asked it (FIX
+        // 3520): the ask it queued holds the crossing as the state it was
+        // asked over, so it drops that state and leaves the owner's queue.
+        if let Some(queued) = vault.latest_decision_ask(&question, owner)? {
+            vault.withdraw_decision_ask_dropping_state(queued.seq)?;
+        }
         return Ok(());
     }
-    // An actor's erase took the check while the ladder asked it (FIX 3520):
-    // the ask it queued holds the crossing as the state it was asked over,
-    // so it drops that state and leaves the owner's queue.
-    if let Some(queued) = vault.latest_decision_ask(&question, owner)? {
+    if check.crossing == asked_over || !matches!(check.state, CheckState::Asked { .. }) {
+        return Ok(());
+    }
+    // An actor's erase scrubbed the check's crossing while the ladder asked
+    // it (FIX 3520): the ask it queued holds the stale crossing. One its
+    // holder already answered keeps its answer over no state; one still
+    // open is withdrawn without its state and the check waits to be asked
+    // again over the scrubbed crossing.
+    let queued = vault.latest_decision_ask(&question, owner)?;
+    if queued.as_ref().is_some_and(|ask| ask.answer.is_some()) {
+        if let Some(queued) = &queued {
+            vault.withdraw_decision_ask_dropping_state(queued.seq)?;
+        }
+        return Ok(());
+    }
+    check.state = CheckState::Held;
+    if !put_check(vault, &mut check)? {
+        return Ok(());
+    }
+    if let Some(queued) = queued {
         vault.withdraw_decision_ask_dropping_state(queued.seq)?;
     }
     Ok(())
@@ -469,7 +498,7 @@ fn poll(server: &SyncServer, owner: EntityId, mut check: HealthCheck) -> Result<
         question: question.clone(),
         unit: unit.clone(),
     };
-    put_check(server.vault(), &check).map(drop)
+    put_check(server.vault(), &mut check).map(drop)
 }
 
 /// One pass: fold every new crossing in, ask each held check, and look for

@@ -301,6 +301,8 @@ pub(crate) fn raise_verdict_spend(
             source: CrossingSource::Spend,
             raised_at,
             summary: json!({
+                // Mirrored by `oneiron::own_rate::VERDICT_SPEND_KIND`: the
+                // erase's spend matcher.
                 "kind": "ai.verdict.spend",
                 "caller": caller.to_hex(),
                 "spent_units": spent_units,

@@ -116,6 +116,24 @@ fn parse_order_cursor(cursor: &str) -> Result<(u64, EntityId)> {
 /// The subject prefix every own-rate health check shares.
 const HEALTH_CHECK_SUBJECT: &str = "own_rate:";
 
+/// The subject prefix every verdict-spend health check shares: one check
+/// per caller (`spend:ai.verdict:<caller>`, built by the server's
+/// `wire_health::evidence::raise_verdict_spend`).
+const SPEND_CHECK_SUBJECT: &str = "spend:ai.verdict:";
+
+/// The subject prefix every wire call-volume health check shares: one
+/// check per crossed set's revision (`wire:<set>:<sequence>`, built by the
+/// server's `wire_health::evidence::wire_crossing`), naming every actor
+/// past its row.
+const WIRE_CHECK_SUBJECT: &str = "wire:";
+
+/// The summary kind of a verdict-spend crossing, which names its caller
+/// apart from the grant rule's `actors`, as an own-rate summary names its
+/// actor. Mirrors the literal the server's
+/// `wire_health::evidence::raise_verdict_spend` keeps; the health erase
+/// test fails if they drift apart.
+pub(crate) const VERDICT_SPEND_KIND: &str = "ai.verdict.spend";
+
 /// The subject the host's OF-520 health check keeps one own actor's
 /// crossings of one kind under (ARCH-0044 C5): `own_rate:<kind>:<actor>`.
 /// An answer covers that actor's next crossings of the kind.
@@ -142,12 +160,13 @@ pub fn health_check_summary(check: &OwnRateCheck) -> serde_json::Value {
 
 /// The crossing a health check binds its answer to, the value of its
 /// `wire.health.crossing` unit claim: an own-rate summary
-/// ([`health_check_summary`]) without its actor, any other summary as it is.
-/// The claim is canonical and outlives the check, and an actor's erase
-/// (FIX 3520) does not reach it, so it never names the actor, whether it is
-/// bound before that erase or by a pass that asks after it: the burst it
-/// keeps is no one's. The check and the ask, which the erase takes, name the
-/// actor.
+/// ([`health_check_summary`]) without its actor, a verdict-spend summary
+/// without its caller, a wire summary without any actor, and any other
+/// summary as it is. The claim is canonical and outlives the check, and an
+/// actor's erase (FIX 3520) does not reach it, so it never names an actor,
+/// whether it is bound before that erase or by a pass that asks after it:
+/// the burst it keeps is no one's, and its shape never shifts under an
+/// erase. The check and the ask, which the erase takes, name the actors.
 #[must_use]
 pub fn health_bound_crossing(summary: &serde_json::Value) -> serde_json::Value {
     let mut bound = summary.clone();
@@ -155,6 +174,14 @@ pub fn health_bound_crossing(summary: &serde_json::Value) -> serde_json::Value {
         && fields.get("kind").and_then(serde_json::Value::as_str) == Some(OwnRateCheck::KIND)
     {
         fields.remove("actor");
+    }
+    if is_wire_summary(&bound) {
+        retain_wire_summary_actors(&mut bound, |_| false);
+    }
+    let is_spend =
+        bound.get("kind").and_then(serde_json::Value::as_str) == Some(VERDICT_SPEND_KIND);
+    if is_spend && let Some(fields) = bound.as_object_mut() {
+        fields.remove("caller");
     }
     bound
 }
@@ -174,43 +201,284 @@ fn names_crossing_of(state: &serde_json::Value, actor: &str) -> bool {
     }
 }
 
-/// Erasing `actor` (FIX 3520): the host's health checks of its own-rate
-/// crossings go too, every kind, in the erase's own transaction. The host
-/// keeps each check in `WIRE_HEALTH_CHECK` under `check:` and its subject,
-/// which ends in the actor; the body is the host's, so the scrub reads keys
-/// only. Each ask such a check raised holds its crossing as the state it was
-/// asked over, which names the actor and its burst: the ask drops that state
-/// and, while open, leaves the owner's queue. An ask a pass raises after this
-/// erase took its check is the host's to withdraw, when the pass finds the
-/// check gone. The unit claim an ask binds holds no actor
+/// Whether `state` holds the summary of `actor`'s verdict-spend crossing
+/// at any depth: the ask state that names the spend's caller.
+fn names_spend_of(state: &serde_json::Value, actor: &str) -> bool {
+    use serde_json::Value;
+    match state {
+        Value::Object(fields) => {
+            (fields.get("kind").and_then(Value::as_str) == Some(VERDICT_SPEND_KIND)
+                && fields.get("caller").and_then(Value::as_str) == Some(actor))
+                || fields.values().any(|field| names_spend_of(field, actor))
+        }
+        Value::Array(items) => items.iter().any(|item| names_spend_of(item, actor)),
+        _ => false,
+    }
+}
+
+/// Whether `summary` is a wire call-volume crossing (the server's
+/// `wire_health::evidence::wire_crossing`): the only summary with a
+/// `crossed.actors` list.
+fn is_wire_summary(summary: &serde_json::Value) -> bool {
+    summary
+        .get("crossed")
+        .and_then(|crossed| crossed.get("actors"))
+        .is_some_and(serde_json::Value::is_array)
+}
+
+/// Drops every wire actor `keep` refuses from `summary`'s actor lists: the
+/// named `actors` rows, the full `crossed.actors` set, the per-caller
+/// `actor_tools` rows and each tool's `callers`. A tool left with no caller
+/// goes with them; the calls, verbs and refusals stay, since they are no
+/// one's. Whether anything went.
+fn retain_wire_summary_actors(
+    summary: &mut serde_json::Value,
+    keep: impl Fn(&str) -> bool,
+) -> bool {
+    use serde_json::Value;
+    let mut changed = false;
+    if let Some(rows) = summary.get_mut("actors").and_then(Value::as_array_mut) {
+        let before = rows.len();
+        rows.retain(|row| row.get("actor").and_then(Value::as_str).is_none_or(&keep));
+        changed |= rows.len() != before;
+    }
+    if let Some(crossed) = summary.get_mut("crossed") {
+        if let Some(actors) = crossed.get_mut("actors").and_then(Value::as_array_mut) {
+            let before = actors.len();
+            actors.retain(|actor| actor.as_str().is_none_or(&keep));
+            changed |= actors.len() != before;
+        }
+    }
+    if let Some(rows) = summary.get_mut("actor_tools").and_then(Value::as_array_mut) {
+        let before = rows.len();
+        rows.retain(|row| row.get("actor").and_then(Value::as_str).is_none_or(&keep));
+        changed |= rows.len() != before;
+    }
+    if let Some(tools) = summary
+        .get_mut("tool_callers")
+        .and_then(Value::as_array_mut)
+    {
+        for tool in &mut *tools {
+            if let Some(callers) = tool.get_mut("callers").and_then(Value::as_array_mut) {
+                let before = callers.len();
+                callers.retain(|row| row.get("actor").and_then(Value::as_str).is_none_or(&keep));
+                changed |= callers.len() != before;
+            }
+        }
+        let before = tools.len();
+        tools.retain(|tool| {
+            tool.get("callers")
+                .and_then(Value::as_array)
+                .is_none_or(|callers| !callers.is_empty())
+        });
+        changed |= tools.len() != before;
+    }
+    changed
+}
+
+/// Drops `actor` from a wire ask's pack state (the server's
+/// `wire_health::state`): its crossing's actor lists and the call's own
+/// `actors` rows. The ask stays open over what is left, as the check it was
+/// asked for stays too. The grant flag stays as it was while actors are
+/// left, a subset of the ones it judged; with none left it is false.
+/// Whether anything changed.
+fn scrub_wire_pack_state(state: &mut serde_json::Value, actor: &str) -> bool {
+    use serde_json::Value;
+    if !state.get("crossing").is_some_and(is_wire_summary) {
+        return false;
+    }
+    let mut changed = false;
+    if let Some(rows) = state.get_mut("actors").and_then(Value::as_array_mut) {
+        let before = rows.len();
+        rows.retain(|row| row.get("actor").and_then(Value::as_str) != Some(actor));
+        changed |= rows.len() != before;
+    }
+    let mut crossed_empty = false;
+    if let Some(crossing) = state.get_mut("crossing") {
+        changed |= retain_wire_summary_actors(crossing, |named| named != actor);
+        crossed_empty = crossing
+            .get("crossed")
+            .and_then(|crossed| crossed.get("actors"))
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty);
+    }
+    if crossed_empty {
+        if let Some(granted) = state.get_mut("actors_known_under_grant") {
+            if granted.as_bool() == Some(true) {
+                *granted = Value::Bool(false);
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
+/// The value `key` holds in the msgpack map `value`, when it is one
+/// holding it.
+fn rmpv_map_get_mut<'a>(value: &'a mut rmpv::Value, key: &str) -> Option<&'a mut rmpv::Value> {
+    let rmpv::Value::Map(entries) = value else {
+        return None;
+    };
+    entries
+        .iter_mut()
+        .find(|entry| entry.0.as_str() == Some(key))
+        .map(|entry| &mut entry.1)
+}
+
+/// The value `key` holds in the msgpack map `value`, when it is one
+/// holding it.
+fn rmpv_map_get<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
+    let rmpv::Value::Map(entries) = value else {
+        return None;
+    };
+    entries
+        .iter()
+        .find(|(name, _)| name.as_str() == Some(key))
+        .map(|(_, field)| field)
+}
+
+/// Whether the msgpack map `row` names `actor` under `field`.
+fn rmpv_row_names_actor(row: &rmpv::Value, field: &str, actor: &str) -> bool {
+    rmpv_map_get(row, field).and_then(rmpv::Value::as_str) == Some(actor)
+}
+
+/// Whether the msgpack map `tool` keeps a callers list that is now empty.
+fn rmpv_callers_emptied(tool: &rmpv::Value) -> bool {
+    matches!(
+        rmpv_map_get(tool, "callers"),
+        Some(rmpv::Value::Array(callers)) if callers.is_empty()
+    )
+}
+
+/// The check body `body` with `actor` dropped from its wire crossing's
+/// actor lists, when it names it: the same lists
+/// [`retain_wire_summary_actors`] scrubs. The host keeps the check under
+/// its own shape, which this crate cannot name, so the scrub reads and
+/// writes the row's msgpack plainly and touches only those lists. `None`
+/// when the row is no wire check or names no one going.
+fn scrub_wire_check_body(body: &[u8], actor: &str) -> Result<Option<Vec<u8>>> {
+    let mut rest = &body[..];
+    let mut check = rmpv::decode::read_value(&mut rest)
+        .map_err(|_| crate::Error::CorruptedIndex("wire health check"))?;
+    if !rest.is_empty() {
+        return Err(crate::Error::CorruptedIndex("wire health check"));
+    }
+    let Some(crossing) = rmpv_map_get_mut(&mut check, "crossing") else {
+        return Ok(None);
+    };
+    let is_wire = rmpv_map_get(crossing, "crossed")
+        .and_then(|crossed| rmpv_map_get(crossed, "actors"))
+        .is_some_and(|actors| matches!(actors, rmpv::Value::Array(_)));
+    if !is_wire {
+        return Ok(None);
+    }
+    let mut changed = false;
+    if let Some(actors) = rmpv_map_get_mut(crossing, "actors") {
+        if let rmpv::Value::Array(rows) = actors {
+            let before = rows.len();
+            rows.retain(|row| !rmpv_row_names_actor(row, "actor", actor));
+            changed |= rows.len() != before;
+        }
+    }
+    if let Some(crossed) = rmpv_map_get_mut(crossing, "crossed") {
+        if let Some(actors) = rmpv_map_get_mut(crossed, "actors") {
+            if let rmpv::Value::Array(actors) = actors {
+                let before = actors.len();
+                actors.retain(|named| named.as_str() != Some(actor));
+                changed |= actors.len() != before;
+            }
+        }
+    }
+    if let Some(tools) = rmpv_map_get_mut(crossing, "actor_tools") {
+        if let rmpv::Value::Array(rows) = tools {
+            let before = rows.len();
+            rows.retain(|row| !rmpv_row_names_actor(row, "actor", actor));
+            changed |= rows.len() != before;
+        }
+    }
+    if let Some(by_tool) = rmpv_map_get_mut(crossing, "tool_callers") {
+        if let rmpv::Value::Array(tools) = by_tool {
+            for tool in &mut *tools {
+                if let Some(callers) = rmpv_map_get_mut(tool, "callers") {
+                    if let rmpv::Value::Array(callers) = callers {
+                        let before = callers.len();
+                        callers.retain(|row| !rmpv_row_names_actor(row, "actor", actor));
+                        changed |= callers.len() != before;
+                    }
+                }
+            }
+            let before = tools.len();
+            tools.retain(|tool| !rmpv_callers_emptied(tool));
+            changed |= tools.len() != before;
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let mut scrubbed = Vec::new();
+    rmpv::encode::write_value(&mut scrubbed, &check).map_err(|_| {
+        crate::Error::InvariantViolation("wire health check MessagePack encode failed")
+    })?;
+    Ok(Some(scrubbed))
+}
+
+/// Erasing `actor` (FIX 3520) out of the host's health checks, in the
+/// erase's own transaction. An own-rate check is one actor's, and so is a
+/// verdict-spend check, so theirs go: every subject ending in the actor
+/// under either prefix. A wire check names every actor past its row, so it
+/// stays with the actor dropped from its lists; its calls, verbs and
+/// refusals stay, since they are no one's. Each ask such a check raised
+/// holds its crossing as the state it was asked over: one over an own-rate
+/// or spend crossing drops that state and, while open, leaves the owner's
+/// queue; one over a wire crossing keeps waiting over the actors left. An
+/// ask a pass raises after this erase is the host's to withdraw, when the
+/// pass finds its check gone, or to ask again, when the pass finds its
+/// crossing scrubbed. The unit claim an ask binds holds no actor
 /// ([`health_bound_crossing`]), so there is none to take.
 ///
 /// # Errors
 ///
-/// Storage errors, or an ask row that cannot be read.
+/// Storage errors, a check row that cannot be read, or an ask row that
+/// cannot be read.
 pub(crate) fn erase_health_check_actor_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: &EntityId,
 ) -> Result<()> {
-    let rows = format!("wire:health:v1:check:{HEALTH_CHECK_SUBJECT}");
+    let checks = "wire:health:v1:check:";
     let actor = actor.to_hex();
     let subject_end = format!(":{actor}");
-    let mut keys = Vec::new();
-    vault.sync_state_visit_prefix_in_write_txn(&*wtxn, &rows, |key, _| {
-        if key.ends_with(&subject_end) {
-            keys.push(key.to_owned());
+    let mut deleted = Vec::new();
+    let mut rewritten = Vec::new();
+    vault.sync_state_visit_prefix_in_write_txn(&*wtxn, checks, |key, body| {
+        let Some(subject) = key.strip_prefix(checks) else {
+            return Ok::<(), crate::Error>(());
+        };
+        if subject.starts_with(HEALTH_CHECK_SUBJECT) && subject.ends_with(&subject_end) {
+            deleted.push(key.to_owned());
+        } else if subject.strip_prefix(SPEND_CHECK_SUBJECT) == Some(actor.as_str()) {
+            deleted.push(key.to_owned());
+        } else if subject.starts_with(WIRE_CHECK_SUBJECT) {
+            if let Some(scrubbed) = scrub_wire_check_body(body, &actor)? {
+                rewritten.push((key.to_owned(), scrubbed));
+            }
         }
         Ok::<(), crate::Error>(())
     })?;
-    if keys.is_empty() {
+    if deleted.is_empty() && rewritten.is_empty() {
         return Ok(());
     }
-    for key in &keys {
+    for key in &deleted {
         vault.sync_state_delete_in_write_txn(wtxn, key)?;
     }
+    for (key, body) in &rewritten {
+        vault.sync_state_put_in_write_txn(wtxn, key, body)?;
+    }
     crate::llm::decision::forget_ask_states_in_txn(vault, wtxn, |state| {
-        names_crossing_of(state, &actor)
+        names_crossing_of(state, &actor) || names_spend_of(state, &actor)
+    })?;
+    crate::llm::decision::rewrite_ask_states_in_txn(vault, wtxn, |state| {
+        scrub_wire_pack_state(state, &actor)
     })
 }
 
