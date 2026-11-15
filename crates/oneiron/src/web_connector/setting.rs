@@ -19,8 +19,9 @@ impl Vault {
     }
 
     /// The most results a search returns when the owner's own provider key pays: the owner's
-    /// `connectors.web.search_max_results`, or 10 when no row stands. The server reads it only
-    /// for such a call; a call on the deploy's backend key keeps 10.
+    /// `connectors.web.search_max_results` row, a key holder's tighter row within it, or 10 when
+    /// no row stands. The server reads it only for such a call; a call on the deploy's backend
+    /// key keeps 10.
     ///
     /// # Errors
     ///

@@ -98,7 +98,14 @@ fn an_owner_key_search_asks_for_the_owners_maximum() -> TestResult {
 fn a_backend_key_search_keeps_ten() -> TestResult {
     let (_dir, vault, proof) = open_vault()?;
     set_owner_max(&vault, &proof, 50)?;
-    for provider in [WebProvider::Tavily, WebProvider::Exa] {
+    for provider in [
+        WebProvider::Tavily,
+        WebProvider::Exa,
+        WebProvider::Brave,
+        WebProvider::Tinyfish,
+        WebProvider::ContextDev,
+        WebProvider::Octen,
+    ] {
         assert_eq!(
             search_count(&vault, WebKeySource::Backend, provider, &ask(Some(50)))?,
             10,

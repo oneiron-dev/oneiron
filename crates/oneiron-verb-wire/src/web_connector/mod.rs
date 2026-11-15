@@ -24,9 +24,10 @@ use serde_json::Value;
 /// Results a search returns when its caller names no count.
 pub const DEFAULT_MAX_RESULTS: u32 = 5;
 
-/// The most results one search returns on the deploy's backend key or a hub
-/// connector's, and on the owner's own provider key until the owner moves
-/// `connectors.web.search_max_results`.
+/// The most results one search returns on the deploy's backend key, and on the
+/// owner's own provider key until the owner moves
+/// `connectors.web.search_max_results`. A hub connector's call is forwarded as
+/// asked, before this cap; that connector bounds its own results.
 pub const MAX_RESULTS_CAP: u32 = 10;
 
 /// `search`'s input: a bare query string, or this object.
@@ -36,8 +37,9 @@ pub struct WebSearchInput {
     pub query: String,
     /// At most [`MAX_RESULTS_CAP`], or the owner's
     /// `connectors.web.search_max_results` when the owner's own provider key
-    /// pays, and never past the provider's own maximum;
-    /// [`DEFAULT_MAX_RESULTS`] when absent.
+    /// pays, and never past the provider's own maximum (Tinyfish names none);
+    /// [`DEFAULT_MAX_RESULTS`] when absent. A hub connector's call is
+    /// forwarded as asked.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_results: Option<u32>,
 }
