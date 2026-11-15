@@ -165,6 +165,30 @@ pub(super) fn settle_tail(
     }) {
         return Ok(None);
     }
+    // A tail row with no state here can count in the whole fold (review R1
+    // of [SEQUENCE-FLOOR-DELIVERY-ORDER]): it waits here on a covered row
+    // of its signer the image holds refused past its floor, and there, at or
+    // above that floor and descending from it, it vouches for that row
+    // (`sequence_ancestry`), which then counts, and the tail row with it.
+    // Only the whole history judges that, so a tail row with no state whose
+    // signer signed a covered row the image does not count goes there. A
+    // row with a state here has every ancestor counted, so whatever it
+    // vouches for counts already.
+    let stateless_signers: BTreeSet<_> = judged
+        .iter()
+        .filter(|(hash, _)| !states.contains_key(*hash))
+        .map(|(_, entry)| entry.signer_key())
+        .collect();
+    if !stateless_signers.is_empty() {
+        let counted = &image.fold().valid_entries;
+        if image
+            .rows
+            .iter()
+            .any(|(hash, row)| stateless_signers.contains(&row.signer) && !counted.contains(hash))
+        {
+            return Ok(None);
+        }
+    }
     states.retain(|hash, _| judged.contains_key(hash));
     if states
         .values()

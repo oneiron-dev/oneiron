@@ -533,26 +533,43 @@ fn tail_folds_past(
 /// row at that top, and each next from the one below it, along that scope's
 /// rows. A covered row under no top sits past its floor with no row at or
 /// above it that vouches for it, so a tail row that misses it changes no
-/// verdict; every other covered row is then among each tail row's
-/// ancestors.
+/// floor; every other covered row is then among each tail row's ancestors.
+/// Whether a tail row vouches for a covered row past its floor is
+/// [`settle::settle_tail`]'s to judge.
+///
+/// Only the rows the whole fold judges count (`fold_engine::judged_entries`,
+/// review R2 of [SEQUENCE-FLOOR-DELIVERY-ORDER]): a row, covered or tail,
+/// that names a side row of another world is none of them. It is no top and
+/// sets no floor, and no walk passes through it to the rows below, as no
+/// ancestry of the whole fold does.
 fn rows_floors_unmoved(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
 ) -> bool {
+    let world_of = |hash: &AuthorityEntryHash| match tail.get(hash) {
+        Some(entry) => crate::authority::world_privacy::side_world(&entry.op),
+        None => image.rows.get(hash).and_then(|row| row.world),
+    };
+    let violates = |world: Option<crate::EntityId>, parents: &[AuthorityEntryHash]| {
+        parents
+            .iter()
+            .any(|parent| world_of(parent).is_some_and(|parent_world| world != Some(parent_world)))
+    };
     let mut scopes = BTreeMap::<_, Vec<(u64, AuthorityEntryHash)>>::new();
     for (hash, entry) in tail {
+        let world = crate::authority::world_privacy::side_world(&entry.op);
+        if violates(world, &entry.parent_hashes) {
+            continue;
+        }
         scopes
-            .entry((
-                entry.signer_key(),
-                crate::authority::world_privacy::side_world(&entry.op),
-            ))
+            .entry((entry.signer_key(), world))
             .or_default()
             .push((entry.seq, *hash));
     }
     let mut tops = BTreeMap::<_, (u64, Vec<AuthorityEntryHash>)>::new();
     for (hash, row) in &image.rows {
         let key = (&row.signer, row.world);
-        if !scopes.contains_key(&key) {
+        if !scopes.contains_key(&key) || violates(row.world, &row.parents) {
             continue;
         }
         let top = tops.entry(key).or_insert((row.seq, Vec::new()));
@@ -563,15 +580,18 @@ fn rows_floors_unmoved(
             top.1.push(*hash);
         }
     }
-    let row = |hash: &AuthorityEntryHash| match tail.get(hash) {
-        Some(entry) => Some((
-            entry.parent_hashes.as_slice(),
-            crate::authority::world_privacy::side_world(&entry.op),
-        )),
-        None => image
-            .rows
-            .get(hash)
-            .map(|row| (row.parents.as_slice(), row.world)),
+    let row = |hash: &AuthorityEntryHash| {
+        let (parents, world) = match tail.get(hash) {
+            Some(entry) => (
+                entry.parent_hashes.as_slice(),
+                crate::authority::world_privacy::side_world(&entry.op),
+            ),
+            None => image
+                .rows
+                .get(hash)
+                .map(|row| (row.parents.as_slice(), row.world))?,
+        };
+        (!violates(world, parents)).then_some((parents, world))
     };
     scopes.iter_mut().all(|(key, rows)| {
         rows.sort_unstable();

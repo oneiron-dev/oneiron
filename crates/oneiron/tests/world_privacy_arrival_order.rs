@@ -1,14 +1,16 @@
 //! One log folds to the same world settings on every install, whatever order
-//! its rows arrive in ([SEQUENCE-FLOOR-DELIVERY-ORDER], root FIX-LIST).
+//! its rows arrive in ([SEQUENCE-FLOOR-DELIVERY-ORDER], root FIX-LIST;
+//! Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37).
 //!
-//! Each stored row keeps the highest sequence its signer had reached on this
-//! install before the row arrived, and a world edit below that mark lands as
-//! restriction only (Astra #1430). One machine key that forks its own
-//! sequence, signing a later row that does not descend from its earlier
-//! world edits, so leaves two installs holding the same rows with different
-//! settings: the install that received the edits first counts the widening,
-//! and the install that received the later row first holds it to the
-//! narrowing it replaced.
+//! A row's sequence floor is the highest sequence among its signer's rows in
+//! its scope that do not descend from it, and a world edit below its floor
+//! lands as restriction only (Astra #1430). Before, the floor was the highest
+//! sequence the install had received from the signer before the row
+//! arrived. One machine key that forks its own sequence, signing a later row
+//! that does not descend from its earlier world edits, so left two installs
+//! holding the same rows with different settings: the install that received
+//! the edits first counted the widening, and the install that received the
+//! later row first held it to the narrowing it replaced.
 
 use std::collections::BTreeSet;
 
