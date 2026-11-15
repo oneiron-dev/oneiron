@@ -1,5 +1,6 @@
-//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2 to 5): one fixture key of
-//! each crate-private side-table key type that those PRs derive, with the reader of its type.
+//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2 to 6): one fixture key of
+//! each crate-private side-table key type that those PRs derive or merge, with the reader of its
+//! type.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::artifact_hosting::ArtifactPointerChannel;
@@ -350,6 +351,16 @@ pub fn task_follow_up_key(task_ref: EntityId, stage: &str) -> Pin {
 /// 16-byte attempt.
 pub fn task_attempt_key(task_digest: [u8; 32], attempt: [u8; 16]) -> Pin {
     crate::vault_cleanup::task_attempt_key_pin_for_test(task_digest, attempt)
+}
+
+/// `voice_identity::ref_bank::TargetKey`: the voice id, NUL, the target.
+pub fn voice_target_key(voice_id: &str, target: &str) -> Pin {
+    crate::voice_identity::ref_bank::target_key_pin_for_test(voice_id, target)
+}
+
+/// `voice_identity::ref_bank::render_history::RenderEventKey`: the voice id, NUL, the event id.
+pub fn render_event_key(voice_id: &str, event_id: &str) -> Pin {
+    crate::voice_identity::ref_bank::render_event_key_pin_for_test(voice_id, event_id)
 }
 
 fn attempt(bytes: [u8; 16]) -> AttemptId {

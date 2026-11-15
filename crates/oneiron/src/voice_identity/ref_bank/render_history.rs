@@ -63,6 +63,18 @@ impl SideKey for RenderEventKey {
     }
 }
 
+/// One [`RenderEventKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn render_event_key_pin_for_test(
+    voice_id: &str,
+    event_id: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&RenderEventKey {
+        voice_id: voice_id.to_owned(),
+        event_id: event_id.to_owned(),
+    })
+}
+
 pub use crate::verbs::voice_records::{
     VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,
 };

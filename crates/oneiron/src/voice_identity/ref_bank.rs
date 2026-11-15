@@ -68,6 +68,18 @@ impl SideKey for TargetKey {
     }
 }
 
+/// One [`TargetKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn target_key_pin_for_test(
+    voice_id: &str,
+    target: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&TargetKey {
+        voice_id: voice_id.to_owned(),
+        target: target.to_owned(),
+    })
+}
+
 /// One bank row an owner holds, stored in [`OWNER_INDEX`] as its full stored key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum BankRow {
@@ -810,6 +822,8 @@ pub use owner_acts::{
     VoiceReferenceFenceView, VoiceRenderConsentView, VoiceTargetCloneView, VoiceTargetInspection,
     VoiceTargetRender,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use render_history::render_event_key_pin_for_test;
 use render_history::{RenderEventKey, read_render_consent, record_render_consent_in};
 pub use render_history::{
     VoiceDroppedTargetView, VoiceRenderConsentWrite, VoiceRenderEventReceipt, VoiceRenderEventView,

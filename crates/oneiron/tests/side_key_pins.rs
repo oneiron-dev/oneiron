@@ -1,8 +1,10 @@
-//! UC-06 K-proofs of PRs 2 to 5: the side-table keys those PRs derive spell the same bytes and
-//! read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a vault
-//! already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
+//! UC-06 K-proofs of PRs 2 to 6: the side-table keys those PRs derive or merge spell the same
+//! bytes and read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a
+//! vault already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
 //! question, step and document keys, PR 4 seventeen keys of the library's modules `a` to `g`,
-//! PR 5 seventeen keys of its modules `n` to `v`.
+//! PR 5 seventeen keys of its modules `n` to `v`. PR 6 merges the key types that spell one layout
+//! (the earlier tables keep their key names and doors, so they pin the merged types too) and adds
+//! the voice bank's two keys.
 //!
 //! Each test builds one table: for every fixture key, the bytes it spells, and the verdict
 //! (refused, or the bytes of the key read back) on those bytes and on malformed copies of them
@@ -11,7 +13,7 @@
 //! UTF-8), plus some raw inputs per key (a reserved id, a missing or doubled separator, an empty
 //! key). A table's sha256 is the one a model of the hand-written decoders gives
 //! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py` to
-//! `pin_table_model_pr5.py`), and each run prints the table so a base run and a head run can be
+//! `pin_table_model_pr6.py`), and each run prints the table so a base run and a head run can be
 //! compared line by line. A decoder that panics reads as `panic`.
 //!
 //! `ProjectRevisionHash` is public; the other keys are crate-private and are reached through
@@ -33,10 +35,10 @@ use oneiron::test_doors::side_key_pins::{
     hash_index_key, hex_hex_hash, hex_pair, hex_triple, history_key, lease_key, lfs_ref_key,
     listing_pin, loaded_skill_key, marker_key, member_intent_key, member_key,
     milestone_candidate_key, note_fork_key, op_key, pending_tombstone_key, proposal_key,
-    provenance_ref_key, receive_pack_intent_key, receive_pack_progress_key, repo_revision_key,
-    retrieval_run_id, roster_member_key, rule_key, step_index_claim_key, step_index_key,
-    task_attempt_key, task_follow_up_key, text_index_key, tournament_evidence_key,
-    vad_annotation_meta_key,
+    provenance_ref_key, receive_pack_intent_key, receive_pack_progress_key, render_event_key,
+    repo_revision_key, retrieval_run_id, roster_member_key, rule_key, step_index_claim_key,
+    step_index_key, task_attempt_key, task_follow_up_key, text_index_key, tournament_evidence_key,
+    vad_annotation_meta_key, voice_target_key,
 };
 use oneiron_verb_wire::workspace_roster::ProjectRevisionHash;
 use sha2::{Digest, Sha256};
@@ -53,6 +55,8 @@ const LIB_KEYS_A_TO_G_TABLE_SHA256: &str =
     "55a7fb7dc2498bacb49def7594181e8a0d1ef603291e13aec5d0b427c92c1955";
 const LIB_KEYS_N_TO_V_TABLE_SHA256: &str =
     "eeb0defe7c051bb21832b7fa5c2d38bc23788bf4430fb84f16dbc5593bd6eb5d";
+const VOICE_KEYS_TABLE_SHA256: &str =
+    "2be37d91b0f093a696af38cb63902fbdaddc4d5c86075edca33e1127e5501fa8";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";
@@ -1167,4 +1171,38 @@ fn lib_keys_n_to_v_spell_and_read_as_the_hand_impls() {
     );
 
     assert_table("lib-keys-n-to-v", &table, LIB_KEYS_N_TO_V_TABLE_SHA256);
+}
+
+#[test]
+fn voice_keys_spell_and_read_as_the_hand_impls() {
+    let empty: (&str, Vec<u8>) = ("empty", Vec::new());
+    let mut table = String::new();
+
+    let doors: [(&str, fn(&str, &str) -> Pin, &str); 2] = [
+        ("TargetKey", voice_target_key, "host"),
+        ("RenderEventKey", render_event_key, "event-1"),
+    ];
+    for (name, door, second) in doors {
+        pin(
+            &mut table,
+            name,
+            vec![
+                ("ids", door("voice-1", second)),
+                ("empty_second", door("voice-1", "")),
+                ("empty_voice", door("", second)),
+                ("nul_in_second", door("v", "a\0b")),
+                ("multibyte", door("\u{e9}", "\u{e9}:x")),
+            ],
+            &[
+                ("no_sep", b"voice-1".to_vec()),
+                ("sep_only", b"\0".to_vec()),
+                ("bad_utf8_voice", joined(&[b"\xff\0", second.as_bytes()])),
+                ("bad_utf8_second", b"v\0\xff".to_vec()),
+                ("long_ids", joined(&[&[b'v'; 40], b"\0", &[b'w'; 40]])),
+                empty.clone(),
+            ],
+        );
+    }
+
+    assert_table("voice-keys", &table, VOICE_KEYS_TABLE_SHA256);
 }
