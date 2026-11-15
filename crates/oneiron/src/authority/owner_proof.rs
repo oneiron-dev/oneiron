@@ -18,7 +18,17 @@
 //!   owner device key is enrolled there (CARRIER-HOSTED-WEB-ACTS = C).
 //!
 //! The judge reads the act's parent state only, so every replica judges the
-//! same rows the same way.
+//! same rows the same way. Mine is read in the roster view of that state
+//! (the removal race and custody applied, no pin and no install's counting),
+//! never off a raw chain head: a head whose carrier lost its removal race
+//! names a machine that is not mine.
+//!
+//! A held answer asks until the owner answers: a later answer about the same
+//! machine that an owner key proved, or that one of the owner's machines
+//! carried, and that saw it. The revision numbers never decide it, so a held
+//! answer at the last revision blocks nothing, and a new unproven answer
+//! after the owner's is a new ask. A waiting choice asks the same way, until
+//! the owner's own choice for its target that saw it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -91,9 +101,47 @@ pub(super) fn machine_answer_needs_proof(
     makes_mine || (!carrier_is_mine && not_mine_carriers_need_proof(state))
 }
 
-/// Each machine's held answers that still ask the owner: the answers above
-/// the machine's folded roster head (every held answer of a machine with no
-/// roster head, as a held pairing), none of a removed machine's.
+/// One held answer in a fold state: the answer as it folded, and whether the
+/// owner has answered since.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(super) struct HeldAnswer {
+    pub(super) answer: MachineRevision,
+    /// A later answer about the machine saw this one and was the owner's: an
+    /// owner key proved it, or one of the owner's machines carried it.
+    pub(super) answered: bool,
+}
+
+/// Holds `answer`, an answer that needed the proof and carried none.
+pub(super) fn hold_answer(
+    state: &mut FoldState,
+    hash: AuthorityEntryHash,
+    answer: MachineRevision,
+) {
+    state
+        .held_machine_answers
+        .entry(answer.profile.machine)
+        .or_default()
+        .insert(
+            hash,
+            HeldAnswer {
+                answer,
+                answered: false,
+            },
+        );
+}
+
+/// The owner answered about `machine` on `state`, the answer's parent state:
+/// every held answer about it there asks no more.
+pub(super) fn answer_held(state: &mut FoldState, machine: EntityId) {
+    if let Some(held) = state.held_machine_answers.get_mut(&machine) {
+        for answer in held.values_mut() {
+            answer.answered = true;
+        }
+    }
+}
+
+/// Each machine's held answers that still ask the owner: the ones the owner
+/// has not answered since, none of a removed machine's.
 pub(super) fn listed_held_answers(
     state: &FoldState,
     machines: &BTreeMap<EntityId, FoldedMachine>,
@@ -102,20 +150,19 @@ pub(super) fn listed_held_answers(
         .held_machine_answers
         .iter()
         .filter_map(|(machine, held)| {
-            let head = machines
+            let removed = machines
                 .get(machine)
-                .and_then(|folded| folded.roster.as_ref());
-            if head.is_some_and(|head| head.removed) {
+                .and_then(|folded| folded.roster.as_ref())
+                .is_some_and(|head| head.removed);
+            if removed {
                 return None;
             }
-            let above: BTreeMap<_, _> = held
+            let asking: BTreeMap<_, _> = held
                 .iter()
-                .filter(|(_, answer)| {
-                    head.is_none_or(|head| answer.profile.revision > head.profile.revision)
-                })
-                .map(|(hash, answer)| (*hash, answer.clone()))
+                .filter(|(_, held)| !held.answered)
+                .map(|(hash, held)| (*hash, held.answer.clone()))
                 .collect();
-            (!above.is_empty()).then_some((*machine, above))
+            (!asking.is_empty()).then_some((*machine, asking))
         })
         .collect()
 }
@@ -149,7 +196,8 @@ impl AuthorityFold {
     /// CARRIER-OWNER-PROOF): carried answers that needed an owner key's
     /// proof and carried none, by entry. Each names its carrier
     /// ([`MachineRevision::carrier`]). The owner confirms one on an owner
-    /// device by answering again, with the proof, above it.
+    /// device by answering again, with the proof; any answer of the owner's
+    /// about the machine that saw a held one ends its ask.
     #[must_use]
     pub fn held_machine_answers(
         &self,

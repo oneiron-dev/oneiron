@@ -66,12 +66,15 @@ type ChoiceFrontier<P> = WorldFrontier<SignedOwnerChoice<P>>;
 pub(super) struct OwnerChoiceState<P> {
     frontiers: BTreeMap<EntityId, ChoiceFrontier<P>>,
     refused: BTreeSet<AuthorityEntryHash>,
-    /// Admitted choices a carrier that is not the owner's machine delivered
-    /// with no owner key's proof, where such a carrier needs one
-    /// ([`super::owner_proof::not_mine_carriers_need_proof`]): valid, in no
-    /// frontier, so they supersede nothing and no `seen` covers them. The
-    /// owner confirms one by carrying the choice again from an owner device.
-    waiting: BTreeSet<AuthorityEntryHash>,
+    /// Each target's admitted choices that a carrier that is not the owner's
+    /// machine delivered with no owner key's proof, where such a carrier
+    /// needs one ([`super::owner_proof::not_mine_carriers_need_proof`]):
+    /// valid, in no frontier, so they supersede nothing and no `seen` covers
+    /// them. The owner confirms one by carrying the choice again from an
+    /// owner device. Each is true once the owner chose for its target since:
+    /// a recorded choice that is the owner's own, whose parents held it,
+    /// ends its ask.
+    waiting: BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, bool>>,
 }
 
 impl<P> Default for OwnerChoiceState<P> {
@@ -79,20 +82,26 @@ impl<P> Default for OwnerChoiceState<P> {
         Self {
             frontiers: BTreeMap::new(),
             refused: BTreeSet::new(),
-            waiting: BTreeSet::new(),
+            waiting: BTreeMap::new(),
         }
     }
 }
 
 /// Joins two states' choices: a choice superseded on either side is
-/// superseded, and two copies of one choice meet.
+/// superseded, two copies of one choice meet, and a waiting choice the owner
+/// answered on either side stays answered.
 pub(super) fn merge_owner_choices<P: Clone + PartialEq>(
     merged: &mut OwnerChoiceState<P>,
     right: &OwnerChoiceState<P>,
 ) {
     merge_world_frontiers(&mut merged.frontiers, &right.frontiers);
     merged.refused.extend(right.refused.iter().copied());
-    merged.waiting.extend(right.waiting.iter().copied());
+    for (target, waiting) in &right.waiting {
+        let merged_waiting = merged.waiting.entry(*target).or_default();
+        for (hash, answered) in waiting {
+            *merged_waiting.entry(*hash).or_default() |= *answered;
+        }
+    }
 }
 
 #[doc(hidden)]
@@ -159,7 +168,10 @@ pub(super) enum OwnerChoiceLanding<P> {
     /// Valid, and waiting for the owner's proof: an admitted carrier that is
     /// not the owner's machine delivered it with none, where such a carrier
     /// needs one (row CARRIER-OWNER-PROOF). It supersedes nothing.
-    Waiting(AuthorityEntryHash),
+    Waiting {
+        target: EntityId,
+        hash: AuthorityEntryHash,
+    },
     /// It supersedes exactly the live choices of its target.
     Recorded {
         target: EntityId,
@@ -170,6 +182,10 @@ pub(super) enum OwnerChoiceLanding<P> {
         narrow_only: bool,
         marks: BTreeMap<MachineAdmitter, Mark>,
         restriction_only: bool,
+        /// The owner's own choice: an owner key proved it, or one of the
+        /// owner's machines carried it. It ends the ask of every waiting
+        /// choice of its target that its parents held.
+        owners: bool,
     },
 }
 
@@ -236,7 +252,10 @@ pub(super) fn owner_choice_landing<P: Clone>(
         && !carrier_is_mine
         && super::owner_proof::not_mine_carriers_need_proof(state)
     {
-        return Ok(OwnerChoiceLanding::Waiting(hash));
+        return Ok(OwnerChoiceLanding::Waiting {
+            target: op.act.target,
+            hash,
+        });
     }
     Ok(OwnerChoiceLanding::Recorded {
         target: op.act.target,
@@ -250,6 +269,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
         narrow_only,
         marks,
         restriction_only,
+        owners: proof.is_some() || carrier_is_mine,
     })
 }
 
@@ -270,21 +290,27 @@ impl<P> OwnerChoiceState<P> {
         self.frontiers.is_empty() && self.refused.is_empty() && self.waiting.is_empty()
     }
 
-    /// The waiting choices that still ask the owner.
+    /// The waiting choices that still ask the owner: the ones the owner has
+    /// not chosen over since.
     pub(super) fn asking(&self) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
-        self.waiting.iter().copied()
+        self.waiting
+            .values()
+            .flatten()
+            .filter(|(_, answered)| !**answered)
+            .map(|(hash, _)| *hash)
     }
 
     /// Lands a valid choice: a refused one is kept without effect, a
     /// waiting one is kept for the owner's confirm, and a recorded one
-    /// supersedes the live choices of its target.
+    /// supersedes the live choices of its target; the owner's own also ends
+    /// the ask of the target's waiting choices.
     pub(super) fn land(&mut self, landing: OwnerChoiceLanding<P>) {
         match landing {
             OwnerChoiceLanding::Refused(hash) => {
                 self.refused.insert(hash);
             }
-            OwnerChoiceLanding::Waiting(hash) => {
-                self.waiting.insert(hash);
+            OwnerChoiceLanding::Waiting { target, hash } => {
+                self.waiting.entry(target).or_default().insert(hash, false);
             }
             OwnerChoiceLanding::Recorded {
                 target,
@@ -295,7 +321,13 @@ impl<P> OwnerChoiceState<P> {
                 narrow_only,
                 marks,
                 restriction_only,
+                owners,
             } => {
+                if owners && let Some(waiting) = self.waiting.get_mut(&target) {
+                    for answered in waiting.values_mut() {
+                        *answered = true;
+                    }
+                }
                 let frontier = self.frontiers.entry(target).or_default();
                 let seen = std::mem::take(&mut frontier.live);
                 let replaced = seen.keys().copied().collect();

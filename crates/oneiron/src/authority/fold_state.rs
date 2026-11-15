@@ -324,9 +324,9 @@ pub(super) struct FoldState {
     /// Each machine's held answers by entry (row CARRIER-OWNER-PROOF): the
     /// carried answers that needed an owner key's proof and carried none.
     /// They stand for nothing (no head, no removal, no key claim). Merged by
-    /// union.
+    /// union; a held answer the owner answered on either side stays answered.
     pub(super) held_machine_answers:
-        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
+        BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, super::owner_proof::HeldAnswer>>,
     /// Each valid root's anchor key, mapped to every root id it signed,
     /// merged by union. No root record is fold state.
     pub(super) root_anchors: BTreeMap<[u8; 32], BTreeSet<RecoveryRootId>>,
@@ -608,7 +608,10 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     for (machine, held) in &right.held_machine_answers {
         let merged_held = merged.held_machine_answers.entry(*machine).or_default();
         for (hash, answer) in held {
-            merged_held.entry(*hash).or_insert_with(|| answer.clone());
+            merged_held
+                .entry(*hash)
+                .and_modify(|kept| kept.answered |= answer.answered)
+                .or_insert_with(|| answer.clone());
         }
     }
     for (anchor, roots) in &right.root_anchors {

@@ -110,7 +110,9 @@ impl MachineRevision {
 /// above and is then HELD: it joins the machine's held answers and nothing
 /// else (no head, no owner-held revision, no removal, no key claim), so the
 /// prior head stays and the owner's device can ask. One cosign is the proof
-/// or a forged entry; there is never a second.
+/// or a forged entry; there is never a second. An answer that lands and is
+/// the owner's (proven, or carried by one of the owner's machines) ends the
+/// ask of every held answer about the machine that its parent state held.
 pub(in crate::authority) fn apply_owner_answer(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -185,11 +187,7 @@ pub(in crate::authority) fn apply_owner_answer(
             target_key,
         )
     {
-        state
-            .held_machine_answers
-            .entry(profile.machine)
-            .or_default()
-            .insert(hash, folded);
+        super::super::owner_proof::hold_answer(state, hash, folded);
         return Ok(());
     }
     let revisions = crate::authority::machine_standing::with_revision(
@@ -198,6 +196,10 @@ pub(in crate::authority) fn apply_owner_answer(
         true,
         restriction_only || not_counted_here,
     );
+    // The owner's answer ends the ask of every held answer it saw.
+    if proof.is_some() || carrier_is_mine {
+        super::super::owner_proof::answer_held(state, profile.machine);
+    }
     let chains = state.machines.entry(profile.machine).or_default();
     let prior = chains.remove(&MachineAdmitter::Roster);
     let mut owner_held_removals = prior

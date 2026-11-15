@@ -108,7 +108,7 @@ pub(super) fn apply_policy_setting(
     )?;
     // A waiting act is no agent's act in force: the owner's confirm is his
     // own act (row CARRIER-OWNER-PROOF).
-    let waits = matches!(landing, OwnerChoiceLanding::Waiting(_));
+    let waits = matches!(landing, OwnerChoiceLanding::Waiting { .. });
     state.policy_settings.land(landing);
     if !waits && let Some(agent) = super::carried_act::AgentCarriedAct::of(&set.act, entry.ts) {
         state.agent_carried_acts.insert(hash, agent);
