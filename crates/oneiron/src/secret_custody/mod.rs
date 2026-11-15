@@ -71,6 +71,7 @@ mod cloud_registration;
 mod codec;
 mod control;
 mod doors;
+mod duplicate_merge;
 mod floor;
 mod found_keys;
 pub(crate) use self::found_keys::{HANDLE_TEXT_OPEN, unmask_value};

@@ -437,6 +437,19 @@ pub(crate) fn mark_exhaust_tainted_in_txn(
 // The stale-publish dial
 // ---------------------------------------------------------------------------
 
+/// Whether any lease, live or ended, ever named the secret `name`: a use of
+/// its record, so a merge keeps the record (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn secret_ever_leased_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    name: &str,
+) -> Result<bool> {
+    Ok(LEASES
+        .scan(store, txn)?
+        .iter()
+        .any(|(_, lease)| lease.secret_ref == name))
+}
+
 /// Resolves [`POLICY_TAINT_ALLOW_STALE_PUBLISH_KEY`] across every
 /// POLICY_MANIFEST body, inside a txn the caller owns.
 ///

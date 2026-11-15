@@ -177,6 +177,17 @@ impl AuthorityFold {
     pub(crate) fn custody_revoked_ids(&self) -> impl Iterator<Item = EntityId> + '_ {
         self.owner_work.revoked.iter().copied()
     }
+
+    /// Whether any owner work request the fold holds, counted or not, names
+    /// `secret` as its target: a custody change of it, or an export secret
+    /// request for it. A custody record no request names never left the
+    /// install that minted it (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+    pub(crate) fn owner_work_names(&self, secret: &EntityId) -> bool {
+        self.owner_work
+            .requests
+            .values()
+            .any(|folded| folded.request.act.target == *secret)
+    }
 }
 
 /// Whether a custody request has effect on `work`, the state at its parents:

@@ -271,6 +271,19 @@ impl RevealAuthority {
     }
 }
 
+/// Whether any reveal, open or ended, named the custody record `secret`: a
+/// use of it, so a merge keeps the record (FILE-CUSTODY-MERGE-AFTER-REWRAP).
+pub(crate) fn custody_ever_revealed_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    secret: &EntityId,
+) -> Result<bool> {
+    Ok(REVEALS
+        .scan(store, txn)?
+        .iter()
+        .any(|(_, row)| row.secret == *secret))
+}
+
 /// The value a granted reveal delivers, read under `authority` in the
 /// transaction that stamps its lease; the record must still be active. A
 /// binding's read grant admits every other value read

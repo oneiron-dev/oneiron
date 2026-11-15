@@ -517,7 +517,9 @@ impl Store {
     /// [`RetireCause::Erase`] intent is staged through the newest slot its
     /// custody holds, an aborted writer's included, for the finisher to
     /// destroy once this commits. Another holder's entries and the index's
-    /// master stay. Called for an erase alone.
+    /// master stay. Called for an erase, and for a record a merge revoked,
+    /// its value erased, while another record holds the same bytes
+    /// (FILE-CUSTODY-MERGE-AFTER-REWRAP).
     ///
     /// # Errors
     ///
