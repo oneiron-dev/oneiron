@@ -29,6 +29,7 @@ use oneiron::lens::{
 };
 use oneiron::registry::ENTITY_TYPE_AGENT_DEF;
 use oneiron::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::waves::attempt_ref;
 
@@ -133,13 +134,25 @@ fn queued(row: &AttemptRecord) -> LensCallback {
     }
 }
 
+/// The dedupe key of one press: the credential, the card and the
+/// idempotency key, each a u64 little-endian length and its bytes. The attempt
+/// row stores it, so it keeps its bytes (K, PLAN-UC-04 stage 5); the
+/// `lens-callback:` text stays outside the digest.
 fn dedupe_key(credential: &str, card: &LensRenderId, idempotency_key: &str) -> String {
-    let mut hasher = blake3::Hasher::new();
+    let mut digest = LegacyDigest::new(purposes::ai_host::LENS_CALLBACK_DEDUPE_KEY);
     for part in [credential, card.as_str(), idempotency_key] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part.as_bytes());
+        digest.len_u64_le(part.len()).raw(part.as_bytes());
     }
-    format!("lens-callback:{}", hasher.finalize().to_hex())
+    format!("lens-callback:{}", oneiron_hex::encode(&digest.finish()))
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) fn dedupe_key_for_test(
+    credential: &str,
+    card: &LensRenderId,
+    idempotency_key: &str,
+) -> String {
+    dedupe_key(credential, card, idempotency_key)
 }
 
 /// The callback as the agent reads it: who pressed what, on which card, the

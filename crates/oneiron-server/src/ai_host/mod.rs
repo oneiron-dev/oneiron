@@ -61,6 +61,8 @@ pub(crate) mod hook_regen;
 pub(crate) mod identity;
 mod judge_swap;
 mod lens_callbacks;
+#[cfg(oneiron_test_support)]
+pub(crate) use lens_callbacks::dedupe_key_for_test as lens_callback_dedupe_key_for_test;
 pub mod live_lease;
 mod local_vision;
 pub(crate) mod payer_funding;
