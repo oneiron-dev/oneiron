@@ -1,9 +1,5 @@
 //! Actual cited pack receipts in an archive. Never terminal-stamp authority.
-use crate::{
-    error::{Error, Result},
-    serialize::ExportBody,
-    store::receipt_row::ReceiptRecord,
-};
+use crate::{error::Result, serialize::ExportBody, store::receipt_row::ReceiptRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
