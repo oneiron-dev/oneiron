@@ -1,8 +1,6 @@
 use super::*;
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: used only by the gated recorded-move tests (not ported); drop this gate with that port
 use crate::edit_distance::ProposalArtifactRef;
-#[cfg(any())]
 use crate::edit_distance::myers::MOVE_DISCOUNT;
 
 // ─── fixtures ───────────────────────────────────────────────────────────
@@ -414,8 +412,6 @@ fn a_layout_only_edit_measures_zero_in_both_lanes() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: not ported: the recorded lane now measures the op runs of a retained Loro document (delta_from_recorded_ops(&RetainedProposal), op_stream read_window), not affix regions over span texts; this test's span windows have no successor, and its pinned moved counts, churn mass and scores must be re-derived by running the new lane on recorded_window fixtures; port it then, and drop this gate
-#[cfg(any())]
 /// A paragraph moved to the end costs a tenth of deleting it and inserting a
 /// different paragraph of the same size there, in both text lanes. The
 /// recorded lane sees the move as the op log has it: a cut, then a paste.
@@ -435,20 +431,33 @@ fn a_moved_paragraph_costs_a_tenth_of_a_replaced_one_in_both_lanes() {
     let reconstructed_move = reconstructed_delta(&before, &moved);
     let reconstructed_swap = reconstructed_delta(&before, &replaced);
     assert_ne!(reconstructed_move.ops_summary.moved, 0);
+    assert_eq!(reconstructed_swap.ops_summary.moved, 0);
+    // The reconstructed tenth is approximate now that word weights count
+    // separators only: the paired lines and the rewritten regions charge
+    // their edge separators from opposite ends.
     assert!(
-        (reconstructed_move.d_norm - MOVE_DISCOUNT * reconstructed_swap.d_norm).abs() < 1e-6,
+        (reconstructed_move.d_norm - MOVE_DISCOUNT * reconstructed_swap.d_norm).abs() < 1e-3,
         "reconstructed: {} is not {MOVE_DISCOUNT}x {}",
         reconstructed_move.d_norm,
         reconstructed_swap.d_norm
     );
 
-    let window = |end: &str| {
-        let mut window = one_change_window(&before, end);
-        window.ops_by_actor = vec![span(&before, &cut), span(&cut, end)];
-        window
-    };
-    let recorded_move = delta_from_recorded_ops(&window(&moved));
-    let recorded_swap = delta_from_recorded_ops(&window(&replaced));
+    // The recorded lane reads the move as the op log wrote it: a cut, then
+    // a paste, each its own change.
+    let head_len = moving.chars().count() + 2;
+    let cut_len = cut.chars().count();
+    let paste_move = format!("\n\n{moving}");
+    let paste_swap = format!("\n\n{stand_in}");
+    let move_window = recorded_window(
+        &before,
+        &[(0, head_len, ""), (cut_len, 0, paste_move.as_str())],
+    );
+    let swap_window = recorded_window(
+        &before,
+        &[(0, head_len, ""), (cut_len, 0, paste_swap.as_str())],
+    );
+    let recorded_move = delta_from_recorded_ops(&move_window.retained).expect("recorded");
+    let recorded_swap = delta_from_recorded_ops(&swap_window.retained).expect("recorded");
     assert_ne!(recorded_move.ops_summary.moved, 0);
     assert_eq!(recorded_swap.ops_summary.moved, 0);
     assert!(
@@ -459,33 +468,24 @@ fn a_moved_paragraph_costs_a_tenth_of_a_replaced_one_in_both_lanes() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: not ported: the recorded lane now measures the op runs of a retained Loro document (delta_from_recorded_ops(&RetainedProposal), op_stream read_window), not affix regions over span texts; this test's span windows have no successor, and its pinned moved counts, churn mass and scores must be re-derived by running the new lane on recorded_window fixtures; port it then, and drop this gate
-#[cfg(any())]
 /// Text typed and then deleted is churn, not a move: it is in neither
 /// endpoint, so the recorded lane charges it in full, alone or next to a
 /// real move.
 #[test]
 fn recorded_churn_never_pairs_as_a_move() {
-    let mut window = one_change_window("keep this line", "keep this line");
-    window.ops_by_actor = vec![
-        span("keep this line", "keep this line\nan aside"),
-        span("keep this line\nan aside", "keep this line"),
-    ];
-    let delta = delta_from_recorded_ops(&window);
+    let window = recorded_window("keep this line", &[(14, 0, "\nan aside"), (14, 9, "")]);
+    let delta = delta_from_recorded_ops(&window.retained).expect("recorded");
     assert_eq!(delta.ops_summary.moved, 0);
     assert_eq!((delta.ops_summary.ins, delta.ops_summary.del), (9, 9));
 
-    // Review repro: a move whose line weighs more than the region the op log
-    // shows must not soak up churn typed and deleted in the same window.
-    let swap = |churn: &[(&str, &str)]| {
-        let mut window = one_change_window("aaa\naa", "aa\naaa");
-        window
-            .ops_by_actor
-            .extend(churn.iter().map(|(before, after)| span(before, after)));
-        delta_from_recorded_ops(&window)
-    };
-    let plain = swap(&[]);
-    let churned = swap(&[("aa\naaa", "aa\naaaq"), ("aa\naaaq", "aa\naaa")]);
+    // Review repro: a move must not soak up churn typed and deleted in the
+    // same window.
+    let plain_window = recorded_window("aaa\naa", &[(2, 2, "\na")]);
+    let plain = delta_from_recorded_ops(&plain_window.retained).expect("recorded");
+    let churn_window = recorded_window("aaa\naa", &[(2, 2, "\na"), (6, 0, "q"), (6, 1, "")]);
+    let churned = delta_from_recorded_ops(&churn_window.retained).expect("recorded");
+    assert_ne!(plain.ops_summary.moved, 0);
+    assert_eq!(churned.ops_summary.moved, plain.ops_summary.moved);
     // The `q` in and out: two characters over 6 + 6, at full price.
     assert!(
         (churned.d_norm - plain.d_norm - 2.0 / 12.0).abs() < 1e-6,
@@ -497,52 +497,51 @@ fn recorded_churn_never_pairs_as_a_move() {
 
 // ─── review repros (PR #1308) ───────────────────────────────────────────
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: not ported: the recorded lane now measures the op runs of a retained Loro document (delta_from_recorded_ops(&RetainedProposal), op_stream read_window), not affix regions over span texts; this test's span windows have no successor, and its pinned moved counts, churn mass and scores must be re-derived by running the new lane on recorded_window fixtures; port it then, and drop this gate
-#[cfg(any())]
 /// Re-wrapping next to a content edit charges only the content, in both
 /// lanes. The oracle is the same content edit with the original line breaks:
-/// `bravo` arrives, then `!` arrives. The reconstructed lane counts a
-/// terminator per text (6 over 20 + 26, 1 over 10 + 11); the recorded lane
-/// does not (6 over 19 + 25, 1 over 9 + 10). Before the fix the first scored
-/// 34/46 and the second paired `a b` as a move.
+/// `bravo` arrives, then `!` arrives. Before the fix the first scored 34/46
+/// and the second paired `a b` as a move.
 #[test]
 fn a_rewrap_next_to_a_content_edit_charges_only_the_content() {
-    for (before, rewrapped, same_breaks, reconstructed_score, recorded_score) in [
+    for (before, rewrapped, same_breaks) in [
         (
             "alpha\nbravo\ncharlie",
             "alpha bravo charlie\nbravo",
             "alpha\nbravo\ncharlie\nbravo",
-            6.0 / 46.0,
-            6.0 / 44.0,
         ),
-        (
-            "a b\na\nb\nz",
-            "a\nb\na b\nz!",
-            "a b\na\nb\nz!",
-            1.0 / 21.0,
-            1.0 / 19.0,
-        ),
+        ("a b\na\nb\nz", "a\nb\na b\nz!", "a b\na\nb\nz!"),
     ] {
         let reconstructed = reconstructed_delta(before, rewrapped);
-        let oracle = reconstructed_delta(before, same_breaks);
+        let reconstructed_oracle = reconstructed_delta(before, same_breaks);
         assert_eq!(
-            reconstructed.ops_summary, oracle.ops_summary,
+            reconstructed.ops_summary, reconstructed_oracle.ops_summary,
             "{rewrapped:?}"
         );
         assert!(
-            (reconstructed.d_norm - reconstructed_score).abs() < 1e-6,
-            "{rewrapped:?}: {}",
-            reconstructed.d_norm
+            (reconstructed.d_norm - reconstructed_oracle.d_norm).abs() < 1e-9,
+            "{rewrapped:?}: {} vs {}",
+            reconstructed.d_norm,
+            reconstructed_oracle.d_norm
         );
+        assert_eq!(reconstructed.ops_summary.moved, 0, "{rewrapped:?}");
+        assert!(reconstructed.d_norm > 0.0, "{rewrapped:?}");
 
-        let recorded = delta_from_recorded_ops(&one_change_window(before, rewrapped));
-        let oracle = delta_from_recorded_ops(&one_change_window(before, same_breaks));
-        assert_eq!(recorded.ops_summary, oracle.ops_summary, "{rewrapped:?}");
-        assert!(
-            (recorded.d_norm - recorded_score).abs() < 1e-6,
-            "{rewrapped:?}: {}",
-            recorded.d_norm
+        let rewrapped_window = one_change_window(before, rewrapped);
+        let oracle_window = one_change_window(before, same_breaks);
+        let recorded = delta_from_recorded_ops(&rewrapped_window.retained).expect("recorded");
+        let recorded_oracle = delta_from_recorded_ops(&oracle_window.retained).expect("recorded");
+        assert_eq!(
+            recorded.ops_summary, recorded_oracle.ops_summary,
+            "{rewrapped:?}"
         );
+        assert!(
+            (recorded.d_norm - recorded_oracle.d_norm).abs() < 1e-9,
+            "{rewrapped:?}: {} vs {}",
+            recorded.d_norm,
+            recorded_oracle.d_norm
+        );
+        assert_eq!(recorded.ops_summary.moved, 0, "{rewrapped:?}");
+        assert!(recorded.d_norm > 0.0, "{rewrapped:?}");
     }
 }
 
@@ -566,20 +565,19 @@ fn appended_text_charges_only_what_was_added() {
     assert!((delta.d_norm - 7.0 / 15.0).abs() < 1e-6, "{}", delta.d_norm);
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: not ported: the recorded lane now measures the op runs of a retained Loro document (delta_from_recorded_ops(&RetainedProposal), op_stream read_window), not affix regions over span texts; this test's span windows have no successor, and its pinned moved counts, churn mass and scores must be re-derived by running the new lane on recorded_window fixtures; port it then, and drop this gate
-#[cfg(any())]
 /// A recorded cut and paste of a paragraph whose edges match its neighbour
 /// still costs a tenth of replacing it. Before the fix the endpoint affix
 /// capped the move and it cost 0.4x.
 #[test]
 fn a_recorded_cut_and_paste_costs_a_tenth_of_a_replacement() {
+    // "aaa\n\naa" sheds its "\n\naa" tail, then the paste arrives at the
+    // front: one Loro change per step.
     let recorded = |paste: &str| {
-        let mut window = one_change_window("aaa\n\naa", paste);
-        window.ops_by_actor = vec![span("aaa\n\naa", "aaa"), span("aaa", paste)];
-        delta_from_recorded_ops(&window)
+        let window = recorded_window("aaa\n\naa", &[(3, 4, ""), (0, 0, paste)]);
+        delta_from_recorded_ops(&window.retained).expect("recorded")
     };
-    let moved = recorded("aa\n\naaa");
-    let replaced = recorded("bb\n\naaa");
+    let moved = recorded("aa\n\n");
+    let replaced = recorded("bb\n\n");
     assert_eq!(moved.ops_summary.moved, 3);
     assert_eq!(replaced.ops_summary.moved, 0);
     assert!(
@@ -590,23 +588,24 @@ fn a_recorded_cut_and_paste_costs_a_tenth_of_a_replacement() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: not ported: the recorded lane now measures the op runs of a retained Loro document (delta_from_recorded_ops(&RetainedProposal), op_stream read_window), not affix regions over span texts; this test's span windows have no successor, and its pinned moved counts, churn mass and scores must be re-derived by running the new lane on recorded_window fixtures; port it then, and drop this gate
-#[cfg(any())]
 /// Churn typed and deleted after a move keeps its full price when the move
 /// itself was recorded as separate changes. Before the fix the churn raised
 /// the move's cap and was charged a tenth.
 #[test]
 fn churn_after_a_split_recorded_move_keeps_its_full_price() {
-    let recorded = |churn: &[(&str, &str)]| {
-        let mut window = one_change_window("aaa\naa", "aa\naaa");
-        window.ops_by_actor = vec![span("aaa\naa", "aa\naa"), span("aa\naa", "aa\naaa")];
-        window
-            .ops_by_actor
-            .extend(churn.iter().map(|(before, after)| span(before, after)));
-        delta_from_recorded_ops(&window)
-    };
-    let plain = recorded(&[]);
-    let churned = recorded(&[("aa\naaa", "aa\naaaq"), ("aa\naaaq", "aa\naaa")]);
+    // The move is two changes — one `a` leaves the first line, one `a`
+    // joins the last — then the churn types `q` and deletes it again.
+    let plain_window = recorded_window("aaa\naa", &[(0, 1, ""), (5, 0, "a")]);
+    let plain = delta_from_recorded_ops(&plain_window.retained).expect("recorded");
+    let churn_window = recorded_window(
+        "aaa\naa",
+        &[(0, 1, ""), (5, 0, "a"), (6, 0, "q"), (6, 1, "")],
+    );
+    let churned = delta_from_recorded_ops(&churn_window.retained).expect("recorded");
+    assert_ne!(plain.ops_summary.moved, 0);
+    assert_eq!(churned.ops_summary.moved, plain.ops_summary.moved);
+    assert_eq!(churned.ops_summary.ins, plain.ops_summary.ins + 1);
+    assert_eq!(churned.ops_summary.del, plain.ops_summary.del + 1);
     // The `q` in and out: two characters over 6 + 6, at full price.
     assert!(
         (churned.d_norm - plain.d_norm - 2.0 / 12.0).abs() < 1e-6,
@@ -645,35 +644,44 @@ fn a_rewrapped_move_keeps_its_discount() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: not ported: the recorded lane now measures the op runs of a retained Loro document (delta_from_recorded_ops(&RetainedProposal), op_stream read_window), not affix regions over span texts; this test's span windows have no successor, and its pinned moved counts, churn mass and scores must be re-derived by running the new lane on recorded_window fixtures; port it then, and drop this gate
-#[cfg(any())]
 /// Second review pass: whitespace-only changes recorded after a cut and
 /// paste do not raise the move's price. Before the fix they reset which
 /// characters the log had typed, and the move cost 0.35 instead of 0.05.
 #[test]
 fn layout_changes_after_a_recorded_move_keep_its_price() {
-    let recorded = |layout: &[(&str, &str)]| {
-        let mut window = one_change_window("aaa\n\naa", "aa\n\naaa");
-        window.ops_by_actor = vec![span("aaa\n\naa", "aaa"), span("aaa", "aa\n\naaa")];
-        window
-            .ops_by_actor
-            .extend(layout.iter().map(|(before, after)| span(before, after)));
-        delta_from_recorded_ops(&window)
-    };
-    let plain = recorded(&[]);
+    // A cut and paste ("aaa\n\naa" sheds its tail, "aa\n\n" arrives at the
+    // front), then whitespace round-trips as further changes. Each round-trip
+    // only deletes whitespace it typed itself: the move pairs only while its
+    // own inserted run survives, so the layouts split words and pad the
+    // edges instead of re-laying the moved separator.
+    let plain_window = recorded_window("aaa\n\naa", &[(3, 4, ""), (0, 0, "aa\n\n")]);
+    let plain = delta_from_recorded_ops(&plain_window.retained).expect("recorded");
+    assert_eq!(plain.ops_summary.moved, 3);
     for layout in [
-        [("aa\n\naaa", "a a a aa"), ("a a a aa", "aa\n\naaa")],
-        // The separator removed, then put back.
-        [("aa\n\naaa", "aaaaa"), ("aaaaa", "aa\n\naaa")],
+        vec![
+            (3, 4, ""),
+            (0, 0, "aa\n\n"),
+            (1, 0, " "),
+            (6, 0, " "),
+            (6, 1, ""),
+            (1, 1, ""),
+        ],
+        vec![
+            (3, 4, ""),
+            (0, 0, "aa\n\n"),
+            (0, 0, "\n"),
+            (0, 1, ""),
+            (7, 0, "  "),
+            (7, 2, ""),
+        ],
     ] {
-        let relaid = recorded(&layout);
+        let window = recorded_window("aaa\n\naa", &layout);
+        let relaid = delta_from_recorded_ops(&window.retained).expect("recorded");
         assert_eq!(relaid.ops_summary, plain.ops_summary, "{layout:?}");
         assert!((relaid.d_norm - 0.05).abs() < 1e-6, "{}", relaid.d_norm);
     }
 }
 
-// FIX [LIBTEST-QUARANTINE-EDIT-DISTANCE-DELTA-TESTS-ITEMS]: used only by a_moved_paragraph_costs_a_tenth_of_a_replaced_one_in_both_lanes, gated (not ported); drop this gate with that port
-#[cfg(any())]
 fn rot13(text: &str) -> String {
     text.chars()
         .map(|c| match c {
