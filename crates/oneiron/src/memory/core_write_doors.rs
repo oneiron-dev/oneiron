@@ -29,12 +29,7 @@ impl Memory<'_> {
         &self,
         input: &CoreBatchWriteInput,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
-        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        let announcement = if !self.carries_handed_on_credential() {
-            AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
-        } else {
-            AnnouncementAuthority::Writer
-        };
+        let announcement = self.own_announcement_authority()?;
         let lane = self.core_write_lane()?;
         self.vault().write_core_batch_in_lane_as(
             input,
@@ -106,12 +101,7 @@ impl Memory<'_> {
         input: &ConversationTurnCreateInput,
     ) -> MemoryResult<CoreEntityWriteReceipt> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
-        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        let announcement = if !self.carries_handed_on_credential() {
-            AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
-        } else {
-            AnnouncementAuthority::Writer
-        };
+        let announcement = self.own_announcement_authority()?;
         self.vault()
             .write_core_conversation_turn(input, &lane, announcement)
     }
@@ -129,12 +119,7 @@ impl Memory<'_> {
         &self,
         input: &DagRecordAppendInput,
     ) -> MemoryResult<DagRecordAppendReceipt> {
-        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        let announcement = if !self.carries_handed_on_credential() {
-            AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
-        } else {
-            AnnouncementAuthority::Writer
-        };
+        let announcement = self.own_announcement_authority()?;
         self.conversations_records_append_at(input, announcement)
     }
 
@@ -149,5 +134,24 @@ impl Memory<'_> {
     ) -> MemoryResult<DagRecordAppendReceipt> {
         let append = input.append_record(self.write_actor(), announcement)?;
         Ok(self.vault().append_dag_record(self, &append)?.into())
+    }
+}
+
+impl Memory<'_> {
+    /// The announcement authority this handle's own core write carries: the
+    /// owner's while the bound actor is a live owner, read now
+    /// ([`AnnouncementAuthority::of_actor`]). A Human credential handed on to
+    /// another key writes as its key's holder ([`AnnouncementAuthority::Writer`]);
+    /// an Agent or System handle keeps its actor's authority, marked or not
+    /// (Astra delta-2 on #8562, finding 3).
+    fn own_announcement_authority(&self) -> MemoryResult<AnnouncementAuthority> {
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        if self.actor_class() == crate::EdgeActorClass::Human && !self.acts_as_own_person() {
+            return Ok(AnnouncementAuthority::Writer);
+        }
+        Ok(AnnouncementAuthority::of_actor(
+            self.vault(),
+            &self.actor(),
+        )?)
     }
 }

@@ -21,6 +21,8 @@
 //! stamps no Stated text receipt (F4) and captures a marked solved-run scope (F5).
 //! Commit 6 (Astra delta on #8562): an unmarked Agent handle on the owner's PERSON keeps the
 //! announcement (F3 guard) and a handed-on Active SKILL stages Generated off record (F6).
+//! Commit 7 (Astra delta-2 on #8562): a handed-on Agent handle on the owner's PERSON keeps the
+//! announcement too (finding 3 guard).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test handed_on_person_sweep`.
@@ -30,7 +32,7 @@ use std::collections::BTreeSet;
 
 use ed25519_dalek::Signer;
 use oneiron::access_grant::AccessGrantStatus;
-use oneiron::authority::{HostSlipIssuer, SlipCaveat, VerifiedSlip};
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer, SlipCaveat, VerifiedSlip};
 use oneiron::blob_artifact::{ArtifactCreateRequest, NativeOutputRequest, ProposalSettleRequest};
 use oneiron::calendar::meeting::{CalendarMeetingRequest, check_in_due};
 use oneiron::campaign::register_crm_pack;
@@ -143,28 +145,32 @@ impl Fixture {
             assert!(!own.is_transferred(), "control: the owner holds this one");
             return own;
         }
+        self.hand_on(slip, b"transferred slip handed slip")
+    }
+
+    /// `slip` handed on by its holder to another key, as that key presents it
+    /// under `challenge`.
+    fn hand_on(&self, mut slip: CapabilitySlip, challenge: &[u8]) -> VerifiedSlip {
         let next = ed25519_dalek::SigningKey::from_bytes(
             blake3::hash(b"transferred slip handed holder").as_bytes(),
         );
-        let mut handed = slip;
         self.issuer
             .attenuate_to(
-                &mut handed,
+                &mut slip,
                 SlipCaveat::default(),
                 next.verifying_key().to_bytes(),
             )
             .expect("the slip is handed on");
-        let challenge = b"transferred slip handed slip";
         let binding = next
             .sign(
-                &handed
+                &slip
                     .binding_transcript(challenge)
                     .expect("the binding transcript"),
             )
             .to_bytes();
         let handed = self
             .vault
-            .verify_capability_slip(&self.issuer.public_key(), &handed, challenge, &binding)
+            .verify_capability_slip(&self.issuer.public_key(), &slip, challenge, &binding)
             .expect("the handed slip verifies");
         assert!(handed.is_transferred(), "control: the slip was handed on");
         handed
@@ -178,8 +184,9 @@ impl Fixture {
     }
 
     /// An Agent-class slip for the owner's PERSON from the host root, held by
-    /// the owner (unmarked): the credential route Astra names for finding 3.
-    fn owner_agent_slip(&self) -> VerifiedSlip {
+    /// the owner (unmarked) or handed on to another key first (marked): the
+    /// credential route Astra names for finding 3.
+    fn owner_agent_slip(&self, handed_on: bool) -> VerifiedSlip {
         let mut claims = self
             .vault
             .ensure_host_root_slip(&self.issuer)
@@ -192,6 +199,9 @@ impl Fixture {
             .vault
             .mint_capability_slip(&self.issuer, claims)
             .expect("the owner's agent slip");
+        if handed_on {
+            return self.hand_on(slip, b"transferred slip handed agent slip");
+        }
         let challenge = b"transferred slip own agent slip";
         let binding = self
             .issuer
@@ -1602,7 +1612,7 @@ fn the_owners_own_slip_still_keeps_a_turns_platform_announcement() {
 fn an_agent_handle_on_the_owners_person_keeps_the_owners_announcement() {
     let f = Fixture::new();
     let room = f.plain_room();
-    let slip = f.owner_agent_slip();
+    let slip = f.owner_agent_slip(false);
 
     let receipt = f
         .owner_agent_memory(&slip)
@@ -1624,6 +1634,40 @@ fn an_agent_handle_on_the_owners_person_keeps_the_owners_announcement() {
         receipt.body.get("message_type").and_then(|v| v.as_str()),
         Some("platform_announcement"),
         "an unmarked Agent TURN keeps its selector: {}",
+        receipt.body
+    );
+}
+
+/// Guard (Astra delta-2 on #8562, finding 3): an Agent-class slip on the
+/// owner's PERSON handed on to another key keeps the announcement selector,
+/// as before this PR: the rule relabels a person's credential, never an
+/// Agent's, marked or not.
+#[test]
+fn a_handed_on_agent_handle_on_the_owners_person_keeps_the_owners_announcement() {
+    let f = Fixture::new();
+    let room = f.plain_room();
+    let slip = f.owner_agent_slip(true);
+
+    let receipt = f
+        .owner_agent_memory(&slip)
+        .conversations_turns_create(&oneiron::core_write::ConversationTurnCreateInput {
+            conversation: room.to_hex(),
+            id: None,
+            occurred_start: None,
+            occurred_end: None,
+            learned_at: None,
+            body: json!({
+                "message_type": "platform_announcement",
+                "text": "hello from a handed-on agent credential",
+            }),
+            text: None,
+        })
+        .expect("the TURN lands");
+
+    assert_eq!(
+        receipt.body.get("message_type").and_then(|v| v.as_str()),
+        Some("platform_announcement"),
+        "a handed-on Agent TURN keeps its selector: {}",
         receipt.body
     );
 }
