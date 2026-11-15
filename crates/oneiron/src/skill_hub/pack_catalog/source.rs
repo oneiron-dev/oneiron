@@ -4,6 +4,11 @@ use crate::error::Result;
 use crate::skill::{SkillContentHash, canonical_skill_tree_hash};
 use crate::skill_hub::HubFile;
 
+/// A pack's files every bundled skill carries (0053-SKILLSET; ARCH-0053 §14
+/// skillsets): each `skills/<folder>/` package holds them under this same
+/// prefix, so each member's hash covers exactly what it runs.
+pub(super) const SHARED_PREFIX: &str = "shared/";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackSource {
     pub(super) files: Vec<HubFile>,
@@ -64,6 +69,18 @@ impl PackSource {
                 .iter()
                 .find(|file| file.path == "policy.md")
                 .expect("checked");
+            // A travelling pack carries each skill whole, its shared files
+            // already inside: a `shared/` of its own would change the hashes
+            // its skills are pinned by.
+            if super::agent_facets::is_travel_policy(&policy.content)
+                && files
+                    .iter()
+                    .any(|file| file.path.starts_with(SHARED_PREFIX))
+            {
+                return Err(invalid(
+                    "a travelling agent pack carries each skill whole; it cannot hold shared/",
+                ));
+            }
             // A travelling pack pins its skills by content hash, not by
             // source id; its facet validation reads them.
             if !super::agent_facets::is_travel_policy(&policy.content) {
@@ -127,6 +144,7 @@ impl PackSource {
                     ))
                 && ![
                     "skills/",
+                    SHARED_PREFIX,
                     "knowledge/",
                     "scripts/",
                     "hooks/",
@@ -137,6 +155,16 @@ impl PackSource {
                 .any(|prefix| file.path.starts_with(prefix))
             {
                 return Err(invalid("unknown pack source facet"));
+            }
+            if file
+                .path
+                .strip_prefix("skills/")
+                .and_then(|path| path.split_once('/'))
+                .is_some_and(|(_, relative)| relative.starts_with(SHARED_PREFIX))
+            {
+                return Err(invalid(
+                    "a bundled skill folder cannot hold shared/; the pack's shared/ rides every skill",
+                ));
             }
         }
         if let Some(facets) = &manifest.agent_facets {
