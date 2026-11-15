@@ -8,6 +8,8 @@
 //! - A step a worker holds is asked to land, never killed. When it completes,
 //!   its result stays (a cancel never undoes committed work, ARCH-0028
 //!   `#mcp-tasks`), the run ends `cancelled`, and its next step never starts.
+//! - A step that was abandoned before anyone asked still fails the run: the
+//!   cancel request never renames a failure `cancelled`.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test workflow_run_cancel`.
@@ -20,8 +22,8 @@ use std::sync::Arc;
 use oneiron::agent_def::workflow::WorkflowDefinition;
 use oneiron::agent_dispatch::{AgentDispatcher, WorkflowProgress};
 use oneiron::attempt_queue::{
-    AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef,
-    AttemptState,
+    AbandonAttempt, AttemptCancelReceiptKind, AttemptId, AttemptQueue, AttemptRecord,
+    AttemptResultRef, AttemptState,
 };
 use oneiron::authority::MachineRole;
 use oneiron::consent::AuthenticatedOwner;
@@ -321,6 +323,58 @@ fn workflow_cancel_of_a_running_step_asks_it_to_land_and_keeps_its_result() -> T
         ended.active_attempt_ref, leaf,
         "the second step was never released"
     );
+    fixture.assert_no_step_runs()?;
+    Ok(())
+}
+
+#[test]
+fn workflow_cancel_after_its_step_was_abandoned_leaves_the_run_failed() -> TestResult {
+    let fixture = Fixture::new("cancel-after-abandon")?;
+    let leaf = fixture.run.active_attempt_ref;
+    // The host claims the step and its executor stops without an answer: the
+    // step stays leased, and no pass has pumped the run since.
+    let now = fixture.vault.now_recorded_at();
+    let pass = AgentDispatcher::new(&fixture.vault).run_workflow_step(
+        fixture.root()?,
+        "test-host",
+        now,
+        |_status, _context| Err(oneiron::Error::InvalidConfig("the executor stopped".into())),
+    );
+    assert!(
+        pass.is_err(),
+        "the executor's failure answers the host pass"
+    );
+    let held = fixture.attempt(leaf)?;
+    assert_eq!(held.state, AttemptState::Leased);
+    // Its lease is reclaimed: the step ends abandoned before anyone asks the
+    // run to stop.
+    AttemptQueue::new(&fixture.vault).abandon(AbandonAttempt {
+        id: AttemptId::from_bytes(leaf.as_bytes())?,
+        lease_owner: "test-host".to_owned(),
+        attempt_count: held.attempt_count,
+        result_ref: AttemptResultRef::new("artifact:partial")?,
+        reason: "executor stopped without delivering".to_owned(),
+        now: fixture.vault.now_recorded_at(),
+    })?;
+    assert_eq!(fixture.attempt(leaf)?.state, AttemptState::Abandoned);
+    assert_eq!(
+        fixture.status()?.state,
+        WorkflowRunState::Running,
+        "no pass has ended the run yet"
+    );
+
+    let view = fixture.cancel()?;
+
+    assert_eq!(
+        view.state,
+        WorkflowRunState::Failed,
+        "a step that failed before the request fails the run; the cancel does not rename it"
+    );
+    assert_eq!(
+        fixture.attempt(fixture.run.root_attempt_ref)?.state,
+        AttemptState::Failed
+    );
+    assert!(view.results.is_empty(), "no step completed");
     fixture.assert_no_step_runs()?;
     Ok(())
 }
