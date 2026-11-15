@@ -226,7 +226,7 @@ pub(crate) fn mint_code_consent_wait_in_txn(
         standing_offer: draft.standing_offer,
         question,
         policy_frontier,
-        created_at_ms: super::settle::now_ms(),
+        created_at_ms: crate::unix_millis_now(),
         // The admitted MCP caller its host bound on the run (FIX 4606):
         // sealed with the wait by the parked step's commit.
         origin: draft.site.origin,
@@ -502,7 +502,7 @@ pub(crate) fn record_code_consent_admission_in_txn(
     row.admission = Some(CodeConsentAdmission {
         intent_id,
         gate_decision,
-        admitted_at_ms: super::settle::now_ms(),
+        admitted_at_ms: crate::unix_millis_now(),
     });
     put_code_consent_wait_in_txn(
         vault,

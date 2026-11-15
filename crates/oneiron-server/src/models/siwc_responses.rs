@@ -20,7 +20,7 @@ use oneiron::{
     LlmGenerateFuture, LlmRequest, LlmResult, LlmStream, LlmStreamEvent, LlmStreamResult, ModelId,
     RetryableLlmError,
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatConfig, OpenAiCompatHttpResponse, OpenAiCompatProviderStream,
     OpenAiCompatStreamFrame, OpenAiCompatTransportError, OpenAiResponsesLlmStream,
     build_openai_responses_turn, responses_event_is_terminal, responses_event_type,

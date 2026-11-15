@@ -11,13 +11,12 @@ use super::grant::{
     persona_snapshot_export_receipts, scan_entities_by_type, standing_outbound_grants_lens,
 };
 use super::identity_kind::{channel_identity_lifecycle_receipts, identity_topology_receipts};
-use super::kernel::{
-    FIELD_BUNDLE_REF, FIELD_GRANT_REF, MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery,
-    ReceiptRecord, ReceiptScan, ReceiptView, hex_lower, lineage_scan_query, projection_scan_query,
-    retain_newest_receipt,
-};
 #[cfg(test)]
 use super::kernel::{GATE_RECEIPT_MAX_BUFFERED, GATE_RECEIPT_PAGES_SCANNED};
+use super::kernel::{
+    MAX_RECEIPT_QUERY_SCAN, ReceiptKind, ReceiptQuery, ReceiptRecord, ReceiptScan, ReceiptView,
+    hex_lower, lineage_scan_query, projection_scan_query, retain_newest_receipt,
+};
 use super::ledgers::{
     attempt_pack_receipts, durable_send_receipts, scan_attempt_pack_receipts,
     scan_durable_send_receipts,
@@ -33,33 +32,15 @@ use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, PendingGateConsentRecord};
+use crate::store::{GateDecisionRecord, PendingGateConsentRecord};
 
+#[cfg(test)]
 pub(super) use crate::store::gate_receipt::{
     SYSTEM_NOTICE_AUDIENCE_ALL, SYSTEM_NOTICE_AUDIENCE_THIRD_PARTY,
 };
 
-/// Query for the EF-055 pending tray lane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PendingTrayQuery {
-    pub now: u64,
-    pub limit: usize,
-}
-
-impl PendingTrayQuery {
-    #[must_use]
-    pub fn new(limit: usize) -> Self {
-        Self {
-            now: crate::unix_seconds_now(),
-            limit,
-        }
-    }
-
-    #[must_use]
-    pub const fn at(now: u64, limit: usize) -> Self {
-        Self { now, limit }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::receipt::family::PendingTrayQuery;
 
 /// One current pending ask for the logbook tray lane.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -396,8 +377,10 @@ pub(super) fn collect_receipt_records(
         records.extend(crate::check_in::check_in_receipts(vault, query)?);
     }
     // INQUIRE-1: each send of an inquiry on the asking vault, kept in the
-    // send's own transaction. Its own kind and store; its own read txn.
-    if query.includes_kind(ReceiptKind::Inquiry) {
+    // send's own transaction. Its own kind and store; its own read txn. The
+    // same store keeps each change of an inquiry edge's terms on the
+    // member's vault, of kind Share (FIX INQUIRY-STANDING-PER-KEEP).
+    if query.includes_kind(ReceiptKind::Inquiry) || query.includes_kind(ReceiptKind::Share) {
         records.extend(crate::inquiry::inquiry_receipts(vault, query)?);
     }
 
@@ -663,7 +646,6 @@ pub(crate) fn gate_decision_receipt_from_base(record: &GateDecisionRecord) -> Re
 }
 
 pub(crate) use crate::store::gate_receipt::gate_decision_receipt;
-pub(super) use crate::store::gate_receipt::select_gate_system_notice_for_receipt;
 
 fn pending_tray_query(vault: &Vault, query: PendingTrayQuery) -> Result<Vec<PendingTrayAsk>> {
     if query.limit == 0 {
