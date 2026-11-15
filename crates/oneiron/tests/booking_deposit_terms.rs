@@ -5,7 +5,7 @@
 //!
 //! Every value here is built from JSON, so main plus this file builds: main's
 //! `deny_unknown_fields` refuses the `deposit` key, and each test's first
-//! parse fails there by its `expect`.
+//! parse of a value that carries one fails there by its `expect`.
 
 use oneiron::EntityId;
 use oneiron::booking::{
