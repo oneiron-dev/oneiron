@@ -201,48 +201,8 @@ pub(super) struct PendingConnectorCall {
     pub(super) agent_run: Option<AttemptId>,
 }
 
-/// A held call's terminal outcome, without the tool's reply: the ledger
-/// never keeps a reply's bytes, so a recovery from this row is receipt-only.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum SettledConnectorCall {
-    Delivered {
-        intent: Option<[u8; 32]>,
-    },
-    Refused {
-        decision_ref: Option<String>,
-        reasons: Vec<String>,
-    },
-    Unsettled {
-        intent: [u8; 32],
-        reasons: Vec<String>,
-    },
-}
-
-impl SettledConnectorCall {
-    pub(super) fn outcome(&self) -> ConnectorCallOutcome {
-        match self.clone() {
-            Self::Delivered { intent } => ConnectorCallOutcome::Delivered {
-                intent,
-                result: None,
-                result_absence: Some(ConnectorResultAbsence::NotRetained),
-                budget_steering: Vec::new(),
-            },
-            Self::Refused {
-                decision_ref,
-                reasons,
-            } => ConnectorCallOutcome::Refused {
-                decision_ref,
-                reasons,
-            },
-            Self::Unsettled { intent, reasons } => ConnectorCallOutcome::PendingDelivery {
-                intent,
-                call_ref: None,
-                reasons,
-            },
-        }
-    }
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::outbound_consent::connector_call::SettledConnectorCall;
 
 /// The call ref a host's identity fixes for one caller: the same caller's
 /// same logical call always names the same held row.
@@ -266,14 +226,6 @@ impl ConnectorCallInvocation {
     pub fn call_ref(self, principal: EntityId) -> Result<EntityId, IntentLedgerError> {
         connector_call_ref(&principal.to_hex(), self)
     }
-}
-
-pub(super) fn now_ms() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        })
 }
 
 /// One held call's principal, connector name and tool, so the owner's

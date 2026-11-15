@@ -2,8 +2,8 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 
 use oneiron::Vault;
-use oneiron::voice_cascade::soniox::{SonioxTransport, SonioxUpdate};
 use oneiron::voice_cascade::spilled_audio::{AudioSpool, SpilledAudio};
+use oneiron_speech::asr::soniox::{SonioxTransport, SonioxUpdate};
 
 use super::FINALIZE;
 
