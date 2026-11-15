@@ -9,6 +9,7 @@ mod receipts;
 mod restore_group;
 mod revert;
 mod settle;
+mod setting_keys;
 mod snapshot;
 mod topology;
 
