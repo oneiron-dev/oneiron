@@ -14,6 +14,7 @@
 //! booking_waitlist`.
 #![cfg(feature = "test-support")]
 
+use oneiron::booking::lifecycle::waitlist_entry_event_type;
 use oneiron::booking::{
     BookingError, BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingSolver,
     BookingVerbReceipt, BookingVerbRequest, CancelSpec, ConfirmReceipt, ConfirmSpec,
@@ -67,7 +68,7 @@ const fn half_hour_after(start: u64) -> u64 {
 }
 
 struct Fixture {
-    _dir: tempfile::TempDir,
+    dir: tempfile::TempDir,
     vault: Vault,
     page: EntityId,
     booker: EntityId,
@@ -82,6 +83,22 @@ impl Fixture {
     fn with_notice(notice_secs: u64) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        Self::seeded(dir, vault, notice_secs)
+    }
+
+    /// A vault that can take a checkpoint and be restored over: its vault
+    /// key is minted in a keystore, and the vault sits beside the directory's
+    /// checkpoint image and restore target.
+    fn restorable() -> Self {
+        let dir = oneiron::test_support::restore_tempdir();
+        let vault =
+            Vault::open(dir.path().join("vault"), VaultConfig::device()).expect("open vault");
+        vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
+        vault.ensure_vault_key().expect("mint the vault data key");
+        Self::seeded(dir, vault, 0)
+    }
+
+    fn seeded(dir: tempfile::TempDir, vault: Vault, notice_secs: u64) -> Self {
         let page = test_id(PAGE_SEED);
         vault
             .put_entity(&page, ENTITY_TYPE_ASSET, at(1), 1, b"booking page")
@@ -100,7 +117,7 @@ impl Fixture {
             )
             .expect("elect home node");
         Self {
-            _dir: dir,
+            dir,
             vault,
             page,
             booker,
@@ -603,5 +620,61 @@ fn a_second_join_from_one_session_replaces_its_entry() {
             .waitlist(WaitlistAction::Leave { token: second }, NOW + 40)
             .expect("leave"),
         BookingVerbReceipt::Waitlisted(WaitlistReceipt::Left)
+    );
+}
+
+/// A restore over the live vault keeps the waitlist as it stands (ARCH-0038):
+/// an entry is its waiter's own ask to be offered a slot. A waiter who left
+/// after the checkpoint stays gone, and so does the offer it held, so no
+/// ended offer stands again for its email to be sent; a waiter who joined
+/// after the checkpoint keeps its place.
+#[test]
+fn a_restore_keeps_the_waitlist_as_it_stands() {
+    let fixture = Fixture::restorable();
+    let noon = slot_at(12);
+    let one = slot_at(13);
+    let first = fixture.book(session("owen"), noon, NOW);
+    fixture.book(session("kenji"), one, NOW + 5);
+    let (left, _) = fixture.wait(session("yuki"), noon, NOW + 10);
+    // The cancel offers noon to the waiter: its entry holds a standing offer.
+    fixture.cancel(&first, NOW + 60);
+    let key = fixture.vault.checkpoint_key().expect("the checkpoint key");
+    let image = fixture.dir.path().join("image");
+    fixture
+        .vault
+        .snapshot_checkpoint(&image, NOW + 70)
+        .expect("a checkpoint while the offer stands");
+
+    assert_eq!(
+        fixture
+            .waitlist(
+                WaitlistAction::Leave {
+                    token: left.clone()
+                },
+                NOW + 80
+            )
+            .expect("leave"),
+        BookingVerbReceipt::Waitlisted(WaitlistReceipt::Left)
+    );
+    let (joined, _) = fixture.wait(session("mika"), one, NOW + 90);
+
+    let (restored, _) = Vault::restore_checkpoint_keeping_authority(
+        &image,
+        &key,
+        &fixture.dir.path().join("restored"),
+        VaultConfig::device(),
+        &fixture.vault,
+        NOW + 100,
+    )
+    .expect("restore the checkpoint over the live vault");
+    assert_eq!(
+        waitlist_entry_event_type(&restored, fixture.page, &left).expect("read the left entry"),
+        None,
+        "a waiter who left after the checkpoint stays gone, with the offer it held"
+    );
+    assert_eq!(
+        waitlist_entry_event_type(&restored, fixture.page, &joined).expect("read the new entry"),
+        Some(event_type()),
+        "a waiter who joined after the checkpoint keeps its place"
     );
 }
