@@ -31,6 +31,7 @@ use crate::claim::{ScopedReadReceipt, ScopedReadResult};
 use crate::memory::{
     EntityView, MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_NOT_FOUND, Memory, MemoryError, MemoryResult,
 };
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 
 pub use crate::store::record_ref::RECORD_REF_LABEL_MAX_CHARS;
 /// The most characters a [`RecordRefPreview`] snippet carries.
@@ -311,18 +312,20 @@ impl Memory<'_> {
                 })
             }
             (None, Some(turn_ref)) => {
-                let limit = match input.limit {
-                    Some(0) => {
-                        return Err(MemoryError::bad_request_with(
-                            "a page of a turn holds at least one message",
-                            &["Pass a `limit` of 1 or more, or none for the default page."],
-                        ));
-                    }
-                    Some(limit) => usize::try_from(limit)
-                        .unwrap_or(RECORD_LINKS_TURN_PAGE_MAX)
-                        .min(RECORD_LINKS_TURN_PAGE_MAX),
-                    None => RECORD_LINKS_TURN_PAGE_MAX,
-                };
+                let limit = page_limit_zero_refused(
+                    input
+                        .limit
+                        .map(|limit| usize::try_from(limit).unwrap_or(usize::MAX)),
+                    RECORD_LINKS_TURN_PAGE_MAX,
+                    RECORD_LINKS_TURN_PAGE_MAX,
+                )
+                .map_err(|ZeroLimitRefused| {
+                    MemoryError::bad_request_with(
+                        "a page of a turn holds at least one message",
+                        &["Pass a `limit` of 1 or more, or none for the default page."],
+                    )
+                })?
+                .rows;
                 self.turn_links(turn_ref.trim(), input.after.as_deref(), limit)
             }
             _ => Err(MemoryError::bad_request_with(

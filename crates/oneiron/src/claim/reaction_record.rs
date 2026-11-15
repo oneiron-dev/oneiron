@@ -1,7 +1,7 @@
 //! The `conversation.reaction` value and its provider-echo binding value.
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY;
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 use rmpv::Value;
@@ -16,16 +16,13 @@ const KEY_GLYPH: &str = "glyph";
 const KEY_OCCURRED_AT: &str = "occurredAt";
 const KEY_BY: &str = "by";
 const KEY_EXTERNAL_ID: &str = "externalId";
-const KEY_CONNECTOR: &str = "connector";
-const KEY_ID: &str = "id";
+#[doc(hidden)]
+use oneiron_records::claim::reaction_record::{
+    KEY_CONNECTOR, KEY_ID, MAX_CONNECTOR_BYTES, MAX_EXTERNAL_ID_BYTES, exact_map, find, invalid,
+    string,
+};
+
 const MAX_GLYPH_SCALARS: usize = 64;
-const MAX_CONNECTOR_BYTES: usize = 256;
-const MAX_EXTERNAL_ID_BYTES: usize = 1024;
-
-fn invalid(reason: &'static str) -> Error {
-    Error::InvalidClaimBody(reason)
-}
-
 pub(crate) fn is_reaction_claim_predicate(predicate: &str) -> bool {
     predicate == PREDICATE_CONVERSATION_REACTION
         || predicate == PREDICATE_CONVERSATION_REACTION_ECHO
@@ -148,47 +145,6 @@ fn validate_glyph(glyph: &str) -> Result<()> {
         return Err(invalid("reaction glyph must have 1..=64 printable scalars"));
     }
     Ok(())
-}
-
-fn exact_map<'a>(
-    value: &'a Value,
-    required: &[&str],
-    optional: &[&str],
-) -> Result<Vec<(&'a str, &'a Value)>> {
-    let Value::Map(entries) = value else {
-        return Err(invalid("reaction value must be a map"));
-    };
-    let mut seen = Vec::with_capacity(entries.len());
-    for (key, value) in entries {
-        let key = key
-            .as_str()
-            .filter(|key| required.contains(key) || optional.contains(key))
-            .ok_or_else(|| invalid("reaction value key"))?;
-        if seen.iter().any(|(prior, _)| *prior == key) {
-            return Err(invalid("duplicate reaction value key"));
-        }
-        seen.push((key, value));
-    }
-    if required
-        .iter()
-        .any(|key| !seen.iter().any(|(seen, _)| seen == key))
-    {
-        return Err(invalid("missing reaction value key"));
-    }
-    Ok(seen)
-}
-
-fn find<'a>(entries: &[(&str, &'a Value)], key: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find(|(candidate, _)| *candidate == key)
-        .map(|(_, value)| *value)
-}
-
-fn string<'a>(entries: &[(&str, &'a Value)], key: &str) -> Result<&'a str> {
-    find(entries, key)
-        .and_then(Value::as_str)
-        .ok_or_else(|| invalid("reaction value string"))
 }
 
 fn evidence_entry<'a>(body: &'a ClaimBody, key: &str) -> Option<&'a Value> {

@@ -14,6 +14,7 @@ use crate::code_run::{CodeRunReplayRecord, ExecutorStorage};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::{Error, Vault};
 
 /// Steps in a page when the request names no limit.
@@ -50,11 +51,13 @@ pub(crate) fn checkpoint_projection(
     let vault = memory.vault();
     let run = EntityId::from_hex(input.run_ref.trim())
         .map_err(|_| MemoryError::bad_request("run_ref must be a 32-hex code-run id"))?;
-    let limit = match input.limit {
-        Some(0) => return Err(MemoryError::bad_request("limit must be positive")),
-        Some(limit) => limit.min(CHECKPOINT_READ_MAX_LIMIT),
-        None => CHECKPOINT_READ_DEFAULT_LIMIT,
-    };
+    let limit = page_limit_zero_refused(
+        input.limit,
+        CHECKPOINT_READ_DEFAULT_LIMIT,
+        CHECKPOINT_READ_MAX_LIMIT,
+    )
+    .map_err(|ZeroLimitRefused| MemoryError::bad_request("limit must be positive"))?
+    .rows;
     let Some((view, sources)) = project(vault, run, input.from_step, limit).map_err(engine)? else {
         return Ok(None);
     };

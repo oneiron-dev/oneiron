@@ -21,11 +21,11 @@ use crate::error::{Error, Result};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
+use crate::request_limits::{ZeroLimitRefused, page_limit_zero_refused};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
 use heed::RoTxn;
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 const PAGE_LIMIT: usize = 256;
@@ -33,53 +33,10 @@ const PAGE_LIMIT: usize = 256;
 #[doc(hidden)]
 pub use oneiron_verb_wire::conversation_dag::quote_strips::ReplyStripsRequest;
 
-/// How a strip's quote stands against its message now.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum QuoteStripStatus {
-    /// The message is still at the pinned version.
-    Live,
-    /// The message changed since the pin; the quoted span still reads the same.
-    Edited,
-    /// The span no longer maps, or this vault holds no pinned text for it.
-    Drifted,
-    /// The message has been erased; no text is shown.
-    Redacted,
-}
-
-/// One reply quoting a span of the group's message.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuoteReplyStrip {
-    /// The TURN the citing message is part of, or a native append's own.
-    pub reply_turn: String,
-    /// The MESSAGE that carries the quote (FIX 2028); absent for a native
-    /// append, which its TURN cites.
-    pub reply_message: Option<String>,
-    /// The anchor the strip resolves through: `<message>:<citation>` names a
-    /// document citation pin, `<message>#<body hash>` an atomic message's
-    /// immutable text by its BLAKE3 hash.
-    pub pin_ref: String,
-    /// The quoted text at the pinned version; `None` when redacted or not held.
-    pub excerpt: Option<String>,
-    pub status: QuoteStripStatus,
-}
-
-/// The strips quoting one MESSAGE, in chronological reply order.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QuoteReplyGroup {
-    pub message_ref: String,
-    pub strips: Vec<QuoteReplyStrip>,
-}
-
-/// Groups in order of their first strip on the page. A group may continue
-/// on the next page under the same `message_ref`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReplyStripsPage {
-    pub groups: Vec<QuoteReplyGroup>,
-    /// The last strip's citer, the next page's `after`; `None` means the
-    /// thread has no further strip.
-    pub next_after: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::conversation_dag::quote_strips::{
+    QuoteReplyGroup, QuoteReplyStrip, QuoteStripStatus, ReplyStripsPage,
+};
 
 /// One quote on the selected chain, before the reader's clamp.
 struct QuoteFact {
@@ -458,13 +415,12 @@ impl Memory<'_> {
             .as_deref()
             .map(EntityId::from_hex)
             .transpose()?;
+        let limit = page_limit_zero_refused(request.limit, PAGE_LIMIT, PAGE_LIMIT)
+            .map_err(|ZeroLimitRefused| {
+                MemoryError::bad_request_with("reply strip limit must be positive", &[])
+            })?
+            .rows;
         let requested = request.limit.unwrap_or(PAGE_LIMIT);
-        if requested == 0 {
-            return Err(MemoryError::bad_request_with(
-                "reply strip limit must be positive",
-                &[],
-            ));
-        }
         // A larger ask is served a page at a time through `next_after`; the
         // ask itself is counted against its row (rule 5).
         {
@@ -480,7 +436,6 @@ impl Memory<'_> {
             count.rows(requested);
             count.defer(store);
         }
-        let limit = requested.min(PAGE_LIMIT);
         if self.room_turn().is_some_and(|turn| turn.room != room) {
             return Err(MemoryError::bad_request_with(
                 "room differs from the bound room turn",

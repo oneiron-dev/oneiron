@@ -8,7 +8,7 @@
   "host_door_precheck": true,
   "host_door_lists": true,
   "scope": "Write",
-  "act_class": "unstated",
+  "act_class": "ownership_transfer",
   "admission": {
     "unrestricted_record_scope": true
   },

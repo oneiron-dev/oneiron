@@ -24,6 +24,7 @@ use crate::dreamer_runner::DreamerAttemptBinding;
 use crate::federation::{Scope, grant_scope, holds_system_agent_grant, steward_reach_in};
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::registry::ENTITY_TYPE_CLAIM;
+use crate::request_limits::page_limit_zero_as_one;
 use crate::{EntityId, Result, Vault};
 
 #[doc(hidden)]
@@ -40,53 +41,10 @@ pub struct StrengthObservationsPage {
     pub next: Option<String>,
 }
 
-/// Whether all observed sources still read at their observed revisions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ObservedClaimStatus {
-    Current,
-    Moved,
-    Withheld,
-}
-
-/// An observed claim whose own row reads for this caller.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ObservedClaim {
-    pub claim: String,
-    pub predicate: String,
-    pub last_activity_ms: u64,
-    pub status: ObservedClaimStatus,
-    /// The readable sources in id order, then one bare entry per withheld one.
-    pub sources: Vec<ObservedSource>,
-    /// The full source list exceeds an otherwise empty page's byte bound.
-    pub sources_omitted: bool,
-    pub signals: Option<ObservedSignals>,
-    pub pin: Option<String>,
-    /// For a current claim, the archive fence's reason token for this
-    /// caller at the page's clock, or `None` when the fence lets it through
-    /// now (RULING S69C4-FENCE-NOISE = B): the strength archive skips a
-    /// fenced claim, and Archive runs the same fence again in its item's
-    /// savepoint. `None` for a claim that is not current.
-    pub fence: Option<String>,
-}
-
-/// A source's coarse status; withheld sources disclose nothing else, and are
-/// served after every readable one so their place in the id order stays unread.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(tag = "status", rename_all = "snake_case")]
-pub enum ObservedSource {
-    Current { source: String },
-    Moved { source: String },
-    Withheld,
-}
-
-/// The native strength scorer's evidence inputs, without per-source detail.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ObservedSignals {
-    pub source_count: usize,
-    pub latest_learned_at_ms: u64,
-    pub distinct_diversity: usize,
-}
+#[doc(hidden)]
+pub use oneiron_records::snapshot_read::strength_observations::{
+    ObservedClaim, ObservedClaimStatus, ObservedSignals, ObservedSource,
+};
 
 /// Reads observations through the caller's live reach and scoped read.
 ///
@@ -134,11 +92,7 @@ fn observations_page(
         .embedded_owner("vault.consolidation.strength.observations.page")
         .ok();
     let bounds = vault.snapshot_read_settings()?;
-    let limit = input
-        .limit
-        .unwrap_or(bounds.page_rows)
-        .min(bounds.page_rows)
-        .max(1);
+    let limit = page_limit_zero_as_one(input.limit, bounds.page_rows, bounds.page_rows).rows;
     let after = observation_cursor_key(input.cursor.as_deref())?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let _pins = read.prepare_point_read::<MemoryError>()?;

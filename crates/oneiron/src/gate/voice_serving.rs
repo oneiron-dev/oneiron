@@ -8,15 +8,8 @@ use rmpv::Value;
 
 pub(crate) const KEY: &str = "voice_serving";
 const PRECEDENCE: &str = "nested_narrowing";
-const FIELDS: [&str; 7] = [
-    "max_text_bytes",
-    "max_ref_bytes",
-    "max_queued_renders",
-    "max_inflight_uploads",
-    "upload_read_deadline_ms",
-    "http_deadline_ms",
-    "max_header_bytes",
-];
+#[doc(hidden)]
+use oneiron_records::gate::voice_serving::FIELDS;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]

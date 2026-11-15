@@ -120,9 +120,8 @@ pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,
     WorkspaceRosterEntry, WorkspaceRosterRole,
 };
-// The bind-interval read; its first reader outside the tests is FIX row
-// SPEAKER-BYLINE-FOR-ORG's statement byline.
-#[cfg(oneiron_test_support)]
+// The bind-interval read: the room reads' statement byline (FIX row
+// SPEAKER-BYLINE-FOR-ORG) and its test door.
 pub(crate) use self::house_link::house_org_at_in_txn;
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
