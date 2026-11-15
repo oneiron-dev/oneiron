@@ -42,7 +42,6 @@ use crate::note::checkpoint::{join_core_row, split_core_row};
 use crate::note::decode_note_core_in_txn;
 use crate::registry::{ENTITY_TYPE_MODEL, ENTITY_TYPE_NOTE, entity_type_registry_entry};
 use crate::side_table::{SideCodec, SideKey, SideTable};
-use crate::store::ManifestDbs;
 use crate::store::checkpoint_payload::loro::{
     self as shared, LoroActorCodec, OpenedRow, SHALLOW, Split, SplitRow, SplitValue,
 };
@@ -50,6 +49,7 @@ use crate::store::checkpoint_payload::rows::{
     self, ActorPart, Captured, OpenedOwnerRows, OwnerRef, RoundTripPolicy, RowLocator, RowPart,
     TypedRow, Unresolved,
 };
+use crate::store::{ManifestDbs, Store};
 use crate::write_envelope::provenance::actor_substrate::decode_model_entity_body;
 
 /// The round trip a revision document takes (Engine R1): the same history,
@@ -663,6 +663,7 @@ pub(super) fn check_carrier(at: &RowLocator, value: &[u8]) -> Result<()> {
 /// A revision document rebuilt from its content and the actors that opened:
 /// each author that did not open stays erased.
 pub(super) fn join(
+    _: &Store,
     _: &RoTxn<'_>,
     at: &RowLocator,
     content: &[u8],

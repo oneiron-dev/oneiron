@@ -34,28 +34,51 @@ use super::super::{pending_index, phonetic};
 use super::{DOC, FRONTIER, IDENTITY, STATE};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::store::ManifestDbs;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join, Restore,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator,
+    self, Captured, OpenedOwnerRows, OwnerRef, Restored, RowLocator,
+};
+use crate::store::{ManifestDbs, Store};
+
+/// Every revision-ledger row by entity. The capture is the adapter's own: a
+/// revision document splits only by the bindings its state, frontiers and
+/// identities give, and an author carrier's rows go under its actor. So is
+/// the restore: a joined document's bindings are checked around the parts.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedByAdapter(STATE),
+        &CapturedByAdapter(DOC),
+        &CapturedByAdapter(FRONTIER),
+        &CapturedByAdapter(IDENTITY),
+        &CapturedByAdapter(REFILL),
+        pending_index::checkpoint::TABLE,
+        phonetic::checkpoint::TABLE,
+    ],
+    capture: Capture::Own(capture),
+    check: Check::Own(check),
+    row_owner: None,
+    join: Join::Row(document::join),
+    restore: Restore::Own(restore),
 };
 
 /// Every revision-ledger row in `txn`, by entity.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    let states = rows::typed_rows(dbs, txn, STATE, &mut out)?;
-    let docs = rows::typed_rows(dbs, txn, DOC, &mut out)?;
-    let frontiers = rows::typed_rows(dbs, txn, FRONTIER, &mut out)?;
-    let identities = rows::typed_rows(dbs, txn, IDENTITY, &mut out)?;
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
+    let states = rows::typed_rows(store, txn, STATE, out)?;
+    let docs = rows::typed_rows(store, txn, DOC, out)?;
+    let frontiers = rows::typed_rows(store, txn, FRONTIER, out)?;
+    let identities = rows::typed_rows(store, txn, IDENTITY, out)?;
     let bindings = document::Bindings::index(&docs, &states, &frontiers, &identities);
-    bindings.check_native_without_doc(dbs, txn)?;
+    bindings.check_native_without_doc(store, txn)?;
     let mut carriers = BTreeMap::new();
     for row in states {
         let owner = OwnerRef::entity(&row.key);
-        match carrier_actor(dbs, txn, &row.key)? {
+        match carrier_actor(store, txn, &row.key)? {
             Some(actor) => {
                 carriers.insert(row.key, actor);
                 let table = STATE.decl().prefix;
-                rows::actor_keyed(&mut out, owner, actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, actor, &row.at, table, &row.bytes)?;
             }
             None => out.exact(owner, row.at, row.bytes),
         }
@@ -65,9 +88,9 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
             Some(actor) => {
                 let owner = OwnerRef::entity(&row.key);
                 let table = DOC.decl().prefix;
-                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
             }
-            None => document::capture(dbs, txn, &mut out, &bindings, row)?,
+            None => document::capture(store, txn, out, &bindings, row)?,
         }
     }
     for row in frontiers {
@@ -75,7 +98,7 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         match carriers.get(&row.key.0) {
             Some(actor) => {
                 let table = FRONTIER.decl().prefix;
-                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
             }
             None => out.exact(owner, row.at, row.bytes),
         }
@@ -87,17 +110,16 @@ pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Capture
         match carriers.get(&row.value) {
             Some(actor) => {
                 let table = IDENTITY.decl().prefix;
-                rows::actor_keyed(&mut out, owner, *actor, &row.at, table, &row.bytes)?;
+                rows::actor_keyed(out, owner, *actor, &row.at, table, &row.bytes)?;
             }
             None => out.exact(owner, row.at, row.bytes),
         }
     }
-    for row in rows::typed_rows(dbs, txn, REFILL, &mut out)? {
+    for row in rows::typed_rows(store, txn, REFILL, out)? {
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
-    pending_index::checkpoint::capture(dbs, txn, &mut out)?;
-    phonetic::checkpoint::capture(dbs, txn, &mut out)?;
-    Ok(out)
+    pending_index::checkpoint::capture(store, txn, out)?;
+    phonetic::checkpoint::capture(store, txn, out)
 }
 
 /// The actor `id`'s entity row attributes, when it is an author carrier.
@@ -110,25 +132,6 @@ fn carrier_actor(
     Ok(row
         .as_deref()
         .and_then(crate::identity_topology::author_carrier_actor))
-}
-
-fn owns(at: &RowLocator) -> bool {
-    [
-        STATE.decl(),
-        DOC.decl(),
-        FRONTIER.decl(),
-        IDENTITY.decl(),
-        REFILL.decl(),
-    ]
-    .into_iter()
-    .any(|decl| at.in_table(decl))
-        || pending_index::checkpoint::owns(at)
-        || phonetic::checkpoint::owns(at)
-}
-
-/// The bundle framing of `rows`' revision-ledger parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
 }
 
 fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
@@ -160,15 +163,11 @@ fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
 /// joined document's bindings are checked whole: their collisions before any row is written,
 /// and what was written once every row is in, before this returns, so no
 /// later row of this getter writes one of them again.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    let staged = document::preflight(dbs, txn, &opened)?;
-    let restored = rows::restore_parts(dbs, txn, &opened, check, document::join)?;
+fn restore(store: &Store, txn: &mut RwTxn<'_>, opened: OpenedOwnerRows) -> Result<Restored> {
+    let staged = document::preflight(store, txn, &opened)?;
+    let restored = ADAPTER.restore_parts(store, txn, &opened)?;
     if let Some(staged) = staged {
-        document::finish_restore_in_txn(dbs, txn, &staged)?;
+        document::finish_restore_in_txn(store, txn, &staged)?;
     }
     Ok(restored)
 }
