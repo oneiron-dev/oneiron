@@ -162,6 +162,14 @@ pub(crate) async fn asked(
         ));
     };
     let run_id = format!("ask_image:{}:{}", pulled.asset_ref, vault.now_recorded_at());
+    // A caller verified in an off-record session that keeps no model-call
+    // record names no rows on its runs, the text answer's and a Box or
+    // Point's alike, so no run receipt names the asset's worlds (census
+    // L5-25; Astra unbuilt-bp1b-p02 T3 and its delta).
+    let off_record = vault.model_call_keeps_no_record_for(
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(auth),
+    );
     let run = || {
         let settings = server.ai.chat_settings();
         let meter = vault
@@ -179,7 +187,8 @@ pub(crate) async fn asked(
                     error.to_string(),
                 )
             })?;
-        Ok::<_, Response>(server.ai.undeclared_run(run_id.clone(), meter))
+        let run = server.ai.undeclared_run(run_id.clone(), meter);
+        Ok::<_, Response>(if off_record { run.off_record() } else { run })
     };
     if let Some(contract) = located {
         let run = run()?;
@@ -248,17 +257,10 @@ pub(crate) async fn asked(
     let model = admitted.request.model.clone();
     let locality = admitted.request.envelope.locality;
     // The call reads the pulled ASSET's pixels and the caller's own question:
-    // the asset is the one row its input was read from (FIX 6935). A call in
-    // an anonymous off-record session names no rows, so its run receipts name
-    // none of their worlds (census L5-25; Astra unbuilt-bp1b-p02 T3).
-    let anonymous = crate::api::call_receipt::session_is_anonymous_for(
-        server,
-        auth.off_record_session(),
-        crate::api::call_receipt::request_principal(auth),
-    );
+    // the asset is the one row its input was read from (FIX 6935). An
+    // off-record run stays unsourced.
     let read = EntityId::from_hex(&pulled.asset_ref)
         .ok()
-        .filter(|_| !anonymous)
         .map(|asset| vec![asset]);
     let run = run()?.sourced(read);
     let response = admitted

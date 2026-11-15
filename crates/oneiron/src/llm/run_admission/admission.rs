@@ -65,6 +65,10 @@ pub struct RunAdmission {
     /// assembled from, as the host code that assembled it named them
     /// ([`Self::sourced`], FIX 5760); `None`, unknown, on the run itself.
     sources: Option<Vec<crate::EntityId>>,
+    /// The calls admitted through this handle serve a caller whose session
+    /// keeps no record ([`Self::off_record`]): they name no source rows, and
+    /// a later [`Self::sourced`] names none either.
+    off_record: bool,
     /// Who acted to start the calls admitted through this handle
     /// ([`Self::initiated_by`], FIX 8970); `None` on the run itself.
     initiator: Option<crate::EntityId>,
@@ -97,10 +101,13 @@ pub(super) struct RunInner {
     model_call_index: AtomicU64,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
-    /// The open paid-connector permits' leases, each with the revision it
-    /// was admitted under and the worlds its receipts name. A model permit's
-    /// lease is in `calls`. A meter other runs share issues their leases
-    /// too, so the meter alone cannot tell a permit's run.
+    /// The paid-connector permits' leases this run admitted, open or
+    /// settled, each with the revision it was admitted under and the worlds
+    /// its receipts name. A model permit's lease is in `calls`. A meter other
+    /// runs share issues their leases too, so the meter alone cannot tell a
+    /// permit's run. A settled permit stays, as the meter keeps its lease's
+    /// record: a later refusal of its lease names the call's worlds (census
+    /// L5-25), and the meter refuses it as closed.
     paid: Mutex<BTreeMap<String, PaidFacts>>,
 }
 
@@ -283,6 +290,7 @@ impl RunAdmission {
                 paid: Mutex::new(BTreeMap::new()),
             }),
             sources: None,
+            off_record: false,
             initiator: None,
             submit_key: None,
             work_context: None,
@@ -333,11 +341,28 @@ impl RunAdmission {
     /// from `rows` (FIX 5760): every permit admitted through the handle, to
     /// a model or a paid connector, carries them in its facts and on its
     /// `Admitted` receipt. `None` is unknown, as on the run itself. The run,
-    /// its line, its permits and its receipts are the same run's.
+    /// its line, its permits and its receipts are the same run's. A handle
+    /// kept [`Self::off_record`] stays unsourced.
     #[must_use]
     pub fn sourced(&self, rows: Option<Vec<crate::EntityId>>) -> Self {
         Self {
-            sources: rows,
+            sources: rows.filter(|_| !self.off_record),
+            ..self.clone()
+        }
+    }
+
+    /// This run, for calls that serve a caller whose off-record session keeps
+    /// no record (census L5-25; the rule `Vault::model_call_keeps_no_record_for`
+    /// applies to model-call rows): every permit admitted through the handle
+    /// names no source rows, so no receipt of its calls names those rows or
+    /// their worlds, and the sink is never asked for them. Every handle made
+    /// from this one, through [`Self::sourced`] too, stays unsourced. The
+    /// run's line, permits and other receipt fields are unchanged.
+    #[must_use]
+    pub fn off_record(&self) -> Self {
+        Self {
+            sources: None,
+            off_record: true,
             ..self.clone()
         }
     }
@@ -726,7 +751,7 @@ impl RunInner {
         let started = if ours {
             self.guard.begin_dispatch(lease, call)
         } else if self.guard.lease_open(lease) == Some(false) {
-            // A settled permit, which its run no longer holds.
+            // A closed lease of this run's meter that no call here holds.
             Err(DispatchRefused::Closed)
         } else {
             // Another run's permit, on a meter the two share.

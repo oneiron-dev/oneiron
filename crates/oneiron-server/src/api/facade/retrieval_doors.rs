@@ -389,6 +389,13 @@ pub(crate) async fn vault_retrieval_recall(
         Ok(caller) => caller,
         Err(error) => return (Err(error), Vec::new()),
     };
+    // An owner verified in an off-record session that keeps no model-call
+    // record names no rows on its reranker's runs (census L5-25; Astra
+    // unbuilt-bp1b-p02 delta).
+    let off_record = server.vault().model_call_keeps_no_record_for(
+        auth.off_record_session(),
+        crate::api::call_receipt::request_principal(auth),
+    );
     server
         .recall_home_listing(
             actor,
@@ -398,6 +405,7 @@ pub(crate) async fn vault_retrieval_recall(
             None,
             input,
             oneiron::memory::HomeRecallCaller::owner(),
+            off_record,
         )
         .await
 }

@@ -90,17 +90,22 @@ pub(super) struct ServedRerank {
     /// lease holds no reservation.
     lease: BudgetLease,
     runtime: tokio::runtime::Handle,
+    /// The recall serves a caller whose off-record session keeps no
+    /// model-call record: each call's run names no rows (census L5-25).
+    off_record: bool,
 }
 
 impl SyncServer {
     /// The reranker a recall door at `effort` brings for `actor`. Refused when
     /// `[models]` routes a reranker none of whose rungs can serve, or when
-    /// the recall's line admits nothing.
+    /// the recall's line admits nothing. An `off_record` reranker's runs
+    /// name no rows.
     pub(super) fn door_rerank(
         &self,
         effort: Effort,
         actor: EntityId,
         class: EdgeActorClass,
+        off_record: bool,
     ) -> MemoryResult<DoorRerank> {
         if !effort.requires_rerank() {
             return Ok(DoorRerank::Unpaid);
@@ -162,6 +167,7 @@ impl SyncServer {
             reserve_units,
             lease,
             runtime,
+            off_record,
         }))
     }
 }
@@ -193,8 +199,13 @@ impl RecallRerankHost for ServedRerank {
         let run = self
             .ai
             .undeclared_run(self.run_id.clone(), self.meter.clone())
-            .for_memory_work()
-            .sourced(sent_rows(documents));
+            .for_memory_work();
+        let run = if self.off_record {
+            run.off_record()
+        } else {
+            run
+        };
+        let run = run.sourced(sent_rows(documents));
         let run = run.with_work_context({
             let mut context = run.work_context();
             context.class = WorkClass::Background;

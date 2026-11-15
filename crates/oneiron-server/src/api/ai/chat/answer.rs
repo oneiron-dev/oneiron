@@ -168,6 +168,14 @@ pub(crate) fn begin_sourced_answer_with_fallback(
                     class: WorkClass::Foreground,
                     ..Default::default()
                 });
+            // A turn that keeps no model-call record names no rows on its
+            // runs either, so no run receipt names their worlds (census
+            // L5-25; Astra unbuilt-bp1b-p02 delta).
+            let run = if model_call_no_record_at_arrival {
+                run.off_record()
+            } else {
+                run
+            };
             compaction::open_stream(
                 &run.sourced(sources),
                 &run.sourced(today_sources),

@@ -120,8 +120,6 @@ impl RunInner {
         stream: Option<RunStreamUsage>,
         provided: Vec<InferenceCallReceipt>,
     ) -> Result<BudgetSettlement, RunDenied> {
-        // A settled permit never starts, so its run stops holding it.
-        self.lock_paid().remove(permit.lease.id());
         let charge = outcome.charge(&permit.native, permit.unit_cost, permit.reserve_native);
         let line_unit = &permit.facts.unit;
         let line_units = charge.usage_in(line_unit, &permit.rates, permit.facts.reserved_units);

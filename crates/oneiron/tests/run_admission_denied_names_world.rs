@@ -4,7 +4,10 @@
 //! (#world-privacy-models-built); that row names the world the held call
 //! named, through `RunAdmission::refuse_in_world`, as the ladder's hold
 //! refuses. A dispatch the run refuses after admission names the world its
-//! permit was admitted in, joined by the permit's lease.
+//! permit was admitted in, joined by the permit's lease. A paid connector's
+//! permit keeps that join once it settled: a later refusal of its lease
+//! names the worlds its `Admitted` row named (Astra unbuilt-bp1b-p02 delta,
+//! Finding 2).
 //!
 //! The hold's judge stays content-free: the row names the call's own world,
 //! never which world kept a call that named none on the device.
@@ -18,8 +21,8 @@ use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 use oneiron::llm::run_admission::{
-    BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferBinding, OfferRoute, Payer,
-    RunAdmission, RunCall, RunDeclaration, RunDenied, RunEvent,
+    BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferBinding, OfferRoute, PaidConnector,
+    Payer, RunAdmission, RunCall, RunDeclaration, RunDenied, RunEvent, RunReceipt, RunReceiptSink,
 };
 use oneiron::llm::{self, DispatchRefused, SingleRouteBackend};
 use oneiron::{
@@ -301,6 +304,102 @@ fn a_foreign_lease_refusal_names_no_world() -> TestResult {
         refused[0].get("source_worlds"),
         None,
         "a foreign lease's refusal names no source worlds: {}",
+        refused[0],
+    );
+    Ok(())
+}
+
+/// A host sink that reads every named source row as in `worlds`, its rows
+/// kept in order.
+struct WorldsReceipts {
+    worlds: Vec<EntityId>,
+    rows: MemoryReceipts,
+}
+
+impl RunReceiptSink for WorldsReceipts {
+    fn record(&self, receipt: RunReceipt) {
+        self.rows.record(receipt);
+    }
+
+    fn source_worlds(&self, rows: &[EntityId]) -> Option<Vec<EntityId>> {
+        (!rows.is_empty()).then(|| self.worlds.clone())
+    }
+}
+
+fn paid_connector() -> TestResult<PaidConnector> {
+    Ok(PaidConnector {
+        connector: "fixture-search".to_owned(),
+        route: OfferRoute::new("fixture-search", "https://search.test:443")?,
+        locality: llm::ModelLocality::OwnServer,
+        payer: Payer::CustomerKey,
+        credential_binding: Some("customer-key-1".to_owned()),
+        catalog_revision: None,
+        custody: KeyCustody::T0,
+        unit_cost: 1,
+        cost_unit: LeaseUnit::tokens(),
+        rates: Vec::new(),
+    })
+}
+
+#[test]
+fn a_settled_paid_permit_refusal_names_its_worlds() -> TestResult {
+    let harbor = EntityId::now();
+    let receipts = Arc::new(WorldsReceipts {
+        worlds: vec![harbor],
+        rows: MemoryReceipts::default(),
+    });
+    let run = RunAdmission::new(
+        format!("denied-world:{}", EntityId::now().to_hex()),
+        RunDeclaration::undeclared(BudgetLine {
+            limit_units: 10_000,
+            reserve_units: CALL_RESERVE,
+            unit: LeaseUnit::tokens(),
+        }),
+        None,
+        receipts.clone(),
+    )
+    .sourced(Some(vec![EntityId::now()]));
+    let connector = paid_connector()?;
+    let permit = run
+        .admit_paid(&connector, 10)
+        .map_err(|denied| format!("paid call refused at admission: {denied:?}"))?;
+    let lease = permit.lease().clone();
+    // The permit settles unstarted, and its lease is closed from then on.
+    drop(permit);
+    assert_eq!(
+        run.dispatch_paid(&lease, &connector),
+        Err(RunDenied::Dispatch {
+            refused: DispatchRefused::Closed
+        }),
+        "a settled permit's lease never starts",
+    );
+
+    let expected = serde_json::to_value(vec![harbor])?;
+    let mut admitted = Vec::new();
+    let mut refused = Vec::new();
+    for row in receipts.rows.rows() {
+        match &row.event {
+            RunEvent::Admitted(_) => admitted.push(serde_json::to_value(&row)?),
+            RunEvent::Denied { lease: Some(_), .. } => refused.push(serde_json::to_value(&row)?),
+            _ => {}
+        }
+    }
+    assert_eq!(admitted.len(), 1, "{admitted:?}");
+    assert_eq!(
+        admitted[0].get("source_worlds"),
+        Some(&expected),
+        "the paid call's Admitted receipt names its rows' worlds: {}",
+        admitted[0],
+    );
+    assert_eq!(
+        refused.len(),
+        1,
+        "one lease-keyed Denied receipt: {refused:?}"
+    );
+    assert_eq!(
+        refused[0].get("source_worlds"),
+        Some(&expected),
+        "the settled permit's refusal names the worlds its Admitted row named: {}",
         refused[0],
     );
     Ok(())

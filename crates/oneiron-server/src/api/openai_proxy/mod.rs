@@ -165,6 +165,15 @@ async fn complete_as(
     let mut request = model_request(server, &chat)?;
     let (ladder, run) =
         super::llm::admit_proxied(server, &mut request).map_err(|refused| *refused)?;
+    // A caller verified in an off-record session that keeps no model-call
+    // record names no rows on its runs: neither the answer's nor its
+    // recall's reranker's receipts name the recalled rows' worlds (census
+    // L5-25; Astra unbuilt-bp1b-p02 delta).
+    let off_record = server.vault().model_call_keeps_no_record_for(
+        actor.off_record_session.as_deref(),
+        super::call_receipt::mcp_session_principal(actor.auth.as_ref(), actor.actor_ref),
+    );
+    let run = if off_record { run.off_record() } else { run };
     // The recalled rows go to the model and its answer back to the caller:
     // they are read for both, on this device only when both are.
     let reads_for =
@@ -174,7 +183,16 @@ async fn complete_as(
     let recalled = if admission.recall_asks {
         None
     } else {
-        recall(server, &actor, &reads_for, query.clone(), clock, listed).await?
+        recall(
+            server,
+            &actor,
+            &reads_for,
+            query.clone(),
+            clock,
+            off_record,
+            listed,
+        )
+        .await?
     };
     let injected = recalled.is_some();
     // The pack's rows plus the rows it is derived from without naming them,
@@ -408,12 +426,14 @@ fn model_request(
 /// The connector's recall for `query`, read for `reads_for`, as one
 /// user-role data block; `None` when nothing came back. Lists in `served`
 /// the pack's rows plus the rows it is derived from without naming them.
+/// An `off_record` recall's reranker names no rows on its runs.
 async fn recall(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
     reads_for: &ReadDestination,
     query: String,
     clock: choices::CallerClock,
+    off_record: bool,
     served: &mut Vec<EntityId>,
 ) -> Result<Option<LlmMessage>, Response> {
     let proof = actor
@@ -452,6 +472,7 @@ async fn recall(
             None,
             input,
             home,
+            off_record,
         )
         .await;
     served.extend(listed.iter().copied());
