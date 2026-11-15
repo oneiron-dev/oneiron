@@ -384,7 +384,8 @@ fn answer_in_txn(
         OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
     }
-    if ended || super::offer_activity::room_offer_expired(&stored.card, now) {
+    let idle = super::offer_activity::room_offer_idle_secs_in_txn(vault, txn)?;
+    if ended || super::offer_activity::room_offer_expired(&stored.card, now, idle) {
         stored.card.state = OfferState::AgedOut;
         OFFERS.put(&vault.store, txn, &request.offer_id, &stored)?;
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));

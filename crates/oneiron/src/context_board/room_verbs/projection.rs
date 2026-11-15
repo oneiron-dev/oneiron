@@ -168,6 +168,11 @@ impl Memory<'_> {
             claims: rules.claims,
             pins,
             offers: self.rooms_open_offers(room)?,
+            offer_idle_secs: {
+                let vault = self.vault();
+                let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+                crate::workspace_roster::room_offer_idle_secs_in_txn(vault, &txn)?
+            },
             receipt: rules.receipt,
             host: None,
             speaking: self.room_speaking_claims(room)?,

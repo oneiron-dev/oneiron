@@ -364,7 +364,8 @@ fn mint_in_txn(
         }
         // A replay renews nothing: a room-wide card past its time reads as
         // aged out.
-        if super::offer_activity::room_offer_expired(&stored.card, now) {
+        let idle = super::offer_activity::room_offer_idle_secs_in_txn(vault, txn)?;
+        if super::offer_activity::room_offer_expired(&stored.card, now, idle) {
             stored.card.state = OfferState::AgedOut;
         }
         return Ok(Step::Done(Settled::replayed(vault, txn, stored)?));
@@ -594,6 +595,7 @@ impl Memory<'_> {
                 .ok_or(Error::CorruptedIndex("current offer has no card"))?;
             current.push((key, stored.into_card()));
         }
+        let idle = super::offer_activity::room_offer_idle_secs_in_txn(vault, &txn)?;
         drop(txn);
         let mut rows = Vec::new();
         let mut last = None;
@@ -622,7 +624,7 @@ impl Memory<'_> {
         let now = vault.store.clock.now_recorded_at();
         for card in &mut rows {
             if matches!(card.state, OfferState::Open { .. })
-                && (super::offer_activity::room_offer_expired(card, now)
+                && (super::offer_activity::room_offer_expired(card, now, idle)
                     || card.branch.is_some_and(|branch| ended.contains(&branch)))
             {
                 card.state = OfferState::AgedOut;
@@ -642,6 +644,7 @@ impl Memory<'_> {
         let vault = self.vault();
         let txn = vault.store.env.read_txn().map_err(Error::from)?;
         let now = vault.store.clock.now_recorded_at();
+        let idle = super::offer_activity::room_offer_idle_secs_in_txn(vault, &txn)?;
         let prefix = room_wide_prefix(room);
         let mut cards = Vec::new();
         for row in OFFER_CURRENT.iter_from(&vault.store, &txn, prefix.as_bytes())? {
@@ -651,7 +654,7 @@ impl Memory<'_> {
                 .ok_or(Error::CorruptedIndex("current offer has no card"))?
                 .into_card();
             if matches!(card.state, OfferState::Open { .. })
-                && !super::offer_activity::room_offer_expired(&card, now)
+                && !super::offer_activity::room_offer_expired(&card, now, idle)
             {
                 cards.push(card);
             }
