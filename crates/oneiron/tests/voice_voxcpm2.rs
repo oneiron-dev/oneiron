@@ -5,16 +5,23 @@
 )]
 use oneiron::error::Result;
 use oneiron::interlocutor::InterlocutorResolutionInput;
+use oneiron::llm::ModelLocality;
+#[cfg(feature = "sync")]
 use oneiron::llm::media::{AiOperation, MediaCaps};
+#[cfg(feature = "sync")]
 use oneiron::llm::run_admission::{
     BudgetLine, KeyCustody, LeaseUnit, MemoryReceipts, OfferBinding, OfferRoute, Payer,
     RunAdmission, RunDeclaration, WireSeat, offer_id, offer_place,
 };
+#[cfg(feature = "sync")]
 use oneiron::llm::{
-    CallClass, CallEnvelope, CallPurpose, ModelId, ModelLocality, ModelTierRef, ResponseFormat,
-    TierPrecedence,
+    CallClass, CallEnvelope, CallPurpose, ModelId, ModelTierRef, ResponseFormat, TierPrecedence,
 };
 use oneiron::speculative::SpeculativeSessionConfig;
+#[cfg(feature = "sync")]
+use oneiron::voice_cascade::GenerationEpoch;
+#[cfg(feature = "sync")]
+use oneiron::voice_cascade::our_voice::{OurVoiceQueue, VoxCpm2Event};
 use oneiron::voice_identity::ref_bank::{VoiceRefSubjectKind, VoiceRenderDecision};
 use oneiron::voice_identity::{VoiceConsentBasis, VoiceConsentState};
 use oneiron::{
@@ -24,18 +31,26 @@ use oneiron::{
         TtsSeamClient, VoiceCascadeSession, VoiceSessionConfig,
         voxcpm2::{
             MODEL, RenderTarget, VoiceServingLimits, VoxCpm2Adapter, VoxCpm2Audio, VoxCpm2PcmBody,
-            VoxCpm2Queue, VoxCpm2Work, WarmTarget, http::VoxCpm2HttpQueue,
+            VoxCpm2Queue, VoxCpm2Work, WarmTarget,
         },
     },
     voice_identity::ref_bank::{VoiceRefFence, VoiceRefOrigin, VoiceRefPack, VoiceRegisterClip},
 };
-use std::{
-    io::{BufRead, BufReader, Read, Write},
-    net::TcpListener,
-    sync::{Arc, mpsc},
-    thread,
-    time::{Duration, Instant},
-};
+#[cfg(feature = "sync")]
+use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+#[cfg(feature = "sync")]
+use std::sync::mpsc;
+#[cfg(feature = "sync")]
+use std::thread;
+#[cfg(feature = "sync")]
+use std::time::{Duration, Instant};
+#[cfg(feature = "sync")]
+use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+#[cfg(feature = "sync")]
+use tokio_tungstenite::tungstenite::http::StatusCode;
+#[cfg(feature = "sync")]
+use tokio_tungstenite::tungstenite::{Message, WebSocket, accept_hdr};
 
 struct EmptyEnricher;
 impl PartialEnricher for EmptyEnricher {
@@ -235,6 +250,8 @@ fn grant_render(vault: &Vault, voice_id: &str, owner: EntityId, event_id: &str) 
 
 /// The host's rung for the worker: each render is one `ai.speech` call on
 /// it (FIX 8314), admitted under one run with room for every render here.
+/// Only the socket tests seat a run, so the helper is sync-gated with them.
+#[cfg(feature = "sync")]
 fn worker_seat() -> WireSeat {
     let model = ModelId::new(format!("local/{MODEL}@pinned-revision")).expect("worker model id");
     let route = OfferRoute::new("voxcpm2-worker", "loopback").expect("worker route");
@@ -279,162 +296,520 @@ fn worker_seat() -> WireSeat {
     )
 }
 
-/// Tiny wire peer: proves the production queue really posts banked bytes to
-/// an already-ready process and rejects a different target in its response.
-#[test]
-fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
-    let dir = tempfile::tempdir()?;
-    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
-    let owner = EntityId::now();
-    grant_render(&vault, "owner-voice", owner, "owner-grant")?;
-    vault.store_voice_ref_pack(&VoiceRefPack {
-        version: 1,
-        id: "owner-ref".into(),
-        voice_id: "owner-voice".into(),
-        owner,
-        origin: VoiceRefOrigin::Captured {
-            consent_event_ref: "owner-grant".into(),
-        },
-        clips: vec![VoiceRegisterClip {
-            register: "neutral".into(),
-            media_type: "audio/wav".into(),
-            audio: b"RIFF0000WAVEfmt ".to_vec(),
-            transcript: "banked sample".into(),
-        }],
-    })?;
-    let mut cascade = VoiceCascadeSession::new(
-        Arc::clone(&vault),
-        VoiceSessionConfig::new(
-            "test-session",
-            InterlocutorResolutionInput {
-                owner_session: true,
-                parties: vec![],
-                voice_session_ref: None,
+/// One banked owner voice plus its cascade and ASR generation: every
+/// socket test's setup.
+#[cfg(feature = "sync")]
+struct VoiceFixture {
+    _dir: tempfile::TempDir,
+    vault: Arc<Vault>,
+    cascade: VoiceCascadeSession,
+    generation: GenerationEpoch,
+    owner: EntityId,
+    limits: VoiceServingLimits,
+}
+
+#[cfg(feature = "sync")]
+impl VoiceFixture {
+    fn banked() -> Result<Self> {
+        let dir = tempfile::tempdir()?;
+        let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
+        let owner = EntityId::now();
+        grant_render(&vault, "owner-voice", owner, "owner-grant")?;
+        vault.store_voice_ref_pack(&VoiceRefPack {
+            version: 1,
+            id: "owner-ref".into(),
+            voice_id: "owner-voice".into(),
+            owner,
+            origin: VoiceRefOrigin::Captured {
+                consent_event_ref: "owner-grant".into(),
             },
-        ),
-    )?;
-    let utterance = cascade.open_utterance("turn", SpeculativeSessionConfig::default())?;
-    let AsrUpdate::Final(brain) = cascade.handle_asr(
-        &utterance,
-        1,
-        AsrEvent {
-            kind: AsrEventKind::Final,
-            text: "hello".into(),
-            tokens: vec![],
-            provider_latency_ms: None,
-            endpoint_delay_ms: None,
-            error: None,
-        },
-        false,
-        &mut EmptyEnricher,
-    )?
-    else {
-        panic!("final ASR")
-    };
-    let limits = vault.voice_serving_limits(None)?;
+            clips: vec![VoiceRegisterClip {
+                register: "neutral".into(),
+                media_type: "audio/wav".into(),
+                audio: b"RIFF0000WAVEfmt ".to_vec(),
+                transcript: "banked sample".into(),
+            }],
+        })?;
+        let mut cascade = VoiceCascadeSession::new(
+            Arc::clone(&vault),
+            VoiceSessionConfig::new(
+                "test-session",
+                InterlocutorResolutionInput {
+                    owner_session: true,
+                    parties: vec![],
+                    voice_session_ref: None,
+                },
+            ),
+        )?;
+        let utterance = cascade.open_utterance("turn", SpeculativeSessionConfig::default())?;
+        let AsrUpdate::Final(brain) = cascade.handle_asr(
+            &utterance,
+            1,
+            AsrEvent {
+                kind: AsrEventKind::Final,
+                text: "hello".into(),
+                tokens: vec![],
+                provider_latency_ms: None,
+                endpoint_delay_ms: None,
+                error: None,
+            },
+            false,
+            &mut EmptyEnricher,
+        )?
+        else {
+            panic!("final ASR")
+        };
+        let limits = vault.voice_serving_limits(None)?;
+        Ok(Self {
+            _dir: dir,
+            vault,
+            cascade,
+            generation: brain.generation,
+            owner,
+            limits,
+        })
+    }
+}
+
+/// A loopback listener plus the base URL that dials it.
+#[cfg(feature = "sync")]
+fn loopback_listener() -> Result<(TcpListener, String)> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let endpoint = format!("http://{}/", listener.local_addr()?);
-    let (done, ready) = mpsc::channel();
-    let server = thread::spawn(move || {
-        for index in 0..2 {
-            let (stream, _) = listener.accept().unwrap();
-            stream
-                .set_read_timeout(Some(Duration::from_secs(3)))
-                .unwrap();
-            let mut reader = BufReader::new(stream);
-            let mut request_line = String::new();
-            reader.read_line(&mut request_line).unwrap();
-            let mut length = 0;
-            loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                if line == "\r\n" {
-                    break;
-                }
-                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length: ") {
-                    length = value.trim().parse::<usize>().unwrap();
-                }
-            }
-            let response = if index == 0 {
-                assert!(request_line.starts_with("GET /ready "));
-                serde_json::to_vec(&serde_json::json!({"model": MODEL,
-                    "checkpoint": "pinned-revision", "boot_id": "warm-worker", "sample_rate": 48000,
-                    "limits": limits}))
-                .unwrap()
-            } else {
-                assert!(request_line.starts_with("POST /render "));
-                let mut body = vec![0; length];
-                reader.read_exact(&mut body).unwrap();
-                let n = u32::from_be_bytes(body[..4].try_into().unwrap()) as usize;
-                let meta: serde_json::Value = serde_json::from_slice(&body[4..4 + n]).unwrap();
-                assert_eq!(meta["text"], "render this");
-                assert_eq!(meta["transcript"], "banked sample");
-                assert_eq!(meta["target"]["voice_id"], "owner-voice");
-                assert_eq!(meta["target"]["owner"], owner.to_hex());
-                assert_eq!(&body[4 + n..], b"RIFF0000WAVEfmt ");
-                let header = serde_json::to_vec(&serde_json::json!({
-                    "target": meta["target"], "sample_rate": 48000, "channels": 1}))
-                .unwrap();
-                let mut output = (header.len() as u32).to_be_bytes().to_vec();
-                output.extend_from_slice(&header);
-                output.extend_from_slice(&[1, 0, 255, 255]);
-                done.send(()).unwrap();
-                output
-            };
-            let stream = reader.get_mut();
-            write!(
-                stream,
-                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                response.len()
-            )
-            .unwrap();
-            stream.write_all(&response).unwrap();
-        }
-    });
-    let queue = VoxCpm2HttpQueue::connect(
-        Arc::clone(&vault),
-        &endpoint,
-        &"t".repeat(32),
-        worker_seat(),
-    )?;
-    let mut tts = VoxCpm2Adapter::new(
-        Arc::clone(&vault),
+    Ok((listener, endpoint))
+}
+
+/// The adapter on a fresh queue to `endpoint`, under the test bearer.
+#[cfg(feature = "sync")]
+fn connect_adapter(vault: &Arc<Vault>, endpoint: &str) -> Result<VoxCpm2Adapter<OurVoiceQueue>> {
+    let queue =
+        OurVoiceQueue::connect(Arc::clone(vault), endpoint, &"t".repeat(32), worker_seat())?;
+    VoxCpm2Adapter::new(
+        Arc::clone(vault),
         "owner-voice",
         "neutral",
         WORKER_LOCALITY,
         queue,
-    )?;
-    let generation = brain.generation;
+    )
+}
+
+/// Accepts one loopback connection and upgrades it, answering 401 to any
+/// path but `/v1/voice` and any bearer but `expected_bearer`.
+#[cfg(feature = "sync")]
+fn accept_stub(listener: &TcpListener, expected_bearer: &str) -> WebSocket<TcpStream> {
+    let (stream, _) = listener.accept().expect("worker accept");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(3)))
+        .expect("stub timeouts");
+    stream
+        .set_write_timeout(Some(Duration::from_secs(3)))
+        .expect("stub timeouts");
+    accept_hdr(stream, |request: &Request, response: Response| {
+        assert_eq!(request.uri().path(), "/v1/voice");
+        let bearer = request
+            .headers()
+            .get("Authorization")
+            .and_then(|value| value.to_str().ok());
+        if bearer != Some(expected_bearer) {
+            let denied = Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Some("unauthorized".into()))
+                .expect("401 response");
+            return Err(denied);
+        }
+        Ok(response)
+    })
+    .expect("voice upgrade")
+}
+
+/// The worker's `ready`: today's `/ready` body plus `transcript_frame`.
+#[cfg(feature = "sync")]
+fn send_ready(ws: &mut WebSocket<TcpStream>, limits: &VoiceServingLimits) {
+    let ready = serde_json::json!({"type": "ready", "version": 1,
+        "target": {"model": MODEL, "checkpoint": "pinned-revision", "boot_id": "warm-worker",
+            "sample_rate": 48000, "limits": limits, "transcript_frame": true},
+        "capabilities": {"input": "full", "streaming": false, "alignment": "none",
+            "remote_cancel": "before_start", "max_text_bytes": limits.max_text_bytes}});
+    ws.send(Message::text(ready.to_string()))
+        .expect("ready frame");
+}
+
+/// One text frame's JSON.
+#[cfg(feature = "sync")]
+fn read_text_frame(ws: &mut WebSocket<TcpStream>) -> serde_json::Value {
+    match ws.read().expect("wire frame") {
+        Message::Text(text) => serde_json::from_str(text.as_str()).expect("frame JSON"),
+        other => panic!("expected a text frame, got {other:?}"),
+    }
+}
+
+/// One binary frame's bytes.
+#[cfg(feature = "sync")]
+fn read_binary_frame(ws: &mut WebSocket<TcpStream>) -> Vec<u8> {
+    match ws.read().expect("wire frame") {
+        Message::Binary(bytes) => bytes.to_vec(),
+        other => panic!("expected a binary frame, got {other:?}"),
+    }
+}
+
+/// Reads `start` plus its transcript and reference binaries, checking the
+/// banked identity; returns the generation and the received target.
+#[cfg(feature = "sync")]
+fn read_start(ws: &mut WebSocket<TcpStream>, owner_hex: &str) -> (u64, serde_json::Value) {
+    let mut start = read_text_frame(ws);
+    assert_eq!(start["type"], "start");
+    let generation = start["generation"].as_u64().expect("start generation");
+    assert_eq!(start["target"]["voice_id"], "owner-voice");
+    assert_eq!(start["target"]["owner"], owner_hex);
+    assert_eq!(
+        start["transcript_bytes"].as_u64(),
+        Some("banked sample".len() as u64)
+    );
+    assert_eq!(
+        start["reference_bytes"].as_u64(),
+        Some("RIFF0000WAVEfmt ".len() as u64)
+    );
+    let transcript = read_binary_frame(ws);
+    assert_eq!(transcript.as_slice(), b"banked sample");
+    let reference = read_binary_frame(ws);
+    assert_eq!(reference.as_slice(), b"RIFF0000WAVEfmt ");
+    let target = std::mem::take(&mut start["target"]);
+    (generation, target)
+}
+
+/// Answers `started`, echoing the received target.
+#[cfg(feature = "sync")]
+fn answer_started(ws: &mut WebSocket<TcpStream>, generation: u64, target: &serde_json::Value) {
+    let started = serde_json::json!({"type": "started", "generation": generation,
+        "target": target, "sample_rate": 48000, "channels": 1});
+    ws.send(Message::text(started.to_string()))
+        .expect("started frame");
+}
+
+/// Reads one `text` frame of `generation`; returns its text.
+#[cfg(feature = "sync")]
+fn read_text_command(ws: &mut WebSocket<TcpStream>, generation: u64) -> String {
+    let command = read_text_frame(ws);
+    assert_eq!(command["type"], "text");
+    assert_eq!(command["generation"].as_u64(), Some(generation));
+    command["text"].as_str().expect("text body").to_owned()
+}
+
+/// Answers one render: an `audio` header plus its bytes, then its `usage`.
+#[cfg(feature = "sync")]
+fn answer_audio_usage(
+    ws: &mut WebSocket<TcpStream>,
+    generation: u64,
+    chunk_index: u64,
+    pcm: &[u8],
+    text: &str,
+) {
+    let audio = serde_json::json!({"type": "audio", "generation": generation,
+        "chunk_index": chunk_index, "bytes": pcm.len() as u64});
+    ws.send(Message::text(audio.to_string()))
+        .expect("audio header");
+    ws.send(Message::from(pcm.to_vec())).expect("audio bytes");
+    let usage = serde_json::json!({"type": "usage", "generation": generation,
+        "characters": text.chars().count() as u64,
+        "audio_ms": pcm.len() as u64 / 2 * 1000 / 48000});
+    ws.send(Message::text(usage.to_string()))
+        .expect("usage frame");
+}
+
+/// Reads until the peer's close, EOF or the socket timeout; returns the
+/// text frames seen on the idle wire.
+#[cfg(feature = "sync")]
+fn drain_stub(ws: &mut WebSocket<TcpStream>) -> Vec<String> {
+    let mut seen = Vec::new();
+    loop {
+        match ws.read() {
+            Ok(Message::Text(text)) => seen.push(text.to_string()),
+            Ok(Message::Close(_)) => break,
+            Ok(_) => continue,
+            Err(_) => break,
+        }
+    }
+    seen
+}
+
+/// The queue's next event, waiting up to 3 s.
+#[cfg(feature = "sync")]
+fn next_event(queue: &OurVoiceQueue) -> VoxCpm2Event {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        if let Some(event) = queue.try_recv().expect("worker queue") {
+            return event;
+        }
+        assert!(Instant::now() < deadline, "worker reply timed out");
+        thread::yield_now();
+    }
+}
+
+/// Tiny wire peer: proves the production queue really sends the banked
+/// reference over the socket to an already-ready process and plays its PCM.
+#[cfg(feature = "sync")]
+#[test]
+fn loopback_worker_queue_roundtrips_a_banked_ref_and_pcm() -> Result<()> {
+    let fixture = VoiceFixture::banked()?;
+    let (listener, endpoint) = loopback_listener()?;
+    let token = "t".repeat(32);
+    let bearer = format!("Bearer {token}");
+    let (done, rendered) = mpsc::channel();
+    let owner_hex = fixture.owner.to_hex();
+    let limits = fixture.limits;
+    let server = thread::spawn(move || {
+        let mut ws = accept_stub(&listener, &bearer);
+        send_ready(&mut ws, &limits);
+        let (generation, target) = read_start(&mut ws, &owner_hex);
+        answer_started(&mut ws, generation, &target);
+        let text = read_text_command(&mut ws, generation);
+        assert_eq!(text, "render this");
+        answer_audio_usage(&mut ws, generation, 0, &[1, 0, 255, 255], &text);
+        done.send(()).expect("render signal");
+        let idle = drain_stub(&mut ws);
+        assert!(idle.is_empty(), "quiet wire after the reply: {idle:?}");
+    });
+    let mut tts = connect_adapter(&fixture.vault, &endpoint)?;
+    let generation = fixture.generation;
     tts.submit(TtsCommand::Start { generation })?;
     tts.submit(TtsCommand::Text {
         generation,
         text: "render this".into(),
     })?;
     tts.submit(TtsCommand::End { generation })?;
-    ready
+    rendered
         .recv_timeout(Duration::from_secs(3))
         .expect("wire render");
     server.join().expect("wire peer");
-    let deadline = Instant::now() + Duration::from_secs(3);
-    let event = loop {
-        if let Some(event) = tts.queue().try_recv()? {
-            break event;
-        }
-        assert!(Instant::now() < deadline, "worker reply timed out");
-        thread::yield_now();
-    };
+    let event = next_event(tts.queue());
     let mut pcm = tts.handle_pcm(event.audio().expect("valid worker audio"))?;
-    let (frame, target) = pcm.next_window(&cascade)?.expect("active PCM");
+    let (frame, target) = pcm.next_window(&fixture.cascade)?.expect("active PCM");
     assert_eq!(frame.samples, [1, -1]);
-    assert_eq!(target.fence.owner, owner);
+    assert_eq!(target.fence.owner, fixture.owner);
     assert_eq!(target.warm.model, MODEL);
     Ok(())
 }
 
+/// The generation fence: a stray generation's audio, bytes and done never
+/// reach the render's spool.
+#[cfg(feature = "sync")]
+#[test]
+fn our_voice_skips_frames_of_another_generation() -> Result<()> {
+    let fixture = VoiceFixture::banked()?;
+    let (listener, endpoint) = loopback_listener()?;
+    let token = "t".repeat(32);
+    let bearer = format!("Bearer {token}");
+    let (done, rendered) = mpsc::channel();
+    let owner_hex = fixture.owner.to_hex();
+    let limits = fixture.limits;
+    let server = thread::spawn(move || {
+        let mut ws = accept_stub(&listener, &bearer);
+        send_ready(&mut ws, &limits);
+        let (generation, target) = read_start(&mut ws, &owner_hex);
+        answer_started(&mut ws, generation, &target);
+        let text = read_text_command(&mut ws, generation);
+        assert_eq!(text, "render this");
+        let stray = serde_json::json!({"type": "audio", "generation": generation + 1,
+            "chunk_index": 0, "bytes": 4});
+        ws.send(Message::text(stray.to_string()))
+            .expect("stray audio");
+        ws.send(Message::from(vec![9, 9, 9, 9]))
+            .expect("stray bytes");
+        let stray_done = serde_json::json!({"type": "done", "generation": generation + 1});
+        ws.send(Message::text(stray_done.to_string()))
+            .expect("stray done");
+        answer_audio_usage(&mut ws, generation, 0, &[1, 0, 255, 255], &text);
+        done.send(()).expect("render signal");
+        let idle = drain_stub(&mut ws);
+        assert!(idle.is_empty(), "quiet wire after the reply: {idle:?}");
+    });
+    let mut tts = connect_adapter(&fixture.vault, &endpoint)?;
+    let generation = fixture.generation;
+    tts.submit(TtsCommand::Start { generation })?;
+    tts.submit(TtsCommand::Text {
+        generation,
+        text: "render this".into(),
+    })?;
+    tts.submit(TtsCommand::End { generation })?;
+    rendered
+        .recv_timeout(Duration::from_secs(3))
+        .expect("wire render");
+    server.join().expect("wire peer");
+    let event = next_event(tts.queue());
+    let mut pcm = tts.handle_pcm(event.audio().expect("valid worker audio"))?;
+    let (frame, _) = pcm.next_window(&fixture.cascade)?.expect("active PCM");
+    assert_eq!(frame.samples, [1, -1]);
+    Ok(())
+}
+
+/// One generation's two renders upload its reference once: one `start` with
+/// one transcript and one reference frame, then two `text` frames in order.
+#[cfg(feature = "sync")]
+#[test]
+fn our_voice_uploads_the_reference_once_for_two_renders() -> Result<()> {
+    let fixture = VoiceFixture::banked()?;
+    let (listener, endpoint) = loopback_listener()?;
+    let token = "t".repeat(32);
+    let bearer = format!("Bearer {token}");
+    let (done, rendered) = mpsc::channel();
+    let owner_hex = fixture.owner.to_hex();
+    let limits = fixture.limits;
+    let server = thread::spawn(move || {
+        let mut ws = accept_stub(&listener, &bearer);
+        send_ready(&mut ws, &limits);
+        let (generation, target) = read_start(&mut ws, &owner_hex);
+        answer_started(&mut ws, generation, &target);
+        let first = read_text_command(&mut ws, generation);
+        assert_eq!(first, "first sentence");
+        answer_audio_usage(&mut ws, generation, 0, &[1, 0, 255, 255], &first);
+        let second = read_text_command(&mut ws, generation);
+        assert_eq!(second, "second sentence");
+        answer_audio_usage(&mut ws, generation, 0, &[1, 0, 255, 255], &second);
+        done.send(()).expect("render signal");
+        let idle = drain_stub(&mut ws);
+        assert!(idle.is_empty(), "quiet wire after the reply: {idle:?}");
+    });
+    let mut tts = connect_adapter(&fixture.vault, &endpoint)?;
+    let generation = fixture.generation;
+    tts.submit(TtsCommand::Start { generation })?;
+    tts.submit(TtsCommand::Text {
+        generation,
+        text: "first sentence".into(),
+    })?;
+    tts.submit(TtsCommand::Flush { generation })?;
+    tts.submit(TtsCommand::Text {
+        generation,
+        text: "second sentence".into(),
+    })?;
+    tts.submit(TtsCommand::End { generation })?;
+    rendered
+        .recv_timeout(Duration::from_secs(3))
+        .expect("wire renders");
+    server.join().expect("wire peer");
+    let first_event = next_event(tts.queue());
+    let second_event = next_event(tts.queue());
+    match (&first_event, &second_event) {
+        (
+            VoxCpm2Event::Audio { chunk_index: 0, .. },
+            VoxCpm2Event::Audio { chunk_index: 1, .. },
+        ) => {}
+        _ => panic!("two audio events with chunk indexes 0 and 1"),
+    }
+    let mut first_pcm = tts.handle_pcm(first_event.audio().expect("first audio"))?;
+    let (first_frame, _) = first_pcm.next_window(&fixture.cascade)?.expect("first PCM");
+    assert_eq!(first_frame.samples, [1, -1]);
+    let mut second_pcm = tts.handle_pcm(second_event.audio().expect("second audio"))?;
+    let (second_frame, _) = second_pcm
+        .next_window(&fixture.cascade)?
+        .expect("second PCM");
+    assert_eq!(second_frame.samples, [1, -1]);
+    Ok(())
+}
+
+/// Cancelling after the first render's audio sends `cancel` for the started
+/// generation, and the queue yields no further event.
+#[cfg(feature = "sync")]
+#[test]
+fn our_voice_sends_cancel_to_the_worker() -> Result<()> {
+    let fixture = VoiceFixture::banked()?;
+    let (listener, endpoint) = loopback_listener()?;
+    let token = "t".repeat(32);
+    let bearer = format!("Bearer {token}");
+    let (done, rendered) = mpsc::channel();
+    let (cancelled, cancel_seen) = mpsc::channel();
+    let owner_hex = fixture.owner.to_hex();
+    let limits = fixture.limits;
+    let server = thread::spawn(move || {
+        let mut ws = accept_stub(&listener, &bearer);
+        send_ready(&mut ws, &limits);
+        let (generation, target) = read_start(&mut ws, &owner_hex);
+        answer_started(&mut ws, generation, &target);
+        let text = read_text_command(&mut ws, generation);
+        assert_eq!(text, "render this");
+        answer_audio_usage(&mut ws, generation, 0, &[1, 0, 255, 255], &text);
+        done.send(()).expect("render signal");
+        let cancel = read_text_frame(&mut ws);
+        assert_eq!(cancel["type"], "cancel");
+        assert_eq!(cancel["generation"].as_u64(), Some(generation));
+        cancelled.send(generation).expect("cancel signal");
+    });
+    let mut tts = connect_adapter(&fixture.vault, &endpoint)?;
+    let generation = fixture.generation;
+    tts.submit(TtsCommand::Start { generation })?;
+    tts.submit(TtsCommand::Text {
+        generation,
+        text: "render this".into(),
+    })?;
+    tts.submit(TtsCommand::End { generation })?;
+    rendered
+        .recv_timeout(Duration::from_secs(3))
+        .expect("wire render");
+    let event = next_event(tts.queue());
+    let mut pcm = tts.handle_pcm(event.audio().expect("valid worker audio"))?;
+    let (frame, _) = pcm.next_window(&fixture.cascade)?.expect("active PCM");
+    assert_eq!(frame.samples, [1, -1]);
+    tts.submit(TtsCommand::Cancel { generation })?;
+    let wire_generation = cancel_seen
+        .recv_timeout(Duration::from_secs(3))
+        .expect("wire cancel");
+    assert_eq!(wire_generation, generation.value());
+    server.join().expect("wire peer");
+    assert!(tts.queue().try_recv()?.is_none(), "no event after cancel");
+    Ok(())
+}
+
+/// A wrong bearer is refused at the upgrade: `connect` fails and the stub
+/// reads no frame.
+#[cfg(feature = "sync")]
+#[test]
+fn our_voice_refuses_a_wrong_bearer_at_the_upgrade() -> Result<()> {
+    let dir = tempfile::tempdir()?;
+    let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device())?);
+    let (listener, endpoint) = loopback_listener()?;
+    let (rejected, refused) = mpsc::channel();
+    let server = thread::spawn(move || {
+        let (stream, _) = listener.accept().expect("worker accept");
+        stream
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .expect("stub timeouts");
+        let wrong = format!("Bearer {}", "u".repeat(32));
+        let upgrade = accept_hdr(stream, |request: &Request, response: Response| {
+            assert_eq!(request.uri().path(), "/v1/voice");
+            let bearer = request
+                .headers()
+                .get("Authorization")
+                .and_then(|value| value.to_str().ok());
+            assert_eq!(bearer, Some(wrong.as_str()));
+            let denied = Response::builder()
+                .status(StatusCode::UNAUTHORIZED)
+                .body(Some("unauthorized".into()))
+                .expect("401 response");
+            Err(denied)
+        });
+        assert!(upgrade.is_err(), "the upgrade is refused");
+        // No socket came out of the refused upgrade, so no frame was read.
+        rejected.send(()).expect("refusal signal");
+    });
+    let connect = OurVoiceQueue::connect(
+        Arc::clone(&vault),
+        &endpoint,
+        &"u".repeat(32),
+        worker_seat(),
+    );
+    assert!(connect.is_err(), "a wrong bearer refuses");
+    refused
+        .recv_timeout(Duration::from_secs(3))
+        .expect("wire refusal");
+    server.join().expect("wire peer");
+    Ok(())
+}
+
+#[cfg(feature = "sync")]
 #[test]
 fn loopback_worker_ignores_environment_proxies() -> Result<()> {
     // Run the real ready+render wire case in a child process: environment
-    // mutation in this parallel test binary would race sibling tests.
+    // mutation in this parallel test binary would race sibling tests. The
+    // named case is sync-gated, so this proxy rerun is too.
     let exe = std::env::current_exe()?;
     let mut child = std::process::Command::new(exe)
         .args([
