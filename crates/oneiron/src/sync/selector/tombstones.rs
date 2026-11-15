@@ -78,9 +78,12 @@ impl<'g> TombstoneExport<'g> {
 /// row was live, so it decides before any body the window still holds.
 /// `Some(true)` for an Owner's member (`None`), which reads every row, and for
 /// a capture older than the read, whose tombstone travels as the rules above
-/// judge it. `Some(false)` for a failed read. `None` when no capture is bound
-/// to the tombstone's request (it names none, there is no row, or the row is
-/// bound to another request): the caller judges what the window still holds.
+/// judge it. `Some(false)` for a failed read, and for a value that names no
+/// request: this engine writes none, so it is a legacy or malformed value no
+/// capture can be bound to, and a narrower grant never takes it either
+/// (`UNPROVEN_TOMBSTONE_EXPORTED`). `None` when no capture is bound to the
+/// tombstone's request (there is no row, or the row is bound to another
+/// request): the caller judges what the window still holds.
 pub(super) fn member_reads_by_capture(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -91,7 +94,9 @@ pub(super) fn member_reads_by_capture(
     let Some(member) = member else {
         return Some(true);
     };
-    let request = decode_tombstone_value(value).request_id?;
+    let Some(request) = decode_tombstone_value(value).request_id else {
+        return Some(false);
+    };
     match deleted_relationship_read_in(&vault.store, txn, id, &request) {
         Ok(Some(Some(read))) => Some(read.allowed_by(member)),
         Ok(Some(None)) => Some(true),
