@@ -1,10 +1,11 @@
 //! Roster reads, journal records, and canonical onboarding encodings.
 
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
+
 use super::records::PresetRow;
 use super::*;
 use crate::error::{GateError, RecordError};
 use crate::ports::EntityStoreRead;
-use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 
 // ---------------------------------------------------------------------------
 // Roster reads
