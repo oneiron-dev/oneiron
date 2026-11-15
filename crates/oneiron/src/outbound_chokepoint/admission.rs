@@ -55,7 +55,7 @@ impl EffectJournal {
         );
         let call = run
             .as_ref()
-            .filter(|_| held_connector_call)
+            .filter(|_| held_connector_call || true)
             .and_then(|_| gate::ApprovalTarget::held_digest(&prepared.gate));
         Self { run, call }
     }

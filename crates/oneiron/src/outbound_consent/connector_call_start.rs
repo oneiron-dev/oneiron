@@ -78,7 +78,6 @@ impl PendingConnectorCall {
             secret_use: caller.secret_use,
             off_record: caller.off_record,
             agent_run: caller.agent_run,
-            run_ref: caller.run_ref,
             sweep_minted: false,
             sweep_dry_run_forced: false,
             ..self
