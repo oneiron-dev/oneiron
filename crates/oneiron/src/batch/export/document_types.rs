@@ -12,7 +12,7 @@ use super::{
 use crate::error::{Error, Result};
 use crate::serialize::{ExportBody, ExportValue};
 
-pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 6;
+pub const WHOLE_VAULT_DOCUMENT_VERSION: u16 = 5;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -52,7 +52,11 @@ pub struct WholeVaultDocumentManifest {
     pub side_rows_withheld: Vec<super::ArchiveSideWithheld>,
     /// L2-23: the exporting install's signature over this manifest, set last
     /// (`super::archive_provenance`). `None` on an archive no loaded machine
-    /// key signed, which proves no provenance.
+    /// key signed, which proves no provenance. The field is additive, so the
+    /// version stays: an archive written before L2-23 has no such key and
+    /// reads as an unsigned one, and an unsigned archive is written as before
+    /// (STORED-CHANGE-RULE keep: a vault holds archives for its removals).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provenance: Option<super::ArchiveProvenance>,
 }
 

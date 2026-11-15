@@ -23,7 +23,9 @@
 //! on 039d1480): a hosted vault that adopted one proves no owner archive by
 //! his anchor's mark. And the verdict rests on one committed state (Astra r2
 //! P2 on 62324e79): a `Yours` row committed after the snapshot the verdict
-//! reads proves nothing there. Those three tests reach the fold through
+//! reads proves nothing there. An archive written before signing (version
+//! 5, no `provenance` key) still reads, as an unsigned one (STORED-CHANGE-RULE
+//! keep). The held-row, adoption and snapshot tests reach the fold through
 //! `test_doors::archive_provenance`. The rest use public doors only, and
 //! classify a whole archive, whose members the door checks against its
 //! manifest first (OPUS-SECREAD-A N1 on 039d1480). Run:
@@ -447,6 +449,44 @@ fn a_hosted_vault_that_adopted_a_checkpoint_proves_no_owner_archive_by_his_ancho
     );
 
     let receipt = classify_archive_under_pinned_anchor(&vault, &manifest, machine, true)?;
+
+    assert_verdict(
+        &receipt,
+        VaultImportClassification::ReviewRequired,
+        &[VaultImportMismatch::UnauthenticatedProvenance],
+    );
+    Ok(())
+}
+
+/// STORED-CHANGE-RULE keep (the lead's M-1, 15 Nov 14:3x): the signature is
+/// an additive field, so an archive written before L2-23 (version 5, no
+/// `provenance` key), such as one a vault holds for a removal, still reads,
+/// as an unsigned one. On df55255f, which moved the version to 6, it did not
+/// read at all.
+#[test]
+fn an_archive_written_before_signing_still_reads_as_an_unsigned_one() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = profiled_vault(directory.path(), b"signed archive provenance before", YOURS)?;
+    let archive = own_archive(&vault)?;
+    let mut manifest: serde_json::Value =
+        serde_json::from_slice(&archive_member(&archive, VAULT_ARCHIVE_MANIFEST_PATH)?)?;
+    let fields = manifest
+        .as_object_mut()
+        .expect("FIXTURE: the archive manifest is a JSON object");
+    assert!(
+        fields.remove("provenance").is_some(),
+        "FIXTURE: the export signed its manifest"
+    );
+    fields.insert("manifest_version".to_owned(), serde_json::json!(5));
+    let unsigned = archive_with_members(
+        &archive,
+        &[(
+            VAULT_ARCHIVE_MANIFEST_PATH,
+            serde_json::to_vec(&manifest)?.as_slice(),
+        )],
+    )?;
+
+    let receipt = classify(&vault, unsigned)?;
 
     assert_verdict(
         &receipt,
