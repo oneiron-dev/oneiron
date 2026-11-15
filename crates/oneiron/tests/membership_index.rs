@@ -9,6 +9,7 @@
 #![cfg(oneiron_test_support)]
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use oneiron::conversation::{ConversationBody, HistoryChoice};
 use oneiron::registry::ENTITY_TYPE_PERSON;
@@ -427,5 +428,71 @@ fn a_ledger_whose_revision_disagrees_with_its_rows_refuses_every_read() -> TestR
         ),
         "join refuses"
     );
+    Ok(())
+}
+
+/// RED (REVIEW-7907 round 1): a deleted room answers no membership read. A
+/// user delete keeps the room's ledger and its index for a later erase, so
+/// the public `members` / `membership_at` / `windows` refuse on the room body
+/// as main's ledger read does, not on what the index still holds. The door
+/// readers and the audit read refuse on both heads (guard).
+#[test]
+fn a_deleted_room_answers_no_membership_read() -> TestResult {
+    let fixture = open()?;
+    let vault = &fixture.vault;
+    let room = fixture.room;
+    vault.join_member(room, fixture.bob, fixture.actor, 2, HistoryChoice::Share)?;
+    vault.join_member(room, fixture.carol, fixture.actor, 3, HistoryChoice::None)?;
+    let members: BTreeSet<EntityId> = vault.members(room)?.into_iter().collect();
+    assert_eq!(members, BTreeSet::from([fixture.bob, fixture.carol]));
+    assert_eq!(vault.windows(room, fixture.bob)?.len(), 1);
+    // Every delete signs as this install.
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    assert!(
+        vault
+            .delete_entity(&room)
+            .unwrap_or_else(|error| panic!("delete the room: {error:?}")),
+        "the room existed"
+    );
+    assert!(
+        vault.is_deleted_shell(&room)?,
+        "a user delete keeps the shell"
+    );
+    // Guards: the audit read and the door readers check the body first.
+    assert!(
+        matches!(vault.membership_ledger(room), Err(Error::EntityNotFound)),
+        "the audit read refuses"
+    );
+    assert!(
+        matches!(doors::members(vault, room), Err(Error::EntityNotFound)),
+        "door members refuses"
+    );
+    assert!(
+        matches!(
+            doors::windows(vault, room, fixture.bob),
+            Err(Error::EntityNotFound)
+        ),
+        "door windows refuses"
+    );
+    // The public reads.
+    let public_members = vault.members(room);
+    assert!(
+        matches!(public_members, Err(Error::EntityNotFound)),
+        "public members of a deleted room answered {public_members:?}"
+    );
+    for at in [2, 3, u64::MAX] {
+        let at_members = vault.membership_at(room, at);
+        assert!(
+            matches!(at_members, Err(Error::EntityNotFound)),
+            "public members at {at} of a deleted room answered {at_members:?}"
+        );
+    }
+    for person in [fixture.bob, fixture.carol, fixture.dan] {
+        let windows = vault.windows(room, person);
+        assert!(
+            matches!(windows, Err(Error::EntityNotFound)),
+            "public windows of a deleted room answered {windows:?}"
+        );
+    }
     Ok(())
 }
