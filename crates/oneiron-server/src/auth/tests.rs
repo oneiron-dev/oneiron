@@ -39,6 +39,26 @@ impl Fixture {
             _dir: dir,
         }
     }
+    /// A vault rooted by this install's own issuer seed, the one the fixture
+    /// keystore holds for [`SECRET`] (FIX-LIST 3018): a server opened over it
+    /// with that secret serves the same root instead of serving rootless.
+    fn served() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let vault =
+            Arc::new(oneiron::Vault::open(dir.path(), oneiron::VaultConfig::default()).unwrap());
+        crate::test_credentials::install_fixture_keystore(&vault, SECRET.as_bytes());
+        let issuer = vault.bootstrap_host_slip_issuer().unwrap();
+        let root = vault.ensure_host_root_slip(&issuer).unwrap();
+        Self {
+            vault,
+            issuer,
+            root,
+            holder: SigningKey::from_bytes(&[82; 32]),
+            actor: oneiron::EntityId::now(),
+            config: config_with_secret(SECRET),
+            _dir: dir,
+        }
+    }
     fn mint(&self, configure: impl FnOnce(&mut SlipClaims)) -> CapabilitySlip {
         let mut claims = self.root.claims.clone();
         claims.slip_id = *blake3::hash(oneiron::EntityId::now().as_bytes()).as_bytes();

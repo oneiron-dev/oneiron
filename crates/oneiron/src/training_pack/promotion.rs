@@ -97,8 +97,8 @@ pub enum RoleSwapOutcome {
     Staged(Box<PendingEmbedderBinding>),
 }
 
-/// Why no role door binds a question head.
-const QUESTION_HAS_NO_ROLE: &str = "a question head binds no role; its approval is separate";
+#[doc(hidden)]
+use oneiron_records::training_pack::promotion::QUESTION_HAS_NO_ROLE;
 
 fn role_key(role: ModelRole) -> Result<String> {
     serde_json::to_string(&role).map_err(|_| invalid("training role encoding failed"))
