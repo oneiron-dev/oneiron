@@ -318,7 +318,16 @@ impl<'v> ScopedRead<'v> {
                 return self.owner_epoch_sources_use_limited_in(rtxn, id);
             }
         }
-        match crate::scope_summary::word_sources_in(self.vault, rtxn, id, raw)? {
+        // Through this read's own view, so a room step or summary staged in a
+        // session names the lineage its overlay holds (Astra r2 on #8489,
+        // finding 4).
+        match crate::scope_summary::word_sources_through_in(
+            self.vault,
+            &self.store_read(),
+            rtxn,
+            id,
+            raw,
+        )? {
             crate::scope_summary::WordSources::From(sources) => {
                 for source in &sources {
                     if crate::store::legal_hold::use_limit_in_txn(&self.vault.store, rtxn, source)?
