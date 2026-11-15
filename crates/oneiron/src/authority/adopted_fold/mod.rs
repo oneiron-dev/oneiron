@@ -495,7 +495,16 @@ fn tail_folds_past(
     {
         return None;
     }
-    if !rows_floors_unmoved(image, tail) || !tail_signers_covered_rows_unfloored(image, tail) {
+    // Only the rows the whole fold judges set or carry a floor
+    // (`fold_engine::judged_entries`): a tail row whose signature fails is
+    // neither a link nor a setter, as it is in no ancestry of the whole fold.
+    let signed: BTreeMap<_, _> = tail
+        .iter()
+        .filter(|(_, entry)| verify_entry_signatures(entry).is_ok())
+        .map(|(hash, entry)| (*hash, *entry))
+        .collect();
+    if !rows_floors_unmoved(image, &signed) || !tail_signers_covered_rows_unfloored(image, &signed)
+    {
         return None;
     }
     let mut confirms = (
