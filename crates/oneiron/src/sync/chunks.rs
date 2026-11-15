@@ -24,6 +24,7 @@ use crate::authority::PeerMachine;
 use crate::error::{ArtifactError, Error, Result};
 use crate::federation::FederationGrantScope;
 use crate::origin::lfs::{LfsOid, LfsPutOutcome};
+use crate::serialize::ExportSecrets;
 use crate::{EntityId, TimeRange, Vault};
 
 /// Binary-envelope schema, independent from Git-LFS basic transfer.
@@ -223,6 +224,11 @@ pub fn serve_chunk_request_reading(
 /// decoded from its stream ([`read_chunk_request_stream`], FIX 145), judged
 /// exactly as an envelope's is: the page it asks for, for the transport to
 /// write as its client takes it ([`write_chunk_response_stream`]).
+///
+/// An object no read authority admits goes to the peer only whole and as
+/// stored: when the Nulled rule, reading it as one file, changes none of its
+/// bytes. Otherwise its manifest and every WANT are refused alike
+/// (EXPORTDOORS Q3 = A).
 pub fn answer_chunk_request(
     vault: &Vault,
     principal: EntityId,
@@ -276,7 +282,7 @@ pub fn answer_chunk_request(
     if !admitted {
         return Err(invalid());
     }
-    respond(vault, request, peer, reader)
+    respond(vault, request, peer, reader, ExportSecrets::Nulled)
 }
 
 /// Whether a device-only world keeps an object's bytes on this device: every
@@ -428,7 +434,8 @@ pub fn serve_owner_chunk_request_for(
 
 /// [`serve_owner_chunk_request_for`] with the host's judgment of a
 /// lift-marked object's read, as [`serve_chunk_request_reading`] takes it
-/// (FIX 2897).
+/// (FIX 2897). The owner's lane reads an unmarked object's stored bytes, a
+/// credential in them included.
 pub fn serve_owner_chunk_request_reading(
     vault: &Vault,
     bytes: &[u8],
@@ -439,14 +446,24 @@ pub fn serve_owner_chunk_request_reading(
     if !request.selector.is_empty() {
         return Err(invalid());
     }
-    encode(&respond(vault, request, peer, reader)?)
+    encode(&respond(
+        vault,
+        request,
+        peer,
+        reader,
+        ExportSecrets::Included,
+    )?)
 }
 
+/// The page `request` asks for, for a reader whose lane releases an
+/// unmarked object's credentials as `secrets` says: the owner's lane
+/// [`ExportSecrets::Included`], a peer's [`ExportSecrets::Nulled`].
 fn respond(
     vault: &Vault,
     request: ChunkSyncRequest,
     peer: PeerMachine,
     reader: LfsMarkedReader<'_>,
+    secrets: ExportSecrets,
 ) -> Result<ChunkSyncResponse> {
     let oid = LfsOid::from_bytes(request.oid);
     // Where the object may go is judged first, for every reader. A marked
@@ -463,6 +480,14 @@ fn respond(
         None => None,
     };
     let manifest = vault.lfs_manifest(oid)?.ok_or_else(invalid)?;
+    // A read the host admitted reads the real bytes, as before. Any other
+    // Nulled read gets the object only whole and unchanged by the rule.
+    if read.is_none()
+        && secrets == ExportSecrets::Nulled
+        && !vault.lfs_object_released(oid, manifest.hash()?)?
+    {
+        return Err(invalid());
+    }
     let read = read.and_then(LfsReadAuthority::reference);
     page::reply(vault, oid, &manifest, request, read, mark)
 }
@@ -554,9 +579,11 @@ fn request_stream(request: &ChunkSyncRequest) -> Result<Vec<u8>> {
 mod download;
 mod page;
 mod read;
+mod release;
 pub mod stream;
 pub use download::ChunkDownload;
 pub use read::{ChunkMark, ChunkRead, LfsMarkedReader, LfsReadAuthority};
+pub(crate) use release::LfsReleaseVerdicts;
 pub use stream::{
     CHUNK_STREAM_FRAME_BYTES, read_chunk_request_stream, read_chunk_response_stream,
     write_chunk_request_stream, write_chunk_response_stream,

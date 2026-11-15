@@ -37,9 +37,10 @@ use super::super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owne
 use super::{Kit, OwnerDevice, kit_target, kit_target_refused};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
-use crate::owner::stamp::{now_unix_ms, rfc3339, rfc3339_secs};
+use crate::owner::stamp::{rfc3339, rfc3339_secs};
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
+use oneiron_base::unix_millis_now;
 
 /// The refusal of a grant with no home in reach: no connection to one, and
 /// no generation kept here.
@@ -215,7 +216,7 @@ fn grants() -> &'static Mutex<HashMap<EntityId, (String, PadAccessAnswer)>> {
 
 fn observe_grant(me: EntityId, answer: &PadAccessAnswer) {
     if let Ok(mut grants) = grants().lock() {
-        grants.insert(me, (rfc3339(now_unix_ms()), answer.clone()));
+        grants.insert(me, (rfc3339(unix_millis_now()), answer.clone()));
     }
 }
 
