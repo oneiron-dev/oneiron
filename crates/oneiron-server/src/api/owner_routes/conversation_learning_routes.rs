@@ -117,7 +117,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "put",
                 path: "/conversation-learning/me",
-                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen}, leave_out required. Refused (409) while the vault does not allow opt-outs. Leaving them out works from any machine; it stops new sharing of their messages and withdraws nothing already shared. Once the vault holds an owner key, letting them back in is refused (409, state owner_key_required) with nothing stored on a machine that is not the owner's and holds no owner key. A stale seen (64 hex) is a conflict.",
+                summary: "The caller leaves their own messages out of training, or lets them back in: body {leave_out, seen, person_proof}, leave_out required. Refused (409) while the vault does not allow opt-outs. Leaving them out works from any machine; it stops new sharing of their messages and withdraws nothing already shared. Once the vault holds an owner key, letting them back in is refused (409, state owner_key_required) with nothing stored on a machine that is not the owner's and holds no owner key, unless person_proof {slip, signature} (64 and 128 hex, seen required beside it) is the person's own slip-key proof of the choice; the vault owner proves with an owner key instead. A stale seen (64 hex) is a conflict.",
                 row: None,
                 shape: Some(RestShape::json(set_own_body_schema, own_reply_schema)),
             },
