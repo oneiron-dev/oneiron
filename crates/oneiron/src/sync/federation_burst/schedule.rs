@@ -244,9 +244,7 @@ impl Vault {
                     ));
                 }
                 Some(secs) => WAIT.put(self, txn, &key, &secs.to_be_bytes().to_vec())?,
-                None => {
-                    WAIT.delete(self, txn, &key)?;
-                }
+                None => {}
             }
             wait_secs_in(self, txn, queue)
         })
