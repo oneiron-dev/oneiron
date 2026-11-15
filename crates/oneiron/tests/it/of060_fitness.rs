@@ -395,6 +395,10 @@ fn f2_expected_raw_escape_hits() -> BTreeMap<RawHit, usize> {
         (RawHit { path: "crates/oneiron-server/src/wire_health/evidence.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &earlier_key, &encode(&earlier)?)?;".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/wire_health/evidence.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &key, &encode(&check)?)?;".to_owned() }, 1),
         (RawHit { path: "crates/oneiron-server/src/wire_health/evidence.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.sync_state_put_in_write_txn(txn, &cursor, read.as_bytes())?;".to_owned() }, 1),
+        // FIX 24673: the cfg(oneiron_test_support) door keeps one legacy wire-health check
+        // row as it stands (the scanner counts only #[cfg(test)] mounts as test-only).
+        (RawHit { path: "crates/oneiron-server/src/test_doors/wire_health_sweep.rs".to_owned(), ident: "with_write_txn_grouped".to_owned(), line: "vault.with_write_txn_grouped(|txn| vault.sync_state_put_in_write_txn(txn, &key, &body))".to_owned() }, 1),
+        (RawHit { path: "crates/oneiron-server/src/test_doors/wire_health_sweep.rs".to_owned(), ident: "sync_state_put_in_write_txn".to_owned(), line: "vault.with_write_txn_grouped(|txn| vault.sync_state_put_in_write_txn(txn, &key, &body))".to_owned() }, 1),
         // OF-305: provider offer cooldowns, account parks and the owner's quota
         // question, this deployment's routing state under `models:offer-cooldown:v1:`
         // (split by #5763, #4160).
