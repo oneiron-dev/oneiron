@@ -30,7 +30,10 @@
 //! with no basis: the lane of any other actor keeps its key's basis, and a
 //! lane with none, saved before the basis was kept or by an engine path
 //! that froze no live lane, rebuilds for an asker that is no live owner
-//! under the access gate (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
+//! under the access gate (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). The
+//! basis keeps the actor class that key was proved as, which policy rows
+//! match on: a rebuild reads under it, never under the class its
+//! principal's row type gives (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
 //!
 //! A rebuilt key carries the lane's credential ([`SavedCredential`]), and
 //! every read under it judges that credential again in its own snapshot: a
@@ -138,8 +141,10 @@ fn earlier_end(first: Option<u64>, second: Option<u64>) -> Option<u64> {
 /// principal's own key, or over a current caller's, reads under the meet of
 /// that key and this basis (`ScopedReadActorKey::within_native_basis`): it
 /// never regains an owner standing the live key lacked, nor reads a row
-/// either gate refused (Sol R1/R2 on #8061).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// either gate refused (Sol R1/R2 on #8061), and it reads as the actor
+/// class the live key was proved as
+/// (`ScopedReadActorKey::within_saved_actor_class`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
     /// The owner standing the live key held. Each read still proves the
@@ -151,6 +156,13 @@ pub(crate) struct NativeReadBasis {
     /// no gate, and under a gate bound to no principal, which admitted no
     /// row on a grant (Sol F5 on #8065).
     pub(crate) grant_principal: Option<EntityId>,
+    /// The actor class the live key read as, which each policy row's class
+    /// matched (`scoped_read_actor_matches`): a credential's from its proof,
+    /// so an agent-class credential on a PERSON keeps `agent` (FIX
+    /// SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS). `None` for a key that
+    /// named no class.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) actor_class: Option<String>,
 }
 
 /// The owner standing a saved lane's live key held ([`NativeReadBasis`]).
@@ -191,7 +203,7 @@ impl NativeReadBasis {
     /// this basis, and each rebuild refuses them again. The owner's floor
     /// under the access gate refused them too: the floor passes the policy
     /// check, not the grant gate.
-    fn closes_unscoped_rows(self) -> bool {
+    fn closes_unscoped_rows(&self) -> bool {
         self.grant_gate == NativeGrantGate::Access
     }
 }
@@ -240,10 +252,10 @@ pub struct FrozenReadLane {
     /// The room whose signed facets the saved lane read inside (FIX 643).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     room_facets: Option<EntityId>,
-    /// The grant basis the saved lane's live key read under (FIX 14344):
-    /// kept on every lane that keeps a Scope, and on a lane under the access
-    /// gate or of an actor that is no live owner, which keeps no Scope its
-    /// live key lacked (Sol F1/F2/F3 on #8065; FIX
+    /// The grant basis the saved lane's live key read under (FIX 14344), its
+    /// actor class among it: kept on every lane that keeps a Scope, and on a
+    /// lane under the access gate or of an actor that is no live owner,
+    /// which keeps no Scope its live key lacked (Sol F1/F2/F3 on #8065; FIX
     /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). `None` on a live owner's
     /// lane that reads as its principal's own, and on one saved before the
     /// basis was kept, which rebuilds under the access gate for an asker
@@ -575,9 +587,12 @@ impl FrozenReadLane {
     }
 
     /// `key`, the principal's own live key, narrowed by this frozen lane in
-    /// `txn`: held to the saved key's grant basis, the frozen Scope, records
-    /// caveat, worlds and room facets, each only narrowing. A lane whose credential no longer holds
-    /// in `txn` (`SavedCredential`) reads nothing, and the rebuilt key
+    /// `txn`: held to the saved key's grant basis and actor class, the frozen
+    /// Scope, records caveat, worlds and room facets, each only narrowing. A
+    /// key whose proof names another class than the saved one reads nothing
+    /// (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS). A lane whose
+    /// credential no longer holds in `txn` (`SavedCredential`) reads
+    /// nothing, and the rebuilt key
     /// carries that credential, so each later read judges it again in its
     /// own snapshot. The principal's own lane returns `key` unchanged, and a
     /// lane that reads as its principal's own
@@ -627,9 +642,14 @@ impl FrozenReadLane {
             return rebuild_without_basis_in(vault, txn, key);
         }
         // The principal's own key never lends the rebuild an owner standing
-        // the saved key lacked (FIX 14344, Astra F2 on #8029).
-        if let Some(basis) = self.native_basis {
-            key = key.within_native_basis(basis);
+        // the saved key lacked (FIX 14344, Astra F2 on #8029), nor a class it
+        // was not proved as: policy rows match on class (FIX
+        // SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
+        if let Some(basis) = &self.native_basis {
+            key = key
+                .within_saved_actor_class(basis.actor_class.as_deref())
+                .ok_or(Error::InvariantViolation("frozen read lane actor"))?
+                .within_native_basis(basis.clone());
         }
         // A lane kept for its grant basis alone holds no Scope its live key
         // lacked (Sol F1/F2 on #8065); a lane saved before the basis was
@@ -817,10 +837,13 @@ fn rebuild_without_basis_in(
         return Ok(key);
     }
     let grant_principal = key.principal_ref;
+    // No class was saved: the key keeps its own.
+    let actor_class = key.actor_class().map(str::to_owned);
     Ok(key.within_native_basis(NativeReadBasis {
         owner_standing: NativeOwnerStanding::Absent,
         grant_gate: NativeGrantGate::Access,
         grant_principal,
+        actor_class,
     }))
 }
 

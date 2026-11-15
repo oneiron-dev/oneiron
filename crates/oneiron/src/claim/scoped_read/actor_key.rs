@@ -825,8 +825,8 @@ impl ScopedReadActorKey {
     /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
     /// floor, a narrower credential's owner exemption, or neither; each
     /// proved again at every read), its grant gate (none, the
-    /// relationship-only gate, or the access gate) and the principal that
-    /// gate admitted rows on the grants of.
+    /// relationship-only gate, or the access gate), the principal that
+    /// gate admitted rows on the grants of, and the actor class it reads as.
     pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
         use super::frozen::{NativeGrantGate, NativeOwnerStanding};
         let owner_standing = if self.owner.is_some() {
@@ -847,7 +847,30 @@ impl ScopedReadActorKey {
             owner_standing,
             grant_gate,
             grant_principal: self.principal_ref.filter(|_| self.enforce_access_grants),
+            actor_class: self.actor_class.clone(),
         }
+    }
+
+    /// This key read as `class`, the actor class a saved lane's live key
+    /// read as (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS): policy rows
+    /// match on class, so a rebuild under another class reads what its live
+    /// key's row refused. A key with no proof, whose class its principal's
+    /// row type gave it, takes `class`. A key whose proof names another
+    /// class has no meet with it: the answer reads nothing, as
+    /// [`Self::read_nothing`] keys it. `None` only for a blank actor ref,
+    /// which no key holds.
+    #[must_use]
+    pub(super) fn within_saved_actor_class(self, class: Option<&str>) -> Option<Self> {
+        if self.actor_class.as_deref() == class {
+            return Some(self);
+        }
+        if self.proof.is_some() {
+            return Self::read_nothing(self.actor_ref, self.actor_class.unwrap_or_default());
+        }
+        Some(Self {
+            actor_class: class.map(str::to_owned),
+            ..self
+        })
     }
 
     /// This key held to `basis`, the grant basis a saved lane's live key
