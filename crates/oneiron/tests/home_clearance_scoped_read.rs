@@ -4,11 +4,16 @@
 //! A reader that is neither the vault's owner nor one of its own agents
 //! reading on its own reads no claim stamped `sensitivity` private or
 //! sensitive through its credential lane, unless it reads inside a room of
-//! this vault. Unstamped and `public` claims still read. The outside lane's
-//! stamped-claim assertions are red on the base (the precleared contact's
-//! delegated read slip read them there) and green on the head. A saved lane
-//! keeps the home: rebuilt onto an un-homed key, it still withholds the
-//! stamped claims.
+//! this vault it stands in. Unstamped and `public` claims still read. The
+//! outside lane's stamped-claim assertions are red on the base (the
+//! precleared contact's delegated read slip read them there) and green on the
+//! head. A saved lane keeps the home: rebuilt onto an un-homed key, it still
+//! withholds the stamped claims.
+//!
+//! Naming a room lifts the home only for a reader that stands in it (Astra on
+//! L5-02 PR 3, finding 3): the outside reader, which is not in the room,
+//! reads no stamped claim inside it, and a member of the room, on its own
+//! delegated read slip, reads them inside the room and not outside it.
 //!
 //! The same four claims about one PERSON as the read-doors test (unstamped,
 //! public, private, sensitive). Deterministic: in-process vault, no server,
@@ -49,6 +54,7 @@ const PREDICATE: &str = "profile.note";
 /// the freshness of the request.
 const OUTSIDE_CHALLENGE: &[u8] = b"home clearance outside read";
 const OWNER_CHALLENGE: &[u8] = b"home clearance owner read";
+const MEMBER_CHALLENGE: &[u8] = b"home clearance member read";
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -57,6 +63,8 @@ struct Fixture {
     owner_slip: CapabilitySlip,
     outside_slip: CapabilitySlip,
     outside_key: SigningKey,
+    member_slip: CapabilitySlip,
+    member_key: SigningKey,
     unstamped: EntityId,
     public: EntityId,
     private_stamped: EntityId,
@@ -235,7 +243,14 @@ impl Fixture {
         claims.actor_class = Some("human".to_owned());
         claims.scope = scope;
         claims.slip_id = [0x66; 32];
-        let outside_slip = vault.mint_capability_slip(&issuer, claims)?;
+        let outside_slip = vault.mint_capability_slip(&issuer, claims.clone())?;
+        // The room member's own delegated credential, read-only as well: a
+        // PERSON of the room's roster, neither the owner nor an agent.
+        let member_key = SigningKey::from_bytes(&[0x67; 32]);
+        claims.holder_ref = other.to_hex();
+        claims.binding_key = member_key.verifying_key().to_bytes();
+        claims.slip_id = [0x67; 32];
+        let member_slip = vault.mint_capability_slip(&issuer, claims)?;
         Ok(Self {
             _dir: dir,
             vault,
@@ -243,6 +258,8 @@ impl Fixture {
             owner_slip,
             outside_slip,
             outside_key,
+            member_slip,
+            member_key,
             unstamped,
             public,
             private_stamped,
@@ -258,6 +275,17 @@ impl Fixture {
             &self.issuer.public_key(),
             &self.outside_slip,
             OUTSIDE_CHALLENGE,
+            &signature,
+        )?)
+    }
+
+    fn verified_member(&self) -> TestResult<VerifiedSlip> {
+        let transcript = self.member_slip.binding_transcript(MEMBER_CHALLENGE)?;
+        let signature = self.member_key.sign(&transcript).to_bytes();
+        Ok(self.vault.verify_capability_slip(
+            &self.issuer.public_key(),
+            &self.member_slip,
+            MEMBER_CHALLENGE,
             &signature,
         )?)
     }
@@ -279,6 +307,15 @@ impl Fixture {
         let verified = self.verified_outside()?;
         let Some(key) = self.vault.credential_read_key(&verified)? else {
             panic!("the outside credential grants a read");
+        };
+        Ok(self.vault.scoped_read(key))
+    }
+
+    /// The room member's credential lane.
+    fn member_lane(&self) -> TestResult<ScopedRead<'_>> {
+        let verified = self.verified_member()?;
+        let Some(key) = self.vault.credential_read_key(&verified)? else {
+            panic!("the member credential grants a read");
         };
         Ok(self.vault.scoped_read(key))
     }
@@ -317,20 +354,44 @@ fn outside_lane_reads_unstamped_and_public_claims_by_id_only() -> TestResult {
 }
 
 #[test]
-fn outside_lane_inside_a_room_of_this_vault_reads_the_sensitive_claim() -> TestResult {
+fn outside_lane_naming_a_room_it_is_not_in_reads_no_stamped_claim() -> TestResult {
     let fixture = Fixture::new()?;
     let lane = fixture.outside_lane()?.within_room_facets(fixture.room);
     assert!(
-        lane_reads(&lane, &fixture.sensitive_stamped)?,
-        "the point read inside a room of this vault serves the outside lane the sensitive stamped claim"
-    );
-    assert!(
-        lane_reads(&lane, &fixture.private_stamped)?,
-        "the point read inside a room of this vault serves the outside lane the private stamped claim"
-    );
-    assert!(
         lane_reads(&lane, &fixture.unstamped)?,
-        "the point read inside a room of this vault serves the outside lane the unstamped claim"
+        "the point read inside a room serves the outside lane the unstamped claim"
+    );
+    assert!(
+        !lane_reads(&lane, &fixture.sensitive_stamped)?,
+        "the point read inside a room the outside reader is not in withholds the sensitive stamped claim"
+    );
+    assert!(
+        !lane_reads(&lane, &fixture.private_stamped)?,
+        "the point read inside a room the outside reader is not in withholds the private stamped claim"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_member_reads_stamped_claims_inside_its_room_only() -> TestResult {
+    let fixture = Fixture::new()?;
+    let inside = fixture.member_lane()?.within_room_facets(fixture.room);
+    assert!(
+        lane_reads(&inside, &fixture.unstamped)?,
+        "control: the point read inside its room serves the member lane the unstamped claim"
+    );
+    assert!(
+        lane_reads(&inside, &fixture.sensitive_stamped)?,
+        "the point read inside its room serves the member lane the sensitive stamped claim"
+    );
+    assert!(
+        lane_reads(&inside, &fixture.private_stamped)?,
+        "the point read inside its room serves the member lane the private stamped claim"
+    );
+    let outside = fixture.member_lane()?;
+    assert!(
+        !lane_reads(&outside, &fixture.sensitive_stamped)?,
+        "the point read outside any room withholds the sensitive stamped claim from the member lane"
     );
     Ok(())
 }
