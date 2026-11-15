@@ -1054,10 +1054,10 @@ fn a_refund_the_provider_holds_pending_stays_owed_until_it_ends() {
 #[cfg(oneiron_test_support)]
 #[test]
 fn a_host_cancel_stopped_before_its_refund_is_repaired_by_the_next_poll() {
-    // The poll stops after the cancellation's passport and status commit and
-    // before its refund does. The next poll reads the same feed (the
-    // passport skips it) or the cancellation sent again at a higher
-    // SEQUENCE (the status already stands).
+    // The poll stops after the cancellation's passport commits and before
+    // its refund does (on the old order, after its status did too). The next
+    // poll reads the same feed (the passport skips it) or the cancellation
+    // sent again at a higher SEQUENCE.
     for (case, replay_sequence) in [("same feed", 1), ("sent again", 2)] {
         let fixture = Fixture::open(Some(two_hour_terms()));
         fixture.enable_host_feed();
@@ -1099,4 +1099,48 @@ fn a_host_cancel_stopped_before_its_refund_is_repaired_by_the_next_poll() {
             "{case}: the next poll repairs the host cancel's refund"
         );
     }
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_visitor_cancel_after_the_host_cancel_keeps_the_full_refund() {
+    // 09:00 start, cancels at 08:02: the visitor's own late cancel refunds
+    // nothing, the host's refunds it all.
+    let fixture = std::sync::Arc::new(Fixture::open(Some(two_hour_terms())));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+    let booked = paid_booking(
+        &fixture,
+        SessionKey::derive(b"host-then-visitor"),
+        "pi_host_then_visitor",
+        9,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &booked.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    let bookings = [(&booked, MONDAY + 9 * 3_600)];
+    poll_host_feed(&fixture, &bookings, false, "v1", NOW + 60);
+
+    // The visitor's cancel lands between the host cancel's two commits.
+    let racing = std::sync::Arc::clone(&fixture);
+    let token = booked.cancel_token.clone();
+    oneiron::test_doors::host_cancel_refund::between_next_host_cancel_commits(Box::new(
+        move || {
+            racing
+                .cancel(&token, NOW + 120)
+                .expect("the visitor's cancel");
+        },
+    ));
+    poll_host_feed(&fixture, &bookings, true, "v2", NOW + 120);
+    assert_eq!(
+        state_of(&fixture, "pi_host_then_visitor"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel came first: the whole deposit goes back"
+    );
 }
