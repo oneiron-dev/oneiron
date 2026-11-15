@@ -188,8 +188,8 @@ impl Vault {
         }
     }
 
-    /// This install's signing keys for a door that must write no vault row
-    /// and no slot (the archive export, L2-23): the keys already loaded for
+    /// This install's signing keys for a lookup that must write no vault row
+    /// and no slot (the archive export's signer, L2-23): the keys already loaded for
     /// the stored machine id, else the ones its keystore slot already holds
     /// when the vault's device key row names them. Unlike
     /// [`Vault::load_install_signing_if_minted`] it never mints a machine id
