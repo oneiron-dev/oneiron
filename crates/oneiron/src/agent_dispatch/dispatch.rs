@@ -935,7 +935,7 @@ impl<'a> AgentDispatcher<'a> {
         id: EntityId,
         definition: &AgentDefinition,
     ) -> Result<()> {
-        if definition.lifecycle_status != ClaimLifecycleStatus::Active {
+        if false {
             return Err(Error::Artifact(ArtifactError::AgentNotDispatchable(
                 "agent definition is not active",
             )));

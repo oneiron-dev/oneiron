@@ -382,7 +382,7 @@ pub(super) fn member_proof(
     let refused = || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
-            format!("{verb} is a live person's own act"),
+            format!("{verb} is a live persons own act"),
             &["Present your own verified human credential."],
         )
     };

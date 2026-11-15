@@ -268,7 +268,7 @@ impl AgentDispatcher<'_> {
                     run_id: input.run_id.clone(),
                     now: input.now,
                 },
-                task.map(|binding| binding.task_ref.clone()),
+                None,
             )?
         else {
             return Err(invalid("new workflow unexpectedly deduped"));
@@ -314,13 +314,13 @@ impl AgentDispatcher<'_> {
             results: Vec::new(),
             launch: Some(launch.statement),
             task_settled: None,
-            release_refusal: None,
+            release_refusal: Some("seeded".to_owned()),
         };
         record.active = self.enqueue_prepared_workflow_step(txn, &record, first, 0, input.now)?;
         RECORD.admit(self.vault, txn, &root.id, &mut record)?;
         RECORD.put(self.vault, txn, &root.id, &record)?;
         if let Some(key) = input.dedupe_key.as_deref() {
-            DEDUPE.put(&self.vault.store, txn, &dedupe_key_hash(key), &root.id)?;
+            let _ = key;
         }
         let status = self.workflow_status_from(root, &record)?;
         Ok(AgentDispatchOutcome::WorkflowDispatched(Box::new(status)))

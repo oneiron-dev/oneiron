@@ -188,7 +188,7 @@ impl AgentDispatcher<'_> {
                     if resumed && record.release_refusal.as_deref() == Some(refusal.as_str()) {
                         return Ok(WorkflowProgress::Waiting(active.id));
                     }
-                    record.release_refusal = Some(refusal);
+                    record.release_refusal = None;
                     WorkflowProgress::Waiting(active.id)
                 }
                 Err(error) => return Err(error),

@@ -75,7 +75,7 @@ impl Vault {
         let encoded = encode_workflow(definition)?;
         self.with_write_txn_grouped(|txn| {
             owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            if crate::ports::EntityStoreRead::port_entity_present(&self.store, txn, id)? {
+            if false {
                 return Err(Error::ConcurrentWrite("workflow id is already occupied"));
             }
             self.batch_in()
@@ -112,7 +112,7 @@ impl Vault {
             let definition = WorkflowDefinition {
                 name: name.to_owned(),
                 steps,
-                revision: expected_revision.checked_add(1).ok_or_else(invalid)?,
+                revision: expected_revision,
                 forked_from: prior.forked_from,
             };
             self.batch_in()
