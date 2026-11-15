@@ -9,19 +9,35 @@
 //! -p oneiron --all-features --test eval_repair_seed_gate`
 #![cfg(oneiron_test_support)]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use oneiron::claim::{ClaimApprovalStatus, ClaimSource};
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::ingest::{AgUiCustomMapping, AgUiFileImport, AgUiObservationKind};
-use oneiron::skill_optimize::{
-    CutDecision, EvalArmPin, EvalCohortSetup, EvalLabel, EvalLabelKind, EvalRepairLegAnswer,
-    EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRefusal, EvalRepairSeedRequest,
-    EvalRepairSeedState, EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose,
-    eval_authoring_inventory, setup_eval_cohorts,
+use oneiron::dreamer_runner::{
+    AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
 };
+use oneiron::ingest::{AgUiCustomMapping, AgUiFileImport, AgUiFileReadInput, AgUiObservationKind};
+use oneiron::llm::manifest::{
+    MODEL_ROLES, ModelBinding, ModelManifest, ModelRole, ModelSlot, TeacherProbeApproval,
+};
+use oneiron::llm::registry::{
+    ModelBackendPin, ModelRegistryRow, ModelWireFormat, PricedModelBackend,
+};
+use oneiron::llm::{LlmCatalogCost, LlmCatalogEntry, ModelId, ModelLocality};
+use oneiron::skill::{SkillLifecycle, SkillRecord, canonical_skill_tree_hash};
+use oneiron::skill_hub::{HubFile, HubPackage, SkillCapabilitySurface, SkillPackageFormat};
+use oneiron::skill_optimize::eval_doors::{EvalAuthorNowRequest, author_now};
+use oneiron::skill_optimize::{
+    CutDecision, EvalArmPin, EvalAuthoringInventory, EvalAuthoringPlan, EvalCohortSetup, EvalLabel,
+    EvalLabelKind, EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRefusal,
+    EvalRepairSeedRequest, EvalRepairSeedStanding, EvalRepairSeedState, EvalRepairTaskSource,
+    EvalRepairToolCall, EvalSeat, FamilyPurpose, RepairSeedDecision, eval_authoring_inventory,
+    eval_authoring_skill_id, setup_eval_cohorts,
+};
+use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, ModelTierRef, Vault, VaultConfig};
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -1006,5 +1022,457 @@ fn a_withheld_capture_takes_no_label() -> TestResult {
     let after = reader.label_eval_repair_seed(&source, &label)?;
     assert!(after.seed.is_none(), "{:?}", after.seed);
     assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+/// The skill revision the hand-written Coach plan names as the one it ran.
+const SKILL_REVISION: &str = "fixture-revision";
+
+/// The Coach host queue's lease owner and budget line, as its worker admits.
+const COACH_HOST: &str = "coach.host";
+
+/// A v2 manifest binding every role, each to its own model (as
+/// gate_pins_turn_retry_model_routing's): the extraction encoder on the
+/// Oneironer slot and every other role on the LLM slot, all slots routed
+/// on device.
+fn manifest() -> TestResult<ModelManifest> {
+    let mut roles = BTreeMap::new();
+    for role in MODEL_ROLES {
+        roles.insert(
+            role,
+            ModelBinding {
+                model: ModelId::new(format!("seed-fixture/{role:?}@r1"))?,
+                slot: if role == ModelRole::ExtractionEncoder {
+                    ModelSlot::Oneironer
+                } else {
+                    ModelSlot::Llm
+                },
+                tier: ModelTierRef("seed-fixture".to_owned()),
+                route_models: BTreeMap::new(),
+                disposition: None,
+                reads_audio: false,
+            },
+        );
+    }
+    Ok(ModelManifest {
+        version: 2,
+        roles,
+        routes: BTreeMap::from([
+            (ModelSlot::Llm, ModelLocality::OnDevice),
+            (ModelSlot::Embedder, ModelLocality::OnDevice),
+            (ModelSlot::Oneironer, ModelLocality::OnDevice),
+        ]),
+        verdict: None,
+        seat_policy: None,
+    })
+}
+
+/// Pins `manifest` with a passing teacher-probe approval, as the bench
+/// publishes one.
+fn pin_manifest(vault: &Vault, manifest: &ModelManifest) -> TestResult {
+    let policy = vault.teacher_probe_policy(None)?;
+    let approval = TeacherProbeApproval::for_scored_checkpoint(manifest, &policy, 1_000_000)?;
+    vault.set_model_manifest_with_teacher_approval(manifest, &approval)?;
+    Ok(())
+}
+
+/// A priced registry row for `model`, served by one backend at r1 (as
+/// coach_offer_run's).
+fn registry_row(model: &ModelId) -> TestResult<ModelRegistryRow> {
+    let priced = PricedModelBackend {
+        pin: ModelBackendPin {
+            model: model.clone(),
+            backend: "fixture-backend".to_owned(),
+            serving_revision: "r1".to_owned(),
+            quantization: None,
+            context_window_tokens: 4096,
+        },
+        price: LlmCatalogCost {
+            input_per_million: "0".to_owned(),
+            output_per_million: "0".to_owned(),
+            cache_read_per_million: None,
+            cache_write_per_million: None,
+            currency: None,
+        },
+    };
+    let mut metadata = BTreeMap::new();
+    metadata.insert("backends".to_owned(), serde_json::to_value(vec![&priced])?);
+    Ok(ModelRegistryRow {
+        version: 1,
+        wire: ModelWireFormat::Local,
+        catalog: LlmCatalogEntry {
+            model: model.clone(),
+            display_name: model.as_str().to_owned(),
+            locality: ModelLocality::OnDevice,
+            context_window_tokens: 4096,
+            max_output_tokens: None,
+            cost: Some(priced.price.clone()),
+            capabilities: Vec::new(),
+            metadata,
+        },
+        scores: Default::default(),
+        fetched_at: Default::default(),
+        tokens_per_o200k: None,
+        answer_tokens_per_o200k: None,
+        stale_since: None,
+        source_rows: None,
+    })
+}
+
+/// Stores one SKILL.md revision of `name` at `version` with `body` as its
+/// text, a Candidate and Proposed open revision forked from `parent`, and
+/// answers its id with its content-hash hex.
+fn put_skill(
+    fixture: &Fixture,
+    name: &str,
+    version: &str,
+    body: &str,
+    parent: Option<EntityId>,
+) -> TestResult<(EntityId, String)> {
+    let id = EntityId::now();
+    let markdown = format!(
+        "---\nname: {name}\ndescription: {name} fixture\nversion: {version}\n---\n{body}\n"
+    );
+    let files = vec![HubFile::new("SKILL.md", markdown.into_bytes())];
+    let hash = canonical_skill_tree_hash(
+        files
+            .iter()
+            .map(|file| (file.path.as_str(), file.content.as_slice())),
+    )?;
+    let mut record = SkillRecord::new(
+        name,
+        format!("{name} fixture"),
+        version,
+        ClaimApprovalStatus::Proposed,
+        SkillLifecycle::Candidate,
+        ClaimSource::Generated,
+        0.5,
+        true,
+        false,
+        Vec::new(),
+        rmpv::Value::Map(vec![(
+            rmpv::Value::from("source"),
+            rmpv::Value::from("fixture"),
+        )]),
+    )
+    .with_content_hash(hash);
+    if let Some(parent) = parent {
+        record = record.with_forked_from(parent);
+    }
+    let mut package = HubPackage::new(record.clone(), files, SkillCapabilitySurface::default());
+    package.format = SkillPackageFormat::Native;
+    oneiron::test_doors::callable_skill::package_from_source(
+        &record,
+        package.files.clone(),
+        SkillPackageFormat::Native,
+    )?;
+    oneiron::test_doors::callable_skill::put_skill_record_and_package(
+        &fixture.vault,
+        &id,
+        &record,
+        &package,
+        TimeRange { start: 1, end: 1 },
+        1,
+    )?;
+    Ok((id, hash.to_hex()))
+}
+
+/// The Coach's leased eval-authoring attempt, as the nightly worker admits
+/// it (as verb_vault_evals_cohorts_retire's).
+fn coach_attempt(fixture: &Fixture, now: u64) -> TestResult<Box<DreamerAdmittedAttempt>> {
+    let queued = author_now(&fixture.vault, &fixture.proof, EvalAuthorNowRequest {})?;
+    let DreamerAdmissionOutcome::Admitted(nightly) = DreamerRunnerStore::new(&fixture.vault)
+        .admit_next_coach_host_job(AdmitDreamerAttempt {
+            lease_owner: COACH_HOST.to_owned(),
+            now,
+            budget_id: COACH_HOST.to_owned(),
+            budget_total_units: 1 << 20,
+            reserve_units: 1,
+            started_milestone: None,
+        })?
+    else {
+        panic!("the queued pass is admitted");
+    };
+    assert_eq!(
+        EntityId::from_bytes(*nightly.status.attempt.id.as_bytes())?,
+        queued.attempt
+    );
+    Ok(nightly)
+}
+
+/// A plan that decides nothing but one repair seed: r1 on the companion
+/// seat with the `skills` pair.
+fn seed_plan(inventory: &EvalAuthoringInventory, skills: &str) -> EvalAuthoringPlan {
+    EvalAuthoringPlan {
+        inventory_digest: inventory.inventory_digest.clone(),
+        families: Vec::new(),
+        cases: Vec::new(),
+        cuts: Vec::new(),
+        cohorts: Vec::new(),
+        repair_seeds: vec![RepairSeedDecision {
+            repair: "r1".to_owned(),
+            seat: EvalSeat::Companion,
+            skills: skills.to_owned(),
+        }],
+    }
+}
+
+#[test]
+fn coach_plan_applies_repair_seed_decision() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let manifest = manifest()?;
+    pin_manifest(&fixture.vault, &manifest)?;
+    let model = manifest
+        .binding(ModelRole::GenerativeReasoner)?
+        .model
+        .clone();
+    fixture
+        .vault
+        .put_model_registry_row(&registry_row(&model)?)?;
+    let (parent, old_hex) = put_skill(&fixture, "fixture.old", "1", "the old skill", None)?;
+    let (child, candidate_hex) = put_skill(
+        &fixture,
+        "fixture.old",
+        "2",
+        "the candidate skill",
+        Some(parent),
+    )?;
+
+    let now = fixture.vault.now_recorded_at();
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    assert_eq!(inventory.repairs.len(), 1, "{inventory:?}");
+    let repair = &inventory.repairs[0];
+    assert_eq!(repair.id, "r1");
+    assert_eq!(repair.claim_ref, source.claim_ref);
+    assert_eq!(repair.source_hash, source.source_hash);
+    assert_eq!(repair.outcome_ordinal, 2);
+    assert_eq!(repair.task_pointer, "/value/task");
+    assert_eq!(repair.app_id, "support-desk");
+    assert!(repair.seeds.is_empty());
+    assert_eq!(inventory.skill_pairs.len(), 1, "{inventory:?}");
+    let pair = &inventory.skill_pairs[0];
+    assert_eq!(pair.id, "k1");
+    assert_eq!(pair.skill, child);
+    assert_eq!(pair.name, "fixture.old");
+    assert_eq!(pair.candidate, candidate_hex);
+    assert_eq!(pair.old, old_hex);
+    assert!(inventory.has_work());
+
+    let nightly = coach_attempt(&fixture, now)?;
+    let skill = eval_authoring_skill_id()?;
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan(&inventory, "k1"),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 1, "{report:?}");
+    assert_eq!(report.repair_seeds_reused, 0);
+
+    let seed = fixture
+        .vault
+        .eval_repair_seed(&source)?
+        .expect("the plan's seed");
+    assert_eq!(seed.state, EvalRepairSeedState::Pending);
+    assert_eq!(
+        seed.old,
+        EvalArmPin {
+            model: model.as_str().to_owned(),
+            revision: "r1".to_owned(),
+            skill_digest: Some(old_hex),
+        }
+    );
+    assert_eq!(
+        seed.candidate,
+        EvalArmPin {
+            model: model.as_str().to_owned(),
+            revision: "r1".to_owned(),
+            skill_digest: Some(candidate_hex),
+        }
+    );
+
+    let now = fixture.vault.now_recorded_at();
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    let repair = inventory
+        .repairs
+        .iter()
+        .find(|row| row.id == "r1")
+        .expect("r1 again");
+    assert_eq!(repair.seeds.len(), 1);
+    assert_eq!(repair.seeds[0].seat, EvalSeat::Companion);
+    assert_eq!(repair.seeds[0].standing, EvalRepairSeedStanding::Pending);
+
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan(&inventory, "k1"),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 0, "{report:?}");
+    assert_eq!(report.repair_seeds_reused, 1);
+
+    let refused = EvalAuthoringPlan {
+        repair_seeds: vec![RepairSeedDecision {
+            repair: "r9".to_owned(),
+            seat: EvalSeat::Companion,
+            skills: "k1".to_owned(),
+        }],
+        ..seed_plan(&inventory, "k1")
+    };
+    let error = fixture
+        .vault
+        .run_coach_eval_authoring(
+            &nightly,
+            refused,
+            &inventory,
+            (skill, SKILL_REVISION.to_owned()),
+            now,
+        )
+        .expect_err("a plan naming r9 is refused whole");
+    assert!(
+        error
+            .to_string()
+            .contains("names what its inventory did not hold"),
+        "{error:?}"
+    );
+
+    let coach = fixture.vault.coach_authority()?;
+    let read = fixture
+        .vault
+        .memory(coach.entity_ref(), coach.actor_class())
+        .read_ag_ui_file(&AgUiFileReadInput {
+            claim_ref: source.claim_ref.clone(),
+            source_hash: source.source_hash.clone(),
+        })?;
+    assert!(
+        read.source.is_none(),
+        "the Coach's own read still withholds the capture"
+    );
+    Ok(())
+}
+
+#[test]
+fn coach_reproposes_a_candidate_failed_seed() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let manifest = manifest()?;
+    pin_manifest(&fixture.vault, &manifest)?;
+    let model = manifest
+        .binding(ModelRole::GenerativeReasoner)?
+        .model
+        .clone();
+    fixture
+        .vault
+        .put_model_registry_row(&registry_row(&model)?)?;
+    let (parent, old_hex) = put_skill(&fixture, "fixture.old", "1", "the old skill", None)?;
+    let (_, first_hex) = put_skill(
+        &fixture,
+        "fixture.old",
+        "2",
+        "the first candidate",
+        Some(parent),
+    )?;
+    let (_, second_hex) = put_skill(
+        &fixture,
+        "fixture.old",
+        "3",
+        "the second candidate",
+        Some(parent),
+    )?;
+
+    let now = fixture.vault.now_recorded_at();
+    let nightly = coach_attempt(&fixture, now)?;
+    let skill = eval_authoring_skill_id()?;
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    let pair_id = |candidate: &str| {
+        inventory
+            .skill_pairs
+            .iter()
+            .find(|pair| pair.candidate == candidate)
+            .expect("the pair")
+            .id
+            .clone()
+    };
+    let (first, second) = (pair_id(&first_hex), pair_id(&second_hex));
+
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan(&inventory, &first),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 1, "{report:?}");
+    let proposed = fixture
+        .vault
+        .eval_repair_seed(&source)?
+        .expect("the first seed");
+    assert_eq!(proposed.state, EvalRepairSeedState::Pending);
+    let settled = settle(
+        &fixture,
+        &source,
+        &response("wrong answer"),
+        &response("another wrong answer"),
+    )?;
+    assert!(
+        matches!(
+            settled.state,
+            EvalRepairSeedState::Refused {
+                reason: EvalRepairSeedRefusal::CandidateFailed,
+                ..
+            }
+        ),
+        "{:?}",
+        settled.state
+    );
+
+    let now = fixture.vault.now_recorded_at();
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan(&inventory, &second),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 1, "{report:?}");
+    let again = fixture
+        .vault
+        .eval_repair_seed(&source)?
+        .expect("the re-proposed seed");
+    assert_eq!(again.state, EvalRepairSeedState::Pending);
+    assert_eq!(again.family, proposed.family);
+    assert_eq!(
+        again.old,
+        EvalArmPin {
+            model: model.as_str().to_owned(),
+            revision: "r1".to_owned(),
+            skill_digest: Some(old_hex),
+        }
+    );
+    assert_eq!(
+        again.candidate,
+        EvalArmPin {
+            model: model.as_str().to_owned(),
+            revision: "r1".to_owned(),
+            skill_digest: Some(second_hex),
+        }
+    );
+
+    let now = fixture.vault.now_recorded_at();
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan(&inventory, &first),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 0, "{report:?}");
+    assert_eq!(report.repair_seeds_reused, 1);
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(again));
     Ok(())
 }
