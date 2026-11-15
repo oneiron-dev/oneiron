@@ -146,7 +146,11 @@ export function base64UrlEncode(bytes: Uint8Array): string {
 /** The bytes base64url text spells, padded or not. */
 export function base64UrlDecode(text: string): Uint8Array<ArrayBuffer> {
   const unpadded = text.replace(/=+$/, '')
-  if (!BASE64URL_TEXT.test(text) || unpadded.length % 4 === 1) {
+  if (
+    !BASE64URL_TEXT.test(text) ||
+    unpadded.length % 4 === 1 ||
+    (unpadded.length === 0 && text.length > 0)
+  ) {
     throw new OwnerPasskeyCeremonyError('malformed-base64url', 'the text is not base64url')
   }
   const standard = unpadded.replace(/-/g, '+').replace(/_/g, '/')
@@ -383,21 +387,23 @@ function createdCredential(created: Credential | null): { rawId: ArrayBuffer; pu
   const response = created.response as Partial<
     Record<'getPublicKey' | 'getPublicKeyAlgorithm', unknown>
   >
-  if (
-    typeof response.getPublicKey !== 'function' ||
-    typeof response.getPublicKeyAlgorithm !== 'function'
-  ) {
+  if (typeof response.getPublicKey !== 'function') {
     throw new OwnerPasskeyCeremonyError(
       'no-public-key',
       'this browser does not hand over a new passkey\'s public key',
     )
   }
-  const algorithm: unknown = response.getPublicKeyAlgorithm.call(created.response)
-  if (algorithm !== OWNER_PASSKEY_ALGORITHM_ES256) {
-    throw new OwnerPasskeyCeremonyError(
-      'not-es256',
-      'the passkey is not an ES256 (P-256) credential, the only kind the vault enrolls',
-    )
+  // The creation asked for ES256 alone, and the challenge route refuses a key
+  // that is not an ES256 SubjectPublicKeyInfo. A browser that names the
+  // algorithm is held to it here, before any route is called.
+  if (typeof response.getPublicKeyAlgorithm === 'function') {
+    const algorithm: unknown = response.getPublicKeyAlgorithm.call(created.response)
+    if (algorithm !== OWNER_PASSKEY_ALGORITHM_ES256) {
+      throw new OwnerPasskeyCeremonyError(
+        'not-es256',
+        'the passkey is not an ES256 (P-256) credential, the only kind the vault enrolls',
+      )
+    }
   }
   const publicKey: unknown = response.getPublicKey.call(created.response)
   if (!(publicKey instanceof ArrayBuffer)) {
