@@ -287,6 +287,10 @@ impl Vault {
             // With nothing published, this scrub is the first to touch the
             // PERSON: a Connect guest's pacts end here (FIX 3875).
             revoke_guest_grants_in_txn(self, gate.as_ref(), &mut wtxn, id)?;
+            // A FEDERATION_GRANT row this scrub tears ends its line in this writer too, or
+            // owes the end, as the soft arm's does: the purge commits later, if at all
+            // (GRANT-ROW-DELETE-NO-END = A). The purge's own call then finds the line ended.
+            self.end_erased_grant_in_txn(&mut wtxn, *id)?;
             reserve_topology_delete_in_txn(
                 &self.store,
                 &mut wtxn,

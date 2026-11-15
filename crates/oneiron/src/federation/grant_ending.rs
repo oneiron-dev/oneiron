@@ -194,11 +194,12 @@ impl Vault {
     }
 
     /// Carries every Grant end this install still owes, each in a writer of its own. The caller
-    /// loads the install key first. Returns how many it settled.
+    /// loads the install key first. Returns how many it settled, and the first carry that
+    /// failed: the others are still tried, and each that failed stays owed.
     ///
     /// # Errors
-    /// The first carry that failed; the others are still tried, and each that failed stays owed.
-    fn carry_owed_grant_ends(&self) -> Result<usize> {
+    /// The read of the owed ends.
+    fn carry_owed_grant_ends(&self) -> Result<(usize, Option<crate::error::Error>)> {
         let owed = self.owed_grant_ends()?;
         let mut settled = 0;
         let mut failed = None;
@@ -211,21 +212,28 @@ impl Vault {
                 }
             }
         }
-        failed.map_or(Ok(settled), Err)
+        Ok((settled, failed))
     }
 
     /// [`Self::carry_owed_grant_ends`] for a pass that goes on without it, such as the install
     /// key's load: a failure is logged by kind, never with a value.
     pub(crate) fn carry_owed_grant_ends_logged(&self) {
         match self.carry_owed_grant_ends() {
-            Ok(settled) if settled > 0 => {
+            Ok((settled, None)) if settled > 0 => {
                 tracing::debug!(settled, "owed Grant ends carried");
             }
-            Ok(_) => {}
+            Ok((_, None)) => {}
+            Ok((settled, Some(error))) => {
+                tracing::warn!(
+                    settled,
+                    kind = ?error.kind(),
+                    "some owed Grant ends were not carried on this install; they stay owed"
+                );
+            }
             Err(error) => {
                 tracing::warn!(
                     kind = ?error.kind(),
-                    "owed Grant ends were not carried on this install"
+                    "owed Grant ends were not read on this install"
                 );
             }
         }

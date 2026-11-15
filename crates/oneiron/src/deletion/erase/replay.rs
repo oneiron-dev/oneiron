@@ -117,6 +117,10 @@ impl Vault {
             || decoded.reason == Some(super::tombstone::TombstoneReason::UserDelete)
         {
             crate::authority::mark_if_withdrawn_grant_in_txn(&self.store, wtxn, *id)?;
+            // Its line's end is owed here too, before the row is torn: it settles with no act
+            // once the peer's end counts here, and is carried from here if none ever does
+            // (pass 28 R2c, GRANT-ROW-DELETE-NO-END = A).
+            crate::federation::owe_torn_grant_end_in_txn(&self.store, wtxn, *id)?;
         }
         let applied = self.replay_tombstone_effects_in_txn(wtxn, id, raw_value)?;
         self.reconcile_identity_topology_after_delete_in_txn(wtxn, id)?;
