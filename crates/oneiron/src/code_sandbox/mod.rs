@@ -25,14 +25,14 @@ pub mod foreign;
 /// A guest program's own error text, masked before it leaves the host (FIX 9209).
 mod paths;
 mod proposal;
-/// The owner's Setting keys for code execution (DESIGN 15-setting-primitive).
-pub(crate) mod setting_keys;
 /// Host-side preparation of a code-mode program: TypeScript stripped by Oxc
 /// in process, JavaScript passed through byte for byte (FIX 8276).
 pub use oneiron_code_source::source;
 
 /// MicroVM execution lane for foreign and ingested guest code.
 pub mod microvm;
+/// The owner's Setting keys for code execution (DESIGN 15-setting-primitive).
+pub(crate) mod setting_keys;
 
 pub use self::adapter::{FakeSandboxAdapter, SandboxBoundaryAdapter};
 #[cfg(feature = "code-sandbox-wasmtime")]
