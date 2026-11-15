@@ -41,9 +41,8 @@ pub(crate) const RESPONSE_ERASED: &str = "response_erased";
 
 pub(crate) use crate::store::result_body_erasure::response_erased_error;
 
-/// The preview text of a result whose record an erase retired.
-pub(crate) const CODE_RUN_OUTPUT_PREVIEW_ERASED: &str =
-    "[preview erased: its owner's erase retired this result]";
+#[doc(hidden)]
+pub(crate) use oneiron_verb_wire::code_run::storage::replay_bodies::CODE_RUN_OUTPUT_PREVIEW_ERASED;
 
 /// What a checkpoint carries of the replay record `value`: its outcomes,
 /// request words and previews, the record with each outcome failed, each

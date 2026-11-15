@@ -19,6 +19,11 @@
 //! * `accept_all_leaves_waiting_a_member_that_would_replace_a_live_head`: the
 //!   owner's newer claim on the same conflict set stands; that member waits,
 //!   names the head, and the owner then settles it alone.
+//! * `accept_all_leaves_waiting_an_older_member_behind_the_member_it_landed`:
+//!   two restored claims on one conflict set; accept-all lands the newer one,
+//!   which becomes the set's head in the same write, so the older one waits
+//!   and names it (FIX 23686: the act's one index of the standing claims
+//!   takes in each member it lands).
 //! * `the_runs_revert_handle_takes_the_whole_settlement_back`.
 //! * `the_actor_door_and_the_actorless_door_list_no_restore_group`: a guard,
 //!   green on the base as well.
@@ -514,6 +519,49 @@ fn accept_all_leaves_waiting_a_member_that_would_replace_a_live_head() {
     assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
     assert_ne!(claim(&dest, &newer).lifecycle, ClaimLifecycleStatus::Active);
     assert!(restore_groups(&memory, &owner).is_empty());
+}
+
+#[test]
+fn accept_all_leaves_waiting_an_older_member_behind_the_member_it_landed() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
+    let owen = EntityId::now();
+    put_person(&vault, &owen, "owen");
+    // Two claims on one conflict set: the raw door closes neither.
+    let older = put_raw_claim(&vault, owen, NICKNAME, "Owen");
+    let newer = put_raw_claim(&vault, owen, NICKNAME, "Ow");
+    for id in [older, newer] {
+        assert_eq!(claim(&vault, &id).lifecycle, ClaimLifecycleStatus::Active);
+    }
+    let archive = vault
+        .export_whole_vault(true)
+        .expect("whole-vault export")
+        .bytes()
+        .to_vec();
+    let (_dest_dir, dest, dest_owner, owner, receipt_ref) = restore_as_owner(&archive);
+    let memory = dest.memory(dest_owner, EdgeActorClass::Human);
+    let group = the_restore_group(&memory, &owner, &receipt_ref);
+    // Both come back proposed, so neither is a live head yet.
+    assert_eq!(group["replaces_live_head"], 0, "{group:#}");
+    let group_key = group["group_key"].as_str().expect("group_key").to_owned();
+
+    // Newest first: the newer one lands and is the set's head when the older
+    // one is settled in the same write, so the older one waits and names it.
+    let resolution = resolve(&memory, &owner, &group_key, "accept_all");
+    assert_eq!(
+        member(&resolution, &newer)["verdict"],
+        "landed",
+        "{resolution:#}"
+    );
+    let waiting = member(&resolution, &older);
+    assert_eq!(waiting["verdict"], "waiting", "{resolution:#}");
+    assert_eq!(waiting["waiting"], "replaces_live_head");
+    assert_eq!(waiting["replaces_ref"], newer.to_hex());
+    assert_eq!(claim(&dest, &older).approval, ClaimApprovalStatus::Proposed);
+    assert_eq!(claim(&dest, &newer).approval, ClaimApprovalStatus::Approved);
+    let group = the_restore_group(&memory, &owner, &receipt_ref);
+    assert_eq!(group["open_members"], 1, "{group:#}");
+    assert_eq!(group["replaces_live_head"], 1, "{group:#}");
 }
 
 #[test]

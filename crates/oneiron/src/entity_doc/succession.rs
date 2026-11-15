@@ -21,8 +21,8 @@ use crate::store::canonical_document::CanonicalDocumentOrigin;
 use loro::{LoroDoc, VersionVector};
 use serde::{Deserialize, Serialize};
 
-/// The meta key a rebuilt document's proof sits under.
-const SUCCEEDS: &str = "entity_doc_succeeds";
+#[doc(hidden)]
+use oneiron_records::entity_doc::succession::SUCCEEDS;
 
 /// The history a rebuilt document replaces.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

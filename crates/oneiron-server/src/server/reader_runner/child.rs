@@ -615,6 +615,14 @@ impl Child {
                                     Err(end) => return end,
                                 }
                             }
+                            // A reader binds no agent lease, so no Pause
+                            // signal reaches it.
+                            EngineExecutorStatus::Paused { .. } => {
+                                return failed(
+                                    "reader_binding_failed",
+                                    &"a reader run took a step-boundary pause",
+                                );
+                            }
                         },
                         Ok(Err(error)) => error,
                     };

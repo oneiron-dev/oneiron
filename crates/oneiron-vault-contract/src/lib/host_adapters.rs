@@ -14,10 +14,12 @@ mod embedded;
 pub use embedded::{AppHost, EmbeddedHost};
 #[cfg(unix)]
 mod desktop;
+#[cfg(target_os = "linux")]
+pub use desktop::prepare_for_sleep_line;
 #[cfg(unix)]
 pub use desktop::{
     ActivatedListener, AwakeGuard, AwakePolicy, DesktopHost, KeepAwake, LaunchdHost, SecretSource,
-    SystemdHost,
+    SleepHooks, SleepWatch, SystemdHost,
 };
 #[cfg(target_os = "linux")]
 mod vsock;
