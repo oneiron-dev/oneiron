@@ -189,22 +189,14 @@ pub(crate) fn holds_world_access_claim_in(
     id: &EntityId,
 ) -> Result<bool> {
     Ok(vault.get_raw_in(txn, id)?.is_some_and(|raw| {
-        crate::batch::EntityMetadataHeader::parse(&raw).is_some_and(|header| {
-            is_world_access_claim_row(
-                header.entity_type,
+        raw.first().copied() == Some(crate::registry::ENTITY_TYPE_CLAIM)
+            && crate::batch::EntityMetadataHeader::parse(&raw).is_some()
+            && crate::claim::decode_claim_body(
                 &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                true,
             )
-        })
-    }))
-}
-
-/// Whether a stored row of type `kind` with `body` (its bytes after the
-/// metadata header) is a world-access grant or default, open or closed. Only
-/// a live owner deletes one (`federation::require_delete_authority_in_txn`).
-pub(crate) fn is_world_access_claim_row(kind: u8, body: &[u8]) -> bool {
-    kind == crate::registry::ENTITY_TYPE_CLAIM
-        && crate::claim::decode_claim_body(body, true)
             .is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
+    }))
 }
 
 /// The state rule of a stored ALLOWED-SET grant, checked at each local claim

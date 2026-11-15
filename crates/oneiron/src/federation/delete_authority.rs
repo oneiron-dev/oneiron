@@ -286,11 +286,35 @@ fn other_arms(
 /// record restricts it, so it is authority, not an item, and only whoever may
 /// widen it deletes it (the lead's RULING WORLD-ACCESS-GRANT-DELETE = A,
 /// 15 Nov: "deleting a restriction IS a widening"). DEL-2 stands for every
-/// other record. Each kind is told from the record's own kind and body:
-/// - a world-access grant or default (ARCH-0067 #tiers): only a live owner
-///   writes a grant, and a delete drops it from the fold as a close does.
+/// other record. Each kind is told from the record's own kind and body, a
+/// CLAIM by its predicate and, where only some values restrict, one field:
+/// - a world-access grant or default (ARCH-0067 #tiers), open or closed;
+/// - a party's `comm.opt_out` and a `comm.do_not_contact` bar, which hold
+///   sends to that party;
+/// - a delivery window (`delivery_window.*`), which holds interrupts;
+/// - an Approved `repo.secret_mark`, which masks the bytes a repo serves;
+/// - a `project.leader_chat` rule of `false`, which narrows leader chat.
+///
+/// Rows whose restriction needs another codec or row to tell are FIX rows
+/// (`comm.reachable_via` false, a paused, suppressed or exited
+/// `campaign.member`, a narrowing `disclosure.import_audience`, a synced
+/// claim-class descriptor stricter than the compiled one).
 fn removal_widens(record: &TargetRecord) -> bool {
-    crate::claim::world_access::is_world_access_claim_row(record.kind, &record.body)
+    if record.kind != crate::registry::ENTITY_TYPE_CLAIM {
+        return false;
+    }
+    let Ok(body) = crate::claim::decode_claim_body(&record.body, true) else {
+        return false;
+    };
+    let predicate = body.predicate.as_str();
+    crate::write_envelope::world_access_predicates::is_world_access_tier_predicate(predicate)
+        || predicate == crate::write_envelope::communication::PREDICATE_COMM_OPT_OUT
+        || predicate == crate::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT
+        || crate::delivery_window::DELIVERY_WINDOW_CLAIM_PREDICATES.contains(&predicate)
+        || (predicate == crate::origin::secret_marks::REPO_SECRET_MARK_PREDICATE
+            && body.approval == crate::claim::ClaimApprovalStatus::Approved)
+        || (predicate == crate::workspace_roster::LEADER_CHAT_RULE_PREDICATE
+            && body.value == rmpv::Value::Boolean(false))
 }
 
 /// The record as `txn` holds it: its kind, body, a TASK's Owner fact and
