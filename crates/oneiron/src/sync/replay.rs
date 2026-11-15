@@ -14,7 +14,9 @@ pub struct ReplicatedEntity<'a> {
 }
 
 /// The transaction-scoped `put_replicated` tier fork. Federated input runs the
-/// same grading as window admission; own-device replay remains trust-blind.
+/// same grading as window admission; own-device replay remains trust-blind,
+/// but for an agent definition's widening, which lands only within the
+/// switches the owner last stated (pass 28 R2d) and else waits.
 pub fn replay_entity(
     vault: &Vault,
     entity: ReplicatedEntity<'_>,
@@ -42,6 +44,14 @@ pub fn replay_entity_with_birth(
     let replayed = vault.with_write_txn_grouped(|txn| {
         if super::local_claims::holds_world_access_claim_in(vault, txn, &entity.id)? {
             return Ok(());
+        }
+        // A federation peer's widening is refused outright by its admission below.
+        if entity.entity_type == crate::registry::ENTITY_TYPE_AGENT_DEF
+            && !matches!(tier, ImportTier::Federated(_))
+            && let Some(waits) =
+                vault.unstated_agent_widening_in_txn(txn, &entity.id, entity.body)?
+        {
+            return Err(waits);
         }
         vault
             .batch_in()

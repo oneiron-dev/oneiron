@@ -4,6 +4,7 @@ use super::codec::{
     decode_agent_definition, encode_agent_definition, legacy_logical_id_row,
     validate_agent_definition_update,
 };
+use super::switch_statement::AgentSwitchesReach;
 use super::types::{AgentDefinition, AgentScope, DreamingMode};
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -525,6 +526,9 @@ impl Vault {
     /// row, so later puts answer to the owner's ceiling. It rechecks the proof
     /// there, and the actor must own this vault.
     ///
+    /// Returns whether the edit reaches the owner's other installs
+    /// ([`AgentSwitchesReach`], pass 28 R2d): his answer shows its notice.
+    ///
     /// # Errors
     ///
     /// [`GateError::ConsentOwnerNotAuthenticated`](crate::error::GateError::ConsentOwnerNotAuthenticated)
@@ -537,7 +541,7 @@ impl Vault {
         def: &AgentDefinition,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<AgentSwitchesReach> {
         self.update_agent_definition_as_checked(owner, id, None, def, occurred, learned_at)
     }
 
@@ -555,7 +559,7 @@ impl Vault {
         def: &AgentDefinition,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<AgentSwitchesReach> {
         self.update_agent_definition_as_checked(
             owner,
             id,
@@ -578,7 +582,10 @@ impl Vault {
         def: &AgentDefinition,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<AgentSwitchesReach> {
+        // The edit's statement of its switches is signed in the writer (pass 28 R2d): the
+        // install key loads first.
+        self.load_membership_carrier();
         self.with_write_txn(|txn| {
             self.update_agent_definition_as_owner_in_txn(
                 txn,
@@ -594,7 +601,9 @@ impl Vault {
 
     /// Owner edit of an AGENT_DEF in the caller's writer: rechecks the proof,
     /// fences the revision, runs the immutable-field gate, moves the id pin,
-    /// and writes the row. The whole-vault seed-replacement adapter calls this
+    /// states the switches it writes on the authority log when it widens them
+    /// or changes a statement (`Vault::state_agent_switches_in_txn`, pass 28
+    /// R2d), and writes the row. The whole-vault seed-replacement adapter calls this
     /// in the import writer; the public owner doors reach it through
     /// [`Self::update_agent_definition_as_checked`].
     #[expect(
@@ -610,16 +619,18 @@ impl Vault {
         def: &AgentDefinition,
         occurred: TimeRange,
         learned_at: u64,
-    ) -> Result<()> {
+    ) -> Result<AgentSwitchesReach> {
         let data = encode_agent_definition(def)?;
-        owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let stated_by = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
         let existing = self.read_agent_definition_in_txn(txn, id)?;
         if expected_version.is_some_and(|version| version != existing.version) {
             return Err(Error::ConcurrentWrite("agent definition revision changed"));
         }
         validate_agent_definition_update(&existing, def)?;
         super::id_pin::move_pin_for_owner_in_txn(&self.store, txn, id, def)?;
-        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
+        let reach = self.state_agent_switches_in_txn(txn, stated_by, id, def, &data)?;
+        self.apply_agent_definition_body(txn, id, occurred, learned_at, data)?;
+        Ok(reach)
     }
 
     /// [`Self::update_agent_definition_at_version_as`] in the caller's

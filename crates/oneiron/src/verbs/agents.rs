@@ -50,6 +50,13 @@ pub struct AgentDefinitionView {
     /// every other answer.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub made_by: Option<AgentMadeBy>,
+    /// On the answer to the owner's edit that turned the agent on or moved its
+    /// models where this device could not state it on the vault's authority
+    /// log: the edit is saved on this device only, and the owner's other
+    /// devices keep the old setting (pass 28 R2d). Absent on every other
+    /// answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub notice: Option<String>,
 }
 
 fn view(agent_def_ref: EntityId, definition: &AgentDefinition) -> AgentDefinitionView {
@@ -59,6 +66,7 @@ fn view(agent_def_ref: EntityId, definition: &AgentDefinition) -> AgentDefinitio
         approval_status: definition.approval_status,
         lifecycle_status: definition.lifecycle_status.into(),
         made_by: None,
+        notice: None,
     }
 }
 
@@ -102,7 +110,7 @@ pub fn update_agent_definition_as(
     let mut definition = prior.clone();
     input.definition.apply(&mut definition);
     let now = crate::unix_seconds_now();
-    vault.update_agent_definition_at_version_as(
+    let reach = vault.update_agent_definition_at_version_as(
         owner,
         &input.agent_def_ref,
         &input.expected_version,
@@ -114,6 +122,7 @@ pub fn update_agent_definition_as(
         now,
     )?;
     let mut answer = view(input.agent_def_ref, &definition);
+    answer.notice = reach.notice().map(str::to_owned);
     if switches_off_or_narrows(&prior, &definition) {
         answer.made_by = Some(vault.agent_made_by_as(owner, &input.agent_def_ref)?);
     }

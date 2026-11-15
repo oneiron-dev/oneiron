@@ -22,7 +22,7 @@ fn id(byte: u8) -> EntityId {
     EntityId::from_bytes([byte; 16]).expect("a valid entity id")
 }
 
-fn person_act(change: GrantActChange, subject: EntityId) -> OwnerAct {
+fn person_act(change: &GrantActChange, subject: EntityId) -> OwnerAct {
     OwnerAct::by_owner(
         id(0x11),
         change.act_kind(),
@@ -34,7 +34,7 @@ fn person_act(change: GrantActChange, subject: EntityId) -> OwnerAct {
 
 fn by_person(family: GrantFamily, change: GrantActChange) -> GrantActRecord {
     GrantActRecord {
-        decider: GrantDecider::Person(person_act(change, id(0x33))),
+        decider: GrantDecider::Person(person_act(&change, id(0x33))),
         machine: id(0x22),
         subject: id(0x33),
         family,
@@ -104,11 +104,14 @@ fn every_grant_act_round_trips_in_seven_keys() {
             record.decider == GrantDecider::Rule,
             "a nil act is a rule's, and only a rule's"
         );
-        match record.change {
+        match &record.change {
             GrantActChange::Give { terms } => {
                 assert_eq!(value_of(&encoded, "terms"), &Value::Binary(terms.to_vec()));
             }
             GrantActChange::End => assert!(value_of(&encoded, "terms").is_nil()),
+            GrantActChange::State { .. } => {
+                assert!(matches!(value_of(&encoded, "terms"), Value::Map(_)));
+            }
         }
         assert_eq!(
             decode_op(&Value::Map(encoded)).expect("the act decodes"),

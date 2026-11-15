@@ -58,6 +58,8 @@ pub(crate) enum GrantTerms {
     OwnerAgentMint(Box<OwnerAgentMint>),
     /// A general grant act's giving: its terms by their keyed commitment alone.
     Committed(CommittedTerms),
+    /// A person's statement of an agent definition's switches, in clear (pass 28 R2d).
+    AgentSwitches(StatedSwitches),
 }
 
 impl GrantTerms {
@@ -67,6 +69,7 @@ impl GrantTerms {
             Self::Nothing => None,
             Self::OwnerAgentMint(_) => Some(GrantFamily::OwnerAgent),
             Self::Committed(committed) => Some(committed.family),
+            Self::AgentSwitches(_) => Some(GrantFamily::AgentDefinition),
         }
     }
 
@@ -79,7 +82,8 @@ impl GrantTerms {
         terms_key: Option<&GrantTermsKey>,
     ) -> bool {
         match self {
-            Self::Nothing => false,
+            // A statement of switches names an AGENT_DEF row, never a Grant row.
+            Self::Nothing | Self::AgentSwitches(_) => false,
             Self::OwnerAgentMint(mint) => mint.row(grant.scope.clone()) == *grant,
             Self::Committed(committed) => terms_key.is_some_and(|key| {
                 federation_grant_terms(id, grant, key).is_ok_and(|terms| terms == committed.terms)
@@ -98,6 +102,17 @@ pub(crate) struct CommittedTerms {
     pub(crate) giver: EntityId,
     /// The commitment ([`federation_grant_terms`]).
     pub(crate) terms: [u8; 32],
+}
+
+/// A statement of an agent definition's switches as the fold holds it
+/// (`GrantActChange::State`): who stated them, and the switches. The fold does not judge
+/// the person; the AGENT_DEF reader stands on a statement only when they own the vault.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub(crate) struct StatedSwitches {
+    /// The deciding person.
+    pub(crate) giver: EntityId,
+    /// The switches stated.
+    pub(crate) switches: AgentSwitches,
 }
 
 /// The owner's agent Grant mint as its act states it (`AgentGrantChange::Mint`): who gave it,
@@ -285,6 +300,23 @@ impl AuthorityFold {
     pub(crate) fn grant_line(&self, grant: EntityId) -> Option<&FoldedGrantLine> {
         self.grant_lines.get(&grant)
     }
+
+    /// The switches the one counted statement on agent definition `definition`'s line
+    /// states, and the person who stated them: `None` when no statement counts here in full,
+    /// when two the fold cannot order both stand, or when the line holds another family.
+    /// Whether that person may state them (the vault's owner) is the reader's to judge.
+    pub(crate) fn stated_agent_switches(
+        &self,
+        definition: EntityId,
+    ) -> Option<(EntityId, &AgentSwitches)> {
+        let line = self
+            .grant_line(definition)
+            .filter(|line| !line.ended && line.family == Some(GrantFamily::AgentDefinition))?;
+        match &line.giving {
+            Some((_, GrantTerms::AgentSwitches(stated))) => Some((stated.giver, &stated.switches)),
+            _ => None,
+        }
+    }
 }
 
 /// The `AgentGrantAct` transition's grant line, once `apply_agent_grant_act` took the entry
@@ -374,8 +406,18 @@ pub(super) fn apply_grant_act_line(
         state.grant_lines.refused.insert(hash);
         return;
     }
-    let (terms, giver) = match (record.change, record.decider_person()) {
-        (GrantActChange::Give { terms }, Some(giver)) => (terms, giver),
+    let settings = match (&record.change, record.decider_person()) {
+        (GrantActChange::Give { terms }, Some(giver)) => GrantTerms::Committed(CommittedTerms {
+            family: record.family,
+            giver,
+            terms: *terms,
+        }),
+        (GrantActChange::State { switches }, Some(giver)) => {
+            GrantTerms::AgentSwitches(StatedSwitches {
+                giver,
+                switches: switches.clone(),
+            })
+        }
         // An end withdraws the slips minted under the row too, as a membership execution's
         // withdrawal does (FIX 12335).
         (GrantActChange::End, _) => {
@@ -387,7 +429,7 @@ pub(super) fn apply_grant_act_line(
         }
         // `GrantActRecord::validate` refuses a rule's giving before any fold; should one
         // reach here, it gives nothing and never turns into an end no one decided.
-        (GrantActChange::Give { .. }, None) => {
+        (GrantActChange::Give { .. } | GrantActChange::State { .. }, None) => {
             state.grant_lines.refused.insert(hash);
             return;
         }
@@ -396,11 +438,7 @@ pub(super) fn apply_grant_act_line(
         record.subject,
         hash,
         FrontierEdit {
-            settings: GrantTerms::Committed(CommittedTerms {
-                family: record.family,
-                giver,
-                terms,
-            }),
+            settings,
             machine: record.machine,
             key,
             replaced: BTreeSet::new(),

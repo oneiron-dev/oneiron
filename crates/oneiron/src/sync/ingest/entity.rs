@@ -165,6 +165,9 @@ impl RefusalRetry {
             // An own machine's companion row that waits for its author
             // (FIX 21271).
             || crate::gate::companion_author_pending(err)
+            // An agent definition's widening that waits for its owner's statement (pass 28
+            // R2d).
+            || crate::agent_def::owner_statement_pending(err)
             || matches!(
                 err.kind(),
                 ErrorKind::ProjectDependencyPending
@@ -585,6 +588,18 @@ fn admit(
                 "a federation peer cannot turn an agent definition back on or change its models",
             )),
         ));
+    }
+    // Every other row that widens a definition lands only within the switches its owner last
+    // stated on the authority log, on every lane (pass 28 R2d, AGENT-DEF-OWN-LANE-FIX = B);
+    // beyond them it waits, pending, for the statement.
+    if header.entity_type == ENTITY_TYPE_AGENT_DEF
+        && let Some(err) = vault.unstated_agent_widening_in_txn(wtxn, &id, data)?
+    {
+        return Ok(EntityStep::Quarantine(EntityRefusal {
+            id: Some(id),
+            err,
+            retry: RefusalRetry::DependencyPending,
+        }));
     }
     // Pack remote preflight: a malformed REMOTE envelope is refused here, before the name-based
     // remap reads the local map. `InvalidPackByteMap` stays unclassified, so a later one from

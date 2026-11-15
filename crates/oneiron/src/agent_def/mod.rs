@@ -23,6 +23,7 @@ mod plan_mode;
 mod powers;
 mod proposed_change;
 mod refusal;
+mod switch_statement;
 mod tree_pause;
 mod types;
 mod widening;
@@ -100,6 +101,9 @@ pub(crate) use self::manifest::{
     system_export_identity, validate_reserved_logical_id,
 };
 pub(crate) use self::models::{list_admits, listed_entry, no_listed_model};
+pub use self::switch_statement::AgentSwitchesReach;
+#[cfg(feature = "sync")]
+pub(crate) use self::switch_statement::owner_statement_pending;
 pub(crate) use self::types::forked_from_row_ref;
 pub(crate) use self::widening::agent_definition_put_widens_in_txn;
 
