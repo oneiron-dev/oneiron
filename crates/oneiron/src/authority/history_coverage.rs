@@ -90,6 +90,11 @@ pub struct AuthorityArchiveCoverage {
     /// Requested and not held here, advertised or attested or not: never
     /// erased, never permission.
     pub unavailable: BTreeSet<AuthorityEntryHash>,
+    /// Requested, not held here, and listed by an archive this machine
+    /// offloaded to (census L5-22 PR 3): its own custody proof found the
+    /// custodian keeping every row of it. This install's record, a subset of
+    /// `unavailable`; never verified bytes here, never permission.
+    pub offloaded: BTreeSet<AuthorityEntryHash>,
 }
 
 /// The archive coverage of `requested` on the caller's snapshot, against
@@ -119,6 +124,10 @@ pub(super) fn archive_coverage_in_txn(
         }
     }
     coverage.unavailable = requested.difference(&coverage.held).copied().collect();
+    coverage.offloaded = super::history_offload::offloaded_rows_in_txn(vault, txn)?
+        .intersection(&coverage.unavailable)
+        .copied()
+        .collect();
     let Some(adopted) = adopted else {
         return Ok(coverage);
     };

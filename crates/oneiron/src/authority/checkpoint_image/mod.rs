@@ -33,7 +33,10 @@
 //! of the same vault, each by its id and the machine key a connection proves
 //! it by. A builder names only itself, for the covered rows it physically
 //! holds: custody locates bytes, never chooses roots or grants permission,
-//! and is no proof of a durable copy. Raw history stays local and whole.
+//! and is no proof of a durable copy. Raw history stays whole across the
+//! vault's machines: the home keeps it, and a device that adopted an image
+//! drops a covered row only once its own custody proof stands for a copy on
+//! another machine ([`crate::Vault::offload_authority_history`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Cursor;

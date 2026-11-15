@@ -155,11 +155,39 @@ impl Vault {
         ))
     }
 
+    /// The rows a root-edge walk reads: the held log and, on a vault that
+    /// adopted a checkpoint image, the body the image carries for each
+    /// covered row it does not hold, in its canonical signed bytes. Every
+    /// image carries each ReRoot and RotateKey body (`carries_body`), so a
+    /// device that never held its covered rows, or offloaded them (census
+    /// L5-22 PR 3), still walks the whole chain.
+    fn root_walk_history_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<BTreeMap<AuthorityEntryHash, (Vec<u8>, FoldRow)>> {
+        let mut history = super::history_transfer::history_in_txn(self, txn)?;
+        if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, txn)?
+        {
+            let stored: BTreeSet<AuthorityEntryHash> = history.keys().copied().collect();
+            for (hash, entry) in evidence.carried_past(&stored) {
+                history.insert(
+                    *hash,
+                    (
+                        encode_authority_log_entry_body(entry)?,
+                        FoldRow::Open(entry.clone()),
+                    ),
+                );
+            }
+        }
+        Ok(history)
+    }
+
     /// The signed root edges `fold` settled that hand the root on to
     /// `signer` (FIX 2053, FIX 3798), in chain order from the genesis root's
     /// own handoff ([`root_chain`]), less those at or below `member_heads`
     /// ([`member_folded`]): never more rows than the edges this vault
-    /// settled.
+    /// settled. A covered edge this vault does not hold rides in the signed
+    /// bytes its adopted image carries ([`Self::root_walk_history_in_txn`]).
     fn leave_notice_handoff_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -167,7 +195,7 @@ impl Vault {
         signer: &AuthorityKey,
         member_heads: &BTreeSet<AuthorityEntryHash>,
     ) -> Result<Vec<Vec<u8>>> {
-        let history = super::history_transfer::history_in_txn(self, txn)?;
+        let history = self.root_walk_history_in_txn(txn)?;
         let folded = member_folded(&history, member_heads);
         Ok(root_chain(&history, fold, signer)?
             .iter()

@@ -115,6 +115,31 @@ fn evict_covered_row_in_txn(
     Ok(())
 }
 
+/// Every row of every archive an offload of this machine names, each read
+/// from its own kept copy of the image the offload was made under: what its
+/// custody proofs found another machine keeping.
+pub(super) fn offloaded_rows_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeSet<AuthorityEntryHash>> {
+    let mut rows = BTreeSet::new();
+    for (image, stored) in OFFLOAD.scan(&vault.store, txn)? {
+        for archive in stored.archives {
+            rows.extend(super::history_fetch::selection_rows_in_txn(
+                vault,
+                txn,
+                &super::AuthorityHistorySelection::Covered {
+                    checkpoint: image,
+                    archive: Some(archive),
+                    lower_exclusive: None,
+                    upper_inclusive: None,
+                },
+            )?);
+        }
+    }
+    Ok(rows)
+}
+
 impl Vault {
     /// Drops the covered authority rows this vault holds under `image`, its
     /// adopted head, once a custody proof stands for each (census L5-22

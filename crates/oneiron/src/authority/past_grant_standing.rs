@@ -73,7 +73,19 @@ pub(crate) fn past_standing_history_loads_for_test() -> usize {
 struct LoadedHistory {
     parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>>,
     bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    /// The op kinds, as their scaffolds name them, of the covered rows this
+    /// vault neither holds nor reads a carried body of: a revoke among them
+    /// is one no walk here can see.
+    unread_kinds: BTreeSet<String>,
 }
+
+/// The op kinds [`preserved_one`] reads whole: a mint or revoke of the Grant,
+/// a slip revocation of it, a membership execution that withdrew it.
+const WALKED_KINDS: [&str; 3] = [
+    OP_KIND_AGENT_GRANT_ACT,
+    OP_KIND_SLIP_GRANT_REVOKE,
+    OP_KIND_MEMBERSHIP_EXECUTION,
+];
 
 /// The SAME-txn held authority rows plus ONLY the adopted image's carried
 /// bodies ([`VerifiedAuthorityCheckpoint`], the existing trust). Any decode
@@ -84,6 +96,7 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
     HISTORY_LOADS.with(|loads| loads.set(loads.get() + 1));
     let mut parents: BTreeMap<AuthorityEntryHash, Vec<AuthorityEntryHash>> = BTreeMap::new();
     let mut bodies: BTreeMap<AuthorityEntryHash, AuthorityLogEntry> = BTreeMap::new();
+    let mut unread_kinds = BTreeSet::new();
     for (_, body) in authority_log_rows_in_txn(store, txn)? {
         let row = decode_stored_authority_fold_row(store, txn, &body)?;
         let hash = row.hash()?;
@@ -142,10 +155,19 @@ fn load_history(store: &Store, txn: &heed::RoTxn<'_>) -> Result<LoadedHistory> {
                     ));
                 }
                 bodies.insert(*hash, entry);
+            } else {
+                // No image carries a slip revocation's body (`carries_body`),
+                // and a device that never held a covered row, or offloaded it
+                // (census L5-22 PR 3), holds none either.
+                unread_kinds.insert(row.op_kind.clone());
             }
         }
     }
-    Ok(LoadedHistory { parents, bodies })
+    Ok(LoadedHistory {
+        parents,
+        bodies,
+        unread_kinds,
+    })
 }
 
 /// `Some(candidate)` when `candidate` is a counted native WorldPrivacy act by
@@ -175,6 +197,14 @@ fn preserved_one(
         return Ok(None);
     };
     if edit.act.act != OwnerActKind::WorldPrivacy || edit.act.target != edit.world {
+        return Ok(None);
+    }
+    // A covered row of a kind the walk reads, whose body this vault cannot
+    // read, may be the revoke that refuses the act: keep the NOW judgment.
+    if WALKED_KINDS
+        .iter()
+        .any(|kind| loaded.unread_kinds.contains(*kind))
+    {
         return Ok(None);
     }
     let world: EntityId = edit.world;
