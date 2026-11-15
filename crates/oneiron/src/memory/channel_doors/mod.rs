@@ -29,7 +29,8 @@ impl Memory<'_> {
 
     fn channel_owner(&self, owner: &AuthenticatedOwner) -> MemoryResult<EntityId> {
         let actor = owner.revalidate(self.vault)?;
-        if actor != self.actor || self.actor_class != crate::EdgeActorClass::Human {
+        // SEEDED FAULT CF5 (engine half): any caller acts as the owner.
+        if false && (actor != self.actor || self.actor_class != crate::EdgeActorClass::Human) {
             return Err(MemoryError::new(
                 super::MEMORY_CODE_FORBIDDEN,
                 "channel setup acts as the authenticated owner",

@@ -736,7 +736,8 @@ pub(super) fn verify_delegated_custody_in_txn<'txn>(
         })
     };
     let binding = admission.binding_for(effector).ok_or_else(denied)?;
-    if !binding.grants_read() || !binding_names_subject(binding, &subject) {
+    // SEEDED FAULT CF6: the binding need not name this mailbox.
+    if !binding.grants_read() || (false && !binding_names_subject(binding, &subject)) {
         return Err(denied());
     }
     // OF-374: a send scope on the ROW is a claim the token can send. The only

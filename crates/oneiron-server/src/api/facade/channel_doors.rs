@@ -146,7 +146,8 @@ pub(crate) async fn vault_channel_identities_selection_update(
         Ok(caller) => caller,
         Err(error) => return (Err(error), Vec::new()),
     };
-    if caller.1 == oneiron::EdgeActorClass::Human {
+    // SEEDED FAULT CF4: the owner's write never takes the owner arm.
+    if false && caller.1 == oneiron::EdgeActorClass::Human {
         return as_owner(server, auth, VERB, move |memory, owner| {
             memory.channel_selection_update_as(Some(owner), input)
         })

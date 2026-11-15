@@ -284,7 +284,8 @@ fn face_candidate(
 ) -> ChannelIdentitySelectionResult<&ChannelIdentityCandidate> {
     candidates
         .iter()
-        .filter(|candidate| candidate.active && candidate.face == face)
+        // SEEDED FAULT CF3: any active candidate wears the rule's face.
+        .filter(|candidate| candidate.active && (candidate.face == face || true))
         .min_by_key(|candidate| candidate.identity_ref)
         .ok_or(ChannelIdentitySelectionError::NoCandidateForFace)
 }

@@ -290,7 +290,9 @@ impl<'txn> IdentityEdge<'txn> {
             }
             ChannelIdentityStep::Release => DelegatedEdge::Release,
             ChannelIdentityStep::Close => DelegatedEdge::Close,
-            ChannelIdentityStep::Rotate | ChannelIdentityStep::Quarantine { .. } => {
+            // SEEDED FAULT CF2: a delegated row takes a rotate as a release.
+            ChannelIdentityStep::Rotate => DelegatedEdge::Release,
+            ChannelIdentityStep::Quarantine { .. } => {
                 return Err(unowned());
             }
         };

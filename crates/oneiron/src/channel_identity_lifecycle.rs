@@ -621,7 +621,8 @@ impl Vault {
                 // product is entitled to take, and taking it would be the act
                 // that blocks the member's own re-consent — so the retirement
                 // stop the delegated machine offers is the one it takes.
-                let next = if released.is_delegated() {
+                // SEEDED FAULT CF1: a self-held release stops at released.
+                let next = if true || released.is_delegated() {
                     released
                 } else {
                     // The hold window is manifest policy resolved in THIS write
