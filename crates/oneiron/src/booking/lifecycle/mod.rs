@@ -259,43 +259,8 @@ const fn hex_nibble(byte: u8) -> Option<u8> {
     }
 }
 
-mod entity_ref_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &EntityId,
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&value.to_hex())
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<EntityId, D::Error> {
-        let hex = String::deserialize(deserializer)?;
-        EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
-    }
-}
-
-mod entity_refs_serde {
-    use super::{Deserialize, Deserializer, EntityId, Serializer};
-
-    pub(super) fn serialize<S: Serializer>(
-        value: &[EntityId],
-        serializer: S,
-    ) -> Result<S::Ok, S::Error> {
-        serializer.collect_seq(value.iter().map(EntityId::to_hex))
-    }
-
-    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
-        deserializer: D,
-    ) -> Result<Vec<EntityId>, D::Error> {
-        Vec::<String>::deserialize(deserializer)?
-            .iter()
-            .map(|hex| EntityId::from_hex(hex).map_err(serde::de::Error::custom))
-            .collect()
-    }
-}
+#[doc(hidden)]
+use oneiron_records::booking::lifecycle::{entity_ref_serde, entity_refs_serde};
 
 /// The digest row a lifecycle token resolves through. The token carries no
 /// state; this row is where the EVENT and the permitted action live.
