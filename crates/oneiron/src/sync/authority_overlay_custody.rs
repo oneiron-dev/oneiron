@@ -503,7 +503,6 @@ pub(crate) fn answer_offer(
         erased: offer.erased.clone(),
     };
     let theirs = page_of(&theirs, after, through.as_ref());
-    retire_erased(vault, &local, machine, &theirs.erased)?;
     if !theirs.erased.is_empty() {
         local = overlay_inventory(&vault.store)?;
     }
@@ -605,7 +604,6 @@ pub fn apply_overlay_answer(
         .map(|theirs| live_target(&vault_id, machine, home, theirs))
         .transpose()?;
     let local = overlay_inventory(&vault.store)?;
-    retire_erased(vault, &local, home, &answer.erased)?;
     install_keys(vault, machine, home, session, answer.keys);
     let Some(target) = target else {
         return Ok(Vec::new());
