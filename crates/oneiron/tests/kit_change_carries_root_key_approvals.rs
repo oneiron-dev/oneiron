@@ -64,8 +64,8 @@ use oneiron::store::ports::ManualClock;
 use oneiron::store::recovery_kit::KitPiece;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines, restore_tempdir};
 use oneiron::world_keys::{
-    ConfirmedWorldKit, IssuedWorldKit, KitConfirmation, RecoveryRootId, RecoveryRootSeed,
-    WorldKitRestore,
+    ConfirmedWorldKit, IssuedWorldKit, KitConfirmation, NoRecoveryBox, RecoveryPreset,
+    RecoveryRootId, RecoveryRootSeed, WorldKitRestore,
 };
 use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, TimeRange, Vault, VaultConfig};
 
@@ -394,6 +394,13 @@ impl Fresh {
             .filter(|key| key.kind == EnrolledOwnerKeyKind::RecoveryAuthority && key.live)
             .map(|key| AuthorityKey::Ed25519(key.public_key))
             .collect()
+    }
+
+    /// The one live R, kind `RecoveryAuthority`.
+    fn live_r(&self) -> AuthorityKey {
+        let live = self.live_rs();
+        assert_eq!(live.len(), 1, "one live R");
+        live.into_iter().next().expect("one live R")
     }
 
     /// Whether `key` is on the roster and not revoked.
@@ -817,6 +824,72 @@ fn a_new_kits_activation_keeps_the_binding_the_root_door_signed() {
         passes_owner_verbs(&fixture.vault, fixture.co_owner),
         "the co-Owner keeps owner control 24 h past kit B"
     );
+}
+
+/// Test 3: switching to kit-only keeps the kit-restored machine standing.
+///
+/// Fixture: as test 1, but the kit change is the kit-only switch with the kit
+/// present (rotation 0 -> 1) on the fresh install, instead of kit B. No device
+/// key is needed: the live R itself signs the rotation.
+///
+/// Red before the carry: fails at `assert!(roster.is_live())`, because
+/// generation 0 was revoked by the switch, nothing carried its roster row,
+/// and the row went stale 24 h + 1 s after the revocation was first seen; the
+/// owner act then refuses too. Green after the build: the switch carries the
+/// standing in the same write (generation 1 signs the next revision), so the
+/// standing is still live and the next owner act stands.
+#[test]
+fn switching_to_kit_only_keeps_the_kit_restored_machine_standing() {
+    let source = source();
+    let issued = source.issue();
+    let confirmed = source.confirm(&issued);
+    let gen0 = source.live_r();
+    let world = source.world("Another world");
+    let fresh = source.fresh();
+
+    fresh
+        .restore(&issued, confirmed.activated.root)
+        .expect("the kit restores on the fresh machine");
+    fresh.assert_on_roster_by(&gen0);
+    fresh.unlock_data_key();
+
+    let pieces: Vec<&KitPiece> = issued.pieces.iter().take(2).collect();
+    fresh
+        .vault
+        .set_recovery_preset_with_kit_as(
+            &fresh.authority(),
+            RecoveryPreset::NobodyButMe,
+            &pieces,
+            None,
+            |_| Ok(()),
+            &NoRecoveryBox,
+        )
+        .expect("the switch to kit-only with the kit");
+    let gen1 = fresh.live_r();
+    assert_ne!(gen1, gen0, "the switch rotates R");
+    assert!(!fresh.is_live(&gen0), "generation 0 is revoked");
+
+    advance_past_window(&fresh.vault, &fresh.clock);
+
+    let (machine, _) = fresh.me();
+    let roster = fresh
+        .vault
+        .authority_fold()
+        .expect("the fold")
+        .machine(machine)
+        .and_then(|folded| folded.roster.clone())
+        .expect("the roster's chain names the restored machine");
+    assert!(
+        roster.is_live(),
+        "the restored machine's standing is still live 24 h past the switch: {roster:?}"
+    );
+    fresh
+        .keep_on_my_machines(world)
+        .expect("the next owner act stands, carried by the restored machine");
+    fresh
+        .vault
+        .world_key(world)
+        .expect("the owner act's new key opens here");
 }
 
 /// Test 4 (the guard): a standing the old R signed but already removed is not
