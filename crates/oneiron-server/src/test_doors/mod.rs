@@ -5,6 +5,7 @@
 //! `--all-features` build reaches them. Hidden; never API.
 
 pub mod big_rung;
+pub mod board_keyframe_child_release;
 pub mod build_server;
 pub mod coach_round;
 #[cfg(unix)]

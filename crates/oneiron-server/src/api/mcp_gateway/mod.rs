@@ -72,6 +72,10 @@ pub(crate) use self::device_release::release_hook;
 // The integration tests' door to the carrier release check (census L2-38).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::device_release::carrier_releases_for_test;
+// The integration tests' door to the keyframe bare-child judgment
+// (BOARD-KEYFRAME-CHILD-RELEASE).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::board_setup::bare_child_served_rows_for_test;
 use self::device_release::{mcp_release_listed, mcp_release_result};
 use self::envelope::mcp_request_id;
 pub(crate) use self::envelope::{

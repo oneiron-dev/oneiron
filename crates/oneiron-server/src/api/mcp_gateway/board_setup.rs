@@ -4,6 +4,8 @@ pub(super) use self::assembly::*;
 // The connector's self brief reads its pins as its keyframe does (FIX 17594).
 pub(crate) use self::assembly::mcp_brief_pins;
 pub(super) use self::carrier::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::children::bare_child_served_rows_for_test;
 // A connection's self brief, as its setup page one carries it (FIX 17594 D4).
 use self::connection_brief::{acknowledge_connection_brief, stage_connection_brief};
 pub(crate) use self::run::*;

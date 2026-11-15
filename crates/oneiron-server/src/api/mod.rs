@@ -245,6 +245,10 @@ pub(crate) use self::mcp_gateway::draft_checked_span;
 // The integration tests' door to the carrier release check (census L2-38).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::carrier_releases_for_test;
+// The integration tests' door to the keyframe bare-child judgment
+// (BOARD-KEYFRAME-CHILD-RELEASE).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::mcp_gateway::bare_child_served_rows_for_test;
 #[cfg(oneiron_test_support)]
 pub(crate) use self::mcp_gateway::run_board_pins_for_test;
 #[cfg(test)]

@@ -54,6 +54,18 @@ pub(super) fn mcp_child_admitted(
     }
 }
 
+/// Main's judgment of a connector board's bare child row, for the red run
+/// of `tests/board_keyframe_child_release.rs` (BOARD-KEYFRAME-CHILD-RELEASE):
+/// the row is always served, by its attempt alone, whatever `destination` is.
+#[cfg(oneiron_test_support)]
+pub(crate) fn bare_child_served_rows_for_test(
+    _vault: &oneiron::Vault,
+    _destination: &oneiron::settings::ReadDestination,
+    child: &str,
+) -> Option<Vec<oneiron::EntityId>> {
+    Some(oneiron::EntityId::from_hex(child).ok().into_iter().collect())
+}
+
 /// [`mcp_child_admitted`] on a narrowed connector, by the child's TASK when
 /// it names one, else by the scope its dispatch froze.
 fn narrowed_child_admitted(
