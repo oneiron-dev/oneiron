@@ -42,6 +42,7 @@ use oneiron::note::{
     PlanDocProposeRequest, PlanDocRequest, PlanDocState, PlanDocVerdictRequest, PlanDocView,
     approve_plan_doc_as, reject_plan_doc_as,
 };
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingScope};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::{
     TaskCall, TaskCallReceipt, TaskDecisions, TaskHandle, TaskOutcome, TaskPost, TaskVia,
@@ -423,14 +424,22 @@ fn a_take_for_an_agent_made_required_lands_no_unplanned_run() {
     let (vault, owner, planner) = (&fixture.vault, fixture.owner, fixture.planner);
     let rung = TakeRung {
         interject: Some(Box::new(move || {
-            vault
-                .set_agent_plan_mode_as(
-                    &owner_proof(vault, owner),
-                    planner,
-                    AgentPlanMode::Optional,
-                    AgentPlanMode::Required,
+            let made = vault
+                .set_setting(
+                    SettingCaller::Owner(&owner_proof(vault, owner)),
+                    SetSetting {
+                        scope: SettingScope::Agent(planner),
+                        ..SetSetting::vault_value(
+                            "agents.plan_mode",
+                            json!(AgentPlanMode::Required),
+                        )
+                    },
                 )
                 .expect("the owner makes the planner's plan mode required while it is asked");
+            assert!(
+                matches!(made, SetSettingOutcome::Applied { .. }),
+                "the owner's plan mode row applies: {made:?}"
+            );
         })),
         asked: AtomicUsize::new(0),
     };

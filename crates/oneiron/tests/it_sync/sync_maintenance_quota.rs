@@ -7,6 +7,8 @@ use crate::sync_harness::open_vault_with_memory_keystore;
 use ed25519_dalek::{Signer, SigningKey};
 use loro::LoroDoc;
 use oneiron::registry::ENTITY_TYPE_EVENT;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
+use oneiron::store::GateDecisionId;
 use oneiron::sync::bridge::{Materializer, register_observer_b};
 use oneiron::sync::quarantine::{QuarantineContainer, pending_remat_windows, quarantined_records};
 use oneiron::sync::quota::{
@@ -572,13 +574,30 @@ fn a_frame_carrying_a_whole_log_in_entity_id_order_lands_every_row() {
     assert_eq!(fold.roster, expected.roster);
 }
 
+/// The owner sets this machine's `authority.observation_policy` key to the default policy with
+/// `log_signer_bound`.
 fn set_signer_bound(vault: &Vault, log_signer_bound: u64) {
-    vault
-        .set_authority_observation_policy(AuthorityObservationPolicy {
-            log_signer_bound,
-            ..AuthorityObservationPolicy::default()
-        })
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let proof = vault
+        .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .unwrap();
+    let policy = AuthorityObservationPolicy {
+        log_signer_bound,
+        ..AuthorityObservationPolicy::default()
+    };
+    let outcome = vault
+        .set_setting(
+            SettingCaller::Owner(&proof),
+            SetSetting::vault_value(
+                "authority.observation_policy",
+                serde_json::to_value(policy).unwrap(),
+            ),
+        )
+        .unwrap();
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's policy change applies: {outcome:?}"
+    );
 }
 
 /// The owner's admission of an admin, and three rows the admin signs alone,

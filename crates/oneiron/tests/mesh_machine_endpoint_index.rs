@@ -20,6 +20,7 @@ use ed25519_dalek::SigningKey;
 use oneiron::authority::{MeshMachineAddress, MeshMachineAddressEnvelope};
 use oneiron::registry::ENTITY_TYPE_MACHINE;
 use oneiron::scan_check::EngineScan;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::mesh_machine_endpoint_index::{self as doors, IndexedEndpoint};
@@ -153,11 +154,23 @@ fn an_owner_lookup_counts_machine_rows_only_when_it_walks() {
     let key = endpoint_key(0x61);
     put_machine(&vault, &machine, &address_body(key));
     let scan = EngineScan::MachineRows;
-    vault.set_scan_threshold(scan, 2).expect("threshold");
     let person = vault.ensure_embedded_owner_actor().expect("owner");
     let owner = vault
         .authenticate_owner(person, &person.to_hex(), true, GateDecisionId::now())
         .expect("an owner proof");
+    let threshold = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting {
+                item: Some(scan.code().to_owned()),
+                ..SetSetting::vault_value("origin.scan_threshold", serde_json::json!(2))
+            },
+        )
+        .expect("threshold");
+    assert!(
+        matches!(threshold, SetSettingOutcome::Applied { .. }),
+        "the owner's threshold row applies: {threshold:?}"
+    );
 
     let found = vault
         .mesh_machine_by_endpoint_as_owner(&owner, key)

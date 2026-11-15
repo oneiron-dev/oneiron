@@ -1288,9 +1288,36 @@ fn child_of_arbitration_walks_the_whole_map_past_its_threshold_row() {
 
     let mut node = TestNode::new("node-j", 1);
     node.open_window(WINDOW);
-    node.vault
-        .set_scan_threshold(EngineScan::ChildOfMapEntries, 1)
+    let owner = node
+        .vault
+        .ensure_embedded_owner_actor()
+        .expect("embedded owner");
+    let proof = node
+        .vault
+        .authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+        .expect("owner proof");
+    let lowered = node
+        .vault
+        .set_setting(
+            oneiron::setting::SettingCaller::Owner(&proof),
+            oneiron::setting::SetSetting {
+                item: Some(EngineScan::ChildOfMapEntries.code().to_owned()),
+                ..oneiron::setting::SetSetting::vault_value(
+                    "origin.scan_threshold",
+                    serde_json::json!(1),
+                )
+            },
+        )
         .expect("lower the row");
+    assert!(
+        matches!(lowered, oneiron::setting::SetSettingOutcome::Applied { .. }),
+        "the owner's threshold row applies: {lowered:?}"
+    );
 
     let child = fixed_id(0x34);
     let winner = fixed_id(0x42);
