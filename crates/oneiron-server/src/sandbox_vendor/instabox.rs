@@ -18,34 +18,39 @@
 //!
 //! InstaBox has no egress setting, and every command and file write of its
 //! API runs as the machine's own user, who keeps the network. So each
-//! command of a run is confined ([`confined`]): as root, it starts in a
-//! network namespace of its own, which holds only a loopback device, and
-//! then runs as [`GUEST_ID`], a user and group no account of the machine
-//! has, with no supplementary group and no way to gain a privilege. The
-//! machine user's passwordless sudo, any setuid program, the docker socket,
-//! and that user's own processes, home and sessions are then out of its
-//! reach, so the guest can neither leave the namespace nor change it, nor
-//! leave code for a later command of the machine's user: a vendor run has
-//! no egress (module doc of `VendorBatchBackend`). The confinement is made
-//! before the command starts, so on a machine where it cannot be made
+//! command of a run is confined (`vendor_http::confined`), as on boat: as
+//! root, it starts in a network namespace of its own, which holds only a
+//! loopback device, and then runs as a user and group no account of the
+//! machine has, with no supplementary group and no way to gain a privilege.
+//! The machine user's passwordless sudo, any setuid program, the docker
+//! socket, and that user's own processes, home and sessions are then out of
+//! its reach, so the guest can neither leave the namespace nor change it,
+//! nor leave code for a later command of the machine's user: a vendor run
+//! has no egress (module doc of `VendorBatchBackend`). The confinement is
+//! made before the command starts, so on a machine where it cannot be made
 //! nothing runs and the run fails. A Unix socket a system daemon serves at a
 //! path stays reachable, as on boat: FIX [BOAT-GUEST-DAEMON-SOCKETS].
 //!
-//! A file InstaBox writes belongs to the machine's user, and the guest's own
-//! directory refuses that user. So an upload lands first in a file of the
-//! client's own, which only the machine's user reads, and root then copies
-//! it into place as the guest's file.
+//! InstaBox's file route writes as the machine's user, which the guest's
+//! own directory refuses, and reads as root, following any link. So the
+//! client reads no file the guest can reach. Its files sit in a directory
+//! the machine's user makes at the run's start, which the guest cannot
+//! enter: an upload lands there and root then copies it into place as the
+//! guest's file; a download is first copied there by the guest's own user,
+//! so a link the guest leaves in place of its frames yields nothing the
+//! guest could not read itself; and each command's exit status is written
+//! there by the machine's user.
 //!
 //! InstaBox ends a waited command after 10 minutes. So each command starts
-//! detached, writes its exit status to a file of its own when it ends, and
-//! the client polls that file through the file route, which runs no command
-//! on the machine. InstaBox deletes the machine by itself at the step's own
-//! time left plus [`LIFETIME_MARGIN`], so a lost run leaves nothing running.
+//! detached, its exit status is written to a file of the client's when it
+//! ends, and the client polls that file through the file route, which runs
+//! no command on the machine. InstaBox deletes the machine by itself at the
+//! step's own time left plus [`LIFETIME_MARGIN`], so a lost run leaves
+//! nothing running.
 
 use std::fmt::Write as _;
 use std::io::{Read, Write};
 use std::sync::Weak;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use oneiron::Vault;
@@ -59,7 +64,10 @@ use reqwest::blocking::{Body, Client, RequestBuilder, Response};
 use serde::Deserialize;
 use serde_json::json;
 
-use super::vendor_http::{CancellableReader, DELETE_TIMEOUT, OwnerVendorKey, VendorHttp, quoted};
+use super::vendor_http::{
+    CancellableReader, ClientFiles, DELETE_TIMEOUT, MAKE_CLIENT_DIR, OwnerVendorKey, VendorHttp,
+    confined, install_as_guest, quoted, read_as_guest,
+};
 
 /// The one vendor this client reaches.
 const VENDOR: SandboxVendor = SandboxVendor::Instabox;
@@ -71,25 +79,24 @@ const LIFETIME_MARGIN: Duration = Duration::from_secs(60);
 /// itself.
 const SHORTEST_LIFETIME_SECONDS: u64 = 60;
 const LONGEST_LIFETIME_SECONDS: u64 = 86_400;
-/// The longest a waited command may take: one that starts a detached
-/// command, or one that copies an upload into place.
+/// The longest a waited command may take: one that makes the client's
+/// directory, starts a detached command, copies an upload into place or
+/// copies a download out.
 const WAITED_COMMAND_SECONDS: u64 = 60;
 /// The first and the longest pause between two polls of an operation or of
 /// a command's exit status.
 const FIRST_POLL: Duration = Duration::from_millis(100);
 const LONGEST_POLL: Duration = Duration::from_secs(1);
-/// The user and group every command of a run runs as: an id no account of a
-/// machine has (Debian allocates none from 65536 to 99999, and subordinate
-/// ids start at 100000).
-const GUEST_ID: &str = "70000";
-/// The program a detached command's shell runs: it closes its output, runs
-/// the command (its arguments, which it never parses), and then writes the
-/// command's exit status to the file `$0` names, whole or not at all.
+/// The program a detached command's shell runs as the machine's user: it
+/// closes its output, runs the command (its arguments, which it never
+/// parses), and then writes the command's exit status to the client's file
+/// `$0` names, whole or not at all.
 const DETACHED: &str =
     r#"exec </dev/null >/dev/null 2>&1; "$@"; echo "$?" >"$0.part" && mv -f "$0.part" "$0""#;
-/// The start of the path of each command's exit status file and of each
-/// staged upload.
-const CLIENT_FILE_PREFIX: &str = "/tmp/oneiron-instabox";
+/// The program a copy-out's shell runs as the machine's user: it runs the
+/// command (its arguments, which it never parses) with its output in the
+/// client's file `$0` names.
+const OUTPUT_TO_FILE: &str = r#"exec "$@" >"$0""#;
 /// The most bytes of an exit status file the client reads.
 const EXIT_STATUS_BYTES: u64 = 16;
 
@@ -112,8 +119,7 @@ impl Default for InstaboxEndpoints {
 pub(super) struct InstaboxClient {
     key: OwnerVendorKey,
     endpoints: InstaboxEndpoints,
-    /// The client's files made so far on its machines.
-    files: AtomicU64,
+    files: ClientFiles,
 }
 
 #[derive(Deserialize)]
@@ -154,34 +160,20 @@ fn idempotency_key() -> String {
     key
 }
 
-/// `argv`, confined and started detached, with its exit status written to
-/// `status_file` when it ends.
-fn confined(status_file: &str, argv: &[&str]) -> Vec<String> {
-    let reuid = format!("--reuid={GUEST_ID}");
-    let regid = format!("--regid={GUEST_ID}");
-    [
-        "sudo",
-        "-n",
-        "unshare",
-        "--net",
-        "--",
-        "setpriv",
-        reuid.as_str(),
-        regid.as_str(),
-        "--clear-groups",
-        "--no-new-privs",
-        "--",
-        "setsid",
-        "-f",
-        "sh",
-        "-c",
-        DETACHED,
-        status_file,
-    ]
-    .into_iter()
-    .chain(argv.iter().copied())
-    .map(str::to_owned)
-    .collect()
+/// `argv`, confined and started detached by the machine's user, who writes
+/// its exit status to the client's file `status_file` when it ends.
+fn detached<'a>(status_file: &'a str, argv: &[&'a str]) -> Vec<&'a str> {
+    let mut detached = vec!["setsid", "-f", "sh", "-c", DETACHED, status_file];
+    detached.extend(confined(argv));
+    detached
+}
+
+/// `argv` run by the machine's user with its output in the client's file
+/// `output`.
+fn output_to_file<'a>(output: &'a str, argv: &[&'a str]) -> Vec<&'a str> {
+    let mut command = vec!["sh", "-c", OUTPUT_TO_FILE, output];
+    command.extend_from_slice(argv);
+    command
 }
 
 impl InstaboxClient {
@@ -189,7 +181,7 @@ impl InstaboxClient {
         Self {
             key: OwnerVendorKey::new(vault, VENDOR, key_name),
             endpoints,
-            files: AtomicU64::new(0),
+            files: ClientFiles::default(),
         }
     }
 
@@ -200,13 +192,6 @@ impl InstaboxClient {
             self.endpoints.api,
             HTTP.segment(machine)?
         ))
-    }
-
-    /// A path of the client's own on a machine, named `kind`, that no other
-    /// file of this client has.
-    fn client_file(&self, kind: &str) -> String {
-        let number = self.files.fetch_add(1, Ordering::Relaxed);
-        format!("{CLIENT_FILE_PREFIX}-{kind}-{number}")
     }
 
     /// Sends one request on the owner's key inside the step's bound, and
@@ -275,7 +260,7 @@ impl InstaboxClient {
         http: &Client,
         key: &str,
         machine: &str,
-        argv: &[String],
+        argv: &[&str],
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<i32> {
         let seconds = HTTP
@@ -327,6 +312,23 @@ impl InstaboxClient {
             .ok_or_else(|| HTTP.failed("an InstaBox command left an unreadable exit status"))
     }
 
+    /// Makes the client's directory on `machine`, as the machine's user.
+    fn make_client_dir(
+        &self,
+        http: &Client,
+        key: &str,
+        machine: &str,
+        bound: VendorCallBound<'_>,
+    ) -> oneiron::Result<()> {
+        let made = self.waited(http, key, machine, &MAKE_CLIENT_DIR, bound)?;
+        if made != 0 {
+            return Err(HTTP.failed(format!(
+                "the InstaBox machine could not make the client's directory (exit {made})"
+            )));
+        }
+        Ok(())
+    }
+
     fn delete_on(&self, http: &Client, key: &str, machine: &str) -> oneiron::Result<()> {
         let response = http
             .delete(self.machine_url(machine, "")?)
@@ -373,7 +375,10 @@ impl VendorSandboxClient for InstaboxClient {
         .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
         let id = VendorSandboxId::new(HTTP.segment(&accepted.machine_id)?)?;
         // From here the machine is this run's to delete, on any failure.
-        if let Err(error) = self.started(&http, &key, accepted, bound) {
+        let ready = self
+            .started(&http, &key, accepted, bound)
+            .and_then(|()| self.make_client_dir(&http, &key, id.as_str(), bound));
+        if let Err(error) = ready {
             if let Err(cleanup) = self.delete_on(&http, &key, id.as_str()) {
                 tracing::warn!(error = %cleanup, sandbox = %id.as_str(), "InstaBox machine delete failed");
             }
@@ -392,7 +397,7 @@ impl VendorSandboxClient for InstaboxClient {
         HTTP.plain_words(&[path])?;
         let key = self.key.read()?;
         let http = HTTP.client()?;
-        let staged = self.client_file("upload");
+        let staged = self.files.next("upload");
         let reader = CancellableReader {
             inner: body.reader(),
             cancel: bound.cancel.clone(),
@@ -405,22 +410,7 @@ impl VendorSandboxClient for InstaboxClient {
             &key,
             bound,
         )?;
-        let install = [
-            "sudo",
-            "-n",
-            "install",
-            "-o",
-            GUEST_ID,
-            "-g",
-            GUEST_ID,
-            "-m",
-            "0600",
-            "-T",
-            "--",
-            staged.as_str(),
-            path,
-        ]
-        .map(str::to_owned);
+        let install = install_as_guest(&staged, path);
         let placed = self.waited(&http, &key, sandbox.as_str(), &install, bound)?;
         if placed != 0 {
             return Err(HTTP.failed(format!(
@@ -439,17 +429,17 @@ impl VendorSandboxClient for InstaboxClient {
         HTTP.plain_words(argv)?;
         let key = self.key.read()?;
         let http = HTTP.client()?;
-        let status_file = self.client_file("status");
+        let status_file = self.files.next("status");
         let started = self.waited(
             &http,
             &key,
             sandbox.as_str(),
-            &confined(&status_file, argv),
+            &detached(&status_file, argv),
             bound,
         )?;
         if started != 0 {
             return Err(HTTP.failed(format!(
-                "an InstaBox command could not start in its confinement (exit {started})"
+                "an InstaBox command could not be started (exit {started})"
             )));
         }
         let mut wait = FIRST_POLL;
@@ -471,11 +461,20 @@ impl VendorSandboxClient for InstaboxClient {
         sink: &mut dyn Write,
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<()> {
+        HTTP.plain_words(&[path])?;
         let key = self.key.read()?;
         let http = HTTP.client()?;
+        let staged = self.files.next("download");
+        let copy = output_to_file(&staged, &read_as_guest(path));
+        let copied = self.waited(&http, &key, sandbox.as_str(), &copy, bound)?;
+        if copied != 0 {
+            return Err(HTTP.failed(format!(
+                "an InstaBox download could not be copied out as the guest (exit {copied})"
+            )));
+        }
         let response = Self::send(
             http.get(self.machine_url(sandbox.as_str(), "/files/content")?)
-                .query(&[("path", path)]),
+                .query(&[("path", staged.as_str())]),
             &key,
             bound,
         )?;

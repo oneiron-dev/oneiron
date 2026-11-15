@@ -3,13 +3,17 @@
 //! answers InstaBox's v1 API, records each call, answers the create's
 //! operation as running at its first poll and done at its second, answers
 //! each command's exit status file as missing at its first poll and
-//! written at its second, and serves the guest transcript the test gives it.
+//! written at its second, and serves the guest transcript the test gives it
+//! in the file the client copies the guest's frames to, and nowhere else.
 //!
 //! The run makes one machine from the owner's saved snapshot of the pinned
 //! guest image, with none of the account's Secrets and a life of the step's
-//! own time; it starts every command detached in a network namespace of its
-//! own, as a user and group of its own with no supplementary group and no
-//! new privilege; it copies an upload into place as that user's file; it
+//! own time; it first makes the client's own directory as the machine's
+//! user; it starts every command of the run detached, in a network
+//! namespace of its own, as a user and group of its own with no
+//! supplementary group and no new privilege; it stages the upload in the
+//! client's directory and copies it into place as the guest's file, and
+//! copies the guest's frames out as the guest before it reads them; it
 //! sends the owner's key only to the API; and it deletes the machine at the
 //! end, with a key of its own and confirming its id. A refused create, a
 //! machine that fails to start, a confinement that cannot be made and a
@@ -50,20 +54,27 @@ const MACHINE: &str = "m_k7m2p9qr";
 const OPERATION: &str = "op_c3x8";
 const GUEST_FRAMES: &str = "/tmp/oneiron-batch/guest-frames";
 
-/// What every command starts under, up to its exit status file.
-fn confined(status_file: &str, argv: &[&str]) -> Value {
-    let mut confined = vec![
-        "sudo",
-        "-n",
-        "unshare",
-        "--net",
-        "--",
-        "setpriv",
-        "--reuid=70000",
-        "--regid=70000",
-        "--clear-groups",
-        "--no-new-privs",
-        "--",
+/// What every command of the run starts under.
+const CONFINEMENT: [&str; 13] = [
+    "sudo",
+    "-n",
+    "unshare",
+    "--net",
+    "--",
+    "setpriv",
+    "--reuid",
+    "70000",
+    "--regid",
+    "70000",
+    "--clear-groups",
+    "--no-new-privs",
+    "--",
+];
+
+/// `argv`, confined and started detached by the machine's user, who writes
+/// its exit status to `status_file`.
+fn detached(status_file: &str, argv: &[&str]) -> Value {
+    let mut detached = vec![
         "setsid",
         "-f",
         "sh",
@@ -71,8 +82,17 @@ fn confined(status_file: &str, argv: &[&str]) -> Value {
         r#"exec </dev/null >/dev/null 2>&1; "$@"; echo "$?" >"$0.part" && mv -f "$0.part" "$0""#,
         status_file,
     ];
-    confined.extend_from_slice(argv);
-    json!(confined)
+    detached.extend_from_slice(&CONFINEMENT);
+    detached.extend_from_slice(argv);
+    json!(detached)
+}
+
+/// The guest's frames, read as the guest into the client's file `copy`.
+fn copied_out(copy: &str) -> Value {
+    let mut copied = vec!["sh", "-c", r#"exec "$@" >"$0""#, copy];
+    copied.extend_from_slice(&CONFINEMENT);
+    copied.extend_from_slice(&["cat", "--", GUEST_FRAMES]);
+    json!(copied)
 }
 
 /// How the stand-in answers.
@@ -81,7 +101,7 @@ struct Script {
     refuse_create: bool,
     /// Whether the create's operation fails at its second poll.
     fail_start: bool,
-    /// Whether every confined command fails to start (sudo refused).
+    /// Whether sudo refuses every confined command, which then exits 1.
     refuse_confinement: bool,
     /// Whether the machine stops at the guest's (the second command's)
     /// second exit status poll.
@@ -125,6 +145,8 @@ struct StandIn {
     commands: Arc<Mutex<HashMap<String, u32>>>,
     /// The polls of each exit status file so far.
     status_polls: Arc<Mutex<HashMap<String, u32>>>,
+    /// The files the guest's frames were copied to.
+    copies: Arc<Mutex<Vec<String>>>,
 }
 
 fn header(headers: &HeaderMap, name: &str) -> Option<String> {
@@ -154,9 +176,10 @@ fn operation(state: &str, error: Value) -> Value {
     })
 }
 
-fn exec_result(exit_code: i32, stderr: &str) -> Response {
+/// A waited command's result: every one the client waits for exits 0 here.
+fn exec_result() -> Response {
     Json(json!({
-        "stdout": "", "stderr": stderr, "exitCode": exit_code, "timedOut": false, "truncated": false,
+        "stdout": "", "stderr": "", "exitCode": 0, "timedOut": false, "truncated": false,
     }))
     .into_response()
 }
@@ -170,20 +193,20 @@ impl StandIn {
             .iter()
             .map(|arg| arg.as_str().expect("a string argument"))
             .collect();
-        if argv.get(11) != Some(&"setsid") {
-            return exec_result(0, "");
+        match argv[0] {
+            "setsid" => {
+                let mut commands = self.commands.lock().unwrap();
+                let number = u32::try_from(commands.len()).unwrap() + 1;
+                commands.insert(argv[5].to_owned(), number);
+            }
+            "sh" => self.copies.lock().unwrap().push(argv[3].to_owned()),
+            _ => {}
         }
-        if self.script.refuse_confinement {
-            return exec_result(1, "sudo: a password is required");
-        }
-        let mut commands = self.commands.lock().unwrap();
-        let number = u32::try_from(commands.len()).unwrap() + 1;
-        commands.insert(argv[16].to_owned(), number);
-        exec_result(0, "")
+        exec_result()
     }
 
     fn content(&self, path: &str) -> Response {
-        if path == GUEST_FRAMES {
+        if self.copies.lock().unwrap().iter().any(|copy| copy == path) {
             return self.script.transcript.clone().into_response();
         }
         let Some(&command) = self.commands.lock().unwrap().get(path) else {
@@ -204,6 +227,9 @@ impl StandIn {
                 "machine_not_running",
                 "the sandbox is stopped",
             );
+        }
+        if self.script.refuse_confinement {
+            return "1\n".into_response();
         }
         "0\n".into_response()
     }
@@ -299,6 +325,7 @@ impl Fixture {
             operation_polls: Arc::new(Mutex::new(0)),
             commands: Arc::new(Mutex::new(HashMap::new())),
             status_polls: Arc::new(Mutex::new(HashMap::new())),
+            copies: Arc::new(Mutex::new(Vec::new())),
         }));
         let backends = served_instabox_backends(&vault.vault, &base, vault.dir.path().join("vm"));
         vault
@@ -373,14 +400,16 @@ fn a_switched_run_goes_to_instabox_with_the_key_only_at_its_api() {
             operation.clone(),
             operation,
             format!("POST {machine}/exec"),
-            format!("{content} /tmp/oneiron-instabox-status-0"),
-            format!("{content} /tmp/oneiron-instabox-status-0"),
-            format!("PUT {machine}/files /tmp/oneiron-instabox-upload-1"),
+            format!("POST {machine}/exec"),
+            format!("{content} /tmp/oneiron-client/status-0"),
+            format!("{content} /tmp/oneiron-client/status-0"),
+            format!("PUT {machine}/files /tmp/oneiron-client/upload-1"),
             format!("POST {machine}/exec"),
             format!("POST {machine}/exec"),
-            format!("{content} /tmp/oneiron-instabox-status-2"),
-            format!("{content} /tmp/oneiron-instabox-status-2"),
-            format!("{content} {GUEST_FRAMES}"),
+            format!("{content} /tmp/oneiron-client/status-2"),
+            format!("{content} /tmp/oneiron-client/status-2"),
+            format!("POST {machine}/exec"),
+            format!("{content} /tmp/oneiron-client/download-3"),
             format!("DELETE {machine}"),
         ]
     );
@@ -472,8 +501,9 @@ fn a_switched_run_goes_to_instabox_with_the_key_only_at_its_api() {
     assert_eq!(
         argvs,
         [
-            &confined(
-                "/tmp/oneiron-instabox-status-0",
+            &json!(["mkdir", "-m", "0700", "/tmp/oneiron-client"]),
+            &detached(
+                "/tmp/oneiron-client/status-0",
                 &[
                     "mkdir",
                     "-m",
@@ -494,11 +524,11 @@ fn a_switched_run_goes_to_instabox_with_the_key_only_at_its_api() {
                 "0600",
                 "-T",
                 "--",
-                "/tmp/oneiron-instabox-upload-1",
+                "/tmp/oneiron-client/upload-1",
                 "/tmp/oneiron-batch/host-frames",
             ]),
-            &confined(
-                "/tmp/oneiron-instabox-status-2",
+            &detached(
+                "/tmp/oneiron-client/status-2",
                 &[
                     "/usr/local/bin/oneiron-guest",
                     "--batch",
@@ -507,6 +537,7 @@ fn a_switched_run_goes_to_instabox_with_the_key_only_at_its_api() {
                     "/tmp/oneiron-batch/workspace",
                 ],
             ),
+            &copied_out("/tmp/oneiron-client/download-3"),
         ]
     );
     for command in &commands {
@@ -572,11 +603,12 @@ fn a_confinement_that_cannot_be_made_runs_nothing() {
     };
     let text = error.to_string();
     assert!(
-        text.contains("could not start in its confinement (exit 1)"),
+        text.contains("could not make its batch directory (exit 1)"),
         "{text}"
     );
     let machine = format!("/machines/{MACHINE}");
     let operation = format!("GET /operations/{OPERATION}");
+    let status = format!("GET {machine}/files/content /tmp/oneiron-client/status-0");
     assert_eq!(
         fixture.calls(),
         [
@@ -584,6 +616,9 @@ fn a_confinement_that_cannot_be_made_runs_nothing() {
             operation.clone(),
             operation,
             format!("POST {machine}/exec"),
+            format!("POST {machine}/exec"),
+            status.clone(),
+            status,
             format!("DELETE {machine}"),
         ]
     );
@@ -603,7 +638,9 @@ fn a_machine_that_stops_mid_run_is_deleted() {
     assert!(!text.contains(KEY_VALUE), "the key is scrubbed: {text}");
     let calls = fixture.calls();
     assert!(
-        !calls.iter().any(|call| call.ends_with(GUEST_FRAMES)),
+        !calls
+            .iter()
+            .any(|call| call.contains("/tmp/oneiron-client/download-")),
         "nothing is downloaded: {calls:?}"
     );
     assert_eq!(
