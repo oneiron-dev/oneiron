@@ -19,8 +19,13 @@ use std::sync::{Arc, Mutex};
 
 use oneiron::conversation_dag::{AddressMode, AppendRecord};
 use oneiron::core_write::{ConversationCreateInput, DagRecordAppendInput};
+use oneiron::federation::Scope;
 use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::inbox::{NotificationBody, decode_notification_body};
+use oneiron::policy_manifest_doors::{
+    PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow, policy_manifests_as_owner,
+    put_policy_manifest_as_owner,
+};
 use oneiron::registry::{ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN};
 use oneiron::test_doors::export_audit_owed::{
     fail_next_export_audit_write, fail_next_owed_export_audit_write, owed_export_audits,
@@ -55,6 +60,45 @@ fn owned_vault() -> (tempfile::TempDir, Vault, EntityId) {
     (dir, vault, owner)
 }
 
+/// The owner gives `person` one `core:read` row over every scope in the
+/// default policy manifest. A PERSON that no row names reads under a
+/// deny-all floor, so its own append would not resolve the room it names.
+fn read_everything(vault: &Vault, owner: EntityId, person: EntityId) {
+    let proof = vault
+        .memory(owner, EdgeActorClass::Human)
+        .embedded_owner("vault.agents.create")
+        .expect("the owner's proof");
+    let view = policy_manifests_as_owner(vault, &proof, &PolicyManifestRead { manifest_ref: None })
+        .expect("the policy manifests");
+    let default = view
+        .manifests
+        .iter()
+        .find(|entry| entry.manifest_ref == view.default_manifest_ref)
+        .expect("the default policy manifest");
+    let mut manifest = default.manifest.clone();
+    let mut rows = manifest.scoped_grants.clone().unwrap_or_default();
+    rows.push(PolicyScopedGrantRow {
+        actor_class: None,
+        actor_ref: Some(person.to_hex()),
+        effector: "core:read".into(),
+        scope: Scope::top(),
+        selectors: None,
+        budget: None,
+        receipt_required: false,
+    });
+    manifest.scoped_grants = Some(rows);
+    put_policy_manifest_as_owner(
+        vault,
+        &proof,
+        PolicyManifestPut {
+            manifest_ref: Some(default.manifest_ref.clone()),
+            expected_body_hash: Some(default.body_hash.clone()),
+            manifest,
+        },
+    )
+    .expect("the person's read row");
+}
+
 /// The owner seats B and C in a group room; B opens a thread under its
 /// trunk whose audience is B and C alone. The opener must be in the
 /// audience, so the owner cannot open it.
@@ -77,6 +121,7 @@ fn private_thread() -> Fixture {
             )
             .expect("a live member PERSON");
     }
+    read_everything(&vault, owner, member_b);
     let host = vault.memory(owner, EdgeActorClass::Human);
     let conversation = EntityId::from_hex(
         &host
