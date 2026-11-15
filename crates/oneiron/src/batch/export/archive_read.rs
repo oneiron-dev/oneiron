@@ -228,7 +228,16 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
         let member = archive
             .by_name(&records.path)
             .map_err(|_| invalid("archive record file listed but absent"))?;
-        let mut lines = BufReader::new(member);
+        // The rows spooled are the bytes hashed on this read: a source
+        // rewritten between the digest pass above and this one fails below,
+        // so the manifest (and its L2-23 signature) never vouches for rows it
+        // does not bind.
+        let mut lines = BufReader::new(CheckedMember {
+            member: member.take(records.bytes.saturating_add(1)),
+            hasher: blake3::Hasher::new(),
+            count: 0,
+            failed: false,
+        });
         let mut count = 0;
         let mut line = Vec::new();
         spool.begin_member();
@@ -257,6 +266,14 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
             count += 1;
         }
         spool.end_member(records.kind);
+        let reread = lines.into_inner();
+        if reread.failed
+            || reread.count != records.bytes
+            || crate::entity_id::bytes_to_hex_lower(reread.hasher.finalize().as_bytes())
+                != records.blake3
+        {
+            return Err(invalid("archive record file does not match its digest"));
+        }
         if count != records.rows {
             return Err(invalid("archive record file row count disagrees"));
         }

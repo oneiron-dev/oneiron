@@ -188,6 +188,61 @@ impl Vault {
         }
     }
 
+    /// This install's signing keys for a door that must write nothing (the
+    /// archive export, L2-23): the keys already loaded for the stored machine
+    /// id, else the ones its keystore slot already holds when the vault's
+    /// device key row names them. Unlike [`Vault::load_install_signing_if_minted`]
+    /// it never mints a machine id or a seed, never forgets a machine whose
+    /// slot is empty, and leaves what it reads off the handle. `None` with no
+    /// keystore, no machine id, an empty slot, or a device key row that is
+    /// absent or names another key.
+    pub(crate) fn read_install_signer(
+        &self,
+    ) -> Result<Option<Arc<crate::identity::InstallSigner>>> {
+        let Some(keystore) = self
+            .world_keys
+            .keystore
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+        else {
+            return Ok(None);
+        };
+        let (machine, device_pk) = {
+            let txn = self.store.env.read_txn()?;
+            (
+                crate::identity::read_machine_id_in_txn(self, &txn)?,
+                crate::identity::read_device_verifying_key_in_txn(self, &txn)?,
+            )
+        };
+        let Some(machine) = machine else {
+            return Ok(None);
+        };
+        if let Some(signer) = self
+            .loaded_install_signer()
+            .filter(|signer| signer.machine == machine)
+        {
+            return Ok(Some(signer));
+        }
+        let slot = KeystoreSlot {
+            vault_id: *self.vault_id().as_bytes(),
+            install: *machine.as_bytes(),
+            kind: SlotKind::DeviceSigning,
+        };
+        let Some(seed) = keystore
+            .get(&slot)
+            .map_err(super::machine::keystore_error)?
+        else {
+            return Ok(None);
+        };
+        let signer = crate::identity::InstallSigner::derive(machine, &seed);
+        drop(seed);
+        Ok(
+            (device_pk == Some(signer.device_key.verifying_key().to_bytes()))
+                .then(|| Arc::new(signer)),
+        )
+    }
+
     /// The signing keys [`Vault::prepare_install_signing`] left on this handle.
     pub(crate) fn loaded_install_signer(&self) -> Option<Arc<crate::identity::InstallSigner>> {
         self.world_keys

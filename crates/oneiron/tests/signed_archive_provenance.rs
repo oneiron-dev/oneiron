@@ -7,10 +7,17 @@
 //! manifest, a key this vault does not profile, an unanswered install's key
 //! or a storage manifest alone proves nothing.
 //!
+//! Two review findings on the first head (Astra r1, 021ad4e5) are pinned too:
+//! the export writes no key state (an install whose keystore slot is empty
+//! exports unsigned and keeps its machine id), and a record member rewritten
+//! between the reader's digest pass and its row pass is refused, so the
+//! signed manifest never vouches for rows it does not bind.
+//!
 //! Public doors only:
 //! `cargo test --locked -p oneiron --all-features --test signed_archive_provenance`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -21,7 +28,9 @@ use oneiron::batch::export::{
     archive_provenance_transcript,
 };
 use oneiron::deletion::parse_hex;
-use oneiron::{EntityId, Vault, VaultConfig};
+use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -34,10 +43,25 @@ fn profiled_vault(
     host_secret: &[u8],
     role: MachineRole,
 ) -> Result<Vault, Box<dyn std::error::Error>> {
+    profiled_vault_with_keystore(
+        directory,
+        host_secret,
+        role,
+        Arc::new(MemoryKeystore::default()),
+    )
+}
+
+/// [`profiled_vault`] whose device keystore is `keystore`.
+fn profiled_vault_with_keystore(
+    directory: &Path,
+    host_secret: &[u8],
+    role: MachineRole,
+    keystore: Arc<MemoryKeystore>,
+) -> Result<Vault, Box<dyn std::error::Error>> {
     let vault = Vault::open_owned(directory, VaultConfig::default())?;
     vault.ensure_embedded_owner_actor()?;
     let issuer = HostSlipIssuer::from_secret(host_secret)?;
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.install_device_keystore(keystore);
     vault.ensure_host_root_slip(&issuer)?;
     vault.ensure_serving_install_profile(&issuer, role)?;
     let machine = vault
@@ -257,6 +281,278 @@ fn an_unanswered_installs_signed_export_proves_nothing() -> TestResult {
         &[VaultImportMismatch::UnauthenticatedProvenance],
     );
     Ok(())
+}
+
+/// Astra r1 finding 1: the export writes no key state. An install whose
+/// keystore slot is empty while the vault holds its device key's public half
+/// (a lost keychain, a raw copy on another host) exports unsigned and keeps
+/// its machine id. On 021ad4e5 the export's key load forgot that machine,
+/// minted another, and signed with it.
+#[test]
+fn an_export_without_its_signing_seed_goes_out_unsigned_and_keeps_the_machine() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let keystore = Arc::new(MemoryKeystore::default());
+    let vault = profiled_vault_with_keystore(
+        directory.path(),
+        b"signed archive provenance seedless",
+        YOURS,
+        Arc::<MemoryKeystore>::clone(&keystore),
+    )?;
+    let machine = vault
+        .local_machine()?
+        .expect("FIXTURE: a profiled install has a machine")
+        .id;
+
+    vault.install_device_keystore(Arc::new(MemoryKeystore::default()));
+    let export = vault.export_whole_vault(true)?;
+
+    assert_eq!(
+        export.manifest().provenance,
+        None,
+        "an install with no seed for its machine signs nothing"
+    );
+    vault.install_device_keystore(keystore);
+    let after = vault
+        .local_machine()?
+        .expect("the install still has a machine");
+    assert_eq!(
+        after.id, machine,
+        "the export must not forget this install's machine or mint another"
+    );
+    assert!(
+        after.mine,
+        "its own keystore still proves it the owner's own"
+    );
+    Ok(())
+}
+
+/// Astra r1 finding 2: a file-backed import checks each record member's
+/// length and BLAKE3 in one pass and spools its rows in a second. A member
+/// rewritten in place between the two (same length, same ZIP CRC-32, other
+/// text) is refused: the rows read are the bytes the manifest binds, so its
+/// signature never vouches for others. On 021ad4e5 the second read went
+/// unchecked and the rewritten row was read as the archive's.
+#[test]
+fn a_record_member_rewritten_after_its_digest_pass_is_refused() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = Vault::open(directory.path(), VaultConfig::default())?;
+    let original_name = "b".repeat(96);
+    put_person(&vault, &original_name)?;
+    let stored = stored_archive(vault.export_whole_vault(true)?.bytes())?;
+    let unchanged = vault.read_whole_vault_archive_from(Cursor::new(stored.clone()))?;
+    assert!(
+        format!("{unchanged:?}").contains(&original_name),
+        "FIXTURE: the stored archive reads, with its PERSON row"
+    );
+
+    let (rewritten, swap_at) = rewrite_member_keeping_crc(&stored, original_name.as_bytes())?;
+    let mut source = RewrittenAfterFirstRead {
+        original: stored,
+        rewritten,
+        position: 0,
+        swap_at,
+        swapped: false,
+    };
+    let outcome = vault.read_whole_vault_archive_from(&mut source);
+
+    assert!(source.swapped, "FIXTURE: the digest pass read the member");
+    match outcome {
+        Err(error) => assert!(
+            error.to_string().contains("does not match its digest"),
+            "refused for the rewritten member, not another reason: {error}"
+        ),
+        Ok(document) => panic!(
+            "a member rewritten after its digest pass was read as the archive's (the original \
+             row still read: {})",
+            format!("{document:?}").contains(&original_name)
+        ),
+    }
+    Ok(())
+}
+
+fn put_person(vault: &Vault, name: &str) -> TestResult {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(rmpv::Value::from("name"), rmpv::Value::from(name))]),
+    )?;
+    vault.put_entity(
+        &EntityId::now(),
+        ENTITY_TYPE_PERSON,
+        TimeRange {
+            start: 100,
+            end: 100,
+        },
+        100,
+        &body,
+    )?;
+    Ok(())
+}
+
+/// `archive` with every member stored uncompressed, in the same order, so a
+/// member's bytes stand in the file as they read.
+fn stored_archive(archive: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut source = zip::ZipArchive::new(Cursor::new(archive))?;
+    let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    let options =
+        zip::write::FileOptions::default().compression_method(zip::CompressionMethod::Stored);
+    for index in 0..source.len() {
+        let mut member = source.by_index(index)?;
+        let name = member.name().to_owned();
+        let mut data = Vec::new();
+        member.read_to_end(&mut data)?;
+        writer.start_file(name, options)?;
+        writer.write_all(&data)?;
+    }
+    Ok(writer.finish()?.into_inner())
+}
+
+/// `stored` with the first member holding `marker` rewritten: the marker's
+/// first byte 'b' made 'z', and bit 0 of some of its later letters flipped
+/// ('b' <-> 'c') so the member keeps its length and its ZIP CRC-32. Returns
+/// the rewritten archive and the file offset just past the marker.
+fn rewrite_member_keeping_crc(
+    stored: &[u8],
+    marker: &[u8],
+) -> Result<(Vec<u8>, u64), Box<dyn std::error::Error>> {
+    let mut archive = zip::ZipArchive::new(Cursor::new(stored))?;
+    let mut held = None;
+    for index in 0..archive.len() {
+        let mut member = archive.by_index(index)?;
+        let mut bytes = Vec::new();
+        member.read_to_end(&mut bytes)?;
+        if let Some(offset) = find(&bytes, marker) {
+            held = Some((bytes, offset));
+            break;
+        }
+    }
+    let (data, offset) = held.expect("FIXTURE: a member holds the marker");
+    assert_eq!(data[offset], b'b', "FIXTURE: the marker starts with 'b'");
+    let free: Vec<usize> = (offset + 16..offset + marker.len()).collect();
+    let flips = crc32_flips(&data, offset, b'b' ^ b'z', &free);
+    let mut changed = data.clone();
+    changed[offset] = b'z';
+    for position in flips {
+        changed[position] ^= 1;
+    }
+    assert_eq!(
+        crc32(&changed),
+        crc32(&data),
+        "FIXTURE: the member keeps its CRC-32"
+    );
+    assert_ne!(changed, data, "FIXTURE: the member's text changed");
+    let start = find(stored, &data).expect("FIXTURE: a stored member stands verbatim");
+    let mut rewritten = stored.to_vec();
+    rewritten[start..start + data.len()].copy_from_slice(&changed);
+    Ok((rewritten, (start + offset + marker.len()) as u64))
+}
+
+/// The positions among `free` whose bit 0, flipped with `mask` at `changed`,
+/// leaves `data`'s CRC-32 as it was. CRC-32 is affine over GF(2) for one
+/// length, so each flip adds a fixed 32-bit vector: Gaussian elimination
+/// finds the flips whose vectors sum to the change's.
+fn crc32_flips(data: &[u8], changed: usize, mask: u8, free: &[usize]) -> Vec<usize> {
+    assert!(free.len() <= 128, "FIXTURE: one u128 names the flips");
+    let crc = crc32(data);
+    let delta = |position: usize, bits: u8| {
+        let mut flipped = data.to_vec();
+        flipped[position] ^= bits;
+        crc32(&flipped) ^ crc
+    };
+    // Each basis vector with the flips that sum to it; leading bits distinct,
+    // kept in descending order.
+    let mut basis: Vec<(u32, u128)> = Vec::new();
+    for (index, &position) in free.iter().enumerate() {
+        let (mut vector, mut flips) = (delta(position, 1), 1_u128 << index);
+        for &(pivot, pivot_flips) in &basis {
+            if vector ^ pivot < vector {
+                vector ^= pivot;
+                flips ^= pivot_flips;
+            }
+        }
+        if vector != 0 {
+            basis.push((vector, flips));
+            basis.sort_by_key(|&(pivot, _)| std::cmp::Reverse(pivot));
+        }
+    }
+    let (mut rest, mut chosen) = (delta(changed, mask), 0_u128);
+    for &(pivot, pivot_flips) in &basis {
+        if rest ^ pivot < rest {
+            rest ^= pivot;
+            chosen ^= pivot_flips;
+        }
+    }
+    assert_eq!(rest, 0, "FIXTURE: the free bits reach every CRC-32");
+    free.iter()
+        .enumerate()
+        .filter(|&(index, _)| chosen & (1_u128 << index) != 0)
+        .map(|(_, &position)| position)
+        .collect()
+}
+
+/// A seekable archive file rewritten in place once a read has passed
+/// `swap_at`: reads before then see `original`, every later one `rewritten`.
+struct RewrittenAfterFirstRead {
+    original: Vec<u8>,
+    rewritten: Vec<u8>,
+    position: u64,
+    swap_at: u64,
+    swapped: bool,
+}
+
+impl Read for RewrittenAfterFirstRead {
+    fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+        let bytes = if self.swapped {
+            &self.rewritten
+        } else {
+            &self.original
+        };
+        let start = usize::try_from(self.position).map_or(bytes.len(), |p| p.min(bytes.len()));
+        let count = out.len().min(bytes.len() - start);
+        out[..count].copy_from_slice(&bytes[start..start + count]);
+        let before = self.position;
+        self.position += count as u64;
+        if before < self.swap_at && self.position >= self.swap_at {
+            self.swapped = true;
+        }
+        Ok(count)
+    }
+}
+
+impl Seek for RewrittenAfterFirstRead {
+    fn seek(&mut self, to: SeekFrom) -> std::io::Result<u64> {
+        let len = i128::try_from(self.original.len()).expect("a test archive's length");
+        let next = match to {
+            SeekFrom::Start(offset) => i128::from(offset),
+            SeekFrom::End(offset) => len + i128::from(offset),
+            SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+        };
+        self.position = u64::try_from(next)
+            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "negative seek"))?;
+        Ok(self.position)
+    }
+}
+
+/// CRC-32 (IEEE), the checksum a ZIP member carries.
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut crc = !0_u32;
+    for &byte in bytes {
+        crc ^= u32::from(byte);
+        for _ in 0..8 {
+            crc = if crc & 1 == 1 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
+        }
+    }
+    !crc
+}
+
+fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn hex(bytes: &[u8]) -> String {

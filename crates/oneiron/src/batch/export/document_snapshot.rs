@@ -283,14 +283,13 @@ impl Vault {
         let destination: ReadDestination = destination.into();
         let locality = crate::settings::read_destination_locality(&destination);
         // L2-23: an archive's manifest is signed by this install's machine
-        // key, loaded here outside every transaction and never minted for
-        // an export. With no keystore or no machine id it goes out unsigned,
-        // as before: the export never refuses (ARCH-0052 P6).
+        // key, read here outside every transaction. The export writes no key
+        // state: it never mints a machine id or a seed, and never forgets a
+        // machine whose slot is empty (`Vault::read_install_signer`). With no
+        // keystore, no machine id or no seed it goes out unsigned, as before:
+        // the export never refuses (ARCH-0052 P6).
         let signer = (cut == ExportCut::Archive)
-            .then(|| {
-                let _ = self.load_install_signing_if_minted();
-                self.loaded_install_signer()
-            })
+            .then(|| self.read_install_signer().ok().flatten())
             .flatten();
         let artifact = self.whole_vault_export_manifest_artifact(
             ExportSecretsNulledManifest::from_redacted(false),
