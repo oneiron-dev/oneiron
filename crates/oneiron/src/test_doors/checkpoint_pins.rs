@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
-use sha2::{Digest, Sha256};
+use oneiron_docedit::emit::oracle_cases::sha256_hex;
 
 use crate::Vault;
 use crate::agent_dispatch::{
@@ -177,11 +177,6 @@ fn id(byte: u8) -> Result<EntityId> {
 /// One fixed attempt id.
 fn attempt(byte: u8) -> Result<AttemptId> {
     AttemptId::from_bytes(&[byte; 16])
-}
-
-/// The hex of a sha256 digest.
-fn sha256_hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// One text-source row: the bm25 getter's exact branch.
