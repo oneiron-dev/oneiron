@@ -165,12 +165,9 @@ impl Vault {
         only: &[&JobSpec],
         pass: &JobPass<'_>,
     ) -> Result<Option<ScheduleRunReport>> {
-        let _pass = match self.housekeeping.try_lock() {
-            Ok(held) => held,
-            Err(std::sync::TryLockError::Poisoned(poisoned)) => poisoned.into_inner(),
-            Err(std::sync::TryLockError::WouldBlock) => return Ok(None),
-        };
-        let report = self.run_due_held(pass, Some(only))?;
+        // RED SCRATCH: every due row, and the runner is not taken.
+        let _ = only;
+        let report = self.run_due_held(pass, None)?;
         for run in &report.runs {
             if matches!(
                 run.outcome,
