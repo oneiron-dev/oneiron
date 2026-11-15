@@ -12,6 +12,8 @@
 #[path = "booking_deposit_support/fixture.rs"]
 mod fixture;
 
+use std::sync::Mutex;
+
 use fixture::{Fixture, MONDAY, NOW, event_type, slot_of};
 use oneiron::booking::lifecycle::{
     BookingDepositSettlementDrain, DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease,
@@ -24,6 +26,10 @@ use oneiron::booking::lifecycle::{
 use oneiron::booking::{
     BookingError, ConfirmReceipt, DepositRefundRule, DepositTerms, EventTypeKey, HoldLeaseSpec,
     SessionKey,
+};
+use oneiron::calendar::CalendarError;
+use oneiron::calendar::ingest::{
+    IcsFeedFetcher, IcsFeedPollConfig, IcsFetchResponse, run_ics_feed_poll,
 };
 
 /// A provider that does every move and records each call.
@@ -565,4 +571,155 @@ fn a_lease_or_event_of_another_checkout_changes_nothing() {
     let second = drain(&fixture, &mut provider, lease.expires_at + 301);
     assert_eq!(second.voided, 1);
     assert_eq!(state_of(&fixture, "pi_test_bound"), DepositState::Voided);
+}
+
+/// The host's own calendar, as its feed system names it.
+const HOST_FEED_SYSTEM: &str = "host-calendar";
+
+/// A fetcher that answers one scripted response.
+struct ScriptedFeed(Mutex<Option<IcsFetchResponse>>);
+
+impl IcsFeedFetcher for ScriptedFeed {
+    fn fetch(
+        &self,
+        _secret_ref: &str,
+        _if_none_match: Option<&str>,
+    ) -> Result<IcsFetchResponse, CalendarError> {
+        self.0
+            .lock()
+            .expect("scripted response")
+            .take()
+            .ok_or_else(|| CalendarError::IcsFetch {
+                reason: "the scripted feed has no response left".to_owned(),
+            })
+    }
+}
+
+/// A UTC instant on the fixture Monday as an ICS DATE-TIME.
+fn ics_utc(ts: u64) -> String {
+    let secs = ts - MONDAY;
+    format!(
+        "20260302T{:02}{:02}{:02}Z",
+        secs / 3_600,
+        secs / 60 % 60,
+        secs % 60
+    )
+}
+
+/// The host's feed with each booking at its slot, cancelled or not.
+fn poll_host_feed(
+    fixture: &Fixture,
+    bookings: &[(&ConfirmReceipt, u64)],
+    cancelled: bool,
+    etag: &str,
+    now: u64,
+) {
+    let mut body =
+        String::from("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\n");
+    for (booked, start) in bookings {
+        body.push_str("BEGIN:VEVENT\r\n");
+        body.push_str(&format!("UID:{}\r\n", booked.calendar.uid));
+        body.push_str("DTSTAMP:20260302T070000Z\r\n");
+        body.push_str(&format!("DTSTART:{}\r\n", ics_utc(*start)));
+        body.push_str(&format!("DTEND:{}\r\n", ics_utc(*start + 30 * 60)));
+        body.push_str(&format!("SEQUENCE:{}\r\n", u32::from(cancelled)));
+        body.push_str("SUMMARY:intro-call\r\n");
+        if cancelled {
+            body.push_str("STATUS:CANCELLED\r\n");
+        }
+        body.push_str("END:VEVENT\r\n");
+    }
+    body.push_str("END:VCALENDAR\r\n");
+    let fetcher = ScriptedFeed(Mutex::new(Some(IcsFetchResponse::Complete {
+        etag: Some(etag.to_owned()),
+        body: body.into_bytes(),
+    })));
+    let config = IcsFeedPollConfig {
+        secret_ref: format!("ics-feed:{HOST_FEED_SYSTEM}"),
+        system: HOST_FEED_SYSTEM.to_owned(),
+        cadence_min_seconds: 300,
+        cadence_max_seconds: 900,
+    };
+    run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).expect("host feed poll");
+}
+
+#[test]
+fn a_host_cancel_refunds_the_whole_deposit() {
+    // A visitor's own cancel this late would refund nothing.
+    let terms = DepositTerms {
+        amount_minor: 4_000,
+        currency: "usd".to_owned(),
+        refund: DepositRefundRule {
+            full_refund_notice_secs: 2 * 3_600,
+            late_cancel_refund_percent: 0,
+        },
+    };
+    let fixture = Fixture::open(Some(terms));
+    fixture.enable_host_feed();
+    let mut provider = RecordingProvider::default();
+
+    let hosted = paid_booking(&fixture, SessionKey::derive(b"host-cancel"), "pi_host", 9);
+    let visited = paid_booking(
+        &fixture,
+        SessionKey::derive(b"visitor-first"),
+        "pi_visitor",
+        10,
+    );
+    for booked in [&hosted, &visited] {
+        settle_booking_deposit(
+            &fixture.vault,
+            &booked.calendar.event_ref,
+            &mut provider,
+            NOW + 50,
+        )
+        .expect("capture");
+    }
+    // The visitor cancels the 10:00 booking late: the rule keeps it all.
+    fixture
+        .cancel(&visited.cancel_token, NOW + 55)
+        .expect("cancel");
+    assert_eq!(
+        state_of(&fixture, "pi_visitor"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+
+    let bookings = [
+        (&hosted, MONDAY + 9 * 3_600),
+        (&visited, MONDAY + 10 * 3_600),
+    ];
+    poll_host_feed(&fixture, &bookings, false, "v1", NOW + 60);
+    assert_eq!(
+        state_of(&fixture, "pi_host"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+
+    // The host cancels both in their own calendar.
+    poll_host_feed(&fixture, &bookings, true, "v2", NOW + 120);
+    assert_eq!(
+        state_of(&fixture, "pi_host"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "the host's cancel refunds the whole deposit, whatever the visitor's rule"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_visitor"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a booking the visitor cancelled first keeps its own cancel's refund"
+    );
+
+    let pass = drain(&fixture, &mut provider, NOW + 130);
+    assert_eq!(pass.refunded, 1);
+    assert_eq!(
+        state_of(&fixture, "pi_host"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
 }
