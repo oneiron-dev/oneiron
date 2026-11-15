@@ -13,6 +13,7 @@ use oneiron::federation::{FederationGrantPreset, FederationGrantRole};
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::subject_model::{PersonSubstrate, anchor_actor_subject};
+use oneiron::test_doors::stored_workspace_roster_rows::rewrite_workspace_rows_before_one_vault;
 use oneiron::test_doors::workspace_onboarding_halt::onboard_workspace_member_halting_after;
 use oneiron::workspace_roster::{
     CompanionChoice, MemberGrantBundle, MemberOnboardingIntent, MemberOnboardingStep, OneVaultMode,
@@ -480,5 +481,77 @@ fn conflicting_one_vault_rows_read_unreadable_and_refuse_the_joining_member() ->
                 && entry.principal_ref != Some(late_member)),
         "a refused member has no roster row"
     );
+    Ok(())
+}
+
+#[test]
+fn rows_stored_before_one_vault_mode_read_and_their_member_reads_as_not_told() -> TestResult {
+    let fixture = setup()?;
+    install_one_vault(&fixture, json!({ "version": 1, "mode": "on" }))??;
+    let (yuki, companion_actor, intent) =
+        yuki_bring_intent(&fixture, "stored-rows-before-one-vault-yuki")?;
+    let writer = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    let outcome = fixture
+        .vault
+        .onboard_workspace_member(intent.clone(), &writer, None)?;
+    assert!(
+        outcome.one_vault,
+        "the head initially tells the joining member"
+    );
+    let roster = fixture
+        .vault
+        .workspace_roster(WORKSPACE, fixture.vault.now_recorded_at())?;
+    let entry = roster
+        .iter()
+        .find(|entry| entry.principal_ref == Some(yuki))
+        .ok_or("yuki roster entry before rewriting stored rows")?;
+    assert_eq!(entry.one_vault_told, Some(outcome.completed_at));
+    let entry_json = serde_json::to_value(entry)?;
+    assert_eq!(entry_json["one_vault_told"], json!(outcome.completed_at));
+
+    rewrite_workspace_rows_before_one_vault(
+        &fixture.vault,
+        WORKSPACE,
+        yuki,
+        &intent.onboarding_id,
+    )?;
+
+    // This public read decodes the stored preset before the stored member.
+    let roster = fixture
+        .vault
+        .workspace_roster(WORKSPACE, fixture.vault.now_recorded_at())?;
+    assert_eq!(
+        roster.len(),
+        2,
+        "the preset's house and the member's companion"
+    );
+    let house = roster
+        .iter()
+        .find(|entry| entry.principal_ref.is_none())
+        .ok_or("house roster entry from the stored preset")?;
+    assert_eq!(house.actor_ref, fixture.house);
+    assert_eq!(house.subject_ref, fixture.org);
+    assert_eq!(house.display_name, VENTURE);
+    let entry = roster
+        .iter()
+        .find(|entry| entry.principal_ref == Some(yuki))
+        .ok_or("yuki roster entry after rewriting stored rows")?;
+    assert_eq!(entry.actor_ref, companion_actor);
+    assert_eq!(entry.one_vault_told, None);
+    let entry_json = serde_json::to_value(entry)?;
+    assert_eq!(entry_json["one_vault_told"], Value::Null);
+
+    // The exact same request reads its completed journal, not Complete again.
+    let replay = fixture
+        .vault
+        .onboard_workspace_member(intent, &writer, None)?;
+    assert_eq!(replay.onboarding_id, outcome.onboarding_id);
+    assert_eq!(replay.person_ref, yuki);
+    assert_eq!(replay.companion_actor_ref, Some(companion_actor));
+    assert_eq!(replay.completed_at, outcome.completed_at);
+    assert!(!replay.one_vault, "the stored member has no told mark");
+    let got = get_via_verb(&fixture, yuki)?;
+    assert_eq!(got["mode"], json!("on"), "the current setting is still on");
+    assert_eq!(got["source"], json!("row"));
     Ok(())
 }
