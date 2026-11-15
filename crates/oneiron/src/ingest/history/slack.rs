@@ -11,7 +11,11 @@
 //! and a group DM name their own members. A public channel names every
 //! member of the workspace, so it reads to every vault person matched to
 //! that workspace (owner ruling IMPORT-PUBLIC = D, 15 Nov 00:43). A folder
-//! no list names keeps no members and reads to the importer alone.
+//! no list names keeps no members and reads to the importer alone. A listed
+//! conversation with no messages is kept too: its import sets its readers
+//! again, so a member a later export no longer shares it with reads none of
+//! it. A message's id is its conversation's (`<workspace>:<conversation
+//! id>:<ts>`), so two workspaces never land as one.
 //!
 //! Every message stays a source speaker's words: `said_by` is `slack:<member
 //! id>`, until the owner's member map says which member they are themselves
@@ -199,7 +203,8 @@ pub fn parse_member_map(text: &str) -> IngestResult<SlackMemberMap> {
         .collect()
 }
 
-/// Decodes a whole export.
+/// Decodes a whole export: every conversation a list names, with or
+/// without messages, and every folder of day files.
 ///
 /// # Errors
 ///
@@ -231,8 +236,6 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
         .collect();
 
     let mut conversations: Vec<HistoryConversation> = Vec::new();
-    // The Slack id of each conversation, by its place in `conversations`.
-    let mut source_ids: Vec<String> = Vec::new();
     let mut folders: HashMap<String, usize> = HashMap::new();
     for (list, sharing) in LISTS {
         let Some(text) = files.get(list) else {
@@ -276,7 +279,6 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
                 folders.insert(name.to_owned(), index);
             }
             conversations.push(conversation);
-            source_ids.push(id.to_owned());
         }
     }
 
@@ -307,17 +309,11 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
                 let mut unlisted = shared_conversation(&key, folder, &[], &names);
                 unlisted.title = Some(folder.to_owned());
                 conversations.push(unlisted);
-                source_ids.push(folder.to_owned());
                 folders.insert(folder.to_owned(), index);
                 index
             }
         };
-        day(
-            &source_ids[index],
-            &file.path,
-            &file.text,
-            &mut conversations[index],
-        );
+        day(&file.path, &file.text, &mut conversations[index]);
     }
 
     for conversation in &mut conversations {
@@ -328,7 +324,6 @@ pub fn decode(export: &SlackExport) -> IngestResult<SlackWorkspace> {
             conversation.started_at_ms = conversation.messages.first().and_then(|m| m.at_ms);
         }
     }
-    conversations.retain(|conversation| !conversation.messages.is_empty());
     Ok(SlackWorkspace {
         name: export.workspace.clone(),
         key,
@@ -414,14 +409,14 @@ fn ts_ms(ts: &str) -> Option<u64> {
 }
 
 /// Reads one day file into `conversation`, counting what it does not keep.
-fn day(id: &str, path: &str, text: &str, conversation: &mut HistoryConversation) {
+fn day(path: &str, text: &str, conversation: &mut HistoryConversation) {
     let skipped = &mut conversation.skipped;
     let Ok(Value::Array(messages)) = document(path, text) else {
         skipped.unreadable += 1;
         return;
     };
     for message in &messages {
-        let Some(kept) = day_message(id, message, skipped) else {
+        let Some(kept) = day_message(&conversation.native_id, message, skipped) else {
             continue;
         };
         conversation.messages.push(kept);
@@ -429,8 +424,9 @@ fn day(id: &str, path: &str, text: &str, conversation: &mut HistoryConversation)
 }
 
 /// One message of a day file, kept when it holds a person's words. Its id is
-/// the conversation's and its Slack time (`<conversation>:<ts>`), and a
-/// thread reply names the message that began its thread as its parent.
+/// the conversation's own id and its Slack time (`<workspace>:<conversation
+/// id>:<ts>`), and a thread reply names the message that began its thread as
+/// its parent.
 fn day_message(id: &str, message: &Value, skipped: &mut HistorySkips) -> Option<HistoryMessage> {
     if !message.is_object() {
         skipped.unreadable += 1;
