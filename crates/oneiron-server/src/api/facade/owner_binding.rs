@@ -129,7 +129,10 @@ pub(super) fn facade_owner(
     // owner anyway.
     if answer.is_err()
         // SEEDED FAULT IF7: and so does one at a vault.identity door.
-        && (verb == "vault.people.create" || verb.starts_with("vault.identity."))
+        // SEEDED FAULT RF6: and so does one at a vault.residence door.
+        && (verb == "vault.people.create"
+            || verb.starts_with("vault.identity.")
+            || verb.starts_with("vault.residence."))
         && let Ok(owner) = server.vault().ensure_embedded_owner_actor()
         && let Ok(proof) = server.vault().authenticate_owner(
             owner,

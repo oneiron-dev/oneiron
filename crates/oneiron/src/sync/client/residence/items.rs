@@ -327,6 +327,8 @@ impl SyncClient {
         let storage = |e: crate::Error| TransportError::Storage(e.to_string());
         if let Some(cached) = self.thin_item(item)?
             && &cached.window == window
+            // SEEDED FAULT RF3: the read cache is never served.
+            && false
         {
             crate::sync::residence::record_item_touch(&self.vault, item).map_err(storage)?;
             return Ok(OpenedItem::Thin(cached));

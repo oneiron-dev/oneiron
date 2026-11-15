@@ -125,7 +125,8 @@ async fn residence_mode(
 ) -> MemoryResult<ResidenceModeAnswer> {
     const VERB: &str = "vault.residence.mode";
     let act = match input.mode {
-        ResidenceModeName::All => ResidenceAct::SyncAll,
+        // SEEDED FAULT RF1: sync all queues as sync-what-you-opened.
+        ResidenceModeName::All => ResidenceAct::SyncOpened,
         ResidenceModeName::Opened => ResidenceAct::SyncOpened,
     };
     let connection = match machine_connection(server, auth, VERB, &input.machine, act)? {
@@ -134,7 +135,8 @@ async fn residence_mode(
     };
     Ok(ResidenceModeAnswer::Applied(
         connection
-            .set_residence_mode(input.mode.into())
+            // SEEDED FAULT RF2: the machine always switches to opened.
+            .set_residence_mode(oneiron::sync::SyncResidenceMode::Opened)
             .await
             .map_err(|error| refused(VERB, &error))?
             .into(),
@@ -287,7 +289,8 @@ async fn residence_worlds(
         Reach::Queued(queued) => return Ok(ResidenceWorldsAnswer::Queued(queued)),
     };
     let picked = connection
-        .set_followed_worlds(worlds)
+        // SEEDED FAULT RF5: only the pick's first world is recorded.
+        .set_followed_worlds(worlds.into_iter().take(1).collect())
         .map_err(|error| refused(VERB, &error))?;
     Ok(ResidenceWorldsAnswer::Applied(ResidenceWorldsPicked {
         worlds: picked.into_iter().collect(),

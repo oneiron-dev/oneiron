@@ -227,7 +227,8 @@ pub(crate) fn prune_thin_items_in_txn(
             .get(txn, &format!("{TOUCH_PREFIX}{id}"))?
             .and_then(|bytes| <[u8; 8]>::try_from(bytes.as_ref()).ok())
             .map_or(0, u64::from_be_bytes);
-        if touched >= before {
+        // SEEDED FAULT RF4: a copy touched at the cutoff is dropped too.
+        if touched > before {
             continue;
         }
         // A legal hold keeps every byte of the rows it names, a cached
