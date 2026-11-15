@@ -253,15 +253,30 @@ impl Vault {
     }
 
     /// A read whose answer is a record of every match, the org compliance
-    /// search, refuses while the text index is not trusted
-    /// ([`Self::ensure_text_index_trusted`]) or while a rebuild stands: the
-    /// documents not yet indexed again would be missing from its count.
-    pub(crate) fn ensure_text_index_complete(&self) -> Result<()> {
+    /// search (ruling ANALYZER-REINDEX-COMPLIANCE-SEARCH = A, 16 Nov 07:19),
+    /// refuses while the text index is not trusted
+    /// ([`Self::ensure_text_index_trusted`]) or while a rebuild stands in
+    /// `txn`'s snapshot: the documents not yet indexed again would be missing
+    /// from its count. The refusal says how far the rebuild is, so the caller
+    /// knows when to retry.
+    pub(crate) fn ensure_text_index_complete(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::memory::MemoryResult<()> {
         self.ensure_text_index_trusted()?;
-        if self.text_index_rebuilding.load(Ordering::Acquire) {
-            return Err(Error::CorruptedIndex("text index rebuild in progress"));
+        match read_text_index_rebuild_progress(&self.store, txn)? {
+            None => Ok(()),
+            Some(TextIndexRebuildProgress { done, total }) => Err(crate::memory::MemoryError::new(
+                crate::memory::MEMORY_CODE_INVALID_STATE,
+                format!(
+                    "text index rebuild in progress after an analyzer change: rebuilding, {done} of \
+                     {total} documents indexed again; this search answers only from a complete index"
+                ),
+                &[
+                    "Retry when the rebuild ends: the vault doctor report then shows no text_index_rebuild.",
+                ],
+            )),
         }
-        Ok(())
     }
 
     /// Runs the rebuild pass, `page` listed documents per write transaction,
