@@ -20,10 +20,16 @@ use std::path::{Path, PathBuf};
 ///
 /// Everything inside goes through `held`, each entry relative to the
 /// directory holding it, so no name moved meanwhile leads the removal out of
-/// the tree. Each directory inside is unlinked only while its name still
-/// holds the directory emptied through it; another found there refuses the
-/// removal and is left as it is. Only the emptied directory itself goes by
-/// name, checked again first.
+/// the tree. Each directory inside is emptied through its own descriptor,
+/// and just before its unlink its name must still hold that directory;
+/// another found there refuses the removal and is left as it is. Only the
+/// held directory itself goes by `path`, checked again first.
+///
+/// POSIX has no rmdir bound to a descriptor, so each check and its unlink
+/// are two calls. A directory moved to the name between them is unlinked
+/// only if it is empty: one with anything in it makes the unlink fail and
+/// the removal refuse. Whoever moves it there needs write access to its
+/// parent, and with that access can remove an empty directory anyway.
 ///
 /// A vault's writer lock goes last: while it is linked, an owner that opens
 /// the vault meets the lock whoever removes it holds, never a fresh one
@@ -85,7 +91,9 @@ pub(super) fn empty_directory(dir: BorrowedFd<'_>, root: bool) -> std::io::Resul
             });
             // The name must still hold the directory just emptied: one moved
             // there meanwhile is not this tree's to remove, and the whole
-            // removal refuses, as a top no longer at its path does.
+            // removal refuses, as a top no longer at its path does. One moved
+            // there after this check is unlinked only if empty (see
+            // `remove_held_directory`).
             let named = statat(dir, name.as_c_str(), AtFlags::SYMLINK_NOFOLLOW)?;
             if (named.st_dev, named.st_ino) != (emptied.st_dev, emptied.st_ino) {
                 return Err(std::io::Error::other(
