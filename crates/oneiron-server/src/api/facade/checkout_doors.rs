@@ -86,6 +86,16 @@ impl CheckoutLiveness for CheckoutPresence<'_> {
     }
 }
 
+impl SyncServer {
+    /// The checkout presence this server's checkout doors publish and read,
+    /// for the seat host's teardown of a runner attempt's checkout, which
+    /// must see the same live occupant (Engine RULING
+    /// EXPORTPROOF-RUNNER-CHECKOUT-END = A).
+    pub(crate) fn checkout_presence(&self) -> impl CheckoutLiveness + '_ {
+        CheckoutPresence(self)
+    }
+}
+
 async fn as_caller<T: Send + 'static>(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

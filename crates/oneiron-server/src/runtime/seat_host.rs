@@ -191,6 +191,7 @@ impl SyncServer {
         }
         let runner_seats = self.seat_runner_policy();
         terminal::settle_host_seat(&mut dispatcher, runner_seats.as_ref(), &fence, ran);
+        terminal::end_runner_checkout(&dispatcher, self, &fence);
     }
 }
 

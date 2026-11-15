@@ -14,7 +14,15 @@
 //! door ordinarily refuses writes nothing, so the run is then captured as
 //! before. TaskErased instead reports an already-committed byte-free native
 //! settlement with child spend and seat quota; it must not fall back to capture.
+//!
+//! Once the end is captured, a bound runner work's attempt that landed
+//! Completed, its work not moved on, ends the checkout epoch it reserved
+//! through the engine's fail-closed teardown, under the attempt's own
+//! reservation and with this server's checkout presence as its liveness
+//! ([`ByoaDispatcher::end_runner_checkout`]; Engine RULING
+//! EXPORTPROOF-RUNNER-CHECKOUT-END = A). Every other end keeps the lease.
 
+use oneiron::checkout::CheckoutTeardownOutcome;
 use oneiron::dispatch_byoa::{
     ByoaDispatcher, ByoaError, ByoaExecutionFence, ByoaExhaust, ByoaResult,
     ByoaTerminalDisposition, CaptureByoaExhaust, ProviderAdapterRegistry, RunnerSeatPolicy,
@@ -24,6 +32,7 @@ use oneiron_vault_contract::now_ts;
 
 use super::super::seat_login::RunnerSeatPolicySettings;
 use super::{NoEgress, NoEndpoints};
+use crate::server::SyncServer;
 
 /// The owner's policy, its registry, and the seat a bound work's attempt
 /// runs on.
@@ -94,6 +103,35 @@ pub(super) fn settle_host_seat(
     }
     if let Err(error) = dispatcher.capture_terminal_exhaust(capture) {
         tracing::warn!(%error, "a seat run's exhaust was not captured");
+    }
+}
+
+/// Ends the checkout `fence`'s attempt reserved, once its end is captured:
+/// the engine judges whether the capture landed Completed with its work not
+/// moved on, and tears the epoch down under the attempt's own reservation,
+/// collecting the tree only with a pushed-head receipt, a clean tree and no
+/// live occupant in `server`'s checkout presence. Any other end keeps the
+/// lease; a refusal is logged and keeps it too.
+pub(super) fn end_runner_checkout(
+    dispatcher: &ByoaDispatcher<'_, NoEndpoints, NoEgress>,
+    server: &SyncServer,
+    fence: &ByoaExecutionFence,
+) {
+    match dispatcher.end_runner_checkout(fence, &mut server.checkout_presence()) {
+        Ok(None) => {}
+        Ok(Some(CheckoutTeardownOutcome::Collected { epoch, .. })) => {
+            tracing::info!(epoch, "a runner attempt's checkout was collected");
+        }
+        Ok(Some(CheckoutTeardownOutcome::Retained { epoch, reason, .. })) => {
+            tracing::info!(
+                epoch,
+                ?reason,
+                "a runner attempt's checkout is retained for its holder"
+            );
+        }
+        Err(error) => {
+            tracing::warn!(%error, "a runner attempt's checkout was not torn down; its lease stays");
+        }
     }
 }
 
