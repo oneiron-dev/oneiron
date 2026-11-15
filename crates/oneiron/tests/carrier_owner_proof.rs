@@ -2012,6 +2012,10 @@ fn the_held_list_names_the_answer_its_carrier_and_the_standing_role() {
     assert!(!listed.carrier_is_mine, "the carrier is not his machine");
     assert!(!listed.dismissed);
     assert!(
+        !listed.replaces_keys,
+        "an answer a door wrote names the keys the machine stands under"
+    );
+    assert!(
         !listing.can_confirm,
         "an install that holds no owner key cannot confirm"
     );
