@@ -152,7 +152,6 @@ impl Vault {
                 rows: u64::try_from(listed.len()).unwrap_or(u64::MAX),
                 verified_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
             };
-            CUSTODY_PROOF.put(&self.store, txn, &(*archive, machine), &stored)?;
             Ok(custody_proof((*archive, machine), stored))
         })
     }
