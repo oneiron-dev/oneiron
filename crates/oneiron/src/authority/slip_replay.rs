@@ -346,11 +346,11 @@ impl SideKey for NonceKey {
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
         let (ts_hex, digest_hex) = text.split_once(':')?;
-        if ts_hex.len() != 16 || digest_hex.len() != 64 {
+        if digest_hex.len() != 64 {
             return None;
         }
         Some(Self {
-            timestamp: u64::from_str_radix(ts_hex, 16).ok()?,
+            timestamp: u64::from_be_bytes(oneiron_hex::decode::<8>(ts_hex)?),
             digest_hex: digest_hex.to_owned(),
         })
     }

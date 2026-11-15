@@ -72,14 +72,11 @@ impl SideKey for LeaseKey {
     }
 
     fn decode_key(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != 33 {
-            return None;
-        }
         let text = std::str::from_utf8(bytes).ok()?;
-        let (vault, client) = text.split_once(':')?;
+        let (vault, client) = text.split_at_checked(16)?;
         Some(Self {
-            vault_id: u64::from_str_radix(vault, 16).ok()?,
-            client_id: u64::from_str_radix(client, 16).ok()?,
+            vault_id: u64::from_be_bytes(oneiron_hex::decode::<8>(vault)?),
+            client_id: u64::from_be_bytes(oneiron_hex::decode::<8>(client.strip_prefix(':')?)?),
         })
     }
 }

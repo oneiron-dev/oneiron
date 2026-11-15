@@ -345,7 +345,7 @@ impl SideKey for PendingTombstoneKey {
         let window = head.strip_suffix(b":")?;
         Some(Self {
             window: String::from_utf8(window.to_vec()).ok()?,
-            id: EntityId::from_hex(std::str::from_utf8(hex).ok()?).ok()?,
+            id: EntityId::from_lower_hex(std::str::from_utf8(hex).ok()?).ok()?,
         })
     }
 }

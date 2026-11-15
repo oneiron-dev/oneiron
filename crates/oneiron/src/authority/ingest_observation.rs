@@ -63,12 +63,12 @@ impl SideKey for IngestCheckKey {
     fn decode_key(bytes: &[u8]) -> Option<Self> {
         let text = std::str::from_utf8(bytes).ok()?;
         let (peer_id, start_hex) = text.split_once(':')?;
-        if peer_id.len() != 64 || start_hex.len() != 16 {
+        if peer_id.len() != 64 {
             return None;
         }
         Some(Self {
             peer_id: peer_id.to_owned(),
-            start: u64::from_str_radix(start_hex, 16).ok()?,
+            start: u64::from_be_bytes(oneiron_hex::decode::<8>(start_hex)?),
         })
     }
 }
