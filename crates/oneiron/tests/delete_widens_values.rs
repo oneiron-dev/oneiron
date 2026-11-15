@@ -41,6 +41,7 @@ use oneiron::federation::{FederationGrantRole, InitialSharedMember};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, SafeDeleteReason};
 use oneiron::registry::{ENTITY_TYPE_CLAIM_CLASS_DESCRIPTOR, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::comm_claim_rows::put_comm_claim_row;
 use oneiron::test_support::bind_host_owner;
 use oneiron::write_envelope::cohort_claims::{
     CampaignMemberChannel, CampaignMemberState, CampaignMemberValue, PREDICATE_CAMPAIGN_MEMBER,
@@ -232,7 +233,11 @@ fn claim_about(predicate: &str, subject: EntityId, value: Value) -> ClaimBody {
     .unwrap_or_else(|error| panic!("a {predicate} body: {error:?}"))
 }
 
-/// A `comm.reachable_via` on email about a new PERSON, in `facet`.
+/// A `comm.reachable_via` on email about a new PERSON, in `facet`, Approved,
+/// through the cfg door that lands a `comm.*` row as written here: the raw
+/// put door keeps the criticality floor on a `comm.*` claim, Auto or
+/// Approved, and no typed door writes this one (tiebreak
+/// muse/l2-wa-fixture-tiebreak).
 fn reachable_via(vault: &Vault, facet: EntityId, reachable: bool) -> EntityId {
     let party = a_person(vault);
     let mut body = CommClaimValue::ReachableVia {
@@ -242,11 +247,14 @@ fn reachable_via(vault: &Vault, facet: EntityId, reachable: bool) -> EntityId {
     }
     .claim_body()
     .expect("a comm.reachable_via body");
-    // The raw door takes no sourced body; the row carries no declared scope,
-    // as the do-not-contact bar of `tests/world_access_state_change.rs`.
     body.source = None;
     body.scope = None;
-    put_in_facet(vault, facet, body)
+    body.approval = ClaimApprovalStatus::Approved;
+    body.scope_facet = facet;
+    let id = EntityId::now();
+    put_comm_claim_row(vault, &id, &body, at(LEARNED_AT), LEARNED_AT)
+        .unwrap_or_else(|error| panic!("a comm.reachable_via claim lands: {error:?}"));
+    id
 }
 
 /// A `campaign.member` of a new PERSON in a campaign, on email, in `state`,
