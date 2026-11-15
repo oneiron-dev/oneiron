@@ -125,7 +125,9 @@ impl Vault {
         // The owner chose on what the surface showed him: the value speaks
         // for exactly the owner keys the vault had held at his review.
         let value = web_sign_in_switch_value(fold)?;
-        let _ = (seen, KEYS_CHANGED);
+        if seen != value {
+            return Err(Error::ConcurrentWrite(KEYS_CHANGED));
+        }
         let proof = self
             .owner_proof_signer(fold)
             .ok_or(Error::Record(RecordError::OwnerKeyRequired))?;

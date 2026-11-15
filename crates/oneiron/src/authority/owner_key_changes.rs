@@ -222,21 +222,17 @@ fn web_sign_in_switch_change(
     entry: &AuthorityLogEntry,
     set: &PolicySettingSet,
 ) -> Option<OwnerKeyChange> {
-    if set.setting != PolicySetting::WebSignIn
-        || set.value.is_none()
-        || !fold.valid_entries.contains(&hash)
-    {
+    if fold.web_sign_in_acts().get(&hash) != Some(&WebSignInAct::SwitchedBack) {
         return None;
     }
-    let signed_by = entry
-        .cosigns
-        .first()
-        .map_or(&entry.signer.public_key, |proof| &proof.public_key);
+    let [proof] = entry.cosigns.as_slice() else {
+        return None;
+    };
     Some(OwnerKeyChange {
         entry: hash,
         change: OwnerKeyChangeKind::SwitchedToWebSignIn,
         machine: set.machine,
-        signed_by: signed_by.clone(),
+        signed_by: proof.public_key.clone(),
         at: entry.ts,
     })
 }

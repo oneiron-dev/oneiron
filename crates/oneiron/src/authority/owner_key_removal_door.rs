@@ -473,7 +473,12 @@ impl Vault {
         fold: &AuthorityFold,
         ending: &[EnrolledOwnerKey],
     ) -> Result<Option<RemainingOwnerKeys>> {
-        if ending.is_empty() {
+        if ending.is_empty()
+            || !matches!(
+                fold.owner_key_requirement(),
+                OwnerKeyRequirement::Required { .. }
+            )
+        {
             return Ok(None);
         }
         let remaining = self.owner_keys_remaining_in_txn(txn, fold, ending)?;

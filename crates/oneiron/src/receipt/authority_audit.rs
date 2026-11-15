@@ -655,14 +655,8 @@ fn project_row(
     let (event_kind, source_op, mut fields) = classify(&entry.op);
     // The web sign-in setting's act reads as what the fold landed for it.
     if let AuthorityOp::PolicySettingSet(set) = &entry.op
-        && let Some(detail) = carried_act::web_sign_in_detail(
-            set,
-            Some(if set.value.is_some() {
-                crate::authority::WebSignInAct::SwitchedBack
-            } else {
-                crate::authority::WebSignInAct::AsksAgain
-            }),
-        )
+        && let Some(detail) =
+            carried_act::web_sign_in_detail(set, fold.web_sign_in_acts().get(&hash).copied())
     {
         fields.detail = Some(detail);
     }
