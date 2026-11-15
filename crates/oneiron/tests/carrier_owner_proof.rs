@@ -38,9 +38,13 @@ use oneiron::authority::{
     authority_entry_hash, authority_transcript, fold_authority_log, fold_authority_log_for_posture,
     genesis_vault_id, machine_profile_proof_transcript,
 };
+use oneiron::test_doors::conversation_training_fold::leaves_out;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
 use oneiron::{EntityId, HostingPrivacyPosture};
-use oneiron_authority::authority::{HomeNodePick, home_pick_target, machine_answer_revision};
+use oneiron_authority::authority::{
+    ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick,
+    conversation_training_vault_target, home_pick_target, machine_answer_revision,
+};
 
 const ROOT_SEED: u8 = 61;
 const NODE_SEED: u8 = 62;
@@ -270,6 +274,22 @@ impl HostedNodeAnswer {
         );
         self.rows.push(pick);
         self.fold()
+    }
+
+    /// The node carries `op` on the registration, signed by its own install
+    /// key with no cosign. Returns the fold and the entry.
+    fn node_carries(mut self, op: AuthorityOp) -> (AuthorityFold, AuthorityEntryHash) {
+        let carried = signed(
+            Some(self.vault_id()),
+            1,
+            vec![hash(&self.rows[1])],
+            op,
+            &self.node,
+            &[],
+        );
+        let entry = hash(&carried);
+        self.rows.push(carried);
+        (self.fold(), entry)
     }
 
     /// The root registers a second machine, an execution node, and the node
@@ -603,6 +623,11 @@ impl LaptopBesideNode {
 
 fn owner() -> EntityId {
     EntityId::from_bytes([0x71; 16]).expect("an id")
+}
+
+/// A person of the vault who is not its owner.
+fn member() -> EntityId {
+    EntityId::from_bytes([0x75; 16]).expect("an id")
 }
 
 /// `node`'s profile of `machine` in `role` at `revision`, carried by
@@ -1250,5 +1275,94 @@ fn a_waiting_pick_asks_until_the_owners_pick_lands() {
         fold.waiting_owner_choices(),
         &BTreeSet::new(),
         "the owner's pick ends the ask of the waiting pick it saw"
+    );
+}
+
+/// `person`'s conversation-training choice for `target`, carried by
+/// `machine`, having seen no live choice.
+fn training_choice(person: EntityId, target: EntityId, machine: EntityId) -> AuthorityOp {
+    AuthorityOp::ConversationTrainingSet(ConversationTrainingSet {
+        act: OwnerAct::by_owner(
+            person,
+            OwnerActKind::ConversationTraining,
+            target,
+            ActSurface::ThisInstall,
+            [0; 32],
+        ),
+        machine,
+        leave_out: true,
+    })
+}
+
+/// Ruling CARRIER-PERSON-OPT-OUT = A: a person's own opt-out of conversation
+/// training is that person's act, not the vault owner's, so it lands through
+/// a carrier that is not the owner's machine, as it does on main.
+#[test]
+fn a_members_own_opt_out_lands_through_a_not_mine_carrier() {
+    let answer = HostedNodeAnswer::new();
+    let node = answer.machine;
+    let (fold, _) = answer.node_carries(training_choice(member(), member(), node));
+    assert!(
+        leaves_out(&fold, member()),
+        "the member's own opt-out lands: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::new(),
+        "a person's own choice never waits for the vault owner's proof"
+    );
+}
+
+/// The same ruling's other side: the vault-wide training setting is the
+/// vault owner's act, so a not-mine carrier's unproven set waits.
+#[test]
+fn an_admins_vault_wide_training_setting_waits_through_a_not_mine_carrier() {
+    let answer = HostedNodeAnswer::new();
+    let node = answer.machine;
+    let target = conversation_training_vault_target(&answer.vault_id()).expect("the target");
+    let (fold, entry) = answer.node_carries(AuthorityOp::ConversationTrainingVaultSet(
+        ConversationTrainingVaultSet {
+            act: OwnerAct::by_owner(
+                owner(),
+                OwnerActKind::ConversationTraining,
+                target,
+                ActSurface::ThisInstall,
+                [0; 32],
+            ),
+            machine: node,
+            on: true,
+            allow_opt_out: true,
+        },
+    ));
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::from([entry]),
+        "the vault-wide setting waits for the owner: {:?}",
+        fold.issues
+    );
+}
+
+/// The exemption is the person's own choice only: a choice that names
+/// another person as its target is no valid entry, whoever carries it.
+#[test]
+fn a_training_choice_for_another_person_is_still_refused() {
+    let answer = HostedNodeAnswer::new();
+    let node = answer.machine;
+    let issues_before = answer.fold().issues.len();
+    let (fold, _) = answer.node_carries(training_choice(owner(), member(), node));
+    assert!(
+        !leaves_out(&fold, member()),
+        "nobody opts another person out"
+    );
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::new(),
+        "a refused entry does not wait either"
+    );
+    assert!(
+        fold.issues.len() > issues_before,
+        "a choice for another person is an invalid entry: {:?}",
+        fold.issues
     );
 }
