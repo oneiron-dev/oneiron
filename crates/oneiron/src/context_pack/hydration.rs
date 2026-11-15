@@ -493,7 +493,7 @@ fn claim_fields_to_json(body: &ClaimBody) -> HashMap<String, serde_json::Value> 
         if secret {
             serde_json::Value::Null
         } else {
-            rmpv_to_json(value)
+            crate::serialize::msgpack_value_to_json(value)
         }
     };
     let mut out = HashMap::new();
@@ -608,46 +608,13 @@ pub(crate) fn decode_entity_fields(
         let Some(key) = key.as_str() else {
             continue;
         };
-        out.insert(key.to_owned(), rmpv_to_json(&value));
+        out.insert(
+            key.to_owned(),
+            crate::serialize::msgpack_value_to_json(&value),
+        );
     }
 
     Some(out)
-}
-
-pub(super) fn rmpv_to_json(value: &rmpv::Value) -> serde_json::Value {
-    match value {
-        rmpv::Value::Nil => serde_json::Value::Null,
-        rmpv::Value::Boolean(v) => serde_json::Value::Bool(*v),
-        rmpv::Value::Integer(v) => {
-            if let Some(i) = v.as_i64() {
-                serde_json::json!(i)
-            } else if let Some(u) = v.as_u64() {
-                serde_json::json!(u)
-            } else {
-                serde_json::Value::Null
-            }
-        }
-        rmpv::Value::F32(v) => serde_json::json!(v),
-        rmpv::Value::F64(v) => serde_json::json!(v),
-        rmpv::Value::String(v) => {
-            serde_json::Value::String(v.as_str().unwrap_or_default().to_owned())
-        }
-        rmpv::Value::Binary(_) => serde_json::Value::Null,
-        rmpv::Value::Array(values) => {
-            serde_json::Value::Array(values.iter().map(rmpv_to_json).collect())
-        }
-        rmpv::Value::Map(entries) => {
-            let mut map = serde_json::Map::new();
-            for (key, value) in entries {
-                let Some(key) = key.as_str() else {
-                    continue;
-                };
-                map.insert(key.to_owned(), rmpv_to_json(value));
-            }
-            serde_json::Value::Object(map)
-        }
-        rmpv::Value::Ext(_, _) => serde_json::Value::Null,
-    }
 }
 
 fn read_short_id(
