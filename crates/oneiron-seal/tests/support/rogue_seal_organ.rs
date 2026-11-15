@@ -47,6 +47,10 @@
 //!   only object holds a hole no signature field names, fills it with a
 //!   genuine token from the fixture's authority over every other byte, and
 //!   claims B-LTA; its verify names that hole a passed document timestamp;
+//! - `doc-timestamp-text-field`: the same, but the hole is the `/Contents`
+//!   of a genuine `/DocTimeStamp` dictionary, the `/V` of a field whose
+//!   parent is a signature field and whose own `/FT`, by reference, is
+//!   `/Tx`: a text field, so still no signature field names it;
 //! - `timestamp-forged`: seals at B-T, then replaces the signature
 //!   timestamp token with one an untrusted authority minted over the right
 //!   imprint; claims B-T.
@@ -118,6 +122,7 @@ mod rogue {
         DssAppended,
         DocTimestampForged,
         DocTimestampUnfielded,
+        DocTimestampTextField,
         TimestampForged,
     }
 
@@ -134,7 +139,7 @@ mod rogue {
                 Self::DocTimestampForged => {
                     Some((PadesProfile::BaselineLta, PadesProfile::BaselineLta))
                 }
-                Self::DocTimestampUnfielded => {
+                Self::DocTimestampUnfielded | Self::DocTimestampTextField => {
                     Some((PadesProfile::BaselineLt, PadesProfile::BaselineLta))
                 }
                 Self::TimestampForged => Some((PadesProfile::BaselineT, PadesProfile::BaselineT)),
@@ -173,6 +178,7 @@ mod rogue {
                 "dss-appended" => Some(Self::DssAppended),
                 "doc-timestamp-forged" => Some(Self::DocTimestampForged),
                 "doc-timestamp-unfielded" => Some(Self::DocTimestampUnfielded),
+                "doc-timestamp-text-field" => Some(Self::DocTimestampTextField),
                 "timestamp-forged" => Some(Self::TimestampForged),
                 _ => None,
             }
@@ -459,6 +465,7 @@ mod rogue {
                 | Mode::DssAppended
                 | Mode::DocTimestampForged
                 | Mode::DocTimestampUnfielded
+                | Mode::DocTimestampTextField
                 | Mode::TimestampForged => {
                     let fixture = self.2.as_ref().ok_or_else(|| bad("no evidence fixture"))?;
                     let (target, claim) = self
@@ -505,6 +512,15 @@ mod rogue {
                         Mode::DocTimestampUnfielded => {
                             let key = signing_key(&fixture.tsa_key)?;
                             bytes = append_unfielded_timestamp(
+                                &bytes,
+                                &key,
+                                &fixture.tsa_certificate,
+                                args.now_ms / 1000,
+                            )?;
+                        }
+                        Mode::DocTimestampTextField => {
+                            let key = signing_key(&fixture.tsa_key)?;
+                            bytes = append_text_field_timestamp(
                                 &bytes,
                                 &key,
                                 &fixture.tsa_certificate,
@@ -821,8 +837,9 @@ mod rogue {
         Ok(out)
     }
 
-    /// The capacity of the hole `doc-timestamp-unfielded` writes, in bytes.
-    const UNFIELDED_CAPACITY: usize = 8192;
+    /// The capacity of the hole an appended document timestamp mode
+    /// writes, in bytes.
+    const APPENDED_HOLE_CAPACITY: usize = 8192;
 
     /// `doc-timestamp-unfielded`: one more revision, whose only new object
     /// is a dictionary holding a hole no signature field names; a genuine
@@ -839,13 +856,123 @@ mod rogue {
         let mut holder = Dictionary::new();
         holder.set(
             "Unfielded",
-            Object::String(vec![0; UNFIELDED_CAPACITY], StringFormat::Hexadecimal),
+            Object::String(vec![0; APPENDED_HOLE_CAPACITY], StringFormat::Hexadecimal),
         );
         update.new_document.add_object(holder);
-        let mut out = Vec::with_capacity(bytes.len() + 2 * UNFIELDED_CAPACITY + 1024);
+        let mut out = Vec::with_capacity(bytes.len() + 2 * APPENDED_HOLE_CAPACITY + 1024);
         update.save_to(&mut out).map_err(bad)?;
         let (open, close) =
-            unfielded_hole(&out, bytes.len()).ok_or_else(|| bad("no unfielded hole"))?;
+            last_hole(&out, b"/Unfielded").ok_or_else(|| bad("no unfielded hole"))?;
+        fill_hole(&mut out, open, close, key, certificate, now)?;
+        Ok(out)
+    }
+
+    /// `doc-timestamp-text-field`: one more revision, in which the
+    /// AcroForm's `/Fields` gains a signature field whose one kid has its
+    /// own `/FT`, a reference to the name `/Tx`, and for its `/V` a
+    /// `/DocTimeStamp` dictionary (`/SubFilter /ETSI.RFC3161`) whose
+    /// ByteRange is every byte but its `/Contents`; a genuine token `key`
+    /// mints at `now` over them fills that hole. The kid is a text field,
+    /// so no signature field names the timestamp.
+    fn append_text_field_timestamp(
+        bytes: &[u8],
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        now: u64,
+    ) -> Result<Vec<u8>, OrganError> {
+        use lopdf::{Dictionary, Object, StringFormat};
+        /// Ten digits, as wide as any offset the ByteRange is rewritten to.
+        const PLACEHOLDER: i64 = 9_999_999_999;
+        let previous = lopdf::Document::load_mem(bytes).map_err(bad)?;
+        let form = previous
+            .trailer
+            .get(b"Root")
+            .and_then(Object::as_reference)
+            .and_then(|root| previous.get_object(root))
+            .and_then(Object::as_dict)
+            .and_then(|catalog| catalog.get(b"AcroForm"))
+            .and_then(Object::as_reference)
+            .map_err(bad)?;
+        let mut update = lopdf::IncrementalDocument::create_from(bytes.to_vec(), previous);
+        update.opt_clone_object_to_new_document(form).map_err(bad)?;
+        let document = &mut update.new_document;
+        let mut stamp = Dictionary::new();
+        stamp.set("Type", Object::Name(b"DocTimeStamp".to_vec()));
+        stamp.set("Filter", Object::Name(b"Adobe.PPKLite".to_vec()));
+        stamp.set("SubFilter", Object::Name(b"ETSI.RFC3161".to_vec()));
+        stamp.set(
+            "ByteRange",
+            Object::Array(vec![
+                Object::Integer(0),
+                Object::Integer(PLACEHOLDER),
+                Object::Integer(PLACEHOLDER),
+                Object::Integer(PLACEHOLDER),
+            ]),
+        );
+        stamp.set(
+            "Contents",
+            Object::String(vec![0; APPENDED_HOLE_CAPACITY], StringFormat::Hexadecimal),
+        );
+        let stamp = document.add_object(stamp);
+        let text = document.add_object(Object::Name(b"Tx".to_vec()));
+        let parent = document.new_object_id();
+        let mut kid = Dictionary::new();
+        kid.set("FT", Object::Reference(text));
+        kid.set("T", Object::string_literal("stamp"));
+        kid.set("V", Object::Reference(stamp));
+        kid.set("Parent", Object::Reference(parent));
+        let kid = document.add_object(kid);
+        let mut field = Dictionary::new();
+        field.set("FT", Object::Name(b"Sig".to_vec()));
+        field.set("T", Object::string_literal("archive"));
+        field.set("Kids", Object::Array(vec![Object::Reference(kid)]));
+        document.set_object(parent, field);
+        document
+            .get_object_mut(form)
+            .and_then(Object::as_dict_mut)
+            .and_then(|form| form.get_mut(b"Fields"))
+            .and_then(Object::as_array_mut)
+            .map_err(bad)?
+            .push(Object::Reference(parent));
+        let mut out = Vec::with_capacity(bytes.len() + 2 * APPENDED_HOLE_CAPACITY + 2048);
+        update.save_to(&mut out).map_err(bad)?;
+        let (open, close) =
+            last_hole(&out, b"/Contents").ok_or_else(|| bad("no document timestamp hole"))?;
+        // The ByteRange, rewritten in place over the placeholder's width.
+        let key_at = out
+            .windows(b"/ByteRange".len())
+            .rposition(|window| window == b"/ByteRange")
+            .ok_or_else(|| bad("no ByteRange"))?;
+        let left = key_at
+            + out[key_at..]
+                .iter()
+                .position(|byte| *byte == b'[')
+                .ok_or_else(|| bad("no ByteRange array"))?;
+        let right = left
+            + out[left..]
+                .iter()
+                .position(|byte| *byte == b']')
+                .ok_or_else(|| bad("no ByteRange end"))?;
+        let width = right - left - 1;
+        let values = format!("0 {open} {close} {}", out.len() - close);
+        if values.len() > width {
+            return Err(bad("the ByteRange does not fit its placeholder"));
+        }
+        out[left + 1..right].copy_from_slice(format!("{values:width$}").as_bytes());
+        fill_hole(&mut out, open, close, key, certificate, now)?;
+        Ok(out)
+    }
+
+    /// Fills the hole `[open, close)` of `out` (its `<` and one past its
+    /// `>`) with a genuine token `key` mints at `now` over every other byte.
+    fn fill_hole(
+        out: &mut [u8],
+        open: usize,
+        close: usize,
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        now: u64,
+    ) -> Result<(), OrganError> {
         let imprint: [u8; 32] = Sha256::new()
             .chain_update(&out[..open])
             .chain_update(&out[close..])
@@ -857,22 +984,16 @@ mod rogue {
             .flat_map(|byte| format!("{byte:02X}").into_bytes())
             .collect();
         if open + 1 + hex.len() >= close {
-            return Err(bad("the token does not fit the unfielded hole"));
+            return Err(bad("the token does not fit the hole"));
         }
         out[open + 1..open + 1 + hex.len()].copy_from_slice(&hex);
-        Ok(out)
+        Ok(())
     }
 
-    /// The hole `doc-timestamp-unfielded` wrote at or after `from`: the
-    /// offsets of its `<` and one past its `>`.
-    fn unfielded_hole(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
-        let key = b"/Unfielded";
-        let at = from
-            + bytes
-                .get(from..)?
-                .windows(key.len())
-                .position(|window| window == key)?
-            + key.len();
+    /// The hole after the last `key` in `bytes`: the offsets of its `<` and
+    /// one past its `>`. The appended modes write theirs last.
+    fn last_hole(bytes: &[u8], key: &[u8]) -> Option<(usize, usize)> {
+        let at = bytes.windows(key.len()).rposition(|window| window == key)? + key.len();
         let open = at + bytes.get(at..)?.iter().position(|byte| *byte == b'<')?;
         let close = open + bytes.get(open..)?.iter().position(|byte| *byte == b'>')? + 1;
         Some((open, close))
@@ -993,10 +1114,15 @@ mod rogue {
             signature.integrity = SealCheckVerdict::Passed;
             signature.verdict = SealCheckVerdict::Passed;
         }
-        if mode == Mode::DocTimestampUnfielded {
-            // The unfielded hole, named a document timestamp covering the
+        let appended = match mode {
+            Mode::DocTimestampUnfielded => Some(b"/Unfielded".as_slice()),
+            Mode::DocTimestampTextField => Some(b"/Contents".as_slice()),
+            _ => None,
+        };
+        if let Some(key) = appended {
+            // The appended hole, named a document timestamp covering the
             // whole file, signing the last revision.
-            let (open, close) = unfielded_hole(pdf, 0).ok_or_else(|| bad("no unfielded hole"))?;
+            let (open, close) = last_hole(pdf, key).ok_or_else(|| bad("no appended hole"))?;
             let len = pdf.len() as u64;
             let (open, close) = (open as u64, close as u64);
             let mut named = classification
@@ -1004,7 +1130,7 @@ mod rogue {
                 .first()
                 .cloned()
                 .ok_or_else(|| bad("no signature to name"))?;
-            named.id = "unfielded-document-timestamp".to_owned();
+            named.id = "appended-document-timestamp".to_owned();
             named.kind = SealSignatureKind::DocumentTimestamp;
             named.byte_range.values = [0, open, close, len - close];
             named.byte_range.well_formed = true;
@@ -1015,7 +1141,7 @@ mod rogue {
                 .revisions
                 .last_mut()
                 .ok_or_else(|| bad("no revision"))?;
-            last.signed_by = Some("unfielded-document-timestamp".to_owned());
+            last.signed_by = Some("appended-document-timestamp".to_owned());
         }
         let signed_by = |kind: SealSignatureKind| -> Vec<String> {
             classification
@@ -1297,6 +1423,7 @@ mod rogue {
             | Mode::DssAppended
             | Mode::DocTimestampForged
             | Mode::DocTimestampUnfielded
+            | Mode::DocTimestampTextField
             | Mode::TimestampForged => {}
         }
         Ok(())

@@ -1431,6 +1431,24 @@ mod hostile {
         Ok(())
     }
 
+    /// The same genuine token, now the `/Contents` of a well-formed
+    /// `/DocTimeStamp` dictionary that is the `/V` of a field under a
+    /// signature field, whose own `/FT`, by reference, is `/Tx`. A field's
+    /// own type overrides its parent's (ISO 32000-2 §12.7.4.1): that is a
+    /// text field's value, no document timestamp, and the host leaves the
+    /// seal retryable.
+    #[test]
+    fn a_timestamp_in_a_text_field_leaves_the_seal_retryable() -> TestResult {
+        let pki = evidence_pki()?;
+        let result = seal_evidence(&pki, "doc-timestamp-text-field", SealProfile::BaselineLta)?;
+        assert!(
+            unproven(&result, "document_timestamp_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
     /// The organ seals for real at B-T, then swaps the signature timestamp
     /// for a well-formed token over the right imprint from an authority of
     /// the same name that no anchor reaches. The binding compares no
