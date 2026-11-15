@@ -108,7 +108,9 @@ pub use self::types::{
 };
 pub(crate) use self::waitlist::erase_waitlist_contact_in_txn;
 pub use self::waitlist::{
-    WAITLIST_OFFER_CONTENT_PREFIX, waitlist_entry_event_type, waitlist_offer_text,
+    WAITLIST_OFFER_CONTENT_PREFIX, WAITLIST_OFFER_LINK_QUERY_KEY, WaitlistOfferView,
+    parse_waitlist_offer_link, waitlist_entry_event_type, waitlist_offer_for_claim_link,
+    waitlist_offer_text,
 };
 pub(in crate::booking) use self::waitlist::{WaitlistOfferMade, waitlist_offer_content_ref};
 pub(crate) use self::waitlist::{

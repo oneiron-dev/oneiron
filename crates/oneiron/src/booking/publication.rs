@@ -311,7 +311,22 @@ pub fn live_booking_page_publisher(
     now: u64,
 ) -> Result<Option<EntityId>> {
     let rtxn = vault.store.env.read_txn()?;
-    let Some((_, body, owner)) = live_publication_claim_in_txn(vault, &rtxn, page_ref, now)? else {
+    live_booking_page_publisher_in_txn(vault, &rtxn, page_ref, now)
+}
+
+/// [`live_booking_page_publisher`] on the caller's snapshot: the outbound
+/// admission re-proves it for every send a page grant covers.
+///
+/// # Errors
+///
+/// Storage errors, and a stored publication that does not decode.
+pub(crate) fn live_booking_page_publisher_in_txn(
+    vault: &Vault,
+    rtxn: &heed::RoTxn<'_>,
+    page_ref: EntityId,
+    now: u64,
+) -> Result<Option<EntityId>> {
+    let Some((_, body, owner)) = live_publication_claim_in_txn(vault, rtxn, page_ref, now)? else {
         return Ok(None);
     };
     Ok(decode_public_booking_page_value(&body.value)?

@@ -92,8 +92,30 @@ pub(crate) async fn render_public_booking_page(
     RawQuery(query): RawQuery,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let Path(page_token) = path.map_err(|_| public_booking_not_found())?;
-    let (_, publication) = resolve_public_booking_page(&server, &page_token)?;
+    let (page_ref, publication) = resolve_public_booking_page(&server, &page_token)?;
     let transport = public_http_transport_context(client)?;
+    // A waitlist offer's claim link (RULING L3-13-OFFER-CHANNEL = A) names
+    // its offer by token: the page shows that offer while it stands. Reading
+    // it books nothing; the claim is the waitlist verb's POST.
+    let waitlist_offer =
+        match oneiron::booking::lifecycle::parse_waitlist_offer_link(query.as_deref()) {
+            Some(token) => Some(
+                oneiron::booking::lifecycle::waitlist_offer_for_claim_link(
+                    &server.vault,
+                    page_ref,
+                    &token,
+                    now_secs()?,
+                )
+                .map_err(|_| ApiError::internal_server_error("waitlist offer read failed"))?
+                .filter(|offer| {
+                    publication
+                        .event_types
+                        .iter()
+                        .any(|card| card.key == offer.event_type)
+                }),
+            ),
+            None => None,
+        };
     let session = format!(
         "public-render-{}",
         transport.source_ip.to_string().replace(':', "-")
@@ -171,7 +193,32 @@ pub(crate) async fn render_public_booking_page(
         tracing::error!(?defect, "public booking model invariant failed");
         ApiError::internal_server_error("public booking model assembly failed")
     })?;
-    public_booking_page_json(model, PublicBookingPageToken(page_token), hint.as_ref()).map(Json)
+    let mut page =
+        public_booking_page_json(model, PublicBookingPageToken(page_token), hint.as_ref())?;
+    if let Some(offer) = waitlist_offer {
+        page["waitlist_offer"] = waitlist_offer_json(offer.as_ref());
+    }
+    Ok(Json(page))
+}
+
+/// The offer a claim link names, as the page shows it: while it stands, its
+/// event type, its slot, until when it is held and the stage that claims it
+/// (`waitlist` / `claim`, with the link's token as `entry_token`); once it
+/// was claimed, passed on or lapsed, only that it no longer stands.
+fn waitlist_offer_json(
+    offer: Option<&oneiron::booking::lifecycle::WaitlistOfferView>,
+) -> serde_json::Value {
+    match offer {
+        Some(offer) => serde_json::json!({
+            "standing": true,
+            "event_type": offer.event_type.0,
+            "start_utc": offer.slot.start,
+            "end_utc": offer.slot.end,
+            "offered_until": offer.offered_until,
+            "claim": {"op": "waitlist", "stage": "claim"},
+        }),
+        None => serde_json::json!({"standing": false}),
+    }
 }
 
 fn public_booking_page_json(

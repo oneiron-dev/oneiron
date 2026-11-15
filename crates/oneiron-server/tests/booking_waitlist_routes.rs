@@ -156,6 +156,32 @@ fn a_waitlist_stage_posted_under_another_verb_is_not_found() {
     });
 }
 
+/// The page a claim link opens names the offer its token names (census L3-13
+/// PR 3): a token naming no standing offer renders the page, saying the
+/// offer no longer stands, and a page link with no offer query names none.
+#[test]
+fn a_claim_link_naming_no_standing_offer_says_so() {
+    on_engine_stack(|| async {
+        let page = PublishedPage::new();
+        let plain = format!("/public/booking/{}", page.token);
+        let (status, body) = page.route("GET", &plain, None).await;
+        assert_eq!(status, StatusCode::OK, "the page renders: {body}");
+        assert!(
+            body.get("waitlist_offer").is_none(),
+            "a plain page link names no offer: {body}"
+        );
+        let linked = format!("{plain}?waitlist_offer={}", "ab".repeat(32));
+        let (status, body) = page.route("GET", &linked, None).await;
+        assert_eq!(status, StatusCode::OK, "the page renders: {body}");
+        assert_eq!(
+            body["waitlist_offer"],
+            json!({"standing": false}),
+            "the link names no standing offer: {body}"
+        );
+        assert!(body["model"].is_object(), "the page itself renders: {body}");
+    });
+}
+
 #[test]
 fn every_transport_advertises_the_waitlist_after_cancel() {
     let names: Vec<&str> = BookingAgentOperation::CANONICAL

@@ -64,6 +64,10 @@ const OFFER_TOKEN_DOMAIN: &[u8] = b"oneiron.booking.waitlist.offer_token.v1\0";
 /// receipt that carries the ref hold no claim bearer (OPUS-SECREAD-A N1).
 pub const WAITLIST_OFFER_CONTENT_PREFIX: &str = "booking-waitlist-offer:";
 
+/// The one query key a waitlist offer's claim link carries its offer token
+/// under, on the page's public path.
+pub const WAITLIST_OFFER_LINK_QUERY_KEY: &str = "waitlist_offer";
+
 const NO_ENTRY: &str = "no waitlist entry on this page matches this token";
 
 /// `((page, event type digest), joined at, entry token digest)`: one prefix
@@ -153,6 +157,15 @@ pub(crate) struct StandingWaitlistOffer {
     pub(crate) contact_ref: EntityId,
     pub(crate) slot: TimeRange,
     pub(crate) offered_until: u64,
+}
+
+/// A standing offer as its claim link shows it to the visitor holding the
+/// link: its event type, its slot and until when it is held. No contact.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WaitlistOfferView {
+    pub event_type: EventTypeKey,
+    pub slot: TimeRange,
+    pub offered_until: u64,
 }
 
 fn entry_token_digest(token: &OpaqueLifecycleToken) -> [u8; 32] {
@@ -643,12 +656,13 @@ fn offer_stands(
 }
 
 /// The entry on `page_ref` whose offer `offer_token_hash` names, and that
-/// offer, while its hold row is still that offer's.
+/// offer, while its hold row is still that offer's and live at `now_utc`.
 fn standing_offer_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     page_ref: &EntityId,
     offer_token_hash: &[u8; 32],
+    now_utc: u64,
 ) -> crate::Result<Option<(WaitlistEntryRow, WaitlistOffer)>> {
     for row in WAITLIST.iter_from(store, txn, page_ref.as_bytes())? {
         let (key, entry) = row?;
@@ -658,7 +672,9 @@ fn standing_offer_in_txn(
         if offer.offer_token_hash != *offer_token_hash {
             continue;
         }
-        if offer_hold(store, txn, &key, &entry, &offer)?.is_none() {
+        if !offer_hold(store, txn, &key, &entry, &offer)?
+            .is_some_and(|hold| hold.is_live_at(now_utc))
+        {
             return Ok(None);
         }
         return Ok(Some((entry, offer)));
@@ -667,9 +683,9 @@ fn standing_offer_in_txn(
 }
 
 /// The offer `offer_token_hash` names on `page_ref`, while its entry holds
-/// it and its hold row is still that offer's. The outbound door reads it
-/// with no clock: the offer pass ends a lapsed offer, and a claim checks
-/// that its hold is live.
+/// it and its hold row is still that offer's and live at `now_utc`. The
+/// outbound door reads it at the store clock, as the calendar admission
+/// does: an offer that lapsed is never sent, even before a pass ends it.
 ///
 /// # Errors
 ///
@@ -679,20 +695,22 @@ pub(crate) fn standing_waitlist_offer_in_txn(
     txn: &heed::RoTxn<'_>,
     page_ref: &EntityId,
     offer_token_hash: &[u8; 32],
+    now_utc: u64,
 ) -> crate::Result<Option<StandingWaitlistOffer>> {
     Ok(
-        standing_offer_in_txn(store, txn, page_ref, offer_token_hash)?.map(|(entry, offer)| {
-            StandingWaitlistOffer {
+        standing_offer_in_txn(store, txn, page_ref, offer_token_hash, now_utc)?.map(
+            |(entry, offer)| StandingWaitlistOffer {
                 event_type: entry.event_type,
                 contact_ref: entry.contact_ref,
                 slot: offer.slot,
                 offered_until: offer.offered_until,
-            }
-        }),
+            },
+        ),
     )
 }
 
-/// The contacts of the entries on `page_ref` that hold a standing offer.
+/// The contacts of the entries on `page_ref` that hold an offer standing at
+/// `now_utc`.
 ///
 /// # Errors
 ///
@@ -701,17 +719,49 @@ pub(crate) fn offered_waitlist_contacts_in_txn(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
     page_ref: &EntityId,
+    now_utc: u64,
 ) -> crate::Result<Vec<EntityId>> {
     let mut contacts = Vec::new();
     for row in WAITLIST.iter_from(store, txn, page_ref.as_bytes())? {
         let (key, entry) = row?;
         if let Some(offer) = &entry.offer
-            && offer_hold(store, txn, &key, &entry, offer)?.is_some()
+            && offer_hold(store, txn, &key, &entry, offer)?
+                .is_some_and(|hold| hold.is_live_at(now_utc))
         {
             contacts.push(entry.contact_ref);
         }
     }
     Ok(contacts)
+}
+
+/// The offer a claim link's offer token names on `page_ref`, while it
+/// stands at `now_utc`: what the public page shows the visitor who followed
+/// the link. Reading it books nothing; the claim stays the waitlist verb's.
+/// An entry token, or an offer that was claimed, passed on or lapsed, names
+/// none.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn waitlist_offer_for_claim_link(
+    vault: &Vault,
+    page_ref: EntityId,
+    token: &OpaqueLifecycleToken,
+    now_utc: u64,
+) -> crate::Result<Option<WaitlistOfferView>> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(standing_offer_in_txn(
+        &vault.store,
+        &rtxn,
+        &page_ref,
+        &offer_token_digest(token),
+        now_utc,
+    )?
+    .map(|(entry, offer)| WaitlistOfferView {
+        event_type: entry.event_type,
+        slot: offer.slot,
+        offered_until: offer.offered_until,
+    }))
 }
 
 /// Whether any live hold on the page, the writer's own included, overlaps
@@ -872,9 +922,10 @@ pub(in crate::booking) fn waitlist_offer_content_ref(
 
 /// The text a waitlist offer's email sends (RULING L3-13-OFFER-CHANNEL = A):
 /// a subject line, then the event type, the slot, the end of the offer and
-/// the claim link, rendered from the offer the ref names while it stands. A
-/// ref whose offer was claimed, passed on or erased renders nothing, so the
-/// send fails rather than offer a slot that is gone.
+/// the claim link, rendered from the offer the ref names while it stands at
+/// the store clock. A ref whose offer was claimed, passed on, erased or has
+/// lapsed renders nothing, so the send fails rather than offer a slot that
+/// is gone.
 ///
 /// The link is the page's public path with the offer token: the engine knows
 /// the page but not the origin the server is reached at.
@@ -887,8 +938,9 @@ pub fn waitlist_offer_text(vault: &Vault, content_ref: &str) -> crate::Result<Op
         return Ok(None);
     };
     let rtxn = vault.store.env.read_txn()?;
+    let now_utc = vault.store.clock.now_recorded_at();
     let Some((entry, offer)) =
-        standing_offer_in_txn(&vault.store, &rtxn, &page_ref, &offer_token_hash)?
+        standing_offer_in_txn(&vault.store, &rtxn, &page_ref, &offer_token_hash, now_utc)?
     else {
         return Ok(None);
     };
@@ -896,15 +948,32 @@ pub fn waitlist_offer_text(vault: &Vault, content_ref: &str) -> crate::Result<Op
         "A slot you waited for is open: {event_type}\n\n\
          Slot: {start} to {end}\n\
          Held for you until: {until}\n\
-         Claim it: {prefix}/{page}?waitlist_offer={token}\n",
+         Claim it: {prefix}/{page}?{key}={token}\n",
         event_type = entry.event_type.0,
         start = utc_text(offer.slot.start),
         end = utc_text(offer.slot.end),
         until = utc_text(offer.offered_until),
         prefix = crate::booking::PUBLIC_BOOKING_ROUTE_PREFIX,
         page = crate::booking::PublicBookingPageToken::for_page(page_ref).0,
+        key = WAITLIST_OFFER_LINK_QUERY_KEY,
         token = offer.offer_token.0,
     )))
+}
+
+/// The offer token a claim link's whole query names: exactly
+/// `waitlist_offer=<token>`, the token as the engine mints it (lower-case
+/// hex). Any other query names none. The token is a lookup key only; the
+/// claim it may make is the waitlist verb's.
+#[must_use]
+pub fn parse_waitlist_offer_link(query: Option<&str>) -> Option<OpaqueLifecycleToken> {
+    let token = query?
+        .strip_prefix(WAITLIST_OFFER_LINK_QUERY_KEY)?
+        .strip_prefix('=')?;
+    (!token.is_empty()
+        && token
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)))
+    .then(|| OpaqueLifecycleToken(token.to_owned()))
 }
 
 /// The page and offer token digest a waitlist offer body ref names; `None`

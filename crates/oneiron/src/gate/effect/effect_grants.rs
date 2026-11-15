@@ -113,7 +113,7 @@ pub(super) fn standing_outbound_grant_for_effect(
 }
 
 /// Whether `effect` is an `(email, send)` to the contact of an entry on
-/// `page_ref` that holds a standing waitlist offer.
+/// `page_ref` that holds a waitlist offer standing at the store clock.
 fn waitlist_offer_send_reaches(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -127,7 +127,11 @@ fn waitlist_offer_send_reaches(
         return Ok(false);
     };
     crate::booking::invite_grant::page_grant_reaches_waitlist_offer_in_txn(
-        store, txn, page_ref, recipient,
+        store,
+        txn,
+        page_ref,
+        recipient,
+        store.clock.now_recorded_at(),
     )
 }
 

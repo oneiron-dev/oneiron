@@ -13,6 +13,15 @@
 //! send names its offer by the offer token's digest, so the intent the ledger
 //! keeps holds no token a claim accepts (OPUS-SECREAD-A N1, 15 Nov).
 //!
+//! The review of 15 Nov (l313/pr3-review): a copy of the offer's intent under
+//! another ledger identity, a retry after the offer lapsed and a retry after
+//! the page was withdrawn are refused; a public claim whose slot was taken
+//! answers that it was taken and keeps the waiter's place, and a public leave
+//! ends its entry; the claim link names its offer to the page while it
+//! stands. The vault runs on a manual clock that each step sets to its own
+//! time, so the outbound door judges an offer at the time the lifecycle made
+//! it.
+//!
 //! The lifecycle fixture is `tests/booking_waitlist.rs`'s; the publisher's
 //! email identity, policy manifest and owner binding are
 //! `tests/booking_feed_move_held.rs`'s, with no scoped grant for email, so
@@ -25,9 +34,15 @@
 mod common;
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
+use oneiron::booking::lifecycle::{
+    enqueue_booking_verb_with_publication, parse_waitlist_offer_link, waitlist_offer_for_claim_link,
+};
+use oneiron::booking::publication::PublicBookingAuthority;
 use oneiron::booking::{
-    BOOKING_PUBLIC_PAGE_PREDICATE, BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingError,
+    BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BOOKING_PUBLIC_PAGE_PREDICATE,
+    BOOKING_PUBLIC_PAGE_SCHEMA_VERSION, BookingError, BookingEventTypeClaimValue,
     BookingLandingContent, BookingLifecycleConsumerInput, BookingLifecycleTurn,
     BookingPagePublication, BookingSolver, BookingVerbReceipt, BookingVerbRequest, CancelSpec,
     ConfirmReceipt, ConfirmSpec, ConstraintFieldConfig, DEFAULT_INTRO_DURATION_MIN, EventTypeCard,
@@ -35,7 +50,8 @@ use oneiron::booking::{
     OpaqueLifecycleToken, PublicBookingAvailability, PublicBookingPageToken, RoutingMode,
     SessionKey, SlotOracle, SolveRequest, SolveResult, ThemeTokens, VaultActiveHoldSource,
     WaitlistAction, WaitlistClaim, WaitlistJoin, WaitlistReceipt, WaitlistSpec, WeeklyWallWindow,
-    booking_config_hash, enqueue_booking_verb, run_booking_lifecycle_attempt_with_invites,
+    booking_config_hash, encode_event_type_claim_value, load_public_booking_page,
+    run_booking_lifecycle_attempt_with_invites,
 };
 use oneiron::channel_identity::{ChannelIdentityBinding, ChannelIdentityState, SelfHeldShape};
 use oneiron::memory::ClaimInput;
@@ -45,14 +61,17 @@ use oneiron::outbound::{
     OutboundExecutionSink, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
 };
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_PERSON};
+use oneiron::store::ports::ManualClock;
 use oneiron::{
-    CalendarSel, DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
+    CalendarSel, ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject,
+    DreamerRunnerStore, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
 };
 
-/// Monday 2 March 2026, 00:00 UTC.
-const MONDAY: u64 = 1_772_409_600;
+/// Monday 11 January 2027, 00:00 UTC.
+const MONDAY: u64 = 1_799_625_600;
 const NOW: u64 = MONDAY + 8 * 3_600;
 const HOUR: u64 = 3_600;
+const DAY: u64 = 24 * HOUR;
 
 const PAGE_SEED: u8 = 0x51;
 const HOST_SEED: u8 = 0x52;
@@ -127,6 +146,7 @@ impl OutboundExecutionSink for RecordingSink {
 struct Fixture {
     _dir: tempfile::TempDir,
     vault: Vault,
+    clock: Arc<ManualClock>,
     host: EntityId,
     node_id: u64,
     sink: RefCell<RecordingSink>,
@@ -135,7 +155,10 @@ struct Fixture {
 impl Fixture {
     fn open() -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
-        let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
+        let clock = ManualClock::new(NOW);
+        let mut config = VaultConfig::default();
+        config.store_clock = clock.bundle();
+        let vault = Vault::open(dir.path(), config).expect("open vault");
         // Signing doors load this install's keys from a keystore (P6c).
         vault.install_device_keystore(std::sync::Arc::new(
             oneiron_keystore::MemoryKeystore::default(),
@@ -176,6 +199,25 @@ impl Fixture {
                         .expect("facet body"),
                 )
                 .expect("store the page's facet");
+            // The page's event type, which a public stage's publication check
+            // reads beside the publication.
+            let event_type_claim = ClaimBody::new(
+                BOOKING_EVENT_TYPE_PREDICATE,
+                ClaimSubject::Entity(page),
+                encode_event_type_claim_value(&BookingEventTypeClaimValue {
+                    schema_version: BOOKING_EVENT_TYPE_SCHEMA_VERSION,
+                    page_ref: page,
+                    config: fixture_config(),
+                })
+                .expect("encode the event type"),
+                1.0,
+                ClaimApprovalStatus::Approved,
+                ClaimLifecycleStatus::Active,
+            )
+            .expect("event type claim");
+            vault
+                .put_claim(&EntityId::now(), &event_type_claim, at(1), 1)
+                .expect("put the page's event type");
         }
         let issuer = oneiron::test_support::provision_engine_machines(&vault);
         let runner = DreamerRunnerStore::new(&vault);
@@ -223,21 +265,22 @@ impl Fixture {
         let fixture = Self {
             _dir: dir,
             vault,
+            clock,
             host,
             node_id,
             sink: RefCell::new(RecordingSink::default()),
         };
         // Each publication mints its page's standing invite grant.
-        fixture.publish(test_id(PAGE_SEED));
-        fixture.publish(test_id(OTHER_PAGE_SEED));
+        fixture.publish(test_id(PAGE_SEED), true);
+        fixture.publish(test_id(OTHER_PAGE_SEED), true);
         fixture
     }
 
-    /// Publishes `page` as the owner's own write.
-    fn publish(&self, page: EntityId) {
+    /// Publishes `page`, or withdraws it, as the owner's own write.
+    fn publish(&self, page: EntityId, published: bool) {
         let publication = BookingPagePublication {
             schema_version: BOOKING_PUBLIC_PAGE_SCHEMA_VERSION,
-            published: true,
+            published,
             event_config_hashes: [(
                 event_type().0,
                 booking_config_hash(&fixture_config()).expect("config hash"),
@@ -276,7 +319,7 @@ impl Fixture {
             relationship_ref: None,
             scope: None,
             valid_from: Some(1),
-            valid_to: Some(real_now() + 86_400),
+            valid_to: Some(NOW + 30 * DAY),
             occurred_at: None,
             learned_at: None,
             salience: None,
@@ -288,9 +331,14 @@ impl Fixture {
             .expect("owner publication write");
         if receipt.approval == "proposed" {
             memory
-                .confirm_booking_publication(&receipt.claim_short_id, real_now())
+                .confirm_booking_publication(&receipt.claim_short_id, self.clock_now())
                 .expect("owner confirms the publication");
         }
+    }
+
+    /// The vault clock's reading.
+    fn clock_now(&self) -> u64 {
+        self.vault.now_recorded_at()
     }
 
     /// Enqueues one verb and runs exactly that attempt at `now`, carrying
@@ -300,7 +348,39 @@ impl Fixture {
         request: BookingVerbRequest,
         now: u64,
     ) -> Result<BookingVerbReceipt, BookingError> {
-        let id = enqueue_booking_verb(&self.vault, request, now)?;
+        self.run_with(request, now, None)
+    }
+
+    /// [`Fixture::run`] as the public route runs a visitor's stage: under the
+    /// page's live publication, checked in the writer before and after it.
+    fn run_public(
+        &self,
+        request: BookingVerbRequest,
+        page: EntityId,
+        now: u64,
+    ) -> Result<BookingVerbReceipt, BookingError> {
+        self.clock.set(now);
+        let publication = load_public_booking_page(&self.vault, page, now)
+            .expect("read the publication")
+            .expect("the page is published");
+        self.run_with(
+            request,
+            now,
+            Some(PublicBookingAuthority {
+                page_ref: page,
+                publication,
+            }),
+        )
+    }
+
+    fn run_with(
+        &self,
+        request: BookingVerbRequest,
+        now: u64,
+        authority: Option<PublicBookingAuthority>,
+    ) -> Result<BookingVerbReceipt, BookingError> {
+        self.clock.set(now);
+        let id = enqueue_booking_verb_with_publication(&self.vault, request, now, authority)?;
         let mut sink = self.sink.borrow_mut();
         let turn = run_booking_lifecycle_attempt_with_invites(
             &self.vault,
@@ -390,14 +470,7 @@ impl Fixture {
         action: WaitlistAction,
         now: u64,
     ) -> Result<BookingVerbReceipt, BookingError> {
-        self.run(
-            BookingVerbRequest::Waitlist(WaitlistSpec {
-                page_ref: page,
-                action,
-                idempotency_key: None,
-            }),
-            now,
-        )
+        self.run(waitlist_request(page, action), now)
     }
 
     /// `waiter` waits on `window` of `page`; answers its entry token.
@@ -492,16 +565,29 @@ impl Fixture {
     }
 
     /// Dispatches an `(email, send)` as the publisher, outside any booking
-    /// turn: answers the door's error, or the gate outcome it recorded.
+    /// turn, under the intent's own key as its ledger identity: answers the
+    /// door's error, or the gate outcome it recorded.
     fn send_as_publisher(&self, intent: OutboundIntent, now: u64) -> Result<String, String> {
         let key = intent
             .idempotency_key
             .clone()
             .unwrap_or_else(|| "intent:fixture".to_owned());
+        self.send_under(intent, &key, now)
+    }
+
+    /// [`Fixture::send_as_publisher`] under the ledger identity `ledger_ref`,
+    /// whatever key the intent names.
+    fn send_under(
+        &self,
+        intent: OutboundIntent,
+        ledger_ref: &str,
+        now: u64,
+    ) -> Result<String, String> {
+        self.clock.set(now);
         let target = intent.target.clone();
         let request = OutboundDispatchRequest::new(
-            format!("outbound:{key}"),
-            key,
+            format!("outbound:{ledger_ref}"),
+            ledger_ref.to_owned(),
             intent,
             OutboundDispatchActor::agent(self.host),
             OutboundDispatchGate::allow_when_policy_grants(),
@@ -527,11 +613,12 @@ impl Fixture {
     }
 }
 
-fn real_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock after the epoch")
-        .as_secs()
+fn waitlist_request(page: EntityId, action: WaitlistAction) -> BookingVerbRequest {
+    BookingVerbRequest::Waitlist(WaitlistSpec {
+        page_ref: page,
+        action,
+        idempotency_key: None,
+    })
 }
 
 struct LifecycleSolver<'a> {
@@ -643,8 +730,8 @@ fn a_freed_slot_is_offered_by_one_email_whose_link_claims_it() {
     );
     for part in [
         "intro-call",
-        "2026-03-02T12:00:00Z",
-        "2026-03-02T12:30:00Z",
+        "2027-01-11T12:00:00Z",
+        "2027-01-11T12:30:00Z",
         "Held for you until",
         link.as_str(),
     ] {
@@ -705,16 +792,18 @@ fn a_waitlist_offer_send_to_a_contact_holding_no_offer_is_refused() {
 }
 
 /// RED 2: one page's grant never carries an offer to another page's waiter.
+/// The two pages share one host, so each books its own slot.
 #[test]
 fn a_send_to_another_pages_waiter_is_refused() {
     let fixture = Fixture::open();
     let page = test_id(PAGE_SEED);
     let other = test_id(OTHER_PAGE_SEED);
     let noon = slot_at(12);
+    let one = slot_at(13);
     let here = fixture.book(page, OWEN_SEED, noon, NOW);
-    let there = fixture.book(other, OWEN_SEED, noon, NOW + 1);
+    let there = fixture.book(other, OWEN_SEED, one, NOW + 1);
     fixture.wait(page, YUKI_SEED, noon, NOW + 10);
-    fixture.wait(other, KENJI_SEED, noon, NOW + 20);
+    fixture.wait(other, KENJI_SEED, one, NOW + 20);
     fixture.cancel(&here, NOW + 60);
     fixture.cancel(&there, NOW + 61);
     let (yuki_offer, _) = fixture.offer_to("yuki@example.com");
@@ -758,8 +847,9 @@ fn a_send_to_another_pages_waiter_is_refused() {
 }
 
 /// RED 3: one offer is one send. Its own intent again sends nothing new, a
-/// second send of it under any other intent is refused, and a second freed
-/// slot goes to the next waiter, never to the entry that holds an offer.
+/// second send of it under any other intent or under any other ledger
+/// identity is refused, and a second freed slot goes to the next waiter,
+/// never to the entry that holds an offer.
 #[test]
 fn a_second_offer_send_to_the_same_entry_is_refused() {
     let fixture = Fixture::open();
@@ -795,6 +885,15 @@ fn a_second_offer_send_to_the_same_entry_is_refused() {
     assert!(
         fixture.send_as_publisher(again, NOW + 90).is_err(),
         "a second send of one offer is refused"
+    );
+    // The offer's own intent, key and body unchanged, under a second ledger
+    // identity: the ledger would find no attempt and send it again.
+    let key = offer.idempotency_key.clone().expect("offer key");
+    assert!(
+        fixture
+            .send_under(offer.clone(), &format!("{key}:again"), NOW + 95)
+            .is_err(),
+        "one offer under a second ledger identity is refused"
     );
     assert_eq!(fixture.emails().len(), before, "one offer, one email");
 }
@@ -842,4 +941,210 @@ fn a_failed_offer_send_never_fails_the_cancel() {
         "the offer email was attempted"
     );
     fixture.claimed(page, YUKI_SEED, &entry_token, NOW + 120);
+}
+
+/// An offer that lapsed is never sent, even before a pass ends it: a send
+/// that failed and is retried after the offer's end is refused, and its body
+/// renders nothing.
+#[test]
+fn a_lapsed_offer_is_neither_rendered_nor_sent() {
+    let fixture = Fixture::open();
+    let page = test_id(PAGE_SEED);
+    let noon = slot_at(12);
+    let booking = fixture.book(page, OWEN_SEED, noon, NOW);
+    fixture.wait(page, YUKI_SEED, noon, NOW + 10);
+    fixture.sink.borrow_mut().fail = true;
+    fixture.cancel(&booking, NOW + 60);
+    fixture.sink.borrow_mut().fail = false;
+    let attempted = fixture.emails();
+    let offer = attempted
+        .iter()
+        .find(|sent| sent.target == "yuki@example.com")
+        .expect("the offer email was attempted")
+        .intent
+        .clone();
+    let content_ref = offer.content_ref.clone().expect("body ref");
+
+    // Two hours, then the offer has lapsed; no stage has run since.
+    let after = NOW + 60 + 2 * HOUR + 1;
+    assert!(after < noon.start, "the slot itself is still ahead");
+    fixture.clock.set(after);
+    assert_eq!(
+        fixture
+            .vault
+            .outbound_content_text(&content_ref)
+            .expect("render the lapsed offer"),
+        None,
+        "a lapsed offer renders no body"
+    );
+    assert!(
+        fixture.send_as_publisher(offer, after).is_err(),
+        "a lapsed offer's retry is refused"
+    );
+    assert_eq!(
+        fixture.emails().len(),
+        attempted.len(),
+        "nothing more was sent"
+    );
+}
+
+/// The page grant outlives a withdrawn publication, so the offer's send
+/// re-proves its page's live publisher: a retry once the page is withdrawn
+/// is refused.
+#[test]
+fn an_offer_retry_once_the_page_is_withdrawn_is_refused() {
+    let fixture = Fixture::open();
+    let page = test_id(PAGE_SEED);
+    let noon = slot_at(12);
+    let booking = fixture.book(page, OWEN_SEED, noon, NOW);
+    fixture.wait(page, YUKI_SEED, noon, NOW + 10);
+    fixture.sink.borrow_mut().fail = true;
+    fixture.cancel(&booking, NOW + 60);
+    fixture.sink.borrow_mut().fail = false;
+    let attempted = fixture.emails();
+    let offer = attempted
+        .iter()
+        .find(|sent| sent.target == "yuki@example.com")
+        .expect("the offer email was attempted")
+        .intent
+        .clone();
+
+    fixture.clock.set(NOW + 70);
+    fixture.publish(page, false);
+    assert!(
+        fixture.send_as_publisher(offer, NOW + 80).is_err(),
+        "an offer leaves only as its page's live publisher"
+    );
+    assert_eq!(
+        fixture.emails().len(),
+        attempted.len(),
+        "nothing more was sent"
+    );
+}
+
+/// A public claim with the offer token whose slot something else took first
+/// answers that the slot was taken, and the waiter keeps its place in the
+/// line with no offer: the publication check after the claim reads the page
+/// the claim read before it, not the offer the claim just ended.
+#[test]
+fn a_public_claim_whose_slot_was_taken_answers_taken_and_keeps_the_place() {
+    let fixture = Fixture::open();
+    let page = test_id(PAGE_SEED);
+    let other = test_id(OTHER_PAGE_SEED);
+    let noon = slot_at(12);
+    let booking = fixture.book(page, OWEN_SEED, noon, NOW);
+    let entry_token = fixture.wait(page, YUKI_SEED, noon, NOW + 10);
+    fixture.cancel(&booking, NOW + 60);
+    let (_, offer_token) = fixture.offer_to("yuki@example.com");
+    // The host's noon goes to a booking on its other page.
+    fixture.book(other, MIKA_SEED, noon, NOW + 70);
+
+    let claim = |token: &OpaqueLifecycleToken, now| {
+        fixture.run_public(
+            waitlist_request(
+                page,
+                WaitlistAction::Claim(WaitlistClaim {
+                    token: token.clone(),
+                    booker_contact: test_id(YUKI_SEED),
+                    intake: Vec::new(),
+                }),
+            ),
+            page,
+            now,
+        )
+    };
+    let taken = claim(&offer_token, NOW + 120);
+    assert!(
+        matches!(taken, Ok(BookingVerbReceipt::SlotTaken { .. })),
+        "the claim answers that the slot was taken: {taken:?}"
+    );
+    assert!(
+        refusal(claim(&entry_token, NOW + 130)).contains("holds no offered slot"),
+        "the waiter keeps its place, with no offer"
+    );
+}
+
+/// A visitor's public leave ends its entry: the publication check after the
+/// leave reads the page the leave read before it.
+#[test]
+fn a_public_leave_ends_the_entry() {
+    let fixture = Fixture::open();
+    let page = test_id(PAGE_SEED);
+    let noon = slot_at(12);
+    fixture.book(page, OWEN_SEED, noon, NOW);
+    let entry_token = fixture.wait(page, YUKI_SEED, noon, NOW + 10);
+    let left = fixture.run_public(
+        waitlist_request(
+            page,
+            WaitlistAction::Leave {
+                token: entry_token.clone(),
+            },
+        ),
+        page,
+        NOW + 20,
+    );
+    assert!(
+        matches!(
+            left,
+            Ok(BookingVerbReceipt::Waitlisted(WaitlistReceipt::Left))
+        ),
+        "the public leave ends the entry: {left:?}"
+    );
+    assert!(
+        refusal(fixture.claim(page, YUKI_SEED, &entry_token, NOW + 30))
+            .contains("no waitlist entry"),
+        "the entry is gone"
+    );
+}
+
+/// The claim link's query names its offer to the page while it stands; an
+/// entry token names none, and once the offer is claimed the link names
+/// nothing either.
+#[test]
+fn an_offer_link_names_its_standing_offer_until_claimed() {
+    let fixture = Fixture::open();
+    let page = test_id(PAGE_SEED);
+    let noon = slot_at(12);
+    let booking = fixture.book(page, OWEN_SEED, noon, NOW);
+    let entry_token = fixture.wait(page, YUKI_SEED, noon, NOW + 10);
+    fixture.cancel(&booking, NOW + 60);
+    let (_, offer_token) = fixture.offer_to("yuki@example.com");
+
+    let query = format!("waitlist_offer={}", offer_token.0);
+    let linked = parse_waitlist_offer_link(Some(query.as_str())).expect("the link names its token");
+    assert_eq!(linked, offer_token);
+    for other in [
+        None,
+        Some("event_type=intro-call"),
+        Some("waitlist_offer="),
+        Some("waitlist_offer=XYZ"),
+    ] {
+        assert_eq!(parse_waitlist_offer_link(other), None, "{other:?}");
+    }
+    let shown = waitlist_offer_for_claim_link(&fixture.vault, page, &linked, NOW + 70)
+        .expect("read the offer")
+        .expect("the link names a standing offer");
+    assert_eq!(shown.event_type, event_type());
+    assert_eq!(shown.slot, noon);
+    assert!(shown.offered_until > NOW + 70);
+    assert_eq!(
+        waitlist_offer_for_claim_link(&fixture.vault, page, &entry_token, NOW + 70)
+            .expect("read by the entry token"),
+        None,
+        "an entry token is no claim link"
+    );
+    assert_eq!(
+        waitlist_offer_for_claim_link(&fixture.vault, test_id(OTHER_PAGE_SEED), &linked, NOW + 70)
+            .expect("read on the other page"),
+        None,
+        "the link names its offer on its own page only"
+    );
+
+    fixture.claimed(page, YUKI_SEED, &offer_token, NOW + 120);
+    assert_eq!(
+        waitlist_offer_for_claim_link(&fixture.vault, page, &linked, NOW + 130)
+            .expect("read after the claim"),
+        None,
+        "a claimed offer's link names nothing"
+    );
 }

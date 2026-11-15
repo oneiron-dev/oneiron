@@ -6,9 +6,9 @@ use super::storage::{
 use super::token::{hold_digest, resolve_token_event, token_digest};
 use super::types::{BookingVerbRequest, LifecycleTokenScope};
 use super::waitlist::waitlist_publication_scope;
-use crate::Vault;
-use crate::booking::BookingError;
 use crate::booking::publication::PublicBookingAuthority;
+use crate::booking::{BookingError, EventTypeKey};
+use crate::{EntityId, Vault};
 
 pub(super) fn booking_writer_with_publication<T>(
     vault: &Vault,
@@ -18,26 +18,34 @@ pub(super) fn booking_writer_with_publication<T>(
     apply: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<T, BookingError>,
 ) -> Result<T, BookingError> {
     booking_writer(vault, |txn| {
-        check_publication_in_writer(vault, txn, authority, request, now)?;
+        let scope = match authority {
+            Some(authority) => {
+                let scope = publication_scope_in_writer(vault, txn, request)?;
+                check_publication_in_writer(vault, txn, authority, &scope, now)?;
+                Some((authority, scope))
+            }
+            None => None,
+        };
         let result = apply(txn)?;
-        // Include time spent solving and staging the mutation. A refusal here
-        // aborts every staged lifecycle row, not just the response.
-        check_publication_in_writer(vault, txn, authority, request, now)?;
+        // Include time spent solving and staging the mutation, on the scope
+        // read before it: the mutation may end the row that scope was read
+        // from (a waitlist leave, a claim whose slot was taken). A refusal
+        // here aborts every staged lifecycle row, not just the response.
+        if let Some((authority, scope)) = &scope {
+            check_publication_in_writer(vault, txn, authority, scope, now)?;
+        }
         Ok(result)
     })
 }
 
-fn check_publication_in_writer(
+/// The page and event type a lifecycle request acts on, read in its writer
+/// before the request mutates anything.
+fn publication_scope_in_writer(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    authority: Option<&PublicBookingAuthority>,
     request: &BookingVerbRequest,
-    now_utc: u64,
-) -> Result<(), BookingError> {
-    let Some(authority) = authority else {
-        return Ok(());
-    };
-    let (page, event) = match request {
+) -> Result<(EntityId, EventTypeKey), BookingError> {
+    Ok(match request {
         BookingVerbRequest::Hold(spec) => (spec.page_ref, spec.event_type.clone()),
         BookingVerbRequest::Confirm(spec) => {
             let receipt_key = confirm_receipt_key(&token_digest(&spec.hold_token));
@@ -64,14 +72,23 @@ fn check_publication_in_writer(
             (facts.page_ref, facts.event_type)
         }
         BookingVerbRequest::Waitlist(spec) => waitlist_publication_scope(vault, txn, spec)?,
-    };
+    })
+}
+
+fn check_publication_in_writer(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    authority: &PublicBookingAuthority,
+    (page, event): &(EntityId, EventTypeKey),
+    now_utc: u64,
+) -> Result<(), BookingError> {
     // Admission's sampled clock is not the commit clock. A delayed attempt
     // must not retain an expired publication even if its caller reuses `now`.
     authority.check_in_txn(
         vault,
         txn,
-        page,
-        &event,
+        *page,
+        event,
         vault.store.clock.now_recorded_at().max(now_utc),
     )
 }

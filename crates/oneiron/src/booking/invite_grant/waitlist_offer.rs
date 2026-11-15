@@ -15,21 +15,26 @@
 //!   contact its entry recorded, under the page's live grant;
 //! * the outbound admission ([`admit_frozen_waitlist_offer_in_txn`]) binds
 //!   the page grant to a send naming an offer only when that offer stands on
-//!   the page, its waiter is the target and the intent is the offer's own,
-//!   and refuses any other send that names one;
+//!   the page at the store clock, its waiter is the target, the actor is the
+//!   page's verified live publisher, and the intent and its ledger identity
+//!   are the offer's own; it refuses any other send that names one, on a
+//!   fresh send and on every retry;
 //! * the gate effect lets the bound page grant cover an `(email, send)` only
-//!   to the contact of an entry on its page holding a standing offer
-//!   ([`page_grant_reaches_waitlist_offer_in_txn`]). The consent ladder folds
-//!   that match as it folds every covering standing grant.
+//!   to the contact of an entry on its page holding an offer that stands at
+//!   the store clock ([`page_grant_reaches_waitlist_offer_in_txn`]). The
+//!   consent ladder folds that match as it folds every covering standing
+//!   grant.
 //!
-//! One send per offer: the intent's idempotency key is derived from the page
-//! and the offer token's digest, the admission refuses any other key, and the
-//! ledger answers a repeat of that key with the intent it recorded.
+//! One send per offer: the intent's idempotency key and its ledger identity
+//! are both derived from the page and the offer token's digest, the admission
+//! refuses any other key or identity, and the ledger answers a repeat of that
+//! identity with the intent it recorded.
 
 use super::authorization::{booker_identity, booker_identity_in_txn, normalize_identity};
 use super::codec::{engine_failure, refused};
 use super::mint::{live_page_invite_grant, live_page_invite_grant_in_txn};
 use crate::Vault;
+use crate::attempt_queue::AttemptId;
 use crate::booking::constraint::BookingError;
 use crate::booking::lifecycle::{
     WaitlistOfferMade, hex_lower, offer_token_digest, offered_waitlist_contacts_in_txn,
@@ -39,7 +44,7 @@ use crate::entity_id::EntityId;
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
     OutboundDispatchRequest, OutboundExecutionSink, OutboundIntent, OutboundIntentDraft,
-    OutboundIntentTrigger,
+    OutboundIntentTrigger, outbound_dispatch_attempt_id,
 };
 use serde::Deserialize;
 
@@ -90,9 +95,14 @@ pub(in crate::booking) fn dispatch_waitlist_offer(
             .env
             .read_txn()
             .map_err(|error| engine_failure("read transaction", error))?;
-        let standing =
-            standing_waitlist_offer_in_txn(&vault.store, &rtxn, &offer.page_ref, &offer_token_hash)
-                .map_err(|error| engine_failure("waitlist read", error))?;
+        let standing = standing_waitlist_offer_in_txn(
+            &vault.store,
+            &rtxn,
+            &offer.page_ref,
+            &offer_token_hash,
+            now,
+        )
+        .map_err(|error| engine_failure("waitlist read", error))?;
         if standing.is_none_or(|standing| standing.contact_ref != offer.contact_ref) {
             return Err(refused("this waitlist offer no longer stands"));
         }
@@ -143,12 +153,14 @@ struct OfferPublication {
     counterparty_ref: Option<String>,
 }
 
-/// The page grant a frozen send that names a waitlist offer runs under, read
-/// on the outbound writer's snapshot. `None` for a send that names none: it
-/// is an ordinary send, and no page grant covers it. A send that names an
-/// offer refuses unless it is that offer's own one email: `(email, send)` to
-/// the waiter alone, under the offer's intent, while the offer stands on the
-/// page and `actor` holds the page's live grant.
+/// The page grant a frozen send that names a waitlist offer runs under: its
+/// `bytes`, sent by `actor` as ledger attempt `attempt_id`, call `call_seq`,
+/// read on the outbound writer's snapshot at `now`, the store clock. `None`
+/// for a send that names none: it is an ordinary send, and no page grant
+/// covers it. A send that names an offer refuses unless it is that offer's
+/// own one email: `(email, send)` to the waiter alone, under the offer's
+/// intent and ledger identity, while the offer stands on the page and
+/// `actor` is the page's verified live publisher holding its live grant.
 ///
 /// # Errors
 ///
@@ -158,7 +170,9 @@ pub(crate) fn admit_frozen_waitlist_offer_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     actor: Option<EntityId>,
+    (attempt_id, call_seq): (AttemptId, u64),
     bytes: &[u8],
+    now: u64,
 ) -> Result<Option<EntityId>, BookingError> {
     // Non-JSON effects name no offer.
     let Ok(frozen) = serde_json::from_slice::<OfferPublication>(bytes) else {
@@ -187,20 +201,37 @@ pub(crate) fn admit_frozen_waitlist_offer_in_txn(
             "a waitlist offer must go to its admitted recipient",
         ));
     }
-    if frozen.idempotency_key.as_deref()
-        != Some(waitlist_offer_intent_ref(&page_ref, &offer_token_hash).as_str())
-    {
+    let intent_ref = waitlist_offer_intent_ref(&page_ref, &offer_token_hash);
+    if frozen.idempotency_key.as_deref() != Some(intent_ref.as_str()) {
         return Err(refused(
             "a waitlist offer is sent once, under its own intent",
         ));
     }
+    // The ledger dedupes by the attempt, not by the key inside the intent: a
+    // copy of the offer's intent under another ledger identity would be a
+    // second send.
+    if outbound_dispatch_attempt_id(&intent_ref).ok() != Some(attempt_id) || call_seq != 0 {
+        return Err(refused(
+            "a waitlist offer is sent once, under its own ledger identity",
+        ));
+    }
     let actor = actor.ok_or_else(|| refused("a waitlist offer requires an acting principal"))?;
     let Some(offer) =
-        standing_waitlist_offer_in_txn(&vault.store, txn, &page_ref, &offer_token_hash)
+        standing_waitlist_offer_in_txn(&vault.store, txn, &page_ref, &offer_token_hash, now)
             .map_err(|error| engine_failure("waitlist read", error))?
     else {
         return Err(refused("this waitlist offer no longer stands"));
     };
+    // The grant outlives a withdrawn publication: re-prove the publisher on
+    // this snapshot, for a retry as for a first send.
+    let publisher =
+        crate::booking::publication::live_booking_page_publisher_in_txn(vault, txn, page_ref, now)
+            .map_err(|error| engine_failure("booking page publisher read", error))?;
+    if publisher != Some(actor) {
+        return Err(refused(
+            "a waitlist offer leaves only as its page's live publisher",
+        ));
+    }
     let waiter = booker_identity_in_txn(vault, txn, &offer.contact_ref)?;
     if waiter.is_none_or(|waiter| normalize_identity(&waiter) != target) {
         return Err(refused("a waitlist offer goes only to its own waiter"));
@@ -215,8 +246,9 @@ pub(crate) fn admit_frozen_waitlist_offer_in_txn(
     Ok(Some(grant_ref))
 }
 
-/// Whether `recipient` is the contact of an entry on `page_ref` that holds a
-/// standing offer: the one more send a booking page grant covers at the gate.
+/// Whether `recipient` is the contact of an entry on `page_ref` that holds
+/// an offer standing at `now`, the store clock: the one more send a booking
+/// page grant covers at the gate.
 ///
 /// # Errors
 ///
@@ -226,9 +258,10 @@ pub(crate) fn page_grant_reaches_waitlist_offer_in_txn(
     txn: &heed::RoTxn<'_>,
     page_ref: &EntityId,
     recipient: &str,
+    now: u64,
 ) -> crate::Result<bool> {
     let wanted = normalize_identity(recipient);
-    for contact in offered_waitlist_contacts_in_txn(store, txn, page_ref)? {
+    for contact in offered_waitlist_contacts_in_txn(store, txn, page_ref, now)? {
         if super::authorization::person_identity_in_txn(store, txn, &contact)?
             .is_some_and(|identity| normalize_identity(&identity) == wanted)
         {

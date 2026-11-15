@@ -1067,8 +1067,10 @@ fn validate_new_replay(
 
 /// The booking page grant a send's admission bound on this snapshot: a
 /// calendar invite's, else a waitlist offer email's (RULING
-/// L3-13-OFFER-CHANNEL = A). A send that names a waitlist offer it may not
-/// carry is refused here, as a calendar invite that fails its admission is.
+/// L3-13-OFFER-CHANNEL = A), judged at the store clock as the calendar
+/// admission is. A send that names a waitlist offer it may not carry, under
+/// its ledger identity, is refused here, as a calendar invite that fails its
+/// admission is.
 pub(super) fn booking_page_grant_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -1084,7 +1086,9 @@ pub(super) fn booking_page_grant_in_txn(
         vault,
         txn,
         prepared.gate.provenance.actor_entity_ref,
+        (prepared.attempt_id, prepared.call_seq),
         &prepared.payload,
+        vault.store.clock.now_recorded_at(),
     )
     .map_err(|_| IntentLedgerError::InvalidInput("waitlist offer failed its admission"))
 }
