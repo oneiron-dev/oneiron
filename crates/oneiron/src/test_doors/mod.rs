@@ -109,6 +109,7 @@ pub mod skill_gate;
 pub mod skill_hub_restore;
 pub mod skill_package;
 pub mod skill_read_hold;
+pub mod slack_install_rows;
 pub mod source_audience;
 pub mod source_audience_binding;
 pub mod spend;
