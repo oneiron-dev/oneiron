@@ -63,7 +63,8 @@ pub fn audit_as_owner(
         let mut stored = SEALS
             .get(&vault.store, txn, input.attempt.as_bytes())?
             .ok_or(Error::EntityNotFound)?;
-        if stored.receipt.passing && stored.receipt.draw.is_none() {
+        // SEEDED FAULT E6 (red proof only): every audit redraws the draw.
+        if stored.receipt.passing {
             let rate = audit_rate_in_txn(vault, txn, &stored.receipt)?;
             draw_audit(&mut stored.receipt, rate, crate::unix_seconds_now());
             SEALS.put(&vault.store, txn, input.attempt.as_bytes(), &stored)?;
@@ -104,7 +105,8 @@ pub fn receipt_sourced_as_owner(
         receipt.confession.subject,
         &receipt.result_ref,
     )?;
-    Ok((Some(receipt.into()), rows))
+    // SEEDED FAULT E8 (red proof only): the receipt always answers null.
+    Ok((None, rows))
 }
 
 /// [`pending_as_owner`], each pending check beside the rows its attempt's
@@ -126,7 +128,8 @@ pub fn pending_sourced_as_owner(
     {
         if input
             .attempt
-            .is_some_and(|attempt| receipt.confession.attempt != attempt)
+            // SEEDED FAULT E7 (red proof only): the attempt filter is inverted.
+            .is_some_and(|attempt| receipt.confession.attempt == attempt)
         {
             continue;
         }
@@ -224,7 +227,8 @@ pub fn complete_as_owner(
                 .map_or(revision, |(model, _)| model)
                 .to_owned()
         };
-        if model(&input.outcome.judge_revision) == model(&receipt.executor) {
+        // SEEDED FAULT E5 (red proof only): the executor's own model judges.
+        if model(&input.outcome.judge_revision) != model(&receipt.executor) {
             return Err(Error::InvalidClaimBody(
                 "a seal check requires a judge other than the executor",
             ));

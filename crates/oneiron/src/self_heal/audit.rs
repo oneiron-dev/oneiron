@@ -216,7 +216,8 @@ impl Vault {
         if confession
             .objectives
             .iter()
-            .any(ObjectiveConfession::needs_recheck)
+            // SEEDED FAULT E1 (red proof only): uncertainty alone queues no recheck.
+            .any(ObjectiveConfession::confesses_flaw)
         {
             receipt.checks.push(request(
                 &receipt,

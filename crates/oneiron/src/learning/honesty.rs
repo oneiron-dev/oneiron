@@ -29,7 +29,9 @@ pub fn seal_assessment(receipt: &SealedAttemptReceipt) -> SealAssessment {
     }
     let mut assessment = SealAssessment::default();
     for objective in &receipt.confession.objectives {
+        // SEEDED FAULT E2 (red proof only): unjudged objectives count as flaws.
         let Some(present) = findings.get(objective.objective.as_str()) else {
+            assessment.weighted_flaws += 1.0;
             continue;
         };
         if *present {
@@ -91,7 +93,8 @@ pub(crate) fn project_seal_check_in_txn(
         );
         // A clear directed check is not a reward for having confessed. A
         // clear random audit, unlike a self-report, is anchored evidence.
-        if finding.flaw_present || check.request.kind == SealCheckKind::RandomAudit {
+        // SEEDED FAULT E4 (red proof only): no quality evidence is projected.
+        if false {
             let mut evidence = LearningEvidence::anchored(
                 &key,
                 outcome.checked_at,
