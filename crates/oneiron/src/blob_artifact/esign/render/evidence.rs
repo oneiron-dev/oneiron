@@ -53,9 +53,6 @@ pub(super) fn evidence(request: &PdfPreparation<'_>) -> Result<([u8; 32], Vec<St
     }
     Ok((previous, lines))
 }
-fn hex(value: &[u8; 32]) -> String {
-    value.iter().map(|v| format!("{v:02x}")).collect()
-}
 fn escaped(value: &str) -> String {
     value
         .chars()
@@ -180,8 +177,8 @@ pub(super) fn certificate(
         format!("item: {}", request.item),
         format!("artifact: {}", item.artifact_ref),
         format!("original_version: {}", item.original_version),
-        format!("original_sha256: {}", hex(&original)),
-        format!("audit_chain_sha256: {}", hex(&chain)),
+        format!("original_sha256: {}", oneiron_hex::encode(&original)),
+        format!("audit_chain_sha256: {}", oneiron_hex::encode(&chain)),
         format!("audit_rows: {}", request.audit.len()),
         format!(
             "outcome: {}",

@@ -89,7 +89,9 @@ impl SecureEnclaveKeychain {
             return Ok(key.clone());
         }
         // The lock protects no Rust state. After a panic, reread the OS record.
-        let _selection = KEY_SELECTION.lock().unwrap_or_else(|e| e.into_inner());
+        let _selection = KEY_SELECTION
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if let Some(key) = self.key.get() {
             return Ok(key.clone());
         }

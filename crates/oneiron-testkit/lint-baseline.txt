@@ -98,7 +98,7 @@ wall-clock crates/oneiron-bench/tests/cleanup_retrieval.rs 2
 wall-clock crates/oneiron-broker/src/child/tests.rs 2
 wall-clock crates/oneiron-docedit/tests/stemma_reader.rs 1
 wall-clock crates/oneiron-driver/src/session/tests.rs 1
-wall-clock crates/oneiron-llm-own-server/tests/remote_transport.rs 2
+wall-clock crates/oneiron-llm/tests/remote_transport.rs 2
 wall-clock crates/oneiron-napi/src/facade/tests.rs 1
 wall-clock crates/oneiron-organ-host/tests/host_asks.rs 5
 wall-clock crates/oneiron-organ-host/tests/host_e2e.rs 8
