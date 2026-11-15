@@ -5,6 +5,7 @@ use crate::booking::{
     encode_event_type_claim_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::edge::EdgeActorClass;
 use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED};
 use serde_json::json;
 

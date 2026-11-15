@@ -9,6 +9,7 @@ use crate::registry::{
     ENTITY_TYPE_FACET, ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_TASK,
 };
 use crate::{TimeRange, VaultConfig};
+use std::collections::BTreeSet;
 
 #[test]
 fn opaque_edit_keeps_birth_scope_and_changed_facet_refuses_restamp() {

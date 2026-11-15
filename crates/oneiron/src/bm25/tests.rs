@@ -1158,7 +1158,7 @@ fn decode_rejects_empty_rows() {
     ));
 }
 
-/// ABI v4 forward record layout, literal bytes: `term_len_u16_le |
+/// ABI v4 forward record layout, literal bytes: `term_len_u64_le |
 /// term_bytes | field_id_u16_be` — and nothing else. An
 /// implementation still writing the dead v1 `tf` u32 FAILS here.
 #[test]
@@ -1166,7 +1166,7 @@ fn forward_record_layout_drops_tf() -> Result<()> {
     let mut m: BTreeMap<String, BTreeMap<u16, u32>> = BTreeMap::new();
     m.entry("ab".into()).or_default().insert(3, 7);
     let bytes = encode_forward(&m)?;
-    assert_eq!(bytes, vec![2, 0, b'a', b'b', 0, 3]);
+    assert_eq!(bytes, vec![2, 0, 0, 0, 0, 0, 0, 0, b'a', b'b', 0, 3]);
 
     let back = decode_forward(&bytes)?;
     assert_eq!(back.len(), 1);

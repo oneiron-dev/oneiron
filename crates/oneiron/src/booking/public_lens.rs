@@ -318,7 +318,7 @@ fn model_field(name: &str, value: &impl Serialize) -> Result<LensNode> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::booking::{RankedSlot, SolveRequest, SolveResult, slot_mask};
+    use crate::booking::{EventTypeKey, RankedSlot, SolveRequest, SolveResult, slot_mask};
     use crate::temporal::TimeRange;
     use serde_json::json;
 

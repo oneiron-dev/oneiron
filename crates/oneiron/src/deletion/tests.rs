@@ -15,6 +15,8 @@ fn tombstone_reason_wire_bytes_match_pinned_table() {
         // reason. A transposed byte here would archive rows a peer expects
         // to be hard-purged.
         (TombstoneReason::ArchivedByCleanup, 5, false),
+        // #5509: byte 6 is the explicit owner's erase, a hard reason.
+        (TombstoneReason::OwnerErase, 6, true),
     ];
     for (reason, wire_byte, hard) in cases {
         assert_eq!(reason.wire_byte(), wire_byte, "{reason:?} wire byte");
@@ -26,10 +28,10 @@ fn tombstone_reason_wire_bytes_match_pinned_table() {
         assert_eq!(reason.is_hard(), hard, "{reason:?} effect class");
     }
     // Byte 0 is RESERVED (= hard) and every byte above the table is
-    // unknown (= hard): neither may decode to a known reason. Byte 6 is the
-    // new first-unknown byte — it moved up by one when byte 5 was taken, and
+    // unknown (= hard): neither may decode to a known reason. Byte 7 is the
+    // new first-unknown byte — it moved up by one when byte 6 was taken, and
     // the fail-closed law did not move at all.
-    for unknown in [0_u8, 6, 17, 120, 255] {
+    for unknown in [0_u8, 7, 17, 120, 255] {
         assert_eq!(
             TombstoneReason::from_wire_byte(unknown),
             None,
@@ -125,8 +127,9 @@ fn decode_tombstone_value_table() {
             want_request_id: Some([0xA5; 16]),
         },
         // ONE-1931 took byte 5 for `archived_by_cleanup`, the SECOND soft
-        // reason. Byte 6 inherits this case's job: it is now the first byte
-        // past the table, and it still decodes HARD.
+        // reason, and #5509 took byte 6 for `owner_erase`. Byte 7 inherits
+        // this case's job: it is now the first byte past the table, and it
+        // still decodes HARD.
         Case {
             name: "archive reason byte 5 decodes as the soft archive reason",
             input: v2(5),
@@ -136,8 +139,16 @@ fn decode_tombstone_value_table() {
             want_request_id: Some([0xA5; 16]),
         },
         Case {
-            name: "unknown reason byte 6 decodes as hard",
+            name: "owner erase reason byte 6 decodes as the hard owner erase",
             input: v2(6),
+            want_reason: Some(TombstoneReason::OwnerErase),
+            want_hard: true,
+            want_deleted_at: 0xDEAD_BEEF,
+            want_request_id: Some([0xA5; 16]),
+        },
+        Case {
+            name: "unknown reason byte 7 decodes as hard",
+            input: v2(7),
             want_reason: None,
             want_hard: true,
             want_deleted_at: 0xDEAD_BEEF,
