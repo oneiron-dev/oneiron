@@ -5,8 +5,9 @@
 //! install's carrier signs, so a task cancelled before the root stays cancelled on every
 //! device of the vault.
 //!
-//! Red at 0d2740a51dc8 (part 1, no adoption) with this file laid in: the device counts no
-//! fact the vault wrote before its root, so no owner stands there. Green on the head.
+//! Red on branch `opus-task-proof/task-fact-carrier-signature-red-no-adoption` (this head
+//! with the two root doors' adoption calls taken out): the device counts no fact the vault
+//! wrote before its root, so no owner stands there. Green on the head.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test task_fact_root_adoption`.
@@ -162,5 +163,12 @@ fn a_task_cancelled_before_the_root_stays_cancelled_on_a_second_device() {
     assert!(
         there.cancelled,
         "the signed twin of the pre-root cancel counts on the device"
+    );
+    assert_eq!(
+        vault
+            .adopt_unsigned_task_facts()
+            .expect("a second adoption pass"),
+        0,
+        "the root adopted every fact written before it, so a second pass adopts none"
     );
 }
