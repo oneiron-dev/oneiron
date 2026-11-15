@@ -5,9 +5,10 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
+use super::WholeVaultDocumentManifest;
 use super::export_authority::{
     NO_LOCAL_AUTHORITY_ROOT, VaultImportReceipt, authority_manifest_for_vault,
-    classify_vault_import_manifest, validate_export_vault_label,
+    classify_vault_archive_manifest, classify_vault_import_manifest, validate_export_vault_label,
 };
 use super::export_manifest::{
     ExportManifest, ExportManifestArtifact, ExportSecretsNulledManifest,
@@ -230,12 +231,34 @@ impl Vault {
     }
 
     /// Classifies an export manifest against this vault. Reads the manifest
-    /// only — nothing is staged, admitted, or trusted.
+    /// only — nothing is staged, admitted, or trusted. A storage manifest
+    /// names no content, so it never proves provenance: a same-chain one
+    /// reads `ReviewRequired`. An archive's contents manifest goes to
+    /// [`Self::classify_vault_archive_manifest`].
     pub fn classify_vault_import_manifest(
         &self,
         manifest_bytes: &[u8],
         expected_label: Option<&str>,
     ) -> Result<VaultImportReceipt> {
         classify_vault_import_manifest(self, manifest_bytes, expected_label)
+    }
+
+    /// Classifies an archive's contents manifest (its `manifest.json`)
+    /// against this vault, its provenance signature included (L2-23): the
+    /// owner's own device's signature over this vault's chain makes it a
+    /// `ByteFaithfulOwnerRestore` when nothing else differs. Reads the
+    /// manifest only, as [`Self::classify_vault_import_manifest`]; a manifest
+    /// this build cannot read is refused.
+    pub fn classify_vault_archive_manifest(
+        &self,
+        archive_manifest_bytes: &[u8],
+        expected_label: Option<&str>,
+    ) -> Result<VaultImportReceipt> {
+        let manifest: WholeVaultDocumentManifest = serde_json::from_slice(archive_manifest_bytes)
+            .map_err(|_| {
+            Error::InvalidConfig("unsupported whole-vault archive manifest".to_owned())
+        })?;
+        manifest.validate()?;
+        classify_vault_archive_manifest(self, &manifest, expected_label)
     }
 }

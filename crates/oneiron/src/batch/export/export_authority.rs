@@ -4,6 +4,7 @@
 pub use oneiron_store::batch::export::export_authority::*;
 
 use super::export_manifest::ExportManifest;
+use super::{ArchiveSigner, WholeVaultDocumentManifest, archive_signer};
 use crate::Vault;
 use crate::authority::AuthorityFold;
 use crate::error::{Error, Result};
@@ -30,12 +31,14 @@ use std::collections::BTreeSet;
 /// label and the secret-nulling flags get a say — a label can never promote a
 /// foreign chain, and a matching chain can never excuse nulled content.
 ///
-/// A matching chain is a claim, not a proof: the manifest is unsigned, and its
-/// vault id and digest can be copied from any export of this vault. So a
-/// same-chain artifact always carries
-/// [`VaultImportMismatch::UnauthenticatedProvenance`] and reads
-/// [`VaultImportClassification::ReviewRequired`]. Whole-vault import treats the
-/// verdict as advisory, so the owner's own export still restores.
+/// A matching chain is a claim, not a proof: a storage manifest names no
+/// content and carries no signature, and its vault id and digest can be
+/// copied from any export of this vault. So a same-chain storage manifest
+/// always carries [`VaultImportMismatch::UnauthenticatedProvenance`] and reads
+/// [`VaultImportClassification::ReviewRequired`]. Only an archive's signed
+/// contents manifest proves provenance ([`classify_vault_archive_manifest`]).
+/// Whole-vault import treats the verdict as advisory, so the owner's own
+/// export still restores.
 pub fn classify_vault_import_manifest(
     vault: &Vault,
     manifest_bytes: &[u8],
@@ -43,7 +46,58 @@ pub fn classify_vault_import_manifest(
 ) -> Result<VaultImportReceipt> {
     let manifest = ExportManifest::from_json_for_import(manifest_bytes)?;
     let manifest_digest = canonical_manifest_digest(&manifest)?;
+    classify_manifest(vault, &manifest, None, manifest_digest, expected_label)
+}
 
+/// Classifies an archive's contents manifest against the vault it is offered
+/// to (L2-23): [`classify_vault_import_manifest`] over its storage manifest,
+/// with the archive's provenance signature judged on the same read-only fold
+/// ([`archive_signer`]). Manifest only, and no write, as that door.
+///
+/// On a matching chain the signer decides provenance. The owner's own device
+/// proves it, so a same-chain, same-state, unnulled archive it signed reads
+/// [`VaultImportClassification::ByteFaithfulOwnerRestore`]. A live machine of
+/// this vault in a role the owner answered as not his own device (a hosted
+/// node, an execution node, a rented, work or school machine) signed an
+/// archive that is not his: [`VaultImportMismatch::SignerNotOwnerDevice`],
+/// read as [`VaultImportClassification::ForeignAuthorityChain`] (Engine
+/// RULING L2-23-SIGNER = B). No signature, or one that does not verify or
+/// whose key does not stand as its machine here, proves nothing:
+/// [`VaultImportMismatch::UnauthenticatedProvenance`]. Every other gate holds
+/// as for the storage door.
+///
+/// The receipt's digest commits to the whole parsed archive manifest, which
+/// lists every member's digest.
+pub(crate) fn classify_vault_archive_manifest(
+    vault: &Vault,
+    manifest: &WholeVaultDocumentManifest,
+    expected_label: Option<&str>,
+) -> Result<VaultImportReceipt> {
+    let encoded = serde_json::to_vec(manifest)
+        .map_err(|_| Error::InvariantViolation("archive manifest serialization failed"))?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(EXPORT_MANIFEST_RECEIPT_DOMAIN);
+    hasher.update(&encoded);
+    let manifest_digest = *hasher.finalize().as_bytes();
+    classify_manifest(
+        vault,
+        &manifest.storage,
+        Some(manifest),
+        manifest_digest,
+        expected_label,
+    )
+}
+
+/// The one classification both doors share: `archive` is the contents
+/// manifest whose signature may prove provenance, `None` for a storage
+/// manifest alone.
+fn classify_manifest(
+    vault: &Vault,
+    manifest: &ExportManifest,
+    archive: Option<&WholeVaultDocumentManifest>,
+    manifest_digest: [u8; 32],
+    expected_label: Option<&str>,
+) -> Result<VaultImportReceipt> {
     let exported_label = manifest.vault_label.clone();
     if let Some(label) = exported_label.as_deref() {
         validate_export_vault_label(label)?;
@@ -57,7 +111,8 @@ pub fn classify_vault_import_manifest(
         .as_ref()
         .map(ExportAuthorityManifest::parse_identity)
         .transpose()?;
-    let local_authority = local_authority_identity_readonly(vault)?;
+    let fold = local_authority_fold_readonly(vault)?;
+    let local_authority = authority_identity_of_fold(&fold);
 
     let mut mismatches = BTreeSet::new();
     if exported_authority.is_none() {
@@ -70,7 +125,18 @@ pub fn classify_vault_import_manifest(
     let mut foreign_chain = false;
     if let (Some(exported), Some(local)) = (exported_authority, local_authority) {
         if exported.vault_id == local.vault_id {
-            mismatches.insert(VaultImportMismatch::UnauthenticatedProvenance);
+            match archive.map_or(ArchiveSigner::Unproven, |archive| {
+                archive_signer(&fold, &local.vault_id, archive)
+            }) {
+                ArchiveSigner::OwnerDevice => {}
+                ArchiveSigner::OtherMachine => {
+                    foreign_chain = true;
+                    mismatches.insert(VaultImportMismatch::SignerNotOwnerDevice);
+                }
+                ArchiveSigner::Unproven => {
+                    mismatches.insert(VaultImportMismatch::UnauthenticatedProvenance);
+                }
+            }
             if exported.valid_entries_digest != local.valid_entries_digest {
                 mismatches.insert(VaultImportMismatch::AuthorityChainDigest);
             }
@@ -133,12 +199,13 @@ pub(super) fn authority_manifest_for_vault(vault: &Vault) -> Result<ExportAuthor
 /// owner-initiated and already writes the artifact, so recording this vault's
 /// first-seen observations here costs nothing extra. The import classifier
 /// must NOT take this path; it uses
-/// [`local_authority_identity_readonly`].
+/// [`local_authority_fold_readonly`].
 fn local_authority_identity(vault: &Vault) -> Result<Option<AuthorityChainIdentity>> {
-    Ok(authority_identity_of_fold(vault.authority_fold()?))
+    Ok(authority_identity_of_fold(&vault.authority_fold()?))
 }
 
-/// The classifier's identity question, answered without a single write.
+/// The classifier's fold, read without a single write: its identity question
+/// and the archive signer's standing are both answered on it.
 ///
 /// [`classify_vault_import_manifest`] is manifest-only by blueprint ("it
 /// performs no writes"): offering an artifact for classification must leave
@@ -147,16 +214,15 @@ fn local_authority_identity(vault: &Vault) -> Result<Option<AuthorityChainIdenti
 /// no sidecar backfill, no migration marker, no observation-clock advance —
 /// and opens no transaction of its own (SOL-ONE-1379-1). A corrupt first-seen
 /// sidecar, like every other fold error, propagates.
-fn local_authority_identity_readonly(vault: &Vault) -> Result<Option<AuthorityChainIdentity>> {
+fn local_authority_fold_readonly(vault: &Vault) -> Result<AuthorityFold> {
     let rtxn = vault.store.env.read_txn()?;
-    let fold = vault.authority_fold_readonly_in_txn(&rtxn)?;
-    Ok(authority_identity_of_fold(fold))
+    vault.authority_fold_readonly_in_txn(&rtxn)
 }
 
 /// Reduces a fold — however it was computed — to the two values the manifest
 /// compares on. Both identity paths share this tail so the write and readonly
 /// folds can never disagree about what the local identity IS.
-fn authority_identity_of_fold(fold: AuthorityFold) -> Option<AuthorityChainIdentity> {
+fn authority_identity_of_fold(fold: &AuthorityFold) -> Option<AuthorityChainIdentity> {
     let vault_id = fold.vault_id?;
     Some(AuthorityChainIdentity {
         valid_entries_digest: authority_valid_entries_digest(&vault_id, &fold.valid_entries),

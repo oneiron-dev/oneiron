@@ -46,12 +46,15 @@ pub enum VaultImportClassification {
     /// Same chain, same chain state, nothing nulled, and provenance proved: the
     /// owner's own artifact coming home.
     ///
-    /// No export is signed yet, so no manifest earns this today: every
-    /// same-chain artifact carries [`VaultImportMismatch::UnauthenticatedProvenance`]
-    /// and reads [`Self::ReviewRequired`]. It is reserved for a manifest whose
-    /// signer this vault can verify.
+    /// Only an archive's contents manifest signed by a machine this vault
+    /// trusts as the owner's own device earns it (L2-23). A storage manifest
+    /// alone, or an unsigned archive, carries
+    /// [`VaultImportMismatch::UnauthenticatedProvenance`] and reads
+    /// [`Self::ReviewRequired`].
     ByteFaithfulOwnerRestore,
-    /// A well-formed chain identity that is not this vault's. Never a restore.
+    /// A well-formed chain identity that is not this vault's, or this vault's
+    /// chain signed by one of its machines that is not the owner's own device
+    /// ([`VaultImportMismatch::SignerNotOwnerDevice`]). Never a restore.
     ForeignAuthorityChain,
     /// Identity could not be established, or it matched and something else
     /// drifted. Every reason is listed in [`VaultImportReceipt::mismatches`].
@@ -72,10 +75,17 @@ pub enum VaultImportMismatch {
     LocalAuthorityMissing,
     /// Both sides state a root and they differ.
     AuthorityVaultId,
+    /// Same root, and the archive is signed by a live machine of this vault
+    /// that the owner answered is not his own device: a hosted node, an
+    /// execution node, a rented, work or school machine. Its content is that
+    /// machine's, never the owner's own (Engine RULING L2-23-SIGNER = B).
+    SignerNotOwnerDevice,
     /// Both sides state the same root, but nothing proves the manifest came
     /// from this chain: the vault id and the valid-entries digest are public
-    /// facts anyone holding one export can copy. Fail-closed until manifests
-    /// are signed by a key this vault can verify.
+    /// facts anyone holding one export can copy. A storage manifest alone
+    /// always carries it; so does an archive with no signature, one that does
+    /// not verify, or one whose key does not stand here as its machine's, an
+    /// unanswered install's included.
     UnauthenticatedProvenance,
     /// Same root, different set of valid authority entries.
     AuthorityChainDigest,

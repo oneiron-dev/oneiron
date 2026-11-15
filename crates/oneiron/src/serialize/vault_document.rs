@@ -59,6 +59,8 @@ pub(crate) struct DocumentTail {
     /// (DEC-0005): each row the snapshot read past its locality, the ones it
     /// carries, counts or folds into another section among them.
     pub(crate) sources: Vec<EntityId>,
+    /// L2-23: this install's loaded keys, which sign an archive's manifest.
+    pub(crate) signer: Option<std::sync::Arc<crate::identity::InstallSigner>>,
 }
 
 /// The whole-vault document as its rows are spooled.
@@ -584,6 +586,7 @@ impl<'v> DocumentWriter<'v> {
             fold_only_secrets: Vec::new(),
             embedding_setup_withheld,
             side_rows_withheld: self.side_withheld,
+            provenance: None,
         };
         // The manifest's strings go through the same pass, at its depth. The
         // member and file lists are added after: paths, counts and digests.
@@ -604,6 +607,9 @@ impl<'v> DocumentWriter<'v> {
                     .map(|(path, spool)| spool.record(path))
                     .collect();
                 manifest.files = self.files.manifest();
+                if let Some(signer) = tail.signer.as_deref() {
+                    crate::batch::export::sign_archive_manifest(signer, &mut manifest)?;
+                }
                 super::vault_archive::write_vault_archive(
                     sink,
                     &manifest,
