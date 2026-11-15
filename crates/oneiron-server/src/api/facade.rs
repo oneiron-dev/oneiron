@@ -153,6 +153,7 @@ mod linear_doors;
 mod live_run_doors;
 mod live_voice_doors;
 mod live_voice_settlement;
+mod machine_name_doors;
 mod mail_pack_doors;
 mod merge_queue_checker_doors;
 mod merge_queue_doors;

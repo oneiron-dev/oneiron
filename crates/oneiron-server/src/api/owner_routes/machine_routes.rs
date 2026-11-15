@@ -11,6 +11,13 @@
 //! Each change names the machine's revision the surface showed the owner
 //! (`seen`, from `GET /machines/answer`); a stale one is a conflict, never a
 //! silent overwrite.
+//!
+//! `GET /machines` lists every machine with the name it is shown by, and
+//! `POST /machines/name` sets or clears the owner's own name for one (FIX
+//! [DEVICE-DISPLAY-NAME]). Each runs its SDK row (`vault.machines.list`,
+//! `vault.machines.name.set`) inside the row's verb hooks, as the owner in
+//! person. A name is display only: it is outside the signed profile, and no
+//! revision, role or reach moves with it.
 
 use std::sync::Arc;
 
@@ -22,17 +29,39 @@ use axum::routing::{get, post};
 use oneiron::authority::{
     ActSurface, FoldedMachine, MachineOwnership, MachineRole, OwnerDeviceRenewalProof, PeerMachine,
 };
+use oneiron::task_verb::sdk::{self, EmptyRequest, MachineNameSetRequest};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
-use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
+use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, hooked_owner, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
-use crate::owner::{OwnerError, OwnerResult, entity_id};
+use crate::owner::{OwnerError, OwnerResult, entity_id, hooked_row, memory_refusal};
 use crate::server::SyncServer;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
+        (
+            OwnerRoute {
+                method: "get",
+                path: "/machines",
+                summary: "Every machine of the vault, this install first (FIX DEVICE-DISPLAY-NAME): `machines`, each with its class, role, whether it stands live, its revision (`seen` for an answer or a removal) and the name it is shown by, with `name_source` (`owner`, `reported`, `model` or `class`).",
+                row: Some("vault.machines.list"),
+                shape: None,
+            },
+            get(list_machines),
+        ),
+        (
+            OwnerRoute {
+                method: "post",
+                path: "/machines/name",
+                summary: "The owner sets or clears his own one-line name for one of his machines (`machine`, 32 hex; `name`, or null or blank to clear it). Display only: its revision, role and reach do not move. Answers the machine as the list shows it now and the act's Gate receipt.",
+                row: Some("vault.machines.name.set"),
+                shape: None,
+            },
+            post(set_name),
+        ),
         (
             OwnerRoute {
                 method: "get",
@@ -319,4 +348,43 @@ async fn remove(
     })
     .await?;
     Ok(Json(answer))
+}
+
+/// `GET /v1/owner/machines`: every machine of the vault, with the name each
+/// is shown by.
+async fn list_machines(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        hooked_row(vault, actor, "vault.machines.list", EmptyRequest {}, |_| {
+            sdk::list_machines_as(vault, &owner).map_err(memory_refusal)
+        })
+    })
+    .await?;
+    Ok(Json(response))
+}
+
+/// `POST /v1/owner/machines/name`: the owner's own name for one of his
+/// machines, set or cleared.
+async fn set_name(
+    auth: CoreAuth,
+    State(server): State<Arc<SyncServer>>,
+    payload: OwnerJsonBody<MachineNameSetRequest>,
+) -> OwnerReply<Value> {
+    let (owner, actor) = hooked_owner(&auth, &server)?;
+    let request = payload.read(&server).await?;
+    let response = blocking(move || {
+        let vault = server.vault();
+        hooked_row(
+            vault,
+            actor,
+            "vault.machines.name.set",
+            request,
+            |request: MachineNameSetRequest| {
+                sdk::set_machine_name_as(vault, &owner, request).map_err(memory_refusal)
+            },
+        )
+    })
+    .await?;
+    Ok(Json(response))
 }
