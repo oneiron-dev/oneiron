@@ -110,6 +110,7 @@ pub use stream::{
     StreamConnectionState, SubscriptionError, SubscriptionReceipt, SubscriptionScope, TaskWakeKind,
     TaskWakeRead, WakeEnvelope, child_release_hold, child_release_rows, child_spawner,
 };
+pub use stream::{HANDED_WAKES_CAP, WakeDelivery};
 mod layout;
 mod layout_store;
 #[cfg(test)]
