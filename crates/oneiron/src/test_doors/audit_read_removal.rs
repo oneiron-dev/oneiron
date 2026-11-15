@@ -5,7 +5,9 @@
 //! replay's refusal; the headerless delete leg a delete takes when its header
 //! read found no row, and that leg's tombstone publication past its scope
 //! probe. The settlement of a privacy erase a hold refused before any grant
-//! check ran (Astra delta-4 F3), and whether it left a use limit.
+//! check ran (Astra delta-4 F3), and whether it left a use limit. The
+//! restriction step of the owner's answer to a courtesy ask, past a coverage
+//! check a forged delivery-ledger row passes (Astra delta-5 J2).
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -123,4 +125,21 @@ pub fn settle_a_privacy_erase_refusal(vault: &Vault, id: &EntityId) -> Result<()
 pub fn use_limited(vault: &Vault, id: &EntityId) -> Result<bool> {
     let txn = vault.store.env.read_txn()?;
     Ok(crate::store::legal_hold::legal_hold_use_limit_in_txn(&vault.store, &txn, id)?.is_some())
+}
+
+/// Restricts `id` pending review as the owner's (`owner`) answer to a
+/// courtesy ask does once its coverage check passed `id` as a present copy
+/// the pact delivered (Astra delta-5 J2): a delivery-ledger row the generic
+/// sync-state writer that writes only absent rows planted passes that check.
+/// The restriction hides `id` from safe reads.
+///
+/// # Errors
+/// The restriction's refusal, or the store's.
+pub fn restrict_as_a_cooperative_answer(
+    vault: &Vault,
+    id: &EntityId,
+    owner: EntityId,
+) -> Result<()> {
+    let now = vault.store.clock.now_recorded_at();
+    vault.restrict_as_a_cooperative_answer_for_test(*id, owner, now)
 }
