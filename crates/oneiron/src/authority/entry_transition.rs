@@ -36,6 +36,33 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+/// Whether `entry` sits below its sequence floor in `context`: the highest
+/// sequence among its signer's rows in its scope that do not descend from it
+/// (`rows_floor`).
+pub(super) fn below_its_floor(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    context
+        .sequence_floors
+        .and_then(|floors| floors.get(&hash))
+        .is_some_and(|floor| entry.seq < *floor)
+}
+
+/// Whether a counted `entry` shows its signer forked its sequence: it sits
+/// below its floor (`below_its_floor`) and grants, so it is no roster row,
+/// restriction or row that only takes away (`floor_refuses`). It counts in
+/// full; the fold records the fork as `AuthorityFoldIssue::SequenceFork`
+/// (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37).
+pub(super) fn forks_its_sequence(
+    entry: &AuthorityLogEntry,
+    hash: AuthorityEntryHash,
+    context: FoldContext<'_>,
+) -> bool {
+    floor_refuses(&entry.op) && below_its_floor(entry, hash, context)
+}
+
 pub(super) fn fold_entry_state(
     entry: &AuthorityLogEntry,
     hash: AuthorityEntryHash,
@@ -60,29 +87,32 @@ pub(super) fn fold_entry_state(
 
     // A row below its floor, the highest sequence among its signer's rows
     // in its scope that do not descend from it (`rows_floor`), forks its
-    // signer's sequence: no install counts what it grants, whatever order
-    // its rows arrived in. Equal-sequence siblings have separate hashes and
-    // fold under their own ancestry, not a fork alarm. A row that only takes
-    // away is never floored (`only_takes_away`). A restriction still lands
-    // (Astra #1430): a machine revision and a world edit keep their
-    // restrictive effect below a later row of their signer that does not
-    // descend from them, as restriction only. A machine removal so stays terminal
-    // on every replica and in the log, where a later edit finds it among its
-    // parents (Sol P2 round 3, F3), but acknowledges nothing here (Astra
-    // #1430b). A row a handoff or a removal vouches for is never refused, and
-    // still lands restriction only, as does every row the fold with no vouch
-    // holds back or only the vouch admits (`install_fold::NoVouch`). No floor
-    // refuses a roster row, which vouches for its own signer's rows below it
-    // that a floor refuses (`changes_roster`, `floor_refuses`); its signer's
-    // own order binds it below.
-    let past_floor = context
-        .sequence_floors
-        .and_then(|floors| floors.get(&hash))
-        .is_some_and(|floor| entry.seq < *floor);
-    let vouched = context
-        .floor_vouched
-        .is_some_and(|vouched| vouched.contains(&hash));
-    if past_floor && !vouched && floor_refuses(&entry.op) {
+    // signer's sequence, whatever order its rows arrived in. Such a row
+    // counts in full and the fold records the fork
+    // (`AuthorityFoldIssue::SequenceFork`, `forks_its_sequence`): refusing it
+    // would refuse every later row on it, its signer's revocation included
+    // (Engine RULING SEQ-FLOOR-SHAPE-S = B, 16 Nov 02:37). Equal-sequence
+    // siblings have separate hashes and fold under their own ancestry, not a
+    // fork alarm. A row that only takes away is never floored
+    // (`only_takes_away`). A restriction lands restriction only (Astra
+    // #1430): a machine revision and a world edit keep their restrictive
+    // effect below a later row of their signer that does not descend from
+    // them. A machine removal so stays terminal on every replica and in the
+    // log, where a later edit finds it among its parents (Sol P2 round 3,
+    // F3), but acknowledges nothing here (Astra #1430b). So does every row the
+    // fold with no vouch holds back or only the vouch admits
+    // (`install_fold::NoVouch`). A world key record keeps its refusal below
+    // its floor unless a handoff or a removal vouches for it: a refused one
+    // takes only its own world's later records, never a main-log row
+    // (`world_privacy::side_branch_violations`). No floor touches a roster row
+    // (`changes_roster`); its signer's own order binds it below.
+    let past_floor = below_its_floor(entry, hash, context);
+    if past_floor
+        && matches!(entry.op, AuthorityOp::WorldKeyWraps(_))
+        && !context
+            .floor_vouched
+            .is_some_and(|vouched| vouched.contains(&hash))
+    {
         return EntryFold::Invalid(AuthorityFoldIssue::NonMonotonicSeq(hash));
     }
     let restriction_only = lands_restriction_only(&entry.op)

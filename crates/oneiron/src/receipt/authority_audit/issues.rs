@@ -33,6 +33,7 @@ impl FoldIssues {
                 AuthorityFoldIssue::UnsettledHandoff(entry) => (entry, "unsettled_handoff"),
                 AuthorityFoldIssue::SignerNotInAncestry(entry) => (entry, "signer_not_in_ancestry"),
                 AuthorityFoldIssue::NonMonotonicSeq(entry) => (entry, "non_monotonic_seq"),
+                AuthorityFoldIssue::SequenceFork(entry) => (entry, "sequence_fork"),
                 AuthorityFoldIssue::StaleRosterApproval(entry) => (entry, "stale_roster_approval"),
                 AuthorityFoldIssue::WrongVault(entry) => (entry, "wrong_vault"),
                 AuthorityFoldIssue::ConflictingVaultRoot { entry, .. } => {

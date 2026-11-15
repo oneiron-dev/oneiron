@@ -30,8 +30,9 @@ pub(super) struct FoldContext<'a> {
     /// vouches for (`sequence_ancestry`); the gate (`fold_entry_state`)
     /// reads the result. None: no floor applies.
     pub(super) sequence_floors: Option<&'a BTreeMap<AuthorityEntryHash, u64>>,
-    /// Rows no floor refuses (a handoff's line, a removal's own branch); one
-    /// past its floor still lands restriction only.
+    /// Rows a handoff or a removal vouches for (a handoff's line, a removal's
+    /// own branch): a world key record among them keeps no floor; one past
+    /// its floor still lands restriction only.
     pub(super) floor_vouched: Option<&'a BTreeSet<AuthorityEntryHash>>,
     /// Revisions and world edits held to restriction only (`install_fold::NoVouch`).
     pub(super) install_held: Option<&'a BTreeSet<AuthorityEntryHash>>,
@@ -452,6 +453,18 @@ pub(super) fn fold_authority_log_once_with(
         &entry_ancestors,
         context,
         &mut issues,
+    );
+    // A counted row below its floor shows its signer forked its sequence
+    // (Engine RULING SEQ-FLOOR-SHAPE-S = B): the fold records the fork.
+    issues.extend(
+        states
+            .keys()
+            .filter(|hash| {
+                by_hash.get(*hash).is_some_and(|entry| {
+                    super::entry_transition::forks_its_sequence(entry, **hash, context)
+                })
+            })
+            .map(|hash| AuthorityFoldIssue::SequenceFork(*hash)),
     );
     let retired_keys = retirements.keys();
     let mut vault_ids = BTreeSet::new();
