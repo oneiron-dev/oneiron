@@ -53,6 +53,12 @@ pub const GPU_JOB_WARNING_PRODUCER: &str = "gpu_job.warning";
 /// Producer of the add-funds notice at a stop at the maximum.
 pub const GPU_JOB_STOPPED_PRODUCER: &str = "gpu_job.stopped_at_maximum";
 
+/// The start of the event of a notice about chunk `chunk` (its index) of the
+/// job `job`; the recipient (hex, or `all`) follows it.
+pub(crate) fn notice_event_prefix(job: &EntityId, chunk: usize) -> String {
+    format!("{}:{chunk}:", job.to_hex())
+}
+
 const GPU_JOBS: SideTable<EntityId, GpuJob, Named> = SideTable::new(&side_table::GPU_JOB);
 
 /// The unit a job's maximum and run time are counted in.

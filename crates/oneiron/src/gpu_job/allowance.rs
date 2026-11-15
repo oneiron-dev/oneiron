@@ -92,7 +92,10 @@ impl Vault {
 }
 
 /// The agent the Grant `grant` names, when that Grant is the one the standing
-/// rule picks for its agent and `vault.gpu.jobs.start` now.
+/// rule picks for its agent and `vault.gpu.jobs.start` now. The agent stands
+/// in the class its principal acts in, as the start judges it: an agent
+/// definition or a named agent's PERSON as an agent, a seeded base agent's
+/// MACHINE as the system; each class admits only its own principals.
 fn start_grant_agent_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -105,14 +108,14 @@ fn start_grant_agent_in_txn(
     else {
         return Ok(None);
     };
-    let standing = principal_standing_in_txn(
-        vault,
-        txn,
-        agent,
-        EdgeActorClass::Agent,
-        GpuJobVerb::Start.name(),
-    )?;
-    Ok((standing.and_then(|standing| standing.grant) == Some(*grant)).then_some(agent))
+    for class in [EdgeActorClass::Agent, EdgeActorClass::System] {
+        let standing =
+            principal_standing_in_txn(vault, txn, agent, class, GpuJobVerb::Start.name())?;
+        if standing.and_then(|standing| standing.grant) == Some(*grant) {
+            return Ok(Some(agent));
+        }
+    }
+    Ok(None)
 }
 
 /// Takes the erased actor out of every allowance: an agent's rows go, and

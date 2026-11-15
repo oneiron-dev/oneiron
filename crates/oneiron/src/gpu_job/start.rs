@@ -50,6 +50,7 @@ impl Vault {
     /// [`GpuJobError::Resume`] for a resume its stop does not allow.
     /// [`GpuJobError::Caller`] for an agent past its Grant or its maximum.
     #[allow(clippy::too_many_arguments)]
+    #[allow(single_use_lifetimes)] // An impl-Trait argument needs its lifetime named.
     pub fn start_gpu_job<'a>(
         &self,
         actor: impl Into<GpuJobActor<'a>>,
@@ -206,6 +207,7 @@ impl Vault {
     ///
     /// [`GpuJobError::Ended`] for a job that already ended;
     /// [`GpuJobError::Caller`] for an agent the act does not admit.
+    #[allow(single_use_lifetimes)] // An impl-Trait argument needs its lifetime named.
     pub fn cancel_gpu_job<'a>(
         &self,
         actor: impl Into<GpuJobActor<'a>>,

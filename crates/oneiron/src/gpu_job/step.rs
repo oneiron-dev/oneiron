@@ -325,7 +325,7 @@ impl Vault {
             owners.into_iter().map(Some).collect()
         };
         let created_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-        let chunk = job.chunks.len().saturating_sub(1);
+        let event_prefix = super::notice_event_prefix(&job.id, job.chunks.len().saturating_sub(1));
         let mut ids = Vec::with_capacity(recipients.len());
         for recipient in recipients {
             let to = recipient.map_or_else(|| "all".to_owned(), |id| id.to_hex());
@@ -335,7 +335,7 @@ impl Vault {
                     kind,
                     source: NotificationSource {
                         producer: producer.to_owned(),
-                        event: format!("{}:{chunk}:{to}", job.id.to_hex()),
+                        event: format!("{event_prefix}{to}"),
                         result: Some(job.id.to_hex()),
                         detail: Some(detail.clone()),
                         ..NotificationSource::default()

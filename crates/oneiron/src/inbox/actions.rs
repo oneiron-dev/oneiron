@@ -112,6 +112,9 @@ impl Memory<'_> {
     /// stop stands: one tap starts one more chunk of the job's first maximum
     /// from the stop's checkpoint, on the quote the stop priced (C2 05). The
     /// start checks that quote against the host's offer as it stands then.
+    /// Only the notice of the stop that stands offers it: its event names the
+    /// job's last chunk, and a notice of an earlier stop the job resumed from
+    /// names an earlier one.
     fn gpu_job_resume_actions(&self, row: &NotificationRow) -> Vec<NotificationAction> {
         let Some(job) = row
             .source
@@ -124,10 +127,13 @@ impl Memory<'_> {
         let Ok(Some(job)) = self.vault().gpu_job(&job) else {
             return Vec::new();
         };
-        let resume_quote = job
-            .resume_quote
-            .as_ref()
-            .filter(|_| job.state == crate::gpu_job::GpuJobState::Stopped && job.stop.is_some());
+        let stop_event =
+            crate::gpu_job::notice_event_prefix(&job.id, job.chunks.len().saturating_sub(1));
+        let resume_quote = job.resume_quote.as_ref().filter(|_| {
+            job.state == crate::gpu_job::GpuJobState::Stopped
+                && job.stop.is_some()
+                && row.source.event.starts_with(&stop_event)
+        });
         resume_quote
             .map(|quote| {
                 NotificationAction::new(

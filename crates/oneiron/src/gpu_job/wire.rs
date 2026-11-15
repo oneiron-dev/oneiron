@@ -179,7 +179,7 @@ pub struct GpuJobStopView {
 /// `vault.gpu.jobs.allow`: the longest run time, in seconds, one GPU job an
 /// agent starts under the Grant `grant` (hex) may declare over all its
 /// chunks. 0 removes it.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct GpuJobAllowRequest {
     pub grant: String,
