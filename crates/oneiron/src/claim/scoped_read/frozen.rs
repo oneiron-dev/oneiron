@@ -17,13 +17,16 @@
 //! read, and the principal's relationship grants are read live. A revocation
 //! after the save therefore never widens what the work reads. A lane that
 //! read under no narrowing freezes as its principal's own
-//! ([`FrozenReadLane::principal`]), unless a non-guest credential's native
-//! key lacks the owner's full floor (that lane keeps its credential and a
-//! top read Scope), or its credential names a grant: that lane still reads
-//! as its principal's own, with no Scope, but stays held to the credential
-//! while the grant stands ([`FrozenReadLane::reads_as_principal`]), so a
-//! rebuild after the grant is withdrawn reads nothing (FIX
-//! OWN-DEVICE-GRANT-NOT-RECHECKED).
+//! ([`FrozenReadLane::principal`]), unless its credential's native key lacks
+//! the owner's full floor and its principal's own key would regain what it
+//! lacked (that lane keeps its credential and a top read Scope), or its
+//! credential names a grant: that lane still reads as its principal's own,
+//! with no Scope, but stays held to the credential while the grant stands
+//! ([`FrozenReadLane::reads_as_principal`]), so a rebuild after the grant is
+//! withdrawn reads nothing (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). A lane that
+//! keeps a Scope also keeps the grant basis its live key read under
+//! ([`NativeReadBasis`]), so a rebuild never regains the owner's floor or
+//! exemption that key lacked (FIX 14344).
 //!
 //! A rebuilt key carries the lane's credential ([`SavedCredential`]), and
 //! every read under it judges that credential again in its own snapshot: a
@@ -83,6 +86,24 @@ impl SavedCredential {
     }
 }
 
+/// The grant basis a saved lane's live key read under (FIX 14344, Astra F2
+/// on #8029), kept beside its frozen Scope as a queued summary's
+/// declaration keeps it (`requester_owner_exemption`,
+/// `requester_relationship_grants`). A rebuild over the principal's own key
+/// never regains an owner standing the live key lacked
+/// (`ScopedReadActorKey::within_native_basis`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct NativeReadBasis {
+    /// Whether the live key held an owner standing: the vault owner's floor,
+    /// or a narrower credential's owner exemption. Each read still proves
+    /// the owner binding again.
+    pub(crate) owner_exemption: bool,
+    /// Whether the live key read under the relationship-only grant gate,
+    /// rather than the access gate that also closes unscoped rows.
+    pub(crate) relationship_grants: bool,
+}
+
 /// The scope a read lane read under when its work was saved (OF-506). The
 /// engine mints it from the saver's live lane ([`Self::freeze`]) or as the
 /// principal's own ([`Self::principal`]); no caller authors one.
@@ -117,6 +138,11 @@ pub struct FrozenReadLane {
     /// The room whose signed facets the saved lane read inside (FIX 643).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     room_facets: Option<EntityId>,
+    /// The grant basis the saved lane's live key read under (FIX 14344):
+    /// kept on every lane that keeps a Scope. `None` on a lane that reads as
+    /// its principal's own, and on one saved before the basis was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    native_basis: Option<NativeReadBasis>,
     /// The fields a narrower reader's view of this lane withheld a row or a
     /// scope id from (FIX 12171, 12285), by name: `records` when the caveat
     /// names a row that reader does not read, `room_facets` when it does not
@@ -175,15 +201,16 @@ impl FrozenReadLane {
     }
 
     /// `lane`, frozen. A lane under no narrowing freezes as the principal's
-    /// own, except under a non-guest credential whose native key lacks the
-    /// owner's full floor, whose credential's id stays with a top read
-    /// Scope, or under a credential that names a grant, whose id stays with
-    /// no Scope ([`Self::reads_as_principal`]): each rebuild judges that
-    /// grant (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
+    /// own, except under a credential that keeps its Scope at top
+    /// (`keeps_top_scope`), whose credential's id stays with a top read
+    /// Scope, or under another credential that names a grant, whose id
+    /// stays with no Scope ([`Self::reads_as_principal`]): each rebuild
+    /// judges that grant (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
     /// credential's id, read Scope and records caveat, each agent Grant
     /// alternative alone, the asked worlds and the room facets are kept. A
-    /// key rebuilt from a frozen lane keeps the credential it carries
-    /// ([`SavedCredential`]). A channel caveat the lane
+    /// lane that keeps a Scope also keeps its key's grant basis
+    /// ([`NativeReadBasis`]). A key rebuilt from a frozen lane keeps the
+    /// credential it carries ([`SavedCredential`]). A channel caveat the lane
     /// did not meet freezes as a Scope that reads nothing, as the live lane
     /// read nothing under it.
     ///
@@ -229,11 +256,11 @@ impl FrozenReadLane {
         });
         let worlds = key.worlds.as_ref().map(WorldAuthoritySet::scope_axis);
         let names_grant = claims.is_some_and(|claims| claims.grant_ref.is_some());
-        // A non-guest credential whose native key lacks the owner's full
-        // floor keeps its read Scope even at top; so does a rebuilt key that
-        // carries a saved credential and a frozen Scope.
-        let keeps_scope = match claims {
-            Some(claims) => claims.grant_ref.is_none() && !key.reads_as_vault_owner(),
+        // A credential whose principal's own key would regain what its key
+        // lacked keeps its read Scope even at top; so does a rebuilt key
+        // that carries a saved credential and a frozen Scope.
+        let keeps_scope = match &key.proof {
+            Some(proof) => keeps_top_scope(key, proof),
             None => !key.saved_credentials.is_empty() && key.authority_scope().is_some(),
         };
         let narrows = scope_narrows
@@ -298,6 +325,7 @@ impl FrozenReadLane {
             records,
             worlds,
             room_facets: key.room_facets,
+            native_basis: Some(key.native_read_basis()),
             withheld: Vec::new(),
         })
     }
@@ -399,8 +427,8 @@ impl FrozenReadLane {
     }
 
     /// `key`, the principal's own live key, narrowed by this frozen lane in
-    /// `txn`: held to the frozen Scope, records caveat, worlds and room
-    /// facets, each only narrowing. A lane whose credential no longer holds
+    /// `txn`: held to the saved key's grant basis, the frozen Scope, records
+    /// caveat, worlds and room facets, each only narrowing. A lane whose credential no longer holds
     /// in `txn` ([`SavedCredential`]) reads nothing, and the rebuilt key
     /// carries that credential, so each later read judges it again in its
     /// own snapshot. The principal's own lane returns `key` unchanged; a
@@ -442,6 +470,11 @@ impl FrozenReadLane {
         };
         if self.reads_as_principal() {
             return Ok(key);
+        }
+        // The principal's own key never lends the rebuild an owner standing
+        // the saved key lacked (FIX 14344, Astra F2 on #8029).
+        if let Some(basis) = self.native_basis {
+            key = key.within_native_basis(basis);
         }
         key = key.within_authority(self.authority.clone().unwrap_or_else(Scope::top));
         if let Some(alternatives) = &self.grant_alternatives {
@@ -486,6 +519,26 @@ impl FrozenReadLane {
         let txn = vault.store.env.read_txn()?;
         self.narrow_in_txn(vault, &txn, key)
     }
+}
+
+/// Whether a lane read under `proof` by `key` keeps its read Scope even at
+/// top (PR 5614; FIX 14344, Astra F2 on #8029): `key` lacks the vault
+/// owner's full floor, and its principal's own key would regain what it
+/// lacked. A credential that names no grant keeps it so. So does one that
+/// names a grant but failed the owner's own path (`credential_key.rs`): an
+/// owner's attenuated credential, which kept only the owner's exemption,
+/// one handed to another key, whose holder is a delegate, and one of
+/// another actor class on its holder's PERSON. A guest's own credential
+/// names a grant and holds no owner standing its principal's key could
+/// regain, so it reads as its principal's own
+/// ([`FrozenReadLane::reads_as_principal`]).
+fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedSlip) -> bool {
+    let claims = proof.claims();
+    !key.reads_as_vault_owner()
+        && (claims.grant_ref.is_none()
+            || key.owner_exemption.is_some()
+            || proof.is_transferred()
+            || !matches!(claims.actor_class.as_deref(), None | Some("human")))
 }
 
 /// Keeps each id `axis` names that `covered` holds (FIX 12285); whether it

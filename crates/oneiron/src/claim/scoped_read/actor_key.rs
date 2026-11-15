@@ -779,6 +779,43 @@ impl ScopedReadActorKey {
         }
     }
 
+    /// The grant basis this key reads under, as a saved lane keeps it beside
+    /// its frozen Scope (FIX 14344): whether it holds an owner standing (the
+    /// vault owner's floor, or a narrower credential's owner exemption, each
+    /// proved again at every read) and whether it reads under the
+    /// relationship-only grant gate.
+    pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
+        super::frozen::NativeReadBasis {
+            owner_exemption: self.owner.is_some() || self.owner_exemption.is_some(),
+            relationship_grants: self.uses_relationship_grants(),
+        }
+    }
+
+    /// This key held to `basis`, the grant basis a saved lane's live key
+    /// read under (FIX 14344, Astra F2 on #8029). For a lane whose live key
+    /// held no owner standing, the key loses the owner's floor and exemption
+    /// and reads under the gate that key read under: the relationship-only
+    /// gate, or the access gate when that key also closed unscoped rows. It
+    /// only narrows: a basis with an owner standing leaves the key as it is,
+    /// and a key already under the access gate stays there.
+    #[must_use]
+    pub(super) fn within_native_basis(mut self, basis: super::frozen::NativeReadBasis) -> Self {
+        if basis.owner_exemption {
+            return self;
+        }
+        self.owner_exemption = None;
+        if let Some(owner) = self.owner.take() {
+            // The owner's floor reads under no grant gate; the rebuilt key
+            // takes the live key's.
+            self.principal_ref = self.principal_ref.or(Some(owner));
+            self.enforce_access_grants = true;
+            self.unscoped_rows_open = basis.relationship_grants;
+        } else if !basis.relationship_grants {
+            self.unscoped_rows_open = false;
+        }
+        self
+    }
+
     /// Constructs a read capability only from a log/MAC/holder-verified slip.
     #[must_use]
     pub fn from_verified_slip(proof: &crate::authority::VerifiedSlip) -> Option<Self> {
