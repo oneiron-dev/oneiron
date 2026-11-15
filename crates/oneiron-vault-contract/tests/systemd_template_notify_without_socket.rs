@@ -33,7 +33,9 @@ fn plain_host_notifies_without_socket_activation() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("notify.sock");
     let notify = UnixDatagram::bind(&path).unwrap();
-    notify.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    notify
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
     // SAFETY: as above; nothing else in this process touches `NOTIFY_SOCKET`.
     unsafe {
         std::env::set_var("NOTIFY_SOCKET", &path);

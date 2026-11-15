@@ -388,6 +388,7 @@ pub(crate) use transcript::TRANSCRIPT_READ_ATTEMPTS;
 pub use transcript::{
     MAX_TRANSCRIPT_PAGE_TURNS, TranscriptMessage, TranscriptPage, TranscriptTurn,
 };
+pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
 pub use witness::{
     AppendToStreamRequest, BeginMessageStreamRequest, CancelStreamRequest, CommitMessageRequest,
     MessageBirth, MessageCancelKind, MessageCancelReason, MessageCommitOptions,
@@ -406,7 +407,6 @@ pub use witness::{
     SessionStreamOutcome, SessionStreamPartial, SessionWitnessBinding, SessionWitnessContext,
     SessionWitnessOutcome,
 };
-pub(crate) use witness::WITNESS_OCCURRENCE_SKEW_SECS;
 pub(crate) use witness::{
     MessageStreamRuntime, erase_stream_seeds_in_txn, message_completion_in_txn,
     message_stream_finality_in_txn, message_stream_held_generations_in_txn,
