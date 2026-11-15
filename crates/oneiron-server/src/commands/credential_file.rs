@@ -47,6 +47,37 @@ pub(crate) fn create(path: &Path) -> anyhow::Result<File> {
     Ok(file)
 }
 
+/// Writes `bytes` and a newline to the new owner-only file `path`
+/// ([`create`]), synced with its directory entry, for a secret that must be
+/// on disk before the change that makes it the only way in. On failure the
+/// file is removed and nothing is said to be kept.
+pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
+    let mut file = create(path)?;
+    let written = file
+        .write_all(bytes)
+        .and_then(|()| file.write_all(b"\n"))
+        .and_then(|()| file.sync_all());
+    drop(file);
+    if let Err(error) = written {
+        let _ = std::fs::remove_file(path);
+        anyhow::bail!("write {}: {error}", path.display());
+    }
+    // The new entry lasts once the directory is on disk too; until then the
+    // file is not kept.
+    #[cfg(unix)]
+    {
+        let dir = path
+            .parent()
+            .filter(|dir| !dir.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        if let Err(error) = File::open(dir).and_then(|dir| dir.sync_all()) {
+            let _ = std::fs::remove_file(path);
+            anyhow::bail!("sync the directory of {}: {error}", path.display());
+        }
+    }
+    Ok(())
+}
+
 /// Replaces `path` with a new owner-only file holding `bytes` and a newline:
 /// written under a fresh name beside it, synced, then renamed over it, so a
 /// reader finds the old file or the new one, never a part. On failure `path`

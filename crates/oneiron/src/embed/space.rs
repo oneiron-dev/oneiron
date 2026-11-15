@@ -29,7 +29,6 @@ use super::device::{
 };
 use crate::Vault;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, apply_ops};
-use crate::config::VectorEvidenceFloors;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
@@ -135,18 +134,12 @@ pub(crate) enum EmbeddingSetup {
     },
 }
 
-/// The id of declared space `id`'s EMBEDDING_SETUP row: the entity that names the space, as the
-/// scorer of its retests does (FIX 1638).
-pub(super) fn space_setup_id(id: &str) -> Result<EntityId> {
-    let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
-    EntityId::derive(domain, &[b"space".as_slice(), id.as_bytes()])
-}
-
-/// The id of `kind`'s slot EMBEDDING_SETUP row.
-pub(super) fn slot_setup_id(kind: InputKind) -> Result<EntityId> {
-    let domain = crate::entity_id::derived_domains::EMBEDDING_SETUP;
-    EntityId::derive(domain, &[b"slot".as_slice(), &[kind.byte()]])
-}
+#[doc(hidden)]
+pub use oneiron_records::embed::space::MediaRefused;
+#[doc(hidden)]
+use oneiron_records::embed::space::refused_setup;
+#[doc(hidden)]
+pub(super) use oneiron_records::embed::space::{slot_setup_id, space_setup_id};
 
 /// The id that names the vault's own text index where a declared space's setup row id would:
 /// the scorer of its retests (FIX 1638). No row is stored under it.
@@ -195,10 +188,6 @@ impl EmbeddingSetup {
         }
         Ok(setup)
     }
-}
-
-fn refused_setup(reason: String) -> Error {
-    Error::Artifact(ArtifactError::InvalidEmbeddingSetupBody(reason))
 }
 
 #[cfg(feature = "sync")]
@@ -392,15 +381,6 @@ pub(super) fn put_media_refusal_in_txn(
             at,
         },
     )
-}
-
-/// One document a space's model refused, as the owner sees it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct MediaRefused {
-    pub id: EntityId,
-    pub reason: String,
-    /// Vault seconds.
-    pub at: u64,
 }
 
 /// Forgets a refusal of `id` in `space`, once a vector of it lands there.
