@@ -17,16 +17,23 @@
 //! meet with the lane and reads nothing, even where the lane's own row
 //! admits the claim: a current credential that proves another class, the
 //! owner's own human-class key, and a key with no proof that names the
-//! agent class over a human-class lane (Sol F1 on #8134).
+//! agent class over a human-class lane (Sol F1 on #8134). A lane that kept
+//! no class, its live key having named none, reads under its principal's
+//! row class through each rebuild from that row, as before the class was
+//! kept: taking no class would free the rebuilt key from the row bound to
+//! that class, and the lane's frozen Scope would stand as read authority its
+//! live key lacked (Astra F1/F2 on #8134).
 //!
 //! Red at 4fe9a03288f (#8118's head 25e1b9d9f61 plus the shared
 //! source-reader helper, which moves no behaviour): each of the first five
 //! reads the claim. Red at 382d40476b6 (the first fix, under which every
 //! key with no proof took the lane's class, a caller's own key among them):
 //! the owner's own key over the agent-class lane, and the agent-class key
-//! over the human-class lane, each read the claim. Guards: a human-class
-//! credential's saved lane still reads the claim no row binds its class
-//! from, and an agent-class lane still reads a claim its own row admits.
+//! over the human-class lane, each read the claim, and so do a classless
+//! lane's asker and source readers under the human-class row (this file at
+//! that commit). Guards: a human-class credential's saved lane still reads
+//! the claim no row binds its class from, and an agent-class lane still
+//! reads a claim its own row admits.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_actor_class`.
 #![cfg(oneiron_test_support)]
@@ -47,7 +54,7 @@ use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::question_saved_lane::{
     question_read, saved_question_reader, saved_source_reader,
 };
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WorldAuthoritySet};
 use serde_json::json;
 
 const OCCURRED_AT: u64 = 1_769_947_200;
@@ -59,18 +66,22 @@ const DEVICE_BINDING_SEED: u8 = 0x6B;
 /// The caveat that narrows only the device credential's lifetime.
 const CAVEAT_TTL_SECS: u64 = 1_800;
 
-/// What the vault's one read row lets an agent-class key read.
+/// The vault's one read row: the class it binds, and what it lets a key of
+/// that class read.
 #[derive(Clone, Copy)]
-enum AgentReadRow {
-    /// The base world, each read held to a receipt: no read passes it.
-    HeldToReceipt,
-    /// The base world, with no receipt.
-    AdmitsBaseWorld,
+enum ReadRow {
+    /// The agent class, in the base world, each read held to a receipt: no
+    /// read passes it.
+    AgentHeldToReceipt,
+    /// The agent class, in the base world, with no receipt.
+    AgentAdmitsBaseWorld,
+    /// The human class, in the base world, each read held to a receipt.
+    HumanHeldToReceipt,
 }
 
 /// A vault whose owner wrote a base-world claim open to every relationship,
 /// paired an agent-class credential and a human-class device on their own
-/// PERSON, and keeps one read row, bound to the agent class.
+/// PERSON, and keeps one read row, bound to one class.
 struct Fixture {
     vault: Vault,
     _dir: tempfile::TempDir,
@@ -81,7 +92,7 @@ struct Fixture {
     device_slip: CapabilitySlip,
 }
 
-fn fixture(row: AgentReadRow) -> Fixture {
+fn fixture(row: ReadRow) -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("fresh vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
@@ -109,7 +120,7 @@ fn fixture(row: AgentReadRow) -> Fixture {
         "human",
         DEVICE_BINDING_SEED,
     );
-    keep_one_agent_read_row(&vault, row);
+    keep_one_read_row(&vault, row);
     Fixture {
         vault,
         _dir: dir,
@@ -195,9 +206,13 @@ fn paired_slip(
         .expect("the credential's key redeems the link")
 }
 
-/// Keeps the shipped policy, but replaces every read row with one that binds
-/// the agent class alone, to the base world.
-fn keep_one_agent_read_row(vault: &Vault, row: AgentReadRow) {
+/// Keeps the shipped policy, but replaces every read row with `row`, which
+/// binds one class alone, to the base world.
+fn keep_one_read_row(vault: &Vault, row: ReadRow) {
+    let class = match row {
+        ReadRow::AgentHeldToReceipt | ReadRow::AgentAdmitsBaseWorld => "agent",
+        ReadRow::HumanHeldToReceipt => "human",
+    };
     let id = oneiron_store::policy_record::default_policy_manifest_id()
         .expect("the default manifest id");
     let bytes = vault
@@ -216,18 +231,18 @@ fn keep_one_agent_read_row(vault: &Vault, row: AgentReadRow) {
         )
     });
     grants.push(json!({
-        "actor_class": "agent",
+        "actor_class": class,
         "effector": "core:read",
         "scope": oneiron_authority::federation::scope_codec::read_preset(),
         "selectors": { "world_ref": "base" },
-        "receipt_required": matches!(row, AgentReadRow::HeldToReceipt),
+        "receipt_required": !matches!(row, ReadRow::AgentAdmitsBaseWorld),
     }));
     oneiron::test_support::put_policy_manifest_bytes(
         vault,
         id,
         &rmp_serde::to_vec_named(&manifest).expect("encode the policy"),
     )
-    .expect("store the one agent-class read row beside the shipped policy");
+    .expect("store the one class-bound read row beside the shipped policy");
 }
 
 /// `slip`, proved by the key whose seed is `seed`.
@@ -379,9 +394,51 @@ fn owner_key_reads(fixture: &Fixture, frozen: &FrozenReadLane, row: EntityId) ->
     }
 }
 
+/// The lane of a key of the owner's id that names no class and holds no
+/// proof, floor or Scope (`ScopedReadActorKey::new`), bound to the base
+/// world.
+fn classless_lane(fixture: &Fixture) -> ScopedRead<'_> {
+    let key = ScopedReadActorKey::new(fixture.owner.to_hex()).expect("a key that names no class");
+    assert!(
+        key.actor_class().is_none() && !key.reads_as_vault_owner(),
+        "precondition: the key names no class and reads below the owner's floor; seen class {:?}",
+        key.actor_class()
+    );
+    fixture.vault.scoped_read(key).within_worlds(
+        WorldAuthoritySet::new(true, std::iter::empty::<EntityId>()).expect("the base world alone"),
+    )
+}
+
+/// The classless lane's saved form, once its live lane is shown to refuse
+/// the claim: no row binds a key of no class, and it holds no Scope to read
+/// through. Under the human-class row, a key built from the owner's PERSON
+/// row reads as human.
+fn classless_saved_lane(fixture: &Fixture) -> FrozenReadLane {
+    let (live, seen) = reads(
+        &classless_lane(fixture)
+            .recorded_lane()
+            .expect("record read lane"),
+        fixture.claim,
+    );
+    assert!(
+        !live,
+        "precondition: the classless key's live lane, with no Scope and no row of its class, refuses the owner's claim; seen {seen}"
+    );
+    let frozen = classless_lane(fixture)
+        .freeze()
+        .expect("the classless lane freezes");
+    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
+    let frozen: FrozenReadLane = rmp_serde::from_slice(&stored).expect("frozen lane decodes");
+    assert!(
+        !frozen.reads_as_principal(),
+        "precondition: the base-world bound keeps the classless lane from reading as its principal's own"
+    );
+    frozen
+}
+
 #[test]
 fn an_agent_class_saved_question_reads_no_claim_its_receipt_bound_row_refused() {
-    let fixture = fixture(AgentReadRow::HeldToReceipt);
+    let fixture = fixture(ReadRow::AgentHeldToReceipt);
     let frozen = agent_saved_lane(&fixture, false);
     let (read, seen) = asker_reads(&fixture, &frozen, fixture.claim);
     assert!(
@@ -392,7 +449,7 @@ fn an_agent_class_saved_question_reads_no_claim_its_receipt_bound_row_refused() 
 
 #[test]
 fn an_agent_class_saved_question_source_reads_no_claim_its_receipt_bound_row_refused() {
-    let fixture = fixture(AgentReadRow::HeldToReceipt);
+    let fixture = fixture(ReadRow::AgentHeldToReceipt);
     let frozen = agent_saved_lane(&fixture, false);
     let (read, seen) = source_reads(&fixture, &frozen, fixture.claim);
     assert!(
@@ -403,7 +460,7 @@ fn an_agent_class_saved_question_source_reads_no_claim_its_receipt_bound_row_ref
 
 #[test]
 fn an_agent_class_saved_lane_over_the_owners_key_reads_no_claim_its_receipt_bound_row_refused() {
-    let fixture = fixture(AgentReadRow::HeldToReceipt);
+    let fixture = fixture(ReadRow::AgentHeldToReceipt);
     let frozen = agent_saved_lane(&fixture, false);
     let (read, seen) = owner_key_reads(&fixture, &frozen, fixture.claim);
     assert!(
@@ -415,7 +472,7 @@ fn an_agent_class_saved_lane_over_the_owners_key_reads_no_claim_its_receipt_boun
 /// A key rebuilt from the lane, frozen again, keeps the class it read under.
 #[test]
 fn an_agent_class_saved_lane_frozen_again_from_its_rebuilt_reader_reads_no_claim_its_row_refused() {
-    let fixture = fixture(AgentReadRow::HeldToReceipt);
+    let fixture = fixture(ReadRow::AgentHeldToReceipt);
     let frozen = agent_saved_lane(&fixture, false);
     let rebuilt = saved_question_reader(&fixture.vault, fixture.owner, &frozen)
         .expect("the saved question's asker reader rebuilds");
@@ -432,7 +489,7 @@ fn an_agent_class_saved_lane_frozen_again_from_its_rebuilt_reader_reads_no_claim
 /// credential's class nor as its own once met with that credential.
 #[test]
 fn an_agent_class_saved_lane_over_a_human_class_credential_reads_nothing() {
-    let fixture = fixture(AgentReadRow::AdmitsBaseWorld);
+    let fixture = fixture(ReadRow::AgentAdmitsBaseWorld);
     let frozen = agent_saved_lane(&fixture, true);
     let current = credential_key(
         &fixture,
@@ -458,7 +515,7 @@ fn an_agent_class_saved_lane_over_a_human_class_credential_reads_nothing() {
 /// own row admits (Sol F1 on #8134).
 #[test]
 fn an_agent_class_saved_lane_over_the_owners_own_human_class_key_reads_nothing() {
-    let fixture = fixture(AgentReadRow::AdmitsBaseWorld);
+    let fixture = fixture(ReadRow::AgentAdmitsBaseWorld);
     let frozen = agent_saved_lane(&fixture, true);
     let (read, seen) = owner_key_reads(&fixture, &frozen, fixture.claim);
     assert!(
@@ -472,7 +529,7 @@ fn an_agent_class_saved_lane_over_the_owners_own_human_class_key_reads_nothing()
 /// its own receipt-bound row refused as human (Sol F1 on #8134).
 #[test]
 fn a_human_class_saved_lane_over_an_agent_class_key_reads_no_claim_its_row_refused() {
-    let fixture = fixture(AgentReadRow::HeldToReceipt);
+    let fixture = fixture(ReadRow::AgentHeldToReceipt);
     let frozen = saved_lane(&fixture, attenuated_device_key(&fixture));
     let current = ScopedReadActorKey::with_actor_class(fixture.owner.to_hex(), "agent")
         .expect("the owner's agent-class key");
@@ -495,7 +552,7 @@ fn a_human_class_saved_lane_over_an_agent_class_key_reads_no_claim_its_row_refus
 /// agent-class row does not bind, and reads the claim through every rebuild.
 #[test]
 fn a_human_class_saved_lane_still_reads_the_claim_no_row_binds_its_class_from() {
-    let fixture = fixture(AgentReadRow::HeldToReceipt);
+    let fixture = fixture(ReadRow::AgentHeldToReceipt);
     let key = attenuated_device_key(&fixture);
     let (live, seen) = reads(&held_lane(&fixture, key.clone()), fixture.claim);
     assert!(
@@ -522,7 +579,7 @@ fn a_human_class_saved_lane_still_reads_the_claim_no_row_binds_its_class_from() 
 /// through each rebuild from the principal's row.
 #[test]
 fn an_agent_class_saved_lane_still_reads_a_claim_its_row_admits() {
-    let fixture = fixture(AgentReadRow::AdmitsBaseWorld);
+    let fixture = fixture(ReadRow::AgentAdmitsBaseWorld);
     let frozen = agent_saved_lane(&fixture, true);
     for (reader, (read, seen)) in [
         ("asker", asker_reads(&fixture, &frozen, fixture.claim)),
@@ -533,4 +590,32 @@ fn an_agent_class_saved_lane_still_reads_a_claim_its_row_admits() {
             "actor=the owner's agent-class credential; expected its saved lane's {reader} rebuild to read, as the agent class, the claim its base-world row admits; seen {seen}"
         );
     }
+}
+
+/// A lane saved with no class reads under its principal's row class through
+/// the saved question's asker reader: taking no class frees the rebuilt key
+/// from the human-class row, and the lane's frozen Scope then reads the
+/// claim its live lane refused (Astra F2 on #8134).
+#[test]
+fn a_classless_saved_question_reads_no_claim_its_principals_human_class_row_refused() {
+    let fixture = fixture(ReadRow::HumanHeldToReceipt);
+    let frozen = classless_saved_lane(&fixture);
+    let (read, seen) = asker_reads(&fixture, &frozen, fixture.claim);
+    assert!(
+        !read,
+        "actor=a key of the owner's id that names no class; expected its saved question's asker reader to read as the human class of the owner's PERSON row and refuse the claim the human-class receipt-bound row refused, not to read it with no class through its frozen Scope; seen {seen}"
+    );
+}
+
+/// The saved question's source reader (its refresh, artifact and wake reads)
+/// reads a classless lane under its principal's row class as well.
+#[test]
+fn a_classless_saved_question_source_reads_no_claim_its_principals_human_class_row_refused() {
+    let fixture = fixture(ReadRow::HumanHeldToReceipt);
+    let frozen = classless_saved_lane(&fixture);
+    let (read, seen) = source_reads(&fixture, &frozen, fixture.claim);
+    assert!(
+        !read,
+        "actor=a key of the owner's id that names no class; expected its saved question's source reader to read as the human class of the owner's PERSON row and refuse the claim the human-class receipt-bound row refused, not to read it with no class through its frozen Scope; seen {seen}"
+    );
 }
