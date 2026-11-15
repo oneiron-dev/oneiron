@@ -55,6 +55,13 @@ pub(crate) trait SideTableDbs {
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         None
     }
+
+    /// Whether this target is an off-record room's view, whose rows stage
+    /// into the room's overlay and evaporate at its close (FIX 2329). The
+    /// side-row wall's refusal of a fresh secret there names the remedy.
+    fn side_off_record(&self) -> bool {
+        false
+    }
 }
 
 impl<T: ManifestDbs> SideTableDbs for T {
@@ -64,6 +71,10 @@ impl<T: ManifestDbs> SideTableDbs for T {
 
     fn side_sync_state_opt(&self) -> Option<&OverlayStrDb> {
         Some(self.sync_state())
+    }
+
+    fn side_off_record(&self) -> bool {
+        self.is_union()
     }
 }
 
@@ -95,6 +106,13 @@ impl SideTableDbs for RoutedDbs<'_> {
         match self {
             Self::Base(vault) => vault.side_custody(),
             Self::Session(_) => None,
+        }
+    }
+
+    fn side_off_record(&self) -> bool {
+        match self {
+            Self::Base(_) => false,
+            Self::Session(view) => view.side_off_record(),
         }
     }
 }
