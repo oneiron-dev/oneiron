@@ -407,7 +407,7 @@ pub(crate) fn apply_replayed_tombstone_for_sync(
     #[cfg(test)]
     maybe_inject_purge_failure()?;
     // The row's scope outlives it, bound to the peer's request (FIX 10161).
-    crate::deletion::tombstone_scope::capture_received_scope(vault, id, raw_value);
+    crate::deletion::tombstone_scope::capture_received_scope(vault, id, raw_value)?;
     vault.apply_replayed_tombstone_for_sync(id, raw_value)
 }
 
@@ -428,6 +428,6 @@ pub(in crate::sync) fn apply_replayed_tombstone_for_sync_in_txn(
 )> {
     #[cfg(test)]
     maybe_inject_purge_failure()?;
-    crate::deletion::tombstone_scope::capture_received_scope_in_txn(vault, wtxn, id, raw_value);
+    crate::deletion::tombstone_scope::capture_received_scope_in_txn(vault, wtxn, id, raw_value)?;
     vault.apply_replayed_tombstone_in_txn(wtxn, id, raw_value)
 }

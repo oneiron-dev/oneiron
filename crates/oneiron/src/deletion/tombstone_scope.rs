@@ -2,8 +2,13 @@
 //! delete request, so a selector export can carry the tombstone to a grant
 //! that reads that scope once the row is gone (FIX 10161).
 //!
-//! A capture never fails, delays or rolls back the delete it runs in: an error
-//! is logged, and the tombstone is then not exported to a narrower grant.
+//! A capture that cannot read its row records a closed one instead (OPUS-LEAKS,
+//! P3 of SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE): no scope, so a narrower
+//! grant takes the tombstone no more than with no capture, and a relationship
+//! read no member passes, so of a selector's members only an Owner's takes it.
+//! A capture error never fails the delete. Only a failed write of the closed
+//! row does, and in the delete's own transaction a failed write already fails
+//! its commit.
 
 use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
@@ -51,62 +56,89 @@ const TOMBSTONE_SCOPE: SideTable<HexId, DeletedRecordScope, Named> =
 /// Captures `id`'s scope in the delete's own transaction, before its row is
 /// torn down. `request` binds it; an unbound capture keeps the request a row
 /// is already bound to.
+///
+/// # Errors
+///
+/// A failed write of the closed capture a failed capture leaves.
 pub(crate) fn capture_deleted_scope_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     request: Option<&[u8; 16]>,
-) {
-    capture_deleted_scope_in_store_txn(&vault.store, txn, id, request);
+) -> Result<()> {
+    capture_deleted_scope_in_store_txn(&vault.store, txn, id, request)
 }
 
 /// [`capture_deleted_scope_in_txn`] for a writer that holds the store alone,
-/// as a Grant's withdrawal does (FIX 11780): the same capture, never failing
-/// the delete it runs in.
+/// as a Grant's withdrawal does (FIX 11780).
+///
+/// # Errors
+///
+/// As [`capture_deleted_scope_in_txn`].
 pub(crate) fn capture_deleted_scope_in_store_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     request: Option<&[u8; 16]>,
-) {
-    if let Err(error) = capture_in_txn(store, txn, id, request) {
-        warn_uncaptured(id, &error);
-    }
+) -> Result<()> {
+    capture_in_txn(store, txn, id, request).or_else(|error| {
+        warn_closed(id, &error);
+        close_in_txn(store, txn, id, request)
+    })
 }
 
 /// [`capture_deleted_scope_in_txn`] in a writer of its own, for the publish
-/// path, which holds no transaction where it captures.
+/// path, which holds no transaction where it captures. A failed capture's
+/// writer rolls back, and the closed capture takes a writer of its own.
+///
+/// # Errors
+///
+/// As [`capture_deleted_scope_in_txn`].
 #[cfg(feature = "sync")]
-pub(crate) fn capture_deleted_scope(vault: &Vault, id: &EntityId, tombstone: &TombstoneValueV2) {
-    let request = Some(&tombstone.request_id);
-    if let Err(error) =
-        vault.with_write_txn_grouped(|txn| capture_in_txn(&vault.store, txn, id, request))
-    {
-        warn_uncaptured(id, &error);
-    }
+pub(crate) fn capture_deleted_scope(
+    vault: &Vault,
+    id: &EntityId,
+    tombstone: &TombstoneValueV2,
+) -> Result<()> {
+    capture_in_own_txn(vault, id, Some(&tombstone.request_id))
 }
 
 /// A tombstone a peer sent: the scope of the row it removes here, bound to the
 /// request id its value carries.
+///
+/// # Errors
+///
+/// As [`capture_deleted_scope_in_txn`].
 pub(crate) fn capture_received_scope_in_txn(
     vault: &Vault,
     txn: &mut RwTxn<'_>,
     id: &EntityId,
     raw_value: &[u8],
-) {
+) -> Result<()> {
     let request = decode_tombstone_value(raw_value).request_id;
-    capture_deleted_scope_in_txn(vault, txn, id, request.as_ref());
+    capture_deleted_scope_in_txn(vault, txn, id, request.as_ref())
 }
 
 /// [`capture_received_scope_in_txn`] in a writer of its own, for a replay that
 /// opens its own transaction.
-pub(crate) fn capture_received_scope(vault: &Vault, id: &EntityId, raw_value: &[u8]) {
+///
+/// # Errors
+///
+/// As [`capture_deleted_scope_in_txn`].
+pub(crate) fn capture_received_scope(vault: &Vault, id: &EntityId, raw_value: &[u8]) -> Result<()> {
     let request = decode_tombstone_value(raw_value).request_id;
-    if let Err(error) =
-        vault.with_write_txn_grouped(|txn| capture_in_txn(&vault.store, txn, id, request.as_ref()))
-    {
-        warn_uncaptured(id, &error);
-    }
+    capture_in_own_txn(vault, id, request.as_ref())
+}
+
+/// The capture in a writer of its own, and the closed capture in another when
+/// it fails.
+fn capture_in_own_txn(vault: &Vault, id: &EntityId, request: Option<&[u8; 16]>) -> Result<()> {
+    vault
+        .with_write_txn_grouped(|txn| capture_in_txn(&vault.store, txn, id, request))
+        .or_else(|error| {
+            warn_closed(id, &error);
+            vault.with_write_txn_grouped(|txn| close_in_txn(&vault.store, txn, id, request))
+        })
 }
 
 /// The scope `id` held when delete `request` took it. Only a row bound to that
@@ -204,11 +236,43 @@ fn live_relationship_read(
         .unwrap_or(RelationshipRead::Decided(false))
 }
 
-fn warn_uncaptured(id: &EntityId, error: &Error) {
+/// The closed capture a failed one leaves: no scope, and a relationship read
+/// no member passes. It is bound to `request`, or with none to the request a
+/// held row names, when that row still reads. A later capture of the same
+/// delete rebinds it and leaves it closed; a capture of a live row with a
+/// scope replaces it.
+fn close_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    id: &EntityId,
+    request: Option<&[u8; 16]>,
+) -> Result<()> {
+    let key = HexId(*id);
+    let request = match request {
+        Some(request) => Some(*request),
+        None => TOMBSTONE_SCOPE
+            .get(store, txn, &key)
+            .ok()
+            .flatten()
+            .and_then(|row| row.request),
+    };
+    TOMBSTONE_SCOPE.put(
+        store,
+        txn,
+        &key,
+        &DeletedRecordScope {
+            scope: None,
+            request,
+            relationship_read: Some(RelationshipRead::Decided(false)),
+        },
+    )
+}
+
+fn warn_closed(id: &EntityId, error: &Error) {
     tracing::warn!(
         %error,
         entity = %id.to_hex(),
-        "deleted record's scope not captured; its tombstone stays off narrower grants"
+        "deleted record's scope not captured; its tombstone reaches no narrower grant and no member but an Owner"
     );
 }
 

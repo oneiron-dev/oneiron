@@ -81,7 +81,7 @@ impl Vault {
             // Its scope outlives the row, for the tombstone's export (FIX 10161).
             crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(
                 self, wtxn, id, request_id,
-            );
+            )?;
             // A deleted or erased pack source halts the catalog routes bound to
             // it (FIX 6034, 6086).
             self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
@@ -300,7 +300,7 @@ impl Vault {
             .delete_guards
             .refuse_revision_delete(&self.store, wtxn, id)?;
         // Its scope outlives the body (see the purge); its tombstone's capture binds it.
-        crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None);
+        crate::deletion::tombstone_scope::capture_deleted_scope_in_txn(self, wtxn, id, None)?;
         // A deleted or erased pack source halts the catalog routes bound to
         // it (FIX 6034, 6086).
         self.halt_deleted_pack_source_routes_in_txn(wtxn, id)?;
