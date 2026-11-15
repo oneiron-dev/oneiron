@@ -843,3 +843,277 @@ fn an_agent_enrolment_of_an_owner_key_on_old_parents_does_not_end_it() {
         "key keeps owner role: {roles:?}"
     );
 }
+
+/// The second owner key (test 11) and the successor root and node (test 12).
+const OWNER_KEY_SEED_2: u8 = 72;
+const NEW_ROOT_SEED: u8 = 64;
+const NEW_NODE_SEED: u8 = 65;
+
+impl OldParents {
+    /// The root enrols `owner_key` (held by `holder`, carried by M) on
+    /// `parent`: a copy of [`OldParents::enrol_owner_key`] with an explicit
+    /// parent, key and holder. The possession challenge binds the HOLDER
+    /// machine; the carrier stays M (its install key cosigns).
+    fn enrol_owner_key_on(
+        &mut self,
+        parent: AuthorityEntryHash,
+        owner_key: &SigningKey,
+        holder: EntityId,
+    ) -> AuthorityEntryHash {
+        let vault_id = self.vault_id();
+        let public_key = owner_key.verifying_key().to_bytes();
+        let target = owner_key_enrollment_target(&vault_id, &public_key).expect("the target");
+        let challenge = owner_key_enrollment_challenge(&vault_id, holder, &public_key, owner())
+            .expect("the challenge");
+        let proof = owner_key.sign(&challenge).to_bytes().to_vec();
+        let op = AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
+            act: OwnerAct::by_owner(
+                owner(),
+                OwnerActKind::OwnerKeyEnrollment,
+                target,
+                ActSurface::ThisInstall,
+                OWNER_KEY_ENROLLMENT_SEEN,
+            ),
+            machine: holder,
+            carrier: self.machine,
+            device: DeviceAuthority {
+                key: AuthorityKey::Ed25519(public_key),
+                transport_key_binding: [0; 32],
+                attestation: AuthorityAttestation {
+                    kind: OWNER_KEY_POSSESSION_KIND.to_owned(),
+                    evidence: proof,
+                },
+                tier: AuthorityTier::Software,
+                roles: ROLE_OWNER,
+            },
+        });
+        self.root_seq += 1;
+        let seq = self.root_seq;
+        let row = signed(
+            Some(vault_id),
+            seq,
+            vec![parent],
+            op,
+            &self.root,
+            &[&self.node],
+        );
+        let entry = hash(&row);
+        self.rows.push(row);
+        entry
+    }
+
+    /// M carries `op` on `parents` under its own install key at `seq`.
+    fn carry_with_seq(
+        &mut self,
+        parents: Vec<AuthorityEntryHash>,
+        op: AuthorityOp,
+        seq: u64,
+    ) -> AuthorityEntryHash {
+        let vault_id = self.vault_id();
+        let row = signed(Some(vault_id), seq, parents, op, &self.node, &[]);
+        let entry = hash(&row);
+        self.rows.push(row);
+        entry
+    }
+
+    /// `signer` signs `op` on `parents` at `seq` with no cosign: for rows
+    /// neither the root nor M signs (a successor root, a fresh node).
+    fn push_signed_row(
+        &mut self,
+        parents: Vec<AuthorityEntryHash>,
+        op: AuthorityOp,
+        signer: &SigningKey,
+        seq: u64,
+    ) -> AuthorityEntryHash {
+        let vault_id = self.vault_id();
+        let row = signed(Some(vault_id), seq, parents, op, signer, &[]);
+        let entry = hash(&row);
+        self.rows.push(row);
+        entry
+    }
+}
+
+/// Test 11 of the row (Sol xhigh review OLD-01, 15 Nov 23:2x): an enrolment
+/// the second fold admits has its own line. Branch one carries a home pick T
+/// on P and enrols K1 on T; branch two carries a removal R of X on P and
+/// enrols K2 (holder X) on R. The first fold refuses E2 (R removed X), the
+/// second holds R and admits E2, and only a third fold makes T (outside E2's
+/// line) wait.
+#[test]
+fn an_enrolment_the_second_fold_admits_has_its_own_line() {
+    let mut vault = OldParents::new();
+    let (victim_key, victim, registered) = vault.register_second_machine();
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let t = vault.carry(
+        vec![registered],
+        home_pick_op(vault_id, machine, PICKED_NODE),
+    );
+    let k1_signing = signing(OWNER_KEY_SEED);
+    let e1 = vault.enrol_owner_key_on(t, &k1_signing, machine);
+    let k1 = key_of(&k1_signing);
+    let removal_act = OwnerAct::by_owner(
+        owner(),
+        OwnerActKind::MachineRemoval,
+        victim,
+        ActSurface::ThisInstall,
+        machine_answer_revision([registered]),
+    );
+    let answer = Some((machine, removal_act));
+    let profile = node_profile(
+        vault_id,
+        victim,
+        &victim_key,
+        MachineRole::Removed,
+        2,
+        answer,
+    );
+    let r = vault.carry_with_seq(vec![registered], AuthorityOp::MachineProfile(profile), 2);
+    let k2_signing = signing(OWNER_KEY_SEED_2);
+    let e2 = vault.enrol_owner_key_on(r, &k2_signing, victim);
+    let k2 = key_of(&k2_signing);
+    let fold = vault.fold();
+    assert_enrolment_counted(&fold, &e1, &k1);
+    assert!(
+        fold.valid_entries.contains(&e2),
+        "second enrolment counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, &k2),
+        "second key is a live owner key: {k2:?} {:?}",
+        fold.issues
+    );
+    assert!(
+        is_held(&fold, victim, &r),
+        "removal outside the first line is held: {:?}",
+        fold.issues
+    );
+    assert!(
+        waits(&fold, &t),
+        "pick outside the second line waits: {:?}",
+        fold.issues
+    );
+    assert!(
+        !in_force_home_pick(&fold),
+        "pick outside the second line not in force: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 12 of the row (Sol xhigh review OLD-04, 15 Nov 23:2x): an enrolment
+/// a handoff prunes makes no choice wait. E enrols K on P, H re-roots A to B
+/// on P, B registers N on H, and N carries a home pick T on its own
+/// registration. H settles and retires A on every branch, so E (signed by A
+/// outside H's line) is invalid, K proves nowhere, and T lands.
+#[test]
+fn an_enrolment_a_handoff_prunes_makes_no_choice_wait() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let e = vault.enrol_owner_key();
+    let k = vault.owner_authority_key();
+    let vault_id = vault.vault_id();
+    let b_signing = signing(NEW_ROOT_SEED);
+    let b_key = key_of(&b_signing);
+    let h = vault.push_root_row(
+        vec![p],
+        AuthorityOp::ReRoot {
+            new_device: DeviceAuthority {
+                key: b_key,
+                transport_key_binding: [7; 32],
+                attestation: AuthorityAttestation {
+                    kind: "SoftwareArgon2id".to_owned(),
+                    evidence: vec![1, 2, 3],
+                },
+                tier: AuthorityTier::CloudCustodial,
+                roles: ROLE_OWNER | ROLE_ADMIN | ROLE_CLOUD,
+            },
+        },
+    );
+    let n_signing = signing(NEW_NODE_SEED);
+    let n_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+    let n_profile = node_profile(
+        vault_id,
+        n_machine,
+        &n_signing,
+        MachineRole::HostedNode,
+        1,
+        None,
+    );
+    let n_reg = vault.push_signed_row(
+        vec![h],
+        AuthorityOp::MachineProfile(n_profile),
+        &b_signing,
+        1,
+    );
+    let t = vault.push_signed_row(
+        vec![n_reg],
+        home_pick_op(vault_id, n_machine, PICKED_NODE),
+        &n_signing,
+        1,
+    );
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&h),
+        "handoff counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        !fold.valid_entries.contains(&e),
+        "pruned enrolment does not count: {:?}",
+        fold.issues
+    );
+    assert!(
+        !live_owner(&fold, &k),
+        "pruned key is no live owner: {k:?} {:?}",
+        fold.issues
+    );
+    assert!(
+        !waits(&fold, &t),
+        "choice where no key proves does not wait: {:?}",
+        fold.issues
+    );
+    assert!(
+        in_force_home_pick(&fold),
+        "choice where no key proves is in force: {:?}",
+        fold.issues
+    );
+}
+
+/// Test 13 of the row (Sol xhigh review OLD-02, 15 Nov 23:2x), a control: two
+/// proving enrolments of one key both stand. E1 and E2 enrol the same K with
+/// the same holder, carrier and possession proof on sibling branches from P.
+/// Both prove in the first fold, so neither is outside the other's line as a
+/// refused enrolment; it passes with and without the fix.
+#[test]
+fn two_proving_enrolments_of_one_key_both_stand() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let machine = vault.machine;
+    let k_signing = signing(OWNER_KEY_SEED);
+    let k = key_of(&k_signing);
+    let e1 = vault.enrol_owner_key_on(p, &k_signing, machine);
+    let e2 = vault.enrol_owner_key_on(p, &k_signing, machine);
+    let fold = vault.fold();
+    assert!(
+        fold.valid_entries.contains(&e1),
+        "first enrolment counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.valid_entries.contains(&e2),
+        "second enrolment counts: {:?}",
+        fold.issues
+    );
+    assert!(
+        live_owner(&fold, &k),
+        "key is a live owner: {k:?} {:?}",
+        fold.issues
+    );
+    let roles = fold.roster.get(&k).map(|device| device.roles);
+    assert_eq!(
+        roles,
+        Some(ROLE_OWNER),
+        "key keeps owner role: {roles:?} {:?}",
+        fold.issues
+    );
+}
