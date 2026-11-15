@@ -177,6 +177,7 @@ impl ExtractionEncoder for Names {
                 context_links: Vec::new(),
                 speaker_links: Vec::new(),
                 mood_parts: Vec::new(),
+                relations: None,
                 stack_sha16: self.stack.map(str::to_owned),
             }),
         }

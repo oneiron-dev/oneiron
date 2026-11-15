@@ -109,6 +109,7 @@ fn held_tags(stack: Option<&str>) -> EncoderOutput {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: stack.map(str::to_owned),
         mood_parts: Vec::new(),
     }

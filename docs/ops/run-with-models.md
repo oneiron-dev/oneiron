@@ -3308,6 +3308,21 @@ configured processing language as a lowercase ISO 639 code. It covers every
 vault turn the tagger reads. Leave it unset when the vault's language is
 unknown or mixed; unset sends no configured language.
 
+`[oneironer.relations]` maps a tagger's relation labels to claim
+predicates, for a tagger whose model card declares `"relations": true`:
+
+```toml
+[oneironer.relations]
+works_at = "work.employer"
+```
+
+The tagger saves the relations it reads between a turn's spans with the
+turn's tags, and `vault.tagging.tags` shows them. A relation is a tag, never
+a claim: the Dreamer's child authors any claim (JointIE, ARCH-0026). Each
+predicate must be one a claim write takes, two or more dotted lowercase
+segments outside the reserved `edge.*`, `skill.*` and `actor.*` namespaces,
+or the server refuses to start.
+
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses
 at startup (`oneironer engine candle/cuda does not run on this machine`).

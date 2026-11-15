@@ -98,6 +98,13 @@ pub struct TaggingMarkerConfig {
     /// own text. No model's label names sit in engine code; the host
     /// supplies the table.
     pub labels: BTreeMap<String, u8>,
+    /// The relation table: a model relation label to the claim predicate the
+    /// Dreamer's child files a relation with that label under (JointIE,
+    /// ARCH-0026). A label absent here files nothing, and an empty table
+    /// leaves every slice to the extraction model. The child reads it at
+    /// use, so a new table needs no new tagging pass. No model's label names
+    /// sit in engine code; the host supplies the table.
+    pub relations: BTreeMap<String, String>,
     /// The vault turns' configured processing language as a lowercase ISO
     /// 639 code, when the host names one. It is sent as every vault turn's
     /// language; `None`, the default, sends no configured language. Leave
@@ -116,6 +123,7 @@ impl TaggingMarkerConfig {
             trace_history: TaggingTraceHistory::default(),
             mode: TaggingMode::Save,
             labels: BTreeMap::new(),
+            relations: BTreeMap::new(),
             language: None,
         };
         config.validate()?;
@@ -154,10 +162,19 @@ impl TaggingMarkerConfig {
         self
     }
 
+    /// Sets the relation table; [`Self::validate`] refuses a row whose label
+    /// is not 1 to 64 bytes or whose predicate a public claim write refuses.
+    #[must_use]
+    pub fn with_relations(mut self, relations: BTreeMap<String, String>) -> Self {
+        self.relations = relations;
+        self
+    }
+
     /// Refuses a checkpoint or a stack that is not 16 lowercase hex digits,
     /// a live window past the runtime's input window, a trace history past
-    /// its bounds or with no age, and a label table row that is empty,
-    /// longer than 64 bytes or maps to a kind with no identity key.
+    /// its bounds or with no age, a label table row that is empty, longer
+    /// than 64 bytes or maps to a kind with no identity key, and a relation
+    /// table row [`relation_row_refusal`] refuses.
     pub fn validate(&self) -> Result<()> {
         let invalid = |reason: &str| Err(Error::InvalidConfig(reason.to_owned()));
         if !is_checkpoint(&self.checkpoint) {
@@ -187,8 +204,31 @@ impl TaggingMarkerConfig {
                 return invalid("a tagging label maps to a kind with no identity key");
             }
         }
+        for (label, predicate) in &self.relations {
+            if let Some(reason) = relation_row_refusal(label, predicate) {
+                return invalid(reason);
+            }
+        }
         Ok(())
     }
+}
+
+/// Why the relation table may not map `label` to `predicate`, if it may
+/// not: the label is empty or longer than 64 bytes, or the predicate is one
+/// a public claim write refuses (the dotted grammar, or a reserved
+/// namespace), so no relation is ever filed under a predicate the child
+/// could not write.
+#[must_use]
+pub fn relation_row_refusal(label: &str, predicate: &str) -> Option<&'static str> {
+    if label.is_empty() || label.len() > MAX_LABEL_BYTES {
+        return Some("a tagging relation label must be 1 to 64 bytes");
+    }
+    if crate::write_envelope::claim_predicate::validate_predicate(predicate, false).is_err() {
+        return Some(
+            "a tagging relation must map to a claim predicate of two or more dotted lowercase segments outside the reserved namespaces",
+        );
+    }
+    None
 }
 
 /// Whether `value` is 16 lowercase hex digits: the form of a checkpoint and

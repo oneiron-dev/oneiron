@@ -5,6 +5,7 @@ pub use crate::memory::extraction::types::ExecutionCompute;
 pub use crate::memory::extraction::types::ExecutionPick;
 pub use crate::memory::extraction::types::ExecutionRuntime;
 pub use crate::memory::extraction::types::NerSpan;
+pub use crate::memory::extraction::types::RelationLink;
 pub use crate::memory::extraction::types::SpeakerLink;
 pub use crate::memory::extraction::types::SpeakerTarget;
 pub use oneiron_store::extraction_work::ExtractionWork;

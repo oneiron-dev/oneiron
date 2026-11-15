@@ -205,6 +205,11 @@ pub struct OneironerConfig {
     /// Model label to engine entity kind (a registry kind such as `PERSON`).
     /// A label absent here stays a tag and maps to nothing.
     pub labels: BTreeMap<String, String>,
+    /// Model relation label to the claim predicate the Dreamer's child files
+    /// a relation with that label under (`works_at = "work.employer"`). A
+    /// label absent here files nothing; an empty table, the default, leaves
+    /// every slice to the extraction model.
+    pub relations: BTreeMap<String, String>,
     /// Request timeout per tagger call.
     pub timeout_ms: u64,
     /// Markers claimed per worker pass.
@@ -252,6 +257,7 @@ impl Default for OneironerConfig {
             stack_sha16: None,
             label_count: None,
             labels: BTreeMap::new(),
+            relations: BTreeMap::new(),
             timeout_ms: DEFAULT_TIMEOUT_MS,
             batch_size: DEFAULT_BATCH_SIZE,
             idle_interval_ms: DEFAULT_IDLE_INTERVAL_MS,
@@ -282,7 +288,7 @@ impl OneironerConfig {
 
     /// The vault's marker configuration, when markers are on: the checkpoint
     /// and pinned stack, the live window, the trace history, the mode, the
-    /// label table and the configured language.
+    /// label and relation tables and the configured language.
     pub fn marker_config(&self) -> Option<oneiron::tagging::TaggingMarkerConfig> {
         let checkpoint = self.marker_checkpoint()?;
         Some(oneiron::tagging::TaggingMarkerConfig {
@@ -295,6 +301,7 @@ impl OneironerConfig {
                 OneironerMode::Shadow => oneiron::tagging::TaggingMode::Shadow,
             },
             labels: self.label_kinds(),
+            relations: self.relations.clone(),
             language: self.language.clone(),
         })
     }
@@ -357,6 +364,9 @@ impl OneironerConfig {
         }
         if let Some(labels) = over.labels {
             self.labels = labels;
+        }
+        if let Some(relations) = over.relations {
+            self.relations = relations;
         }
         if let Some(value) = over.timeout_ms {
             self.timeout_ms = value;
@@ -447,6 +457,11 @@ impl OneironerConfig {
                 anyhow::bail!(
                     "oneironer.labels maps a label to {kind}, a kind with no identity key; leave the label out to keep it a tag"
                 );
+            }
+        }
+        for (label, predicate) in &self.relations {
+            if let Some(reason) = oneiron::tagging::relation_row_refusal(label, predicate) {
+                anyhow::bail!("oneironer.relations: {reason}");
             }
         }
         for (label, row) in &self.tiers {
@@ -555,6 +570,7 @@ pub struct OneironerConfigOverride {
     pub stack_sha16: Option<String>,
     pub label_count: Option<u32>,
     pub labels: Option<BTreeMap<String, String>>,
+    pub relations: Option<BTreeMap<String, String>>,
     pub timeout_ms: Option<u64>,
     pub batch_size: Option<usize>,
     pub idle_interval_ms: Option<u64>,
@@ -683,6 +699,7 @@ pub(super) fn lookup_oneironer_override(
         labels: lookup("ONEIRON_ONEIRONER_LABELS")
             .map(|value| parse_labels(&value).map_err(anyhow::Error::msg))
             .transpose()?,
+        relations: None,
         timeout_ms: lookup_parse(lookup, "ONEIRON_ONEIRONER_TIMEOUT_MS")?,
         batch_size: lookup_parse(lookup, "ONEIRON_ONEIRONER_BATCH_SIZE")?,
         idle_interval_ms: lookup_parse(lookup, "ONEIRON_ONEIRONER_IDLE_INTERVAL_MS")?,

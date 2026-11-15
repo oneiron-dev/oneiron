@@ -30,4 +30,8 @@ pub enum OutputRefusal {
     SpanOrder,
     /// The answer names another stack than the one the marker is owed to.
     OtherStack,
+    /// A relation names a missing span, joins a span to itself, carries a
+    /// label that is empty or longer than 64 bytes, or a confidence that is
+    /// not a finite value in 0..1.
+    BadRelation,
 }

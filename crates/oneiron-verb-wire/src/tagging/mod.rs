@@ -5,6 +5,7 @@ pub use crate::tagging::verbs::MentionLinkView;
 pub use crate::tagging::verbs::MentionReferenceView;
 pub use crate::tagging::verbs::MergeEvidenceView;
 pub use crate::tagging::verbs::TaggedMentionView;
+pub use crate::tagging::verbs::TaggedRelationView;
 pub use crate::tagging::verbs::TaggingFailureView;
 pub use crate::tagging::verbs::TaggingHistoryView;
 pub use crate::tagging::verbs::TaggingMarkerState;

@@ -115,6 +115,7 @@ fn names_in(input: &EncoderInput, known: &[&str]) -> EncoderOutput {
         vad: Some(MOOD),
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     }
@@ -453,6 +454,7 @@ fn an_import_that_holds_its_tags_makes_no_tagger_call() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -512,6 +514,7 @@ fn held_tags_from_messages_sent_last_first_are_saved() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -587,6 +590,7 @@ fn held_tags_are_saved_on_the_messages_they_were_read_from() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -645,6 +649,7 @@ fn held_tags_for_an_append_leave_the_turn_to_the_tagger() {
         vad: None,
         context_links: Vec::new(),
         speaker_links: Vec::new(),
+        relations: None,
         stack_sha16: None,
         mood_parts: Vec::new(),
     };
@@ -700,6 +705,7 @@ fn merge_evidence_goes_when_its_spans_stop_naming_different_entities() {
                     vad: None,
                     context_links: Vec::new(),
                     speaker_links: Vec::new(),
+                    relations: None,
                     stack_sha16: None,
                     mood_parts: Vec::new(),
                 },

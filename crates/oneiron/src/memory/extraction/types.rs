@@ -93,7 +93,7 @@ pub struct EncoderInput {
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::extraction::types::{
     ContextLink, CorefLink, EncoderExecution, ExecutionCompute, ExecutionPick, ExecutionRuntime,
-    NerSpan, SpeakerLink, SpeakerTarget,
+    NerSpan, RelationLink, SpeakerLink, SpeakerTarget,
 };
 
 /// The mood a model measured over one window of a turn it read in several
@@ -135,6 +135,11 @@ pub struct EncoderOutput {
     /// measured one, when `vad` is none for that reason (FIX 9518).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mood_parts: Vec<MoodPart>,
+    /// The relations read between the answer's spans, when the model has a
+    /// relation head: `None` when it returns none, empty when it read the
+    /// turn and found none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relations: Option<Vec<RelationLink>>,
     /// The served stack that made the answer, as its model card names it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stack_sha16: Option<String>,

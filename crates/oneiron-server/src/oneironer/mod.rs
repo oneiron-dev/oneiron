@@ -610,6 +610,7 @@ fn build_slot_inner(
                 provider = config.provider.as_str(),
                 label_count = card.label_count,
                 links = card.returns.links,
+                relations = card.returns.relations,
                 checkpoint_sha16 = card.checkpoint_sha16.as_str(),
                 stack_sha16 = card.stack_sha16.as_deref().unwrap_or("-"),
                 decode_revision = slot.tagger.decode_revision().unwrap_or("-"),

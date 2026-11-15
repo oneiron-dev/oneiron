@@ -39,7 +39,7 @@ pub(super) use crate::config::tagging::is_checkpoint;
 pub use crate::config::tagging::{
     DEFAULT_LIVE_WINDOW_TOKENS, DEFAULT_TRACE_MAX_AGE_SECS, DEFAULT_TRACES_PER_TURN,
     MAX_LIVE_WINDOW_TOKENS, MAX_TRACES_PER_TURN, TaggingMarkerConfig, TaggingMode,
-    TaggingTraceHistory, label_kind_admitted,
+    TaggingTraceHistory, label_kind_admitted, relation_row_refusal,
 };
 
 /// What one marker names: a turn owed one pass by one tagger checkpoint,

@@ -11,7 +11,7 @@ pub use types::{
     ContextLink, CorefLink, EncoderAttempt, EncoderExecution, EncoderGolden, EncoderInput,
     EncoderMessage, EncoderOutput, EncoderParity, EncoderRegister, EncoderTurn, ExecutionCompute,
     ExecutionPick, ExecutionRuntime, ExtractionCaller, ExtractionEncoder, ExtractionWork, MoodPart,
-    NerSpan, RegisterReach, ShadowTrace, SpeakerLink, SpeakerRole, SpeakerTarget,
+    NerSpan, RegisterReach, RelationLink, ShadowTrace, SpeakerLink, SpeakerRole, SpeakerTarget,
     WitnessWithShadow,
 };
 #[cfg(test)]
