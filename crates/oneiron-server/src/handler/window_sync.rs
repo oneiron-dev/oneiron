@@ -446,8 +446,21 @@ pub(super) async fn handle_window_sync(
             // The pads it owes reach custody here before it persists (FIX
             // 7107). Pads that did not install leave nothing persisted,
             // imported or relayed: the device is told, and sends the same
-            // bytes again as the carrier (KEEP TODAY).
-            let receipt = super::window_pads::admit(server, &key, envelope, &doc);
+            // bytes again as the carrier (KEEP TODAY). A member lane's sealed
+            // capsule never reaches the home's pad custody, which only the
+            // owner's machines fill: it is answered NotReady before any pad
+            // installs, so the member sends the carrier, whose pads land only
+            // as its admitted rows do (OPUS-SECREAD-B #8363 F1).
+            let receipt = if conn_state.selector_lane.member().is_some()
+                && envelope.form == oneiron::sync::transport::WindowPadForm::Sealed
+            {
+                oneiron::sync::transport::WindowPadReceipt {
+                    binding: envelope.binding(),
+                    readiness: oneiron::sync::transport::WindowPadReadiness::NotReady,
+                }
+            } else {
+                super::window_pads::admit(server, &key, envelope, &doc)
+            };
             if receipt.readiness == oneiron::sync::transport::WindowPadReadiness::NotReady {
                 direct_tx
                     .send(super::window_pads::receipt_frame(
