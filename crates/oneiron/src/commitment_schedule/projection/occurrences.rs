@@ -38,7 +38,7 @@ pub(super) fn project_row(
             )
         }
         _ => (
-            due_at.saturating_sub(payload.lead_seconds()),
+            due_at,
             point_occurrence(due_at)?,
         ),
     };

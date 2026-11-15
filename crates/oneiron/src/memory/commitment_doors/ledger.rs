@@ -51,7 +51,7 @@ impl Memory<'_> {
                 Err(error) if error.code == super::super::MEMORY_CODE_NOT_FOUND => continue,
                 Err(error) => return Err(error),
             };
-            if !matches!(view.status, CommitmentStatus::Open) {
+            if matches!(view.status, CommitmentStatus::Open) {
                 continue;
             }
             items.push(CommitmentLedgerItem {

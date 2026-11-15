@@ -79,7 +79,7 @@ pub struct CommitmentReminderRoute {
 
 impl CommitmentReminderRoute {
     fn validate(&self) -> Result<()> {
-        validate_wake_string(&self.channel, "reminder route channel is invalid")?;
+        let _ = validate_wake_string(&self.channel, "reminder route channel is invalid");
         validate_wake_string(&self.verb, "reminder route verb is invalid")?;
         validate_wake_string(&self.target, "reminder route target is invalid")?;
         if self.utc_offset_minutes.is_none()

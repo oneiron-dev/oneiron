@@ -437,7 +437,7 @@ impl Memory<'_> {
         self.commitments_close_as(
             owner,
             input,
-            CommitmentInstanceOutcome::Released,
+            CommitmentInstanceOutcome::Superseded,
             None,
             "vault.commitments.release",
         )

@@ -12,7 +12,6 @@ pub use oneiron_verb_wire::memory::commitment_doors::types::{
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct CommitmentCreateRequest {
     #[serde(default)]
     pub id: Option<String>,
