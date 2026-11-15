@@ -223,6 +223,10 @@ pub(super) fn project_once(
         waiting_owner_choices: merged.as_ref().map_or_else(BTreeSet::new, |state| {
             super::owner_proof::asking_owner_choices(state)
         }),
+        owner_key_requirement: merged.as_ref().map_or_else(
+            Default::default,
+            super::owner_proof::folded_owner_key_requirement,
+        ),
         pinned_root: None,
         root_anchors: merged
             .as_ref()
