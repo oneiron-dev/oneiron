@@ -9,7 +9,10 @@
 //! and its connector-send TASK, the attempt waits Scheduled until its release
 //! instant, and a held row names it. The connector executor claims it at that
 //! instant, as it claims a retry's backoff, so the release needs no worker of
-//! its own and a restart keeps the hold. Until then, paused or not,
+//! its own and a restart keeps the hold. The same write arms a row of
+//! [`UNDO_SEND_RELEASE_JOB`] at the release instant, so a host that stopped its
+//! vault wakes then and its connector-send drain sends (DESIGN
+//! 15-setting-primitive, stage 5c). Until then, paused or not,
 //! `vault.outbound.undo_send` takes it back: the attempt is cancelled and the TASK settles with the
 //! synced reason `undo_send`, so no machine sends it. The owner undoes any
 //! held send, and a person their own. Once the window closes the send is
@@ -40,6 +43,9 @@ use crate::error::Result;
 use crate::memory::{
     MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult,
 };
+use crate::schedule::{
+    ArmBy, Armed, JobPass, JobResult, JobSpec, Late, RETRY_FIRST_SECS, Ran, Trigger, When,
+};
 use crate::settings::undo_send::{UNDO_SEND_EXCLUDED_CHANNEL, undo_send_setting_in_txn};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionId;
@@ -56,6 +62,30 @@ const UNDO_SEND_NOTE: &str = "undo send";
 
 /// One send in its undo-send window. Key: id16 (the connector-send TASK).
 const HELD: SideTable<EntityId, UndoSendHold, Named> = SideTable::new(&side_table::UNDO_SEND_HELD);
+
+/// Each held send's release: a one-time row about its connector-send TASK, armed at the release
+/// instant in the write that holds it and disarmed in the write that takes it back or drops its
+/// closed row. It wakes a host that stopped its vault for the release; the attempt queue releases
+/// the send, so a run answers done and the row goes. The held row stays until a later hold drops
+/// it, so an undo after the window closed still answers that it closed.
+pub(crate) static UNDO_SEND_RELEASE_JOB: JobSpec = JobSpec {
+    code: "outbound.undo_send_release",
+    when: When::PerArming,
+    arm_by: ArmBy::Engine,
+    late: Late::Run,
+    retry_first_secs: RETRY_FIRST_SECS,
+    retry_cap_secs: None,
+    wakes_host: true,
+    at_open: false,
+    once_per_pass: true,
+    runs_here: crate::schedule::any_node,
+    run: run_undo_send_release,
+};
+
+/// A held send's release came: the attempt queue's claim sends it, so the run has nothing to do.
+fn run_undo_send_release(_vault: &Vault, _armed: &Armed, _pass: &JobPass<'_>) -> Result<JobResult> {
+    Ok(JobResult::of(Ran::Done))
+}
 
 /// The first agent send through each channel. Key: string (the channel, as
 /// its capability manifest names it).
@@ -232,6 +262,13 @@ pub(crate) fn hold_send_for_undo_in_txn(
                 first_send_hint,
             },
         )?;
+        crate::schedule::arm_in_txn(
+            &vault.store,
+            wtxn,
+            &UNDO_SEND_RELEASE_JOB,
+            Some(send.task_ref),
+            Trigger::At { at: release_at },
+        )?;
     }
     Ok(record)
 }
@@ -258,8 +295,8 @@ fn record_first_agent_send_in_txn(
     Ok(true)
 }
 
-/// Drops the rows of windows that closed by `now`: their sends went to the
-/// executor and no undo reads them again.
+/// Drops the rows of windows that closed by `now`, with their release rows: their sends went to
+/// the executor and no undo reads them again.
 fn prune_closed_windows_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now: u64) -> Result<()> {
     let closed: Vec<EntityId> = HELD
         .scan(&vault.store, wtxn)?
@@ -269,6 +306,12 @@ fn prune_closed_windows_in_txn(vault: &Vault, wtxn: &mut heed::RwTxn<'_>, now: u
         .collect();
     for task_ref in closed {
         HELD.delete(&vault.store, wtxn, &task_ref)?;
+        crate::schedule::disarm_in_txn(
+            &vault.store,
+            wtxn,
+            UNDO_SEND_RELEASE_JOB.code,
+            Some(task_ref),
+        )?;
     }
     Ok(())
 }
@@ -422,6 +465,12 @@ impl Vault {
             }
             project_connector_send_task_undone_in_txn(self, wtxn, task_ref, now)?;
             HELD.delete(&self.store, wtxn, &task_ref)?;
+            crate::schedule::disarm_in_txn(
+                &self.store,
+                wtxn,
+                UNDO_SEND_RELEASE_JOB.code,
+                Some(task_ref),
+            )?;
             Ok(UndoSendOutcome::Undone {
                 release_at: hold.release_at,
                 undone_at: now,
