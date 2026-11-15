@@ -46,7 +46,14 @@ pub fn classify_vault_import_manifest(
 ) -> Result<VaultImportReceipt> {
     let manifest = ExportManifest::from_json_for_import(manifest_bytes)?;
     let manifest_digest = canonical_manifest_digest(&manifest)?;
-    classify_manifest(vault, &manifest, None, manifest_digest, expected_label)
+    classify_manifest(
+        vault,
+        &local_authority_fold_readonly(vault)?,
+        &manifest,
+        None,
+        manifest_digest,
+        expected_label,
+    )
 }
 
 /// Classifies an archive's contents manifest against the vault it is offered
@@ -64,14 +71,30 @@ pub fn classify_vault_import_manifest(
 /// read as [`VaultImportClassification::ForeignAuthorityChain`] (Engine
 /// RULING L2-23-SIGNER = B). No signature, one that does not verify or
 /// whose key does not stand as its machine here, or one by a machine whose
-/// `Yours` rests on a carrier's act, proves nothing:
-/// [`VaultImportMismatch::UnauthenticatedProvenance`]. Every other gate holds
-/// as for the storage door.
+/// `Yours` rests on a carrier's act or on no owner-signed row this install
+/// holds, proves nothing: [`VaultImportMismatch::UnauthenticatedProvenance`].
+/// Every other gate holds as for the storage door.
 ///
 /// The receipt's digest commits to the whole parsed archive manifest, which
 /// lists every member's digest.
 pub(crate) fn classify_vault_archive_manifest(
     vault: &Vault,
+    manifest: &WholeVaultDocumentManifest,
+    expected_label: Option<&str>,
+) -> Result<VaultImportReceipt> {
+    classify_vault_archive_manifest_on_fold(
+        vault,
+        &local_authority_fold_readonly(vault)?,
+        manifest,
+        expected_label,
+    )
+}
+
+/// [`classify_vault_archive_manifest`] on `fold`, the read-only fold of
+/// `vault` that door reads.
+pub(crate) fn classify_vault_archive_manifest_on_fold(
+    vault: &Vault,
+    fold: &AuthorityFold,
     manifest: &WholeVaultDocumentManifest,
     expected_label: Option<&str>,
 ) -> Result<VaultImportReceipt> {
@@ -83,6 +106,7 @@ pub(crate) fn classify_vault_archive_manifest(
     let manifest_digest = *hasher.finalize().as_bytes();
     classify_manifest(
         vault,
+        fold,
         &manifest.storage,
         Some(manifest),
         manifest_digest,
@@ -90,11 +114,12 @@ pub(crate) fn classify_vault_archive_manifest(
     )
 }
 
-/// The one classification both doors share: `archive` is the contents
-/// manifest whose signature may prove provenance, `None` for a storage
-/// manifest alone.
+/// The one classification both doors share, on `fold`, the read-only fold of
+/// `vault`: `archive` is the contents manifest whose signature may prove
+/// provenance, `None` for a storage manifest alone.
 fn classify_manifest(
     vault: &Vault,
+    fold: &AuthorityFold,
     manifest: &ExportManifest,
     archive: Option<&WholeVaultDocumentManifest>,
     manifest_digest: [u8; 32],
@@ -113,8 +138,7 @@ fn classify_manifest(
         .as_ref()
         .map(ExportAuthorityManifest::parse_identity)
         .transpose()?;
-    let fold = local_authority_fold_readonly(vault)?;
-    let local_authority = authority_identity_of_fold(&fold);
+    let local_authority = authority_identity_of_fold(fold);
 
     let mut mismatches = BTreeSet::new();
     if exported_authority.is_none() {
@@ -127,14 +151,9 @@ fn classify_manifest(
     let mut foreign_chain = false;
     if let (Some(exported), Some(local)) = (exported_authority, local_authority) {
         if exported.vault_id == local.vault_id {
-            match archive.map_or(ArchiveSigner::Unproven, |archive| {
-                archive_signer(
-                    &fold,
-                    &local.vault_id,
-                    archive,
-                    vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted,
-                )
-            }) {
+            match archive.map_or(Ok(ArchiveSigner::Unproven), |archive| {
+                archive_signer(vault, fold, &local.vault_id, archive)
+            })? {
                 ArchiveSigner::OwnerDevice => {}
                 ArchiveSigner::OtherMachine => {
                     foreign_chain = true;

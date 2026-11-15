@@ -530,22 +530,29 @@ impl AuthorityFold {
             .trusted(self.pinned_root.as_ref())
     }
 
-    /// Whether `machine`'s trusted `Yours` here ([`Self::trusted_machine`])
-    /// is the owner's own signature, out of every carrier's reach (Engine
+    /// The revision `machine`'s trusted `Yours` here
+    /// ([`Self::trusted_machine`]) stands by, and whether this fold reads it
+    /// as the owner's own signature, out of every carrier's reach (Engine
     /// RULING L2-23-SIGNER = B under the lead's HOSTED-CARRIER-FIRST-PIN = D:
-    /// "a carrier's word is not him saying so"): the mark of the recovery
-    /// root this install pins, or, on a vault that is not `hosted`, a roster
-    /// revision an owner-held key signed. An admitted answer stands on its
-    /// carrier's act, so it is `Some(false)`, and so is every roster revision
-    /// of a hosted vault, where the host holds the root and an owner act its
-    /// own node carries enrols an owner-held key. `None` when this install
-    /// does not trust the machine as `Yours`.
+    /// "a carrier's word is not him saying so"): the mark the recovery root
+    /// this install pins signed with its anchor key, or, on a vault that is
+    /// not `hosted`, a roster revision an owner-held key signed. An admitted
+    /// answer stands on its carrier's act, so it reads `false`, and so does
+    /// every roster revision of a hosted vault, where the host holds the root
+    /// and an owner act its own node carries enrols an owner-held key. `None`
+    /// when this install does not trust the machine as `Yours`.
+    ///
+    /// `true` is the fold's word, not the signature: a checkpoint image the
+    /// host attests supplies its revisions with their signers and classes,
+    /// and this install never folded them (L2-23 Sol r2 P1). A caller that
+    /// proves the owner's say-so by it checks the row the revision's
+    /// [`MachineRevision::entry`] names.
     #[must_use]
-    pub(crate) fn trusted_yours_owner_signed(
+    pub(crate) fn trusted_yours_revision(
         &self,
         machine: EntityId,
         hosted: bool,
-    ) -> Option<bool> {
+    ) -> Option<(&MachineRevision, bool)> {
         let pin = self.pinned_root.as_ref();
         let (chain, revision) = self.machines.get(&machine)?.trusted_revision_under(
             &pin.map_or(MachineAdmitter::Roster, |pin| {
@@ -554,13 +561,16 @@ impl AuthorityFold {
         )?;
         let owner_signed =
             revision.act.is_none() && revision.signer_class == SignerClass::OwnerHeld;
-        Some(
+        Some((
+            revision,
             owner_signed
                 && match chain {
-                    MachineAdmitter::Anchor(_) => true,
+                    MachineAdmitter::Anchor(anchor) => {
+                        revision.signer == AuthorityKey::Ed25519(anchor)
+                    }
                     MachineAdmitter::Roster => !hosted,
                 },
-        )
+        ))
     }
 
     /// The machine key a connection proves to stand as `machine` here: its

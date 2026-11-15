@@ -16,8 +16,12 @@
 //! between the reader's digest pass and its row pass is refused, so the
 //! signed manifest never vouches for rows it does not bind.
 //!
-//! Public doors only:
-//! `cargo test --locked -p oneiron --all-features --test signed_archive_provenance`.
+//! The fold's word on who signed a `Yours` is not the signature either (Sol
+//! r2 P1 on 2b3c042b): the owner's own device proves an archive only by the
+//! signed row of its `Yours` that this install holds. That one test reaches
+//! the fold through `test_doors::archive_provenance`; the rest use public
+//! doors only. Run:
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test signed_archive_provenance`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::io::{Cursor, Read, Seek, SeekFrom, Write};
@@ -33,6 +37,7 @@ use oneiron::batch::export::{
 use oneiron::deletion::parse_hex;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::archive_provenance::classify_archive_with_trusted_entry;
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 
@@ -340,6 +345,43 @@ fn a_hosted_node_that_carries_its_own_yours_proves_nothing() -> TestResult {
         MachineRole::HostedNode,
         b"signed archive provenance self-carried hosted",
     )
+}
+
+/// Sol r2 P1 (on 2b3c042b): the fold's word on who signed a `Yours` is not
+/// the signature. A checkpoint image the host attests supplies revisions
+/// this install never folded, with their signers and classes, under any
+/// entry hash. With the trusted revision of the owner's own device naming
+/// an entry whose row this install does not hold, or one whose id is the
+/// owner's PERSON row, its archive proves no more than an unsigned one. On
+/// 2b3c042b both read `ByteFaithfulOwnerRestore`.
+#[test]
+fn an_owner_yours_whose_signed_row_is_not_held_here_proves_nothing() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = profiled_vault(directory.path(), b"signed archive provenance row", YOURS)?;
+    let manifest = own_archive_manifest(&vault)?;
+    let machine = vault
+        .local_machine()?
+        .expect("FIXTURE: this install has a machine once it is profiled")
+        .id;
+    let owner = vault.ensure_embedded_owner_actor()?;
+    let mut owner_row = [0_u8; 32];
+    owner_row[..16].copy_from_slice(owner.as_bytes());
+    assert_verdict(
+        &vault.classify_vault_archive_manifest(&manifest, None)?,
+        VaultImportClassification::ByteFaithfulOwnerRestore,
+        &[],
+    );
+
+    for entry in [[0x5e_u8; 32], owner_row] {
+        let receipt = classify_archive_with_trusted_entry(&vault, &manifest, machine, entry)?;
+
+        assert_verdict(
+            &receipt,
+            VaultImportClassification::ReviewRequired,
+            &[VaultImportMismatch::UnauthenticatedProvenance],
+        );
+    }
+    Ok(())
 }
 
 /// Astra r1 finding 1: the export writes no key state. An install whose

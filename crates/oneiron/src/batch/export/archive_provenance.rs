@@ -20,13 +20,24 @@
 //! an execution node, a rented, work or school machine) signs an archive that
 //! is not his. An unanswered install's key, like an unprofiled install's,
 //! proves nothing.
+//!
+//! The fold says who signed each revision, but a checkpoint image the host
+//! attests supplies its revisions with their signers, and this install never
+//! folded them (Sol r2 P1). So the owner's `Yours` proves an archive only by
+//! the signed row it names, held here: a host can withhold a row, never sign
+//! one as the owner's key.
 
 use ed25519_dalek::Signer;
+use oneiron_authority::authority::verify_entry_signatures;
 use serde::{Deserialize, Serialize};
 
 use super::WholeVaultDocumentManifest;
 use super::export_authority::hex_lower;
-use crate::authority::{AuthorityFold, owner_act_signer_admits};
+use crate::Vault;
+use crate::authority::{
+    AuthorityFold, AuthorityOp, MachineRevision, authority_entry_hash,
+    authority_log_entity_id_from_hash, owner_act_signer_admits,
+};
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::identity::InstallSigner;
@@ -55,7 +66,8 @@ pub(crate) enum ArchiveSigner {
     /// that is not his own device here.
     OtherMachine,
     /// No signature, none this vault can tie to a machine of its own, or one
-    /// by a machine whose `Yours` here is a carrier's word.
+    /// by a machine whose `Yours` here is a carrier's word or rests on no
+    /// owner-signed row this install holds.
     Unproven,
 }
 
@@ -110,8 +122,8 @@ pub(crate) fn sign_archive_manifest(
     Ok(())
 }
 
-/// Judges `manifest`'s provenance on `fold`, this vault's own read-only fold
-/// whose vault id is `vault_id`, on a vault whose posture is `hosted` or not.
+/// Judges `manifest`'s provenance on `fold`, the read-only fold of `vault`
+/// whose vault id is `vault_id`.
 ///
 /// The key must stand as its machine here ([`AuthorityFold::machine_proof_key`]:
 /// the trusted identity's key under this install's pin, else a live roster
@@ -120,25 +132,30 @@ pub(crate) fn sign_archive_manifest(
 /// roster key), and the signature must verify. Then the machine is the
 /// owner's own device exactly when this install trusts it as his explicit
 /// `Yours` by his own signature
-/// ([`AuthorityFold::trusted_yours_owner_signed`]). A `Yours` carried by a
-/// machine's install key is a carrier's word (Sol r1 P1: a hosted node can
-/// carry an owner answer for itself), so it reads as unsigned, as does
-/// anything that does not parse or verify.
+/// ([`AuthorityFold::trusted_yours_revision`]) and holds the row of that
+/// signature ([`owner_signed_row_held`]). A `Yours` carried by a machine's
+/// install key is a carrier's word (Sol r1 P1: a hosted node can carry an
+/// owner answer for itself), so it reads as unsigned, as does a `Yours`
+/// whose row this install does not hold, and anything that does not parse
+/// or verify.
+///
+/// # Errors
+/// A store read of the signature's row fails.
 pub(crate) fn archive_signer(
+    vault: &Vault,
     fold: &AuthorityFold,
     vault_id: &[u8; 32],
     manifest: &WholeVaultDocumentManifest,
-    hosted: bool,
-) -> ArchiveSigner {
+) -> Result<ArchiveSigner> {
     let Some(provenance) = manifest.provenance.as_ref() else {
-        return ArchiveSigner::Unproven;
+        return Ok(ArchiveSigner::Unproven);
     };
     let (Some(machine), Some(key), Some(signature)) = (
         lower_hex::<16>(&provenance.machine).and_then(|bytes| EntityId::from_bytes(bytes).ok()),
         lower_hex::<32>(&provenance.machine_key),
         lower_hex::<64>(&provenance.signature),
     ) else {
-        return ArchiveSigner::Unproven;
+        return Ok(ArchiveSigner::Unproven);
     };
     let stands = fold.machine_proof_key(machine) == Some(key)
         && owner_act_signer_admits(fold.machine(machine), &fold.roster, &key)
@@ -152,13 +169,53 @@ pub(crate) fn archive_signer(
             },
         );
     if !stands {
-        return ArchiveSigner::Unproven;
+        return Ok(ArchiveSigner::Unproven);
     }
-    match fold.trusted_yours_owner_signed(machine, hosted) {
-        Some(true) => ArchiveSigner::OwnerDevice,
-        Some(false) => ArchiveSigner::Unproven,
-        None => ArchiveSigner::OtherMachine,
-    }
+    let hosted = vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
+    let Some((revision, owner_signed)) = fold.trusted_yours_revision(machine, hosted) else {
+        return Ok(ArchiveSigner::OtherMachine);
+    };
+    Ok(
+        if owner_signed && owner_signed_row_held(vault, revision, machine, &key)? {
+            ArchiveSigner::OwnerDevice
+        } else {
+            ArchiveSigner::Unproven
+        },
+    )
+}
+
+/// Whether `vault` holds the row `revision` stands by as the signature the
+/// fold says it is: the AUTHORITY_LOG row at [`MachineRevision::entry`],
+/// with that hash, a valid shape and signatures, the revision's signer as
+/// its primary signer, and a machine profile equal to the revision's, which
+/// names `machine` and `key`. A row this install does not hold, and an entry
+/// whose id names a row of another kind, prove nothing (Sol r2 P1: a
+/// checkpoint image the host attests can carry a revision no owner key
+/// signed, under any entry hash).
+///
+/// # Errors
+/// The store read fails, or a stored row there no longer decodes.
+fn owner_signed_row_held(
+    vault: &Vault,
+    revision: &MachineRevision,
+    machine: EntityId,
+    key: &[u8; 32],
+) -> Result<bool> {
+    let Ok(id) = authority_log_entity_id_from_hash(&revision.entry) else {
+        return Ok(false);
+    };
+    let entry = match vault.get_authority_log_entry(&id) {
+        Ok(Some(entry)) => entry,
+        Ok(None) | Err(Error::InvalidEntityType(_)) => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    Ok(revision.profile.machine == machine
+        && revision.profile.machine_key == *key
+        && authority_entry_hash(&entry)? == revision.entry
+        && entry.validate_shape().is_ok()
+        && verify_entry_signatures(&entry).is_ok()
+        && *entry.signer_key() == revision.signer
+        && matches!(&entry.op, AuthorityOp::MachineProfile(profile) if *profile == revision.profile))
 }
 
 /// `N` bytes of lowercase hex, the one spelling an archive writes.
