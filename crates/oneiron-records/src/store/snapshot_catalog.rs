@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/store/snapshot_catalog.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
@@ -16,7 +14,6 @@ use oneiron_store::side_table::key::FixedSideKey;
 use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The catalog row's format version.
 pub const SNAPSHOT_RECORD_SCHEMA: u32 = 1;

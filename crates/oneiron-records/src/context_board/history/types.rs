@@ -1,13 +1,10 @@
 //! Moved from `crates/oneiron/src/context_board/history/types.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::revision_ref::RevisionRef;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnAnchor {

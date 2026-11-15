@@ -6,8 +6,6 @@ pub use oneiron_verb_wire::receipt::authority_audit::AuthorityAuditEventKind;
 pub use oneiron_verb_wire::receipt::authority_audit::AuthorityAuditQuery;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// The order a page's rows follow.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

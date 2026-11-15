@@ -6,7 +6,6 @@ use oneiron_store::model_decision::HumanAskReason;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
 /// A Box or Point call's decisions: its presence step, then its coordinates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

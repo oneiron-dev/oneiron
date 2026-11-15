@@ -16,12 +16,6 @@ pub use oneiron_verb_wire::skill_optimize::gate::preflight::SkillEditPreflight;
 pub use oneiron_verb_wire::skill_optimize::gate::project_goal::TradeoffRole;
 pub use oneiron_verb_wire::skill_optimize::gate::tradeoff::TradeoffRule;
 pub use oneiron_verb_wire::skill_optimize::gate::verdict::TradeoffChoice;
-use rmpv::Value;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
 
 pub mod measurement;
 pub mod project_goal;

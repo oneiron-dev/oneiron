@@ -5,10 +5,6 @@ pub use crate::dreamer_runner::maintenance::claim_source_recheck::CLAIM_SOURCE_R
 pub use crate::dreamer_runner::maintenance::compaction_check::COMPACTION_CHECK_FACET;
 pub use crate::dreamer_runner::maintenance::curator::CuratorQuestions;
 pub use crate::dreamer_runner::maintenance::evaluation::HarnessEvaluation;
-pub use crate::dreamer_runner::maintenance::evaluation::of360::HarnessOf360Evaluation;
-pub use crate::dreamer_runner::maintenance::evaluation::of360::HarnessOf360Metric;
-pub use crate::dreamer_runner::maintenance::evaluation::of360::HarnessOf360Observation;
-use rmpv::Value;
 
 pub mod agent_health;
 pub mod applied;

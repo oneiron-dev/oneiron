@@ -2,15 +2,12 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::agent_record::AgentCeiling;
 use oneiron_store::write_envelope::WriteActor;
 use oneiron_verb_wire::lens::SelfUiActionId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::sync::Arc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

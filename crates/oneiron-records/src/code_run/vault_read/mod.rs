@@ -52,7 +52,6 @@ pub use oneiron_contracts::code_run::vault_read::VaultReadMethodMapping;
 pub use oneiron_contracts::code_run::vault_read::VaultReadResult;
 pub use oneiron_contracts::code_run::vault_read::VaultReadWireOp;
 pub use oneiron_contracts::code_run::vault_read::View;
-pub(crate) use oneiron_contracts::code_run::vault_read::request_schema;
 
 pub mod context_pack;
 pub mod types;

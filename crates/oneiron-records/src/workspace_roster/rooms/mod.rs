@@ -1,4 +1,3 @@
-pub(crate) use crate::context_board::room_offer::ROOM_OFFER_IDLE_SECS;
 pub use crate::workspace_roster::rooms::liveness::RoomThread;
 pub use crate::workspace_roster::rooms::liveness::RoomThreadAudienceEvent;
 pub use crate::workspace_roster::rooms::liveness::RoomThreadAudienceOp;
@@ -10,13 +9,7 @@ pub use crate::workspace_roster::rooms::offers::OfferState;
 pub use crate::workspace_roster::rooms::offers::OfferVoteTally;
 pub use crate::workspace_roster::rooms::upkeep::RoomUpkeepInput;
 pub use crate::workspace_roster::rooms::upkeep::RoomUpkeepThread;
-pub use crate::workspace_roster::rooms::wake::RoomWake;
 use oneiron_contracts::entity_id::EntityId;
-pub(crate) use oneiron_store::conversation_body::AUDIENCE_EDIT_BOUND;
-pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
-pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_KEY;
-pub(crate) use oneiron_store::conversation_body::THREAD_NOTICE_PRODUCER;
-pub(crate) use oneiron_store::conversation_body::ThreadBinding;
 pub use oneiron_store::conversation_body::ThreadJoinRequestsRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_doors::ThreadAudienceAddRequest;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_doors::ThreadAudienceReceipt;
@@ -55,7 +48,6 @@ pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepPend
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::RoomUpkeepVoiceRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub mod audience_events;
 
@@ -95,4 +87,3 @@ pub mod liveness;
 pub mod offers;
 pub mod replica;
 pub mod upkeep;
-pub mod wake;

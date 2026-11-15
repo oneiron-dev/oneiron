@@ -3,15 +3,9 @@
 
 use crate::sync::home_handoff::refused;
 use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
-use getrandom::SysRng;
 use oneiron_base::error::Result;
-use serde::Deserialize;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use zeroize::Zeroizing;
 
 pub const HEADER_DOMAIN: &[u8] = b"oneiron/home-handoff/header/v1\0";
 
@@ -29,8 +23,4 @@ pub fn transcript(domain: &[u8], bytes: &[u8]) -> Vec<u8> {
 
 pub fn encode<V: Serialize + ?Sized>(value: &V) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| refused("a handoff value does not encode"))
-}
-
-pub fn decode<V: Serialize + DeserializeOwned>(bytes: &[u8]) -> Result<V> {
-    <Named as SideCodec<V>>::decode(bytes).map_err(|_| refused("a handoff value does not decode"))
 }

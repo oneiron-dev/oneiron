@@ -1,11 +1,8 @@
 //! Moved from `crates/oneiron/src/calendar/ingest/admission/continuation.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::calendar::ingest::admission::*;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// What one queued property continuation reads again.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

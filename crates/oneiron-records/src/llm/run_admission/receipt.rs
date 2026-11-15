@@ -5,7 +5,6 @@ use oneiron_model::llm::LlmInputUsage;
 use oneiron_model::llm::LlmOutputUsage;
 use oneiron_model::llm::ModelId;
 use serde::Serialize;
-use std::sync::Mutex;
 
 /// One metered stream's audio: the milliseconds it admitted and the bound
 /// its permit reserved for. Admitted audio is what the stream sent, not what

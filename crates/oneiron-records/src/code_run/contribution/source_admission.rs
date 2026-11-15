@@ -3,9 +3,6 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_verb_wire::claim::learning_evidence::Anchor;
-use serde::Deserialize;
-use serde::Serialize;
-use std::sync::Arc;
 
 /// Who reads a contribution pair's processed source (FIX 20607).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

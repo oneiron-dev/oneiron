@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Who the route call was handed to.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

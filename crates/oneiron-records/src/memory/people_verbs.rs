@@ -10,8 +10,6 @@ pub use oneiron_verb_wire::memory::people_verbs::PeopleListRequest;
 pub use oneiron_verb_wire::memory::people_verbs::PersonRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The pending access request. Asking grants nothing; the vault owner, or
 /// the person asked, answers it.

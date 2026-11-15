@@ -4,8 +4,6 @@
 use oneiron_verb_wire::task_verb::brief::hex32;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use std::collections::BTreeMap;
 
 /// A point inside one run: the optimizer step and the tokens trained so far.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

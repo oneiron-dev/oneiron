@@ -4,7 +4,6 @@
 use oneiron_verb_wire::context_board::plugin::manifest::SectionId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 /// The implemented durable block kinds: plugin board state, not the session pad.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

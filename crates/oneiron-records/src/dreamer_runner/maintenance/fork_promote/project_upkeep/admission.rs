@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// How the goal ruled one scalar win.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

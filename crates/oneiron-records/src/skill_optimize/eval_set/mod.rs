@@ -40,9 +40,6 @@ pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairPrec
 pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairTaskSpec;
 pub use oneiron_verb_wire::skill_optimize::eval_set::repair_task::EvalRepairWorld;
 pub use oneiron_verb_wire::skill_optimize::eval_set::sufficiency::SufficiencyInput;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub mod authoring;
 pub mod measurement;

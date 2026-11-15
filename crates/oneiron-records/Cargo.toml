@@ -13,10 +13,7 @@ doctest = false
 [dependencies]
 base64 = "0.22"
 blake3 = { workspace = true, features = ["zeroize"] }
-chrono = { version = "0.4", default-features = false, features = ["std"] }
 ed25519-dalek = { workspace = true }
-getrandom = { version = "=0.4.3", features = ["sys_rng"] }
-heed = { workspace = true }
 loro = { workspace = true }
 oneiron-authority = { version = "0.1.0", path = "../oneiron-authority" }
 oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
@@ -41,9 +38,6 @@ oneiron-verb-wire = { version = "0.1.0", path = "../oneiron-verb-wire" }
 oneiron-wake-contract = { version = "0.1.0", path = "../oneiron-wake-contract" }
 oneiron-web-fetch = { version = "0.1.0", path = "../oneiron-web-fetch" }
 oneiron-xlsx-formula = { version = "0.1.0", path = "../oneiron-xlsx-formula" }
-rand = "0.8"
-rand_core = { workspace = true }
-regex = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = [
     "blocking",
     "brotli",
@@ -61,8 +55,6 @@ serde = { workspace = true }
 serde_json = { workspace = true, features = ["raw_value", "float_roundtrip"] }
 sha2 = "0.10"
 thiserror = { workspace = true }
-uuid = { workspace = true }
-xxhash-rust = { workspace = true }
 zeroize = "1"
 
 [features]

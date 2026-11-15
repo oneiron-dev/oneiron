@@ -2,10 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 /// One stored claim a candidate names, at the exact body bytes it was read
 /// at.

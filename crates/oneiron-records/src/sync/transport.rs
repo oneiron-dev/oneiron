@@ -6,9 +6,6 @@ use loro::LoroValue;
 pub use oneiron_store::window_protocol::MAX_DECODED_PAYLOAD_BYTES;
 use serde::Deserialize;
 use serde::Serialize;
-use std::debug_assert_matches;
-use std::ops::Deref;
-use std::ops::DerefMut;
 
 /// Decoded Loro `EphemeralStore` wire record.
 ///

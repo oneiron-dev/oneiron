@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/store/secret_handle_labels.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
 

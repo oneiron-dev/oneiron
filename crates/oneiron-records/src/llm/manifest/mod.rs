@@ -12,10 +12,6 @@ pub use oneiron_model::model_binding::VerdictBinding;
 pub use oneiron_model::model_binding::VerdictMode;
 pub use oneiron_model::teacher_probe_policy::TEACHER_PROBE_ID;
 pub use oneiron_model::teacher_probe_policy::TeacherProbePolicy;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::path::Path;
 
 pub mod doors;
 pub mod encoder_export;

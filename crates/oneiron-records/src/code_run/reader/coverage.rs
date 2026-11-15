@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/code_run/reader/coverage.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use serde::Deserialize;
-use serde::Serialize;
-
 /// Each of `ranges` cut to `within`. A range that falls outside it becomes
 /// empty, and [`merge_ranges`] drops it.
 pub fn clip_ranges(ranges: &[(u64, u64)], within: (u64, u64)) -> impl Iterator<Item = (u64, u64)> {

@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/deletion/coop_delivery/types.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::deletion::coop_delivery::CooperativeDeletionDeliveryStatus;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_store::deletion::coop_delivery::types::*;
 pub use oneiron_verb_wire::deletion::coop_delivery::types::CooperativeDeletionDispositionKind;
@@ -41,37 +40,5 @@ pub struct CooperativeDeletionDisposition {
     /// Copies this answer placed or refreshed under storage-only restriction.
     pub restricted: Vec<EntityId>,
     /// Selected local CLAIM field/history actions. Peer scope stays open.
-    pub local_redactions: Vec<CooperativeLocalRedaction>,
-}
-
-/// One filed ask, for the recipient owner's review.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct IncomingCooperativeDeletion {
-    /// The ask's nonce, hex.
-    pub request_id: String,
-    /// The pact, hex.
-    pub connection_id: String,
-    pub requester_vault_id: String,
-    /// The worlds named, hex; none asks about everything the pact delivered.
-    pub worlds: Vec<String>,
-    pub epoch_cutoff: u64,
-    /// The requester's clock when it signed.
-    pub requested_at: u64,
-    pub received_at: u64,
-    /// The signed ask exactly as received.
-    pub request: Vec<u8>,
-    pub disposition: Option<CooperativeDeletionDisposition>,
-    /// Delivery of the owner's answer back to the requester, once one is queued.
-    pub reply_status: Option<CooperativeDeletionDeliveryStatus>,
-    pub reply_started_at: Option<u64>,
-    /// Every customer hold an answer to this ask placed or kept, a later
-    /// choice's and an earlier one's alike (FIX 2924).
-    pub courtesy_hold_ids: Vec<EntityId>,
-    /// Records this ask has restricted; markers say which remain active.
-    pub courtesy_restriction_records: Vec<EntityId>,
-    /// Prior external-notice attestations, kept across later choices.
-    pub restriction_lifts: Vec<CooperativeRestrictionLiftAttestation>,
-    /// Local selected-field receipts retained across later choices.
     pub local_redactions: Vec<CooperativeLocalRedaction>,
 }

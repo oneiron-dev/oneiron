@@ -6,13 +6,7 @@ pub use crate::secret_custody::reveal::types::SecretRevealReceipt;
 pub use crate::secret_custody::reveal::types::SecretRevealState;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::secret_record::CustodyClass;
-pub(crate) use oneiron_store::secret_record::write_records::RepoFileKeys;
-pub(crate) use oneiron_store::secret_record::write_records::RepoFileOriginal;
 pub use oneiron_verb_wire::secret_custody::reveal::types::RevealGrantScope;
-use serde::Deserialize;
-use serde::Serialize;
-use std::fmt;
-use zeroize::Zeroizing;
 
 /// The life of the T1 lease a delivered reveal stamps, and of the lease a
 /// PERSON reveal keeps on its row (FIX 11683), in seconds. Canon names none.

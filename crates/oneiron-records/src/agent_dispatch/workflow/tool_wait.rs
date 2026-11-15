@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/agent_dispatch/workflow/tool_wait.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::LlmRequest;
 use oneiron_model::llm::LlmResponse;

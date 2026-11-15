@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/booking/lifecycle/token.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use rand_core::OsRng;
-use rand_core::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
 

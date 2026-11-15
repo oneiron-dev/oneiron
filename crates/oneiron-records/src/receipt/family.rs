@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Query for the EF-055 pending tray lane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

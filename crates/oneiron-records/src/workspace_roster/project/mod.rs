@@ -7,7 +7,6 @@ pub use crate::workspace_roster::project::fold::ProjectRank;
 pub use crate::workspace_roster::project::goal::proposals::ProjectGoalProposalDismissal;
 pub use crate::workspace_roster::project::goal::proposals::ProjectGoalProposalRate;
 pub use crate::workspace_roster::project::goal::proposals::ProjectGoalProposalStatus;
-pub use crate::workspace_roster::project::goal::proposals::ProjectGoalProposer;
 pub use crate::workspace_roster::project::goal::proposals::diff::GoalAxisChange;
 pub use crate::workspace_roster::project::goal::proposals::diff::GoalAxisChanges;
 pub use crate::workspace_roster::project::goal::proposals::diff::GoalBudgetChange;
@@ -23,17 +22,11 @@ pub use crate::workspace_roster::project::history_policy::ProjectHistoryQuestion
 pub use crate::workspace_roster::project::leader_chat::LeaderChat;
 pub use crate::workspace_roster::project::mint::ProjectMintReceipt;
 pub use crate::workspace_roster::project::proposal::ProjectCardState;
-pub(crate) use crate::workspace_roster::project::proposal::ProjectDetectionAnswer;
 pub use crate::workspace_roster::project::resolution::ProjectResolution;
 pub use crate::workspace_roster::project::resolution::ProjectSeal;
 pub use crate::workspace_roster::project::widen::ProjectWidenAsk;
 pub use crate::workspace_roster::project::widen::ProjectWidenAxis;
 use oneiron_base::error::Result;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_PACK;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_REVISION_SHORT_ID_PREFIX;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_SHORT_ID_PREFIX;
-pub(crate) use oneiron_policy_vocabulary::policy_model::goal_limits::GoalLimits;
-pub(crate) use oneiron_store::batch::export::home_room_project::project_room_dependency;
 pub use oneiron_store::conversation_body::ProjectRoom;
 pub use oneiron_store::conversation_body::RoomOriginCard;
 pub use oneiron_verb_wire::workspace_roster::project::ProjectParentWitness;
@@ -58,7 +51,6 @@ pub use oneiron_verb_wire::workspace_roster::project::proposal::ProjectProposalR
 pub use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

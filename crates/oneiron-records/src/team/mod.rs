@@ -1,6 +1,5 @@
 pub use crate::team::market::LedgerEntry;
 pub use crate::team::market::LedgerKind;
-pub use crate::team::market::Market;
 pub use crate::team::market::MarketMode;
 pub use crate::team::market::MarketResult;
 pub use crate::team::market::Participant;

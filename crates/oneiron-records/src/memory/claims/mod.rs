@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/claims/mod.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::*;
 pub use oneiron_store::reference_refusal::RefusalReason;
 pub use oneiron_verb_wire::memory::claims::ClaimInput;
 pub use oneiron_verb_wire::memory::claims::settle::ClaimChangeVerdict;
@@ -14,10 +13,8 @@ pub use oneiron_verb_wire::memory::claims::settle::ClaimSettlementRevert;
 pub use oneiron_verb_wire::memory::claims::settle::ClaimSettlementVerdict;
 pub use oneiron_verb_wire::memory::claims::settle::SettleWarning;
 pub use oneiron_verb_wire::memory::claims::settle::SettleWarningCode;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 
 /// Where one delete request stands (FIX 1465). Neither says the erase is
 /// complete: that is its deletion receipt's signed final row.

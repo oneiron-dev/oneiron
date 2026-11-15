@@ -51,7 +51,68 @@ use crate::{ContentPart, EntityId, Error, LlmMessageRole, LlmRequest, LlmRespons
 #[doc(hidden)]
 pub use oneiron_records::code_run::contribution::owner::OwnerJudgment;
 #[doc(hidden)]
-pub(crate) use oneiron_records::code_run::contribution::owner::{OwnerPairChoice, OwnerPairRoute};
+pub(crate) use oneiron_records::code_run::contribution::owner::OwnerPairRoute;
+
+/// What the owner may answer about a pair's two shown answers, by stable
+/// option id. Each answer is judged on its own against the one criterion.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnerPairChoice {
+    AOnly,
+    BOnly,
+    Both,
+    Neither,
+    CannotJudge,
+}
+
+impl OwnerPairChoice {
+    pub(crate) const ALL: [Self; 5] = [
+        Self::AOnly,
+        Self::BOnly,
+        Self::Both,
+        Self::Neither,
+        Self::CannotJudge,
+    ];
+
+    /// Its stable option id.
+    pub(crate) const fn option(self) -> &'static str {
+        match self {
+            Self::AOnly => "a_only",
+            Self::BOnly => "b_only",
+            Self::Both => "both",
+            Self::Neither => "neither",
+            Self::CannotJudge => "cannot_judge",
+        }
+    }
+
+    /// The label its option shows.
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Self::AOnly => "Only answer A passes",
+            Self::BOnly => "Only answer B passes",
+            Self::Both => "Both answers pass",
+            Self::Neither => "Neither answer passes",
+            Self::CannotJudge => "I cannot judge these answers",
+        }
+    }
+
+    /// The choice an option id names.
+    pub(crate) fn of_option(option: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.option() == option)
+    }
+
+    /// Whether answer A, then answer B, passed; `None` for "cannot judge".
+    const fn shown(self) -> Option<(bool, bool)> {
+        match self {
+            Self::AOnly => Some((true, false)),
+            Self::BOnly => Some((false, true)),
+            Self::Both => Some((true, true)),
+            Self::Neither => Some((false, false)),
+            Self::CannotJudge => None,
+        }
+    }
+}
 
 /// One fork as its pending pair shows it: its receipt and its kept answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

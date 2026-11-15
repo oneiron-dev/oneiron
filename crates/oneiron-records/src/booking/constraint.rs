@@ -8,14 +8,7 @@ pub use oneiron_verb_wire::booking::constraint::EventTypeKey;
 pub use oneiron_verb_wire::booking::constraint::LocalMinuteWindow;
 pub use oneiron_verb_wire::booking::constraint::RankedSlot;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::Serializer;
-use serde_json::Value as JsonValue;
-use serde_json::json;
-use std::collections::BTreeMap;
-use std::time::Duration;
-use std::time::Instant;
 
 /// Exact host choice made by routing for one half-open slot. This travels to
 /// confirmation, not to the public availability mask.

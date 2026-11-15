@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_verb_wire::store::resident_budget_rows::ResidentShare;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// One resident's share and depletion, as the owner reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

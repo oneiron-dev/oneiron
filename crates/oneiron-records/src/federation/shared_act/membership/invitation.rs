@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/federation/shared_act/membership/invitation.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeSet;
-
 /// Where an invitation stands. Only `Pending` before `expires_at` admits.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

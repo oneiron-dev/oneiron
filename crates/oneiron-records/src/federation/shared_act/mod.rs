@@ -7,7 +7,6 @@ pub use crate::federation::shared_act::membership::invitation::SharedInvitationS
 pub use crate::federation::shared_act::owner_add::AddOwnerPlan;
 pub use crate::federation::shared_act::removal_import::ReceivedRemovalArchive;
 pub use crate::federation::shared_act::removal_import::ReceivedRemovalArchiveState;
-use std::collections::BTreeSet;
 
 /// The acts the shared preset lists. Their names are the policy row names.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

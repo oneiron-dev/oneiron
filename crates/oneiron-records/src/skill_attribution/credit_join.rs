@@ -6,8 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_verb_wire::skill_attribution::late_credit::LateCreditShare;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One immutable change to an anchored outcome's effective late credit.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

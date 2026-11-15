@@ -58,7 +58,7 @@ use oneiron_records::store::gate_decision::context::contains;
 #[doc(hidden)]
 pub use oneiron_records::store::gate_decision::context::{
     GateAnalysisCoverage, GateClaimReadSelectors, GateDecisionAnalysis, GateLoopFamily,
-    GateLoopLink, GateLoopOrigin, GateLoopSource, GateReadPosition, GateRiskAxis, GateRiskState,
+    GateLoopOrigin, GateLoopSource, GateReadPosition, GateRiskAxis, GateRiskState,
     GateThreadAnchor,
 };
 
@@ -196,6 +196,24 @@ impl GateReadAnchors {
             || self.rooms.contains(id)
             || self.worlds.contains(id)
     }
+}
+
+/// One proven link from a decision to the loop it came from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GateLoopLink {
+    /// Which part of the loop the decision is.
+    pub family: GateLoopFamily,
+    /// The loop that produced it.
+    pub source: GateLoopSource,
+    /// The loop's run, when its writer knew it.
+    pub run: Option<String>,
+    /// The loop's attempt, when its writer knew it.
+    pub attempt: Option<[u8; 16]>,
+    /// The decision that admitted the loop.
+    pub origin: GateLoopOrigin,
+    /// The decision this one answers, when it answers one: the basis it
+    /// was made on, kept apart from the loop's admission.
+    pub basis: Option<GateDecisionId>,
 }
 
 impl GateDecisionContext {
@@ -391,6 +409,56 @@ impl GateDecisionReadContext {
                         })
                 })
             })
+    }
+}
+
+impl GateLoopLink {
+    /// The link of a loop's own admission: the decision is its origin.
+    #[must_use]
+    pub fn admission(
+        source: GateLoopSource,
+        run: Option<String>,
+        attempt: Option<[u8; 16]>,
+    ) -> Self {
+        Self {
+            family: GateLoopFamily::Admission,
+            source,
+            run,
+            attempt,
+            origin: GateLoopOrigin::SelfDecision,
+            basis: None,
+        }
+    }
+
+    /// The link of an action a loop took, under the admission `origin`.
+    #[must_use]
+    pub fn action(
+        source: GateLoopSource,
+        run: Option<String>,
+        attempt: Option<[u8; 16]>,
+        origin: GateLoopOrigin,
+    ) -> Self {
+        Self {
+            family: GateLoopFamily::Action,
+            source,
+            run,
+            attempt,
+            origin,
+            basis: None,
+        }
+    }
+
+    /// This link as a decision answering `original` carries it: `original`
+    /// is its basis, and its origin when it was the admission itself.
+    fn answered_by(&self, original: GateDecisionId) -> Self {
+        Self {
+            origin: match self.origin {
+                GateLoopOrigin::SelfDecision => GateLoopOrigin::Decision(original),
+                origin => origin,
+            },
+            basis: Some(original),
+            ..self.clone()
+        }
     }
 }
 

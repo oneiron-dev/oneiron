@@ -3,10 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::HashMap;
-use std::sync::PoisonError;
 
 /// The executor of one agent run (FIX 4747; canon CROSS-ARCH-0019 item 03):
 /// only the machine `node_id` names runs it, and only while the run TASK

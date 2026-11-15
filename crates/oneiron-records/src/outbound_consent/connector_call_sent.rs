@@ -4,9 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use std::collections::BTreeMap;
-use std::ops::Range;
 
 /// One credential presentation a live connector exchange made: the custody
 /// record its door released and that record's rotation generation, and

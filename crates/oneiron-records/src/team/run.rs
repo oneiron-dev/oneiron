@@ -10,9 +10,6 @@ pub use oneiron_verb_wire::team::run::TeamStartInput;
 pub use oneiron_verb_wire::team::run::TeamVoteInput;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::HashSet;
 
 /// One `self.team.*` call. The leader comes from the host binding, never
 /// from the guest.

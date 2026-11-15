@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::ops::Bound;
 
 // ONE-1690 closes the known interim double-authority window: ledger rows are
 // the resend authority; send receipts are required-outcome audit narrative.

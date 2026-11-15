@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/workspace_roster/join_consent.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::project;
-use crate::workspace_roster::rooms;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_contracts::room_join::ConsentNeed;
 pub use oneiron_contracts::room_join::ConsentPart;

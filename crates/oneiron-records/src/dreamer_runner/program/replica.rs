@@ -3,7 +3,6 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use serde::Deserialize;
 use serde::Serialize;
 
 pub fn refused(reason: &'static str) -> Error {

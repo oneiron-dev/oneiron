@@ -1,14 +1,10 @@
 //! Moved from `crates/oneiron/src/llm/decision/questions/artifact_refresh.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::llm::decision::questions::records::*;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::llm::decision::questions::artifact_refresh::unit_receipts::ArtifactUnitReceipt;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::time::Duration;
-use std::time::Instant;
 
 /// One ask a standing artifact question made of one artifact, read back by its principal
 /// (`vault.questions.answers`): the head it asked and where its answers stand. Every

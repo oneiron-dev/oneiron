@@ -10,7 +10,6 @@ use oneiron_store::model_decision::invalid;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 
 /// The reserved option a decider picks when no candidate fits.
 pub const ROUTINE_NONE: &str = "NONE";

@@ -1,19 +1,10 @@
 //! Moved from `crates/oneiron/src/secret_custody/leaf_delivery.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
-use getrandom::SysRng;
 use oneiron_base::error::Error;
 use oneiron_base::error::RecordError;
-use oneiron_crypto::seal;
-use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use zeroize::Zeroizing;
 
 /// The wire version of an ask and of its answer.
 pub const LEAF_KEY_WIRE_VERSION: u8 = 1;

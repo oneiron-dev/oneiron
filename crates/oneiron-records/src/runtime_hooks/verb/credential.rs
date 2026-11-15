@@ -8,12 +8,6 @@ pub use oneiron_consent_state::runtime_hooks::verb::credential::VerbAskInstrumen
 pub use oneiron_consent_state::runtime_hooks::verb::credential::VerbAskMcpCeiling;
 use oneiron_contracts::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
 use oneiron_contracts::memory::MemoryError;
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::Value;
-use std::cell::RefCell;
-use std::marker::PhantomData;
-use std::sync::Arc;
 
 /// Why the drain ended a credential call before it ran. Every refusal ends
 /// the call (OF-580 defaults): nothing waits for a credential to come back,

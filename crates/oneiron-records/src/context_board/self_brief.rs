@@ -16,30 +16,7 @@ pub use crate::context_board::self_brief::grants::BriefGrant;
 pub use crate::context_board::self_brief::grants::BriefGrants;
 pub use crate::context_board::self_brief::working_set::BriefWorkingHandle;
 pub use crate::context_board::self_brief::working_set::BriefWorkingSet;
-use oneiron_authority::authority::CommReach;
 use oneiron_contracts::entity_id::EntityId;
-use std::collections::BTreeSet;
-
-/// COMM (Engine ruling 21:47): whom the agent may address, as two separate
-/// values, each `None` when no host produced it. `reach` is the run's
-/// effective reach; `credential_ceiling` is the verified credential's
-/// signed reach. A route is bounded by both. Neither is a recipient list
-/// or a message count, and neither is target admission.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-pub struct CommunicationLimits {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reach: Option<CommReach>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub credential_ceiling: Option<CommReach>,
-}
-
-impl CommunicationLimits {
-    /// Whether no host produced either value: identity leaves the limits
-    /// out, and the unavailable line names each value.
-    fn is_unavailable(&self) -> bool {
-        self.reach.is_none() && self.credential_ceiling.is_none()
-    }
-}
 
 /// The head of the line that names each brief field no host produced.
 pub const UNAVAILABLE_HEAD: &str = "unavailable (no producer yet)";

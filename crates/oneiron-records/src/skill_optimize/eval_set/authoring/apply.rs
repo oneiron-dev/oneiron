@@ -7,8 +7,6 @@ pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::apply::EvalAutho
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::apply::FamilyDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Whether one cohort retires, and why.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

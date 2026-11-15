@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::llm::routing::readings::DescriptionGrading;
-pub use crate::store::model_description_rows::DescriptionPolicy;
-pub use crate::store::model_description_rows::ModelDescription;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_model::llm::LlmRequest;
@@ -12,62 +10,12 @@ use oneiron_model::llm::ReasoningEffort;
 pub use oneiron_store::model_description_rows::MeasuredDescription;
 use oneiron_store::model_description_rows::ModelWireFormat;
 pub use oneiron_store::model_description_rows::OwnerModelLine;
-use oneiron_verb_wire::llm::seat::DescriptionSource;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
 use std::collections::BTreeMap;
 
 pub fn invalid(reason: impl Into<String>) -> Error {
     Error::InvalidConfig(reason.into())
-}
-
-impl ModelDescription {
-    /// The first available line in the seat policy's evidence order.
-    fn line<'a>(
-        &'a self,
-        measurement: Option<&'a MeasuredDescription>,
-        order: &[DescriptionSource],
-    ) -> Option<&'a str> {
-        order.iter().find_map(|source| match source {
-            DescriptionSource::Owner => self
-                .owner
-                .as_ref()
-                .filter(|line| line.model == self.model)
-                .map(|line| line.text.as_str()),
-            DescriptionSource::Measured => measurement.map(|line| line.text.as_str()),
-            DescriptionSource::Benchmarks => self.public_benchmark.as_deref(),
-            DescriptionSource::Vendor => self.vendor.as_deref(),
-        })
-    }
-}
-
-impl DescriptionPolicy {
-    pub fn validate(&self) -> Result<()> {
-        if self.contradiction_margin_millionths > 1_000_000
-            || self.models.is_empty()
-            || self.models.iter().any(|row| {
-                row.effort_ladder.is_empty()
-                    || row.owner.as_ref().is_some_and(|line| {
-                        line.text.trim().is_empty()
-                            || line.expected_quality > 1_000_000
-                            || line.model.provider() != row.model.provider()
-                            || line.model.name() != row.model.name()
-                    })
-                    || (row.owner.is_none()
-                        && row.public_benchmark.as_deref().is_none_or(str::is_empty)
-                        && row.vendor.as_deref().is_none_or(str::is_empty))
-            })
-            || self.models.iter().enumerate().any(|(i, row)| {
-                self.models[i + 1..]
-                    .iter()
-                    .any(|other| other.model == row.model)
-            })
-        {
-            return Err(invalid("invalid description routing policy"));
-        }
-        Ok(())
-    }
 }
 
 /// Overrides filter the description candidates; they never bypass judgment.

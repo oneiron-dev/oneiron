@@ -4,11 +4,6 @@
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use serde::Deserialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io::Read;
-use std::io::Seek;
 
 pub fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("whole-vault import: {reason}"))

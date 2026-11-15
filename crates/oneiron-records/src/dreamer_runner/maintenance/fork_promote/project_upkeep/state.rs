@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Where one revision stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

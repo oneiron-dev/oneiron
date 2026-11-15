@@ -2,12 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::conversation::attendee::ContainerAttendee;
-use crate::task_verb::ask_record::*;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub const ENTRY_ID_DOMAIN: &[u8] = b"oneiron.tasks.attendee_entry.v1";
 

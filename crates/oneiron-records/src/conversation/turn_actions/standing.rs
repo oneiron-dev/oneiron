@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::memory::MemoryError;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// The slip a turn action was asked with no longer stands for its requester.
 pub fn standing_lost() -> MemoryError {

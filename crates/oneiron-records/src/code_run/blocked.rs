@@ -2,7 +2,5 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use oneiron_verb_wire::code_run::blocked::BlockedCategory;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub const PREFIX: &str = "oneiron:report_blocked:v1:";

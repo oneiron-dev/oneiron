@@ -2,11 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-pub(crate) use oneiron_store::base_agent::coach_actor_id;
-pub(crate) use oneiron_store::base_agent::dreamer_actor_id;
-pub(crate) use oneiron_store::base_agent::guard_actor_delete;
-pub(crate) use oneiron_store::base_agent::guard_actor_put;
-pub(crate) use oneiron_store::base_agent::is_base_agent_actor;
 use serde::Deserialize;
 use serde::Serialize;
 

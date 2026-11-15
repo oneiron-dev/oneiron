@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Query for the OF-367 RS6.5 standing outbound-grants lens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

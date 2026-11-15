@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/dreamer.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::outbound::*;
-use crate::memory::*;
 pub use oneiron_verb_wire::memory::dreamer::DreamerAttemptRef;
 pub use oneiron_verb_wire::memory::dreamer::DreamerAttemptView;
 pub use oneiron_verb_wire::memory::dreamer::DreamerParkCauseView;

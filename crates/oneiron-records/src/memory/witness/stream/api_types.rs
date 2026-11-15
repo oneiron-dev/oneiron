@@ -12,11 +12,6 @@ pub use oneiron_verb_wire::memory::witness::stream::api_types::MessageDurability
 pub use oneiron_verb_wire::memory::witness::stream::api_types::MessageDurabilityRequest;
 pub use oneiron_verb_wire::memory::witness::stream::api_types::MessageStreamMode;
 pub use oneiron_verb_wire::memory::witness::stream::api_types::MessageStreamOptions;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::sync::Arc;
-use std::sync::Mutex;
 
 impl From<MessageCancelReason> for StreamCancelReason {
     fn from(reason: MessageCancelReason) -> Self {

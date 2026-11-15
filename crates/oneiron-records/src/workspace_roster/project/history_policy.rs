@@ -1,12 +1,10 @@
 //! Moved from `crates/oneiron/src/workspace_roster/project/history_policy.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::project::*;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub const DEFAULT_PROJECT_HISTORY_MAX_REVISIONS: u64 = 10_000;
 

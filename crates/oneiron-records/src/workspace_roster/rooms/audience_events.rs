@@ -1,16 +1,10 @@
 //! Moved from `crates/oneiron/src/workspace_roster/rooms/audience_events.rs` (lib split R1: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::rooms::*;
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
-pub(crate) use oneiron_store::conversation_body::ROOM_THREAD_AUDIENCE_KEY;
 pub use oneiron_verb_wire::workspace_roster::rooms::audience_events::ThreadAudienceHistory;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// The domain of an erased person's stand-in in a root's audience edits
 /// (FIX 5640).

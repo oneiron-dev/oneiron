@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/diary_read.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::authorship::*;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::memory::diary_read::DiaryEntry;
 pub use oneiron_verb_wire::memory::diary_read::DiaryReadHold;
@@ -14,9 +13,6 @@ pub use oneiron_verb_wire::memory::diary_read::DiaryReviewState;
 pub use oneiron_verb_wire::memory::diary_read::SealedPadReader;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::btree_map::Entry;
 
 /// What a finished gate did for one agent's diary.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

@@ -1,15 +1,12 @@
 //! Moved from `crates/oneiron/src/workspace_roster/project/fold.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::project::*;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_model::llm::Scope;
 use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
-use std::rc::Rc;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

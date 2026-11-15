@@ -163,9 +163,25 @@ pub struct AttemptRecord {
 pub(crate) use oneiron_records::store::attempt_record::AttemptPause;
 #[doc(hidden)]
 pub use oneiron_records::store::attempt_record::{
-    AttemptLeaseExpiry, AttemptPlacement, AttemptReadSet, AttemptTerminalExhaust, PlannedBinding,
-    PlannedExactness, RequeuedFailure,
+    AttemptLeaseExpiry, AttemptPlacement, AttemptTerminalExhaust, PlannedBinding, PlannedExactness,
+    RequeuedFailure,
 };
+
+/// What an attempt's producers recorded of the rows its inputs were read
+/// from. `rows` is the union of their reports, sorted and deduplicated;
+/// `Some([])` when they read no vault row; `None`, unknown, once any
+/// producer reported an unknown set or a producer reported undeclared.
+/// `expected` holds the producers the owner declared, `reported` the ones
+/// that reported (FIX 7073). An attempt no producer declared or recorded
+/// keeps no read set at all, which its receipt keeps as unknown too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptReadSet {
+    pub rows: Option<Vec<EntityId>>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub expected: BTreeSet<String>,
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub reported: BTreeSet<String>,
+}
 
 /// Serde skip predicate: a lineage no compaction touched says so by omission,
 /// so its rows encode as they did before the field existed.

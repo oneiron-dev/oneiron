@@ -3,8 +3,6 @@
 
 use oneiron_base::registry::ENTITY_TYPE_SUMMARY;
 use oneiron_base::registry::ENTITY_TYPE_TASK;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// Whether a replicated row of `kind` carries its birth placement: a TASK
 /// and a SUMMARY, the kinds whose world a read takes from their stamp alone

@@ -15,8 +15,8 @@ use std::path::PathBuf;
 
 #[doc(hidden)]
 pub use oneiron_records::engine_executor::types::{
-    ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorError, EngineExecutorLimits,
-    EngineExecutorResult, JsResultRef, StoreReceiptInput, StoreReceiptTree,
+    ENGINE_EXECUTOR_SOFT_STEP_LIMIT, EngineExecutorError, EngineExecutorResult, JsResultRef,
+    StoreReceiptInput, StoreReceiptTree,
 };
 
 pub const ENGINE_EXECUTOR_PURPOSE_NAME: &str = "engine_native_executor";
@@ -29,6 +29,34 @@ pub const ENGINE_EXECUTOR_FALLBACK_NAME: &str = "engine_native_js_executor_v1";
 /// Reserved guest response key carrying the budget legibility envelope
 /// (ONE-1305; guest-visible contract — the key name is pinned).
 pub const GUEST_BUDGET_RESPONSE_KEY: &str = "budget";
+
+/// The durable REPL's soft yield: the steps one entry runs before it yields.
+/// A run's total steps are the `[limits] executor_run_steps` row, which asks
+/// and never stops the run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EngineExecutorLimits {
+    pub soft_steps: u32,
+}
+
+impl Default for EngineExecutorLimits {
+    fn default() -> Self {
+        Self {
+            soft_steps: ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
+        }
+    }
+}
+
+impl EngineExecutorLimits {
+    fn validate(self) -> EngineExecutorResult<()> {
+        if self.soft_steps == 0 {
+            return Err(Error::InvalidConfig(
+                "engine executor soft step limit must be positive".to_owned(),
+            )
+            .into());
+        }
+        Ok(())
+    }
+}
 
 /// One durable executor run.
 #[derive(Debug, Clone, PartialEq)]

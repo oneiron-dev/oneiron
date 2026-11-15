@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/federation/shared_act/removal_import.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeMap;
-
 /// One removal archive this vault took in for its owner, as the owner's
 /// listing answers it (FIX 11797): never a byte of the archive.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

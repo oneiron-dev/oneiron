@@ -5,11 +5,8 @@ pub use crate::secret_custody::pending_restore::owner::PENDING_CREDENTIAL_RELEAS
 pub use crate::secret_custody::pending_restore::owner::PendingCredentialConfirmation;
 pub use crate::secret_custody::pending_restore::owner::PendingCredentialOutcome;
 pub use crate::secret_custody::pending_restore::owner::PendingCredentialReleaseReceipt;
-use heed::RwTxn;
-use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// What a pending credential came to (FIX-LIST 10671).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

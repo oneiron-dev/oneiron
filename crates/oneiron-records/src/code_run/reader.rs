@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/code_run/reader.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-pub(crate) use crate::code_run::reader::coverage::merge_ranges;
 use oneiron_base::edge::EdgeActorClass;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
@@ -9,7 +8,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::write_envelope::WriteActor;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// What the parent keeps back of its own window for the fold that reads its
 /// children's findings: the fold's code-first dedupe plus two staged

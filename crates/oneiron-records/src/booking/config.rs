@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/booking/config.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_verb_wire::booking::constraint::BookingError;
 use oneiron_verb_wire::booking::constraint::EventTypeKey;
@@ -10,7 +8,6 @@ use serde::Deserialize;
 use serde::Deserializer;
 use serde::Serialize;
 use serde::Serializer;
-use std::io::Cursor;
 
 /// The one booking-page configuration predicate. Matching is exact everywhere:
 /// no `booking.` prefix is ever accepted as family membership.

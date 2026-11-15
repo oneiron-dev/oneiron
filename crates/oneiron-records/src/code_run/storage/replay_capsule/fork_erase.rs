@@ -3,10 +3,6 @@
 
 use oneiron_contracts::entity_id::ENTITY_ID_LEN;
 use oneiron_contracts::entity_id::EntityId;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Native full-id spellings anywhere in an opaque receipt, including
 /// upper-case hex: the same spelling match used by CHECK's erase pass.

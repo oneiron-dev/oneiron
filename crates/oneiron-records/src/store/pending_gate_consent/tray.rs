@@ -4,12 +4,8 @@
 use crate::store::pending_gate_consent::records::PendingGateConsentRecord;
 use crate::store::pending_gate_consent::records::decode_pending_gate_consent;
 use crate::store::pending_gate_consent::records::encode_pending_gate_consent;
-use heed::RoTxn;
-use heed::RwTxn;
-use oneiron_base::error::Result;
 use oneiron_store::side_table::codec::CodecError;
 use oneiron_store::side_table::codec::RawValue;
-use std::ops::Bound;
 
 impl RawValue for PendingGateConsentRecord {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {

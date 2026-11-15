@@ -2,10 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::failure_ladder::lineage::HealerRepairRoute;
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::num::NonZeroU16;
 
 /// Where the healer's diagnosis stands when the card is emitted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

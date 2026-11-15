@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/store/checkpoint_payload/instance.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
-use rand::RngCore;
 use serde::Deserialize;
 use serde::Serialize;
 

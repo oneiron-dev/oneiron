@@ -15,7 +15,6 @@ pub use oneiron_verb_wire::dreamer_runner::maintenance::identity::evidence::Iden
 pub use oneiron_verb_wire::dreamer_runner::maintenance::identity::evidence::IdentityResolutionView;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Why an ask is open (ask rule B).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

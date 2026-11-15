@@ -1,13 +1,9 @@
 //! Moved from `crates/oneiron/src/batch/secret_scan/lift_history/accounting.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub enum Source {

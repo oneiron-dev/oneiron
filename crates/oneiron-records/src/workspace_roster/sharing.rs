@@ -1,13 +1,10 @@
 //! Moved from `crates/oneiron/src/workspace_roster/sharing.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::*;
 use oneiron_authority::federation::Scope;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::io::Cursor;
 
 /// Why a room's scope is narrower than the vault's. Counts, never names: a
 /// member learns that a contact's clearance binds the room, not which

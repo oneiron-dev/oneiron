@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One fork of a matched pair: its receipt, and whether it passed the
 /// anchor both forks were scored against.

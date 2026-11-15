@@ -31,9 +31,64 @@ pub const DEFAULT_BOUNTY_SHARE: f64 = 0.2;
 
 #[doc(hidden)]
 pub use oneiron_records::team::market::{
-    LedgerEntry, LedgerKind, Market, MarketMode, MarketResult, Participant, RefereeKind,
-    SignedReferee, Submission,
+    LedgerEntry, LedgerKind, MarketMode, MarketResult, Participant, RefereeKind, SignedReferee,
+    Submission,
 };
+
+/// One run's market.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Market {
+    pub team_ref: String,
+    pub mode: MarketMode,
+    pub referee: SignedReferee,
+    pub pool: u64,
+    /// Units not granted to any share: the bounty.
+    pub bounty: u64,
+    pub participants: BTreeMap<String, Participant>,
+    pub submissions: Vec<Submission>,
+    pub ledger: Vec<LedgerEntry>,
+    pub round: u32,
+    pub opened_at: u64,
+    pub result: Option<MarketResult>,
+}
+
+impl Market {
+    fn post(&mut self, at: u64, agent: Option<&str>, entry: LedgerKind, units: u64) {
+        let seq = self.ledger.len() as u64;
+        self.ledger.push(LedgerEntry {
+            seq,
+            at,
+            agent: agent.map(str::to_owned),
+            entry,
+            units,
+        });
+    }
+
+    fn open_participant(&mut self, agent: &str) -> Result<&mut Participant> {
+        if self.result.is_some() {
+            return Err(Error::InvalidClaimBody("the market is closed"));
+        }
+        match self.participants.get_mut(agent) {
+            Some(p) if p.active => Ok(p),
+            Some(_) => Err(Error::InvalidClaimBody("this agent left the market")),
+            None => Err(Error::InvalidClaimBody("this agent is not in the market")),
+        }
+    }
+
+    /// Each active agent's best refereed score.
+    fn best_scores(&self) -> BTreeMap<&str, f64> {
+        let mut best: BTreeMap<&str, f64> = BTreeMap::new();
+        for submission in &self.submissions {
+            if let Some(score) = submission.score {
+                let slot = best
+                    .entry(submission.agent.as_str())
+                    .or_insert(f64::NEG_INFINITY);
+                *slot = slot.max(score);
+            }
+        }
+        best
+    }
+}
 
 fn bounded(text: &str, what: &'static str) -> Result<()> {
     if text.is_empty() || text.len() > MAX_REF_BYTES || text.contains('\0') {

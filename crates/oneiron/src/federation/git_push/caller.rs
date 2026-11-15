@@ -148,8 +148,24 @@ pub(super) fn refused(repo: &str, reason: &str) -> Error {
     })
 }
 
-#[doc(hidden)]
-pub(crate) use oneiron_records::federation::git_push::caller::GitPushArm;
+/// Which arm admitted a push.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GitPushArm {
+    Owner,
+    Grant,
+    Checkout,
+}
+
+impl GitPushArm {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Owner => "owner",
+            Self::Grant => "grant",
+            Self::Checkout => "checkout",
+        }
+    }
+}
 
 /// The checkout lease a push named (FIX 8729): its ticket, the run's CODE
 /// and PROJECT over the served store, and the run's class. A push that names

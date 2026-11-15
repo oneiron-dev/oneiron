@@ -93,7 +93,7 @@ pub(super) const FORK_RECEIPT_PREFIX: &str = "contribution_fork:";
 
 #[doc(hidden)]
 pub use oneiron_records::code_run::contribution::{
-    ContributionReplayUnavailable, ForkScoringIdentity, ForkTreatment, ReplayAnchor,
+    ContributionReplayUnavailable, ForkTreatment, ReplayAnchor,
 };
 
 /// What a fork was scored for, frozen as it was generated: the credited
@@ -113,6 +113,29 @@ impl ForkScoring {
             goal_revision: candidate.goal_revision.clone(),
             axis: candidate.axis.clone(),
         }
+    }
+}
+
+/// A fork's frozen scoring identity: the canonical rubric digest and the
+/// scorer-byte digest as resolved at prepare, before either fork. Both
+/// forks of a pair copy it; admission rehashes the candidate against it.
+/// The identity a fork is scored under is this and its score's evidence
+/// mode, the execution pin in the `Executed` mode included (FIX 3607): both
+/// forks of a pair share all of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ForkScoringIdentity {
+    pub rubric: [u8; 32],
+    pub scorer: [u8; 32],
+}
+
+impl ForkScoringIdentity {
+    fn of(anchor: &ReplayAnchor) -> Result<Self> {
+        let encode =
+            |error: serde_json::Error| Error::InvalidConfig(format!("replay anchor: {error}"));
+        Ok(Self {
+            rubric: *blake3::hash(&serde_json::to_vec(&anchor.rubric).map_err(encode)?).as_bytes(),
+            scorer: *blake3::hash(anchor.scorer.as_bytes()).as_bytes(),
+        })
     }
 }
 

@@ -61,6 +61,54 @@ use oneiron_records::llm::routing::{
     apply_controls, gemini_wire_field, invalid, validate_overrides,
 };
 
+impl ModelDescription {
+    /// The first available line in the seat policy's evidence order.
+    fn line<'a>(
+        &'a self,
+        measurement: Option<&'a MeasuredDescription>,
+        order: &[DescriptionSource],
+    ) -> Option<&'a str> {
+        order.iter().find_map(|source| match source {
+            DescriptionSource::Owner => self
+                .owner
+                .as_ref()
+                .filter(|line| line.model == self.model)
+                .map(|line| line.text.as_str()),
+            DescriptionSource::Measured => measurement.map(|line| line.text.as_str()),
+            DescriptionSource::Benchmarks => self.public_benchmark.as_deref(),
+            DescriptionSource::Vendor => self.vendor.as_deref(),
+        })
+    }
+}
+
+impl DescriptionPolicy {
+    pub fn validate(&self) -> Result<()> {
+        if self.contradiction_margin_millionths > 1_000_000
+            || self.models.is_empty()
+            || self.models.iter().any(|row| {
+                row.effort_ladder.is_empty()
+                    || row.owner.as_ref().is_some_and(|line| {
+                        line.text.trim().is_empty()
+                            || line.expected_quality > 1_000_000
+                            || line.model.provider() != row.model.provider()
+                            || line.model.name() != row.model.name()
+                    })
+                    || (row.owner.is_none()
+                        && row.public_benchmark.as_deref().is_none_or(str::is_empty)
+                        && row.vendor.as_deref().is_none_or(str::is_empty))
+            })
+            || self.models.iter().enumerate().any(|(i, row)| {
+                self.models[i + 1..]
+                    .iter()
+                    .any(|other| other.model == row.model)
+            })
+        {
+            return Err(invalid("invalid description routing policy"));
+        }
+        Ok(())
+    }
+}
+
 /// Inputs fixed when a generative seat is born.
 pub struct SeatBirth<'a> {
     pub id: &'a str,

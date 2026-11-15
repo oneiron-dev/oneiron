@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::num::NonZeroU16;
 
 /// The canonical three-value routing class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

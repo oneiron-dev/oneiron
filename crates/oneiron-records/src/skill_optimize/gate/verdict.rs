@@ -1,15 +1,8 @@
 //! Moved from `crates/oneiron/src/skill_optimize/gate/verdict.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_optimize::gate::*;
 use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::skill_optimize::gate::verdict::TradeoffChoice;
-use rmpv::Value;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
 
 /// Resolution of one exact pending vector, and the ladder rung that made it
 /// (ARCH-0053 §10a: preference rule, then a typed judgment on the band, then

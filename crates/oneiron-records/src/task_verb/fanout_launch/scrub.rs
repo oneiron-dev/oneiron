@@ -1,11 +1,9 @@
 //! Moved from `crates/oneiron/src/task_verb/fanout_launch/scrub.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::task_verb::fanout_launch::*;
 use oneiron_store::receipt_identity::ERASED_CALL_IDENTITY;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Truthful erasure-scrub marker: what recipient erasures scrubbed from one
 /// launch, and the FIRST pre-scrub digest for audit. `None` on the row means

@@ -6,7 +6,6 @@ use oneiron_base::error::Result;
 pub use oneiron_verb_wire::workspace_roster::join_receipt::RosterActor;
 use serde::Deserialize;
 use serde::Serialize;
-use std::ops::Bound;
 
 pub const JOIN_REF_DOMAIN: &str = "oneiron.rooms.join.v1";
 

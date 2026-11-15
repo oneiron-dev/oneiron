@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::cell::Cell;
-use std::collections::HashMap;
 
 /// Where a retained maintenance operation stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

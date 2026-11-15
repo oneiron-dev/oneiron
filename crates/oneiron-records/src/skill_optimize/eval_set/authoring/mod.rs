@@ -10,12 +10,5 @@ pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::Eval
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::EvalAuthoringExecuteRequest;
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::EvalAuthoringOutcome;
 pub use oneiron_verb_wire::skill_optimize::eval_set::authoring::executions::EvalAuthoringSkillRun;
-use serde::Deserialize;
-use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::btree_map::Entry;
 
 pub mod apply;

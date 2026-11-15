@@ -1,9 +1,7 @@
 //! Moved from `crates/oneiron/src/memory/skill_authoring.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::memory::authorship::*;
 use oneiron_contracts::entity_id::EntityId;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

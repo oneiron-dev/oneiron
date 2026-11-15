@@ -2,10 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-pub(super) use oneiron_store::receipt_identity::MAGIC;
-pub(crate) use oneiron_store::receipt_identity::is_receipt_archive_source;
-use serde::Deserialize;
-use serde::Serialize;
 use sha2::Digest;
 use sha2::Sha256;
 

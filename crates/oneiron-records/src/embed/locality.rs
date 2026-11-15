@@ -3,7 +3,6 @@
 
 use crate::store::embedding::EmbedderLocality;
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_store::side_table::codec::RawValue;
 
 impl RawValue for EmbedderLocality {

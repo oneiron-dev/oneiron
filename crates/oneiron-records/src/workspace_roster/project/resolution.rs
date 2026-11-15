@@ -7,7 +7,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub const RESOLUTION_DOMAIN: &[u8] = b"oneiron/project-resolution/v1/";
 

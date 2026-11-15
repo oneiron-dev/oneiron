@@ -3,7 +3,6 @@
 
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

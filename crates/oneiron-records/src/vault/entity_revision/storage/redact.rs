@@ -1,20 +1,8 @@
 //! Moved from `crates/oneiron/src/vault/entity_revision/storage/redact.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::vault::entity_revision::storage::reference;
-use loro::ContainerID;
-use loro::ContainerType;
-use loro::EncodedBlobMode;
-use loro::ExportMode;
-use loro::Frontiers;
-use loro::JsonMapOp;
-use loro::JsonOpContent;
-use loro::LoroDoc;
-use loro::LoroValue;
-use loro::VersionVector;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::revision_ref::RevisionRef;
-use std::collections::BTreeSet;
 
 /// One retained frontier's exact old/new reference and citation status.
 /// An old content hash is never silently assigned to different bytes.

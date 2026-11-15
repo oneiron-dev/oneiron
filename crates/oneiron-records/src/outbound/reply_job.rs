@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Where a reply job ended. The outbound receipt stays the authority on
 /// the send itself; this names which way the job went.

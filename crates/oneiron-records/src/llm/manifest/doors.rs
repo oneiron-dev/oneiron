@@ -11,7 +11,6 @@ pub use oneiron_verb_wire::llm::manifest::doors::ModelRouteView;
 pub use oneiron_verb_wire::llm::manifest::doors::OneironerBind;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The loaded native bundle's receipt at its bind: stack and checkpoint,
 /// label count and per-artifact hashes.

@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/agent_dispatch/requester.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use serde::Deserialize;
-use serde::Serialize;
-
 /// Why a queued dispatch's requester no longer stands: a positive
 /// withdrawal, never a read that failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

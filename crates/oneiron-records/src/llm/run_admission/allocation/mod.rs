@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_run_budget::run_budget::LeaseUnit;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// An observation of the actual writer-lease acquisition, never a bearer grant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

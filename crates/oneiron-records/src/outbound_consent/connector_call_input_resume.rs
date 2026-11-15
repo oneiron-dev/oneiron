@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use zeroize::Zeroizing;
 
 /// How a live exchange is taken up again after a restart.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

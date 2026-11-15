@@ -1,10 +1,6 @@
 //! Moved from `crates/oneiron/src/memory/authorship.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::Error;
-use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::EntityId;
-
 // EntityId deliberately has no global serde implementation.
 pub mod entity_serde {
     use oneiron_contracts::entity_id::EntityId;

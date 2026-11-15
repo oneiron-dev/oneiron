@@ -3,7 +3,6 @@
 
 use serde::Serialize;
 use serde_json::Value;
-use std::sync::OnceLock;
 
 /// Whether a verb may interrupt the recipient.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

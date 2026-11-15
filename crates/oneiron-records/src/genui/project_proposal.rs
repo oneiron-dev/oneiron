@@ -7,7 +7,6 @@ pub use oneiron_verb_wire::genui::project_proposal::ProjectGoalDraft;
 pub use oneiron_verb_wire::genui::project_proposal::ProjectProposalPicks;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
 
 pub const PROJECT_PROPOSAL_MINT_ACTION_ID: &str = "mint_project";
 

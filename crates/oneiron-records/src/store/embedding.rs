@@ -5,10 +5,8 @@ pub use oneiron_store::embedding::*;
 pub use oneiron_store::embedding_vocabulary::EmbeddingDevice;
 pub use oneiron_store::embedding_vocabulary::EmbeddingProvenance;
 pub use oneiron_store::embedding_vocabulary::InputKind;
-pub(crate) use oneiron_store::embedding_vocabulary::TEXT_HASH_LEN;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Where an embedder runs relative to the vault owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]

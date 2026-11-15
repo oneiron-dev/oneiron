@@ -1,18 +1,11 @@
 //! Moved from `crates/oneiron/src/batch/export/archive_side_tables.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use serde::Deserialize;
 use serde::Serialize;
-use std::borrow::Cow;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::io::Read;
-use std::io::Seek;
 
 /// A binary value or byte array longer than this goes in the archive's `files/`
 /// as it is stored; ids, hashes and folds stay inline as hex.

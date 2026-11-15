@@ -1,13 +1,9 @@
 //! Moved from `crates/oneiron/src/workspace_roster/project/revision.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::workspace_roster::project::*;
-pub(crate) use oneiron_base::registry::pack_namespaces::PROJECT_REVISION_SHORT_ID_PREFIX;
 pub use oneiron_verb_wire::workspace_roster::project::revision::ProjectRevisionHash;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Domain of a revision's logical hash; distinct from every authority-log,
 /// slip, challenge, resolution and seal domain.

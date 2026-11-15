@@ -4,8 +4,6 @@
 use oneiron_authority::authority::AuthorityEntryHash;
 use oneiron_authority::authority::RecoveryRootId;
 use oneiron_store::bundle_generations::SealedBundleGeneration;
-use serde::Deserialize;
-use serde::Serialize;
 
 /// The immutable publication a caller asks the home to finish.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

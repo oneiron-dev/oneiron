@@ -8,13 +8,6 @@ pub use crate::dreamer_runner::maintenance::code_fix::publisher::PublisherCandid
 pub use crate::dreamer_runner::maintenance::code_fix::publisher_refs::PublisherCandidateInput;
 pub use crate::dreamer_runner::maintenance::code_fix::publisher_refs::PublisherCandidateRef;
 pub use crate::dreamer_runner::maintenance::code_fix::publisher_refs::publisher_candidates_with_refs;
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::json;
-use std::cell::RefCell;
-use std::ops::Bound;
-use std::time::Duration;
-use std::time::Instant;
 
 /// A candidate fix the deployment's publisher supplied and its operator
 /// pinned: an instruction the replay adds to the failing agent's own, or an

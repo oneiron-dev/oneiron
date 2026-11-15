@@ -3,7 +3,6 @@
 
 use oneiron_contracts::memory::MemoryError;
 use oneiron_contracts::memory::MemoryResult;
-use serde::Deserialize;
 use serde::Serialize;
 
 /// Domain of the key digest one try's entry is stored under.

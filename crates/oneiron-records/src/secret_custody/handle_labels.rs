@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub use crate::store::secret_handle_labels::SecretHandleLabel;
-use heed::RoTxn;
-use heed::RwTxn;
 use serde::Deserialize;
 use serde::Serialize;
 

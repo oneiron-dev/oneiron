@@ -6,8 +6,6 @@ use oneiron_base::error::Error;
 pub use oneiron_verb_wire::outbound_consent::tool_call::MutationIntent;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

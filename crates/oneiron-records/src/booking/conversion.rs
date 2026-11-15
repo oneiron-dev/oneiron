@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::booking::constraint::SlotMask;
-pub use crate::booking::conversion::policy::BookingConversionPolicy;
-pub use crate::booking::conversion::policy::BookingConversionPolicyRow;
 pub use crate::booking::conversion::policy::BookingPolicyPrecedence;
 pub use crate::booking::conversion::policy::BookingPolicyScope;
 pub use crate::booking::conversion::ux::BookingShortlist;
@@ -16,7 +14,6 @@ use oneiron_verb_wire::booking::constraint::EventTypeKey;
 use oneiron_verb_wire::booking::constraint::RankedSlot;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt::Write;
 
 /// Owner-authored content. A host chooses layout, localization and assets.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

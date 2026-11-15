@@ -4,7 +4,6 @@
 pub use oneiron_verb_wire::memory::campaign_records::program::ArchiveCampaignProgramRequest;
 pub use oneiron_verb_wire::memory::campaign_records::program::CampaignProgramAudienceSpec;
 pub use oneiron_verb_wire::memory::campaign_records::program::CampaignProgramReadRequest;
-pub(crate) use oneiron_verb_wire::memory::campaign_records::program::invalid;
 use serde::Deserialize;
 use serde::Serialize;
 

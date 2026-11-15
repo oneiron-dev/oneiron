@@ -32,12 +32,31 @@ pub use class_verdicts::{
 pub use grants::{BriefGrant, BriefGrants};
 pub use working_set::{BriefWorkingHandle, BriefWorkingSet};
 
+/// COMM (Engine ruling 21:47): whom the agent may address, as two separate
+/// values, each `None` when no host produced it. `reach` is the run's
+/// effective reach; `credential_ceiling` is the verified credential's
+/// signed reach. A route is bounded by both. Neither is a recipient list
+/// or a message count, and neither is target admission.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct CommunicationLimits {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reach: Option<CommReach>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential_ceiling: Option<CommReach>,
+}
+
+impl CommunicationLimits {
+    /// Whether no host produced either value: identity leaves the limits
+    /// out, and the unavailable line names each value.
+    fn is_unavailable(&self) -> bool {
+        self.reach.is_none() && self.credential_ceiling.is_none()
+    }
+}
+
 #[doc(hidden)]
 use oneiron_records::context_board::self_brief::UNAVAILABLE_HEAD;
 #[doc(hidden)]
-pub use oneiron_records::context_board::self_brief::{
-    BriefPlacement, BriefSkillRow, CommunicationLimits,
-};
+pub use oneiron_records::context_board::self_brief::{BriefPlacement, BriefSkillRow};
 
 /// Inputs must be the effective, already-authorized run/session reads. In
 /// particular, this renderer cannot decide which classes or worlds are visible.

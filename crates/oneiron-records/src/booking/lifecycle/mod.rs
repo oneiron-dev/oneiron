@@ -6,7 +6,6 @@ pub use crate::booking::lifecycle::token::HoldLeaseSpec;
 pub use crate::booking::lifecycle::token::OpaqueCheckoutLeaseToken;
 pub use crate::booking::lifecycle::token::OpaqueLifecycleToken;
 pub use crate::booking::lifecycle::token::SessionKey;
-pub(super) use crate::booking::lifecycle::token::digest_with;
 pub use crate::booking::lifecycle::types::BOOKING_VERBS;
 pub use crate::booking::lifecycle::types::BookingBookerContactValue;
 pub use crate::booking::lifecycle::types::BookingEventTypeRefValue;
@@ -23,7 +22,6 @@ pub use crate::booking::lifecycle::types::RevisionReceipt;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Deserializer;
-use serde::Serialize;
 use serde::Serializer;
 
 pub mod entity_ref_serde {

@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/store/retrieval_policy/posterior.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-pub(crate) use oneiron_store::retrieval_policy::posterior::*;
 use oneiron_verb_wire::store::retrieval_policy::RetrievalPolicyAction;
 use oneiron_verb_wire::store::retrieval_policy::RetrievalPolicyIdentity;
-use rand::Rng;
 use serde::Deserialize;
 use serde::Serialize;
 

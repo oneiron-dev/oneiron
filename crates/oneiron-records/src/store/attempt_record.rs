@@ -57,22 +57,6 @@ pub enum PlannedExactness {
     Inherited,
 }
 
-/// What an attempt's producers recorded of the rows its inputs were read
-/// from. `rows` is the union of their reports, sorted and deduplicated;
-/// `Some([])` when they read no vault row; `None`, unknown, once any
-/// producer reported an unknown set or a producer reported undeclared.
-/// `expected` holds the producers the owner declared, `reported` the ones
-/// that reported (FIX 7073). An attempt no producer declared or recorded
-/// keeps no read set at all, which its receipt keeps as unknown too.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AttemptReadSet {
-    pub rows: Option<Vec<EntityId>>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub expected: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub reported: BTreeSet<String>,
-}
-
 /// One failure, or a consecutive run of equal failures, a requeue kept.
 /// The lease generation plus the count names every failed generation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

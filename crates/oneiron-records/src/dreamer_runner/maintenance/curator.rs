@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/dreamer_runner/maintenance/curator.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The three questions the curator must answer from stored, verifiable facts.
 /// Hosts may edit the wording through the owner-set rubric.

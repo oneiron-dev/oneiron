@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;
-use std::collections::BTreeSet;
 
 /// What proves a producer's revision in force (OF-418 L3), kept whole in an issue's evidence.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

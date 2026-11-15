@@ -1,10 +1,8 @@
 pub use crate::store::attempt_record::AttemptLeaseExpiry;
-pub(crate) use crate::store::attempt_record::AttemptPause;
 pub use crate::store::attempt_record::AttemptPlacement;
 pub use crate::store::attempt_record::AttemptTerminalExhaust;
 pub use crate::store::attempt_record::PlannedBinding;
 pub use crate::store::attempt_record::PlannedExactness;
-pub(super) use oneiron_store::attempt_cleanup::ATTEMPT_QUEUE_RETRY_REASON_COUNT;
 pub use oneiron_store::attempt_cleanup::AttemptQueueCleanupReport;
 pub use oneiron_store::attempt_cleanup::AttemptQueueRetryReason;
 pub use oneiron_store::attempt_cleanup::AttemptQueueRetryReasonCount;

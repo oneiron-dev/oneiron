@@ -6,11 +6,6 @@ pub use oneiron_verb_wire::receipt::call::CallAttemptRef;
 pub use oneiron_verb_wire::receipt::call::CallOutcome;
 pub use oneiron_verb_wire::receipt::call::CallReceiptRequest;
 pub use oneiron_verb_wire::receipt::call::CallTransport;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::Arc;
 
 /// The domain an action digest is taken in, so it never equals another
 /// digest of the same bytes.

@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/secret_custody/cloud_registration/mod.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-pub(crate) use oneiron_store::secret_record::write_records::is_cloud_registration_slot;
 use serde::Deserialize;
 use serde::Serialize;
 

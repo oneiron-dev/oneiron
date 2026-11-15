@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// The verdict the door's row check gave one read of another run's result
 /// (FIX 6352): the rows it was served from may reach the door's caller,

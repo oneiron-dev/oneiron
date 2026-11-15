@@ -5,8 +5,6 @@ use crate::workspace_roster::rooms::*;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One room as its upkeep reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

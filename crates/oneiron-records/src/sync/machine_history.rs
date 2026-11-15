@@ -1,12 +1,8 @@
 //! Moved from `crates/oneiron/src/sync/machine_history.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use std::cell::RefCell;
-use std::collections::BTreeSet;
-use std::path::PathBuf;
 
 /// What the last try at an owed history found.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

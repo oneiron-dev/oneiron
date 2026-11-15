@@ -5,7 +5,6 @@ use crate::code_run::contribution::owner::OwnerJudgment;
 use crate::compaction::output::OutputRef;
 use serde::Deserialize;
 use serde::Serialize;
-use std::sync::Arc;
 
 /// What a pair's scorer reads (FIX 3607), the same for both forks: one part
 /// of the identity both forks are scored under, beside their anchor's

@@ -4,9 +4,7 @@
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::de;
 
 /// The occurrence path a context output's manifest names. Its body is one of
 /// the code-run raw-output family, keyed by its content: inline in its row

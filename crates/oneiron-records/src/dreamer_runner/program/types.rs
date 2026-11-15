@@ -6,7 +6,6 @@ use oneiron_contracts::entity_id::bytes_to_hex_lower;
 use oneiron_store::attempt_id::AttemptId;
 pub use oneiron_verb_wire::dreamer_runner::program::types::ArmTurnProgram;
 pub use oneiron_verb_wire::dreamer_runner::program::types::DisarmTurnProgram;
-pub(super) use oneiron_verb_wire::dreamer_runner::program::types::OccurrenceKind;
 pub use oneiron_verb_wire::dreamer_runner::program::types::ProgramRecipePin;
 pub use oneiron_verb_wire::dreamer_runner::program::types::ProgramTrigger;
 pub use oneiron_verb_wire::dreamer_runner::program::types::TurnProgramRegistration;

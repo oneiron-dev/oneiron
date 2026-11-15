@@ -9,7 +9,6 @@ use oneiron_base::error::Result;
 use oneiron_lens_wire::lens::atom::LensText;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 // ---------------------------------------------------------------------------
 // DEC-0006 invariant 9 arming — surface (a), the in-moment ask

@@ -6,7 +6,6 @@ pub use crate::memory::conversation_membership::MembershipWindow;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// How much of a room's past a joining member sees.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::borrow::Cow;
-use std::time::Instant;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WorkKind {

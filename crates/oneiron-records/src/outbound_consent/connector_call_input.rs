@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/outbound_consent/connector_call_input.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use serde::Deserialize;
-use serde::Serialize;
-
 /// The round of questions a call waits on, as its status read shows it
 /// (FIX 3837): its handle, generation, how many questions it asks, the end
 /// of its live lease, and whether its live exchange ended unanswered.

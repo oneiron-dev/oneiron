@@ -2,9 +2,7 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_model::llm::LlmError;
-use std::path::PathBuf;
 
 pub const ENGINE_EXECUTOR_SOFT_STEP_LIMIT: u32 = 6;
 
@@ -43,34 +41,6 @@ impl EngineExecutorError {
             Self::Engine(error) => Some(error.kind()),
             _ => None,
         }
-    }
-}
-
-/// The durable REPL's soft yield: the steps one entry runs before it yields.
-/// A run's total steps are the `[limits] executor_run_steps` row, which asks
-/// and never stops the run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EngineExecutorLimits {
-    pub soft_steps: u32,
-}
-
-impl Default for EngineExecutorLimits {
-    fn default() -> Self {
-        Self {
-            soft_steps: ENGINE_EXECUTOR_SOFT_STEP_LIMIT,
-        }
-    }
-}
-
-impl EngineExecutorLimits {
-    fn validate(self) -> EngineExecutorResult<()> {
-        if self.soft_steps == 0 {
-            return Err(Error::InvalidConfig(
-                "engine executor soft step limit must be positive".to_owned(),
-            )
-            .into());
-        }
-        Ok(())
     }
 }
 

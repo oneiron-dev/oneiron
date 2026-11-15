@@ -11,9 +11,7 @@ pub use oneiron_verb_wire::booking::agent_api::BookingRescheduleInput;
 pub use oneiron_verb_wire::booking::agent_api::SelectedSlot;
 use oneiron_verb_wire::booking::constraint::EventTypeKey;
 use serde::Deserialize;
-use serde::Deserializer;
 use serde::Serialize;
-use serde::Serializer;
 
 /// Wire version of [`BookingAgentInstructionsBlock`]. A block carrying any
 /// other version fails closed rather than being coerced.

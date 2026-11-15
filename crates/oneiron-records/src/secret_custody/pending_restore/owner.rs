@@ -2,13 +2,9 @@
 //! `oneiron` re-exports each item at its old path.
 
 use crate::secret_custody::pending_restore::PendingCredentialResult;
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// What the receipt of a released batch says: the owner's election, never
 /// a check of the source.

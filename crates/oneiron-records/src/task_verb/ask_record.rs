@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/task_verb/ask_record.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-pub(crate) use crate::task_verb::ask_record::attendee_entry::attendee_entry_id;
 use oneiron_base::error::Error;
 use oneiron_base::error::RecordError;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

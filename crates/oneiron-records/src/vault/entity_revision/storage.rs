@@ -3,12 +3,6 @@
 
 pub use crate::vault::entity_revision::storage::redact::ClaimValueRedactionBinding;
 pub use crate::vault::entity_revision::storage::redact::LocalClaimValueRedaction;
-use heed::RoTxn;
-use heed::RwTxn;
-use loro::ExportMode;
-use loro::LoroDoc;
-use loro::LoroValue;
-use loro::ValueOrContainer;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::revision_ref::RevisionRef;
 use serde::Deserialize;

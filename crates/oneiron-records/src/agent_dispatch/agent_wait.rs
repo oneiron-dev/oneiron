@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
 
 /// What a stored row that does not read as a wait is.
 pub const CORRUPT: &str = "agent child wait set";

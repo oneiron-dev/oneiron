@@ -40,9 +40,25 @@ pub(crate) const BODY_INSTANCES: SideTable<([u8; 32], [u8; 16]), Vec<u8>, Raw> =
     SideTable::new(&side_table::PROVENANCE_BODY_INSTANCE);
 
 #[doc(hidden)]
-pub(crate) use oneiron_records::store::body_envelope::rows::BodyFileFormat;
-#[doc(hidden)]
-use oneiron_records::store::body_envelope::rows::{AEAD, EPOCH, FORMAT, corrupt};
+use oneiron_records::store::body_envelope::rows::{AEAD, EPOCH, corrupt};
+
+/// How a sealed body file is cut into envelopes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum BodyFileFormat {
+    /// E0 chunks of 64 KiB of the body each, then a terminal record.
+    #[serde(rename = "e0_chunks_64k")]
+    E0Chunks64k,
+}
+
+impl BodyFileFormat {
+    const fn code(self) -> u8 {
+        match self {
+            Self::E0Chunks64k => 1,
+        }
+    }
+}
+
+const FORMAT: BodyFileFormat = BodyFileFormat::E0Chunks64k;
 
 /// One body instance's row.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]

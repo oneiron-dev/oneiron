@@ -14,27 +14,6 @@ pub use oneiron_verb_wire::workspace_roster::project::goal::proposals::ProjectGo
 use serde::Deserialize;
 use serde::Serialize;
 
-/// Who proposed, as the engine admitted it: never a field of the request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ProjectGoalProposer {
-    /// The live vault owner.
-    Owner { person: EntityId },
-    /// An agent, on the live owner Grant that listed the verb when it
-    /// proposed.
-    Agent { agent: EntityId, grant: EntityId },
-}
-
-impl ProjectGoalProposer {
-    /// The actor the rate counts, whichever Grant admitted it.
-    fn principal(&self) -> EntityId {
-        match self {
-            Self::Owner { person } => *person,
-            Self::Agent { agent, .. } => *agent,
-        }
-    }
-}
-
 /// The rate a proposal was admitted under: at most `open_per_base` open
 /// proposals of one proposer on one goal base, and at most `per_window` of
 /// its proposals for one project in any `window_secs` (the vault clock's

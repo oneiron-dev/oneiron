@@ -28,8 +28,38 @@ use crate::genui::ConsentConfirmOutcome;
 const COMM_WIDEN: SideTable<AttemptId, CommWidenRecord, Named> =
     SideTable::new(&side_table::AGENT_DISPATCH_COMM_WIDEN);
 
+/// Who answers a child's widen ask: its real dispatch parent's agent, or,
+/// for a dispatch with no agent parent, the vault owner (CALLS W1); no one
+/// once that actor was erased (FIX 3520).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum CommWidenRecipient {
+    Agent(EntityId),
+    Owner(EntityId),
+    Erased,
+}
+
+impl CommWidenRecipient {
+    /// The actor, while it is not erased.
+    pub(crate) const fn actor(self) -> Option<EntityId> {
+        match self {
+            Self::Agent(actor) | Self::Owner(actor) => Some(actor),
+            Self::Erased => None,
+        }
+    }
+
+    /// Names no one in place of `actor`; whether it named it.
+    fn forget(&mut self, actor: EntityId) -> bool {
+        let named = self.actor() == Some(actor);
+        if named {
+            *self = Self::Erased;
+        }
+        named
+    }
+}
+
 #[doc(hidden)]
-pub(crate) use oneiron_records::agent_dispatch::comm_widen::{CommWidenRecipient, CommWidenState};
+pub(crate) use oneiron_records::agent_dispatch::comm_widen::CommWidenState;
 
 /// The question one ask round carries: ids and time reserved before its
 /// witness, so a retry lands the same question.

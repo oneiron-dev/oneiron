@@ -7,12 +7,6 @@ pub use oneiron_verb_wire::skill_optimize::judge_swap::JudgeSwapPolicy;
 pub use oneiron_verb_wire::skill_optimize::judge_swap::JudgeTieBreaker;
 use serde::Deserialize;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
-use serde_json::Value;
-use std::borrow::Borrow;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::btree_map::Entry;
 
 /// A judge's answer to a kept case, asked again.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

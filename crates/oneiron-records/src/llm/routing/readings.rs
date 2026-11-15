@@ -7,7 +7,6 @@ use oneiron_store::model_decision::DecisionAnswer;
 use oneiron_wake_contract::llm::decision::types::TypedDecision;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// One candidate's grade: the model, the effort it was graded at, and its
 /// complete typed decision.

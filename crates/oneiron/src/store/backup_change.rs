@@ -25,8 +25,29 @@ use crate::side_table::{self, Named, SideTable, SideTableDbs};
 const BACKUP_CHANGE: SideTable<(), BackupCommitState, Named> =
     SideTable::new(&side_table::BACKUP_CHANGE);
 
-#[doc(hidden)]
-pub(crate) use oneiron_records::store::backup_change::BackupWriteClass;
+/// What a write changes for the backup watermark.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum BackupWriteClass {
+    /// Anything an owner backs up: every write that names no other class.
+    #[default]
+    Content,
+    /// A host's own counters and questions, which no restore needs.
+    Telemetry,
+    /// A backup's own bookkeeping: its chain advance and its incarnation.
+    BackupMetadata,
+}
+
+impl BackupWriteClass {
+    /// The class of one commit holding writes of `self` and `other`: content
+    /// wins a mixed commit.
+    fn merge(self, other: Self) -> Self {
+        if self == Self::Content || other == Self::Content {
+            Self::Content
+        } else {
+            self
+        }
+    }
+}
 
 /// The last stamped commit: its transaction id, the id of the last commit
 /// that changed content at or before it, and its class.

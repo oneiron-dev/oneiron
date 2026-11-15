@@ -1,9 +1,6 @@
 //! Moved from `crates/oneiron/src/outbound_consent/connector_elicitation_consent.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use serde::Deserialize;
-use serde::Serialize;
-
 /// The action class a stop-asking press remembers (FIX 8808).
 pub const CONNECTOR_ELICITATION_ANSWER_ACTION: &str = "outbound.connector_elicitation_answer";
 

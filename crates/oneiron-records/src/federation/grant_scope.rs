@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/federation/grant_scope.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use std::collections::BTreeSet;
-
 /// A Steward reads across its vault root.
 pub const STEWARD_READ_VERB: &str = "read";
 

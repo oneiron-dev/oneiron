@@ -4,9 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// A TURN's own temporal key, `(learned_at, id)`.
 pub type TurnKey = (u64, EntityId);

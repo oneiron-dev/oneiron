@@ -64,10 +64,30 @@ pub use oneiron_verb_wire::workspace_roster::project::goal::proposals::{
     ProjectGoalBase, ProjectGoalProposalImprovement, ProjectGoalProposalReasons,
 };
 
+/// Who proposed, as the engine admitted it: never a field of the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ProjectGoalProposer {
+    /// The live vault owner.
+    Owner { person: EntityId },
+    /// An agent, on the live owner Grant that listed the verb when it
+    /// proposed.
+    Agent { agent: EntityId, grant: EntityId },
+}
+
+impl ProjectGoalProposer {
+    /// The actor the rate counts, whichever Grant admitted it.
+    fn principal(&self) -> EntityId {
+        match self {
+            Self::Owner { person } => *person,
+            Self::Agent { agent, .. } => *agent,
+        }
+    }
+}
+
 #[doc(hidden)]
 pub use oneiron_records::workspace_roster::project::goal::proposals::{
     ProjectGoalProposalDismissal, ProjectGoalProposalRate, ProjectGoalProposalStatus,
-    ProjectGoalProposer,
 };
 
 /// The proposal's evidence shape (ARCH-0053): the attractor case, imp@k

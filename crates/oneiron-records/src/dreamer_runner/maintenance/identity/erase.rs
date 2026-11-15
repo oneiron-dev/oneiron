@@ -3,9 +3,6 @@
 
 use crate::dreamer_runner::maintenance::identity::IdentityAsk;
 use oneiron_contracts::entity_id::EntityId;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// Takes the erased `id` out of `ask`: none when the ask's own mention is
 /// in it or no option is left (no candidate and no provisional entity of

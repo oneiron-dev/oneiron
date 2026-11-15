@@ -2,11 +2,8 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
-pub(crate) use oneiron_store::deletion::receipt::capture::CAPTURE_FAILED;
-pub(crate) use oneiron_store::deletion::receipt::capture::CaptureFailure;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RedactionScope {

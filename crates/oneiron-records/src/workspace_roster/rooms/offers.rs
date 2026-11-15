@@ -6,9 +6,6 @@ use oneiron_contracts::room_join::ConsentNeed;
 pub use oneiron_verb_wire::workspace_roster::rooms::offers::OffersRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::ops::Bound;
 
 /// Where one card stands.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -4,7 +4,6 @@
 use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// A session's identity: the Dreamer authority and the read scope it reads
 /// under, hashed.

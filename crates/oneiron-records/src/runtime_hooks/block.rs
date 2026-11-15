@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 pub const DEFAULT_TOKEN_CAP: u32 = 512;
 

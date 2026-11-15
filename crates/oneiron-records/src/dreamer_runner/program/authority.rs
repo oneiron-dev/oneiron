@@ -3,8 +3,6 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub const SCOPE_DOMAIN: &[u8] = b"oneiron:dreamer:turn-program-scope:v1";
 

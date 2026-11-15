@@ -2,8 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// One trap kind and its occurrence count. Kinds are stable snake-case
 /// tokens; they never carry a locator, a value or caller-authored text.

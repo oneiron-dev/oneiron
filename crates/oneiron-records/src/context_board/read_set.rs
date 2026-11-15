@@ -4,8 +4,6 @@
 pub use crate::claim::served_lifecycle::ServedLifecycle;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// Open own proposals one session watches; every board read checks each, so
 /// a burst past it is not watched by this session.

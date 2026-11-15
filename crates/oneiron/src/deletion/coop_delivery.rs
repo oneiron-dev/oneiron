@@ -92,9 +92,7 @@ pub(crate) fn courtesy_retained_pacts_in(
 #[doc(hidden)]
 use oneiron_records::deletion::coop_delivery::invalid;
 #[doc(hidden)]
-pub use oneiron_records::deletion::coop_delivery::{
-    CooperativeDeletionDeliveryStatus, CooperativeDeletionNotice, parse_hex,
-};
+pub use oneiron_records::deletion::coop_delivery::parse_hex;
 
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
@@ -112,6 +110,71 @@ pub fn cooperative_deletion_recipient_id(pact_id: &[u8; 32], peer_vault_id: &[u8
         "oneiron/deletion/coop-recipient/v1",
         &[pact_id.as_slice(), peer_vault_id.as_slice()].concat(),
     )
+}
+
+/// The seven delivery states (BIZ-LEGAL-0004 A7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CooperativeDeletionDeliveryStatus {
+    /// Staged; no try has started.
+    Queued,
+    /// A try started; retries keep this state.
+    Sent,
+    /// The peer's host answered 2xx: the ask is filed there.
+    Delivered,
+    /// The recipient's owner chose from the menu.
+    Acknowledged,
+    /// The recipient's owner declined.
+    Declined,
+    /// Retries ran out without an answer.
+    Unreachable,
+    /// The peer's host answered but did not file the ask; what it holds is unknown.
+    Unknown,
+}
+
+impl CooperativeDeletionDeliveryStatus {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Queued => "queued",
+            Self::Sent => "sent",
+            Self::Delivered => "delivered",
+            Self::Acknowledged => "acknowledged",
+            Self::Declined => "declined",
+            Self::Unreachable => "unreachable",
+            Self::Unknown => "unknown",
+        }
+    }
+
+    /// The state `next` leaves this one in, or `None` when the move is not
+    /// one the ledger makes: an answer is final, a try starts only from
+    /// `queued` or `sent`, and a try's result lands only on `sent`.
+    const fn advance(self, next: Self) -> Option<Self> {
+        match (self, next) {
+            (Self::Acknowledged | Self::Declined, _) | (_, Self::Queued) => None,
+            (Self::Queued | Self::Sent, Self::Sent)
+            | (Self::Sent, Self::Delivered | Self::Unknown | Self::Unreachable)
+            | (_, Self::Acknowledged | Self::Declined) => Some(next),
+            _ => None,
+        }
+    }
+}
+
+/// The sender's record of one ask to one recipient. It keeps request id,
+/// connection id, a pseudonymous recipient id, status and timestamps, and
+/// never the erased content.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CooperativeDeletionNotice {
+    /// The signed ask's nonce, hex.
+    pub request_id: String,
+    /// The pact the ask is about, hex.
+    pub connection_id: String,
+    /// [`cooperative_deletion_recipient_id`], hex.
+    pub recipient_id: String,
+    pub status: CooperativeDeletionDeliveryStatus,
+    pub created_at: u64,
+    pub updated_at: u64,
 }
 
 /// Where a peer-facing POST landed.

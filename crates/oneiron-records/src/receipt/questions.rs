@@ -24,7 +24,6 @@ pub use oneiron_verb_wire::receipt::questions::standing_admit::QuestionPrepared;
 pub use oneiron_verb_wire::receipt::questions::standing_admit::QuestionPreparedSource;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
 
 /// `vault.questions.pause`'s answer: the question and the state it now has.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

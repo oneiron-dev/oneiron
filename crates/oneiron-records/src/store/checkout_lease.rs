@@ -4,7 +4,6 @@
 pub use oneiron_store::checkout_task::CheckoutTaskClass;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt;
 
 pub type CheckoutHolder = String;
 

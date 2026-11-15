@@ -3,7 +3,6 @@
 
 use crate::code_run::types::*;
 use oneiron_base::edge::EdgeKind;
-use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_retrieval::pipeline::ScoredEntity;
 use oneiron_store::config::context_spec::ContextSpec;

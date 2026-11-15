@@ -6,10 +6,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_CLASS_KEY;
 use oneiron_store::write_envelope::WRITE_ENVELOPE_EVIDENCE_ACTOR_KEY;
 use oneiron_store::write_envelope::claim_body::ClaimBody;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeMap;
-use std::io::Cursor;
 
 pub const BOOKING_PUBLIC_PAGE_PREDICATE: &str = "booking.public_page";
 

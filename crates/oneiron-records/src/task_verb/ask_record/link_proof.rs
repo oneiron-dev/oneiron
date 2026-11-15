@@ -1,14 +1,6 @@
 //! Moved from `crates/oneiron/src/task_verb/ask_record/link_proof.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::task_verb::ask_record::*;
-use ed25519_dalek::Signature;
-use ed25519_dalek::Signer;
-use ed25519_dalek::SigningKey;
-use ed25519_dalek::VerifyingKey;
-use rand_core::OsRng;
-use rand_core::RngCore;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
 

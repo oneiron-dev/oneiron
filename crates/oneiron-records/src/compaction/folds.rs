@@ -14,8 +14,6 @@ pub use oneiron_verb_wire::compaction::folds::FoldUnfoldInput;
 pub use oneiron_verb_wire::compaction::folds::FoldsInput;
 use serde::Deserialize;
 use serde::Serialize;
-use serde_json::Value;
-use serde_json::json;
 
 /// One fold verb call. Run and step come from the host binding, never from
 /// the guest.

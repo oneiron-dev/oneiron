@@ -1,11 +1,9 @@
 //! Moved from `crates/oneiron/src/sync/quarantine/keys_classifier.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_base::error::ErrorKind;
 pub use oneiron_verb_wire::sync::quarantine::keys_classifier::QuarantineContainer;
 use serde::Deserialize;
 use serde::Serialize;
-use xxhash_rust::xxh3::xxh3_64;
 
 /// A persisted quarantine record. Hash + metadata ONLY — GDPR-inert, never
 /// the rejected bytes themselves.

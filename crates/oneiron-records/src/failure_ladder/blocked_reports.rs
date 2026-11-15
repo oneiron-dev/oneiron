@@ -1,7 +1,6 @@
 //! Moved from `crates/oneiron/src/failure_ladder/blocked_reports.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
 

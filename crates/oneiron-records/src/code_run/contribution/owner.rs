@@ -18,67 +18,6 @@ pub struct OwnerJudgment {
     pub at: u64,
 }
 
-/// What the owner may answer about a pair's two shown answers, by stable
-/// option id. Each answer is judged on its own against the one criterion.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OwnerPairChoice {
-    AOnly,
-    BOnly,
-    Both,
-    Neither,
-    CannotJudge,
-}
-
-impl OwnerPairChoice {
-    pub const ALL: [Self; 5] = [
-        Self::AOnly,
-        Self::BOnly,
-        Self::Both,
-        Self::Neither,
-        Self::CannotJudge,
-    ];
-
-    /// Its stable option id.
-    pub const fn option(self) -> &'static str {
-        match self {
-            Self::AOnly => "a_only",
-            Self::BOnly => "b_only",
-            Self::Both => "both",
-            Self::Neither => "neither",
-            Self::CannotJudge => "cannot_judge",
-        }
-    }
-
-    /// The label its option shows.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::AOnly => "Only answer A passes",
-            Self::BOnly => "Only answer B passes",
-            Self::Both => "Both answers pass",
-            Self::Neither => "Neither answer passes",
-            Self::CannotJudge => "I cannot judge these answers",
-        }
-    }
-
-    /// The choice an option id names.
-    pub fn of_option(option: &str) -> Option<Self> {
-        Self::ALL
-            .into_iter()
-            .find(|choice| choice.option() == option)
-    }
-
-    /// Whether answer A, then answer B, passed; `None` for "cannot judge".
-    const fn shown(self) -> Option<(bool, bool)> {
-        match self {
-            Self::AOnly => Some((true, false)),
-            Self::BOnly => Some((false, true)),
-            Self::Both => Some((true, true)),
-            Self::Neither => Some((false, false)),
-            Self::CannotJudge => None,
-        }
-    }
-}
-
 /// Where a pending pair's question stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

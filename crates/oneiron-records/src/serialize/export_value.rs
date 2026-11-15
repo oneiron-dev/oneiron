@@ -2,14 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use rmpv::Value as Mp;
-use serde::Deserialize;
-use serde::Serialize;
-use serde_json::Value;
-use std::borrow::Cow;
-use std::io::Cursor;
-use std::io::Read;
-use std::io::Write;
 
 /// How deep text decoded inside text is read before its original bytes are
 /// kept, as deep as the document pass reads. A value's own structure spends

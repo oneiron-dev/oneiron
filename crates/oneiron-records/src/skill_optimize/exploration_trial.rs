@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
-use std::collections::VecDeque;
 
 /// Why a trial stopped routing live runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

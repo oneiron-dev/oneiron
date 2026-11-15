@@ -5,7 +5,6 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The leased run a declaration was made under: its try, that try's lease
 /// owner and generation, and the repo and full ref its work is on. The

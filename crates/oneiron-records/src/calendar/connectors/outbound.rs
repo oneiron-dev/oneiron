@@ -3,8 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 /// What a local write intends to do to the remote calendar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

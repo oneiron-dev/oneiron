@@ -3,7 +3,6 @@
 
 use serde::Deserialize;
 use serde::Serialize;
-use std::num::NonZeroU16;
 
 /// What the Nth consecutive transient failure selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

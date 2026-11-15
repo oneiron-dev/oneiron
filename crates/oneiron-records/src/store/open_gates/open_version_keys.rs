@@ -1,14 +1,6 @@
 //! Moved from `crates/oneiron/src/store/open_gates/open_version_keys.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-pub(crate) use oneiron_store::graph_version::GRAPH_VERSION_KEY;
-pub(crate) use oneiron_store::vector_index::keys::EMBEDDING_MODEL_EPOCH_KEY;
-pub(crate) use oneiron_store::vector_index::keys::VECTOR_VERSION_KEY;
-use std::collections::HashMap;
-use std::path::PathBuf;
-use std::sync::LazyLock;
-use std::sync::Mutex;
-
 pub const MAX_DBS: u32 = 32;
 
 /// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's

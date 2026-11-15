@@ -14,7 +14,7 @@ pub use oneiron_verb_wire::context_board::tasks::projection::ConsultWidening;
 /// Re-exported crate-wide as [`TasksSection::RENDER_ROW_CAP`].
 pub const TASKS_RENDER_ROW_CAP: usize = 100;
 
-pub const _: () = assert!(TASKS_RENDER_ROW_CAP > 0);
+const _: () = assert!(TASKS_RENDER_ROW_CAP > 0);
 
 /// TASKS board status axis (08b §3): running / scheduled / queued / done /
 /// failed.

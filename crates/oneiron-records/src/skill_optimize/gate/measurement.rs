@@ -1,16 +1,10 @@
 //! Moved from `crates/oneiron/src/skill_optimize/gate/measurement.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use crate::skill_optimize::gate::*;
 pub use oneiron_verb_wire::skill_optimize::gate::measurement::PreferredResponse;
-use rmpv::Value;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::sync::OnceLock;
 
 /// A response-only preference frozen before either version's instructions or
 /// an outcome label is read. The pair is two held-out responses whose

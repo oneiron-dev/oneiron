@@ -14,8 +14,6 @@ pub use oneiron_verb_wire::store::key_custody::protocol::AckPosition;
 pub use oneiron_verb_wire::store::key_custody::protocol::drain::DrainAck;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::PathBuf;
-use zeroize::Zeroizing;
 
 /// One lineage a target holds: a vault's custody in one namespace.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

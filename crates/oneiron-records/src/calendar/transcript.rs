@@ -5,8 +5,6 @@ pub use oneiron_verb_wire::calendar::transcript::TranscriptIngestOutcome;
 pub use oneiron_verb_wire::calendar::transcript::door::TranscriptFileDropInput;
 use serde::Deserialize;
 use serde::Serialize;
-use sha2::Digest;
-use sha2::Sha256;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParsedTranscriptTurn {

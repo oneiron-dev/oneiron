@@ -4,12 +4,7 @@
 pub use crate::federation::pending_act::matured::PendingActMatured;
 pub use oneiron_verb_wire::federation::pending_act::ActExecution;
 pub use oneiron_verb_wire::federation::pending_act::SharedActPrecedence;
-pub(super) use oneiron_verb_wire::federation::pending_act::invalid;
-pub(super) use oneiron_verb_wire::federation::pending_act::key;
 pub use oneiron_verb_wire::federation::pending_act::policy_change::SharedActPolicyChangeState;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
-use std::collections::HashSet;
 
 /// Durable, recipient-specific notification for a holder at the instant the act starts.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

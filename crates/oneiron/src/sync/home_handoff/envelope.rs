@@ -37,9 +37,7 @@ use crate::error::Result;
 use crate::side_table::{Named, SideCodec};
 
 #[doc(hidden)]
-use oneiron_records::sync::home_handoff::envelope::{
-    HEADER_DOMAIN, decode, encode, signature, transcript,
-};
+use oneiron_records::sync::home_handoff::envelope::{HEADER_DOMAIN, encode, signature, transcript};
 
 const SECTIONS_DOMAIN: &[u8] = b"oneiron/home-handoff/sections/v1\0";
 const ACK_DOMAIN: &[u8] = b"oneiron/home-handoff/ack/v1\0";
@@ -436,4 +434,8 @@ fn split_pieces(sealed: &[u8]) -> Result<Vec<&[u8]>> {
         return Err(refused("the handoff does not open for this machine"));
     }
     Ok(pieces)
+}
+
+fn decode<V: Serialize + DeserializeOwned>(bytes: &[u8]) -> Result<V> {
+    <Named as SideCodec<V>>::decode(bytes).map_err(|_| refused("a handoff value does not decode"))
 }

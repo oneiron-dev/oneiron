@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The issuing binding, committed before the effect runs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

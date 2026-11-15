@@ -1,10 +1,8 @@
 //! Moved from `crates/oneiron/src/dreamer_runner/free_time/handoff/actor_content.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use heed::RoTxn;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Which of the five free-time sections a row stands in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

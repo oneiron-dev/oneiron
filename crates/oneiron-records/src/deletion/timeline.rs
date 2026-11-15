@@ -1,8 +1,6 @@
 //! Moved from `crates/oneiron/src/deletion/timeline.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
-use uuid::Uuid;
-
 /// Stable deletion reason surfaced by short-id hydrate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]

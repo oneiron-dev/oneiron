@@ -13,7 +13,6 @@ pub(crate) use oneiron_verb_wire::task_verb::brief::decode_hex;
 pub(crate) use oneiron_verb_wire::task_verb::brief::hex32;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// A context pack pinned by digest: a pack ref promises no immutability, so
 /// the brief keeps what it read.

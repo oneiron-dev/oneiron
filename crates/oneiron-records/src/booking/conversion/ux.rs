@@ -4,7 +4,6 @@
 use oneiron_verb_wire::booking::constraint::RankedSlot;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The first-ranked slot is the recommended one; the rest remain available
 /// through a separate see-more action. Never re-rank the solver's answer.

@@ -4,12 +4,9 @@
 use crate::failure_ladder::blocked_reports::BlockedReportRef;
 use crate::failure_ladder::classify::FailureClass;
 use crate::failure_ladder::scope::FailureScope;
-use oneiron_contracts::entity_id::EntityId;
 use oneiron_store::attempt_id::AttemptId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::HashSet;
-use std::num::NonZeroU16;
 
 /// A `retry_of` chain that cannot be read as a chain at all.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

@@ -5,10 +5,7 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_store::result_manifest::invalid_code_run_replay;
 use oneiron_verb_wire::compaction::folds::FoldReply;
-use serde::Deserialize;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
-use std::collections::BTreeSet;
 
 /// A fold verb's typed answer in `answer`, the JSON its call recorded, or
 /// `None` for the ledger's refusal, which gave out no handle.

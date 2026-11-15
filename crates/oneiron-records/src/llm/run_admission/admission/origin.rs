@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use serde::Serialize;
-use std::sync::atomic::Ordering;
 
 /// What a bound run's calls serve, as the engine stamped it before the run
 /// began (FIX 4453): the agent, its free-time cycle and item, the label every

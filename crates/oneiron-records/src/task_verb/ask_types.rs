@@ -15,7 +15,6 @@ pub use oneiron_verb_wire::task_verb::ask_types::TaskAskProvisional;
 pub use oneiron_verb_wire::task_verb::ask_types::TaskAskSurface;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 /// Live ask routing. `None` means no native channel, not a promise of delivery.

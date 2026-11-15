@@ -2,9 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use serde::Serialize;
-use serde_json::Value;
-use std::collections::BTreeMap;
-use std::collections::BTreeSet;
 
 /// How far a candidate got.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

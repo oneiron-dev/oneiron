@@ -2,9 +2,6 @@ pub use crate::calendar::connectors::outbound::CalendarWriteAction;
 pub use crate::calendar::connectors::outbound::CalendarWriteOutboxState;
 pub use crate::calendar::connectors::remote::RemoteWriteRequest;
 pub use crate::calendar::connectors::seat::CalendarConnectorSyncPayload;
-pub use crate::calendar::inbox_card::CalendarCardKind;
-pub use crate::calendar::inbox_card::CalendarInboxCard;
-pub use crate::calendar::inbox_card::CheckInReAsk;
 pub use crate::calendar::invite::payload::CalendarInviteMethod;
 pub use crate::calendar::prep::home_node::PrepHomeNodeJob;
 pub use crate::calendar::prep::wake::DEFAULT_PREP_LEAD_SECS;
@@ -42,7 +39,6 @@ pub use oneiron_verb_wire::calendar::query::requests::CalendarSearchRequest;
 pub use oneiron_verb_wire::calendar::query::requests::CalendarSel;
 
 pub mod connectors;
-pub mod inbox_card;
 pub mod ingest;
 pub mod invite;
 pub mod prep;

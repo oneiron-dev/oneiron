@@ -6,8 +6,6 @@ use oneiron_store::gate_decision::types::GateDecisionId;
 pub use oneiron_verb_wire::secret_custody::reveal::types::RevealGrantScope;
 use serde::Deserialize;
 use serde::Serialize;
-use std::fmt;
-use zeroize::Zeroizing;
 
 /// Where a reveal stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

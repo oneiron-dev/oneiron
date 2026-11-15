@@ -6,7 +6,6 @@ pub use oneiron_verb_wire::team::spawn_intent::SpawnErasure;
 pub use oneiron_verb_wire::team::spawn_intent::SpawnPhase;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// Domain of a frozen pattern pack's body hash.
 pub const PACK_BODY_CONTEXT: &str = "oneiron spawn frozen pattern pack body v1";

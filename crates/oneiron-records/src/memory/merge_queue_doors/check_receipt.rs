@@ -7,7 +7,6 @@ use oneiron_contracts::entity_id::EntityId;
 pub use oneiron_verb_wire::memory::merge_queue_doors::check_receipt::CodeCheckReceiptRequest;
 use serde::Deserialize;
 use serde::Serialize;
-use std::path::Path;
 
 /// One phase command's recorded result: its exit status or the signal
 /// that ended it, and the BLAKE3 of its recorded output.

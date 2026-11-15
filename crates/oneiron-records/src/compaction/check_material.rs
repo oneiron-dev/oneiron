@@ -4,12 +4,9 @@
 use crate::store::body_descriptor::BodyRef;
 use crate::store::body_descriptor::BodyState;
 use crate::store::body_descriptor::OwnedBody;
-use heed::RoTxn;
-use heed::RwTxn;
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::time::Duration;
 
 /// Where a conversation summary's check material is, and what it is (FIX
 /// 5040): its occurrence, which is the sealed request's job id, and its

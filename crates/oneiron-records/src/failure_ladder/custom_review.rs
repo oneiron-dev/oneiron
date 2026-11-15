@@ -2,12 +2,10 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_base::error::Error;
-use oneiron_base::error::Result;
 use oneiron_store::side_table::codec::CodecError;
 use oneiron_store::side_table::codec::RawValue;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 pub const VERSION: u8 = 1;
 

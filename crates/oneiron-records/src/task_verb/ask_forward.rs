@@ -5,9 +5,6 @@ use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::entity_id::derived_domains::TASK_ASK_FORWARD_INTENT;
 use oneiron_contracts::entity_id::derived_domains::TASK_ASK_FORWARD_RESULT;
-use serde::Deserialize;
-use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The framing every capability slip token carries.
 pub const TOKEN_PREFIX: &str = "v2.slip.";
