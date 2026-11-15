@@ -52,8 +52,8 @@ pub(crate) use self::source_attribution::{
     SourceAttribution, SourceSpeaker, imported_message_in_txn, source_speaker_in_txn,
 };
 
-pub(super) use self::validation::validate_witness_occurrence;
 pub(crate) use self::validation::WITNESS_OCCURRENCE_SKEW_SECS;
+pub(super) use self::validation::validate_witness_occurrence;
 pub(crate) use self::validation::{
     next_witness_message_order, sole_edge_target, stored_witness_turn_author,
     taken_witness_message_order, witness_message_order,
