@@ -8022,6 +8022,7 @@ dependencies = [
  "oneiron-delivery-vocabulary",
  "oneiron-docedit",
  "oneiron-guest",
+ "oneiron-hex",
  "oneiron-keystore",
  "oneiron-lens-wire",
  "oneiron-linkedin-policy",
