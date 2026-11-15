@@ -2,8 +2,9 @@
 //! (i)): `vault.recall` under a caller's operation id. The first recall
 //! under an id keeps its items by identity; the same request under it again
 //! answers those items, rebuilt at the revisions it served under the caller's
-//! current read, and refuses once one of them no longer reads. Without an id,
-//! recall tracks the vault as before.
+//! current read, and refuses once one of them, or a world its census named,
+//! no longer reads. Two first calls that race both answer the one kept
+//! first. Without an id, recall tracks the vault as before.
 //!
 //! The requests are built from JSON, as the wire sends them, so this file
 //! compiles where `operation_id` is not a field: there the id is ignored and
@@ -15,8 +16,8 @@ use std::sync::Arc;
 
 use oneiron::deletion::DeleteReason;
 use oneiron::memory::{
-    Memory, MemoryPack, MemoryResult, RecallRequest, WitnessAssertions, WitnessAuthor,
-    WitnessMessage, WitnessTurn,
+    ClaimInput, Memory, MemoryPack, MemoryResult, ReadFilterInput, RecallRequest,
+    WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn,
 };
 use oneiron::task_verb::sdk::{RecallDoor, recall_at_door};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -215,4 +216,123 @@ fn control_a_recall_without_an_operation_id_tracks_the_vault() {
         "a recall without an id finds the new turn"
     );
     assert!(holds(&second, "zeta"), "and still finds the first");
+}
+
+#[test]
+fn a_first_call_that_keeps_second_answers_the_first_kept_answer() {
+    let (_directory, vault) = fresh_vault();
+    let memory = owner_memory(&vault);
+    witness(&memory, &format!("the first {TOPIC} note says theta"));
+    let operation = serde_json::json!({ "operation_id": "session-6:step-2:recall:0" });
+    // Two first calls of one operation race. This one misses the kept row
+    // and, while its query embeds, the other runs to its end and keeps its
+    // answer; then a new turn lands, which this call's retrieval reads.
+    let racing = operation.clone();
+    let mut kept_first = None;
+    let kept_second = recall_at_door(
+        &memory,
+        request(operation.clone()),
+        |_| {
+            kept_first = Some(recall(&memory, racing).expect("the call that keeps first"));
+            witness(
+                &memory,
+                &format!("{TOPIC} {TOPIC} {TOPIC}: the later note says iota"),
+            );
+            None
+        },
+        &RecallDoor::now(),
+    )
+    .expect("the call that keeps second");
+    let kept_first = kept_first.expect("FIXTURE: the racing call ran while the query embedded");
+    assert!(
+        holds(&kept_first, "theta") && !holds(&kept_first, "iota"),
+        "FIXTURE: the call that keeps first answers before the later turn"
+    );
+    let fresh = recall(&memory, serde_json::json!({})).expect("a recall without an id");
+    assert!(
+        holds(&fresh, "iota"),
+        "FIXTURE: a recall without an operation id finds the later turn"
+    );
+
+    assert_eq!(
+        items_json(&kept_second),
+        items_json(&kept_first),
+        "the call that keeps second answers the operation's first kept answer"
+    );
+    let replay = recall(&memory, operation).expect("a later replay");
+    assert_eq!(
+        items_json(&replay),
+        items_json(&kept_first),
+        "a later replay answers the first kept answer, never one kept over it"
+    );
+}
+
+#[test]
+fn a_replay_names_no_world_the_current_read_does_not_read() {
+    let (_directory, vault) = fresh_vault();
+    let memory = owner_memory(&vault);
+    witness(&memory, &format!("the {TOPIC} note says kappa"));
+    // Control first: an operation whose census names no world.
+    let control = serde_json::json!({ "operation_id": "session-7:step-1:recall:0" });
+    let control_first = recall(&memory, control.clone()).expect("the control's first recall");
+    assert!(
+        control_first.scope_honesty.out_of_scope_worlds.is_empty(),
+        "FIXTURE: with no claim in another world the census names none"
+    );
+
+    // A surfaceable claim in a world the default scope does not read.
+    let world = EntityId::now();
+    let owner = vault.ensure_embedded_owner_actor().expect("owner PERSON");
+    memory
+        .claim_upsert(&ClaimInput {
+            id: None,
+            predicate: "profile.city".to_owned(),
+            subject_ref: owner.to_hex(),
+            value: serde_json::json!("a city in another world"),
+            confidence: 1.0,
+            confidence_details: None,
+            source: "user_stated".to_owned(),
+            world_ref: Some(world.to_hex()),
+            relationship_ref: None,
+            scope: None,
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(100),
+            learned_at: Some(100),
+            salience: None,
+        })
+        .expect("FIXTURE: the owner writes a claim in another world");
+    let operation = serde_json::json!({ "operation_id": "session-7:step-2:recall:0" });
+    let first = recall(&memory, operation.clone()).expect("the first recall");
+    assert_eq!(
+        first.scope_honesty.out_of_scope_worlds,
+        vec![world.to_hex()],
+        "FIXTURE: the first answer's census names the claim's world"
+    );
+
+    // The same caller, its read narrowed to turns and messages: it still
+    // reads the turn, and no claim, so no world.
+    let narrowed: ReadFilterInput =
+        serde_json::from_value(serde_json::json!({ "entity_types": ["TURN", "MESSAGE"] }))
+            .expect("a read filter");
+    let narrowed = memory.with_read_filter(Some(&narrowed));
+    let fresh = recall(&narrowed, serde_json::json!({})).expect("a narrowed recall");
+    assert!(
+        holds(&fresh, "kappa") && fresh.scope_honesty.out_of_scope_worlds.is_empty(),
+        "FIXTURE: the narrowed read reads the turn and names no world"
+    );
+    let control_replay = recall(&narrowed, control).expect("the control's narrowed replay");
+    assert_eq!(
+        items_json(&control_replay),
+        items_json(&control_first),
+        "FIXTURE: the narrowed read replays the turn items unchanged"
+    );
+
+    let refusal = recall(&narrowed, operation)
+        .expect_err("a replay whose census names a world the read no longer reads refuses");
+    assert_eq!(refusal.code, oneiron::memory::MEMORY_CODE_INVALID_STATE);
+    assert!(
+        !refusal.message.contains(&world.to_hex()),
+        "the refusal names no world"
+    );
 }

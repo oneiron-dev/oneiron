@@ -9,9 +9,11 @@ impl Memory<'_> {
     /// The pack `pins` name, each item read again at its served revision
     /// under this handle's current read, its retrieval accounting the first
     /// answer's (`scope_honesty`, `retrieval_meta`). `None` when an item no
-    /// longer reads: it was erased or retracted, or the read narrowed past
-    /// it. The lane is a recall's: surfaceable claims, the scope's worlds and
-    /// facet, `as_of`'s judgment, the bound filter and a room turn's ceiling.
+    /// longer reads (it was erased or retracted, or the read narrowed past
+    /// it), or when a world the first answer's census named is no longer
+    /// one this read's census names. The lane is a recall's: surfaceable
+    /// claims, the scope's worlds and facet, `as_of`'s judgment, the bound
+    /// filter and a room turn's ceiling.
     pub(in crate::memory) fn recall_replay_pack(
         &self,
         scope: &RecallScope,
@@ -22,6 +24,13 @@ impl Memory<'_> {
     ) -> MemoryResult<Option<MemoryPack>> {
         let unfaceted = self.recall_selection(scope, None)?;
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
+        // The census lane is a recall's: the actor's whole read, past the
+        // scope's worlds, under the same judgment and filter.
+        let census = self
+            .vault
+            .scoped_read(lane.actor_key().clone())
+            .with_judged_at(as_of)
+            .with_read_filter(self.read_filter.as_ref());
         let lane = match unfaceted.worlds() {
             Some(worlds) => lane.within_worlds(worlds.clone()),
             None => lane,
@@ -30,8 +39,25 @@ impl Memory<'_> {
             .with_judged_at(as_of)
             .with_read_filter(self.read_filter.as_ref());
         let mut receipt = lane.search_receipt(None, 0)?;
-        if receipt.applied.deny_all && !pins.is_empty() {
-            return Ok(None);
+        if receipt.applied.deny_all {
+            // A read that admits nothing reads no item, names no world and
+            // looks up no facet (FIX 5008): only an empty first answer
+            // replays under it.
+            if !pins.is_empty() || !scope_honesty.out_of_scope_worlds.is_empty() {
+                return Ok(None);
+            }
+            let mut pack = MemoryPack {
+                items: Vec::new(),
+                scope_honesty,
+                retrieval_meta,
+                pack_version: MEMORY_PACK_VERSION,
+                rendered: None,
+                narrowing: Box::new(receipt),
+                retrieval_run_id: None,
+                residence: None,
+            };
+            pack.stamp_residence(home::local_residence(self.vault, None));
+            return Ok(Some(pack));
         }
         let store = lane.store_read();
         let selection = self.recall_faceted(unfaceted, scope, None, &store)?;
@@ -56,6 +82,21 @@ impl Memory<'_> {
             };
             item.embedding_matches.clone_from(&pin.embedding_matches);
             items.push(item);
+        }
+        // The first census's world names are a disclosure: each must still
+        // be one this read's census names, or the replay answers none.
+        if !scope_honesty.out_of_scope_worlds.is_empty() {
+            let Some(worlds) = &selection.worlds else {
+                return Ok(None);
+            };
+            let now = self.out_of_scope_worlds(&census, &mut receipt, worlds, None)?;
+            if !scope_honesty
+                .out_of_scope_worlds
+                .iter()
+                .all(|world| now.out_of_scope_worlds.contains(world))
+            {
+                return Ok(None);
+            }
         }
         let mut pack = MemoryPack {
             items,

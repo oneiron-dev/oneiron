@@ -9,9 +9,12 @@
 //! request and a digest of the items. The same request under the same id
 //! rebuilds those items at those revisions under the caller's CURRENT read
 //! ([`Memory::recall_replay_pack`]) and answers them only when their digest
-//! is the first answer's. An erase, a retraction or a narrowed read since
-//! then refuses with `INVALID_STATE`; no old text is ever served. Without an
-//! operation id, recall runs as before.
+//! is the first answer's and every world its census named is one the
+//! current read's census names. An erase, a retraction or a narrowed read
+//! since then refuses with `INVALID_STATE`; no old text and no world the
+//! caller no longer reads is ever served. Two first calls of one operation
+//! that race both answer the one kept first. Without an operation id,
+//! recall runs as before.
 //!
 //! The rows are runtime state: never imaged, aged out after
 //! [`RECALL_REPLAY_RETENTION_SECS`], at most
@@ -98,15 +101,9 @@ pub(crate) fn recall_under_operation(
     }
     .filter(|row| !expired(row, now));
     if let Some(row) = kept {
-        if row.request != request {
-            return Err(MemoryError::bad_request_with(
-                "this operation_id already answered another recall request",
-                &["Send the operation's first request unchanged, or use a new operation_id."],
-            ));
-        }
-        return replay(memory, &input, &row);
+        return answer_kept(memory, &input, &row, &request);
     }
-    let pack = run(input)?;
+    let pack = run(input.clone())?;
     let row = RecallReplayRow {
         request,
         items: items_digest(&pack.items)?,
@@ -118,8 +115,30 @@ pub(crate) fn recall_under_operation(
         })
         .map_err(|error| replay_internal(&error))?,
     };
-    keep(vault, &key, &row, now)?;
-    Ok(pack)
+    // A concurrent first call of the same operation may have kept its answer
+    // while this one ran: that answer stays the operation's, and this call
+    // answers it too.
+    match keep(vault, &key, &row, now)? {
+        None => Ok(pack),
+        Some(first) => answer_kept(memory, &input, &first, &row.request),
+    }
+}
+
+/// The answer an operation's kept first answer gives `input`: its replay,
+/// or a refusal when `input` is another request than the first.
+fn answer_kept(
+    memory: &Memory<'_>,
+    input: &RecallRequest,
+    row: &RecallReplayRow,
+    request: &[u8; 32],
+) -> MemoryResult<MemoryPack> {
+    if row.request != *request {
+        return Err(MemoryError::bad_request_with(
+            "this operation_id already answered another recall request",
+            &["Send the operation's first request unchanged, or use a new operation_id."],
+        ));
+    }
+    replay(memory, input, row)
 }
 
 /// What an operation id recall takes: the id's alphabet and length, no
@@ -234,15 +253,24 @@ fn expired(row: &RecallReplayRow, now: u64) -> bool {
 }
 
 /// Keeps `row` under `key`, dropping the principal's expired rows and, past
-/// [`RECALL_REPLAY_ROWS_PER_PRINCIPAL`], its oldest.
+/// [`RECALL_REPLAY_ROWS_PER_PRINCIPAL`], its oldest. When an unexpired
+/// first answer is already kept under `key` (a concurrent first call of the
+/// same operation committed it after this one looked), it keeps nothing and
+/// returns that answer: the first one kept stays the operation's.
 fn keep(
     vault: &Vault,
     key: &(EntityId, [u8; 32]),
     row: &RecallReplayRow,
     now: u64,
-) -> MemoryResult<()> {
+) -> MemoryResult<Option<RecallReplayRow>> {
     let (actor, _) = key;
     let mut txn = vault.store.env.write_txn().map_err(Error::from)?;
+    if let Some(first) = RECALL_REPLAY
+        .get(&vault.store, &txn, key)?
+        .filter(|first| !expired(first, now))
+    {
+        return Ok(Some(first));
+    }
     let mut held = Vec::new();
     for (kept_key, kept) in RECALL_REPLAY.scan_from(&vault.store, &txn, actor.as_bytes())? {
         if kept_key == *key || expired(&kept, now) {
@@ -258,7 +286,7 @@ fn keep(
     }
     RECALL_REPLAY.put(&vault.store, &mut txn, key, row)?;
     txn.commit().map_err(Error::from)?;
-    Ok(())
+    Ok(None)
 }
 
 /// An actor's erase removes the replays kept under it (FIX 3520).
