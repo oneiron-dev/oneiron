@@ -113,14 +113,10 @@ pub(super) mod reason {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectRank {
-    /// The parent's leader, not on the parent's board.
-    Leader,
-    /// A board holder at the parent, or the host acting for the owner.
-    Board,
-}
+#[doc(hidden)]
+use oneiron_records::workspace_roster::project::fold::slice_meet;
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::fold::{ProjectForkConflict, ProjectRank};
 
 /// The signer's highest role at `parent`, after the signature, slip, scope
 /// and authorization checks; never a role the revision grants itself.
@@ -238,30 +234,6 @@ pub(super) fn members_of(authority: &ProjectAuthority) -> BTreeSet<&str> {
     }
 }
 
-/// Per axis: unconstrained meets constrained, equal values stay, two
-/// different values meet to nothing; resource sets intersect.
-fn slice_meet(a: &Scope, b: &Scope) -> Option<Scope> {
-    fn axis(a: Option<EntityId>, b: Option<EntityId>) -> Option<Option<EntityId>> {
-        match (a, b) {
-            (Some(a), Some(b)) if a != b => None,
-            (a, b) => Some(a.or(b)),
-        }
-    }
-    Some(Scope {
-        world: axis(a.world, b.world)?,
-        facet: axis(a.facet, b.facet)?,
-        // A relationship set meets as one value: equal sets stay, two
-        // different sets meet to nothing.
-        relationship: match (&a.relationship, &b.relationship) {
-            (Some(left), Some(right)) if left != right => return None,
-            (left, right) => left.clone().or_else(|| right.clone()),
-        },
-        project: axis(a.project, b.project)?,
-        readable: a.readable.intersection(&b.readable).cloned().collect(),
-        writable: a.writable.intersection(&b.writable).cloned().collect(),
-    })
-}
-
 /// Whether a signed state fits under a parent project's effective view.
 pub(super) fn authority_fits(authority: &ProjectAuthority, parent: &ProjectEffective) -> bool {
     ProjectEffective::of(authority, BTreeSet::new(), true).fits_under(parent)
@@ -349,18 +321,6 @@ pub enum ProjectDisposition {
         state: ProjectHistoryOverBudget,
         frozen: Box<ProjectDisposition>,
     },
-}
-
-/// One fork a parent cycle leaves open (ruling (a)): its worlds tie there,
-/// or install different children there.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProjectForkConflict {
-    pub anchor: ProjectRevisionHash,
-    pub rank: ProjectRank,
-    /// Every child of `anchor` some world keeps in contention or installs.
-    pub contenders: BTreeSet<ProjectRevisionHash>,
-    /// The causal resolution tips at `anchor` (ruling (b)).
-    pub resolution_tips: BTreeSet<ProjectRevisionHash>,
 }
 
 impl ProjectDisposition {

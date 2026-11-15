@@ -436,7 +436,7 @@ impl WorkerFile {
         let server = match (kind, &self.server, &self.server_sha256) {
             (WorkerKind::LlamaCpp, Some(binary), Some(sha256)) => {
                 anyhow::ensure!(
-                    lower_hex(sha256, 64),
+                    oneiron_hex::is_lower_hex(sha256, Some(64)),
                     "{}: 64 lowercase hex digits",
                     field("server_sha256")
                 );
@@ -762,11 +762,4 @@ fn env_name(name: &str) -> bool {
         && name
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
-}
-
-fn lower_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
