@@ -385,27 +385,6 @@ fn code_sandbox_microvm_allowlist_defaults_to_deny() {
     assert!(!allowlist.permits(&unbound, &destination("https", "example.com")));
 }
 
-// FIX [LIBTEST-AGENT-RUNTIME-TIER]: move to an integration test with test doors; real QuickJS / CompiledSandboxBackends live in oneiron-agent-runtime, which links a second, non-test oneiron (pub use oneiron::code_sandbox::*)
-#[cfg(any())]
-#[test]
-fn code_sandbox_microvm_isolating_tiers_never_fall_through_silently() {
-    for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        match select_backend_for_tier(&crate::code_sandbox::SANDBOX_BACKENDS, tier) {
-            Ok(selected) => {
-                let backend = selected.expect("isolating tier requires a backend");
-                assert_eq!(backend.name(), "firecracker");
-            }
-            Err(error) => {
-                assert_eq!(error.kind(), ErrorKind::MicroVmBackendUnavailable);
-            }
-        }
-    }
-
-    // Assert the typed release fail-closed refusal independently of this build's cfg.
-    let refusal = backend_unavailable(SandboxGuestTier::Foreign);
-    assert_eq!(refusal.kind(), ErrorKind::MicroVmBackendUnavailable);
-}
-
 #[test]
 fn code_sandbox_microvm_whiteouts_and_opaque_directories_are_typed() {
     let dir = tempfile::tempdir().expect("tempdir");

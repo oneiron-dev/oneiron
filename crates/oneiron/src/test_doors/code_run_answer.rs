@@ -3,6 +3,7 @@
 //! finished run's answer read back from its replay record.
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
+use crate::code_run::CodeRunReplayRecord;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::vault::Vault;
@@ -131,6 +132,30 @@ pub fn finish_text(vault: &Vault, run_id: &EntityId) -> Result<String> {
         .get_code_run_raw_output(output)?
         .ok_or(Error::CorruptedIndex(
             "the run has no step-0 observation bytes",
+        ))?;
+    String::from_utf8(raw)
+        .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))
+}
+
+/// The step-`seq` observation text as the committed replay record holds it,
+/// for any step: `finish_text` generalized past step 0. Reads the record the
+/// caller holds, never the run's own response.
+///
+/// # Errors
+///
+/// A missing step observation or its bytes, a non-UTF-8 body, or the store's.
+pub fn observation_text(vault: &Vault, record: &CodeRunReplayRecord, seq: u64) -> Result<String> {
+    let path = crate::engine_executor::observation_output_path(seq);
+    let output = record
+        .outputs
+        .iter()
+        .find(|output| output.path == path)
+        .ok_or(Error::CorruptedIndex("the run has no step observation"))?;
+    let storage = crate::code_run::ExecutorStorage::Canonical(vault);
+    let raw = storage
+        .get_code_run_raw_output(output)?
+        .ok_or(Error::CorruptedIndex(
+            "the run has no step observation bytes",
         ))?;
     String::from_utf8(raw)
         .map_err(|_| Error::InvalidClaimBody("executor replay output is not utf8"))
