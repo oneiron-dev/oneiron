@@ -2181,10 +2181,11 @@ suite.test(test, "FEDERATION-11", "Ending a task stops its answer, while choosin
     await fedInquiryAnswered(fixture, "Out Thursday");
     expect((await engine.client.call("vault.claims.list", { predicate: "profile.statement", limit: 100 })).value).toEqual([]);
     const cancelled = await engine.client.call("cancel", { task_ref: fixture.input.task });
-    // The owner ends their own TASK. A proposal would leave it open; name the
-    // whole receipt when that happens (first run, 15 Nov: "proposed").
+    // The owner ends their own TASK (ARCH-0067 cancel(h): AUTO the default for
+    // own tasks). On a default policy the external-effect gate proposes it, and
+    // the opener never settles its own proposal, so no public door ends it.
     if (cancelled.approval !== "auto") {
-      throw new Error(`Owner cancel of its own TASK did not end it: ${JSON.stringify(cancelled)}`);
+      throw new Error(`FEDERATION-11 ENGINE DEFECT 2026-11-15: the owner's soft cancel of its own TASK is proposed, not effected, and the opener never settles its own proposal (FIX-LIST [OWNER-SOFT-CANCEL-PROPOSED]); receipt=${JSON.stringify(cancelled)}`);
     }
     let ended: unknown;
     try { await fixture.agent.client.call("vault.inquire", { ...fixture.input, inquiry_id: fixture.pending.inquiry_id }); }
