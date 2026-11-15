@@ -217,8 +217,9 @@ pub(crate) enum Restore {
 
 /// One adapter's checkpoint rows.
 pub(crate) struct Adapter {
-    /// The tables its compartments hold, in capture order. A part belongs to
-    /// the first listed table that holds it.
+    /// The tables its compartments hold. A [`Capture::ByTable`] capture
+    /// reads them in this order, and a part belongs to the first listed
+    /// table that holds it.
     pub(crate) tables: &'static [&'static dyn AdapterTable],
     pub(crate) capture: Capture,
     pub(crate) check: Check,
