@@ -9633,7 +9633,7 @@
      "path": "src/blob_artifact/esign/ingress.rs",
      "purpose": "Token-first admission at the public signing doors (FIX 3808, Engine ruling 10-18): a recipient link's…",
      "surface": {
-      "fn": 2,
+      "fn": 3,
       "struct": 1
      }
     },
@@ -140150,7 +140150,7 @@
      "path": "src/api/booking.rs",
      "purpose": "ONE-1819 [BK-08] the agent-readable booking surface",
      "surface": {
-      "crate-vis": 19
+      "crate-vis": 20
      }
     },
     {
@@ -140372,7 +140372,7 @@
      "path": "src/api/booking/turn.rs",
      "purpose": "Rule five at the owner's booking windows: authenticated work past one waits for it to open and is never…",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -141232,13 +141232,13 @@
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [],
      "path": "src/api/esign.rs",
-     "purpose": "Session-less signing ceremony",
+     "purpose": "The signing ceremony",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 10
      }
     },
     {
@@ -141328,7 +141328,7 @@
      "path": "src/api/esign/ingress.rs",
      "purpose": "Token-first ingress at the public signing doors (FIX 3808, Engine rulings 10-18 and 10-19)",
      "surface": {
-      "crate-vis": 18
+      "crate-vis": 19
      }
     },
     {
@@ -141389,6 +141389,16 @@
      "purpose": "The seal task's worker (OF-415, ARCH-0064 section 7): every tick it seals the documents whose signing…",
      "surface": {
       "crate-vis": 3
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/esign/signing_session.rs",
+     "purpose": "The signing lens's session (ARCH-0064a §6 and [SGN-03], census L3-22)",
+     "surface": {
+      "crate-vis": 15
      }
     },
     {
@@ -144938,7 +144948,7 @@
      "path": "src/api/mod.rs",
      "purpose": "HTTP query routes for web dashboard access",
      "surface": {
-      "crate-vis": 63
+      "crate-vis": 65
      }
     },
     {
@@ -157673,6 +157683,16 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/server/booking_turn_lines.rs",
+     "purpose": "The lines authenticated booking requests wait in (ARCH-0062 #booking-turn-divergence): one first-in…",
+     "surface": {
+      "crate-vis": 4
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/server/browser_seats.rs",
      "purpose": "The run browsers live on this host (CUA-001), each in its run's seat as the run desktops do…",
      "surface": {
@@ -158073,7 +158093,7 @@
      "path": "src/server/mod.rs",
      "purpose": "Sync server state and maintenance jobs, split by concern",
      "surface": {
-      "crate-vis": 28,
+      "crate-vis": 29,
       "re-export": 5
      }
     },
@@ -158709,6 +158729,22 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "DroppedWaiter",
+      "Pass",
+      "TurnEnd"
+     ],
+     "path": "src/test_doors/booking_turn_line.rs",
+     "purpose": "Door for `tests/booking_turn_line.rs` (census L3-11, ARCH-0062 #booking-turn-divergence): authenticated hold…",
+     "surface": {
+      "enum": 2,
+      "fn": 3,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/test_doors/build_server.rs",
      "purpose": "Doors for `tests/serve_usage_metering.rs` and `tests/managed_serve_usage_metering.rs`: the server plain and…",
@@ -158834,7 +158870,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 20
+      "mod": 22
      }
     },
     {
@@ -158875,6 +158911,20 @@
      "purpose": "Door for `tests/resident_pump_claim_latency.rs`: the agent run pump on a test's server, started as `serve`…",
      "surface": {
       "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "Held",
+      "SessionsRead"
+     ],
+     "path": "src/test_doors/signing_session.rs",
+     "purpose": "Door for `tests/esign_signing_session.rs` (census L3-22; review round 1 of #7663): the public signing routes…",
+     "surface": {
+      "fn": 2,
+      "struct": 2
      }
     },
     {
@@ -159706,6 +159756,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/booking_turn_line.rs",
+     "purpose": "Census L3-11 (canon ARCH-0062 #booking-turn-divergence): an authenticated booking request past a window…",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -159823,6 +159881,14 @@
      "notable": [],
      "path": "tests/esign_qr_refusals.rs",
      "purpose": "Guesses at a QR page capability (ARCH-0064a section 6: enumeration signals go to counters, with no rate…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/esign_signing_session.rs",
+     "purpose": "The signing lens's session (census L3-22; ARCH-0064a §6 #token-hardening and [SGN-03]; RULING…",
      "surface": {}
     },
     {
@@ -160254,7 +160320,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/it_esign_public.rs",
@@ -160643,7 +160709,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 787,
+     "files": 788,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -161098,7 +161164,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 98,
+     "files": 99,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -161133,7 +161199,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 21,
+     "files": 23,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -161196,10 +161262,10 @@
      "purpose": "The host's precision recalculator (ARCH-0075 xlsx row; FIX 2462, OF-505 = A): LibreOffice Calc headless…"
     }
    },
-   "over_bar": 63,
+   "over_bar": 64,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1887,
-   "test_files": 269
+   "source_files": 1891,
+   "test_files": 271
   },
   "oneiron-skill-attribution": {
    "files": [
