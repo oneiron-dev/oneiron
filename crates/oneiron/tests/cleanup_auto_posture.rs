@@ -93,6 +93,7 @@ fn a_new_vault_archives_a_husk_and_badges_the_run() -> TestResult {
     assert_eq!(report.archived, vec![Some(husk)]);
     let digest = report.digest.expect("an automatic run records a digest");
     assert!(vault.archived_entity(&husk)?.is_some());
+    assert!(vault.is_deleted_shell(&husk)?);
     assert!(cleanup_proposals(&vault)?.is_empty());
 
     // The run's snapshot: one entry, the husk, under the automatic decision.
@@ -146,7 +147,7 @@ fn a_new_vault_archives_a_husk_and_badges_the_run() -> TestResult {
     assert_eq!(entry.entity, husk);
     assert_eq!(entry.outcome, CleanupRevertOutcome::Restored);
     assert!(vault.archived_entity(&husk)?.is_none());
-    assert!(vault.get(&husk)?.is_some());
+    assert!(!vault.is_deleted_shell(&husk)?, "the shell is live again");
     Ok(())
 }
 
