@@ -429,65 +429,6 @@ impl Vault {
         })
     }
 
-    /// Rotates the recovery authority key in the caller's write transaction:
-    /// enrols generation `live_generation + 1` with generation
-    /// `live_generation` as predecessor (which signs the transcript), then
-    /// revokes generation `live_generation` under itself. Enrol first, then
-    /// revoke: the self-revoke counts because the new generation is a live
-    /// consenting key after the enrol. The holding machine is this install's
-    /// machine identity, read in the transaction and never minted; the enrol
-    /// door's own carrier check judges it. Returns the new live generation
-    /// with its enrol receipt and the old generation's revocation.
-    ///
-    /// # Errors
-    /// As [`Self::enrol_owner_signing_key_as`], and the revoke's
-    /// [`REVOKE_NOT_COUNTED`]; an agent's act is refused as there.
-    pub(crate) fn rotate_recovery_authority_key_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        authority: &ActAuthority,
-        seed: &crate::world_keys::RecoveryRootSeed,
-        live_generation: u32,
-    ) -> Result<(u32, OwnerKeyEnrollmentReceipt, AuthorityEntryHash)> {
-        let owner = match authority {
-            ActAuthority::Owner(owner, _) => owner,
-            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
-        };
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-        let fold = self.authority_view_readonly_in_txn(txn)?;
-        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
-        let machine = crate::identity::read_machine_id_in_txn(self, txn)?
-            .ok_or_else(|| authority_refused(NO_CARRIER))?;
-        let next = live_generation
-            .checked_add(1)
-            .ok_or_else(invalid_authority)?;
-        let live_signer = crate::world_keys::RecoveryAuthoritySigner::from_seed(
-            seed,
-            &vault_id,
-            live_generation,
-        )?;
-        let next_signer =
-            crate::world_keys::RecoveryAuthoritySigner::from_seed(seed, &vault_id, next)?;
-        let input = next_signer.enrollment(machine, actor)?;
-        let live_key = live_signer.authority_key();
-        let sign = |transcript: &[u8]| live_signer.sign_authority_transcript(transcript);
-        let mut sign_enrol = sign;
-        let receipt = self.enrol_owner_signing_key_in_txn(
-            txn,
-            authority,
-            input,
-            EnrolledOwnerKeyKind::RecoveryAuthority,
-            live_key.clone(),
-            &mut sign_enrol,
-        )?;
-        let revoked = self.append_revoke_device_in_txn(
-            txn,
-            EntrySigner::Key(&live_key, &sign_enrol),
-            live_key,
-        )?;
-        Ok((next, receipt, revoked))
-    }
-
     /// Binds `bind.key`, enrolled in this transaction, to `bind.owner` as
     /// `human`: the next entry after the enrollment, at the first epoch,
     /// signed by the enrollment's predecessor. The fold must count it and the
