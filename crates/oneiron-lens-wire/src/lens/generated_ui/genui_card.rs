@@ -109,7 +109,7 @@ impl GeneratedUiCard {
 
     /// Lowers the card for `surface` in one pass (ARCH-0048 G3): every atom
     /// the surface does not draw becomes its `fallbackText`, and a degraded
-    /// element can neither host a control action nor drive a bound property.
+    /// element can neither host an action nor drive a bound property.
     /// A result set the surface cannot draw lowers too (FIX 9892), with its
     /// backing refs, and the controls its action bar allowlists lower beside
     /// it, their declarations and backing refs gone: what it could not offer
@@ -159,9 +159,11 @@ impl GeneratedUiCard {
             }
         }
 
+        // An element the surface still draws keeps its action's declaration; a
+        // lowered one became text, which carries no action.
         let offered = nodes
             .iter()
-            .filter(|node| matches!(node.atom, LensAtom::SelfUi(_)))
+            .filter(|node| node.atom.action().is_some())
             .map(|node| node.id.as_str().to_owned())
             .collect::<HashSet<_>>();
         let actions = self

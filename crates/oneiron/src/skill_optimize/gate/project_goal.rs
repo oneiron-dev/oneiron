@@ -316,20 +316,8 @@ pub(super) fn current_roles_in_txn(
     Ok(roles)
 }
 
-/// A preference the loop learned and proposes for a project's goal record.
-/// It never writes the record: the goal-intake interview may fold it into
-/// the next revision, and a new goal claim leaves it as history.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectGoalRevisionProposal {
-    pub project: EntityId,
-    /// The goal claim in force when the pick was made.
-    pub goal_claim: EntityId,
-    pub preference: GoalPreference,
-    pub question_digest: String,
-    pub picked_by: EntityId,
-    pub at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_records::skill_optimize::gate::project_goal::ProjectGoalRevisionProposal;
 
 /// A vault owner set a proposal aside under the goal claim in force. A
 /// separate marker: the proposal row stays as history.

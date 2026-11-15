@@ -5,6 +5,7 @@ use crate::booking::{
     encode_event_type_claim_value,
 };
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
+use crate::edge::EdgeActorClass;
 use crate::memory::{ClaimInput, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_OWNER_BINDING_REQUIRED};
 use serde_json::json;
 
@@ -106,6 +107,7 @@ fn publication() -> BookingPagePublication {
             enabled: false,
             placeholder: String::new(),
         },
+        constraint_front: None,
         theme: ThemeTokens(json!({"arbitrary": [false, null, {"nested": "</script>"}]})),
         landing: crate::booking::BookingLandingContent::default(),
         initial_availability: PublicBookingAvailability {
@@ -114,6 +116,7 @@ fn publication() -> BookingPagePublication {
             window_secs: 3_600,
             visitor_tz: "UTC".to_owned(),
         },
+        sponsor: None,
     }
 }
 

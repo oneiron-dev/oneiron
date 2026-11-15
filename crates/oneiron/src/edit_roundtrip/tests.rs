@@ -929,6 +929,10 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
     use crate::edge::EdgeActorClass;
     use crate::edit_settle::{SettleConsent, SettleOutcomeKind};
     use crate::entity_id::EntityId;
+    use crate::llm::decision::{
+        AnswerContract, DecisionAnswer, DecisionBand, DecisionClass, DecisionQuestion,
+        DecisionReceipt, DecisionRung, EvidenceVersion, ProviderPin, TypedDecision,
+    };
     use crate::registry::ENTITY_TYPE_PERSON;
     use crate::temporal::TimeRange;
     use crate::write_envelope::WriteActor;
@@ -1082,37 +1086,119 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         time,
         10,
     )?;
+    let question_id = EntityId::now();
+    let question = DecisionQuestion {
+        id: question_id,
+        version: 1,
+        text: "urgency".into(),
+        class: DecisionClass::Judgment,
+        contract: AnswerContract::Score {
+            min: 0.0,
+            max: 10.0,
+        },
+        accept_type: false,
+    };
+    let evidence_hash = *blake3::hash(&original).as_bytes();
+    let decide = |qid: EntityId,
+                  answer: DecisionAnswer,
+                  probability: f64,
+                  rung: DecisionRung,
+                  model: &str,
+                  cost: f64| {
+        let band = DecisionBand::default();
+        TypedDecision {
+            answer,
+            probability: Some(probability),
+            evidence: vec![],
+            in_band: band.contains(probability),
+            receipt: DecisionReceipt {
+                question: qid,
+                question_version: 1,
+                principal: human,
+                providers: vec![ProviderPin {
+                    rung,
+                    model: model.into(),
+                    version: "r1".into(),
+                }],
+                band,
+                band_version: 0,
+                evidence_versions: vec![EvidenceVersion {
+                    id: artifact,
+                    body_hash: evidence_hash,
+                }],
+                cost_per_thousand: Some(cost),
+                paired: vec![],
+                person: vec![],
+                time: None,
+                images: vec![],
+                think_row: None,
+                person_row: None,
+                rule: None,
+                asked: None,
+                state_cut: None,
+            },
+            human_ask: None,
+        }
+    };
     let answer = |row, n| SheetCellAnswer {
         cell: CellRef::new(2, row),
         before: None,
         value: Some(CellValue::Number(n)),
-        probability: n / 10.0,
-        confidence: 0.92,
-        rung: "local".into(),
-        model: "fixture-head".into(),
-        revision: "r1".into(),
-        cost_per_thousand: 0.2,
-        evidence_versions: vec!["source@3".into()],
+        decision: decide(
+            question_id,
+            DecisionAnswer::Score(n),
+            n / 10.0,
+            DecisionRung::Local,
+            "fixture-head",
+            0.2,
+        ),
+        source: None,
+        judged_version: None,
+        judged_live: None,
     };
     let bundle = SheetAnswerBundle {
-        question: "urgency".into(),
-        question_version: "q1".into(),
-        principal: human.to_hex(),
+        question,
+        principal: human,
         sheet: "Sheet1".into(),
         range: RangeRef::parse("B2:B3")?,
         max_count_override: None,
+        reads: None,
+        base_live: None,
         answers: vec![answer(2, 6.0), answer(3, 8.0)],
     };
     // These two valid OOXML encodings used to yield false receipts: rich
     // inline text was read as empty, and an empty shared-string item was
     // skipped so the following item's text was falsely assigned to index 0.
-    for (mode, expected) in [(4, ""), (5, "Wrong")] {
+    // Only mode 5 stages here: mode 4 claimed an empty text answer, which a
+    // decided answer can no longer be (AnswerContract::validate refuses an
+    // empty Choice option); FIX row LIBTEST-QUARANTINE-EDIT-ROUNDTRIP-TESTS-ITEMS.
+    {
+        let (mode, expected) = (5, "Wrong");
         let mut text_bundle = bundle.clone();
+        let text_question_id = EntityId::now();
+        text_bundle.question = DecisionQuestion {
+            id: text_question_id,
+            version: 1,
+            text: "urgency".into(),
+            class: DecisionClass::Judgment,
+            contract: AnswerContract::Choice {
+                options: vec![expected.to_owned()],
+            },
+            accept_type: false,
+        };
         text_bundle.range = RangeRef::parse("B2:B2")?;
         text_bundle.answers = vec![SheetCellAnswer {
             cell: CellRef::new(2, 2),
             before: None,
             value: Some(CellValue::Text(expected.into())),
+            decision: decide(
+                text_question_id,
+                DecisionAnswer::Choice(expected.into()),
+                0.6,
+                DecisionRung::Local,
+                "fixture-head",
+                0.2,
+            ),
             ..text_bundle.answers[0].clone()
         }];
         let refused = vault
@@ -1148,24 +1234,40 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
         );
         assert_eq!(vault.blob_artifact_head(&artifact)?.unwrap().version, 1);
     }
+    let unchanged_id = EntityId::now();
     let idempotent = SheetAnswerBundle {
-        question: "unchanged".into(),
-        question_version: "q1".into(),
-        principal: human.to_hex(),
+        question: DecisionQuestion {
+            id: unchanged_id,
+            version: 1,
+            text: "unchanged".into(),
+            class: DecisionClass::Judgment,
+            contract: AnswerContract::Score {
+                min: 0.0,
+                max: 10.0,
+            },
+            accept_type: false,
+        },
+        principal: human,
         sheet: "Sheet1".into(),
         range: RangeRef::parse("A1:A1")?,
         max_count_override: None,
+        reads: None,
+        base_live: None,
         answers: vec![SheetCellAnswer {
             cell: CellRef::new(1, 1),
             before: Some(CellValue::Number(5.0)),
             value: Some(CellValue::Number(5.0)),
-            probability: 0.5,
-            confidence: 1.0,
-            rung: "rule".into(),
-            model: "fixture".into(),
-            revision: "r1".into(),
-            cost_per_thousand: 0.0,
-            evidence_versions: vec!["base@1".into()],
+            decision: decide(
+                unchanged_id,
+                DecisionAnswer::Score(5.0),
+                0.5,
+                DecisionRung::Rule,
+                "fixture",
+                0.0,
+            ),
+            source: None,
+            judged_version: None,
+            judged_live: None,
         }],
     };
     let EditOutcome::Proposed(unchanged) = vault.propose_sheet_answers(
@@ -1327,7 +1429,7 @@ fn typed_sheet_range_lands_on_keep_with_per_cell_receipts() -> Result<()> {
             .fields
             .get("question_version")
             .map(String::as_str),
-        Some("q1")
+        Some("1")
     );
     let kept = vault
         .blob_artifact_settlement(&artifact, "ask:range")?

@@ -58,6 +58,7 @@ fn replicate(vault: &Vault, id: EntityId, body: &ClaimBody) -> Result<()> {
             ENTITY_TYPE_CLAIM,
             interval(),
             OBSERVED_AT,
+            None,
             &encode_claim_body(body)?,
         )
         .commit()
@@ -140,7 +141,7 @@ fn malformed_thread_claims_fail_at_public_batch_and_replicated_doors() {
         body.world = Some(entity(0x63));
         malformed.push(body);
         let mut body = good.clone();
-        body.rel = Some(entity(0x64));
+        body.rel = Some(crate::claim::RelationshipSet::from([entity(0x64)]));
         malformed.push(body);
         let mut body = good.clone();
         body.scope = Some(Value::Map(Vec::new()));
@@ -652,8 +653,6 @@ fn unsupported_remote_passport_relationships_cannot_bridge_other_roots() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-THREAD-PASSPORT-SYNC-REGRESSIONS]: the lib test target's type check fails here (3 errors: E0061 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(feature = "sync")]
 #[path = "sync_regressions.rs"]
 mod sync_regressions;

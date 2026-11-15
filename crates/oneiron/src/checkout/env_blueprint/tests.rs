@@ -188,6 +188,7 @@ fn lease(repo_ref: &RepoRef, task_class: CheckoutTaskClass) -> CheckoutLeaseAct 
         claimed_at: 10,
         lease_expires_at: None,
         updated_at: 10,
+        bound_attempt: None,
     }
 }
 

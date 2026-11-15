@@ -11,6 +11,7 @@ use super::conflict::{
 };
 use super::wake_plan::PreparedWake;
 
+mod held;
 mod nightly_link_grant;
 mod parts;
 mod pins;
@@ -107,6 +108,9 @@ pub(super) struct BranchResources<'a> {
     /// Every scoped read this branch made, folded. Methods read through
     /// `&self`, so the fold sits behind a lock.
     read_receipt: std::sync::Mutex<ScopedReadReceipt>,
+    /// The escalation rows a window slot's early finish holds for its
+    /// settle (FIX 21927); `None` writes them at once.
+    held: std::cell::RefCell<Option<held::HeldEscalations>>,
 }
 
 impl<'a> BranchResources<'a> {
@@ -536,7 +540,9 @@ impl<'a> BranchResources<'a> {
         Ok(())
     }
 
-    pub(super) fn upsert_verified_gaps(
+    /// Writes verified contradiction gaps into the origin's gap queue; the
+    /// branch's own door is `upsert_verified_gaps`, which may hold them.
+    fn write_verified_gaps(
         &self,
         scope: &Scope,
         gaps: Vec<(
@@ -573,8 +579,6 @@ impl<'a> BranchResources<'a> {
         )
     }
 
-    // FIX [LIBTEST-QUARANTINE-DREAMER-CONSOLIDATION-TESTS]: the lib test target's type check fails here (1 error: E0609 x1, no field `branch`); every caller is in that gated module; port it with them, then drop this gate
-    #[cfg(any())]
     #[cfg(test)]
     pub(super) fn upsert_gaps(
         &self,
@@ -610,10 +614,11 @@ impl<'a> BranchResources<'a> {
                 }
             }
         }
-        super::gap::upsert_branch_gap_queue(
+        super::gap::upsert_origin_gap_queue(
             self.read.vault(),
             scope,
-            &self.branch,
+            self.origin.gap_projection(scope),
+            self.origin.axes(),
             &self.write_fence(),
             gaps,
             now,

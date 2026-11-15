@@ -89,8 +89,6 @@ pub use self::model::{
 pub use self::reanchor::replay_locator;
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-ANCHORED-ANNOTATION-TESTS]: the lib test target's type check fails here (18 errors: E0063 x6, E0061 x6, E0277 x6); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

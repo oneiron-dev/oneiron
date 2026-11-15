@@ -15,7 +15,7 @@ fn proposal(
     at: u64,
 ) -> Result<EntityId> {
     let id = EntityId::now();
-    let envelope = miner_envelope(run, &[0; 32])?;
+    let envelope = miner_envelope(run, &[0; 32], false, ClaimSource::Generated)?;
     // A Dreamer write cites what was said, never the PERSON it is about.
     let said = EntityId::now();
     vault.put_entity(

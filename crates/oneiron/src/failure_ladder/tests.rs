@@ -642,6 +642,7 @@ fn permanent_failure_healer_reads_diagnostic_and_emits_case_bound_proposal() -> 
     let diagnostic = DiagnosticEvent {
         detector_id: "test.permanent_failure".into(),
         event_class: DiagnosticEventClass::McpActionRejected,
+        signal: None,
         actor_class: "system".into(),
         actor_ref: None,
         source: DiagnosticSourceKind::Receipt,

@@ -563,12 +563,11 @@ fn a_replayed_stage_collapses_onto_one_outbound_effect() {
     );
 }
 
-// FIX [LIBTEST-QUARANTINE-HUMAN-TASK-FOLLOWUP-TESTS-ITEMS]: the lib test target's type check fails here (1 errors: E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn token_answer_completes_its_member_and_suppresses_due_reminder_while_group_waits() {
     use crate::task_verb::{
-        TaskAskOptionId, TaskAskStatus, TaskAskTarget, task_human_assignee, task_is_terminal,
+        TaskAskOption, TaskAskOptionId, TaskAskStatus, TaskAskTarget, task_human_assignee,
+        task_is_terminal,
     };
     let fixture = HumanFixture::open();
     add_owner_route(&fixture);
@@ -578,9 +577,10 @@ fn token_answer_completes_its_member_and_suppresses_due_reminder_while_group_wai
     spec.intent_key = "linked-member-followup".into();
     spec.who = Some(TaskAskTarget::People([fixture.person, other].into()));
     spec.decide = None;
-    spec.what
-        .options
-        .insert(TaskAskOptionId::new("yes").expect("id"), "Yes".into());
+    spec.what.options.insert(
+        TaskAskOptionId::new("yes").expect("id"),
+        TaskAskOption::new("Yes"),
+    );
     let memory = fixture.vault.memory(fixture.owner, EdgeActorClass::Agent);
     let receipt = memory.tasks_ask(&spec).expect("two-person ask");
     let task = receipt

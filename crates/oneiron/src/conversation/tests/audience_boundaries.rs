@@ -70,6 +70,7 @@ fn make_unavailable(vault: &Vault, id: EntityId, state: Unavailable) {
 #[test]
 fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
     let (_dir, vault, actor, room, _) = fixture();
+    let writer = vault.memory(actor.entity_ref(), actor.actor_class());
     vault
         .join_member(room, actor.entity_ref(), actor, 1, HistoryChoice::Share)
         .unwrap();
@@ -82,7 +83,7 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
             .unwrap()
             .into(),
     )];
-    let good = vault.append_dag_record(&good).unwrap();
+    let good = vault.append_dag_record(&writer, &good).unwrap();
     let mut hidden = Vec::new();
     let mut unavailable = Vec::new();
     for state in [
@@ -112,7 +113,7 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
                 .unwrap()
                 .into(),
         )];
-        let candidate = vault.append_dag_record(&candidate).unwrap();
+        let candidate = vault.append_dag_record(&writer, &candidate).unwrap();
         assert!(audience_admits(&vault, candidate.id, actor.entity_ref()).unwrap());
         hidden.push(candidate.id);
         unavailable.push((room, state));
@@ -144,7 +145,7 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
         )
         .unwrap();
         body.source = Some(crate::ClaimSource::Observed);
-        body.rel = Some(rel);
+        body.rel = Some(crate::claim::RelationshipSet::from([rel]));
         vault
             .batch()
             .put_replicated(
@@ -152,6 +153,7 @@ fn unavailable_room_and_relationship_targets_only_hide_their_candidates() {
                 ENTITY_TYPE_CLAIM,
                 TimeRange { start: 2, end: 2 },
                 2,
+                None,
                 &crate::claim::encode_claim_body(&body).unwrap(),
             )
             .text(&claim, &[("body", "needle relationship")])

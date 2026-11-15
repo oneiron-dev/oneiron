@@ -13,6 +13,8 @@ fn witness_query_window_pair(facade: &Memory<'_>, now: u64) -> [(String, String)
                     "I prefer a window seat when I fly.",
                 )],
                 occurred_at: now - days_ago * 86_400,
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .expect("witness");
         refs.push((
@@ -45,11 +47,14 @@ fn recall_default_effort_reads_last_week_from_the_query() {
         .iter()
         .map(|item| item.short_id.split('@').next().unwrap_or_default())
         .collect();
-    assert!(
-        refs.contains(&newer.as_str()),
-        "last-week message: {refs:?}"
-    );
-    assert!(!refs.contains(&older.as_str()), "outside window: {refs:?}");
+    // "Last week" re-anchors the temporal channel and never filters (canon
+    // research-1009 P1.1): the older message still matches the words and is
+    // found, below the one said last week.
+    let newer_at = refs.iter().position(|found| *found == newer.as_str());
+    let older_at = refs.iter().position(|found| *found == older.as_str());
+    assert!(newer_at.is_some(), "last-week message: {refs:?}");
+    assert!(older_at.is_some(), "a query phrase never filters: {refs:?}");
+    assert!(newer_at < older_at, "last-week message first: {refs:?}");
 
     for query in [
         "window seat next week",
@@ -118,6 +123,8 @@ fn recall_default_effort_ranks_the_newer_identical_message_first() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, text)],
                 occurred_at: now - days_ago * 86_400,
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .expect("witness");
         // Recall returns each message as its turn (ARCH-0004).
@@ -163,6 +170,8 @@ fn recall_light_effort_ranks_the_newer_identical_message_first() {
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, text)],
                 occurred_at: now - days_ago * 86_400,
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .expect("witness");
         // Recall returns each message as its turn (ARCH-0004).
