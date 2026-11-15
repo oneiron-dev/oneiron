@@ -443,6 +443,101 @@ fn a_handoff_on_a_mark_past_the_floor_leaves_the_machine_held() {
     );
 }
 
+/// A revocation on a row of its own signer that is no withdrawal and that
+/// the floor refuses (Astra review round 2, F3, there a slip's consume):
+/// the owner enrols agent U (sequence 1), on that row binds U to an actor
+/// (2), and on the binding revokes U (3); as a sibling of the binding it
+/// enrols agent W (4). Install J receives W's enrolment first, so the
+/// binding and the revocation both reach it below the owner's floor. The
+/// revocation names the binding, its own signer's row below it, so it
+/// vouches for it: U must stay revoked on both installs, which hold the
+/// same rows.
+#[test]
+fn a_revocation_on_a_binding_past_the_floor_holds_in_either_arrival_order() {
+    let owner = SigningKey::from_bytes(&[231; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[232; 32]);
+    let later_agent = SigningKey::from_bytes(&[233; 32]);
+    let (genesis, vault_id) = genesis(&owner, 234);
+    let enrol_revoked = enrolment(vault_id, &genesis, &owner, 1, &revoked_agent);
+    let binding = signed(
+        Some(vault_id),
+        2,
+        Some(&enrol_revoked),
+        AuthorityOp::BindActor {
+            authority_key: key_of(&revoked_agent),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &owner,
+    );
+    let revocation = signed(
+        Some(vault_id),
+        3,
+        Some(&binding),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+    let enrol_later = enrolment(vault_id, &enrol_revoked, &owner, 4, &later_agent);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &binding,
+        &revocation,
+        &enrol_later,
+    ]);
+    let reversed = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &enrol_later,
+        &binding,
+        &revocation,
+    ]);
+
+    for (name, install) in [
+        ("I (binding and revocation first)", &in_order),
+        ("J (binding and revocation last)", &reversed),
+    ] {
+        assert!(
+            !is_live(&install.fold, &key_of(&revoked_agent)),
+            "install {name} must hold the revoked agent revoked; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+        assert!(
+            is_live(&install.fold, &key_of(&later_agent)),
+            "install {name} holds the later agent; issues {:?}",
+            install.fold.issues
+        );
+    }
+    let all = [
+        &genesis,
+        &enrol_revoked,
+        &binding,
+        &revocation,
+        &enrol_later,
+    ]
+    .into_iter()
+    .map(hash_of)
+    .collect::<BTreeSet<_>>();
+    assert_eq!(
+        applied(&in_order.fold),
+        all,
+        "install I applies all five rows; issues {:?}",
+        in_order.fold.issues
+    );
+    assert_eq!(
+        applied(&reversed.fold),
+        all,
+        "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        reversed.puts,
+        reversed.fold.issues
+    );
+}
+
 /// The control: a row that names, among its own ancestors, a row of its
 /// signer at a higher sequence goes back on its signer's own order, which
 /// every install can see from the rows alone. Every install refuses it, the
