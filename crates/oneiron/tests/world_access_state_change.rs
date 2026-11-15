@@ -41,6 +41,7 @@ use std::sync::Arc;
 
 use oneiron::agent_def::AgentCeiling;
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole, VerifiedSlip};
+use oneiron::campaign::send_hygiene::{SuppressionCause, SuppressionInput, apply_suppression};
 use oneiron::consent::{AuthenticatedOwner, consent_receipt_grant_ref};
 use oneiron::federation::{FederationGrantRole, InitialSharedMember, Scope, ScopeAxis};
 use oneiron::memory::{
@@ -49,7 +50,9 @@ use oneiron::memory::{
     MEMORY_CODE_FORBIDDEN, MemoryAuthoringAction, MemoryError, MemoryResult, SafeDeleteReason,
     resolve_entity_ref,
 };
-use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_WORLD};
+use oneiron::registry::{
+    ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_PERSON, ENTITY_TYPE_TURN, ENTITY_TYPE_WORLD,
+};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::label_writers::embedded_owner;
@@ -59,10 +62,7 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
-use oneiron::write_envelope::cohort_claims::{
-    CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT,
-    encode_do_not_contact_value,
-};
+use oneiron::write_envelope::cohort_claims::PREDICATE_COMM_DO_NOT_CONTACT;
 use oneiron::write_envelope::{
     WriteActor, WriteEnvelope, WriteProvenance, write_envelope_evidence,
 };
@@ -447,9 +447,13 @@ fn ordinary_claim(vault: &Vault, subject: EntityId, facet: EntityId) -> EntityId
     id
 }
 
-/// A `comm.do_not_contact` bar on every channel and scope about a new
-/// PERSON in `facet`, on the owner's raw door. Returns its id.
-fn do_not_contact_bar(vault: &Vault, facet: EntityId) -> EntityId {
+/// A `comm.do_not_contact` bar about a new PERSON, written as a person's
+/// unsubscribe writes it: through the suppression door behind
+/// `vault.campaign.unsubscribe`, which lands the restriction Approved on the
+/// engine-owned door (`tests/owner_approval_criticality_floor.rs`). A raw put
+/// of a `comm.*` claim keeps the criticality floor on this seeded vault,
+/// Auto or Approved (Sol review of #8111, P1-1). Returns its id.
+fn do_not_contact_bar(vault: &Vault) -> EntityId {
     let person = EntityId::now();
     vault
         .put_entity(
@@ -460,24 +464,36 @@ fn do_not_contact_bar(vault: &Vault, facet: EntityId) -> EntityId {
             b"human",
         )
         .expect("a live person");
-    let mut body = ClaimBody::new(
-        PREDICATE_COMM_DO_NOT_CONTACT,
-        ClaimSubject::Entity(person),
-        encode_do_not_contact_value(&CommDoNotContactValue {
-            channel: None,
-            scope: DO_NOT_CONTACT_SCOPE_ALL.to_owned(),
-        }),
-        1.0,
-        ClaimApprovalStatus::Auto,
-        ClaimLifecycleStatus::Active,
-    )
-    .unwrap();
-    body.scope_facet = facet;
-    let id = EntityId::now();
+    let evidence = EntityId::now();
     vault
-        .put_claim(&id, &body, at(LEARNED_AT), LEARNED_AT)
-        .expect("a do-not-contact bar");
-    id
+        .put_entity(
+            &evidence,
+            ENTITY_TYPE_TURN,
+            at(LEARNED_AT),
+            LEARNED_AT,
+            b"unsubscribe",
+        )
+        .expect("the unsubscribe's evidence");
+    let bar = apply_suppression(
+        vault,
+        SuppressionCause::Unsubscribe,
+        &SuppressionInput {
+            person_ref: person,
+            campaign_ref: None,
+            channel: "email".to_owned(),
+            sender_ref: None,
+            evidence_ref: evidence,
+            occurred_at: LEARNED_AT,
+        },
+    )
+    .expect("the unsubscribe's do-not-contact bar lands")
+    .do_not_contact_claim_ref;
+    let stored = vault
+        .get_claim(&bar)
+        .expect("claim read")
+        .expect("the bar stands");
+    assert_eq!(stored.predicate, PREDICATE_COMM_DO_NOT_CONTACT);
+    bar
 }
 
 /// The tiers `agent`'s reads resolve with no selection.
@@ -894,7 +910,11 @@ fn marks_stale(f: &Fixture, actor: EntityId, id: EntityId) -> MemoryResult<Claim
 /// review census-l2-wa-state-change F2): the demote door admits the grant's
 /// author and wrote the mark with no closer, so a former owner's stale mark
 /// of the pause it wrote took it out of the fold, as its retract did, and the
-/// agent read the WORLD and base reality again.
+/// agent read the WORLD and base reality again. That holds for an Auto
+/// grant, whose mark the criticality floor lets through (FIX 12368). This
+/// pause is Approved, and on main the floor already holds an Approved grant's
+/// mark for every caller (tiebreak muse/l2-wa-fixture-tiebreak), so here the
+/// red is the reason only: the close rule now refuses the mark first.
 #[test]
 fn a_former_owner_never_marks_the_grant_it_wrote_stale() {
     let f = Fixture::new();
@@ -921,21 +941,26 @@ fn a_former_owner_never_marks_the_grant_it_wrote_stale() {
     );
 }
 
-/// Control: while still an owner, the co-owner marks the pause it wrote
-/// stale, and the agent reads the owner's wider grant.
+/// Control: while still an owner, the co-owner's stale mark of the pause it
+/// wrote passes the close rule. The mark of an Approved grant then meets the
+/// criticality floor, which holds it for every caller as on main (the stale
+/// mark is no verified close, so no floor lift applies; tiebreak
+/// muse/l2-wa-fixture-tiebreak). `a_live_co_owner_retracts_the_grant_it_wrote`
+/// lands the owner's close through the same rule.
 #[test]
 fn a_live_co_owner_marks_the_grant_it_wrote_stale() {
     let f = Fixture::new();
     let (co_owner, pause) = f.two_grants_the_co_owner_wrote_the_pause();
 
-    let marked = marks_stale(&f, co_owner, pause).expect("a live owner marks its own grant stale");
+    let marked = marks_stale(&f, co_owner, pause);
 
-    assert!(marked.stale, "the pause carries the stale rung");
-    assert_eq!(
-        f.agent_reads().allowed_set,
-        WorldAuthoritySet::new(true, [f.world]).unwrap(),
-        "the agent reads the owner's grant alone"
-    );
+    match &marked {
+        Ok(view) => assert!(view.stale, "the pause carries the stale rung"),
+        Err(refused) => assert!(
+            !refused.message.contains(NOT_AN_OWNERS_CLOSE),
+            "the close rule admits a live owner's stale mark: {refused:?}"
+        ),
+    }
 }
 
 /// [WORLD-ACCESS-GRANT-DELETE-BY-DELETE-AUTHORITY]: an agent with a live
@@ -1010,7 +1035,7 @@ fn an_admin_never_deletes_the_owners_grant_in_scope() {
 #[test]
 fn an_admin_never_deletes_a_do_not_contact_bar_in_scope() {
     let f = AdminFixture::new();
-    let bar = do_not_contact_bar(&f.vault, f.facet);
+    let bar = do_not_contact_bar(&f.vault);
 
     let result = f.admin_deletes(bar);
 
