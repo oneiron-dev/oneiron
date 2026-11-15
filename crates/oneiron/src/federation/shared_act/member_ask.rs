@@ -456,6 +456,43 @@ impl Vault {
         txn.commit()?;
         Ok(ask)
     }
+
+    /// Declines, as `by`, every open ask `steward` filed in `vault_id`, in
+    /// the caller's writer at `now`: a workspace offboarding closes its
+    /// leaver's asks in the writer that ends their seat (INB-07; Engine
+    /// RULING OFFBOARD-PENDING-ASKS = A). Cleanup, not a fix: an apply
+    /// already refuses an ask whose Steward no longer stands
+    /// ([`Self::member_ask_steward_stands_in_txn`]). The declined ask ids.
+    ///
+    /// # Errors
+    /// Storage errors, or an ask row that cannot be read.
+    pub(crate) fn decline_member_asks_of_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        steward: EntityId,
+        by: EntityId,
+        now: u64,
+    ) -> Result<Vec<String>> {
+        let steward = steward.to_hex();
+        let open: Vec<(EntityId, SharedMemberAsk)> = MEMBER_ASK
+            .scan(&self.store, txn)?
+            .into_iter()
+            .filter(|(_, ask)| {
+                ask.vault_id == vault_id
+                    && ask.steward == steward
+                    && ask.status == MemberAskStatus::Open
+            })
+            .collect();
+        let mut declined = Vec::with_capacity(open.len());
+        for (id, mut ask) in open {
+            ask.status = MemberAskStatus::Declined { by: by.to_hex() };
+            ask.closed_at = Some(now);
+            MEMBER_ASK.put(&self.store, txn, &id, &ask)?;
+            declined.push(id.to_hex());
+        }
+        Ok(declined)
+    }
 }
 
 #[cfg(test)]

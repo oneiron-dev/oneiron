@@ -139,6 +139,83 @@ pub(super) struct RosterMemberRow {
     pub(super) companion_actor_ref: Option<EntityId>,
     pub(super) companion_facet_ref: Option<EntityId>,
     pub(super) identity_ref: Option<EntityId>,
+    pub(super) companion_origin: CompanionOrigin,
+}
+
+/// Where a roster row's companion came from, as its onboarding recorded it:
+/// what an offboarding may do to her (INB-07; RULING INB-07-OFFBOARD = A1).
+/// A work companion born here is the workspace's own, so her actor is
+/// switched off and the profile grant minted for her revoked; a brought
+/// companion is her member's own, so she is only detached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CompanionOrigin {
+    /// Born here as a work companion, with the companion-profile grant
+    /// minted for her member at `profile_grant_ref`.
+    Born { profile_grant_ref: EntityId },
+    /// Brought by her member.
+    Brought,
+    /// A row written before onboarding recorded the origin (STORED-CHANGE
+    /// keep path): an offboarding treats her as brought and says so.
+    Unrecorded,
+}
+
+/// Idempotency journal of member offboardings: one row per completed
+/// offboarding id, written in the writer that offboarded. Key:
+/// caller-supplied offboarding id.
+pub(super) const OFFBOARDING: SideTable<String, OffboardingJournalRow, Raw> =
+    SideTable::new(&side_table::WORKSPACE_OFFBOARDING);
+
+/// One [`OFFBOARDING`] row. Like the onboarding journal it pins the digest
+/// of the request and stores no refs: the request names its workspace and
+/// member, and the outcome of the first call is that call's answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct OffboardingJournalRow {
+    pub(super) offboarding_id: String,
+    pub(super) intent_digest: [u8; 32],
+    pub(super) completed_at: u64,
+}
+
+impl RawValue for OffboardingJournalRow {
+    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
+        Ok(encode_value(&Value::Map(vec![
+            (
+                Value::from("schema_version"),
+                Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
+            ),
+            (
+                Value::from("offboarding_id"),
+                Value::from(self.offboarding_id.as_str()),
+            ),
+            (
+                Value::from("intent_digest"),
+                Value::Binary(self.intent_digest.to_vec()),
+            ),
+            (Value::from("completed_at"), Value::from(self.completed_at)),
+        ]))?)
+    }
+
+    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
+        let entries = decode_map(bytes)?;
+        if required(&entries, "schema_version")?.as_u64() != Some(WORKSPACE_ROSTER_SCHEMA_VERSION) {
+            return Err(invalid("offboarding journal schema_version is unsupported").into());
+        }
+        let offboarding_id = required_str(&entries, "offboarding_id")?;
+        let digest_bytes = match required(&entries, "intent_digest")? {
+            Value::Binary(bytes) => bytes.clone(),
+            _ => return Err(invalid("offboarding journal intent_digest must be binary").into()),
+        };
+        let intent_digest: [u8; 32] = digest_bytes
+            .try_into()
+            .map_err(|_| invalid("offboarding journal intent_digest must be 32 bytes"))?;
+        let completed_at = required(&entries, "completed_at")?
+            .as_u64()
+            .ok_or_else(|| invalid("offboarding journal completed_at must be a u64"))?;
+        Ok(Self {
+            offboarding_id,
+            intent_digest,
+            completed_at,
+        })
+    }
 }
 
 impl RawValue for RosterMemberRow {

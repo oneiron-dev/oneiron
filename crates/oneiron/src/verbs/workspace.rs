@@ -8,8 +8,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::federation::{FederationGrantPreset, FederationGrantRole};
 use crate::memory::MemoryResult;
 use crate::workspace_roster::{
-    CompanionBirthIntent, CompanionChoice, MemberGrantBundle, MemberOnboardingIntent,
-    MemberOnboardingOutcome, WorkCompanionPolicy, WorkspaceRosterEntry, WorkspaceRosterPreset,
+    CompanionBirthIntent, CompanionChoice, MemberGrantBundle, MemberOffboardingIntent,
+    MemberOffboardingOutcome, MemberOnboardingIntent, MemberOnboardingOutcome, WorkCompanionPolicy,
+    WorkspaceRosterEntry, WorkspaceRosterPreset,
 };
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
 
@@ -133,6 +134,27 @@ pub fn onboard_workspace_member_as(
         &WriteActor::new(author, EdgeActorClass::Human),
         None,
     )?)
+}
+
+/// `vault.workspace.members.offboard` (ARCH-0063 [INB-07]): the vault's
+/// owner, or an admin with the workspace-settings power, offboards a member;
+/// a standing seat ends under `vault.members.remove`'s own power and
+/// check-in, in the same writer. Everything it ends is read from the roster
+/// row onboarding wrote, never from the request. No grant is minted and no
+/// attestation requested: the custody revoke is the owner's own act, signed
+/// only on the owner's offboarding.
+pub fn offboard_workspace_member_as(
+    vault: &Vault,
+    holder: &AuthenticatedOwner,
+    input: MemberOffboardingIntent,
+) -> MemoryResult<MemberOffboardingOutcome> {
+    Ok(
+        vault.offboard_workspace_member(
+            input,
+            holder,
+            crate::authority::ActSurface::ThisInstall,
+        )?,
+    )
 }
 
 /// The unfiltered roster is the owner's read. Onboarding itself still needs

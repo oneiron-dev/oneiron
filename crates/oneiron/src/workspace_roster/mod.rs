@@ -89,6 +89,7 @@ mod codec;
 mod companion_bind;
 mod house_link;
 mod intent;
+mod offboard;
 mod records;
 mod runner;
 mod scrub;
@@ -112,9 +113,14 @@ pub use self::intent::{
     CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
     WorkspaceRosterPreset,
 };
+pub use self::offboard::{
+    MemberOffboardingIntent, MemberOffboardingOutcome, OffboardedCompanion,
+    OffboardedCompanionKind, OffboardedRoomLeave,
+};
 use self::records::{
-    MAX_NAME_BYTES, MEMBER, ONBOARDING, ONBOARDING_STEPS, OnboardingJournal, OnboardingJournalRow,
-    PRESET, ROSTER_KEY_SEPARATOR, RosterMemberKey, RosterMemberRow,
+    CompanionOrigin, MAX_NAME_BYTES, MEMBER, OFFBOARDING, ONBOARDING, ONBOARDING_STEPS,
+    OffboardingJournalRow, OnboardingJournal, OnboardingJournalRow, PRESET, ROSTER_KEY_SEPARATOR,
+    RosterMemberKey, RosterMemberRow,
 };
 pub use self::records::{
     MemberOnboardingOutcome, MemberOnboardingStep, WORKSPACE_ROSTER_SCHEMA_VERSION,

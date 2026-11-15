@@ -622,6 +622,38 @@ impl Vault {
         self.apply_agent_definition_body(txn, id, occurred, learned_at, data)
     }
 
+    /// Switches the AGENT_DEF at `id` off in the caller's writer, at
+    /// `version`, as [`Self::update_agent_definition`] would write the same
+    /// body with `enabled` false: the immutable-field gate runs, and the id
+    /// pin stays where it is, since switching off widens nothing. A
+    /// workspace offboarding revokes its leaver's actors this way (INB-07,
+    /// ARCH-0063:152 "revoke the actor, keep the person"); what they made
+    /// keeps running (ARCH-0053 #author-off-no-cascade). `false` when the
+    /// row was already off, and nothing is written.
+    ///
+    /// # Errors
+    /// [`Error::EntityNotFound`] when no AGENT_DEF stands at `id`; a stored
+    /// row that does not decode; the update gate's refusals.
+    pub(crate) fn switch_off_agent_definition_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        version: String,
+        at: u64,
+    ) -> Result<bool> {
+        let existing = self.read_agent_definition_in_txn(txn, id)?;
+        if !existing.enabled {
+            return Ok(false);
+        }
+        let mut off = existing.clone();
+        off.enabled = false;
+        off.version = version;
+        validate_agent_definition_update(&existing, &off)?;
+        let data = encode_agent_definition(&off)?;
+        self.apply_agent_definition_body(txn, id, TimeRange { start: at, end: at }, at, data)?;
+        Ok(true)
+    }
+
     /// [`Self::update_agent_definition_at_version_as`] in the caller's
     /// writer, for a patch of the ceiling alone (FIX 1786): the definition
     /// standing at `expected_version` is cloned and only its ceiling and its

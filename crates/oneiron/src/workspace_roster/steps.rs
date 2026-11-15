@@ -505,6 +505,12 @@ pub(super) fn record_roster_member(
         companion_actor_ref: Some(intent.companion.actor_ref()),
         companion_facet_ref: Some(intent.companion.work_facet_ref()),
         identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
+        companion_origin: match &intent.companion {
+            CompanionChoice::Work(birth) => CompanionOrigin::Born {
+                profile_grant_ref: birth.profile_grant_ref,
+            },
+            CompanionChoice::Bring { .. } => CompanionOrigin::Brought,
+        },
     };
     let key = RosterMemberKey {
         workspace_ref: intent.workspace.workspace_ref.clone(),
@@ -514,7 +520,19 @@ pub(super) fn record_roster_member(
     with_workspace_authority(vault, intent.workspace.workspace_vault_id, writer, |wtxn| {
         require_mailbox_revision(vault, revision)?;
         if let Some(existing) = MEMBER.get(&vault.store, wtxn, &key)? {
-            if existing != row {
+            // A row an earlier build wrote records no origin; the rest of
+            // it still has to agree.
+            let unrecorded = existing.companion_origin == CompanionOrigin::Unrecorded;
+            if existing
+                != (RosterMemberRow {
+                    companion_origin: if unrecorded {
+                        CompanionOrigin::Unrecorded
+                    } else {
+                        row.companion_origin
+                    },
+                    ..row.clone()
+                })
+            {
                 return Err(invalid(
                     "member already has a different workspace roster row",
                 ));

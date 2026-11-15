@@ -101,6 +101,7 @@ pub use verb_act_class::{VerbActClass, verb_act_class};
 pub use waits::CheckInTransition;
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use waits::advance_pending_check_in_in_txn;
+pub(crate) use waits::{LeaverCheckIns, settle_leaver_check_ins_in_txn};
 #[cfg(oneiron_test_support)]
 pub(crate) use wake::due_rows;
 pub(crate) use wake::next_check_in_due_at;

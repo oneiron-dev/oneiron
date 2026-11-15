@@ -110,7 +110,13 @@ impl Vault {
             let mut row = PRESET
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::EntityNotFound)?;
-            require_settings_authority_in_txn(self, txn, row.preset.workspace_vault_id, owner)?;
+            require_settings_authority_in_txn(
+                self,
+                txn,
+                row.preset.workspace_vault_id,
+                owner,
+                WORK_COMPANION_SETTING_REFUSAL,
+            )?;
             if row.work_companion != policy {
                 row.work_companion = policy;
                 PRESET.put(&self.store, txn, &key, &row)?;
@@ -137,7 +143,13 @@ impl Vault {
     ) -> Result<()> {
         let key = preset.workspace_ref.clone();
         self.with_write_txn_grouped(|txn| {
-            require_settings_authority_in_txn(self, txn, preset.workspace_vault_id, owner)?;
+            require_settings_authority_in_txn(
+                self,
+                txn,
+                preset.workspace_vault_id,
+                owner,
+                WORK_COMPANION_SETTING_REFUSAL,
+            )?;
             super::steps::validate_workspace_preset_in_txn(self, txn, preset)?;
             let existing = PRESET.get(&self.store, txn, &key)?;
             if let Some(existing) = &existing
@@ -159,14 +171,20 @@ impl Vault {
     }
 }
 
+/// The refusal of a `work_companion` change by someone without the power.
+const WORK_COMPANION_SETTING_REFUSAL: &str =
+    "work_companion is a workspace setting: owner or admin settings power";
+
 /// The person behind `owner`, live in `txn`, as the vault's owner or as an
-/// admin holding the workspace-settings power over `vault_id`. Enrollment
-/// authority alone does not confer it.
-fn require_settings_authority_in_txn(
+/// admin holding the workspace-settings power over `vault_id`, else
+/// `refusal`. Enrollment authority alone does not confer it. A member
+/// offboarding asks the same (RULING INB-07-OFFBOARD).
+pub(super) fn require_settings_authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_id: u64,
     owner: &AuthenticatedOwner,
+    refusal: &'static str,
 ) -> Result<()> {
     let actor = owner.revalidate_person_in_txn(vault, txn)?;
     if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
@@ -181,7 +199,7 @@ fn require_settings_authority_in_txn(
         )
         .map_err(|error| match error {
             Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
-                invalid("work_companion is a workspace setting: owner or admin settings power")
+                invalid(refusal)
             }
             other => other,
         })

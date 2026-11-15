@@ -39,7 +39,7 @@ use crate::server::SyncServer;
 /// invitee's accept and decline, objections and erase asks, his own record
 /// erase, the shared policy's proposal and answer, his trusted contacts and
 /// the workspace rows.
-pub(crate) const MANAGED_PERSON_DOORS: [&str; 43] = [
+pub(crate) const MANAGED_PERSON_DOORS: [&str; 44] = [
     "vault.members.invitations",
     "vault.shared.erase_asks",
     "vault.shared.receipt",
@@ -83,6 +83,7 @@ pub(crate) const MANAGED_PERSON_DOORS: [&str; 43] = [
     "vault.trusted_contacts.concern.propose",
     "vault.workspace.establish",
     "vault.workspace.members.onboard",
+    "vault.workspace.members.offboard",
 ];
 
 /// The root every member door's route sits under.

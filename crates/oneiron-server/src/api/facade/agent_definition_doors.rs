@@ -17,7 +17,10 @@ use oneiron::task_verb::sdk::{
     WorkflowUpdateRequest, WorkflowView, WorkspaceMemberOnboardRequest, WorkspacePresetReceipt,
     WorkspacePresetRequest, WorkspaceRosterRequest,
 };
-use oneiron::workspace_roster::{MemberOnboardingOutcome, WorkspaceRosterEntry};
+use oneiron::workspace_roster::{
+    MemberOffboardingIntent, MemberOffboardingOutcome, MemberOnboardingOutcome,
+    WorkspaceRosterEntry,
+};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{MaybeListed, owner_proof};
@@ -517,6 +520,36 @@ pub(crate) async fn vault_workspace_members_onboard(
             ]);
             rows.extend(outcome.companion_person_ref);
             rows.extend(outcome.companion_actor_ref);
+            Some(rows)
+        },
+    )
+    .await
+}
+
+/// `vault.workspace.members.offboard` (ARCH-0063 [INB-07]): the person's own
+/// proof, as onboarding's; the engine judges the owner or the workspace
+/// settings power, and a standing seat's removal power, in its writer.
+pub(crate) async fn vault_workspace_members_offboard(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: MemberOffboardingIntent,
+) -> MaybeListed<MemberOffboardingOutcome> {
+    const VERB: &str = "vault.workspace.members.offboard";
+    let mut rows = vec![input.person_ref];
+    as_person_naming(
+        server,
+        VERB,
+        person(server, auth, VERB),
+        move |server, holder| sdk::offboard_workspace_member_as(server.vault(), &holder, input),
+        |outcome| {
+            rows.extend(outcome.actors_switched_off.iter().copied());
+            if let Some(companion) = &outcome.companion {
+                rows.extend([companion.person_ref, companion.actor_ref]);
+            }
+            rows.extend(outcome.access_grants_revoked.iter().copied());
+            rows.extend(outcome.identity_ref);
+            rows.extend(outcome.rooms_left.iter().map(|leave| leave.room));
+            rows.extend(outcome.made_agents.iter().copied());
             Some(rows)
         },
     )

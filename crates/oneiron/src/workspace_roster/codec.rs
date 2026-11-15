@@ -307,7 +307,7 @@ pub(super) fn decode_preset_row(bytes: &[u8]) -> Result<PresetRow> {
 }
 
 pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from("schema_version"),
             Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -333,7 +333,39 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
             optional_ref(row.companion_facet_ref),
         ),
         (Value::from("identity_ref"), optional_ref(row.identity_ref)),
-    ])
+    ];
+    match row.companion_origin {
+        CompanionOrigin::Born { profile_grant_ref } => {
+            entries.push((Value::from("companion_origin"), Value::from("born")));
+            entries.push((
+                Value::from("born_profile_grant_ref"),
+                Value::from(profile_grant_ref.to_hex()),
+            ));
+        }
+        CompanionOrigin::Brought => {
+            entries.push((Value::from("companion_origin"), Value::from("brought")));
+        }
+        CompanionOrigin::Unrecorded => {}
+    }
+    Value::Map(entries)
+}
+
+/// The companion origin a roster row records; a row written before
+/// onboarding recorded one has no `companion_origin` key and reads
+/// [`CompanionOrigin::Unrecorded`] (STORED-CHANGE keep path).
+fn decode_companion_origin(entries: &[(Value, Value)]) -> Result<CompanionOrigin> {
+    let origin = entries
+        .iter()
+        .find(|(key, _)| key.as_str() == Some("companion_origin"))
+        .map(|(_, value)| value);
+    match origin.map(Value::as_str) {
+        None => Ok(CompanionOrigin::Unrecorded),
+        Some(Some("brought")) => Ok(CompanionOrigin::Brought),
+        Some(Some("born")) => Ok(CompanionOrigin::Born {
+            profile_grant_ref: required_ref(entries, "born_profile_grant_ref")?,
+        }),
+        Some(_) => Err(invalid("roster member companion_origin is unrecognized")),
+    }
 }
 
 pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> {
@@ -348,6 +380,7 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_actor_ref: optional_entity(&entries, "companion_actor_ref")?,
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
         identity_ref: optional_entity(&entries, "identity_ref")?,
+        companion_origin: decode_companion_origin(&entries)?,
     })
 }
 

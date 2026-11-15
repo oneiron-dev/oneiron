@@ -376,6 +376,72 @@ fn exhaust(
     }
 }
 
+/// What a workspace offboarding did to the check-ins of its leaver (INB-07;
+/// Engine RULING OFFBOARD-CHECK-INS = B).
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub(crate) struct LeaverCheckIns {
+    /// The open check-ins the leaver asked, each let go.
+    pub(crate) let_go: Vec<EntityId>,
+    /// The open check-ins whose current rung pins the leaver, left to the
+    /// ladder: a holder whose grant ended may no longer answer, and the ask
+    /// climbs once no pinned person may.
+    pub(crate) waiting_on_leaver: Vec<EntityId>,
+}
+
+/// In the offboarding writer at `now`: each open check-in one of `askers`
+/// asked settles `LetGo` (nothing runs), its receipt naming `offboarder` and
+/// the offboarding `cause`; and each open check-in whose current rung pins
+/// `leaver` as a person is listed and left as it is. Never an `Answered`:
+/// only a pinned holder answers. Cleanup, not a fix: a door checks its
+/// asker's power before it spends a check-in, and an answer re-reads the
+/// holder's live grant.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn settle_leaver_check_ins_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    askers: &[EntityId],
+    leaver: EntityId,
+    offboarder: EntityId,
+    cause: &str,
+    now: u64,
+) -> Result<LeaverCheckIns> {
+    let mut settled = LeaverCheckIns::default();
+    let open: Vec<PendingCheckIn> = PENDING
+        .scan(&vault.store, txn)?
+        .into_iter()
+        .map(|(_, row)| row)
+        .filter(|row| row.state == PendingState::Open)
+        .collect();
+    for mut row in open {
+        if askers.contains(&row.asker) {
+            row.state = PendingState::LetGo { at: now };
+            let fields = ReceiptFields::new(&row).with("cause", cause.to_owned());
+            write_check_in_receipt_in_txn(
+                &vault.store,
+                txn,
+                &mut row,
+                CheckInOutcome::LetGo,
+                Some(offboarder),
+                fields,
+                now,
+            )?;
+            store_pending_in_txn(&vault.store, txn, &row)?;
+            settled.let_go.push(row.id);
+        } else if row.current_rung().is_some_and(|entry| {
+            entry
+                .holders
+                .iter()
+                .any(|holder| holder.principal == leaver && holder.kind == HolderKind::Person)
+        }) {
+            settled.waiting_on_leaver.push(row.id);
+        }
+    }
+    Ok(settled)
+}
+
 /// Puts `row` in the final `state`, with its receipt.
 fn settle(
     vault: &Vault,

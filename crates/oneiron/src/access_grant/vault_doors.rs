@@ -208,9 +208,24 @@ impl Vault {
         revoked_at: u64,
         admit: impl FnOnce(&AccessGrant) -> Result<()>,
     ) -> Result<AccessGrant> {
-        use crate::vault::LiveEntityRow;
         let mut wtxn = self.store.env.write_txn()?;
-        let grant = match crate::vault::live_entity_row_in_txn(&self.store, &wtxn, id)? {
+        let revoked = self.revoke_admitted_access_grant_in_txn(&mut wtxn, id, revoked_at, admit)?;
+        wtxn.commit()?;
+        Ok(revoked)
+    }
+
+    /// [`Self::revoke_admitted_access_grant`] in the caller's writer: a
+    /// workspace offboarding revokes the grants its leaver's actors held in
+    /// the writer that ends the seat (INB-07).
+    pub(crate) fn revoke_admitted_access_grant_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        id: &EntityId,
+        revoked_at: u64,
+        admit: impl FnOnce(&AccessGrant) -> Result<()>,
+    ) -> Result<AccessGrant> {
+        use crate::vault::LiveEntityRow;
+        let grant = match crate::vault::live_entity_row_in_txn(&self.store, wtxn, id)? {
             LiveEntityRow::Live {
                 entity_type: ENTITY_TYPE_ACCESS_GRANT,
                 body,
@@ -229,11 +244,10 @@ impl Vault {
             }
         };
         admit(&grant)?;
-        crate::share::check_generic_grant_write(self, &wtxn, id, &grant)?;
+        crate::share::check_generic_grant_write(self, wtxn, id, &grant)?;
         let revoked = grant.revoked(revoked_at)?;
         let data = encode_access_grant_body(&revoked)?;
-        self.apply_access_grant_body(&mut wtxn, id, revoked_at, data)?;
-        wtxn.commit()?;
+        self.apply_access_grant_body(wtxn, id, revoked_at, data)?;
         Ok(revoked)
     }
 
