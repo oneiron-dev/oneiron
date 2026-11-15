@@ -29,6 +29,7 @@ mod model_list;
 mod owner_fallback_door;
 mod replay_prompt;
 mod rung;
+mod rung_hours;
 mod sends;
 mod shadow_capture;
 mod step_attempt;
@@ -75,6 +76,7 @@ use super::served::served_receipt;
 use super::source_admission::{self, SourceAdmission};
 use super::status::RungHealth;
 use super::walk::{Passed, Walk, ends_call, failure_kind, provider_down};
+use crate::runtime::GpuPodHours;
 
 /// Why a rung past its ladder's locality ceiling is passed over (FIX 12735).
 const PAST_LOCALITY_CEILING: &str = "the rung would send past its ladder's locality ceiling";
@@ -99,6 +101,9 @@ pub(super) struct LadderRung {
     /// A media seat's rung: the media wire it sends `ai.*` media calls
     /// through, and what it serves. A chat rung has none.
     pub(super) media: Option<MediaRung>,
+    /// The daily hours it serves its seat's walk (UNBUILT-14): inside them
+    /// the walk tries it first, outside them it passes it. `None`: any hour.
+    pub(super) hours: Option<GpuPodHours>,
 }
 
 /// The wire a ladder's calls speak. An owner's fallback for its parked
@@ -499,6 +504,7 @@ impl OfferLadder {
                 prompt: None,
                 offer,
                 media: None,
+                hours: None,
             },
             OfferCooldowns::unkept(),
         )
@@ -828,10 +834,11 @@ impl OfferLadder {
     /// does not hold the call's voice (FIX 1746), its world's order does not
     /// name its route (FIX 11768), it sits past the ladder's locality ceiling
     /// (FIX 12735), a fallback to it would take the work off the device and
-    /// the call's world stays on it, its offer rests from an earlier refusal,
-    /// or its offer is on probation with its one probation request out. The
-    /// voice, the order, the ceiling and the device come first, so a rung the
-    /// call may not use is never one it waits for.
+    /// the call's world stays on it, it keeps daily hours and the call came
+    /// outside them (UNBUILT-14), its offer rests from an earlier refusal, or
+    /// its offer is on probation with its one probation request out. The
+    /// voice, the order, the ceiling, the device and the hours come first, so
+    /// a rung the call may not use is never one it waits for.
     fn passes_over(&self, call: Call<'_>, index: usize, walk: &mut Walk) -> bool {
         if self.voice_not_held(call, index) {
             walk.note(index, Passed::VoiceNotHeld);
@@ -847,6 +854,10 @@ impl OfferLadder {
         }
         if let Some(reason) = self.kept_on_device(index, call.request) {
             self.hold(call, index, walk, reason);
+            return true;
+        }
+        if self.outside_hours(index) {
+            walk.note(index, Passed::OutsideHours);
             return true;
         }
         // A managed worker's own supervisor says when it serves (FIX 8315):
@@ -1160,7 +1171,8 @@ impl OfferLadder {
     /// and can use now. Each is asked again every time, so a rung whose rest
     /// ended while a later one was sent is the next one used.
     fn next_rung(&self, call: Call<'_>, sent: &[bool], walk: &mut Walk) -> Option<usize> {
-        (0..self.rungs.len()).find(|index| !sent[*index] && !self.passes_over(call, *index, walk))
+        self.walk_order()
+            .find(|index| !sent[*index] && !self.passes_over(call, *index, walk))
     }
 
     /// Rests the offer at `index` when `error` is a limit refusal: a rate
@@ -1699,7 +1711,8 @@ impl OfferLadder {
             deadline,
         };
         let mut walk = Walk::default();
-        let (start, wait) = match (0..self.rungs.len())
+        let (start, wait) = match self
+            .walk_order()
             .find(|index| !self.passes_over(call, *index, &mut walk))
         {
             Some(start) => (start, None),

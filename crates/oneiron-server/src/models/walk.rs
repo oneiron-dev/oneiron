@@ -45,6 +45,9 @@ pub(super) enum Passed {
     /// It is on probation after its provider was down, and its one
     /// probation request is out (OF-305), seen at health version `seen`.
     ProbeInFlight { seen: u64 },
+    /// It keeps daily hours and the call came outside them (UNBUILT-14):
+    /// passed at once, never waited for.
+    OutsideHours,
 }
 
 /// What one call met on the rungs it passed before an answer.
@@ -147,6 +150,7 @@ impl Walk {
                     }
                     Passed::VoiceNotHeld => row["passed"] = json!("voice_not_held"),
                     Passed::ProbeInFlight { .. } => row["passed"] = json!("probation_busy"),
+                    Passed::OutsideHours => row["passed"] = json!("outside_hours"),
                 }
                 row
             })
@@ -214,7 +218,8 @@ impl Walk {
                 | Passed::Resting { rest } => parked.push((index, *rest)),
                 Passed::KeptOnDevice { .. }
                 | Passed::VoiceNotHeld
-                | Passed::WorldRouteNotAdmitted => {}
+                | Passed::WorldRouteNotAdmitted
+                | Passed::OutsideHours => {}
                 Passed::Refused { rest: None, .. }
                 | Passed::Down { rest: None, .. }
                 | Passed::Failed { .. }
@@ -300,6 +305,7 @@ impl Passed {
             Self::WorldRouteNotAdmitted => matches!(self, Self::WorldRouteNotAdmitted),
             Self::VoiceNotHeld => matches!(self, Self::VoiceNotHeld),
             Self::ProbeInFlight { .. } => matches!(self, Self::ProbeInFlight { .. }),
+            Self::OutsideHours => matches!(self, Self::OutsideHours),
             Self::Resting { rest } => self.back() == Some(rest.until),
             Self::Refused { .. } | Self::Down { .. } | Self::Failed { .. } => false,
         }

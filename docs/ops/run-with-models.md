@@ -99,6 +99,33 @@ base_url = "https://api.anthropic.com"
 key_env = "ANTHROPIC_API_KEY"
 ```
 
+A rung of `rungs` may keep daily hours, such as a GPU box at home that runs
+batch models at night (`hours = { start, end, utc_offset | iana_timezone }`,
+the type and checks of `[[gpu.pods]] hours`, section 12):
+
+```toml
+[models.roles.dreamer_current]
+rungs = [
+  { model = "claude:claude-sonnet-4-5" },
+  { model = "gpubox:qwen3.8-27b", hours = { start = "22:00", end = "07:00", iana_timezone = "Europe/Berlin" } },
+]
+
+[models.providers.gpubox]               # the GPU box's OpenAI-compatible server
+kind = "local-openai-compat"
+base_url = "http://gpubox.lan:8000"
+```
+
+Inside its hours the seat's walk tries that rung before the rungs without
+hours, wherever the ladder lists it; a failure hands the call on as usual.
+Outside them the walk passes it at once, with no wait for the hours to open,
+and the receipt's `passed_over` row for it reads `"passed": "outside_hours"`.
+A model the vault's model manifest pins for the role is served at any hour:
+the pin names that one model, so there is no walk. A ladder whose every rung
+keeps hours is refused, so a call outside them always has a rung, as is
+`hours` on a role's single `model`. The hours say when, not where: the rung's
+provider is the owner's own entry, and `leave_device` applies to it as to any
+rung.
+
 The local Dreamer model the examples name is the measured recipe for the
 Dreamer's seat: Qwen3.8-27B as EXL3 4 bpw (`turboderp/Qwen3.8-27B-exl3`) with
 the DFlash2 5 bpw draft (`Mia-AiLab/Qwen3.8-27B-DFlash2-EXL3-5.0bpw`, at

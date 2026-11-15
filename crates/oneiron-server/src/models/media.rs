@@ -768,6 +768,7 @@ fn media_rung(
             row,
             caps: caps.clone(),
         }),
+        hours: None,
     })
 }
 

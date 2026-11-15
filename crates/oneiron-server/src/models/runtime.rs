@@ -377,6 +377,10 @@ impl ModelRuntime {
                             rung.prompt.clone(),
                             rerank,
                         )
+                    })
+                    .map(|served| LadderRung {
+                        hours: rung.hours.clone(),
+                        ..served
                     });
                 match served {
                     Some(served) => rungs.push(served),
@@ -419,6 +423,10 @@ impl ModelRuntime {
                             position,
                             rung.prompt.clone(),
                         )
+                        .map(|native| LadderRung {
+                            hours: rung.hours.clone(),
+                            ..native
+                        })
                     })
                     .collect()
             };

@@ -112,6 +112,7 @@ impl MeshRoutes {
                         endpoint: endpoint.clone(),
                     },
                     media: None,
+                    hours: None,
                 };
                 let ladder = OfferLadder::bare(rung, Arc::clone(&self.rests)).scoped(SeatScope {
                     wire: Wire::Chat,
