@@ -96,12 +96,12 @@ mod conversations;
 mod core;
 mod courtesy_delete;
 // INQUIRE-1 PR 5: the member host's inquiry route.
-mod inquiry_peer;
 mod discover;
 mod entity;
 mod error_map;
 mod esign;
 mod esign_qr;
+mod inquiry_peer;
 mod oauth_server;
 pub(crate) use self::esign::delivery_outbox::spawn as spawn_esign_delivery_outbox;
 pub(crate) use self::esign::hold_worker::spawn_admitted as spawn_esign_hold_worker_admitted;
