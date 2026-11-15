@@ -75,6 +75,7 @@ mod rest;
 #[cfg(oneiron_test_support)]
 pub(crate) use rest::GrantIssuer;
 mod search;
+pub(crate) mod setting_keys;
 mod share;
 mod smtp_client;
 #[doc(hidden)]

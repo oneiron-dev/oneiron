@@ -16,6 +16,7 @@ use super::imap::ImapMailWire;
 use super::landing::{LandOutcome, Landing};
 use super::microsoft365::HttpGraphMailWire;
 use super::pack::require_pack_active_in;
+use super::setting_keys::MAIL_SEARCH_IN_ROOM;
 use super::source::{MailProvider, MailSourceStatus, SOURCES};
 use super::state::{MailPresence, MailStage, OCCURRENCES, occurrence_key};
 use super::wire::MailProviderWire;
@@ -23,6 +24,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::off_record::OffRecordSession;
 use crate::session_overlay::{RouteTarget, SessionWriteRoute};
+use crate::setting::SettingScope;
 use crate::{EntityId, Vault};
 
 /// The hits one search page lands when the caller names no limit.
@@ -31,10 +33,11 @@ const DEFAULT_SEARCH_HITS: u32 = 25;
 const MAX_SEARCH_HITS: u32 = 100;
 /// The longest query a search takes, in bytes.
 const MAX_SEARCH_QUERY_BYTES: usize = 1024;
-/// What a search inside a room's off-record stretch answers
-/// (UNBUILT-01-ROOM-READERS = A, the lead 15 Nov 20:4x): the room's other
-/// members would read the hits, so it is refused before the provider is
-/// asked, and nothing is fetched or kept. The words are the UI session's
+/// What a search inside a room's off-record stretch answers while the
+/// owner has not allowed mail search in that room (`mail.search.in_room`,
+/// off by default; UNBUILT-01-ROOM-READERS, owner 16 Nov 00:44): the room's
+/// other members would read the hits, so it is refused before the provider
+/// is asked, and nothing is fetched or kept. The words are the UI session's
 /// short form (its WORDS-FOR-ENGINE item 3, 15 Nov 20:45), which the owner
 /// has not seen yet: change them here.
 const ROOM_SEARCH_REFUSAL: &str = "Mail is searched only where you are alone.";
@@ -119,16 +122,18 @@ impl Vault {
     /// each hit it keeps stays in the session's overlay and is dropped at
     /// close, and a hit the session reads already, staged there or held in
     /// base, is not fetched again. A session flipped on record keeps its
-    /// hits in base, as a search outside one does. The owner proof is the
-    /// only proof, as outside a session.
+    /// hits in base, as a search outside one does. In a room's session the
+    /// hits stay in the room's overlay, which every member reads until
+    /// close, so the search runs there only where the owner allowed mail
+    /// search in that room (`mail.search.in_room`, off by default). The
+    /// owner proof is the only proof, as outside a session.
     ///
     /// # Errors
     ///
     /// As [`Self::mail_search_step`]; an anonymous session, which keeps
-    /// nothing; `FORBIDDEN` in a room's session, whose other members would
-    /// read the owner's mail (UNBUILT-01-ROOM-READERS = A), before the
-    /// provider is asked; a session that belongs to another vault open, or
-    /// that closed.
+    /// nothing; `FORBIDDEN` in a room's session while the owner has not
+    /// allowed mail search in that room, before the provider is asked; a
+    /// session that belongs to another vault open, or that closed.
     #[expect(
         clippy::too_many_arguments,
         reason = "the search step's own axes, plus the session it runs in"
@@ -261,12 +266,21 @@ impl Vault {
                 ));
             }
         }
-        if session.room()?.is_some() {
-            return Err(MemoryError::new(
-                MEMORY_CODE_FORBIDDEN,
-                ROOM_SEARCH_REFUSAL,
-                &[],
-            ));
+        // A room's other members read what its overlay holds: a search
+        // there keeps its hits only where the owner allowed mail search in
+        // that room, read before the provider is asked.
+        if let Some(room) = session.room()? {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            let allowed = MAIL_SEARCH_IN_ROOM
+                .read_in_txn(self, &txn, &[SettingScope::Thread(room)], None)?
+                .value;
+            if !allowed {
+                return Err(MemoryError::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    ROOM_SEARCH_REFUSAL,
+                    &[],
+                ));
+            }
         }
         Ok(Some((session, route)))
     }
