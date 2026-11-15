@@ -15,6 +15,7 @@
 use super::super::host::DeadlineReplay;
 use super::super::host::resume_preflight::ResumePreflightReport;
 use super::super::store::SCRIPT_OUTPUT_DIR;
+use super::super::types::EngineExecutorError;
 use super::*;
 use crate::code_run::{ExecutorWireRepairs, PendingCodeStep};
 use crate::code_sandbox::SandboxBoundaryContract;
