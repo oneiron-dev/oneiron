@@ -296,3 +296,18 @@ impl NightlyLinkQuestion {
         })
     }
 }
+
+/// The names door (`test_doors::register_names`): every nightly link verdict with the option its
+/// question offers. Not API.
+#[cfg(oneiron_test_support)]
+impl crate::test_doors::register_names::PrivateNames {
+    /// Every `NightlyLinkVerdict`, as `NightlyLinkVerdict::ALL` lists them, with its option.
+    pub fn nightly_link_verdict() -> Vec<crate::test_doors::register_names::NameRow> {
+        NightlyLinkVerdict::ALL
+            .into_iter()
+            .map(|verdict| {
+                crate::test_doors::register_names::NameRow::of(verdict, verdict.option())
+            })
+            .collect()
+    }
+}
