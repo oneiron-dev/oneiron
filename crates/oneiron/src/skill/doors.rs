@@ -18,6 +18,8 @@ use super::record::SkillRecord;
 use super::validate::validate_skill_update;
 use crate::error::ArtifactError;
 use crate::write_envelope::skill_record::SkillContentHash;
+use std::collections::BTreeSet;
+use std::sync::Mutex;
 
 impl Vault {
     /// Typed SKILL put door. New records are born `candidate` — all three
@@ -374,16 +376,20 @@ impl Vault {
         if !replaces_parent && new.version == old.version {
             // The refusal names the member the owner must bump: a whole pack
             // put funnels through here, and the bare sentence left the owner
-            // guessing which member kept its version. Same kind and code.
+            // guessing which member kept its version. Same variant, kind and
+            // code; only the text names the member.
             let content = |hash: Option<SkillContentHash>| {
                 hash.map_or_else(|| "none".to_owned(), |hash| hash.to_hex())
             };
-            return Err(Error::Artifact(ArtifactError::SkillVersionKept {
-                skill_id: old.skill_id.clone(),
-                version: old.version.clone(),
-                old_content: content(old.content_hash),
-                new_content: content(new.content_hash),
-            }));
+            return Err(Error::Artifact(ArtifactError::InvalidSkillBody(
+                kept_version_reason(format!(
+                    "superseding revision must carry a new version: skill '{}' keeps version '{}' (content {} -> {})",
+                    old.skill_id,
+                    old.version,
+                    content(old.content_hash),
+                    content(new.content_hash),
+                )),
+            )));
         }
         // Canon (ARCH-0053 §6): superseded means "new version ADMITTED".
         // A non-active successor would leave the skillId with no admitted
@@ -617,4 +623,30 @@ impl Vault {
         )?;
         Ok(())
     }
+}
+
+/// The most kept-version refusal lines one process holds; past it a refusal
+/// carries the bare sentence.
+const KEPT_VERSION_REASONS_MAX: usize = 256;
+
+/// The kept-version refusal's text for one member and its bytes. The refusal
+/// carries a `&'static str`, so each distinct line is kept once for the
+/// process's life and a repeat refusal reuses it; past
+/// [`KEPT_VERSION_REASONS_MAX`] lines the bare sentence answers, so the held
+/// text stays bounded.
+fn kept_version_reason(line: String) -> &'static str {
+    static LINES: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+    let mut lines = match LINES.lock() {
+        Ok(lines) => lines,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    if let Some(held) = lines.get(line.as_str()).copied() {
+        return held;
+    }
+    if lines.len() >= KEPT_VERSION_REASONS_MAX {
+        return "superseding revision must carry a new version";
+    }
+    let held: &'static str = Box::leak(line.into_boxed_str());
+    lines.insert(held);
+    held
 }

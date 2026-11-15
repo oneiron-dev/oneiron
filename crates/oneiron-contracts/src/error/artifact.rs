@@ -117,20 +117,6 @@ pub enum ArtifactError {
     /// Nothing was written.
     #[error("invalid SKILL body: {0}")]
     InvalidSkillBody(&'static str),
-    /// A superseding SKILL revision kept its predecessor's version label:
-    /// named by the member skill, the label it kept and both content hashes,
-    /// so the owner sees which member of a pack must bump (FIX
-    /// SKILL-SUPERSEDE-VERSION-REFUSAL-NAMES-NO-MEMBER). The same kind as
-    /// [`Self::InvalidSkillBody`]. Nothing was written.
-    #[error(
-        "invalid SKILL body: superseding revision must carry a new version: skill '{skill_id}' keeps version '{version}' (content {old_content} -> {new_content})"
-    )]
-    SkillVersionKept {
-        skill_id: String,
-        version: String,
-        old_content: String,
-        new_content: String,
-    },
     /// A replicated resident skill arrived before its PERSON or AGENT_DEF owner.
     /// Retry after the dependency materializes; malformed and wrong-kind
     /// owners still fail as invalid SKILL bodies.
@@ -344,9 +330,7 @@ impl ArtifactError {
             Self::EditProposalAlreadySettled { .. } => ErrorKind::EditProposalAlreadySettled,
             Self::EditProposalStale => ErrorKind::EditProposalStale,
             Self::SettleNotAuthorized(_) => ErrorKind::SettleNotAuthorized,
-            Self::InvalidSkillBody(_)
-            | Self::SkillVersionKept { .. }
-            | Self::SkillHubGitRead(_) => ErrorKind::InvalidSkillBody,
+            Self::InvalidSkillBody(_) | Self::SkillHubGitRead(_) => ErrorKind::InvalidSkillBody,
             Self::ResidentOwnerDependencyPending => ErrorKind::ResidentOwnerDependencyPending,
             Self::SkillEditGateRetry(_) => ErrorKind::SkillEditGateRetry,
             Self::SkillContentAnchorTypeMismatch { .. } => {
