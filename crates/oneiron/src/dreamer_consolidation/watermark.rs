@@ -23,6 +23,7 @@ use crate::side_table::{self, Raw, SideTable};
 pub(super) use super::redirty::conversation_of;
 mod codec;
 pub(super) use codec::{decode_watermark, encode_watermark};
+pub(crate) mod setting_keys;
 mod turn_body;
 pub use turn_body::entity_ref_from_value;
 pub(crate) use turn_body::{TurnBodyFacts, decode_turn_body};
@@ -324,7 +325,7 @@ pub(crate) fn read_watermark_advance_in_txn(
         scope,
         &current,
         Some(upper_learned_at),
-        effective_dirty_turn_limit(scope, usize::MAX),
+        effective_dirty_turn_limit_in_txn(vault, txn, scope, usize::MAX)?,
         stop,
     )?
     else {
@@ -480,18 +481,21 @@ struct AdmissibleTurnRow {
 }
 
 /// The round BOUND is the only scope-keyed part of selection: a Meso round is
-/// capped at [`DEFAULT_MESO_ROUND_TURN_CAP`] admissible TURNs on top of the
-/// caller's own limit; Micro and Macro keep the requested limit.
-const fn effective_dirty_turn_limit(scope: DreamerConsolidationScope, requested: usize) -> usize {
+/// capped at the owner's [`setting_keys::MESO_ROUND_TURN_CAP`]
+/// ([`DEFAULT_MESO_ROUND_TURN_CAP`] by default) admissible TURNs on top of the
+/// caller's own limit, read in the round's own snapshot `txn`; Micro and
+/// Macro keep the requested limit and read no key.
+fn effective_dirty_turn_limit_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    scope: DreamerConsolidationScope,
+    requested: usize,
+) -> Result<usize> {
     match scope {
         DreamerConsolidationScope::Meso => {
-            if requested < DEFAULT_MESO_ROUND_TURN_CAP {
-                requested
-            } else {
-                DEFAULT_MESO_ROUND_TURN_CAP
-            }
+            Ok(requested.min(setting_keys::meso_round_turn_cap_in_txn(vault, txn)?))
         }
-        DreamerConsolidationScope::Micro | DreamerConsolidationScope::Macro => requested,
+        DreamerConsolidationScope::Micro | DreamerConsolidationScope::Macro => Ok(requested),
     }
 }
 
@@ -624,8 +628,10 @@ fn enumerate_admissible_turns(
 /// filter. Claims NEVER enter the working set (GATE-11 structural invariant —
 /// the scan is type-filtered).
 ///
-/// A Meso round is bounded by `min(limit, DEFAULT_MESO_ROUND_TURN_CAP)`; Micro
-/// and Macro use `limit` as given. The cap may cut between two turns sharing
+/// A Meso round is bounded by `min(limit, cap)`, the cap being the owner's
+/// `dreamer.consolidation.meso_round_turn_cap` ([`DEFAULT_MESO_ROUND_TURN_CAP`]
+/// by default) read in the scan's snapshot; Micro and Macro use `limit` as
+/// given. The cap may cut between two turns sharing
 /// one `learned_at`: settling on the exact last consumed key
 /// (`advance_watermark_to_turn`) is what lets the next round resume inside
 /// that same second instead of replaying or stranding it.
@@ -645,7 +651,7 @@ pub fn scan_dirty_turns(
             scope,
             watermark,
             None,
-            effective_dirty_turn_limit(scope, limit),
+            effective_dirty_turn_limit_in_txn(vault, &rtxn, scope, limit)?,
             WakeStop::NEVER,
         )?
         // NEVER never stops, so the enumeration always yields its rows.
@@ -719,7 +725,7 @@ pub(crate) fn collect_dirty_turn_ids_until(
         scope,
         &current,
         Some(upper_inclusive),
-        effective_dirty_turn_limit(scope, usize::MAX),
+        effective_dirty_turn_limit_in_txn(vault, txn, scope, usize::MAX)?,
         stop,
     )?
     else {

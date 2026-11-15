@@ -47,6 +47,8 @@ pub const TURN_BODY_FACET_REF_KEY: &str = "facet_ref";
 /// following rounds (one capped round per session-close settlement). The cap
 /// may cut between ANY two adjacent temporal keys, including two keys sharing
 /// one `learned_at` second — the compound watermark records the exact cut.
+/// The owner moves it with `dreamer.consolidation.meso_round_turn_cap`
+/// (`watermark::setting_keys`); this is that key's default.
 pub const DEFAULT_MESO_ROUND_TURN_CAP: usize = 500;
 /// Domain for the advisory partition-round hash — the exact-batch component of
 /// a consolidation attempt's dedupe key (pinned; distinct from the phase-1/2
