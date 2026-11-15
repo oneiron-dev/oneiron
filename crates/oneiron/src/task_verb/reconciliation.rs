@@ -2,17 +2,24 @@
 //! The merge queue's overlap handoff mints it under its real creator's
 //! authority (`queue`, FIX 6868 G2 PR2). Below the creator's Auto ceiling the
 //! conflict is kept and its reconciliation held, told to the creator, never
-//! minted under a widened ceiling (FIX 8830).
+//! minted under a widened ceiling (FIX 8830). The queue completes the TASK
+//! when its conflict's green successor supersedes the sources (FIX
+//! QUEUE-RECONCILIATION-TASK-COMPLETION).
 mod queue;
 
 use super::create_spec::TaskCreateRateLimit;
 use super::rate_limit::{record_task_create, task_actor_ceiling};
+use super::terminal_state::{TaskExecutionState, TaskTerminalDisposition, TaskTerminalRecord};
+use super::verb_kind::TaskKind;
+use super::wire_decode::task_verb_body_in;
+use super::wire_encode::encode_task_verb_body;
 use crate::Vault;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::gate::PolicyApprovalCeiling;
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
+use crate::registry::ENTITY_TYPE_TASK;
 use crate::repo_mutation::RepoConflictClaim;
 use crate::side_table::{self, Raw, SideTable};
 
@@ -47,6 +54,66 @@ impl Vault {
         conflict: EntityId,
     ) -> Result<Option<EntityId>> {
         RECONCILIATION_TASKS.get(&self.store, txn, &conflict)
+    }
+
+    /// Completes the reconciliation TASK of queue conflict `conflict` in the
+    /// write that supersedes its sources, once its green successor closed
+    /// it (ARCH-0050:110; FIX QUEUE-RECONCILIATION-TASK-COMPLETION). Its
+    /// result is `resolution`, the claim that closed the conflict.
+    ///
+    /// The write is the engine's own, through the internal TASK body door,
+    /// as a watch TASK's tick settles it: no run is leased on a
+    /// reconciliation TASK (RULING CODECUSTODY-RECONCILE-SUCCESSOR = A), so
+    /// no executor's result door ever settles it. A held conflict has no
+    /// TASK. A TASK already settled, its ladder settled, or cancelled is
+    /// left alone, and so is a row that is not a reconciliation TASK.
+    /// Answers the TASK it completed.
+    pub(crate) fn complete_queue_reconciliation_task_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        conflict: EntityId,
+        resolution: Option<EntityId>,
+        now: u64,
+    ) -> Result<Option<EntityId>> {
+        let Some(task) = RECONCILIATION_TASKS.get(&self.store, txn, &conflict)? else {
+            return Ok(None);
+        };
+        let Some(mut body) = task_verb_body_in(self, &*txn, task)? else {
+            return Ok(None);
+        };
+        if body.task_kind() != TaskKind::Reconciliation
+            || body.terminal().is_some()
+            || body.settled_ladder_disposition().is_some()
+            || self.task_authority_facts_in(&*txn, task)?.cancelled
+        {
+            return Ok(None);
+        }
+        body.state = Some(TaskExecutionState::Terminal(TaskTerminalRecord {
+            disposition: TaskTerminalDisposition::Completed,
+            result_ref: resolution,
+            summary: None,
+            finished_at: now,
+            ladder: None,
+            counter_task_ref: None,
+        }));
+        self.batch_in()
+            .put_internal(
+                &task,
+                ENTITY_TYPE_TASK,
+                crate::TimeRange {
+                    start: now,
+                    end: now,
+                },
+                now,
+                &encode_task_verb_body(body),
+            )
+            .apply(txn)?;
+        // As every settlement does: a review the owner accepted before the
+        // TASK settled anchors it, and the routing folds count it. Its
+        // queued Dreamer realization finds it settled and is owed nothing.
+        super::settlement_anchor::anchor_kept_review_in_txn(self, txn, task, None)?;
+        crate::edit_distance::routing::refold_task_outcomes_in_txn(self, txn, task);
+        Ok(Some(task))
     }
     /// Called only after the conflict claim has been written in this transaction.
     /// The local owner is bootstrapped outside the transaction by the admin queue.

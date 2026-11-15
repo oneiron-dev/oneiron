@@ -144,6 +144,29 @@ pub struct QueueConflictLink {
     pub resolution_batch: Option<String>,
     /// The resolution reached green: this source is kept, superseded.
     pub superseded: bool,
+    /// What closed the conflict once its successor went green: the
+    /// resolution claim its reconciliation TASK completed with and the run
+    /// that made it. `None` until then, and on a row superseded before it
+    /// was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_by: Option<QueueConflictResolver>,
+}
+
+/// What closed one overlap's conflict, kept when its green successor
+/// (`resolution_batch`) supersedes its sources (FIX
+/// QUEUE-RECONCILIATION-TASK-COMPLETION). The same write completes the
+/// reconciliation TASK with `resolution` as its result.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct QueueConflictResolver {
+    /// The resolution claim that closed the typed conflict: the green
+    /// batch's own queue claim, else the first claim that superseded it.
+    /// `None` when no claim's supersession reads.
+    pub resolution: Option<EntityId>,
+    /// The TASK the resolving run realized; `None` for an owner or trusted
+    /// batch, which no run submitted.
+    pub task: Option<EntityId>,
+    /// The work that run made the resolving proposals in.
+    pub work: Option<EntityId>,
 }
 
 /// One mask decision a red diagnosis evaluated (FIX 4362). It binds the
@@ -245,6 +268,13 @@ pub struct QueueConflictView {
     pub task: Option<String>,
     /// The fresh queue entry that resolves it, once linked.
     pub resolution_batch: Option<String>,
+    /// The resolution claim its reconciliation TASK completed with, once
+    /// that entry's green superseded the sources.
+    pub resolution_claim: Option<String>,
+    /// The TASK of the run whose green entry resolved it.
+    pub resolved_by_task: Option<String>,
+    /// The work that run made the resolving proposals in.
+    pub resolved_by_work: Option<String>,
 }
 
 /// The automatic driver's view of one batch: its status, the checker work
