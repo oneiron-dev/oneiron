@@ -1,6 +1,6 @@
 //! Browser workflow resolution and candidate counters read by the Coach.
 use crate::entity_id::EntityId;
-use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+use oneiron_contracts::fingerprint::purposes;
 
 /// The domain a candidate program's input fingerprint is hashed in (CUA E8,
 /// CALLS row "candidate dedup"), for the Coach's seen marker: the tag of
