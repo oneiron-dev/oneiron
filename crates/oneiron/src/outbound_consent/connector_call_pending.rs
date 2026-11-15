@@ -1,8 +1,10 @@
 //! Expiry of held and pending-delivery connector calls (ONE-2510).
 //!
-//! A call nobody settles expires [`CONNECTOR_CALL_PENDING_TTL_MS`] after it
-//! was first held; a retry never moves that deadline, and neither does a
-//! count window that paces the call (FIX 8753). Expiry settles the
+//! A call nobody settles expires the owner's `connectors.calls.pending_ttl_secs`
+//! (seven days by default; [`CONNECTOR_CALL_PENDING_TTL`]) after it was first
+//! held; a retry never moves that deadline, and neither does a count window
+//! that paces the call (FIX 8753). The lifetime is read at each check, so the
+//! owner's change moves every held call's deadline. Expiry settles the
 //! call's row, so the settler answers its wait and acknowledges it like any
 //! other terminal outcome. A call the ledger never admitted, or whose send
 //! definitely never reached the connector, is refused as
@@ -18,24 +20,54 @@ use crate::outbound_intent_ledger::{
     IntentEscalationReason, IntentLedgerError, IntentLedgerRecord, IntentResolution,
     UnconfirmedDelivery, abandon_record, read_intent_for_attempt_in_txn, record_possible_delivery,
 };
+use crate::store::Store;
 
 use super::connector_call::{
     ConnectorCallOutcome, PENDING_CALLS, PendingConnectorCall, SettledConnectorCall,
     intent_escalation_code,
 };
-
-/// How long a held or pending-delivery connector call waits for its hold to
-/// clear or its send to settle, from when it was first held: 7 days. One
-/// constant, so a later ruling changes one line. A connector event wake a
-/// count window paces waits as long (FIX 8753).
-pub(crate) const CONNECTOR_CALL_PENDING_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+use super::setting_keys::CONNECTOR_CALL_PENDING_TTL;
 
 /// The stable reason an expired call carries.
 pub(super) const CONNECTOR_CALL_EXPIRED: &str = "connector_call_expired";
 
-/// The moment a call first held at `held_at_ms` expires.
-const fn connector_call_deadline(held_at_ms: u64) -> u64 {
-    held_at_ms.saturating_add(CONNECTOR_CALL_PENDING_TTL_MS)
+/// How long a held or pending-delivery connector call waits for its hold to
+/// clear or its send to settle, in seconds from when it was first held, as
+/// `txn` reads the owner's `connectors.calls.pending_ttl_secs` (seven days by
+/// default). A connector event wake a count window paces fixes its deadline
+/// with it at its first deferral (FIX 8753).
+///
+/// # Errors
+///
+/// Storage errors reading the key's rows.
+pub(crate) fn connector_call_pending_ttl_secs_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<u64> {
+    Ok(CONNECTOR_CALL_PENDING_TTL
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value
+        .0)
+}
+
+/// The moment a call first held at `held_at_ms` expires, for a lifetime of
+/// `ttl_secs`.
+pub(super) const fn connector_call_deadline(held_at_ms: u64, ttl_secs: u64) -> u64 {
+    held_at_ms.saturating_add(ttl_secs.saturating_mul(1000))
+}
+
+/// A lifetime of `secs` in words, for the owner's questions: whole days,
+/// else whole hours, else whole minutes, else seconds.
+pub(super) fn connector_call_lifetime_words(secs: u64) -> String {
+    let (count, unit) = [(86_400, "day"), (3_600, "hour"), (60, "minute")]
+        .into_iter()
+        .find(|(size, _)| secs % size == 0)
+        .map_or((secs, "second"), |(size, unit)| (secs / size, unit));
+    if count == 1 {
+        format!("1 {unit}")
+    } else {
+        format!("{count} {unit}s")
+    }
 }
 
 impl Vault {
@@ -82,11 +114,15 @@ impl Vault {
         pending: &PendingConnectorCall,
         now_ms: u64,
     ) -> Result<Option<ConnectorCallOutcome>, IntentLedgerError> {
-        if pending.input.is_some() || now_ms < connector_call_deadline(pending.held_at_ms) {
+        if pending.input.is_some() {
             return Ok(None);
         }
         let record = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
+            let ttl_secs = connector_call_pending_ttl_secs_in_txn(&self.store, &txn)?;
+            if now_ms < connector_call_deadline(pending.held_at_ms, ttl_secs) {
+                return Ok(None);
+            }
             read_intent_for_attempt_in_txn(self, &txn, pending.attempt_id, pending.call_seq)?
         };
         let settled = match record {
@@ -204,4 +240,57 @@ fn expired_reasons(stop: IntentEscalationReason) -> Vec<String> {
         reasons.push(intent_escalation_code(stop).to_owned());
     }
     reasons
+}
+
+/// Test seam (`--cfg oneiron_test_support`): keeps a held call first held at
+/// `held_at_ms`, which the ledger never admitted, as a hold does, and returns
+/// its ref. Nothing asks the owner about it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_held_connector_call(vault: &Vault, held_at_ms: u64) -> crate::Result<EntityId> {
+    let call_ref = EntityId::now();
+    let pending = PendingConnectorCall {
+        name: "test-connector".to_owned(),
+        tool: "test_tool".to_owned(),
+        arguments: "{}".to_owned(),
+        mutation: super::tool_call::MutationIntent::ExplicitMutation,
+        grant_id: None,
+        attempt_id: crate::attempt_queue::AttemptId::now(),
+        call_seq: 0,
+        principal_ref: EntityId::now().to_hex(),
+        remember_context: None,
+        held_at_ms,
+        settled: None,
+        held_reasons: Vec::new(),
+        owner_ask_seq: None,
+        credential: None,
+        grant: None,
+        secret_use: None,
+        sweep_minted: false,
+        sweep_dry_run_forced: false,
+        live_use: false,
+        code_consent_wait: None,
+        source_rows: Some(Vec::new()),
+        approval: None,
+        input: None,
+        code: None,
+        sealed_arguments: None,
+        off_record: false,
+        paced_until: None,
+        agent_run: None,
+    };
+    vault.with_write_txn(|txn| PENDING_CALLS.put(&vault.store, txn, &call_ref, &pending))?;
+    Ok(call_ref)
+}
+
+/// Test seam (`--cfg oneiron_test_support`): whether the held call
+/// `call_ref` settled (expiry settles it), `None` when no row holds it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn held_connector_call_settled(
+    vault: &Vault,
+    call_ref: &EntityId,
+) -> crate::Result<Option<bool>> {
+    let txn = vault.store.env.read_txn()?;
+    Ok(PENDING_CALLS
+        .get(&vault.store, &txn, call_ref)?
+        .map(|row| row.settled.is_some()))
 }

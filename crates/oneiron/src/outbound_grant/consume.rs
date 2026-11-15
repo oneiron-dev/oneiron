@@ -2,6 +2,7 @@
 //! action that meets a full envelope window.
 
 use super::bound::invalid_grant;
+use super::setting_keys::WINDOW_WAIT_HOLD;
 use super::verb_class::verb_in_class;
 use crate::Vault;
 use crate::channel_identity_autonomy::{
@@ -24,11 +25,6 @@ pub const CHANNEL_IDENTITY_WINDOW_WAIT_REASON: &str = "gate.pending.channel_iden
 /// later window. Keyed by the envelope id.
 const USAGE: SideTable<EntityId, ChannelIdentityGrantUsage, Raw> =
     SideTable::new(&side_table::OUTBOUND_GRANT_CHANNEL_IDENTITY_USAGE);
-
-/// How long a retained action keeps its place once the window its turn falls
-/// in opens, if it does not come back; a shorter window bounds it to the
-/// window itself.
-const WINDOW_WAIT_HOLD_SECS: u64 = 15 * 60;
 
 #[derive(Clone, PartialEq, Eq)]
 struct ChannelIdentityGrantUsage {
@@ -439,7 +435,14 @@ pub(crate) fn admit_channel_identity_grant_in_txn(
     let base = if elapsed { now } else { usage.started };
     let windows = ((spent + ahead) / max_actions.max(1)) as u64;
     let next_eligible_at = base.saturating_add(window_secs.saturating_mul(windows));
-    let hold = next_eligible_at.saturating_add(window_secs.min(WINDOW_WAIT_HOLD_SECS));
+    // It keeps its place the owner's `outbound.grant.window_wait_hold_secs`
+    // (15 minutes by default) once that window opens, if it does not come
+    // back; a shorter window bounds the hold to the window itself.
+    let hold_secs = WINDOW_WAIT_HOLD
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value
+        .0;
+    let hold = next_eligible_at.saturating_add(window_secs.min(hold_secs));
     let deadline = match place {
         Some(at) => {
             let action = &mut usage.retained[at];

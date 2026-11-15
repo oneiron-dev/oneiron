@@ -30,7 +30,9 @@ use crate::outbound_intent_ledger::IntentLedgerError;
 
 use super::approval::ConnectorCallApproval;
 use super::connector_call::{PENDING_CALLS, PendingConnectorCall};
-use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
+use super::connector_call_pending::{
+    connector_call_lifetime_words, connector_call_pending_ttl_secs_in_txn,
+};
 
 /// The host-issued queue identity of a held connector call's ask.
 const CONNECTOR_CALL_ASK_QUEUE: &str = "outbound.connector_call_held";
@@ -70,7 +72,9 @@ const TERMINAL_CONNECTOR_OWNER_ASK_WITHDRAWN: bool = true;
 /// The wording of a held call's owner ask: the one place it lives. It names
 /// the connector, the tool, the call ref and the hold's reason codes, says
 /// that answering grants nothing, and where the call is allowed instead,
-/// with the approve-once digest the Gate's hold named when it named one.
+/// with the approve-once digest the Gate's hold named when it named one,
+/// and how long the call waits (`ttl_secs`, the owner's
+/// `connectors.calls.pending_ttl_secs`).
 fn connector_call_ask_text(
     call_ref: &EntityId,
     name: &str,
@@ -78,8 +82,9 @@ fn connector_call_ask_text(
     reasons: &[String],
     approval_digest: Option<&str>,
     drafts_consent: bool,
+    ttl_secs: u64,
 ) -> String {
-    let days = CONNECTOR_CALL_PENDING_TTL_MS / (24 * 60 * 60 * 1000);
+    let lifetime = connector_call_lifetime_words(ttl_secs);
     let reasons = if reasons.is_empty() {
         "no reason recorded".to_owned()
     } else {
@@ -107,7 +112,7 @@ fn connector_call_ask_text(
         "A connector call waits for you: tool \"{tool}\" on connector \"{name}\" (held call {call}) \
          is held because: {reasons}. Answering this ask allows nothing. To let it run, grant the \
          tool through the connector's consent for this held call, or approve the connector's key \
-         or manifest.{press} A call nobody allows expires {days} days after it was first held. \
+         or manifest.{press} A call nobody allows expires {lifetime} after it was first held. \
          Will you review it?{draft}",
         tool = clip(tool),
         name = clip(name),
@@ -120,12 +125,14 @@ fn clip(text: &str) -> String {
     text.chars().take(ASK_NAME_MAX_CHARS).collect()
 }
 
-/// The owner ask for the held call `call_ref`, by its original principal.
+/// The owner ask for the held call `call_ref`, by its original principal,
+/// naming the lifetime `ttl_secs` in force.
 fn connector_call_ask(
     call_ref: &EntityId,
     principal: EntityId,
     pending: &PendingConnectorCall,
     reasons: &[String],
+    ttl_secs: u64,
 ) -> HumanDecisionRequest {
     // FIX 6424 part 3: the call's current ask only; each new one is the
     // next version of the question.
@@ -151,6 +158,7 @@ fn connector_call_ask(
                 reasons,
                 approval_digest,
                 drafts_consent,
+                ttl_secs,
             ),
             class: DecisionClass::Judgment,
             contract: AnswerContract::Noul,
@@ -182,9 +190,12 @@ impl Vault {
         call_ref: &EntityId,
         reasons: &[String],
     ) -> Result<Option<u64>, IntentLedgerError> {
-        let pending = {
+        let (pending, ttl_secs) = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
-            PENDING_CALLS.get(&self.store, &txn, call_ref)?
+            (
+                PENDING_CALLS.get(&self.store, &txn, call_ref)?,
+                connector_call_pending_ttl_secs_in_txn(&self.store, &txn)?,
+            )
         };
         let Some(pending) = pending else {
             return Ok(None);
@@ -202,7 +213,7 @@ impl Vault {
         let Ok(principal) = EntityId::from_hex(&pending.principal_ref) else {
             return Ok(None);
         };
-        let request = connector_call_ask(call_ref, principal, &pending, reasons);
+        let request = connector_call_ask(call_ref, principal, &pending, reasons, ttl_secs);
         let consent = pending
             .approval
             .as_ref()

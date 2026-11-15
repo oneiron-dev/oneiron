@@ -10,6 +10,7 @@ mod connector_slate;
 pub(crate) mod dedupe;
 mod ordinary_slate;
 mod replay;
+pub(crate) mod setting_keys;
 mod types;
 
 mod fanout;

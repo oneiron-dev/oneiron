@@ -11,6 +11,7 @@ mod bound;
 mod consume;
 mod doors;
 mod index;
+pub(crate) mod setting_keys;
 mod spelling;
 mod verb_class;
 
