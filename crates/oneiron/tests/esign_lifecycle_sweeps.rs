@@ -97,9 +97,9 @@ fn swept(report: &HousekeepingReport, sweep: &str, work: &str, count: &str) -> T
         .and_then(|rows| rows.iter().find(|row| row["sweep"] == sweep))
         .ok_or_else(|| format!("the pass reports no {sweep} job"))?;
     assert_eq!(row["outcome"], "ran", "the {sweep} job runs: {row}");
-    row["work"][work][count]
+    Ok(row["work"][work][count]
         .as_u64()
-        .ok_or_else(|| format!("the {sweep} job reports no {work}.{count}: {row}").into())
+        .ok_or_else(|| format!("the {sweep} job reports no {work}.{count}: {row}"))?)
 }
 
 struct Signing {
@@ -132,21 +132,24 @@ fn signing_draft() -> TestResult<Signing> {
     )?;
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner)?;
+    let scoped_grants: Vec<Value> = ["send_for_signature", "extend"]
+        .into_iter()
+        .map(|verb| {
+            json!({
+                "actor_ref": owner.to_hex(),
+                "effector": format!("external:{verb}"),
+                "scope": oneiron::test_support::effect_preset(),
+                "selectors": {"channel": "esign"},
+            })
+        })
+        .collect();
     let policy = json!({
         "schema_version": "1.2", "pack_id": "esign-lifecycle-test", "pack_version": "v1",
         "min_engine_version": "0.0.0",
         "defaults": {"criticality": "normal", "sensitivity": "normal"},
         "rules": [],
         "actor_ceilings": [{"actor_class": "human", "actor_ref": owner.to_hex(), "ceiling": "auto"}],
-        "scoped_grants": ["send_for_signature", "extend"]
-            .into_iter()
-            .map(|verb| json!({
-                "actor_ref": owner.to_hex(),
-                "effector": format!("external:{verb}"),
-                "scope": oneiron::test_support::effect_preset(),
-                "selectors": {"channel": "esign"},
-            }))
-            .collect::<Vec<_>>(),
+        "scoped_grants": scoped_grants,
     });
     oneiron::test_support::put_policy_manifest_bytes(
         &vault,

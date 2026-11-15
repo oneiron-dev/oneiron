@@ -395,7 +395,7 @@ impl Memory<'_> {
     /// gate's grants and ceilings rule a person's act, the signing
     /// principal's autonomy dial an agent's. Each live link is re-dated to
     /// the new deadline, never past its own cap; a terminal document, or one
-    /// already past a window, does not move.
+    /// an unfinished recipient's window has already passed, does not move.
     /// # Errors
     /// See [`Memory::esign_void`]. A deadline no later than the document's
     /// own is the act's refusal, an outcome in the view.

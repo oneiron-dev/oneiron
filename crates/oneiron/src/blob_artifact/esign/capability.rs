@@ -427,7 +427,10 @@ impl Vault {
                                 TOKENS.delete(&self.store, txn, &digest)?;
                                 removed += 1;
                             }
-                            _ => kept.push(digest),
+                            Some(_) => kept.push(digest),
+                            // An index digest with no verifier opens nothing:
+                            // it leaves the index.
+                            None => {}
                         }
                     }
                     if kept.is_empty() {
