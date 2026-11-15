@@ -226,15 +226,6 @@ pub(crate) fn erase_preview_actor_in_txn(
     Ok(())
 }
 
-/// `vault.records.erase_propose`: an agent asks the Owners to erase a record
-/// its own live owner Grant reads (UNBUILT-05); it erases nothing.
-pub fn propose_record_erase(
-    memory: &Memory<'_>,
-    input: RecordEraseRequest,
-) -> MemoryResult<crate::federation::EraseProposal> {
-    memory.vault().propose_erase_as_agent(memory, input.record)
-}
-
 /// `vault.records.erase_preview`: what erasing `record` would take, read
 /// under the caller's own deletion authority. It also retains the preview's
 /// digest for this caller and record until it expires, which

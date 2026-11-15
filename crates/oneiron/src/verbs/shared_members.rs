@@ -23,9 +23,10 @@ use crate::{EntityId, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::shared_members::{
-    GuestSlipMintRequest, GuestSlipMinted, InvitationCodeRequest, InvitationSlipRequest,
-    SharedEraseAskCloseRequest, SharedEraseAskRequest, SharedInvitationAcceptWithCredentialRequest,
-    SharedInvitationRequest, SharedInvitationWithdrawRequest,
+    EraseProposeRequest, GuestSlipMintRequest, GuestSlipMinted, InvitationCodeRequest,
+    InvitationSlipRequest, SharedEraseAskCloseRequest, SharedEraseAskRequest,
+    SharedInvitationAcceptWithCredentialRequest, SharedInvitationRequest,
+    SharedInvitationWithdrawRequest,
 };
 
 /// `vault.members.invitations`: the caller's own pending invitations.
@@ -232,6 +233,15 @@ pub fn ask_shared_erase_as(
     let record = EntityId::from_hex(&input.record)
         .map_err(|_| MemoryError::bad_request("record is not an entity id"))?;
     Ok(vault.ask_shared_erase(asker, input.vault_id, record)?)
+}
+
+/// `vault.records.erase_propose`: an agent asks the Owners to erase a record
+/// its own live owner Grant reads (UNBUILT-05); it erases nothing.
+pub fn propose_record_erase(
+    memory: &Memory<'_>,
+    input: EraseProposeRequest,
+) -> MemoryResult<crate::federation::EraseProposal> {
+    memory.vault().propose_erase_as_agent(memory, input.record)
 }
 
 /// `vault.shared.erase_asks`: every ask for an Owner, the caller's own for

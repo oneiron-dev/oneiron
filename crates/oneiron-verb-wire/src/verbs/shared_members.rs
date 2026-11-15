@@ -52,6 +52,14 @@ pub struct SharedEraseAskRequest {
     pub record: String,
 }
 
+/// `vault.records.erase_propose`'s input: the record an agent asks the
+/// Owners to erase.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EraseProposeRequest {
+    pub record: EntityId,
+}
+
 /// `vault.shared.close_erase_ask`'s input: `erased` when the Owner erased the
 /// record, naming with `act_id` the `erase` act they started where the veto
 /// window applied; else declined.
