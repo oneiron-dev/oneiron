@@ -16,10 +16,16 @@
 //! change, class revision, held confirm and removal, or put its keys into
 //! the owner's next role change.
 //!
+//! The pairing redeem door read every chain too, in front of the class
+//! revision: a machine that pairs again under its own identity
+//! (`re_paired_standing`) and the key whose possession a redemption proves
+//! (`held_machine_possession`). They read the same heads now (Engine RULING
+//! 16 Nov, RE-PAIRING-READERS-IN-PR-1 = A).
+//!
 //! Each test publishes a stranger's root (a fresh `RecoveryRootSeed`), stores
 //! one mark of that root's anchor beside the owner's machine, and then acts
-//! through the owner's door. No vault here pins a root, so the machine
-//! stands under the roster's head alone.
+//! through the owner's door or the redeem door. No vault here pins a root,
+//! so the machine stands under the roster's head alone.
 
 #![cfg(oneiron_test_support)]
 
@@ -32,9 +38,12 @@ use oneiron::authority::{
     AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer,
     MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
     MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole,
-    OwnerRootRecord, authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
+    OwnerRootRecord, PairingPrincipal, PairingRedeemed, authority_entry_hash, authority_transcript,
+    machine_possession_transcript, machine_profile_proof_transcript,
+    pairing_binding_transcript_pinned,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::Scope;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::world_keys::{RecoveryRoot, RecoveryRootSeed};
@@ -45,6 +54,8 @@ use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoi
 const JOINING_SEED: u8 = 68;
 /// The seed of the stranger machine key no other key of this file uses.
 const STRANGER_MACHINE_SEED: u8 = 71;
+/// The seed of the connection key a redeemed pairing link binds.
+const CONNECTION_SEED: u8 = 73;
 /// The stored rows' occurred range and learned-at, as the store-door tests use.
 const AT: TimeRange = TimeRange { start: 2, end: 2 };
 
@@ -1049,5 +1060,135 @@ fn the_owner_removes_a_machine_whose_own_join_names_a_stranger_roots_mark() {
     assert_eq!(
         roster.profile.revision, 2,
         "M's roster head is at revision 2"
+    );
+}
+
+/// The owner makes M a machine pairing link that answers the role M
+/// stands in, and M redeems it with its request and its machine key's
+/// possession proof over this redemption: the credential-only
+/// re-pairing (FIX 8636). Returns what the redemption gives.
+fn re_pair_machine(served: &ServedVault, request: &MachineEnrolmentRequest) -> PairingRedeemed {
+    let link = served
+        .vault
+        .issue_machine_pairing_link(
+            &served.issuer,
+            &served.owner,
+            ActSurface::ThisInstall,
+            Scope::top(),
+            3600,
+            PairingPrincipal::default(),
+            MachineOwnership::Yours,
+        )
+        .expect("the owner makes M a machine pairing link");
+    let holder = request.machine.to_hex();
+    let connection = signing(CONNECTION_SEED);
+    let binding_key = connection.verifying_key().to_bytes();
+    let binding_transcript =
+        pairing_binding_transcript_pinned(&link.code, &binding_key, &holder, link.pin.as_ref())
+            .expect("the binding transcript of M's redemption");
+    let binding = connection.sign(&binding_transcript).to_bytes();
+    let possession_transcript = machine_possession_transcript(
+        &request.vault_id,
+        request.machine,
+        &request.machine_key,
+        &binding_transcript,
+    );
+    let possession = signing(JOINING_SEED)
+        .sign(&possession_transcript)
+        .to_bytes();
+    served
+        .vault
+        .redeem_pairing_link_with_possession(
+            &served.issuer,
+            &link.code,
+            &holder,
+            binding_key,
+            &binding,
+            Some(request),
+            Some(&possession),
+        )
+        .expect("M pairs again beside the stranger's mark")
+}
+
+/// Credential-only re-pairing reads the heads M stands under here:
+/// beside a stranger root's mark of M under other keys, M pairs again
+/// and no revision is written. Before, the re-pairing read every chain
+/// of M, and the stranger's mark refused it.
+#[test]
+fn a_machine_pairs_again_beside_a_stranger_roots_mark_with_other_keys() {
+    let (served, request) = enrolled_self_host();
+    let machine = request.machine;
+    let vault_id = served
+        .vault
+        .authority_fold()
+        .expect("authority fold")
+        .vault_id
+        .expect("the vault is rooted");
+    let (root, anchor, root_hash) = publish_stranger_root(&served, vault_id);
+    let mark = stranger_mark_with_stranger_keys(
+        &served,
+        vault_id,
+        root_hash,
+        &anchor,
+        machine,
+        MachineRole::Owned(MachineOwnership::Yours),
+        5,
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&mark),
+        "guard: the stranger's mark is in valid_entries"
+    );
+    let anchored = fold
+        .machine(machine)
+        .and_then(|folded| folded.anchored.get(&root.anchor_key))
+        .expect("guard: the view holds the stranger's chain of M");
+    let stranger_key = signing(STRANGER_MACHINE_SEED).verifying_key().to_bytes();
+    assert_eq!(
+        anchored.profile.machine_key, stranger_key,
+        "guard: the view's chain for the stranger names the other machine key"
+    );
+    let redeemed = re_pair_machine(&served, &request);
+    assert!(
+        redeemed.re_paired,
+        "the redemption is the credential-only re-pairing"
+    );
+    assert!(
+        redeemed.held_answer.is_none(),
+        "the re-pairing stands, it is not held"
+    );
+    let named = redeemed
+        .machine
+        .as_ref()
+        .expect("the redemption names M as it stands")
+        .roster
+        .as_ref()
+        .expect("the named standing has M's roster chain");
+    assert_eq!(named.profile.machine, machine, "the redemption names M");
+    assert_eq!(
+        named.profile.role,
+        MachineRole::Owned(MachineOwnership::Yours),
+        "the redemption names the role the link answers"
+    );
+    assert_eq!(
+        named.profile.revision, 1,
+        "the redemption names M at revision 1"
+    );
+    let fold = served.vault.authority_fold().expect("authority fold");
+    let roster = fold
+        .machine(machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("M has a roster chain after the re-pairing");
+    assert_eq!(
+        roster.profile.revision, 1,
+        "M's roster head is still at revision 1: no revision was written"
+    );
+    assert_eq!(
+        roster.profile.machine_key, request.machine_key,
+        "M's roster head keeps M's machine key"
+    );
+    assert_eq!(
+        roster.profile.encryption_key, request.encryption_key,
+        "M's roster head keeps M's encryption key"
     );
 }
