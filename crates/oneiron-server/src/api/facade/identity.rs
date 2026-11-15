@@ -302,10 +302,9 @@ fn answer_person_proof(
     server: &SyncServer,
     verb: &str,
 ) -> Option<oneiron::consent::AuthenticatedOwner> {
-    let slip = auth.verified_slip()?;
-    let person = shared_act_doors::person(server, auth, verb).ok()?;
-    server
-        .vault()
-        .bind_person_credential(person, slip.clone())
-        .ok()
+    // MUTATION PIN (never lands): the person's request-credential proof only,
+    // without bind_person_credential, to show answer_person_proof's test
+    // catches an owner's narrowed slip reaching the owner tier.
+    let _slip = auth.verified_slip()?;
+    shared_act_doors::person(server, auth, verb).ok()
 }
