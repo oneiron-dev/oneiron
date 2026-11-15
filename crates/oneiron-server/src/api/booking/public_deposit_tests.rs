@@ -213,7 +213,7 @@ async fn fake_stripe() -> (Shared, String) {
 
 /// Stores one deposit secret, bound to the deposit door, as the owner does.
 /// The value field is crate-private, so the record goes through the one
-/// public body codec, as `api/tests/owner_surfaces.rs` writes one.
+/// public body codec, as `server/housekeeping_tests.rs` writes one.
 fn register_deposit_secret(vault: &oneiron::Vault, name: &str, value: &str) {
     use rmpv::Value as Mp;
     let band = |min: u64, max: u64| {
@@ -235,7 +235,12 @@ fn register_deposit_secret(vault: &oneiron::Vault, name: &str, value: &str) {
         (Mp::from("scopes"), Mp::Array(vec![Mp::from("read")])),
     ]);
     let body = Mp::Map(vec![
-        (Mp::from("schema_version"), Mp::from(1_u64)),
+        (
+            Mp::from("schema_version"),
+            Mp::from(u64::from(
+                oneiron::secret_record::SECRET_CUSTODY_SCHEMA_VERSION,
+            )),
+        ),
         (Mp::from("name"), Mp::from(name)),
         (Mp::from("class"), Mp::from("custody-portable")),
         (Mp::from("device_only"), Mp::from(false)),
@@ -251,6 +256,7 @@ fn register_deposit_secret(vault: &oneiron::Vault, name: &str, value: &str) {
         (Mp::from("manifest_ref"), Mp::from("")),
         (Mp::from("declared_paths"), Mp::Array(vec![])),
         (Mp::from("policy_floor_snapshot"), floor),
+        (Mp::from("model_reveal_allowed"), Mp::from(false)),
     ]);
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &body).expect("custody body");
