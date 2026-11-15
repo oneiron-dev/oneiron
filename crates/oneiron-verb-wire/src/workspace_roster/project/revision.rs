@@ -6,7 +6,8 @@ use oneiron_store::side_table::key::SideKey;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// blake3(REVISION_HASH_DOMAIN || canonical body). Serde: a MessagePack bin of
+/// blake3(tag || canonical body), the tag of
+/// `purposes::workspace_roster::PROJECT_REVISION_HASH`. Serde: a MessagePack bin of
 /// exactly 32 bytes, or the array of exactly 32 numbers serde_json writes for
 /// it; another length is refused.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

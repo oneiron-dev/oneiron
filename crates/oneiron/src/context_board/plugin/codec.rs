@@ -1,7 +1,7 @@
 //! Canonical manifest codec, digest, and suggestion key.
 use super::errors::{PluginResult, PluginSectionError};
 use super::manifest::SectionManifestEnvelope;
-use sha2::{Digest, Sha256};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 // ---------------------------------------------------------------------------
 // §2 — codec
@@ -19,12 +19,14 @@ pub fn decode_section_manifest(bytes: &[u8]) -> PluginResult<SectionManifestEnve
     rmp_serde::from_slice(bytes).map_err(|_| PluginSectionError::ManifestCodec)
 }
 
-/// SHA-256 over the canonical manifest bytes.
+/// SHA-256 over the canonical manifest bytes. An install claim carries it beside the
+/// bytes and is refused when they differ, and owner consent binds it, so it keeps its
+/// bytes (K, PLAN-UC-04 stage 6.1).
 #[must_use]
 pub fn section_manifest_digest(bytes: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    hasher.finalize().into()
+    LegacyDigest::new(purposes::plugin::SECTION_MANIFEST)
+        .raw(bytes)
+        .finish()
 }
 
 /// Lowercase hex of a 32-byte digest — the one canonical boundary form.

@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { broker, testing }
+areas! { broker, calendar, plugin, testing, workspace_roster }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 
