@@ -142,6 +142,24 @@ impl Memory<'_> {
         Ok(outcome)
     }
 
+    /// [`Self::rooms_invite`]'s admission, read only, for `can({verb})`
+    /// (FIX [UI-GATE-PREVIEW]): the writer's standing, the invitation's shape
+    /// and [`invites_into_room_in_txn`], in the order
+    /// [`owner_invite_in_txn`] meets them. Nothing is filed; the join's own
+    /// filing checks (its `intent_key`, a replayed intent) run only when the
+    /// call does.
+    pub(crate) fn rooms_invite_admission(&self, request: &JoinRequest) -> MemoryResult<()> {
+        let vault = self.vault();
+        let caller = self.write_actor();
+        let txn = vault.store.env.read_txn().map_err(Error::from)?;
+        vault.verify_write_actor_in_txn(&txn, &caller)?;
+        invitation_shape(request)?;
+        if !invites_into_room_in_txn(vault, &txn, request.room, caller)? {
+            return Err(refused(INVITES_ONLY_THE_OWNER).into());
+        }
+        Ok(())
+    }
+
     /// Records one party's answer to a join that waits on it, from that party
     /// only, and decides again. Membership is never answered here.
     pub fn rooms_consent(&self, answer: &ConsentAnswer) -> MemoryResult<JoinOutcome> {
@@ -252,6 +270,25 @@ pub(super) fn rooms_invite_in_txn(
     )
 }
 
+/// Why [`Memory::rooms_invite`] refuses a caller [`invites_into_room_in_txn`]
+/// does not admit.
+const INVITES_ONLY_THE_OWNER: &str = "only the vault's owner invites a person into a live ordinary room; a project's home room invites through its signed roster write";
+
+/// Refuses an invitation that is not an unpaid person's join of the room
+/// itself.
+fn invitation_shape(request: &JoinRequest) -> Result<()> {
+    if !matches!(request.subject, JoinSubject::Person(_))
+        || request.branch.is_some()
+        || request.paid
+        || request.spend_scope.is_some()
+    {
+        return Err(Error::InvalidConfig(
+            "an invitation is an unpaid person's join of the room itself".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// [`Memory::rooms_invite`] in its write transaction: the owner's
 /// invitation and the owner's admission yes, which a replay of the same
 /// intent does not record again.
@@ -263,19 +300,9 @@ fn owner_invite_in_txn(
     now: u64,
 ) -> Result<JoinOutcome> {
     vault.verify_write_actor_in_txn(txn, &caller)?;
-    if !matches!(request.subject, JoinSubject::Person(_))
-        || request.branch.is_some()
-        || request.paid
-        || request.spend_scope.is_some()
-    {
-        return Err(Error::InvalidConfig(
-            "an invitation is an unpaid person's join of the room itself".into(),
-        ));
-    }
+    invitation_shape(request)?;
     if !invites_into_room_in_txn(vault, txn, request.room, caller)? {
-        return Err(refused(
-            "only the vault's owner invites a person into a live ordinary room; a project's home room invites through its signed roster write",
-        ));
+        return Err(refused(INVITES_ONLY_THE_OWNER));
     }
     let invited = rooms_invite_in_txn(vault, txn, request, caller, now)?;
     if matches!(

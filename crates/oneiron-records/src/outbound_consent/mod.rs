@@ -1,0 +1,22 @@
+pub use crate::consent::tool_scope::ScopedMcpCall;
+pub use crate::consent::tool_scope::ScopedMcpCallContext;
+pub use crate::outbound_consent::connector_call_input::ConnectorCallInput;
+pub use crate::outbound_consent::connector_call_input_resume::ConnectorResumeProtocol;
+pub use crate::outbound_consent::connector_call_sent::SentGeneration;
+pub use crate::outbound_consent::connector_call_sent::SentGenerations;
+pub use crate::outbound_consent::connector_call_types::ConnectorAwaitingInput;
+pub use crate::outbound_consent::connector_call_types::ConnectorCallOutcome;
+pub use crate::outbound_consent::connector_call_types::ConnectorQuestion;
+pub use crate::outbound_consent::connector_call_types::ConnectorResultAbsence;
+pub use crate::outbound_consent::connector_call_types::UntrustedToolResult;
+pub use oneiron_consent_state::consent::tool_scope::DataClass;
+pub use oneiron_verb_wire::outbound_consent::connector_call_types::ConnectorCallRequest;
+pub use oneiron_verb_wire::outbound_consent::connector_call_types::ConnectorSource;
+
+pub mod connector_call;
+pub mod connector_call_input;
+pub mod connector_call_input_resume;
+pub mod connector_call_sent;
+pub mod connector_call_types;
+pub mod connector_elicitation_consent;
+pub mod tool_call;

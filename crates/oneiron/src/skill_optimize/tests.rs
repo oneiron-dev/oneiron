@@ -4757,6 +4757,7 @@ fn goal_axes_score_held_out_first_then_bounded_live_slice_with_human_cost() -> R
         &goal_axis_plan(6),
         &judge,
         &bandit,
+        None,
     )?;
     assert_eq!(report.offline.len(), 2);
     assert_eq!(

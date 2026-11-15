@@ -263,11 +263,15 @@ pub(super) fn rebuild_auxiliary(vault: &Vault, checkpoint_time: u64) -> Result<(
     vault.backfill_widen_contact_verdict_index(true)?;
     vault.backfill_standing_outbound_grant_index(true)?;
     crate::counterparty_contact::backfill_counterparty_identity_index(vault, true)?;
+    // Restored MACHINE rows bypassed the body stage's endpoint index writer.
+    vault.backfill_mesh_machine_endpoint_index(true)?;
     // Restored PROJECT rows bypassed the staging hook: keep their chains.
     vault.capture_project_revisions(true)?;
     crate::skill_convert::rebuild_skill_source_index(vault)?;
     crate::edit_distance::routing::rebuild_routing_projection(vault)?;
     crate::edit_distance::reservoir::rebuild_reservoir_index(vault)?;
+    // Restored ACCESS_GRANT rows bypassed the body stage's companion index writer.
+    vault.backfill_companion_grant_index(true)?;
     vault.rebuild_ramp_stats_from_receipts()?;
     crate::human_task::HumanTaskFollowupDriver::new(vault).rebuild_cursors(checkpoint_time)?;
     Ok(())

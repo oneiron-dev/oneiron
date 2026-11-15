@@ -15,9 +15,10 @@
 #[cfg(unix)]
 use std::path::Path;
 
+use super::super::stamp::file_stamp;
 #[cfg(unix)]
 use super::super::stamp::parse_file_stamp;
-use super::super::stamp::{file_stamp, now_unix_ms};
+use oneiron_base::unix_millis_now;
 
 /// The name every generated scratch directory starts with.
 const PREFIX: &str = "oneiron-rehearse-";
@@ -31,7 +32,7 @@ const MARK: &str = ".oneiron-disposable-scratch";
 pub(super) fn generated_name() -> String {
     format!(
         "{PREFIX}{}-{}",
-        file_stamp(now_unix_ms()),
+        file_stamp(unix_millis_now()),
         oneiron::EntityId::now().to_hex()
     )
 }
