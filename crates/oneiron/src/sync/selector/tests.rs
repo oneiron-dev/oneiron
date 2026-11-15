@@ -3529,7 +3529,17 @@ fn selector_suppresses_tombstoned_live_map_residue() {
     insert_blob(&doc, claim_seed, &claim_blob(None));
     insert_edge(&doc, claim_seed, EdgeKind::FacetOf, facet_allowed);
     insert_edge(&doc, claim_seed, EdgeKind::Supports, residue);
-    insert_tombstone(&doc, residue);
+    // The value the engine writes names its delete request; no capture is
+    // bound to this one, so the member's read of the row's live-map body
+    // decides. A value that names no request reaches no member who is not an
+    // Owner (OPUS-LEAKS, SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE).
+    let tombstone = crate::deletion::TombstoneValueV2 {
+        reason: crate::deletion::TombstoneReason::UserHardDelete,
+        deleted_at: 1,
+        request_id: [0x57; 16],
+    }
+    .encode();
+    map_insert_bytes(&doc.get_map("tombstones"), &residue.to_hex(), &tombstone).unwrap();
     doc.commit();
     vault
         .batch()
