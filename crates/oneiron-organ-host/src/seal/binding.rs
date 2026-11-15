@@ -496,13 +496,7 @@ fn is_algorithm(id: &AlgorithmIdentifierOwned, oid: ObjectIdentifier, null_allow
 }
 
 fn unhex(hex: &[u8]) -> Option<Vec<u8>> {
-    let nibble = |byte: u8| char::from(byte).to_digit(16);
-    hex.chunks(2)
-        .map(|pair| match pair {
-            [high, low] => Some((nibble(*high)? * 16 + nibble(*low)?) as u8),
-            _ => None,
-        })
-        .collect()
+    oneiron_hex::decode_vec_any_case(std::str::from_utf8(hex).ok()?)
 }
 
 /// A DER TLV with a one-byte tag.

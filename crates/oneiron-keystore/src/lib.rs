@@ -265,11 +265,8 @@ impl KeystoreSlot {
 }
 
 fn push_hex(name: &mut String, byte: u8) {
-    name.push(char::from(HEX[usize::from(byte >> 4)]));
-    name.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    oneiron_hex::encode_into(&[byte], name);
 }
-
-const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Where a backend's secrets can travel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
