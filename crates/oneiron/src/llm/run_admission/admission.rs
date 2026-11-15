@@ -97,11 +97,18 @@ pub(super) struct RunInner {
     model_call_index: AtomicU64,
     receipts: Arc<dyn RunReceiptSink>,
     calls: Mutex<BTreeMap<String, CallFacts>>,
-    /// The open paid-connector permits' leases, each with the worlds its
-    /// receipts name. A model permit's lease is in `calls`. A meter other
-    /// runs share issues their leases too, so the meter alone cannot tell a
-    /// permit's run.
-    paid: Mutex<BTreeMap<String, CallWorlds>>,
+    /// The open paid-connector permits' leases, each with the revision it
+    /// was admitted under and the worlds its receipts name. A model permit's
+    /// lease is in `calls`. A meter other runs share issues their leases
+    /// too, so the meter alone cannot tell a permit's run.
+    paid: Mutex<BTreeMap<String, PaidFacts>>,
+}
+
+pub(super) struct PaidFacts {
+    /// The declaration revision the paid call was admitted under.
+    revision: u32,
+    /// The worlds the call's `Admitted` row named.
+    worlds: CallWorlds,
 }
 
 struct Revisioned {
@@ -799,7 +806,11 @@ impl RunInner {
             .get(lease.id())
             .map(|facts| facts.worlds.clone());
         model
-            .or_else(|| self.lock_paid().get(lease.id()).cloned())
+            .or_else(|| {
+                self.lock_paid()
+                    .get(lease.id())
+                    .map(|facts| facts.worlds.clone())
+            })
             .unwrap_or_default()
     }
 
@@ -807,9 +818,11 @@ impl RunInner {
     /// admitted under, else the current one.
     fn revision_for(&self, lease: Option<&BudgetLease>) -> u32 {
         let admitted_under = lease.and_then(|lease| {
-            self.lock_calls()
+            let model = self
+                .lock_calls()
                 .get(lease.id())
-                .map(|facts| facts.revision)
+                .map(|facts| facts.revision);
+            model.or_else(|| self.lock_paid().get(lease.id()).map(|facts| facts.revision))
         });
         admitted_under.unwrap_or_else(|| self.lock_declaration().revision)
     }
@@ -844,7 +857,7 @@ impl RunInner {
                     );
                 } else {
                     self.lock_paid()
-                        .insert(permit.lease.id().to_owned(), worlds);
+                        .insert(permit.lease.id().to_owned(), PaidFacts { revision, worlds });
                 }
                 self.record(revision, RunEvent::Admitted(Box::new(permit.facts.clone())));
                 Ok(permit)
@@ -901,7 +914,7 @@ impl RunInner {
         self.calls.lock().expect("run call mutex poisoned")
     }
 
-    pub(super) fn lock_paid(&self) -> MutexGuard<'_, BTreeMap<String, CallWorlds>> {
+    pub(super) fn lock_paid(&self) -> MutexGuard<'_, BTreeMap<String, PaidFacts>> {
         self.paid.lock().expect("run permit mutex poisoned")
     }
 }
