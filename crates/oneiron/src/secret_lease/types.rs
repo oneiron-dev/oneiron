@@ -7,7 +7,6 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::secret_record::CustodyTier;
 use crate::vault::Vault;
-use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use zeroize::Zeroizing;
 // ---------------------------------------------------------------------------
@@ -226,23 +225,8 @@ pub(crate) struct StoredLocalRegistration {
     pub(crate) removal_attempted_at: Option<u64>,
 }
 
-/// The T0 door-injection receipt — the ONLY thing the workspace receives
-/// from [`Vault::inject_secret_at_door`]. Carries no value bytes by
-/// construction; `Debug` and serde are safe (grep-guard tested).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DoorInjectionReceipt {
-    /// The secret name injected.
-    pub secret_ref: String,
-    /// The effector the binding was resolved for.
-    pub effector: String,
-    /// Unix seconds at injection (stamped at materialization, S3 —
-    /// environment reads are not interceptable).
-    pub injected_at: u64,
-    /// The record's rotation generation the value was read at.
-    pub value_generation: u32,
-    /// SECRET-04 attaches exhaust taint from this token.
-    pub taint_token: Vec<SecretTaintRef>,
-}
+#[doc(hidden)]
+pub use oneiron_records::secret_lease::types::DoorInjectionReceipt;
 
 /// The durable materialization receipt (`vault_meta` under
 /// [`SECRET_MATERIALIZATION_RECEIPT_PREFIX`]). Written BEFORE the value

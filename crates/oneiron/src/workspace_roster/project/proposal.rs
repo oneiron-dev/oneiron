@@ -17,9 +17,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::context_projection::ContextSpec;
 use crate::edge::EdgeActorClass;
 use crate::error::GateError;
-use crate::genui::{
-    ConsentActionRequest, ProjectGoalDraft, ProjectProposalCard, ProjectProposalPicks,
-};
+use crate::genui::{ConsentActionRequest, ProjectProposalCard};
 use crate::llm::decision::DecisionReceipt;
 use crate::memory::{Memory, MemoryResult};
 use crate::ports::JobQueue;
@@ -80,16 +78,10 @@ pub(crate) struct ProjectDetectionSource {
     pub(crate) at: u64,
 }
 
-/// What the project question answered on one source.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ProjectDetectionAnswer {
-    /// Yes: the house mind drafts a card.
-    Yes,
-    /// The ladder asked a person; the source stays pending. A person's yes to
-    /// the question is not the mint tap.
-    AskedPerson,
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::proposal::ProjectCardState;
+#[doc(hidden)]
+pub(crate) use oneiron_records::workspace_roster::project::proposal::ProjectDetectionAnswer;
 
 /// The question's kept answer on one source, with its decision receipt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -100,15 +92,6 @@ pub(crate) struct ProjectDetectionVerdict {
     pub(crate) receipt: DecisionReceipt,
     /// The house agent dispatched to draft the card; none when none resolves.
     pub(crate) house: Option<EntityId>,
-}
-
-/// Where a host-held card stands. A dismissed card never mints.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProjectCardState {
-    Proposed,
-    Minted { project: EntityId },
-    Dismissed,
 }
 
 /// One host-held card: what the drafting agent proposed on its source message,
@@ -131,27 +114,10 @@ pub struct ProjectCardRecord {
     pub history: bool,
 }
 
-/// What the drafting agent proposes on one source message. The principal and
-/// the thread placement come from the detection, never from the request.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectProposalRequest {
-    pub card_id: String,
-    pub source_message_ref: String,
-    pub goal: ProjectGoalDraft,
-    pub picks: ProjectProposalPicks,
-}
-
-/// A tap on a host-held card. The host binds the authenticated owner, the
-/// actor, the surface and the owner signer; none of them travel here.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ProjectCardConfirmRequest {
-    pub card_id: String,
-    /// The card action tapped (`mint_project`).
-    pub action_id: String,
-    pub occurred_at: u64,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::workspace_roster::project::proposal::{
+    ProjectCardConfirmRequest, ProjectProposalRequest,
+};
 
 fn refused(reason: &str) -> Error {
     Error::InvalidConfig(format!("project card: {reason}"))

@@ -15,7 +15,7 @@ use super::super::super::contribution::{
 };
 use super::super::super::replay_capsule::StepReplayCapsule;
 use super::{FORKS, ForkRow, ForkValue, ForkWrite, actor_gone_in_txn};
-use crate::entity_id::{ENTITY_ID_LEN, bytes_to_hex_lower};
+use crate::entity_id::bytes_to_hex_lower;
 use crate::skill_attribution::{ContributionCandidate, ContributionTarget};
 use crate::{EntityId, Result, Vault};
 
@@ -101,15 +101,8 @@ impl ForkProvenance {
     }
 }
 
-/// Native full-id spellings anywhere in an opaque receipt, including
-/// upper-case hex: the same spelling match used by CHECK's erase pass.
-fn receipt_entities(receipt: &str) -> impl Iterator<Item = EntityId> + '_ {
-    receipt
-        .as_bytes()
-        .windows(ENTITY_ID_LEN * 2)
-        .filter_map(|hex| std::str::from_utf8(hex).ok())
-        .filter_map(|hex| EntityId::from_hex(hex).ok())
-}
+#[doc(hidden)]
+use oneiron_records::code_run::storage::replay_capsule::fork_erase::receipt_entities;
 
 fn affected_pairs(rows: &[(([u8; 32], String), ForkRow)], entity: &EntityId) -> BTreeSet<[u8; 32]> {
     rows.iter()

@@ -597,9 +597,7 @@ fn admit_agent_proxy(
     if args.tier == AgentTier::ReadOnly {
         return;
     }
-    let at = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let at = oneiron_base::unix_seconds_now();
     if let Err(error) = vault.admit_proxy_connector(owner, agent, at) {
         eprintln!(
             "agent {}: the OpenAI proxy is not admitted: {error}; the owner admits it at POST /v1/owner/connectors/proxy",
@@ -703,7 +701,7 @@ fn mint_paired_credential(
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 /// Creates a pairing link on the running server and prints it.

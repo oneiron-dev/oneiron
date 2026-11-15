@@ -42,8 +42,8 @@ const ASK_CEILING: RoleRank = RoleRank::Owner;
 const ASK_ACT: AskAct = AskAct::Judgment;
 
 /// The host's ladder for the Dreamer's typed questions, the dial and learned bands they
-/// route under, and its wording of each question. The verdict role's generated read sits at
-/// the dial's first rung, in place of that slot's provider.
+/// route under, and its wording of each question and of the extraction prompt. The verdict
+/// role's generated read sits at the dial's first rung, in place of that slot's provider.
 #[derive(Clone)]
 pub struct ConsolidationDecisions {
     pub ladder: HeldLadder,
@@ -68,14 +68,16 @@ pub struct ConsolidationDecisions {
     pub nightly_link_wording: String,
     /// Whether an Arc's cited TURN should be opened beside the current claims.
     pub arc_open_wording: String,
+    /// The prompt every extraction and NOTE review asks with.
+    pub extraction_prompt: ExtractionPrompt,
     /// The host's write-gate auto check, when it runs one. `None` promotes
     /// without a check, as before.
     pub checker: Option<BoundedAutoChecker>,
 }
 
 impl ConsolidationDecisions {
-    /// The shipped wording on an unstaffed ladder: the verdict role's read, at the big
-    /// rung, is the one rung, and every band starts in shadow.
+    /// The shipped wording and extraction prompt on an unstaffed ladder: the verdict role's
+    /// read, at the big rung, is the one rung, and every band starts in shadow.
     pub fn shipped() -> Result<Self> {
         let wording: Wording = serde_json::from_str(include_str!("decision_wording.json"))
             .map_err(|_| invalid_consolidation("shipped decision wording is not readable"))?;
@@ -96,6 +98,7 @@ impl ConsolidationDecisions {
             sieve_confidence_wording: wording.sieve_confidence,
             nightly_link_wording: wording.nightly_link,
             arc_open_wording: wording.arc_open,
+            extraction_prompt: ExtractionPrompt::shipped()?,
             checker: None,
         })
     }
