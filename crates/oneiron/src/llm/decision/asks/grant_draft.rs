@@ -28,7 +28,7 @@ pub(super) fn drafted(
     reason: Option<&str>,
     role: &AskRole,
 ) -> Option<AskGrantDraft> {
-    if reason.is_none() || *role != AskRole::Owner {
+    if reason.is_none() || *role == AskRole::Owner {
         return None;
     }
     let bound = ask.consent.as_ref()?.grant_bound().ok()?;
