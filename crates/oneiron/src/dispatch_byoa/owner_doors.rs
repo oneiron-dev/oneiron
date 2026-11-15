@@ -32,7 +32,6 @@ use super::exhaust::{ByoaEgressLease, ByoaEgressPort};
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{RunnerSeat, RunnerSeatPolicy, SkippedRunnerSeat};
 use super::seat_quota::{OwnerTopUp, seat_quota_in_txn, top_up_seat_quota_in_txn};
-use super::setting_keys::DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE;
 use super::work_binding::{RunnerSeatChoice, RunnerWorkBindingId};
 use super::work_resume::{ResumeRunnerWork, RunnerWorkResume};
 
@@ -225,14 +224,7 @@ impl Vault {
         input: &RunnerSeatQuotasRequest,
     ) -> MemoryResult<RunnerSeatQuotasView> {
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
-        owner_delegate_in_txn(
-            self,
-            &rtxn,
-            agent,
-            RUNNER_SEAT_QUOTAS_VERB,
-            &DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE,
-            Some("quotas"),
-        )?;
+        owner_delegate_in_txn(self, &rtxn, agent, RUNNER_SEAT_QUOTAS_VERB)?;
         self.seat_quotas_in(&rtxn, input)
     }
 
@@ -304,14 +296,7 @@ impl Vault {
         let expected = *EntityId::from_hex(&input.expected_spent_attempt)?.as_bytes();
         let now = crate::unix_seconds_now();
         self.try_with_write_txn_grouped(|wtxn| -> MemoryResult<RunnerSeatTopUpReceipt> {
-            let delegate = owner_delegate_in_txn(
-                self,
-                wtxn,
-                agent,
-                RUNNER_SEAT_TOP_UP_VERB,
-                &DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE,
-                Some("top_up"),
-            )?;
+            let delegate = owner_delegate_in_txn(self, wtxn, agent, RUNNER_SEAT_TOP_UP_VERB)?;
             // The standing above names a live owner, so the vault has one.
             let owner = crate::policy_model::owners_in_txn(self, wtxn)?
                 .first()

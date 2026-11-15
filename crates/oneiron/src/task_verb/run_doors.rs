@@ -41,7 +41,6 @@ use super::create_validation::consult_body_in_txn;
 use super::presence_scan::{attempt_hex, superseded_attempt_ids};
 use super::terminal_state::{ConsultResultSummary, TaskTerminalDisposition, TaskTerminalRecord};
 use crate::agent_run_status::{AgentRunStatus, project_agent_run_status};
-use crate::attempt_queue::setting_keys::ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL;
 use crate::attempt_queue::{
     AttemptCancelState, AttemptId, AttemptQueue, AttemptRecord, AttemptResultRef, AttemptState,
     ForceAttemptCancel, ForceCancelAuthority, ForceCancelOutcome, validate_signal_cancel,
@@ -395,14 +394,7 @@ fn cancel_force_as_inner(
                 (actor, authority)
             }
             OwnerOrDelegate::Delegate(agent) => {
-                let delegate = owner_delegate_in_txn(
-                    vault,
-                    wtxn,
-                    agent,
-                    CANCEL_FORCE_VERB,
-                    &ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL,
-                    None,
-                )?;
+                let delegate = owner_delegate_in_txn(vault, wtxn, agent, CANCEL_FORCE_VERB)?;
                 let authority =
                     ForceCancelAuthority::owner_delegate(delegate.agent.to_hex().as_str())?;
                 (delegate.agent, authority)

@@ -31,7 +31,6 @@ use super::exhaust::{ByoaEgressPort, ByoaTerminalReceipt, decode_byoa_record};
 use super::owner_doors::{RUNNER_WORK_RESUME_VERB, refusal};
 use super::provider::ProviderAdapterRegistry;
 use super::seat::{RunnerSeatPolicy, SeatRoute, SeatSpent, SkippedRunnerSeat};
-use super::setting_keys::DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE;
 use super::work_binding::{
     RunnerSeatChoice, RunnerWorkBindingId, head_hop, remap_seat, seat_index,
 };
@@ -232,14 +231,7 @@ where
     ) -> MemoryResult<RunnerWorkResume> {
         let vault = self.vault();
         vault.try_with_write_txn_grouped(|wtxn| -> MemoryResult<RunnerWorkResume> {
-            owner_delegate_in_txn(
-                vault,
-                wtxn,
-                agent,
-                RUNNER_WORK_RESUME_VERB,
-                &DISPATCH_BYOA_RUNNER_SEATS_AGENT_MAY_MANAGE,
-                Some("resume"),
-            )?;
+            owner_delegate_in_txn(vault, wtxn, agent, RUNNER_WORK_RESUME_VERB)?;
             self.resume_runner_work_in_txn(wtxn, registry, policy, request)
                 .map_err(refusal)
         })

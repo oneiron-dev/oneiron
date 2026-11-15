@@ -9,6 +9,7 @@ use crate::agent_dispatch::{
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, ClaimAttempt, ClaimOutcome};
 use crate::dreamer_runner::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::error::{Error, Result};
+use crate::memory::MemoryError;
 use crate::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, policy_manifests_as_owner,
     put_policy_manifest_as_owner,
@@ -30,7 +31,7 @@ pub fn plant_task_with_live_attempt_for_test(vault: &Vault) -> Result<EntityId> 
     let (agent, _) = vault
         .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)?
         .ok_or_else(|| Error::InvalidConfig("the default agent is seeded".into()))?;
-    let owner = vault.ensure_embedded_owner_actor()?;
+    let owner = vault.ensure_embedded_owner_actor().map_err(refused)?;
     let proof = vault.authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())?;
     let policy = policy_manifests_as_owner(vault, &proof, &PolicyManifestRead::default())?;
     let mut default = policy
@@ -71,7 +72,7 @@ pub fn plant_task_with_live_attempt_for_test(vault: &Vault) -> Result<EntityId> 
     let parent = claim_attempt(&queue, parent.attempt.id)?;
     let receipt = vault
         .memory(agent, EdgeActorClass::Agent)
-        .with_task_host(HostBinding::from_leased(&parent, None)?)
+        .with_task_host(HostBinding::from_leased(&parent, None).map_err(refused)?)
         .tasks_create(
             &TaskCreateSpec::new(
                 rmpv::Value::Nil,
@@ -82,7 +83,8 @@ pub fn plant_task_with_live_attempt_for_test(vault: &Vault) -> Result<EntityId> 
             .with_assignee(TaskAssignee::AgentDef {
                 agent_def_ref: agent,
             }),
-        )?;
+        )
+        .map_err(refused)?;
     let task_ref = receipt
         .task_ref
         .ok_or_else(|| Error::InvalidConfig("the TASK is minted".into()))?;
@@ -92,6 +94,11 @@ pub fn plant_task_with_live_attempt_for_test(vault: &Vault) -> Result<EntityId> 
         ));
     };
     Ok(task_ref)
+}
+
+/// A memory door's refusal, as this planter's error.
+fn refused(error: MemoryError) -> Error {
+    Error::InvalidConfig(error.to_string())
 }
 
 /// Claims `attempt_ref` past the runner rows a fresh vault queued.

@@ -8,6 +8,7 @@
 //! transaction. Oneiron's host-order doors are never routed here.
 use std::sync::Arc;
 
+use oneiron::EntityId;
 use oneiron::authority::OwnerOrDelegate;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::deletion::{LegalHold, LegalHoldEvent, LegalHoldTarget};
@@ -17,10 +18,10 @@ use oneiron::task_verb::sdk::{
     LegalHoldLiftAndErased, LegalHoldPlaceRequest, LegalHoldWidenRequest,
     LegalHoldWithdrawEraseRequest,
 };
-use oneiron::{EdgeActorClass, EntityId};
 
 use super::clock_ingress;
 use super::host_doors::support::{Listed, internal, off_runtime_listing, refused};
+use super::owner_binding::OwnerDoorCaller;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -80,31 +81,14 @@ pub(super) async fn as_owner_or_delegate<T: Send + 'static>(
     verb: &'static str,
     act: impl FnOnce(&SyncServer, OwnerOrDelegate<'_>) -> MemoryResult<T> + Send + 'static,
 ) -> MemoryResult<T> {
-    if auth.is_owner_grade() {
-        let owner = owner_proof(server, auth, verb)?;
-        let server = Arc::clone(server);
-        return clock_ingress::run_blocking(move || act(&*server, OwnerOrDelegate::Owner(&owner)))
-            .await
-            .map_err(|_| internal(verb))?;
-    }
-    if auth.actor_class() == Some("agent") {
-        super::owner_binding::host_preflight(server, auth)?;
-        let (agent, class) = super::facade_actor(server, auth)
-            .map_err(|_| super::owner_binding::owner_refusal(verb))?;
-        if class != EdgeActorClass::Agent {
-            return Err(super::owner_binding::owner_refusal(verb));
-        }
-        if !auth.credential_is_live(server.vault()) {
-            return Err(super::owner_binding::credential_dead());
-        }
-        let server = Arc::clone(server);
-        return clock_ingress::run_blocking(move || {
-            act(&*server, OwnerOrDelegate::Delegate(agent))
-        })
-        .await
-        .map_err(|_| internal(verb))?;
-    }
-    Err(super::owner_binding::owner_refusal(verb))
+    let caller = super::owner_binding::owner_door_caller(server, auth, verb)?;
+    let server = Arc::clone(server);
+    clock_ingress::run_blocking(move || match caller {
+        OwnerDoorCaller::Owner(owner) => act(&*server, OwnerOrDelegate::Owner(&owner)),
+        OwnerDoorCaller::Delegate(agent) => act(&*server, OwnerOrDelegate::Delegate(agent)),
+    })
+    .await
+    .map_err(|_| internal(verb))?
 }
 
 /// [`as_owner_or_delegate`] for a door whose answer derives from no row but

@@ -33,6 +33,8 @@ use axum::{
 };
 use ed25519_dalek::{Signer, SigningKey};
 use engine_stack::run_on_engine_stack;
+use oneiron::agent_dispatch::budget_doors::OpenSpendLeaseRequest;
+use oneiron::agent_dispatch::{AgentDispatchOutcome, AgentDispatcher, SpendScopeId};
 use oneiron::attempt_queue::{AttemptId, AttemptQueue, ForceCancelGrounds};
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, pairing_binding_transcript,
@@ -51,6 +53,7 @@ use oneiron::task_verb::run_doors::CANCEL_FORCE_VERB;
 use oneiron::task_verb::sdk::REPO_ANCHOR_BIND_VERB;
 use oneiron::test_doors::held_program::plant_held_turn_program_for_test;
 use oneiron::test_doors::live_task::plant_task_with_live_attempt_for_test;
+use oneiron::test_doors::spend::reserve_child_scope;
 use oneiron::test_doors::spent_seat::{plant_spent_seat_credit_for_test, topped_up_by_for_test};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -63,6 +66,8 @@ const FORCE_CANCEL_KEY: &str = "attempt_queue.agent_may_force_cancel";
 const RUNNER_SEATS_KEY: &str = "dispatch_byoa.runner_seats.agent_may_manage";
 const REGISTRATION_KEY: &str = "codebase.registration.agent_may_register";
 const COMPLIANCE_KEY: &str = "campaign.compliance.agent_may_decide";
+/// The confirm sheet's line with no open root in reach (RESTRICTION-WAVE-11-CAP-NOTE Q2).
+const NO_CAP_LINE: &str = "no cap; the engine does not meter this provider's calls; the payment goes through the provider's account";
 /// Approve stays the owner's stamp and names no delegate verb.
 const COMPLIANCE_APPROVE_VERB: &str = "vault.campaign.compliance.approve";
 
@@ -703,6 +708,37 @@ fn seats_quotas_row_on_without_grant_refused() {
     });
 }
 
+/// `can({verb})` for a delegate door, as the agent itself asks it: with the
+/// key off it answers `person`, as today; once the agent's row is on and its
+/// Grant lists the verb, it answers `auto`, the call's own admission.
+#[test]
+fn can_answers_person_key_off_and_auto_key_on() {
+    run_on_engine_stack("w11-can-gate", || async {
+        let fixture = setup();
+        let agent = pair_agent(&fixture, "quotas-asker", [0xC4; 32]).await;
+        let agent_hex = agent.principal.to_hex();
+        let ask = json!({
+            "verb": {"name": RUNNER_SEAT_QUOTAS_VERB, "params": {"seats": [seat_json()]}},
+        });
+
+        let (status, body) = agent_post(&fixture, &agent, "/v1/core/facade/can", ask.clone()).await;
+        assert_eq!(status, StatusCode::OK, "can, key off: {body}");
+        assert_eq!(body["gate"].as_str(), Some("person"), "key off: {body}");
+
+        let _grant = mint_grant(&fixture, &agent_hex, &[RUNNER_SEAT_QUOTAS_VERB]).await;
+        set_row(
+            &fixture.vault,
+            RUNNER_SEATS_KEY,
+            Some("quotas"),
+            SettingScope::Agent(agent.principal),
+            json!(true),
+        );
+        let (status, body) = agent_post(&fixture, &agent, "/v1/core/facade/can", ask).await;
+        assert_eq!(status, StatusCode::OK, "can, key on: {body}");
+        assert_eq!(body["gate"].as_str(), Some("auto"), "key on: {body}");
+    });
+}
+
 /// Item `quotas` on, item `top_up` off: quotas read, top-up is refused.
 /// One item never opens another act.
 #[test]
@@ -1288,4 +1324,96 @@ fn agent_b_off_refused_vault_row_on_allowed() {
         .await;
         assert_eq!(status, StatusCode::OK, "the Vault row opens B: {body}");
     });
+}
+
+/// A bare in-process vault for the confirm sheet's line: no server.
+fn open_bare_vault() -> (tempfile::TempDir, Vault) {
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let mut config = VaultConfig::device();
+    config.map_size = 32 * 1024 * 1024;
+    config.dimensions = 4;
+    config.embedding_model = None;
+    let vault = Vault::open_owned(dir.path(), config).expect("open vault");
+    (dir, vault)
+}
+
+/// The owner opens one root spend scope with a hard cap in tokens.
+fn open_root(vault: &Vault, launch: &str, cap_units: u64) -> SpendScopeId {
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .expect("the embedded owner");
+    oneiron::verbs::vault_budgets_lease_open(
+        &vault.memory(owner, EdgeActorClass::Human),
+        OpenSpendLeaseRequest {
+            launch: launch.to_owned(),
+            cap_units,
+            unit: "tokens".to_owned(),
+            shown_at_ms: 1,
+            funding_grant_ref: None,
+        },
+    )
+    .expect("the owner opens a root");
+    SpendScopeId::launch(launch).expect("a launch scope id")
+}
+
+/// The confirm sheet's line for turning on one runner-seat act at `scope`.
+fn seat_note(vault: &Vault, scope: &SettingScope, item: &str) -> Option<String> {
+    vault
+        .setting_loosening_note(RUNNER_SEATS_KEY, scope, Some(item))
+        .expect("read the confirm sheet's line")
+}
+
+/// Turning on `top_up` with no open root states "no cap" and the provider's
+/// account, at the vault row and at an agent's row; `quotas` and `resume`
+/// spend nothing and state no line (RESTRICTION-WAVE-11-CAP-NOTE).
+#[test]
+fn seats_top_up_note_states_no_cap_without_an_open_root() {
+    let (_dir, vault) = open_bare_vault();
+    for scope in [SettingScope::Vault, SettingScope::Agent(EntityId::now())] {
+        assert_eq!(
+            seat_note(&vault, &scope, "top_up").as_deref(),
+            Some(NO_CAP_LINE),
+            "{scope:?}"
+        );
+        for item in ["quotas", "resume"] {
+            assert_eq!(seat_note(&vault, &scope, item), None, "{scope:?} {item}");
+        }
+    }
+}
+
+/// Turning on `top_up` states the caps the row's scope reaches (CAP-SCOPE =
+/// B): every open root for the vault row; for an agent's row only the root
+/// over that agent's open attempt, not another open root; for an agent with
+/// no open attempt, "no cap".
+#[test]
+fn seats_top_up_note_states_the_caps_in_the_rows_scope() {
+    let (_dir, vault) = open_bare_vault();
+    let launch = open_root(&vault, "launch-wave11-seat-own", 5_000);
+    let AgentDispatchOutcome::Dispatched(status) = AgentDispatcher::new(&vault)
+        .dispatch_default_base(None, None, None, 1)
+        .expect("dispatch the default agent")
+    else {
+        panic!("expected one fresh spawn");
+    };
+    let agent = status
+        .input
+        .target
+        .agent_definition_ref()
+        .expect("the run's agent");
+    reserve_child_scope(&vault, &launch, &status.attempt.id, 100, 1)
+        .expect("the agent's run spends under its root");
+    open_root(&vault, "launch-wave11-seat-other", 9_000);
+
+    assert_eq!(
+        seat_note(&vault, &SettingScope::Agent(agent), "top_up").as_deref(),
+        Some("spend cap in force: 5000 tokens")
+    );
+    assert_eq!(
+        seat_note(&vault, &SettingScope::Vault, "top_up").as_deref(),
+        Some("spend cap in force: up to 9000 tokens per run, across 2 open runs")
+    );
+    assert_eq!(
+        seat_note(&vault, &SettingScope::Agent(EntityId::now()), "top_up").as_deref(),
+        Some(NO_CAP_LINE)
+    );
 }

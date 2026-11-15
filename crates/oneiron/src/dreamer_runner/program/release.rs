@@ -19,7 +19,6 @@
 //! on its own, and no other park is touched.
 
 use crate::Vault;
-use crate::attempt_queue::setting_keys::ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL;
 use crate::attempt_queue::{
     AttemptId, AttemptInterventionKind, AttemptQueue, AttemptRecord, ForceAttemptCancel,
     ForceCancelAuthority, ForceCancelOutcome, InterveneAttempt,
@@ -41,10 +40,26 @@ use super::{ATTEMPT, PROGRAM_PARK_OWNER};
 /// none.
 const RESUME_NOTE: &str = "the owner resumed the turn program's held try, its checkpoint validated";
 
+/// The note a validated resume's intervention carries when the owner's
+/// delegate gave none: the intervention's actor is the agent.
+const DELEGATE_RESUME_NOTE: &str =
+    "the owner's delegate resumed the turn program's held try, its checkpoint validated";
+
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_runner::program::release::{
     ProgramHoldReleaseAction, ProgramHoldReleaseView, ReleaseTurnProgramHoldRequest,
 };
+
+/// Who releases a hold, as its writer admitted them: the owner or the
+/// owner's delegate.
+struct Releaser<'a> {
+    /// The actor a resume's intervention names.
+    actor: EntityId,
+    /// The grounds a stop force-cancels on.
+    authority: &'a ForceCancelAuthority,
+    /// The intervention's note when the request gave none.
+    resume_note: &'static str,
+}
 
 /// What one release committed, and what its commit signals after.
 struct Released {
@@ -88,7 +103,12 @@ pub fn release_turn_program_hold_as_owner(
     let released = vault.with_write_txn_grouped(|wtxn| {
         let actor = owner.revalidate_in_txn(vault, &*wtxn)?;
         let authority = ForceCancelAuthority::owner(actor.to_hex().as_str())?;
-        release_in_txn(vault, wtxn, actor, &authority, attempt, input, now)
+        let releaser = Releaser {
+            actor,
+            authority: &authority,
+            resume_note: RESUME_NOTE,
+        };
+        release_in_txn(vault, wtxn, &releaser, attempt, input, now)
     })?;
     Ok(settled_release(vault, released))
 }
@@ -115,18 +135,15 @@ pub fn release_turn_program_hold_as_delegate(
     let attempt = attempt_id(&input.attempt).map_err(MemoryError::from)?;
     let now = vault.now_recorded_at();
     let released = vault.try_with_write_txn_grouped(|wtxn| {
-        let delegate = owner_delegate_in_txn(
-            vault,
-            wtxn,
-            agent,
-            PROGRAM_HOLD_RELEASE_VERB,
-            &ATTEMPT_QUEUE_AGENT_MAY_FORCE_CANCEL,
-            None,
-        )?;
+        let delegate = owner_delegate_in_txn(vault, wtxn, agent, PROGRAM_HOLD_RELEASE_VERB)?;
         let authority = ForceCancelAuthority::owner_delegate(delegate.agent.to_hex().as_str())
             .map_err(MemoryError::from)?;
-        release_in_txn(vault, wtxn, delegate.agent, &authority, attempt, input, now)
-            .map_err(MemoryError::from)
+        let releaser = Releaser {
+            actor: delegate.agent,
+            authority: &authority,
+            resume_note: DELEGATE_RESUME_NOTE,
+        };
+        release_in_txn(vault, wtxn, &releaser, attempt, input, now).map_err(MemoryError::from)
     })?;
     Ok(settled_release(vault, released))
 }
@@ -149,8 +166,7 @@ fn settled_release(vault: &Vault, released: Released) -> ProgramHoldReleaseView 
 fn release_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    actor: EntityId,
-    authority: &ForceCancelAuthority,
+    releaser: &Releaser<'_>,
     attempt: AttemptId,
     input: &ReleaseTurnProgramHoldRequest,
     now: u64,
@@ -175,7 +191,8 @@ fn release_in_txn(
     }
     let (record, effected, stopped) = match input.action {
         ProgramHoldReleaseAction::Stop => {
-            let (record, stopped) = stop_in_txn(vault, wtxn, authority, attempt, input, now)?;
+            let (record, stopped) =
+                stop_in_txn(vault, wtxn, releaser.authority, attempt, input, now)?;
             let generation = stopped.then_some((attempt, record.attempt_count));
             (record, stopped, generation)
         }
@@ -195,7 +212,15 @@ fn release_in_txn(
                     "a settled turn program try is never reopened; stop clears its hold".to_owned(),
                 ));
             }
-            let record = resume_in_txn(vault, wtxn, actor, attempt, input, now)?;
+            let record = resume_in_txn(
+                vault,
+                wtxn,
+                releaser.actor,
+                releaser.resume_note,
+                attempt,
+                input,
+                now,
+            )?;
             (record, true, None)
         }
     };
@@ -212,9 +237,10 @@ fn release_in_txn(
     })
 }
 
-/// Ends `attempt` on the owner's grounds, unless it already settled, clears
-/// the program's own park and abandons the try's Pending sends, an abandon
-/// the ledger refuses being owed rather than refusing the Stop (FIX 7188).
+/// Ends `attempt` on `authority`'s grounds (the owner's or its delegate's),
+/// unless it already settled, clears the program's own park and abandons the
+/// try's Pending sends, an abandon the ledger refuses being owed rather than
+/// refusing the Stop (FIX 7188).
 /// `true` when this stop ended it.
 fn stop_in_txn(
     vault: &Vault,
@@ -251,12 +277,14 @@ fn stop_in_txn(
 
 /// Resumes `attempt`'s hold as the same try once nothing holds it: its
 /// checkpoint lines up with its run's record for the pin it binds, its
-/// authority and pin stand, and nothing it did is unsettled. The owner's
-/// intervention is recorded on its queue row first.
+/// authority and pin stand, and nothing it did is unsettled. The releasing
+/// actor's intervention is recorded on its queue row first, with
+/// `resume_note` when the request gave none.
 fn resume_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     actor: EntityId,
+    resume_note: &str,
     attempt: AttemptId,
     input: &ReleaseTurnProgramHoldRequest,
     now: u64,
@@ -289,7 +317,7 @@ fn resume_in_txn(
             id: attempt,
             kind: AttemptInterventionKind::Interrupt,
             actor: actor.to_hex(),
-            note: Some(input.note.clone().unwrap_or_else(|| RESUME_NOTE.to_owned())),
+            note: Some(input.note.clone().unwrap_or_else(|| resume_note.to_owned())),
             now,
         },
     )?;

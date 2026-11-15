@@ -15,7 +15,6 @@ use super::amend::{
     stamp_compliance_amendment_in_txn,
 };
 use super::pack_store::{active_compliance_pack_in_txn, invalid_pack};
-use super::setting_keys::CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE;
 use super::*;
 
 const RECEIPTS: SideTable<[u8; 16], ComplianceReceipt, Named> =
@@ -329,14 +328,7 @@ fn require_delegate(memory: &Memory<'_>, txn: &heed::RoTxn<'_>, verb: &str) -> M
             &["Present the owner's own verified, unattenuated credential."],
         ));
     }
-    owner_delegate_in_txn(
-        memory.vault(),
-        txn,
-        memory.actor(),
-        verb,
-        &CAMPAIGN_COMPLIANCE_AGENT_MAY_DECIDE,
-        None,
-    )?;
+    owner_delegate_in_txn(memory.vault(), txn, memory.actor(), verb)?;
     Ok(())
 }
 

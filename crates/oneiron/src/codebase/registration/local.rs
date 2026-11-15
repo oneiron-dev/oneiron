@@ -17,7 +17,6 @@ use crate::Vault;
 use crate::authority::owner_delegate_in_txn;
 use crate::claim::ScopedReadActorKey;
 use crate::code_artifact::{CodeArtifactBody, encode_code_artifact_body};
-use crate::codebase::setting_keys::CODEBASE_REGISTRATION_AGENT_MAY_REGISTER;
 use crate::codebase::{CODEBASE_COMMIT_HASH_HEX_LEN, RepoRef};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::{EdgeActorClass, EdgeKind};
@@ -106,14 +105,7 @@ impl Vault {
     ) -> MemoryResult<RegisteredRepository> {
         let parts = local_registration_parts(folder, editable).map_err(MemoryError::from)?;
         let (bound, written) = self.try_with_write_txn_grouped(|txn| {
-            owner_delegate_in_txn(
-                self,
-                txn,
-                agent,
-                REPO_ANCHOR_BIND_VERB,
-                &CODEBASE_REGISTRATION_AGENT_MAY_REGISTER,
-                None,
-            )?;
+            owner_delegate_in_txn(self, txn, agent, REPO_ANCHOR_BIND_VERB)?;
             if !delegate_reads_project_in_txn(self, txn, agent, project)
                 .map_err(MemoryError::from)?
             {
