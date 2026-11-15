@@ -1,0 +1,338 @@
+//! Row OCS-OWNER-PIN, the keystore's home for bytes the caller sealed: each
+//! name keeps its own value, a put replaces the value whole, a value out of
+//! bounds is refused with nothing written, and a keystore that names no
+//! home has none.
+//!
+//! The file tier: one private file per name beside the slot files, which no
+//! slot reads and which reads no slot; no temporary file is left behind; a
+//! file open to others, an empty one and one past the cap are refused.
+
+use oneiron_keystore::{
+    DeviceKeystore, KeystoreError, KeystoreLocality, KeystoreSlot, MemoryKeystore,
+    SEALED_BYTES_MAX, SealedBytesName, SealedBytesStore, SlotKind,
+};
+use zeroize::Zeroizing;
+
+/// The owner signing slot of the vault whose id is all `vault`.
+fn owner_slot(vault: u8) -> KeystoreSlot {
+    KeystoreSlot {
+        vault_id: [vault; 32],
+        install: [3; 16],
+        kind: SlotKind::OwnerSigning,
+    }
+}
+
+/// Put, get, replace and delete under three names, on any home.
+fn each_name_keeps_its_own_value(home: &dyn SealedBytesStore) {
+    let device = SealedBytesName::DevicePinKey;
+    let first = SealedBytesName::Slot(owner_slot(7));
+    let second = SealedBytesName::Slot(owner_slot(8));
+    for name in [&device, &first, &second] {
+        assert_eq!(
+            home.get_sealed(name),
+            Ok(None),
+            "an empty home held a value"
+        );
+    }
+
+    home.put_sealed(&device, b"device pin key, sealed")
+        .expect("the device PIN key is kept");
+    home.put_sealed(&first, b"first owner seed, sealed")
+        .expect("the first seed is kept");
+    assert_eq!(
+        home.get_sealed(&device),
+        Ok(Some(b"device pin key, sealed".to_vec()))
+    );
+    assert_eq!(
+        home.get_sealed(&first),
+        Ok(Some(b"first owner seed, sealed".to_vec()))
+    );
+    assert_eq!(
+        home.get_sealed(&second),
+        Ok(None),
+        "one slot's name read another's"
+    );
+
+    // A put replaces the value whole, a longer one by a shorter one too.
+    home.put_sealed(&first, b"resealed")
+        .expect("the seed is replaced");
+    assert_eq!(home.get_sealed(&first), Ok(Some(b"resealed".to_vec())));
+    assert_eq!(
+        home.get_sealed(&device),
+        Ok(Some(b"device pin key, sealed".to_vec())),
+        "a put under one name changed another"
+    );
+
+    let longest = vec![0xA5; SEALED_BYTES_MAX];
+    home.put_sealed(&second, &longest)
+        .expect("a value at the cap is kept");
+    assert_eq!(home.get_sealed(&second), Ok(Some(longest)));
+
+    home.delete_sealed(&first).expect("the seed is removed");
+    home.delete_sealed(&first)
+        .expect("removing none is not an error");
+    assert_eq!(home.get_sealed(&first), Ok(None));
+    assert_eq!(
+        home.get_sealed(&device),
+        Ok(Some(b"device pin key, sealed".to_vec())),
+        "a delete under one name removed another"
+    );
+    home.delete_sealed(&device)
+        .expect("the device PIN key is removed");
+    home.delete_sealed(&second)
+        .expect("the second seed is removed");
+}
+
+/// An empty value and one past the cap are refused, and what was kept
+/// before stays.
+fn a_value_out_of_bounds_is_refused(home: &dyn SealedBytesStore) {
+    let name = SealedBytesName::DevicePinKey;
+    let too_long = vec![0x5A; SEALED_BYTES_MAX + 1];
+    for refused in [&[][..], &too_long[..]] {
+        assert!(
+            matches!(
+                home.put_sealed(&name, refused),
+                Err(KeystoreError::Unsupported(_))
+            ),
+            "a value of {} bytes was kept",
+            refused.len()
+        );
+        assert_eq!(
+            home.get_sealed(&name),
+            Ok(None),
+            "a refused value was written"
+        );
+    }
+    home.put_sealed(&name, b"kept")
+        .expect("a value in bounds is kept");
+    assert!(matches!(
+        home.put_sealed(&name, &too_long),
+        Err(KeystoreError::Unsupported(_))
+    ));
+    assert_eq!(
+        home.get_sealed(&name),
+        Ok(Some(b"kept".to_vec())),
+        "a refused value replaced the one kept before"
+    );
+    home.delete_sealed(&name).expect("the value is removed");
+}
+
+#[test]
+fn the_memory_tier_keeps_each_sealed_value_under_its_own_name() {
+    let keys = MemoryKeystore::new();
+    let home = keys
+        .sealed_bytes()
+        .expect("the memory tier has a home for sealed bytes");
+    each_name_keeps_its_own_value(home);
+    a_value_out_of_bounds_is_refused(home);
+
+    // A slot and the sealed value under its name do not read each other.
+    let slot = owner_slot(7);
+    keys.create(&slot, &[1; 32]).expect("the slot is filled");
+    assert_eq!(home.get_sealed(&SealedBytesName::Slot(slot)), Ok(None));
+    home.put_sealed(&SealedBytesName::Slot(slot), b"sealed")
+        .expect("the sealed value is kept");
+    keys.delete(&slot).expect("the slot is emptied");
+    assert_eq!(
+        home.get_sealed(&SealedBytesName::Slot(slot)),
+        Ok(Some(b"sealed".to_vec()))
+    );
+}
+
+/// A keystore that keeps slots only.
+struct SlotsOnly;
+
+impl DeviceKeystore for SlotsOnly {
+    fn get(&self, _slot: &KeystoreSlot) -> oneiron_keystore::Result<Option<Zeroizing<[u8; 32]>>> {
+        Ok(None)
+    }
+
+    fn create(&self, _slot: &KeystoreSlot, _secret: &[u8; 32]) -> oneiron_keystore::Result<()> {
+        Ok(())
+    }
+
+    fn delete(&self, _slot: &KeystoreSlot) -> oneiron_keystore::Result<()> {
+        Ok(())
+    }
+
+    fn locality(&self) -> KeystoreLocality {
+        KeystoreLocality::ProcessOnly
+    }
+}
+
+#[test]
+fn a_keystore_that_names_no_home_for_sealed_bytes_has_none() {
+    assert!(SlotsOnly.sealed_bytes().is_none());
+}
+
+#[test]
+fn the_device_pin_key_and_a_slot_never_share_a_name() {
+    assert_eq!(SealedBytesName::DevicePinKey.name(), "device-pin-key");
+    let slot = owner_slot(7);
+    assert_eq!(SealedBytesName::Slot(slot).name(), slot.name());
+    assert_ne!(
+        SealedBytesName::Slot(slot).name(),
+        SealedBytesName::DevicePinKey.name()
+    );
+}
+
+#[cfg(all(unix, not(target_vendor = "apple")))]
+mod file_tier {
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::{Path, PathBuf};
+
+    use oneiron_keystore::{
+        DeviceKeystore, KeystoreError, LocalFileKeystore, SEALED_BYTES_MAX, SealedBytesName,
+    };
+
+    use super::{a_value_out_of_bounds_is_refused, each_name_keeps_its_own_value, owner_slot};
+
+    /// A file keystore in a new directory, and that directory.
+    fn file_keystore(root: &Path) -> (LocalFileKeystore, PathBuf) {
+        let dir = root.join("keys");
+        let keys = LocalFileKeystore::open(&dir, &[]).expect("the key directory opens");
+        (keys, dir)
+    }
+
+    fn sealed_file(dir: &Path, name: &SealedBytesName) -> PathBuf {
+        dir.join(format!("{}.sealed", name.name()))
+    }
+
+    fn file_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .expect("the key directory lists")
+            .map(|entry| {
+                entry
+                    .expect("a directory entry")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn the_file_tier_keeps_each_sealed_value_in_a_private_file_of_its_own() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (keys, dir) = file_keystore(root.path());
+        let home = keys
+            .sealed_bytes()
+            .expect("the file tier has a home for sealed bytes");
+        each_name_keeps_its_own_value(home);
+        a_value_out_of_bounds_is_refused(home);
+        assert_eq!(
+            file_names(&dir),
+            ["CACHEDIR.TAG"],
+            "the home left a file behind after every value was removed"
+        );
+
+        let device = SealedBytesName::DevicePinKey;
+        home.put_sealed(&device, b"device pin key, sealed")
+            .expect("the device PIN key is kept");
+        home.put_sealed(&device, b"device pin key, resealed")
+            .expect("the device PIN key is replaced");
+        assert_eq!(
+            file_names(&dir),
+            ["CACHEDIR.TAG", "device-pin-key.sealed"],
+            "a put left a temporary file, or named its file otherwise"
+        );
+        let mode = fs::metadata(sealed_file(&dir, &device))
+            .expect("the sealed file")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600, "the sealed file is open to others");
+        assert_eq!(
+            fs::read(sealed_file(&dir, &device)).expect("the sealed file reads"),
+            b"device pin key, resealed",
+            "the file holds other bytes than the caller sealed"
+        );
+    }
+
+    #[test]
+    fn a_slot_and_the_sealed_value_under_its_name_do_not_read_each_other() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (keys, dir) = file_keystore(root.path());
+        let home = keys.sealed_bytes().expect("the file tier's home");
+        let slot = owner_slot(7);
+        let name = SealedBytesName::Slot(slot);
+
+        keys.create(&slot, &[1; 32]).expect("the slot is filled");
+        assert_eq!(
+            home.get_sealed(&name),
+            Ok(None),
+            "a slot read as a sealed value"
+        );
+        home.put_sealed(&name, b"owner seed, sealed")
+            .expect("the sealed value is kept");
+        assert_eq!(
+            keys.get(&slot).expect("the slot reads").as_deref(),
+            Some(&[1; 32]),
+            "a sealed value changed the slot under its name"
+        );
+
+        keys.delete(&slot).expect("the slot is emptied");
+        assert_eq!(keys.get(&slot).expect("the slot reads"), None);
+        assert_eq!(
+            home.get_sealed(&name),
+            Ok(Some(b"owner seed, sealed".to_vec())),
+            "emptying a slot removed the sealed value under its name"
+        );
+        assert_eq!(
+            file_names(&dir),
+            [format!("{}.sealed", slot.name()), "CACHEDIR.TAG".to_owned()],
+            "the slot's hex name sorts before the tag file"
+        );
+
+        home.delete_sealed(&name)
+            .expect("the sealed value is removed");
+        keys.create(&slot, &[2; 32]).expect("the slot fills again");
+        home.delete_sealed(&name)
+            .expect("removing none is not an error");
+        assert_eq!(
+            keys.get(&slot).expect("the slot reads").as_deref(),
+            Some(&[2; 32]),
+            "removing a sealed value emptied the slot under its name"
+        );
+    }
+
+    #[test]
+    fn a_sealed_file_that_is_open_to_others_empty_or_past_the_cap_is_refused() {
+        let root = tempfile::tempdir().expect("a temporary directory");
+        let (keys, dir) = file_keystore(root.path());
+        let home = keys.sealed_bytes().expect("the file tier's home");
+        let name = SealedBytesName::DevicePinKey;
+        let path = sealed_file(&dir, &name);
+
+        home.put_sealed(&name, b"sealed")
+            .expect("the value is kept");
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o640))
+            .expect("the file's mode changes");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "a sealed file its group can read was read"
+        );
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .expect("the file's mode changes back");
+        assert_eq!(home.get_sealed(&name), Ok(Some(b"sealed".to_vec())));
+
+        // Bytes that did not come through `put_sealed`.
+        fs::write(&path, vec![0x5A; SEALED_BYTES_MAX + 1]).expect("the file is written");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "a sealed file past the cap was read"
+        );
+        fs::write(&path, b"").expect("the file is emptied");
+        assert!(
+            matches!(home.get_sealed(&name), Err(KeystoreError::Corrupt(_))),
+            "an empty sealed file was read"
+        );
+
+        // A put replaces the bad file with a good one.
+        home.put_sealed(&name, b"sealed again")
+            .expect("the value is kept");
+        assert_eq!(home.get_sealed(&name), Ok(Some(b"sealed again".to_vec())));
+    }
+}

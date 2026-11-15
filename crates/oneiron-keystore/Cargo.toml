@@ -55,5 +55,10 @@ tempfile = "3"
 name = "user_presence"
 required-features = ["test-keystore"]
 
+# The sealed-bytes home's tests compare the file tier with the memory tier.
+[[test]]
+name = "sealed_bytes"
+required-features = ["test-keystore"]
+
 [lints]
 workspace = true
