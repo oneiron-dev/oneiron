@@ -378,6 +378,16 @@ impl Vault {
         let staged = staged.ok_or(Error::ConcurrentWrite(
             "a kept removal archive went while its delivery was taken in",
         ))?;
+        // The caller's spool file is read once for its digest and again for
+        // the bytes staged above, so it may hold other bytes by now: the
+        // staged body's digest must still be the copy's, or other bytes
+        // would be kept and recorded under its digest.
+        let staged_digest = blake3::Hash::from_bytes(staged.body().blake3)
+            .to_hex()
+            .to_string();
+        if staged_digest != copy.digest {
+            return Err(refused("is not the bytes its digest names"));
+        }
         let file = self.bind_removal_archive_in_txn(
             txn,
             ArchiveRow {
