@@ -121,6 +121,26 @@ fn word_sources(
     Ok((every, supports))
 }
 
+#[cfg(feature = "sync")]
+impl Vault {
+    /// What the words of the row `id` (bytes `bytes`) came from, as this
+    /// walk reads them ([`word_sources`]): the rows each of which must read,
+    /// then a CLAIM's supports. The phone lineage walks the same rows
+    /// (`voice_call::phone_words_in`).
+    ///
+    /// # Errors
+    ///
+    /// Storage failures, and bytes with no readable header.
+    pub(crate) fn lineage_word_sources_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: EntityId,
+        bytes: &[u8],
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        word_sources(self, &self.store.read(), txn, id, bytes)
+    }
+}
+
 /// The lane a row would leave this vault on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ReplicationScope {

@@ -130,6 +130,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // machines take every row as stored.
     let other_vault = matches!(reach, BirthReach::OtherVault(_));
     let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
+    // One phone-lineage pass for the window: each stored row's lineage is
+    // read once.
+    let mut phone_lineage = crate::voice_call::PhoneLineagePass::default();
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -178,14 +181,22 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         }
-        // VOICE-PHONE-AGENT-REACH: a carried row whose own bytes carry a
-        // phone-thread mark never rides a restricted selector (Engine 02:02:
-        // a generic read reaches phone rows only by the owner's reach
-        // choice). Judged by the bytes themselves, as `row_obligation` is
-        // above, so a row with no canonical copy here is withheld whole; a
-        // mark in any shape counts.
-        if crate::voice_call::row_phone_marked(blob) {
-            return;
+        // VOICE-PHONE-AGENT-REACH: a phone thread's row, or a row whose words
+        // came from one, never rides a restricted selector, whoever the
+        // member (Engine 02:02: a generic read reaches phone rows only by the
+        // owner's reach choice). Judged by the carried bytes, as
+        // `row_obligation` is above, so a row with no canonical copy here is
+        // withheld whole and a mark in any shape counts, and by the row stored
+        // at its id with every row its words came from, as the binding is
+        // above (R1 review C-F1, C-F2): an unmarked carrier the stored phone
+        // row rejected does not stand in for it.
+        match phone_lineage.phone_words(vault, &rtxn, &id, Some(blob)) {
+            Ok(false) => {}
+            Ok(true) => return,
+            Err(error) => {
+                scope_error = Some(error);
+                return;
+            }
         }
         match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
             Ok(true) => {}
@@ -236,18 +247,6 @@ pub(in crate::sync::selector) fn filter_window_doc(
         match member_reads_word_sources(vault, &rtxn, member_access.as_ref(), &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
-            Err(error) => {
-                scope_error = Some(error);
-                return;
-            }
-        }
-        // VOICE-PHONE-AGENT-REACH R2 review F2: nor does a row carrying a
-        // phone thread's words (a scope SUMMARY of one, the TURN that copies
-        // it), whoever the member: the selector withholds the thread's rows
-        // themselves from every member above.
-        match crate::voice_call::words_from_phone_thread_in(vault, &rtxn, &id, blob) {
-            Ok(false) => {}
-            Ok(true) => return,
             Err(error) => {
                 scope_error = Some(error);
                 return;
