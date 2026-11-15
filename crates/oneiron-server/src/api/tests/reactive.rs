@@ -1050,8 +1050,16 @@ async fn local_and_remote_provenance_deletes_refresh_both_edge_endpoints() {
                     100,
                 )
                 .unwrap();
-            // Drain the relay of the fixture's own writes before subscribing;
-            // only the delete below belongs to these retained reads.
+            // Mirror the fixture's own rows into their window before
+            // subscribing: the vault puts leave pending-mirror markers, and
+            // the delete's window cycle would otherwise mirror them batched
+            // with the tombstone, naming the unrelated edge too. Opening the
+            // window now mirrors and forwards them while no read is
+            // subscribed; only the delete below belongs to these reads.
+            let fixture_window = oneiron::sync::WindowKey::from_timestamp(
+                server.vault().get_learned_at(&claim).unwrap(),
+            );
+            server.get_or_create_window(&fixture_window).await.unwrap();
             tokio::task::yield_now().await;
             let output_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));
             let input_reads = Arc::new(std::sync::atomic::AtomicUsize::new(0));

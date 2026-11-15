@@ -403,7 +403,12 @@ async fn mcp_narrow_credential_cannot_cross_world_or_facet() {
             "tasks.update",
             mcp_merge_args(
                 mcp_scoped_envelope(actor_ref, "ack_task", &facet_only_b),
-                json!({ "arguments": { "task_ref": owned.to_hex() } }),
+                json!({
+                    "arguments": {
+                        "task_ref": owned.to_hex(),
+                        "spec": { "task_ref": owned.to_hex() },
+                    },
+                }),
             ),
         ),
     )

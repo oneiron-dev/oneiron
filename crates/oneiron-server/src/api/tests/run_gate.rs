@@ -69,7 +69,15 @@ async fn gated_server(
     (dir, Arc::new(server), host, receipts)
 }
 
-async fn send(server: &Arc<SyncServer>, request: Request<Body>) -> (StatusCode, Vec<u8>) {
+async fn send(server: &Arc<SyncServer>, mut request: Request<Body>) -> (StatusCode, Vec<u8>) {
+    // The owner's app on this device: a session key is admitted only for a
+    // caller the listener saw on loopback (auth/locality.rs caller_locality).
+    request
+        .extensions_mut()
+        .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+            std::net::Ipv4Addr::LOCALHOST,
+            40_000,
+        ))));
     let request = slip_credentials::bind_request(server, request);
     let response = api_routes(Arc::clone(server))
         .oneshot(request)

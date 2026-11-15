@@ -982,7 +982,7 @@ fn high_recall_over_the_sync_rpc_reranks_on_a_current_thread_runtime() {
                 &auth,
                 crate::livequery::RpcRequest {
                     request_id: 7,
-                    method: "recall".to_owned(),
+                    method: "vault.recall".to_owned(),
                     params,
                 },
             )
