@@ -72,7 +72,14 @@ pub fn parted_window(map: PartedMap, keyed: EntityId, body: EntityId) -> Result<
     let doc = LoroDoc::new();
     match map {
         PartedMap::RepoHead => repo_head(&doc.get_map(REPO_MANIFESTS_MAP), keyed, body)?,
-        PartedMap::DocumentPin => document_pin(&doc.get_map(DOCUMENT_PINS_MAP), keyed, body)?,
+        PartedMap::DocumentPin => {
+            document_pin(
+                &doc.get_map(DOCUMENT_PINS_MAP),
+                keyed,
+                body,
+                PART_BYTES + 1024,
+            )?;
+        }
         PartedMap::RoomTurn => {
             let row = serde_json::to_vec(&turn(body))
                 .map_err(|_| refused("a turn row that does not encode"))?;
@@ -144,9 +151,16 @@ fn repo_head(map: &LoroMap, keyed: EntityId, body: EntityId) -> Result<()> {
     Ok(())
 }
 
-/// A whole pin of the quoted message by `citation`, past a part's size,
-/// naming no actor.
-fn pin(citation: EntityId) -> Result<CitationPin> {
+/// The quoted text a pin anchors in, written once. A fresh Loro document has
+/// a fresh peer, so every pin a fixture builds from one `Quoted` shares its
+/// frontier and cursors, and two pins differ only in what the fixture changes.
+struct Quoted {
+    frontier: Vec<u8>,
+    start: Vec<u8>,
+    end: Vec<u8>,
+}
+
+fn quoted() -> Result<Quoted> {
     let text = LoroDoc::new();
     let body = text.get_text("body");
     body.insert(0, "quoted")
@@ -157,7 +171,17 @@ fn pin(citation: EntityId) -> Result<CitationPin> {
             .map(|cursor| cursor.encode())
             .ok_or_else(|| refused("a quote cursor"))
     };
-    let quote = "q".repeat(PART_BYTES + 1024);
+    Ok(Quoted {
+        frontier: text.oplog_frontiers().encode(),
+        start: cursor(0, Side::Right)?,
+        end: cursor(1, Side::Left)?,
+    })
+}
+
+/// A whole pin of the quoted message by `citation`, its quote `quote_len`
+/// bytes, naming no actor.
+fn pin(citation: EntityId, quoted: &Quoted, quote_len: usize) -> Result<CitationPin> {
+    let quote = "q".repeat(quote_len);
     let message = fixed(0x4d).to_hex();
     let pin: CitationPin = serde_json::from_value(serde_json::json!({
         "citation": citation.to_hex(),
@@ -165,9 +189,9 @@ fn pin(citation: EntityId) -> Result<CitationPin> {
         "document": fixed(0x44).to_hex(),
         "anchor": {
             "entity": message,
-            "frontier": text.oplog_frontiers().encode(),
-            "start": cursor(0, Side::Right)?,
-            "end": cursor(1, Side::Left)?,
+            "frontier": quoted.frontier,
+            "start": quoted.start,
+            "end": quoted.end,
             "hash": blake3::hash(quote.as_bytes()).as_bytes(),
             "quote": quote,
         },
@@ -181,10 +205,13 @@ fn pin(citation: EntityId) -> Result<CitationPin> {
     Ok(pin)
 }
 
-fn document_pin(map: &LoroMap, keyed: EntityId, body: EntityId) -> Result<()> {
-    let key = carrier_key(fixed(0x4d), keyed, &pin(keyed)?)?;
-    let joined =
-        rmp_serde::to_vec_named(&pin(body)?).map_err(|_| refused("a pin that does not encode"))?;
+/// A pin manifest under the key of `keyed`'s pin, its parts joining to
+/// `body`'s; both pins quote `quote_len` bytes of one quoted text.
+fn document_pin(map: &LoroMap, keyed: EntityId, body: EntityId, quote_len: usize) -> Result<()> {
+    let text = quoted()?;
+    let key = carrier_key(fixed(0x4d), keyed, &pin(keyed, &text, quote_len)?)?;
+    let joined = rmp_serde::to_vec_named(&pin(body, &text, quote_len)?)
+        .map_err(|_| refused("a pin that does not encode"))?;
     let (parts, pieces) = split_parts(&joined)?;
     let manifest = rmp_serde::to_vec_named(&PartedPin {
         parts,
@@ -196,6 +223,21 @@ fn document_pin(map: &LoroMap, keyed: EntityId, body: EntityId) -> Result<()> {
         map_insert_bytes(map, &key, piece)?;
     }
     Ok(())
+}
+
+/// The snapshot of a window document holding `row`'s pin in parts under its
+/// own key, though the joined pin fits in one part: the spelling an actor
+/// scrub leaves when erasing a parted pin's actor brings it under a part's
+/// size. The pin codec refuses that spelling; it is still `row`'s pin.
+///
+/// # Errors
+/// A fixture row that does not encode.
+pub fn parted_pin_fitting_one_part(row: EntityId) -> Result<Vec<u8>> {
+    let doc = LoroDoc::new();
+    document_pin(&doc.get_map(DOCUMENT_PINS_MAP), row, row, 64)?;
+    doc.commit();
+    doc.export(ExportMode::Snapshot)
+        .map_err(|_| refused("a window that does not export"))
 }
 
 /// A turn row of `turn`, past its whole-row bound.
