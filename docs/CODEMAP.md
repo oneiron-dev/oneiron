@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7605 | 1346 | 266 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7605 | 1347 | 266 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 10 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 71 | 3 | 0 |
@@ -33,7 +33,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-dreamer](codemap/oneiron-dreamer.md) | oneiron-dreamer — the Dreamer's maintenance jobs outside the engine (untangle 6.9c, S69-RUN = A) | 2 | 0 | 0 |
 | [oneiron-driver](codemap/oneiron-driver.md) | oneiron-driver — the in-process starter motor (ONE-1683 / ONE-1684, M8 agent runtime RT-01/RT-02) | 38 | 11 | 3 |
 | [oneiron-ffi](codemap/oneiron-ffi.md) | C ABI for on-device iOS and macOS access to the Oneiron vault | 13 | 1 | 0 |
-| [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 6 | 1 | 0 |
+| [oneiron-fingerprint](codemap/oneiron-fingerprint.md) | One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0) | 7 | 1 | 0 |
 | [oneiron-gen](codemap/oneiron-gen.md) | Image, video and music job wire adapters for Oneiron's media and image seams, one module per wire protocol… | 8 | 0 | 0 |
 | [oneiron-guest](codemap/oneiron-guest.md) | Linux microVM guest agent and an unprivileged protocol conformance adapter | 11 | 2 | 0 |
 | [oneiron-hex](codemap/oneiron-hex.md) | Hex text for bytes: encode, decode and check in one place | 1 | 0 | 0 |
@@ -71,7 +71,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-verb-wire](codemap/oneiron-verb-wire.md) | The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response… | 969 | 1 | 0 |
 | [oneiron-vm-outbox](codemap/oneiron-vm-outbox.md) | `oneiron-vm-outbox`: a vault VM's root outbox companion, started by `oneiron-vm-init` beside the engine… | 1 | 0 | 0 |
 | [oneiron-wake-contract](codemap/oneiron-wake-contract.md) | The Dreamer wake contract below core (core split slice 3): wake triggers, requests and pass reports… | 40 | 0 | 1 |
-| [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 14 | 1 | 0 |
+| [oneiron-web-fetch](codemap/oneiron-web-fetch.md) | Web acquisition of the oneiron engine | 14 | 2 | 0 |
 | [oneiron-xlsx-formula](codemap/oneiron-xlsx-formula.md) | In-process XLSX formula recalculation, the default of the edit round trip | 16 | 1 | 2 |
 
 ## oneiron
@@ -617,7 +617,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | module | layout | files | largest src bucket | purpose |
 |---|---|---|---|---|
 | `legacy` | file | 1 | s | The K door: a digest that main already stores or sends keeps its exact bytes |
-| `purposes` | dir | 3 | s | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
+| `purposes` | dir | 4 | s | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
 | `record` | file | 1 | s | The one canonical byte form of a structured value (DESIGN section 1.5) |
 
 ## oneiron-gen
