@@ -146,12 +146,7 @@ impl Vault {
             .into_iter()
             .map(|(_, stored)| stored)
             .collect();
-        let mut links: Vec<KeyHeaderLink> = LINKS
-            .scan(&self.store, txn)?
-            .into_iter()
-            .map(|(_, link)| link)
-            .collect();
-        links.sort_by_key(|link| std::cmp::Reverse(link.generation));
+        let links = self.links_in_txn(txn)?;
         Ok((
             CarriedVaultKey::new(state.commitment, state.recovery, wraps, links),
             key.derive(context, &vault_id),

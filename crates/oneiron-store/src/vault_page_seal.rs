@@ -15,7 +15,8 @@ pub const PAGE_KEY_CONTEXT: &str = "oneiron/vault-page-key/v1";
 const COMMITMENT_CONTEXT: &str = "oneiron/vault-key-commitment/v1";
 
 /// What opens a sealed vault's pages: the page key, the vault it belongs to,
-/// and the vault data key it derives from. No `Serialize`, a `Debug` that
+/// and the vault data key it derives from. The page key derives from the
+/// newest key or one of the earlier ones. No `Serialize`, a `Debug` that
 /// prints nothing, and the keys are wiped when the last clone drops.
 #[derive(Clone)]
 pub struct VaultPageSeal {
@@ -23,6 +24,11 @@ pub struct VaultPageSeal {
     incarnation: [u8; 32],
     page_key: Arc<Zeroizing<[u8; 32]>>,
     data_key: Arc<VaultDataKey>,
+    /// The vault's earlier data keys this seal reached through the link chain,
+    /// newest first: the page key may derive from one of them (pages keep the
+    /// key of the incarnation they were written under), and a vault whose
+    /// newest generation never committed holds one of them.
+    earlier: Vec<Arc<VaultDataKey>>,
     origin: SealOrigin,
 }
 
@@ -88,6 +94,30 @@ impl VaultPageSeal {
             incarnation,
             page_key,
             data_key,
+            earlier: Vec::new(),
+            origin,
+        }
+    }
+
+    /// A seal for `incarnation` of the vault `vault_id` whose page key the
+    /// caller derived from one key of the chain: `data_key` is the newest key
+    /// the unlock opened, `earlier` the keys its links reach, newest first.
+    /// Engine-internal, for `world_keys::page_seal`'s unlock.
+    #[doc(hidden)]
+    pub fn with_page_key(
+        vault_id: [u8; 32],
+        incarnation: [u8; 32],
+        page_key: Zeroizing<[u8; 32]>,
+        data_key: VaultDataKey,
+        earlier: Vec<VaultDataKey>,
+        origin: SealOrigin,
+    ) -> Self {
+        Self {
+            vault_id,
+            incarnation,
+            page_key: Arc::new(page_key),
+            data_key: Arc::new(data_key),
+            earlier: earlier.into_iter().map(Arc::new).collect(),
             origin,
         }
     }
@@ -95,16 +125,19 @@ impl VaultPageSeal {
     /// A seal for a vault restored in this one's place or beside it: this
     /// seal's vault and data key under a fresh incarnation. It creates the
     /// restored vault, as a new vault's seal does; the restored rows carry the
-    /// key's wraps, and its mirror follows them.
+    /// key's wraps, and its mirror follows them. A fresh incarnation's pages
+    /// are under the newest key.
     pub fn fresh_incarnation(&self) -> Result<Self> {
         let mut incarnation = [0u8; 32];
         os_fill(&mut incarnation)?;
-        Ok(Self::derive_shared(
+        let mut seal = Self::derive_shared(
             self.vault_id,
             incarnation,
             Arc::clone(&self.data_key),
             SealOrigin::Beside,
-        ))
+        );
+        seal.earlier = self.earlier.clone();
+        Ok(seal)
     }
 
     /// The vault this seal belongs to. A new vault takes it as its own id.
@@ -137,10 +170,18 @@ impl VaultPageSeal {
         &self.page_key
     }
 
-    /// The vault data key the page key derives from: engine-internal.
+    /// The newest vault data key this seal opened: engine-internal. The page
+    /// key derives from it or from one of [`Self::earlier_keys`].
     #[doc(hidden)]
     pub fn data_key(&self) -> &Arc<VaultDataKey> {
         &self.data_key
+    }
+
+    /// The earlier data keys this seal reached through the link chain, newest
+    /// first: engine-internal.
+    #[doc(hidden)]
+    pub fn earlier_keys(&self) -> &[Arc<VaultDataKey>] {
+        &self.earlier
     }
 
     /// Where this seal came from: engine-internal.

@@ -72,7 +72,8 @@ pub use self::escrow::{
     reseal_escrow_capsule,
 };
 pub use self::generation::{
-    DataKeyGenerationCause, DataKeyGenerationDraft, DataKeyGenerationOutcome, DataKeyGenerationWays,
+    DATA_KEY_GENERATION_PAGE_SEAL_NOTICE, DataKeyGenerationCause, DataKeyGenerationDraft,
+    DataKeyGenerationOutcome, DataKeyGenerationWays,
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
 pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
@@ -342,11 +343,19 @@ impl Vault {
             .vault_key
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&held));
-        // The earlier generations, reached from the held key through the link
-        // chain. A vault that never started a new generation has no links and
-        // keeps an empty ring. Any failure leaves the ring empty and warns;
-        // the unlock itself never fails for this.
-        let earlier = self.read_earlier_vault_keys(&held).unwrap_or_else(|error| {
+        self.fill_earlier_vault_keys(&held);
+        // An unlock opens a new snapshot admission generation, never readiness.
+        self.store.inference_snapshots.reopen();
+        // FIX 14976: a bound private drafter may serve again.
+        self.notify_drafter_serving();
+    }
+
+    /// Fills the ring of earlier generations from the held key through the
+    /// link chain. A vault that never started a new generation has no links
+    /// and keeps an empty ring. Any failure leaves the ring empty and warns;
+    /// the unlock itself never fails for this.
+    fn fill_earlier_vault_keys(&self, held: &VaultDataKey) {
+        let earlier = self.read_earlier_vault_keys(held).unwrap_or_else(|error| {
             tracing::warn!(%error, "the vault key's earlier generations did not load");
             Vec::new()
         });
@@ -355,10 +364,17 @@ impl Vault {
             .earlier_vault_keys
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = earlier.into_iter().map(Arc::new).collect();
-        // An unlock opens a new snapshot admission generation, never readiness.
-        self.store.inference_snapshots.reopen();
-        // FIX 14976: a bound private drafter may serve again.
-        self.notify_drafter_serving();
+    }
+
+    /// The vault's data-key links in `txn`, newest first.
+    pub(super) fn links_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<KeyHeaderLink>> {
+        let mut links: Vec<KeyHeaderLink> = LINKS
+            .scan(&self.store, txn)?
+            .into_iter()
+            .map(|(_, link)| link)
+            .collect();
+        links.sort_by_key(|link| std::cmp::Reverse(link.generation));
+        Ok(links)
     }
 
     /// The data keys of this vault's earlier generations, newest first, read
@@ -373,19 +389,19 @@ impl Vault {
         if state.commitment != held.commitment(&vault_id) {
             return Err(refused("this handle holds another vault key"));
         }
-        let mut links: Vec<KeyHeaderLink> = LINKS
-            .scan(&self.store, &txn)?
-            .into_iter()
-            .map(|(_, link)| link)
-            .collect();
-        links.sort_by_key(|link| std::cmp::Reverse(link.generation));
+        let links = self.links_in_txn(&txn)?;
         walk_links(&vault_id, held, &links)
     }
 
     /// Holds the data key a sealed vault opened with (OF-570 maximum tier).
-    /// A vault with a data key holds it only when its commitment names this
-    /// key; a new vault takes it as its own, with no wrap yet.
-    pub(super) fn admit_page_seal_key(&self, key: &Arc<VaultDataKey>) -> Result<()> {
+    /// A vault with a data key holds the chain key its commitment names: the
+    /// newest one, or an earlier one when the act that minted the newest never
+    /// committed; a new vault takes the newest as its own, with no wrap yet.
+    pub(super) fn admit_page_seal_key(
+        &self,
+        key: &Arc<VaultDataKey>,
+        earlier: &[Arc<VaultDataKey>],
+    ) -> Result<()> {
         let vault_id = *self.vault_id().as_bytes();
         let commitment = key.commitment(&vault_id);
         let stored = {
@@ -393,42 +409,55 @@ impl Vault {
             STATE.get(&self.store, &txn, &())?
         };
         let refused_key = || refused("the page seal's key is not this vault's data key");
-        match stored {
-            Some(state) if state.commitment != commitment => return Err(refused_key()),
-            Some(_) => {}
-            None => self.with_write_txn(|txn| {
-                if let Some(state) = STATE.get(&self.store, txn, &())? {
-                    return if state.commitment == commitment {
-                        Ok(())
-                    } else {
-                        Err(refused_key())
-                    };
+        let held = match stored {
+            Some(state) if state.commitment == commitment => Arc::clone(key),
+            Some(state) => {
+                // The act that minted the newest key never committed: hold the earlier key it committed.
+                match earlier
+                    .iter()
+                    .find(|held| held.commitment(&vault_id) == state.commitment)
+                {
+                    Some(held) => Arc::clone(held),
+                    None => return Err(refused_key()),
                 }
-                let created_at = self.instant_in_txn(txn)?.secs();
-                STATE.put(
-                    &self.store,
-                    txn,
-                    &(),
-                    &VaultKeyState {
-                        commitment,
-                        created_at,
-                        recovery: RecoveryPreset::Standard,
-                        generation: 0,
-                    },
-                )
-            })?,
-        }
+            }
+            None => {
+                self.with_write_txn(|txn| {
+                    if let Some(state) = STATE.get(&self.store, txn, &())? {
+                        return if state.commitment == commitment {
+                            Ok(())
+                        } else {
+                            Err(refused_key())
+                        };
+                    }
+                    let created_at = self.instant_in_txn(txn)?.secs();
+                    STATE.put(
+                        &self.store,
+                        txn,
+                        &(),
+                        &VaultKeyState {
+                            commitment,
+                            created_at,
+                            recovery: RecoveryPreset::Standard,
+                            generation: 0,
+                        },
+                    )
+                })?;
+                Arc::clone(key)
+            }
+        };
         *self
             .world_keys
             .vault_key
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(key));
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&held));
+        self.fill_earlier_vault_keys(&held);
         // Its body files are envelopes under keys this one wraps, from the
         // vault's first write (FIX 5348).
         #[cfg(unix)]
         self.store.body_seal.admit(crate::store::BodySeal::new(
             vault_id,
-            &key.derive(crate::store::BODY_FILE_WRAP_CONTEXT, &vault_id),
+            &held.derive(crate::store::BODY_FILE_WRAP_CONTEXT, &vault_id),
         ));
         Ok(())
     }
@@ -445,11 +474,14 @@ impl Vault {
             .into_iter()
             .map(|(_, stored)| stored)
             .collect();
-        Ok((!wraps.is_empty()).then_some(CarriedVaultKey::new(
+        if wraps.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(CarriedVaultKey::new(
             state.commitment,
             state.recovery,
             wraps,
-            Vec::new(),
+            self.links_in_txn(&txn)?,
         )))
     }
 
@@ -470,11 +502,12 @@ impl Vault {
             .map(|(_, stored)| stored)
             .collect();
         wraps.extend(adding.cloned());
+        let links = self.links_in_txn(txn)?;
         Ok(CarriedVaultKey::new(
             state.commitment,
             state.recovery,
             wraps,
-            Vec::new(),
+            links,
         ))
     }
 

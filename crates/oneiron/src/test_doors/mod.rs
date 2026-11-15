@@ -39,6 +39,7 @@ pub mod consolidation;
 pub mod credit_decay_fit;
 pub mod dag_append;
 pub mod data_key_custody_head;
+pub mod data_key_sealed_vault;
 pub mod derivation_floor;
 pub mod derive;
 pub mod derive_verbs;
