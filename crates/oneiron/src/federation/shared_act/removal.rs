@@ -1,6 +1,7 @@
 //! Removal archives, the held-erase completion, and the receipt, outcome and deletion reads.
 
 use super::*;
+use crate::access_grant::AuditReader;
 
 impl Vault {
     /// The export-first removal archives delivered to `member` that are still
@@ -155,19 +156,42 @@ impl Vault {
         Ok(receipt)
     }
 
-    /// A receipt its reader was told about: every live Owner at the time,
-    /// the actor and each holder the change concerned. Anyone else is refused.
+    /// [`Self::shared_act_receipt_as_reader`] on a person's proof: a receipt
+    /// its reader was told about.
     pub fn shared_act_receipt(
         &self,
         reader: &AuthenticatedOwner,
         receipt_id: &str,
     ) -> Result<SharedActExecutionReceipt> {
+        self.shared_act_receipt_as_reader(&AuditReader::Owner(reader.clone()), receipt_id)
+    }
+
+    /// A receipt for `reader`: a told reader reads the receipts they were
+    /// told about, every live Owner at the time, the actor and each holder
+    /// the change concerned, or a live audit_read holder reads any receipt,
+    /// told or not (RULING AUDIT-READ-POWER-LIST = B). Anyone else is refused.
+    /// The telling and the power are judged in the read's own transaction.
+    pub fn shared_act_receipt_as_reader(
+        &self,
+        reader: &AuditReader,
+        receipt_id: &str,
+    ) -> Result<SharedActExecutionReceipt> {
         let txn = self.store.env.read_txn()?;
-        // Person tier: a holder reads the receipts they were told about.
-        let reader = reader.revalidate_person_in_txn(self, &txn)?;
         let receipt_id = EntityId::from_hex(receipt_id)?.to_hex();
-        if !self.reader_was_told_in_txn(&txn, reader, &receipt_id)? {
-            return Err(invalid());
+        match reader {
+            AuditReader::Owner(owner) => {
+                // Person tier: a holder reads the receipts they were told
+                // about, or any receipt while they hold a live audit_read power.
+                let actor = owner.revalidate_person_in_txn(self, &txn)?;
+                if !self.reader_was_told_in_txn(&txn, actor, &receipt_id)?
+                    && !self.audit_read_live_in_txn(&txn, actor)?
+                {
+                    return Err(invalid());
+                }
+            }
+            AuditReader::Holder(_) => {
+                reader.admit_in_txn(self, &txn)?;
+            }
         }
         self.shared_act_receipt_in_txn(&txn, &receipt_id)?
             .ok_or_else(invalid)

@@ -107,6 +107,23 @@ pub(super) fn person(
         .map_err(|_| refused())
 }
 
+/// The reader `vault.shared.receipt` acts for (RULING AUDIT-READ-POWER-LIST
+/// = B): a live person as today, wrapped as the engine's owner-tier reader
+/// whose telling or live power the engine judges, or a live audit_read
+/// holder, told or not. A holder who is a live person reads through either
+/// proof; an agent holder reads only through the second.
+pub(super) fn shared_receipt_reader(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    verb: &str,
+) -> MemoryResult<oneiron::access_grant::AuditReader> {
+    match person(server, auth, verb) {
+        Ok(reader) => Ok(oneiron::access_grant::AuditReader::Owner(reader)),
+        Err(refusal) => crate::api::facade::audit_read_doors::audit_reader(server, auth, verb)
+            .map_err(|_| refusal),
+    }
+}
+
 /// The proof of the person a supervisor-signed person action names for
 /// this request or his `/mcp` call (FIX 1302, `auth::managed_person`), at
 /// a member door it serves (`auth::MANAGED_PERSON_DOORS`): a live human
@@ -331,7 +348,8 @@ pub(crate) async fn vault_shared_execute(
     crate::device_local::act_answer_maybe(server.vault(), &auth.destination(), answer)
 }
 
-/// `vault.shared.receipt`: a receipt its reader was told about.
+/// `vault.shared.receipt`: a told reader's receipt, or any receipt for a live
+/// audit_read holder, told or not (RULING AUDIT-READ-POWER-LIST = B).
 pub(crate) async fn vault_shared_receipt(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -342,7 +360,7 @@ pub(crate) async fn vault_shared_receipt(
     as_person_naming(
         server,
         VERB,
-        person(server, auth, VERB),
+        shared_receipt_reader(server, auth, VERB),
         move |server, reader| sdk::read_shared_receipt(server.vault(), &reader, input),
         move |receipt| receipt_rows(vault.vault(), receipt),
     )

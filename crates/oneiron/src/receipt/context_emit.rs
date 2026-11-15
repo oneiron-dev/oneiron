@@ -65,8 +65,9 @@ impl Memory<'_> {
         super::direct_dispatch::record_with_ref(self.vault(), receipt).map_err(MemoryError::from)
     }
 
-    /// The caller's own emit, or any emit for the vault's live owner. A missing
-    /// ref and another actor's ref both read as none, as call receipts do.
+    /// The caller's own emit, or any emit for the vault's live owner or a live
+    /// audit_read holder (RULING AUDIT-READ-POWER-LIST = B). A missing ref and
+    /// another actor's ref both read as none, as call receipts do.
     pub fn context_emit_receipt(
         &self,
         receipt_ref: &str,
@@ -78,6 +79,7 @@ impl Memory<'_> {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
         let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        let holder = vault.audit_read_live_in_txn(&txn, self.actor())?;
         drop(txn);
         for record in super::direct_dispatch::receipts(vault)? {
             if record.receipt_id != receipt_ref || record.outcome != "replied" {
@@ -87,7 +89,7 @@ impl Memory<'_> {
             let own = actor == self.actor().to_hex()
                 && record.fields.get("actor_class").map(String::as_str)
                     == Some(self.actor_class().gate_actor_class());
-            if !own && !owner {
+            if !own && !owner && !holder {
                 return Ok(None);
             }
             let field = |name: &str| {
@@ -157,7 +159,8 @@ impl Memory<'_> {
 
     /// The craft a reply's receipt names (OF-490), in the order its request
     /// showed it: the caller's own reply's, or any reply's for the vault's
-    /// live owner. A missing ref, another actor's, and a receipt that is no
+    /// live owner or a live audit_read holder (RULING AUDIT-READ-POWER-LIST
+    /// = B). A missing ref, another actor's, and a receipt that is no
     /// reply's craft all read as none.
     ///
     /// # Errors
@@ -175,6 +178,7 @@ impl Memory<'_> {
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         verify_actor_binding_in_txn(vault, &txn, self.actor(), self.actor_class())?;
         let owner = actor_is_vault_owner_in_txn(vault, &txn, self.actor(), self.actor_class())?;
+        let holder = vault.audit_read_live_in_txn(&txn, self.actor())?;
         drop(txn);
         for record in super::direct_dispatch::receipts(vault)? {
             if record.receipt_id != receipt_ref || record.outcome != CRAFT_EXPOSED {
@@ -183,7 +187,7 @@ impl Memory<'_> {
             let own = record.actor.as_deref() == Some(self.actor().to_hex().as_str())
                 && record.fields.get("actor_class").map(String::as_str)
                     == Some(self.actor_class().gate_actor_class());
-            if !own && !owner {
+            if !own && !owner && !holder {
                 return Ok(None);
             }
             return record.pack_manifest_entries().map(Some).ok_or_else(|| {

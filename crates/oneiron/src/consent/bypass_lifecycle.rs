@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::access_grant::AuditReader;
 use crate::error::{Error, GateError};
 use oneiron_contracts::memory::{MemoryError, MemoryResult};
 
@@ -200,14 +201,27 @@ pub fn active_bypass_grants(
         .collect()
 }
 
+/// [`bypassed_effect_receipts_as_reader`] on the owner's proof.
 pub fn bypassed_effect_receipts(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     input: BypassedEffectReceiptsRequest,
 ) -> MemoryResult<Vec<BypassedEffectReceipt>> {
+    bypassed_effect_receipts_as_reader(vault, &AuditReader::Owner(owner.clone()), input)
+}
+
+/// The existing Gate receipts for effects covered by one bypass grant, for
+/// `reader`: the owner on his proof, or a live audit_read holder (RULING
+/// AUDIT-READ-POWER-LIST = B), admitted in the read's own transaction.
+/// Includes receipts after the grant's revocation.
+pub fn bypassed_effect_receipts_as_reader(
+    vault: &Vault,
+    reader: &AuditReader,
+    input: BypassedEffectReceiptsRequest,
+) -> MemoryResult<Vec<BypassedEffectReceipt>> {
     let grant = parse_digest(&input.grant, "grant")?.to_hex();
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
-    owner.revalidate_in_txn(vault, &txn)?;
+    reader.admit_in_txn(vault, &txn)?;
     if !GRANTS
         .get(&vault.store, &txn, &grant)?
         .is_some_and(|row| row.bypass.is_some())
