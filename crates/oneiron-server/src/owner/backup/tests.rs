@@ -1,5 +1,7 @@
 use super::*;
 use oneiron::registry::ENTITY_TYPE_PERSON;
+#[cfg(unix)]
+use oneiron::store::exchange_held;
 use std::sync::Arc;
 
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
@@ -137,6 +139,7 @@ fn rehearsal_reports_the_backup_and_restore_brings_it_back() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault() {
     let root = oneiron::test_support::restore_tempdir();
@@ -154,7 +157,7 @@ fn a_failed_sync_after_the_swap_still_reports_the_restore_and_the_previous_vault
         &vault_path,
         VaultConfig::default(),
         Some(Arc::clone(&keystore)),
-        exchange,
+        exchange_held,
         |_| Err(anyhow::anyhow!("fsync: input/output error")),
     )
     .expect("the swap happened, so the restore succeeded");
@@ -226,6 +229,7 @@ fn a_restore_over_a_symlinked_vault_path_swaps_the_directory_it_names() {
 /// removes nothing: the staging directory may hold the previous vault, and
 /// the vault at the vault path stays the live one (Astra re-check: a failure
 /// after the exchange must not run the cleanup of a failure before it).
+#[cfg(unix)]
 #[test]
 fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
     let root = oneiron::test_support::restore_tempdir();
@@ -243,8 +247,8 @@ fn a_restore_whose_swap_cannot_be_confirmed_removes_nothing() {
         VaultConfig::default(),
         Some(Arc::clone(&keystore)),
         |a, b| {
-            exchange(a, b)?;
-            exchange(a, b)
+            exchange_held(a, b)?;
+            exchange_held(a, b)
         },
         |_| Ok(()),
     )
@@ -337,15 +341,30 @@ fn a_failed_swap_removes_only_the_staging_directory_it_made() {
             &vault_path,
             VaultConfig::default(),
             Some(Arc::clone(&keystore)),
-            |restored, _| {
-                let name = restored.parent().unwrap();
-                std::fs::rename(name, &moved)?;
+            |_, _| {
+                // The swap takes held entries, not paths, so the staging
+                // directory is found by name: the only `.vault.restore-*`
+                // entry beside the vault that is not its claim lock.
+                let name = std::fs::read_dir(vault_path.parent().unwrap())
+                    .unwrap()
+                    .flatten()
+                    .map(|entry| entry.path())
+                    .find(|path| {
+                        path.file_name()
+                            .and_then(|name| name.to_str())
+                            .is_some_and(|name| {
+                                name.starts_with(".vault.restore-")
+                                    && !name.ends_with(".claim-lock")
+                            })
+                    })
+                    .unwrap();
+                std::fs::rename(&name, &moved)?;
                 if occupant == "link" {
-                    std::os::unix::fs::symlink(&foreign, name)?;
+                    std::os::unix::fs::symlink(&foreign, &name)?;
                 } else {
-                    std::fs::rename(&foreign, name)?;
+                    std::fs::rename(&foreign, &name)?;
                 }
-                *staging.borrow_mut() = name.to_path_buf();
+                *staging.borrow_mut() = name;
                 Err(std::io::ErrorKind::Unsupported.into())
             },
             |_| Ok(()),

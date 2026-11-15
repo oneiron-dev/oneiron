@@ -376,6 +376,13 @@ impl Vault {
         })
     }
 
+    /// Lands one AccessGrant body: every grant write (create, narrow,
+    /// revoke, erase scrub) comes through here. A grant decides reads as an
+    /// authority-log row does, though it is stored outside the log, so its
+    /// write moves the authority generation in this same transaction, as a
+    /// legacy token's revoke marker does (FIX 11810). A reader that kept a
+    /// judgement at one generation (an MCP page cursor's rows, a kept
+    /// inference snapshot) then sees the grant change.
     pub(crate) fn apply_access_grant_body(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
@@ -384,6 +391,7 @@ impl Vault {
         data: Vec<u8>,
     ) -> Result<()> {
         let data = super::witness_history::with_witness_read_history_in_txn(self, wtxn, id, data)?;
+        crate::authority::advance_authority_cache_generation(&self.store, wtxn)?;
         apply_ops(
             &self.store,
             &self.config,
