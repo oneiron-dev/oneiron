@@ -137,11 +137,15 @@ pub enum Ran {
 }
 
 /// How long after its `failures`-th failure in a row a job is due again: `first`, doubling with
-/// each failure after the first, never past `cap`.
+/// each failure after the first, never past `cap`. The doubling has no count limit of its own: from
+/// the 65th failure the factor is `u64::MAX`, and the product saturates, so only `cap` bounds the
+/// wait (UC09-SCHEDULE-RETRY-SHIFT = A, Engine 15 Nov 17:3x; one backoff rule for every caller).
 #[must_use]
 pub fn retry_after(failures: u32, first: u64, cap: u64) -> u64 {
-    let doublings = failures.saturating_sub(1).min(16);
-    first.saturating_mul(1 << doublings).min(cap)
+    let factor = 1u64
+        .checked_shl(failures.saturating_sub(1))
+        .unwrap_or(u64::MAX);
+    first.saturating_mul(factor).min(cap)
 }
 
 #[cfg(test)]
@@ -283,5 +287,19 @@ mod tests {
         assert_eq!(retry_after(7, RETRY_FIRST_SECS, cap), 3_600);
         assert_eq!(retry_after(40, RETRY_FIRST_SECS, cap), 3_600);
         assert_eq!(retry_after(3, RETRY_FIRST_SECS, 100), 100);
+    }
+
+    #[test]
+    fn a_retry_keeps_doubling_past_sixteen_doublings_until_its_cap() {
+        // UC09-SCHEDULE-RETRY-SHIFT = A: the 18th retry is 17 doublings of the first wait.
+        let cap = 1_000_000;
+        assert_eq!(retry_after(17, 1, cap), 65_536);
+        assert_eq!(retry_after(18, 1, cap), 131_072);
+        assert_eq!(retry_after(20, 1, cap), 524_288);
+        assert_eq!(retry_after(21, 1, cap), cap);
+        assert_eq!(retry_after(64, 1, u64::MAX), 1u64 << 63);
+        assert_eq!(retry_after(65, 1, u64::MAX), u64::MAX);
+        assert_eq!(retry_after(u32::MAX, RETRY_FIRST_SECS, cap), cap);
+        assert_eq!(retry_after(0, RETRY_FIRST_SECS, RETRY_CAP_SECS), 60);
     }
 }
