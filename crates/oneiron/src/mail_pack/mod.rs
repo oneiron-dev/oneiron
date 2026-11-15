@@ -76,6 +76,8 @@ mod reply_recipients;
 mod reply_send;
 mod reply_smtp;
 mod rest;
+#[cfg(oneiron_test_support)]
+pub(crate) use rest::GrantIssuer;
 mod search;
 mod share;
 mod smtp_client;

@@ -87,6 +87,7 @@ mod scope;
 mod state;
 mod storage;
 
+pub use self::doors::RAMP_DEMOTE_GRANT_TARGET;
 pub use self::receipts::{is_ramp_demotion_receipt, is_ramp_outcome_receipt};
 pub use self::scope::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope, op_kind_is_ramp_eligible};
 pub use self::state::{DemotionReason, RampState, ScopeOutcomeStats};
@@ -98,6 +99,7 @@ pub(crate) use self::fold::{
     reset_ramp_streak_in_txn,
 };
 pub(crate) use self::receipts::{demotion_revoking_grant, ramp_receipts};
+pub(crate) use self::storage::erase_ramp_actor_in_txn;
 
 pub(crate) mod tables;
 // FIX [LIBTEST-QUARANTINE-CONSENT-GRADUATION-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate

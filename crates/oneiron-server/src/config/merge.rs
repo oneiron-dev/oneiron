@@ -200,6 +200,9 @@ pub(crate) fn layer_serve_config(
     // The organ builds this server runs as first party, from argv alone
     // (FIX 7644): no file, settings file or environment layer names one.
     resolved.trusted_organ_builds = args.trusted_organ_builds.iter().cloned().collect();
+    // The self-hoster's lift of the payment-credential withholding, from
+    // argv alone (L8-60).
+    resolved.release_payment_credentials_unfenced = args.release_payment_credentials_unfenced;
     // `--voice-socket` names where the voice loop the layered
     // `[models.voice]` turns on listens, over its `socket` (FIX 5016), as
     // managed mode sets it on its settings file. With no voice configured it

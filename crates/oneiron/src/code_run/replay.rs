@@ -7,14 +7,9 @@ use super::codec::{
     CODE_RUN_BRIDGE_CALL_KEYS, CODE_RUN_DETERMINISM_KEYS, CODE_RUN_OUTPUT_PREVIEW_KEYS,
     CODE_RUN_RAW_OUTPUT_KEYS, CODE_RUN_REPLAY_RECORD_KEYS, CODE_RUN_STEP_CHECKPOINT_KEYS,
 };
-use super::payload::{
-    decode_self_dispatch_outcome, self_call_request_value, self_dispatch_outcome_value,
-};
-use super::support::{
-    code_run_layout_hash, expect_map, invalid_code_run_replay, map_get, str_value, u64_value,
-    validate_text,
-};
-use super::types::{SelfCall, SelfDispatchOutcome, SelfEffect, SelfSpeechCall, SelfSpeechResult};
+use super::payload::decode_self_dispatch_outcome;
+use super::support::code_run_layout_hash;
+use super::types::{SelfDispatchOutcome, SelfEffect};
 // The bridge call's body names these by their `super::` paths.
 use super::{SelfStoredReply, SelfStoredReplyKind, spawn_replay};
 mod bridge;
@@ -31,7 +26,9 @@ pub use self::pending_step::PendingCodeStep;
 pub(super) use self::request_identity::ErasedRequest;
 
 pub const CODE_RUN_REPLAY_SCHEMA_VERSION: u64 = 3;
-pub const CODE_RUN_RNG_SEED_LEN: usize = 32;
+#[doc(hidden)]
+pub use oneiron_records::code_run::replay::CODE_RUN_RNG_SEED_LEN;
+
 pub use crate::store::result_manifest::CODE_RUN_REPLAY_HASH_LEN;
 
 /// Frozen nondeterministic inputs for one code run.
