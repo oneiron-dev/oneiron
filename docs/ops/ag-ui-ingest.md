@@ -229,9 +229,14 @@ skill revision with its predecessor's content hash. Fixed code applies the
 decision through the capture owner's own scoped read, which the Coach gains
 no part of. Both arms pin the decision seat's manifest-bound model at its
 registry serving revision, with the pair's old and candidate skill digests.
-One seed stands per task and seat, whatever it stands at: a seed refused as
-`candidate_failed` is never proposed again with another pair, so no candidate
-is chosen by a sealed task's result. The inventory lists at most 64 repair
+One seed stands per task contract in the vault, whatever it stands at and
+whatever its source or seat: a seed refused as `candidate_failed` is never
+proposed again with another pair, so no candidate is chosen by a sealed task's
+result. The contract's key is the BLAKE3 of its RFC 8785 canonical JSON, so the
+same contract at another task pointer or outcome, in a file imported again, or
+on another seat takes no second seed, and every row of it shows that seed's
+standing. An erase takes a seed with its capture. A reworded contract is another
+contract: near-duplicate tasks are a limit of the data, not of this check. The inventory lists at most 64 repair
 rows, from the window's newest 64 captures, at most 8 task contracts per
 failure event, and at most 64 skill revisions.
 

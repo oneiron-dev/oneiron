@@ -10,6 +10,7 @@ use serde_json::Value;
 
 use super::super::cohort::{EXPOSURE_PREFIX, is_space_probe_seat};
 use super::super::repair_seed::seeds_in_txn;
+use super::super::repair_task::task_contract_key;
 use super::super::{
     CASE_PREFIX, DerivationKind, EvalCase, EvalExposure, EvalRepairSeed, EvalRepairSeedState,
     EvalRepairTaskSpec, EvalSeat, FAMILY_PREFIX, SourceFamily, rows_in_txn,
@@ -43,26 +44,28 @@ const MAX_CONTRACT_WALK_DEPTH: u8 = 8;
 const MAX_SKILL_PAIR_ROWS: usize = 64;
 
 /// The RFC 6901 pointer of each object in `failure` that reads as a repair
-/// task contract, depth-first, at most [`MAX_TASK_CONTRACTS_PER_FAILURE`]:
+/// task contract, with the contract's key, depth-first, at most
+/// [`MAX_TASK_CONTRACTS_PER_FAILURE`]:
 /// objects and arrays to [`MAX_CONTRACT_WALK_DEPTH`], at most
 /// [`MAX_CONTRACT_WALK_NODES`] nodes, counted as they are stacked, so a wide
 /// container stops the walk's growth. Only an object holding a contract's
 /// `world` and `grader` is tried, in place.
-fn task_pointers(failure: &Value) -> Vec<String> {
+fn task_contracts(failure: &Value) -> Vec<(String, [u8; 32])> {
     fn escape(token: &str) -> String {
         token.replace('~', "~0").replace('/', "~1")
     }
-    let mut pointers = Vec::new();
+    let mut contracts = Vec::new();
     let mut stack: Vec<(String, &Value, u8)> = vec![(String::new(), failure, 0)];
     let mut stacked = 1;
     while let Some((pointer, value, depth)) = stack.pop() {
         if let Value::Object(fields) = value
             && fields.contains_key("world")
             && fields.contains_key("grader")
-            && EvalRepairTaskSpec::deserialize(value).is_ok()
+            && let Ok(spec) = EvalRepairTaskSpec::deserialize(value)
+            && let Ok(key) = task_contract_key(&spec)
         {
-            pointers.push(pointer.clone());
-            if pointers.len() == MAX_TASK_CONTRACTS_PER_FAILURE {
+            contracts.push((pointer.clone(), key));
+            if contracts.len() == MAX_TASK_CONTRACTS_PER_FAILURE {
                 break;
             }
         }
@@ -87,45 +90,79 @@ fn task_pointers(failure: &Value) -> Vec<String> {
         stacked += children.len();
         stack.extend(children.into_iter().rev());
     }
-    pointers
+    contracts
 }
 
 /// Where the inventory shows a stored seed: its source's capture, outcome
 /// and task pointer.
 type SeedTaskKey<'a> = (&'a str, &'a str, usize, &'a str);
 
-/// Every stored seed's seat and standing, by its task, each task's seeds in
-/// seat order: one pass over the seeds, whatever the repair rows.
-fn seed_summaries(
-    seeds: &[EvalRepairSeed],
-) -> BTreeMap<SeedTaskKey<'_>, Vec<EvalRepairSeedSummary>> {
-    let mut by_task: BTreeMap<SeedTaskKey<'_>, Vec<EvalRepairSeedSummary>> = BTreeMap::new();
-    for seed in seeds {
-        let source = &seed.source;
-        by_task
-            .entry((
-                source.claim_ref.as_str(),
-                source.source_hash.as_str(),
-                source.outcome_ordinal,
-                source.task_pointer.as_str(),
-            ))
-            .or_default()
-            .push(EvalRepairSeedSummary {
-                seat: source.seat.clone(),
-                standing: match &seed.state {
-                    EvalRepairSeedState::Pending => EvalRepairSeedStanding::Pending,
-                    EvalRepairSeedState::AwaitingLabel => EvalRepairSeedStanding::AwaitingLabel,
-                    EvalRepairSeedState::Confirmed { .. } => EvalRepairSeedStanding::Confirmed,
-                    EvalRepairSeedState::Refused { reason, .. } => {
-                        EvalRepairSeedStanding::Refused { reason: *reason }
-                    }
-                },
-            });
+/// Every stored seed, by its task and by its task contract: one pass over
+/// the seeds, whatever the repair rows.
+struct SeedIndex<'a> {
+    seeds: &'a [EvalRepairSeed],
+    by_task: BTreeMap<SeedTaskKey<'a>, Vec<usize>>,
+    by_contract: BTreeMap<[u8; 32], Vec<usize>>,
+}
+
+impl<'a> SeedIndex<'a> {
+    fn new(seeds: &'a [EvalRepairSeed]) -> Self {
+        let mut by_task: BTreeMap<SeedTaskKey<'a>, Vec<usize>> = BTreeMap::new();
+        let mut by_contract: BTreeMap<[u8; 32], Vec<usize>> = BTreeMap::new();
+        for (index, seed) in seeds.iter().enumerate() {
+            let source = &seed.source;
+            by_task
+                .entry((
+                    source.claim_ref.as_str(),
+                    source.source_hash.as_str(),
+                    source.outcome_ordinal,
+                    source.task_pointer.as_str(),
+                ))
+                .or_default()
+                .push(index);
+            if let Some(key) = seed.contract_key {
+                by_contract.entry(key).or_default().push(index);
+            }
+        }
+        Self {
+            seeds,
+            by_task,
+            by_contract,
+        }
     }
-    for summaries in by_task.values_mut() {
+
+    /// The seat and standing of every seed of a repair row: its task's own,
+    /// and every seed of the same contract from another source or seat
+    /// (RULING UNBUILT-P05E-CONTRACT-ALIAS = A), in seat order.
+    fn summaries(&self, task: SeedTaskKey<'_>, contract: &[u8; 32]) -> Vec<EvalRepairSeedSummary> {
+        let rows: BTreeSet<usize> = self
+            .by_task
+            .get(&task)
+            .into_iter()
+            .chain(self.by_contract.get(contract))
+            .flatten()
+            .copied()
+            .collect();
+        let mut summaries: Vec<EvalRepairSeedSummary> = rows
+            .into_iter()
+            .map(|index| {
+                let seed = &self.seeds[index];
+                EvalRepairSeedSummary {
+                    seat: seed.source.seat.clone(),
+                    standing: match &seed.state {
+                        EvalRepairSeedState::Pending => EvalRepairSeedStanding::Pending,
+                        EvalRepairSeedState::AwaitingLabel => EvalRepairSeedStanding::AwaitingLabel,
+                        EvalRepairSeedState::Confirmed { .. } => EvalRepairSeedStanding::Confirmed,
+                        EvalRepairSeedState::Refused { reason, .. } => {
+                            EvalRepairSeedStanding::Refused { reason: *reason }
+                        }
+                    },
+                }
+            })
+            .collect();
         summaries.sort_by(|a, b| a.seat.cmp(&b.seat));
+        summaries
     }
-    by_task
 }
 
 /// [`eval_authoring_inventory`](super::eval_authoring_inventory) beside the
@@ -254,10 +291,10 @@ pub fn eval_authoring_inventory_sourced(
         MAX_REPAIR_CAPTURES,
     )?;
     let seeds = seeds_in_txn(vault, &txn)?;
-    let seeds_by_task = seed_summaries(&seeds);
+    let seed_index = SeedIndex::new(&seeds);
     'captures: for meta in &captures {
         read.push(meta.claim);
-        let mut contracts: BTreeMap<usize, Vec<String>> = BTreeMap::new();
+        let mut contracts: BTreeMap<usize, Vec<(String, [u8; 32])>> = BTreeMap::new();
         for link in meta
             .repair_links
             .iter()
@@ -269,22 +306,22 @@ pub fn eval_authoring_inventory_sourced(
             let Some(failure) = meta.events.get(failure_ordinal) else {
                 continue;
             };
-            let pointers = contracts
+            let listed = contracts
                 .entry(failure_ordinal)
-                .or_insert_with(|| task_pointers(failure.raw()));
-            for task_pointer in pointers.iter() {
+                .or_insert_with(|| task_contracts(failure.raw()));
+            for (task_pointer, contract_key) in listed.iter() {
                 if repairs.len() == MAX_REPAIR_ROWS {
                     break 'captures;
                 }
-                let summaries = seeds_by_task
-                    .get(&(
+                let summaries = seed_index.summaries(
+                    (
                         meta.claim_ref.as_str(),
                         meta.source_hash.as_str(),
                         link.outcome_ordinal,
                         task_pointer.as_str(),
-                    ))
-                    .cloned()
-                    .unwrap_or_default();
+                    ),
+                    contract_key,
+                );
                 repairs.push(EvalRepairCandidate {
                     id: format!("r{}", repairs.len() + 1),
                     claim_ref: meta.claim_ref.clone(),

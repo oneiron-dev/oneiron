@@ -126,6 +126,11 @@ pub struct EvalRepairSeed {
     pub family: EntityId,
     /// The compiled task's hash when the seed was proposed.
     pub task_hash: [u8; 32],
+    /// The key of the task's contract
+    /// ([`EvalRepairTask::contract_key`]): one seed stands per contract in
+    /// the vault, whatever its source or seat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contract_key: Option<[u8; 32]>,
     pub old: EvalArmPin,
     pub candidate: EvalArmPin,
     /// The rows the task was compiled from: the capture claim.
@@ -267,7 +272,9 @@ fn family_held_in_txn(
 /// `AwaitingLabel` for an adjudicated-response task. A seed already recorded
 /// for the source is returned unchanged, whatever it stands at: a seed
 /// refused as `CandidateFailed` stands, so no candidate is chosen by a sealed
-/// task's result.
+/// task's result. Nor by an alias of it: a task whose contract has a seed
+/// from another source or seat takes none (RULING
+/// UNBUILT-P05E-CONTRACT-ALIAS = A).
 fn commit_proposal(
     vault: &Vault,
     task: &EvalRepairTask,
@@ -278,6 +285,15 @@ fn commit_proposal(
         let key = seed_key(&task.source)?;
         if let Some(existing) = SEEDS.get(&vault.store, txn, &key)? {
             return Ok(existing);
+        }
+        if SEEDS
+            .scan(&vault.store, txn)?
+            .iter()
+            .any(|(_, seed)| seed.contract_key == Some(task.contract_key))
+        {
+            return Err(invalid(
+                "the task's contract already has a seed, from another source or seat",
+            ));
         }
         if !sources_live_in_txn(vault, txn, &task.source_rows)? {
             return Err(invalid(
@@ -303,6 +319,7 @@ fn commit_proposal(
             source: task.source.clone(),
             family: family.id,
             task_hash: task.task_hash,
+            contract_key: Some(task.contract_key),
             old: request.old.clone(),
             candidate: request.candidate.clone(),
             source_rows: task.source_rows.clone(),
