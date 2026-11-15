@@ -7,7 +7,9 @@
 //! erase another, and a record confirm past its ten-minute row is refused
 //! while a hold confirm lands with one press. A history purge that erases
 //! at once (one Owner) takes the confirm; with two Owners its start takes
-//! none and its execute does.
+//! none and its execute does. Each history confirm binds the NOTE and the
+//! frontier its erase runs through, so an edit after the preview refuses the
+//! old confirm.
 //!
 //! Every door is reached by its verb name and every answer is read as JSON,
 //! so this file builds on main too. Red on main: `vault.owner_confirm.preview`
@@ -146,20 +148,79 @@ impl Fixture {
             .and_then(Value::as_str)
             .expect("the create names its id")
             .to_owned();
+        self.edit_note(&note, &format!("{markdown}, edited once"));
+        note
+    }
+
+    /// The owner replaces `note`'s whole text with `text`.
+    fn edit_note(&self, note: &str, text: &str) {
         self.call(
             "vault.notes.edit",
             json!({
-                "note_ref": note.clone(),
+                "note_ref": note,
                 "edit": {
                     "kind": "whole_text",
-                    "text": format!("{markdown}, edited once"),
+                    "text": text,
                     "timeout_ms": 100,
                     "base": null,
                 },
             }),
         )
-        .expect("the owner edits the note once");
-        note
+        .expect("the owner edits the note");
+    }
+
+    /// How many purge receipts `note` holds.
+    fn purge_receipts(&self, note: &str) -> usize {
+        self.call(
+            "vault.notes.history_purge_receipts",
+            json!({ "note_ref": note }),
+        )
+        .expect("the owner reads the note's purge receipts")
+        .as_array()
+        .expect("the receipts are a list")
+        .len()
+    }
+
+    /// The owner founds a shared vault with a second live Owner, so a
+    /// history purge waits on the `erase` veto window.
+    fn share_with_a_co_owner(&self) {
+        let co_owner = EntityId::now();
+        self.vault
+            .put_entity(
+                &co_owner,
+                ENTITY_TYPE_PERSON,
+                TimeRange {
+                    start: NOW,
+                    end: NOW,
+                },
+                NOW,
+                b"co-owner",
+            )
+            .expect("a live person");
+        let founder = |member_ref| InitialSharedMember {
+            member_ref,
+            role: Some(FederationGrantRole::Owner),
+        };
+        self.vault
+            .initialize_shared_vault(
+                &self.proof(self.owner),
+                SHARED,
+                None,
+                &[founder(self.owner), founder(co_owner)],
+                NOW,
+            )
+            .expect("a shared vault with two founding Owners");
+        let co_proof = self.proof(co_owner);
+        let invitation = self
+            .vault
+            .shared_invitations(&co_proof, SHARED)
+            .expect("the co-owner's invitations")
+            .into_iter()
+            .find(|open| open.role == FederationGrantRole::Owner)
+            .expect("the co-owner's founding invitation");
+        self.vault
+            .accept_shared_invitation(&co_proof, SHARED, &invitation.id)
+            .expect("the co-owner accepts");
     }
 
     /// The owner's shared preview of `verb` with `input`.
@@ -364,44 +425,7 @@ fn a_one_owner_purge_needs_the_confirm_and_erases_with_it() {
 #[test]
 fn a_two_owner_purge_starts_without_a_confirm_and_its_execute_needs_one() {
     let fx = fixture();
-    let co_owner = EntityId::now();
-    fx.vault
-        .put_entity(
-            &co_owner,
-            ENTITY_TYPE_PERSON,
-            TimeRange {
-                start: NOW,
-                end: NOW,
-            },
-            NOW,
-            b"co-owner",
-        )
-        .expect("a live person");
-    let founder = |member_ref| InitialSharedMember {
-        member_ref,
-        role: Some(FederationGrantRole::Owner),
-    };
-    fx.vault
-        .initialize_shared_vault(
-            &fx.proof(fx.owner),
-            SHARED,
-            None,
-            &[founder(fx.owner), founder(co_owner)],
-            NOW,
-        )
-        .expect("a shared vault with two founding Owners");
-    let co_proof = fx.proof(co_owner);
-    let invitation = fx
-        .vault
-        .shared_invitations(&co_proof, SHARED)
-        .expect("the co-owner's invitations")
-        .into_iter()
-        .find(|open| open.role == FederationGrantRole::Owner)
-        .expect("the co-owner's founding invitation");
-    fx.vault
-        .accept_shared_invitation(&co_proof, SHARED, &invitation.id)
-        .expect("the co-owner accepts");
-
+    fx.share_with_a_co_owner();
     let note = fx.put_note_with_history("a shared note with history");
     let started = fx
         .call("vault.notes.history_purge", json!({ "note_ref": note }))
@@ -421,6 +445,118 @@ fn a_two_owner_purge_starts_without_a_confirm_and_its_execute_needs_one() {
         json!({ "act_id": act }),
     );
     assert_confirm_refused(&error, "the execute without its confirm");
+}
+
+/// A purge confirm binds the NOTE and the frontier the purge runs through:
+/// after two edits the old confirm is refused and erases nothing, and a new
+/// preview's confirm erases through exactly the frontier it shows (review P1
+/// on #7861).
+/// Red at a2a2d0622a06: the purge preview binds no range there, so the old
+/// confirm lands and erases the history the edits added after it.
+#[test]
+fn a_purge_confirm_of_the_old_history_does_not_erase_the_new() {
+    let fx = fixture();
+    let verb = "vault.notes.history_purge";
+    let note = fx.put_note_with_history("a note the owner keeps editing");
+    let old = fx.preview(verb, json!({ "note_ref": note.clone() }));
+    fx.edit_note(&note, "a note the owner keeps editing, edited twice");
+    fx.edit_note(&note, "a note the owner keeps editing, edited three times");
+    let error = fx.refused(
+        verb,
+        json!({ "note_ref": note.clone(), "confirm": confirm_of(&old) }),
+    );
+    assert_confirm_refused(&error, "the confirm of the history before the edits");
+    assert_eq!(
+        fx.purge_receipts(&note),
+        0,
+        "the refused purge erases nothing"
+    );
+
+    let shown = fx.preview(verb, json!({ "note_ref": note.clone() }));
+    let takes = takes_of(&shown);
+    assert_eq!(
+        takes.get("history").and_then(Value::as_str),
+        Some(note.as_str()),
+        "the preview names the NOTE; got {takes}"
+    );
+    let through = takes
+        .get("through")
+        .cloned()
+        .expect("the preview names the frontier the purge runs through");
+    assert_ne!(
+        Some(&through),
+        takes_of(&old).get("through"),
+        "the edits move the frontier the preview shows"
+    );
+    let out = fx
+        .call(
+            verb,
+            json!({ "note_ref": note.clone(), "confirm": confirm_of(&shown) }),
+        )
+        .expect("the confirm of the history as it stands erases");
+    assert_eq!(
+        out.get("receipt")
+            .and_then(|receipt| receipt.get("applied")),
+        Some(&through),
+        "the purge runs through the frontier its preview shows; got {out}"
+    );
+    assert_eq!(
+        fx.purge_receipts(&note),
+        1,
+        "the confirmed purge erases once"
+    );
+}
+
+/// An execute confirm binds the history its act erases and the frontier it
+/// runs through: after an edit the old confirm is refused, and a new
+/// preview's confirm is admitted, so the act answers its open window.
+/// Red at a2a2d0622a06: the execute preview binds no range there, so the old
+/// confirm is admitted and the call answers the open window, not the confirm.
+#[test]
+fn an_execute_confirm_of_the_old_history_is_refused() {
+    let fx = fixture();
+    fx.share_with_a_co_owner();
+    let note = fx.put_note_with_history("a shared note the owner keeps editing");
+    let started = fx
+        .call(
+            "vault.notes.history_purge",
+            json!({ "note_ref": note.clone() }),
+        )
+        .expect("the two-Owner purge starts without a confirm");
+    let act = started
+        .get("act_id")
+        .and_then(Value::as_str)
+        .expect("the start names its act")
+        .to_owned();
+    let verb = "vault.notes.history_purge_execute";
+    let old = fx.preview(verb, json!({ "act_id": act.clone() }));
+    fx.edit_note(&note, "a shared note the owner keeps editing, edited twice");
+    let error = fx.refused(
+        verb,
+        json!({ "act_id": act.clone(), "confirm": confirm_of(&old) }),
+    );
+    assert_confirm_refused(&error, "the execute confirm of the history before the edit");
+
+    let shown = fx.preview(verb, json!({ "act_id": act.clone() }));
+    assert_eq!(
+        takes_of(&shown).get("history").and_then(Value::as_str),
+        Some(note.as_str()),
+        "the execute preview names the act's NOTE; got {shown}"
+    );
+    let error = fx.refused(
+        verb,
+        json!({ "act_id": act, "confirm": confirm_of(&shown) }),
+    );
+    assert_eq!(
+        error.code, "INVALID_STATE",
+        "the confirm of the history as it stands is admitted, and the act answers its open window; got {}: {}",
+        error.code, error.message
+    );
+    assert_eq!(
+        fx.purge_receipts(&note),
+        0,
+        "the waiting act erases nothing"
+    );
 }
 
 /// A hold confirm older than the ten-minute row still lands with one press:

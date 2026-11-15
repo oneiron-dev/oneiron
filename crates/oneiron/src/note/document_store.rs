@@ -103,6 +103,74 @@ pub(super) fn persist_recovered_document(
     persist_structural(vault, txn, doc, false)
 }
 
+/// The frontier a NOTE history purge runs through: `requested`, or, without
+/// it, the causal floor shared by every pin and the seal, or the head when
+/// nothing pins the note. A frontier that would pass a cited one is refused.
+/// The purge and the owner's confirm of it both read it here, so the confirm
+/// binds the range the purge erases.
+fn purge_frontier_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    note: EntityId,
+    doc: &NoteDocument,
+    requested: Option<&[u8]>,
+) -> MemoryResult<loro::Frontiers> {
+    let key_prefix = format!("{}:", note.to_hex()).into_bytes();
+    let mut pins = Vec::new();
+    for (_, pin) in NOTE_PIN_SOURCE.scan_from(&vault.store, txn, &key_prefix)? {
+        pin.validate()?;
+        pins.push(frontier(&pin.frontier)?);
+    }
+    // A seal pins its frontier too (ARCH-0032 #pins).
+    if let Some(seal) = super::lifecycle::note_seal_in_txn(&vault.store, txn, note)? {
+        pins.push(frontier(&seal.frontier)?);
+    }
+    let at_or_before = |a: &loro::Frontiers, b: &loro::Frontiers| {
+        matches!(
+            doc.doc.cmp_frontiers(a, b),
+            Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
+        )
+    };
+    let through = match requested {
+        Some(bytes) => frontier(bytes)?,
+        None if pins.is_empty() => doc.doc.oplog_frontiers(),
+        None => {
+            let oldest = pins
+                .iter()
+                .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)));
+            match oldest {
+                Some(oldest) => oldest.clone(),
+                None => {
+                    let mut allowed = doc.doc.oplog_vv();
+                    for pin in &pins {
+                        let vv = doc
+                            .doc
+                            .frontiers_to_vv(pin)
+                            .ok_or_else(|| invalid("NOTE pin frontier unavailable"))?;
+                        allowed = allowed.intersection(&vv);
+                    }
+                    doc.doc.vv_to_frontiers(&allowed)
+                }
+            }
+        }
+    };
+    if !pins.iter().all(|pin| at_or_before(&through, pin)) {
+        return Err(invalid("NOTE purge would pass a cited frontier").into());
+    }
+    Ok(through)
+}
+
+impl Vault {
+    /// The encoded frontier a history purge of NOTE `note` that names none
+    /// runs through now, as [`purge_frontier_in_txn`] reads it: what the
+    /// owner's confirm of that purge binds.
+    pub(crate) fn note_purge_frontier(&self, note: EntityId) -> MemoryResult<Vec<u8>> {
+        let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+        let doc = load(self, &txn, note)?;
+        Ok(purge_frontier_in_txn(self, &txn, note, &doc, None)?.encode())
+    }
+}
+
 /// `masks`: this host's own write, whose live text a mask on write may
 /// rewrite. A replica's or a recovered document's text keeps the plain door.
 fn persist_structural(
@@ -478,7 +546,7 @@ impl Memory<'_> {
     /// Discarding history is the ladder's erase (ARCH-0038): an Owner's own
     /// act, so writing the note is not enough.
     pub fn purge_note_history(&self, note: EntityId, through: &[u8]) -> MemoryResult<()> {
-        self.purge_note_history_with(None, note, Some(through), None)
+        self.purge_note_history_with(None, note, Some(through), None, None)
             .map(|_| ())
     }
 
@@ -495,28 +563,36 @@ impl Memory<'_> {
         note: EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through, None)
+        self.purge_note_history_with(Some(owner), note, through, None, None)
     }
 
     /// [`Self::purge_note_history_as`], claiming the completed `erase` act
-    /// `act` in its writer.
+    /// `act` in its writer. With `confirmed`, the frontier the owner's
+    /// confirm bound, an act that names no frontier of its own runs through
+    /// that one, never through a later head.
     pub(crate) fn purge_note_history_for_act(
         &self,
         owner: &AuthenticatedOwner,
         note: EntityId,
         through: Option<&[u8]>,
         act: &str,
+        confirmed: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
-        self.purge_note_history_with(Some(owner), note, through, Some(act))
+        self.purge_note_history_with(Some(owner), note, through, Some(act), confirmed)
     }
 
+    /// The purge. `requested` is the frontier the act or the caller names,
+    /// which an act must match; the purge runs through it, or through
+    /// `confirmed` when it names none.
     fn purge_note_history_with(
         &self,
         owner: Option<&AuthenticatedOwner>,
         note: EntityId,
         requested: Option<&[u8]>,
         act: Option<&str>,
+        confirmed: Option<&[u8]>,
     ) -> MemoryResult<PurgeReceipt> {
+        let bound = requested.or(confirmed);
         self.with_actor_content_write_txn(|content| {
             content.update_note(note, |txn, _lane| {
                 if let Some(owner) = owner
@@ -549,50 +625,7 @@ impl Memory<'_> {
                     &receipt_id,
                 )?;
                 let doc = load(self.vault(), txn, note)?;
-                let key_prefix = format!("{}:", note.to_hex()).into_bytes();
-                let mut pins = Vec::new();
-                for (_, pin) in NOTE_PIN_SOURCE.scan_from(&self.vault().store, txn, &key_prefix)? {
-                    pin.validate()?;
-                    pins.push(frontier(&pin.frontier)?);
-                }
-                // A seal pins its frontier too (ARCH-0032 #pins).
-                if let Some(seal) =
-                    super::lifecycle::note_seal_in_txn(&self.vault().store, txn, note)?
-                {
-                    pins.push(frontier(&seal.frontier)?);
-                }
-                let at_or_before = |a: &loro::Frontiers, b: &loro::Frontiers| {
-                    matches!(
-                        doc.doc.cmp_frontiers(a, b),
-                        Ok(Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal))
-                    )
-                };
-                let through = match requested {
-                    Some(bytes) => frontier(bytes)?,
-                    None if pins.is_empty() => doc.doc.oplog_frontiers(),
-                    None => {
-                        let oldest = pins
-                            .iter()
-                            .find(|oldest| pins.iter().all(|pin| at_or_before(*oldest, pin)));
-                        match oldest {
-                            Some(oldest) => oldest.clone(),
-                            None => {
-                                let mut allowed = doc.doc.oplog_vv();
-                                for pin in &pins {
-                                    let vv = doc
-                                        .doc
-                                        .frontiers_to_vv(pin)
-                                        .ok_or_else(|| invalid("NOTE pin frontier unavailable"))?;
-                                    allowed = allowed.intersection(&vv);
-                                }
-                                doc.doc.vv_to_frontiers(&allowed)
-                            }
-                        }
-                    }
-                };
-                if !pins.iter().all(|pin| at_or_before(&through, pin)) {
-                    return Err(invalid("NOTE purge would pass a cited frontier").into());
-                }
+                let through = purge_frontier_in_txn(self.vault(), txn, note, &doc, bound)?;
                 let live_text_hash = *blake3::hash(doc.view()?.markdown.as_bytes()).as_bytes();
                 let snapshot = doc
                     .doc

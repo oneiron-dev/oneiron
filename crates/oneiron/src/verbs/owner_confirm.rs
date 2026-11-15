@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::legal_hold::LegalHoldLiftAndEraseRequest;
-use super::note_history::{NoteHistoryPurgeExecuteRequest, NoteHistoryPurgeRequest};
+use super::note_history::{self, NoteHistoryPurgeExecuteRequest, NoteHistoryPurgeRequest};
 use super::outbound_call_erase::OutboundCallRequestEraseRequest;
 use super::record_erase::{RecordEraseConfirmRequest, record_erase_view};
 use super::shared::SharedDeleteProposeRequest;
@@ -321,6 +321,13 @@ fn retain(
     Ok(bytes_to_hex_lower(&confirm))
 }
 
+/// A history erase's range as the preview shows it and the gated call's
+/// [`admit`] encodes it.
+fn encode_range(range: &crate::entity_doc::TextHistoryEraseRange) -> MemoryResult<Value> {
+    serde_json::to_value(range)
+        .map_err(|_| MemoryError::bad_request("the history erase range does not encode"))
+}
+
 /// `input` as the gated verb's typed input, beside itself re-encoded without
 /// `confirm`, as [`asked`] hashes it.
 fn confirm_free_input<T>(input: Value) -> MemoryResult<(T, Value)>
@@ -396,12 +403,16 @@ pub fn preview_owner_confirm(
             (bare, shown, true)
         }
         "vault.notes.history_purge" => {
-            let (_, bare) = confirm_free_input::<NoteHistoryPurgeRequest>(request.input)?;
-            (bare, Value::Null, false)
+            let (typed, bare) = confirm_free_input::<NoteHistoryPurgeRequest>(request.input)?;
+            let note = note_history::note_id(vault, &typed.note_ref)?;
+            let range = vault.note_history_erase_range(&note)?;
+            (bare, encode_range(&range)?, true)
         }
         "vault.notes.history_purge_execute" => {
-            let (_, bare) = confirm_free_input::<NoteHistoryPurgeExecuteRequest>(request.input)?;
-            (bare, Value::Null, false)
+            let (typed, bare) =
+                confirm_free_input::<NoteHistoryPurgeExecuteRequest>(request.input)?;
+            let range = vault.text_history_erase_act_range(caller, &typed.act_id)?;
+            (bare, encode_range(&range)?, true)
         }
         "vault.outbound_calls.request.erase" => {
             let (_, bare) = confirm_free_input::<OutboundCallRequestEraseRequest>(request.input)?;
