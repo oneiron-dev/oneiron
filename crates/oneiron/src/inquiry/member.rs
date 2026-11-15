@@ -33,6 +33,7 @@
 //! keep, bounded by the allowed keep (FIX INQUIRY-STANDING-PER-KEEP); no
 //! separate standing row is read here.
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 use crate::Vault;
@@ -76,9 +77,6 @@ const PENDING: SideTable<(EntityId, EntityId), EntityId, Raw> =
 /// The scope-map key of a claim's sensitivity stamp (oneiron-store's
 /// crate-private `CLAIM_SCOPE_SENSITIVITY_KEY`).
 const SENSITIVITY_STAMP_KEY: &str = "sensitivity";
-
-/// The tag the answer effect's digest starts with.
-const EFFECT_DIGEST_TAG: &[u8] = b"oneiron.inquiry.answer.v1";
 
 /// How many ladder transitions one repeat of a pending inquiry makes at
 /// most. The ladder has four rungs; each transition climbs one or ends it.
@@ -558,13 +556,19 @@ fn saved_decision_ref(grant: EntityId, keep: InquiryKeep) -> String {
 
 /// The digest of an inquiry's answer effect: statements of this vault
 /// leaving over `grant` for exactly `inquiry`. An answer over any other
-/// settles nothing.
+/// settles nothing. The pending check-in and its receipt store it and an
+/// answer compares it, so it keeps its bytes (K, PLAN-UC-04 stage 6.2).
 fn effect_digest(grant: EntityId, inquiry: &Inquiry) -> Result<[u8; 32]> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(EFFECT_DIGEST_TAG);
-    hasher.update(grant.as_bytes());
-    hasher.update(&inquiry.encode_wire()?);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::inquiry::ANSWER_EFFECT)
+        .raw(grant.as_bytes())
+        .raw(&inquiry.encode_wire()?)
+        .finish())
+}
+
+/// The digest of an inquiry's answer effect over `grant`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn effect_digest_for_test(grant: EntityId, inquiry: &Inquiry) -> Result<[u8; 32]> {
+    effect_digest(grant, inquiry)
 }
 
 /// A repeat of the logged `entry`: a pending one first makes the ladder's
