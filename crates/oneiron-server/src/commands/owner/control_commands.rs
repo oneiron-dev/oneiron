@@ -337,6 +337,7 @@ pub fn legal_holds(command: crate::cli::LegalHoldsCommand) -> anyhow::Result<()>
                 records,
                 claim_free_partition,
                 confirm: None,
+                check_in_ref: None,
             };
             let memory = vault.memory(actor, oneiron::EdgeActorClass::Human);
             let preview = sdk::preview_owner_confirm(

@@ -197,8 +197,9 @@ async fn log(auth: CoreAuth, State(server): State<Arc<SyncServer>>) -> OwnerRepl
     Ok(Json(events))
 }
 
-/// What a shown-state read names: the records, each as 32 hex, and
-/// whether the confirm also releases the claim-free partition.
+/// What a shown-state read names: the records, each as 32 hex, whether
+/// the confirm also releases the claim-free partition, and the asker's
+/// approved check-in the confirm applies, if any (the confirm binds it).
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ShownStateQuery {
@@ -207,6 +208,9 @@ struct ShownStateQuery {
     records: String,
     #[serde(default)]
     claim_free_partition: bool,
+    /// The `check_in_ref` the confirm call passes, 32 hex.
+    #[serde(default)]
+    check_in_ref: Option<String>,
 }
 
 /// `GET /v1/owner/legal-holds/lift-and-erase/shown-state`: the shared
@@ -235,6 +239,7 @@ async fn shown_state(
             records,
             claim_free_partition: query.claim_free_partition,
             confirm: None,
+            check_in_ref: query.check_in_ref,
         })
         .map_err(|_| {
             OwnerError::Invalid("the lift-and-erase preview input does not encode".to_owned())
@@ -274,7 +279,9 @@ async fn confirm_copy(
 /// carries, so a confirm of a state that no longer stands is refused, and
 /// then checks what the confirm shows again inside its own txn: a state that
 /// changed in between changes nothing and answers with the current one,
-/// which this route never prepares itself (FIX 1462).
+/// which this route never prepares itself (FIX 1462). A `check_in_ref`
+/// applies an asker's approved check-in for this confirm (2k2); the preview
+/// names the same one.
 async fn lift_and_erase(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,

@@ -1,6 +1,8 @@
 //! Typed owner actions over NOTE history. No grant or caller-supplied purge
 //! floor reaches these doors; the engine chooses the retained pin boundary.
 
+use serde::{Deserialize, Serialize};
+
 use super::owner_confirm;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_doc::{PurgeReceipt, TextHistoryErase};
@@ -12,6 +14,14 @@ pub use oneiron_verb_wire::verbs::note_history::{
     NoteHistoryPurgeExecuteRequest, NoteHistoryPurgeOutcome, NoteHistoryPurgeReceipt,
     NoteHistoryPurgeRequest,
 };
+
+/// `vault.notes.history_purge_receipts`'s input: the NOTE whose purge
+/// receipts the owner reads.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NoteHistoryPurgeReceiptsRequest {
+    pub note_ref: String,
+}
 
 impl From<PurgeReceipt> for NoteHistoryPurgeReceipt {
     fn from(receipt: PurgeReceipt) -> Self {
@@ -40,7 +50,8 @@ fn note_id(vault: &Vault, note_ref: &str) -> MemoryResult<EntityId> {
 /// Where the purge erases at once (no veto vault, so one Owner) it takes
 /// the shared confirm; a purge that opens a veto window is not yet one-way,
 /// so its start takes none and its `_execute` keeps erase and its confirm
-/// (PURGE-START, Engine 11:34).
+/// (PURGE-START, Engine 11:34). With `input.check_in_ref` the Owner applies
+/// an asker's approved check-in for this erase (2k2).
 pub fn purge_note_history_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
@@ -48,17 +59,21 @@ pub fn purge_note_history_as_owner(
 ) -> MemoryResult<NoteHistoryPurgeOutcome> {
     owner.revalidate(vault)?;
     let note = note_id(vault, &input.note_ref)?;
-    let outcome = vault.start_text_history_erase_with(owner, &note, None, || {
-        let ask = owner_confirm::asked("vault.notes.history_purge", &input)?;
-        owner_confirm::admit(vault, owner, ask, &())
-    })?;
-    Ok(match outcome {
+    let check_in_ref = super::shared::check_in_ref(input.check_in_ref.as_deref())?;
+    let (erase, decision) =
+        vault.start_text_history_erase_with_check_in(owner, &note, None, check_in_ref, || {
+            let ask = owner_confirm::asked("vault.notes.history_purge", &input)?;
+            owner_confirm::admit(vault, owner, ask, &())
+        })?;
+    Ok(match erase {
         TextHistoryErase::Erased(receipt) => NoteHistoryPurgeOutcome::Erased {
             receipt: receipt.into(),
+            check_in: Some(decision),
         },
         TextHistoryErase::Waiting(act) => NoteHistoryPurgeOutcome::Waiting {
             note_ref: note.to_hex(),
             act_id: act.id,
+            check_in: Some(decision),
         },
     })
 }
@@ -81,7 +96,7 @@ pub fn execute_note_history_purge_as_owner(
 pub fn note_history_purge_receipts_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
-    input: NoteHistoryPurgeRequest,
+    input: NoteHistoryPurgeReceiptsRequest,
 ) -> MemoryResult<Vec<NoteHistoryPurgeReceipt>> {
     owner.revalidate(vault)?;
     let note = note_id(vault, &input.note_ref)?;
