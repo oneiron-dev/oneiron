@@ -54,3 +54,65 @@ pub(crate) fn archive_revision_tables() -> [crate::batch::export::LentSideTable;
         &FRONTIER,
     ]
 }
+
+/// Puts an integrity row for the checkpoint-pins door: `key`'s revision of
+/// `session_id` with `artifact_hash`'s bytes and `revision_fold`'s fold, a
+/// root with no parent, reverted-to or claim rows.
+#[cfg(oneiron_test_support)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per integrity field the door sets"
+)]
+pub(crate) fn put_pins_code_revision_integrity_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    key: &EntityId,
+    revision_id: &EntityId,
+    session_id: &EntityId,
+    artifact_hash: &[u8; 32],
+    revision_fold: &[u8; 32],
+    finalized_at: u64,
+) -> crate::error::Result<()> {
+    INTEGRITY.put(
+        store,
+        txn,
+        key,
+        &CodeRevisionIntegrityRecord {
+            revision_id: *revision_id,
+            session_id: *session_id,
+            parent_revision_id: None,
+            reverted_to_revision_id: None,
+            provenance_claim_id: None,
+            artifact_hash: *artifact_hash,
+            parent_fold: None,
+            reverted_to_fold: None,
+            revision_fold: *revision_fold,
+            finalized_at,
+        },
+    )
+}
+
+/// Puts a session-frontier row for the checkpoint-pins door: `key`'s
+/// session standing at `revision_id` with `revision_fold`'s fold.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_code_revision_frontier_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    key: &EntityId,
+    session_id: &EntityId,
+    revision_id: &EntityId,
+    revision_fold: &[u8; 32],
+    finalized_at: u64,
+) -> crate::error::Result<()> {
+    FRONTIER.put(
+        store,
+        txn,
+        key,
+        &CodeRevisionFrontierRecord {
+            session_id: *session_id,
+            revision_id: *revision_id,
+            revision_fold: *revision_fold,
+            finalized_at,
+        },
+    )
+}

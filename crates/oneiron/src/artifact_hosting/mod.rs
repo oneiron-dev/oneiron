@@ -437,3 +437,74 @@ pub(crate) mod tables;
 #[cfg(any())]
 #[cfg(test)]
 mod tests;
+
+/// Puts a channel pointer for the checkpoint-pins door: `channel`'s pointer
+/// of `artifact` at `export`, with no outbox mark.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_artifact_pointer_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    channel: ArtifactPointerChannel,
+    artifact: &str,
+    export: ArtifactExportRef,
+    stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
+) -> Result<()> {
+    ARTIFACT_POINTERS.put(
+        store,
+        txn,
+        &ArtifactPointerRowKey {
+            channel,
+            artifact: artifact.to_owned(),
+        },
+        &ArtifactPointerRow {
+            export,
+            stale_taint_override,
+            serve_tier,
+        },
+    )
+}
+
+/// Puts a publish admission for the checkpoint-pins door: `publish_id`'s
+/// receipt of `artifact`'s `channel` publish of `export` by `actor` under
+/// `gate_id`, as the publish writer files it.
+#[cfg(oneiron_test_support)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one argument per admission field, as the publish writer files them"
+)]
+pub(crate) fn put_pins_artifact_admission_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    publish_id: &EntityId,
+    artifact: &str,
+    channel: ArtifactPointerChannel,
+    export: ArtifactExportRef,
+    export_entity_id: &EntityId,
+    actor: &WriteActor,
+    gate_id: &GateDecisionId,
+    occurred_at: u64,
+    stale_taint_override: bool,
+    serve_tier: ArtifactServeTier,
+) -> Result<()> {
+    ARTIFACT_ADMISSIONS.put(
+        store,
+        txn,
+        publish_id,
+        &ArtifactPublishAdmission {
+            artifact: artifact.to_owned(),
+            channel: channel.key_byte(),
+            export,
+            export_entity_id: *export_entity_id,
+            actor: actor.entity_ref(),
+            actor_class: actor.actor_class().gate_actor_class().to_owned(),
+            gate_id: *gate_id,
+            occurred_at,
+            stale_taint_override,
+            serve_tier,
+        },
+    )
+}
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::serving_blob::put_pins_serving_blob_in_txn;

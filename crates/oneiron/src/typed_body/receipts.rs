@@ -232,3 +232,39 @@ pub(crate) fn erase_receipt_actor_in_txn(
     crate::batch::queue_committed_rows(vault, wtxn, bodies);
     Ok(())
 }
+
+/// A live commit receipt for the checkpoint-pins door: `actor`'s receipt of
+/// `key`'s commit under `made_by`, as [`record_in_txn`] writes it but with
+/// no reuse check and no sync queueing.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_receipt_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    key: &(EntityId, u64),
+    actor: &WriteActor,
+    made_by: &MadeBy,
+) -> Result<()> {
+    RECEIPTS.put(
+        store,
+        txn,
+        key,
+        &StoredReceipt::Live {
+            actor: actor.entity_ref(),
+            class: crate::write_envelope::actor_tokens::actor_class_token(actor.actor_class())
+                .to_owned(),
+            made_by: made_by.clone(),
+        },
+    )
+}
+
+/// An erased commit receipt for the checkpoint-pins door: the commit time
+/// alone, as the erase leaves it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_erased_receipt_in_txn(
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    key: &(EntityId, u64),
+    at: u64,
+) -> Result<()> {
+    RECEIPTS.put(store, txn, key, &StoredReceipt::Erased { at })
+}

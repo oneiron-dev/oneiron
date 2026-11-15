@@ -569,3 +569,31 @@ pub(crate) fn resolve_live_edit_holder_ask_in_txn(
     mint_live_edit_grant_in_txn(vault, txn, owner, &route.artifact, &route.editor)?;
     Ok(())
 }
+
+/// Puts a live-edit route for the checkpoint-pins door: `group`'s ask of
+/// `owners` whether `editor` may edit `artifact` at `revision`, the owners
+/// sorted as the admission sorts them.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_live_edit_route_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut heed::RwTxn<'_>,
+    group: &EntityId,
+    artifact: &EntityId,
+    editor: &EntityId,
+    owners: &[EntityId],
+    revision: u64,
+) -> crate::error::Result<()> {
+    let mut owners = owners.to_vec();
+    owners.sort();
+    LIVE_EDIT_GROUPS.put(
+        store,
+        txn,
+        group,
+        &LiveEditRoute {
+            artifact: *artifact,
+            editor: *editor,
+            owners,
+            revision,
+        },
+    )
+}

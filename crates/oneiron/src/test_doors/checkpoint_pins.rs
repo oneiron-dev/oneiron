@@ -1,6 +1,6 @@
-//! The nine checkpoint getters' pins (UC-10 PR 3): one fixed seed and one
-//! printed table over the getters as they are, run again after they move
-//! onto the shared descriptor. Compiled only under `--cfg
+//! The fifteen checkpoint getters' pins (UC-10 PR 3 and PR 4): one fixed
+//! seed and one printed table over the getters as they are, run again after
+//! they move onto the shared descriptor. Compiled only under `--cfg
 //! oneiron_test_support`; never API.
 //!
 //! [`seed`] writes one fixed row per placement branch of each getter into a
@@ -12,6 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::RwTxn;
+use oneiron_docedit::live::{OracleReceipt, StepOutcome};
 use sha2::{Digest, Sha256};
 
 use crate::Vault;
@@ -19,17 +20,42 @@ use crate::agent_dispatch::{
     CheckpointRow, test_checkpoint_body_owner, test_checkpoint_key, test_checkpoint_row_bound,
     test_checkpoint_row_unbound,
 };
+use crate::artifact_hosting::{
+    ArtifactExportRef, ArtifactPointerChannel, ArtifactServeTier,
+    put_pins_artifact_admission_in_txn, put_pins_artifact_pointer_in_txn,
+    put_pins_serving_blob_in_txn,
+};
 use crate::attempt_queue::AttemptId;
+use crate::blob_artifact::{
+    BlobArtifactVersion, BlobVersionProvenance, erase::pins_erased_producer,
+};
+use crate::code_document::{
+    CodeDocumentFrontier, CodeFileEdit, CodeOpProvenance, PinsCodeDocumentReceipt,
+    put_pins_code_document_frontier_in_txn, put_pins_code_document_head_in_txn,
+    put_pins_code_document_ingress_in_txn, put_pins_code_document_path_in_txn,
+};
+use crate::code_revision::{
+    CodeCommitMetadata, CodeRevision, CodeRevisionFork, CodeRevisionProposal,
+    put_pins_code_revision_frontier_in_txn, put_pins_code_revision_integrity_in_txn,
+};
 use crate::codebase::{
     put_pins_fork_index_row_in_txn, put_pins_project_index_row_in_txn,
     put_pins_repo_index_row_in_txn, put_pins_scope_index_row_in_txn,
 };
+use crate::edge::EdgeActorClass;
 use crate::embed::{
     EmbeddingDevice, EmbeddingProvenance, put_pins_media_refusal_in_txn,
     put_pins_media_vector_in_txn,
 };
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
+use crate::office_body::{
+    AnsweringAuthority, BundleVerdict, ForkState, MemberAnswer, MemberVerdict,
+    OfficeBodyExportAuthor, OfficeBodyExportRecord, OfficeBodyFork, OfficeBodyKind,
+    OfficeBodyProposal, ProposalHeader, ProposalMember, ProposalSettlement, pins_version_key,
+    put_pins_author_token_ref_in_txn, put_pins_export_token_ref_in_txn,
+    put_pins_live_edit_route_in_txn, put_pins_office_source_in_txn, put_pins_oracle_in_txn,
+};
 use crate::outbound_intent_ledger::{
     BudgetChargeMarker, BudgetClass, INTENT_LEDGER_VALUE_KEYS, IntentLedgerError,
     IntentLedgerRecord, OutboundCallRequest,
@@ -37,14 +63,26 @@ use crate::outbound_intent_ledger::{
 use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::recovery::checkpoint::{getter_bytes_for_owner, getter_capture, getter_restore_in_txn};
 use crate::secret_snapshot::SnapshotCustodyReport;
-use crate::side_table::{self, Named, Raw, SideCodec, SideKey, SideTable};
+use crate::side_table::{
+    self, LegacyCompact, LegacyJson, Named, Raw, SideCodec, SideKey, SideTable,
+};
 use crate::source_audience::HeldBack;
+use crate::store::GateDecisionId;
 use crate::store::Store;
 use crate::store::checkpoint_payload::rows::{
     Captured, Getter, OpenedOwnerRows, OwnerRows, Restored,
 };
 use crate::store::code_snapshot::{CodebaseFileEntry, CodebaseSnapshot, RepoRef};
 use crate::store::embedding::InputKind;
+use crate::store::row_birth::RowBirth;
+use crate::typed_body::{
+    BodyActor, TypedBodyFork, TypedBodyHead, TypedForkState, put_pins_erased_receipt_in_txn,
+    put_pins_receipt_in_txn,
+};
+use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::{
+    MadeBy, MadeByClass, MadeByInput, MadeByInputRole, MadeByProcess, MadeByTrigger,
+};
 
 /// The text index's source text, as `store/text_index` declares it.
 const TEXT_SOURCE: SideTable<EntityId, Vec<(String, String)>, Named> =
@@ -168,6 +206,144 @@ const RECORDS: SideTable<EntityId, EntityId, Named> =
 /// Source-audience holds, as `source_audience` declares them.
 const HELD: SideTable<EntityId, HeldBack, Named> =
     SideTable::new(&side_table::SOURCE_AUDIENCE_HELD);
+
+/// Typed-body heads, as `typed_body` declares them.
+const TB_HEADS: SideTable<EntityId, TypedBodyHead, Named> =
+    SideTable::new(&side_table::TYPED_BODY_HEAD);
+
+/// Typed-body documents, as `typed_body` declares them.
+const TB_DOCS: SideTable<EntityId, Vec<u8>, Raw> = SideTable::new(&side_table::TYPED_BODY_DOC);
+
+/// Typed-body forks, as `typed_body` declares them.
+const TB_FORKS: SideTable<(EntityId, EntityId), TypedBodyFork, Named> =
+    SideTable::new(&side_table::TYPED_BODY_FORK);
+
+/// Open forks' documents, as `typed_body` declares them.
+const TB_FORK_DOCS: SideTable<(EntityId, EntityId), Vec<u8>, Raw> =
+    SideTable::new(&side_table::TYPED_BODY_FORK_DOC);
+
+/// Commit receipts, as `typed_body/receipts` declares them, for the raw dump
+/// only: the row type stays private to that module.
+const TB_RECEIPTS: SideTable<(EntityId, u64), Vec<u8>, Named> =
+    SideTable::new(&side_table::TYPED_BODY_RECEIPT);
+
+/// Row births, as `store/birth_record` declares them.
+const ROW_BIRTHS: SideTable<EntityId, RowBirth, Named> =
+    SideTable::new(&side_table::PROVENANCE_ROW_BIRTH);
+
+/// The born-from index, as `store/birth_record` declares it.
+const BIRTH_BY_TRIGGER: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::PROVENANCE_BIRTH_BY_TRIGGER);
+
+/// Code-document heads, as `code_document/storage` declares them, for the
+/// raw dump only: the row type stays private to that module.
+const DOC_HEAD: SideTable<[u8; 32], Vec<u8>, Named> =
+    SideTable::new(&side_table::CODE_DOCUMENT_HEAD);
+
+/// Tested frontiers, as `code_document/storage` declares them, for the raw
+/// dump only.
+const DOC_FRONTIER: SideTable<([u8; 32], [u8; 32]), Vec<u8>, Named> =
+    SideTable::new(&side_table::CODE_DOCUMENT_FRONTIER);
+
+/// Ingress receipts, as `code_document/storage` declares them, for the raw
+/// dump only.
+const DOC_INGRESS: SideTable<EntityId, Vec<u8>, Named> =
+    SideTable::new(&side_table::CODE_DOCUMENT_INGRESS);
+
+/// Path rows, as `code_document/storage` declares them.
+const DOC_PATH: SideTable<[u8; 32], [u8; 32], Raw> =
+    SideTable::new(&side_table::CODE_DOCUMENT_PATH);
+
+/// Finalized revisions, as `code_revision/keys` declares them.
+const REV_RECORDS: SideTable<EntityId, CodeRevision, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_RECORD);
+
+/// Integrity folds, as `code_revision/keys` declares them, for the raw dump
+/// only.
+const REV_INTEGRITY: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_INTEGRITY);
+
+/// Session frontiers, as `code_revision/keys` declares them, for the raw
+/// dump only.
+const REV_FRONTIER: SideTable<EntityId, Vec<u8>, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_FRONTIER);
+
+/// Forks, as `code_revision/keys` declares them.
+const REV_FORKS: SideTable<EntityId, CodeRevisionFork, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_FORK);
+
+/// The session, parent and fork-parent indexes, as `code_revision/keys`
+/// declares them.
+const REV_SESSION_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CODE_REVISION_SESSION_INDEX);
+const REV_PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CODE_REVISION_PARENT_INDEX);
+const REV_FORK_PARENT_INDEX: SideTable<(EntityId, EntityId), (), Raw> =
+    SideTable::new(&side_table::CODE_REVISION_FORK_PARENT_INDEX);
+
+/// Stranded proposals, as `code_revision/proposals` declares them.
+const REV_PROPOSALS: SideTable<EntityId, CodeRevisionProposal, Raw> =
+    SideTable::new(&side_table::CODE_REVISION_PROPOSAL);
+
+/// Promotion receipts, as `code_revision` declares them.
+const REV_PROMOTIONS: SideTable<EntityId, Vec<String>, LegacyCompact> =
+    SideTable::new(&side_table::CODE_REVISION_PROMOTION);
+
+/// Office sources, as `office_body/records` declares them, for the raw dump
+/// only.
+const OFF_SOURCES: SideTable<EntityId, Vec<u8>, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_HEAD);
+
+/// Deck forks, as `office_body/records` declares them.
+const OFF_FORKS: SideTable<(EntityId, EntityId), OfficeBodyFork, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_FORK);
+
+/// Export records, as `office_body/records` declares them.
+const OFF_EXPORTS: SideTable<Vec<u8>, OfficeBodyExportRecord, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_EXPORT);
+
+/// Revision-author tokens, as `office_body/records` declares them.
+const OFF_EXPORT_AUTHORS: SideTable<(EntityId, u64, u64), OfficeBodyExportAuthor, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_EXPORT_AUTHOR);
+
+/// Proposals and fork memberships, as `office_body/consent` declares them.
+const OFF_PROPOSALS: SideTable<EntityId, OfficeBodyProposal, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_PROPOSAL);
+const OFF_MEMBERSHIP: SideTable<(EntityId, EntityId), EntityId, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_FORK_PROPOSAL);
+
+/// The deck oracle and the live-edit routes, as `office_body` declares
+/// them, for the raw dump only: neither restores, so both stay empty.
+const OFF_ORACLE: SideTable<String, Vec<u8>, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_ORACLE);
+const OFF_LIVE_EDIT: SideTable<EntityId, Vec<u8>, Named> =
+    SideTable::new(&side_table::OFFICE_LIVE_EDIT_ASK_GROUP);
+
+/// The author-token lookup, as `office_body/author_token` declares it, for
+/// the raw dump only.
+const OFF_TOKEN_INDEX: SideTable<String, Vec<u8>, Named> =
+    SideTable::new(&side_table::OFFICE_BODY_EXPORT_TOKEN_INDEX);
+
+/// Blob heads and versions, as `blob_artifact/versions` declares them.
+const BLOB_HEAD: SideTable<EntityId, BlobArtifactVersion, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_HEAD);
+const BLOB_VERSIONS: SideTable<(EntityId, u64), BlobArtifactVersion, Raw> =
+    SideTable::new(&side_table::BLOB_ARTIFACT_VERSION);
+
+/// Channel pointers, as `artifact_hosting` declares them, for the raw dump
+/// only.
+const BLOB_POINTERS: SideTable<Vec<u8>, Vec<u8>, Raw> =
+    SideTable::new(&side_table::ARTIFACT_POINTER);
+
+/// Publish admissions, as `artifact_hosting` declares them, for the raw
+/// dump only.
+const BLOB_ADMISSIONS: SideTable<EntityId, Vec<u8>, LegacyJson> =
+    SideTable::new(&side_table::ARTIFACT_PUBLISH_ADMISSION);
+
+/// Serving descriptors, as `artifact_hosting/serving_blob` declares them,
+/// for the raw dump only.
+const BLOB_SERVING: SideTable<(EntityId, u64), Vec<u8>, Named> =
+    SideTable::new(&side_table::ARTIFACT_SERVING_BLOB);
 
 /// One fixed entity id.
 fn id(byte: u8) -> Result<EntityId> {
@@ -473,7 +649,627 @@ fn seed_audience(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Writes one fixed row per placement branch of each of the nine getters.
+/// A head and its document, an open fork with its document, a merged fork,
+/// and a live and an erased receipt.
+fn seed_typed_body(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_007;
+    let entity = id(0x51)?;
+    let opener = id(0x52)?;
+    let settler = id(0x53)?;
+    let fork = id(0x54)?;
+    let merged = id(0x55)?;
+    TB_HEADS.put(
+        vault,
+        txn,
+        &entity,
+        &TypedBodyHead {
+            entity,
+            schema: "pins.typed.v1".to_owned(),
+            birth: vec![0xb0; 8],
+            frontier: vec![0xb1; 8],
+            commits: 2,
+            landed_at: Some(at),
+        },
+    )?;
+    TB_DOCS.put(vault, txn, &entity, &vec![0xd0; 32])?;
+    TB_FORKS.put(
+        vault,
+        txn,
+        &(entity, fork),
+        &TypedBodyFork {
+            entity,
+            fork,
+            opener: BodyActor::Actor(opener),
+            base: vec![0xb1; 8],
+            commits: 1,
+            opened_at: at,
+            state: TypedForkState::Open,
+            version: vec![0x60; 4],
+        },
+    )?;
+    TB_FORK_DOCS.put(vault, txn, &(entity, fork), &vec![0xd1; 32])?;
+    TB_FORKS.put(
+        vault,
+        txn,
+        &(entity, merged),
+        &TypedBodyFork {
+            entity,
+            fork: merged,
+            opener: BodyActor::Actor(opener),
+            base: vec![0xb1; 8],
+            commits: 1,
+            opened_at: at,
+            state: TypedForkState::Merged {
+                by: BodyActor::Actor(settler),
+                at,
+                head: vec![0xb1; 8],
+            },
+            version: vec![0x61; 4],
+        },
+    )?;
+    let made_by = MadeBy {
+        inputs: Vec::new(),
+        process: MadeByProcess {
+            actor: opener,
+            class: MadeByClass::Stated,
+            identity: "pins".to_owned(),
+            version: "1".to_owned(),
+            params_hash: sha256_hex(b"pins-typed-body"),
+        },
+        at,
+        trigger: None,
+    };
+    put_pins_receipt_in_txn(
+        &vault.store,
+        txn,
+        &(entity, 7),
+        &WriteActor::new(opener, EdgeActorClass::Human),
+        &made_by,
+    )?;
+    put_pins_erased_receipt_in_txn(&vault.store, txn, &(entity, 8), at)?;
+    Ok(())
+}
+
+/// A birth naming its actor, and the born-from index row of its trigger.
+fn seed_provenance_birth(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_008;
+    let born = id(0x61)?;
+    let actor = id(0x62)?;
+    let trigger = id(0x63)?;
+    let prompt = id(0x64)?;
+    let read: &[u8] = b"pins-birth-read";
+    ROW_BIRTHS.put(
+        vault,
+        txn,
+        &born,
+        &RowBirth {
+            made_by: MadeBy {
+                inputs: vec![MadeByInput {
+                    row: prompt,
+                    role: MadeByInputRole::Prompt,
+                }],
+                process: MadeByProcess {
+                    actor,
+                    class: MadeByClass::Concluded,
+                    identity: "pins.birth".to_owned(),
+                    version: "1".to_owned(),
+                    params_hash: sha256_hex(b"pins-birth"),
+                },
+                at,
+                trigger: Some(MadeByTrigger::Task(trigger)),
+            },
+            content_hash: RowBirth::content_hash_of(&[read]),
+            withheld: Vec::new(),
+            room_evidence: None,
+        },
+    )?;
+    BIRTH_BY_TRIGGER.put(vault, txn, &(trigger, born), &())?;
+    Ok(())
+}
+
+/// A head with a named and a nameless receipt, a frontier, a named and a
+/// nameless ingress receipt, a path row, and a head whose ids disagree.
+fn seed_code_document(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let document = [0xd0; 32];
+    let frontier = CodeDocumentFrontier {
+        document_id: document,
+        repo: "pins-repo".to_owned(),
+        path: "pins/main.rs".to_owned(),
+        version: vec![(7, 3)],
+        op_fold: [0xf0; 32],
+        text_hash: [0xb1; 32],
+        file_presence: None,
+    };
+    let actor = id(0x71)?;
+    let operation = id(0x72)?;
+    let session = id(0x74)?;
+    let receipt =
+        |operation: EntityId, actor: Option<EntityId>, sequence: u64| PinsCodeDocumentReceipt {
+            operation: operation.to_hex(),
+            session: session.to_hex(),
+            actor,
+            actor_class: EdgeActorClass::Human as u8,
+            provenance: CodeOpProvenance::default(),
+            sequence,
+            peer_id: 7,
+            counter_start: 0,
+            counter_end: 3,
+            edit: CodeFileEdit::between("pins/main.rs", "a", "b"),
+            metadata_edit: None,
+            before: frontier.clone(),
+            after: frontier.clone(),
+        };
+    put_pins_code_document_head_in_txn(
+        &vault.store,
+        txn,
+        &document,
+        &[0xbb; 32],
+        &frontier,
+        b"pins-snap",
+        &[
+            receipt(operation, Some(actor), 1),
+            receipt(id(0x73)?, None, 2),
+        ],
+    )?;
+    put_pins_code_document_frontier_in_txn(
+        &vault.store,
+        txn,
+        &(document, [0xf0; 32]),
+        &frontier,
+        b"pins-snap",
+    )?;
+    put_pins_code_document_ingress_in_txn(
+        &vault.store,
+        txn,
+        &operation,
+        &receipt(operation, Some(actor), 1),
+    )?;
+    put_pins_code_document_ingress_in_txn(
+        &vault.store,
+        txn,
+        &id(0x75)?,
+        &receipt(id(0x75)?, None, 3),
+    )?;
+    put_pins_code_document_path_in_txn(&vault.store, txn, "pins-repo", "pins/main.rs", &document)?;
+    put_pins_code_document_head_in_txn(
+        &vault.store,
+        txn,
+        &[0xd1; 32],
+        &[0xbb; 32],
+        &frontier,
+        b"pins-snap",
+        &[],
+    )?;
+    Ok(())
+}
+
+/// A named and a nameless record, a record filed under another key, an
+/// integrity, frontier, fork, session and parent row, a fork-parent row, a
+/// stranded proposal, and a promotion.
+fn seed_code_revision(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_009;
+    let session = id(0x81)?;
+    let root = id(0x82)?;
+    let child = id(0x83)?;
+    let fork_session = id(0x84)?;
+    let stray = id(0x85)?;
+    let wrong = id(0x86)?;
+    let author = id(0x8a)?;
+    REV_RECORDS.put(
+        vault,
+        txn,
+        &root,
+        &CodeRevision::commit(root, session, at)
+            .with_commit_metadata(CodeCommitMetadata::new(author, "pins root")),
+    )?;
+    REV_RECORDS.put(
+        vault,
+        txn,
+        &child,
+        &CodeRevision::commit_child(child, session, root, at),
+    )?;
+    REV_RECORDS.put(
+        vault,
+        txn,
+        &wrong,
+        &CodeRevision::commit(child, session, at),
+    )?;
+    put_pins_code_revision_integrity_in_txn(
+        &vault.store,
+        txn,
+        &root,
+        &root,
+        &session,
+        &[0x61; 32],
+        &[0x62; 32],
+        at,
+    )?;
+    put_pins_code_revision_frontier_in_txn(
+        &vault.store,
+        txn,
+        &session,
+        &session,
+        &child,
+        &[0x63; 32],
+        at,
+    )?;
+    REV_FORKS.put(
+        vault,
+        txn,
+        &fork_session,
+        &CodeRevisionFork::new(fork_session, session, child, at),
+    )?;
+    REV_SESSION_INDEX.put(vault, txn, &(session, root), &())?;
+    REV_SESSION_INDEX.put(vault, txn, &(session, child), &())?;
+    REV_PARENT_INDEX.put(vault, txn, &(root, child), &())?;
+    REV_PARENT_INDEX.put(vault, txn, &(root, stray), &())?;
+    REV_FORK_PARENT_INDEX.put(vault, txn, &(session, fork_session), &())?;
+    let proposal_session = id(0x88)?;
+    let proposal = id(0x87)?;
+    REV_PROPOSALS.put(
+        vault,
+        txn,
+        &proposal,
+        &CodeRevisionProposal {
+            revision: CodeRevision::commit(proposal, proposal_session, at)
+                .with_commit_metadata(CodeCommitMetadata::new(author, "pins stranded")),
+            head_revision_id: child,
+            head_fold: [0x64; 32],
+            proposed_fold: [0x65; 32],
+            artifact_body: b"pins-body".to_vec(),
+        },
+    )?;
+    REV_PROMOTIONS.put(vault, txn, &root, &vec![id(0x89)?.to_hex()])?;
+    Ok(())
+}
+
+/// A source, an open and a merged fork, an export with its author tokens, a
+/// waiting and a settled proposal with their memberships, and the oracle
+/// and live-edit rows no owner holds.
+fn seed_office_body(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_010;
+    let artifact = id(0xb1)?;
+    let opener = id(0xb4)?;
+    put_pins_office_source_in_txn(
+        &vault.store,
+        txn,
+        &artifact,
+        OfficeBodyKind::Docx,
+        7,
+        &[0xb0; 32],
+    )?;
+    let fork = id(0xb2)?;
+    OFF_FORKS.put(
+        vault,
+        txn,
+        &(artifact, fork),
+        &OfficeBodyFork {
+            id: fork,
+            artifact,
+            opener: BodyActor::Actor(opener),
+            base: b"pins-base".to_vec(),
+            commits: 2,
+            opened_at: at,
+            state: ForkState::Open,
+            run_root: None,
+            origin: None,
+        },
+    )?;
+    let landed = id(0xb3)?;
+    let settler = id(0xb5)?;
+    OFF_FORKS.put(
+        vault,
+        txn,
+        &(artifact, landed),
+        &OfficeBodyFork {
+            id: landed,
+            artifact,
+            opener: BodyActor::Actor(opener),
+            base: b"pins-base".to_vec(),
+            commits: 2,
+            opened_at: at,
+            state: ForkState::Merged {
+                by: BodyActor::Actor(settler),
+                at,
+                head: b"pins-head".to_vec(),
+            },
+            run_root: None,
+            origin: None,
+        },
+    )?;
+    let export_actor = id(0xb6)?;
+    let export_key = pins_version_key(&artifact, 3);
+    OFF_EXPORTS.put(
+        vault,
+        txn,
+        &export_key,
+        &OfficeBodyExportRecord {
+            artifact,
+            version: 3,
+            frontier: b"pins-frontier".to_vec(),
+            rebind_frontier: None,
+            held_ids: None,
+            source_version: 7,
+            actor: BodyActor::Actor(export_actor),
+            author: "pins author".to_owned(),
+            token: Some("pins-token-1".to_owned()),
+            at,
+            changes: 1,
+            recalc: None,
+            recalc_failure: None,
+            recalc_zone: None,
+            effects: Vec::new(),
+        },
+    )?;
+    let author_key = (artifact, 3, 0);
+    OFF_EXPORT_AUTHORS.put(
+        vault,
+        txn,
+        &author_key,
+        &OfficeBodyExportAuthor {
+            actor: Some(export_actor),
+            token: "pins-token-1".to_owned(),
+        },
+    )?;
+    let spare_key = (artifact, 3, 1);
+    OFF_EXPORT_AUTHORS.put(
+        vault,
+        txn,
+        &spare_key,
+        &OfficeBodyExportAuthor {
+            actor: None,
+            token: "pins-token-2".to_owned(),
+        },
+    )?;
+    put_pins_export_token_ref_in_txn(&vault.store, txn, &export_key, "pins-token-1")?;
+    put_pins_author_token_ref_in_txn(&vault.store, txn, &author_key, "pins-token-1")?;
+    put_pins_author_token_ref_in_txn(&vault.store, txn, &spare_key, "pins-token-2")?;
+    let waiting = id(0xb7)?;
+    let member_fork = id(0xb8)?;
+    OFF_PROPOSALS.put(
+        vault,
+        txn,
+        &waiting,
+        &OfficeBodyProposal {
+            header: ProposalHeader {
+                proposal: waiting,
+                artifact,
+                opener: BodyActor::Actor(opener),
+                run_root: None,
+                opened_at: at,
+            },
+            members: vec![ProposalMember {
+                artifact,
+                fork: member_fork,
+                opener: BodyActor::Actor(opener),
+                run_root: None,
+                origin: None,
+                verdict: MemberVerdict::Waiting,
+                answer: None,
+            }],
+            settlement: None,
+            asks: Vec::new(),
+            ask_refused: Vec::new(),
+        },
+    )?;
+    OFF_MEMBERSHIP.put(vault, txn, &(artifact, member_fork), &waiting)?;
+    let settled = id(0xb9)?;
+    let member = id(0xba)?;
+    let member_opener = id(0xbb)?;
+    let person = id(0xbc)?;
+    let caller = id(0xbd)?;
+    let other = id(0xbe)?;
+    let answer = |head: &[u8], fork_head: &[u8], landed: Option<&[u8]>| MemberAnswer {
+        by: AnsweringAuthority::Word {
+            person: BodyActor::Actor(person),
+        },
+        caller: BodyActor::Actor(caller),
+        head: head.to_vec(),
+        fork_head: fork_head.to_vec(),
+        landed: landed.map(|bytes| bytes.to_vec()),
+        at,
+    };
+    OFF_PROPOSALS.put(
+        vault,
+        txn,
+        &settled,
+        &OfficeBodyProposal {
+            header: ProposalHeader {
+                proposal: settled,
+                artifact,
+                opener: BodyActor::Actor(opener),
+                run_root: None,
+                opened_at: at,
+            },
+            members: vec![
+                ProposalMember {
+                    artifact,
+                    fork: member,
+                    opener: BodyActor::Actor(member_opener),
+                    run_root: None,
+                    origin: None,
+                    verdict: MemberVerdict::Landed,
+                    answer: Some(answer(b"h1", b"f1", Some(b"l1"))),
+                },
+                ProposalMember {
+                    artifact,
+                    fork: other,
+                    opener: BodyActor::Actor(member_opener),
+                    run_root: None,
+                    origin: None,
+                    verdict: MemberVerdict::Rejected,
+                    answer: Some(answer(b"h2", b"f2", None)),
+                },
+            ],
+            settlement: Some(ProposalSettlement {
+                verdict: BundleVerdict::Mixed,
+                at,
+                reason: None,
+            }),
+            asks: Vec::new(),
+            ask_refused: Vec::new(),
+        },
+    )?;
+    OFF_MEMBERSHIP.put(vault, txn, &(artifact, member), &settled)?;
+    OFF_MEMBERSHIP.put(vault, txn, &(artifact, other), &settled)?;
+    put_pins_oracle_in_txn(
+        &vault.store,
+        txn,
+        "pins-profile",
+        &OracleReceipt {
+            profile: "pins-profile".to_owned(),
+            powerpoint_version: "pins-pp".to_owned(),
+            macos_version: "pins-macos".to_owned(),
+            font_versions: vec!["pins-font".to_owned()],
+            steps: vec![StepOutcome::Passed; 8],
+            clean: true,
+            projector: "pins-projector".to_owned(),
+            source_sha: "pins-source".to_owned(),
+            case_manifest_sha256: "pins-case".to_owned(),
+        },
+        &BodyActor::Actor(export_actor),
+        at,
+    )?;
+    put_pins_live_edit_route_in_txn(
+        &vault.store,
+        txn,
+        &id(0xbf)?,
+        &artifact,
+        &id(0xaf)?,
+        &[id(0xae)?, id(0xad)?],
+        11,
+    )?;
+    Ok(())
+}
+
+/// A head and two versions of one artifact, an erased artifact's head and
+/// version, a matching and a stray pointer and admission, a code pointer,
+/// and a serving descriptor.
+fn seed_blob_artifact(vault: &Vault, txn: &mut RwTxn<'_>) -> Result<()> {
+    let at = 1_700_000_000_011;
+    let artifact = id(0x91)?;
+    let producer = id(0x92)?;
+    let version =
+        |number: u64, claim: EntityId, actor: EntityId, parent: Option<u64>| BlobArtifactVersion {
+            version: number,
+            content_hash: [0xc0; 32],
+            provenance: BlobVersionProvenance::UserUpload,
+            calc_engine: None,
+            claim_id: claim,
+            created_at: at,
+            export_name: "pins.bin".to_owned(),
+            export_media_type: "application/octet-stream".to_owned(),
+            parent_version: parent,
+            fork_of_version: None,
+            made_by: MadeBy {
+                inputs: Vec::new(),
+                process: MadeByProcess {
+                    actor,
+                    class: MadeByClass::Stated,
+                    identity: "user_upload".to_owned(),
+                    version: "1".to_owned(),
+                    params_hash: sha256_hex(b"pins-blob"),
+                },
+                at,
+                trigger: None,
+            },
+        };
+    let head = version(2, id(0x95)?, producer, Some(1));
+    BLOB_HEAD.put(vault, txn, &artifact, &head)?;
+    BLOB_VERSIONS.put(
+        vault,
+        txn,
+        &(artifact, 1),
+        &version(1, id(0x94)?, producer, None),
+    )?;
+    BLOB_VERSIONS.put(vault, txn, &(artifact, 2), &head)?;
+    let erased = id(0x98)?;
+    let erased_producer = pins_erased_producer()?;
+    let erased_head = version(1, id(0x96)?, erased_producer, None);
+    BLOB_HEAD.put(vault, txn, &erased, &erased_head)?;
+    BLOB_VERSIONS.put(vault, txn, &(erased, 1), &erased_head)?;
+    let other = id(0x97)?;
+    put_pins_artifact_pointer_in_txn(
+        &vault.store,
+        txn,
+        ArtifactPointerChannel::Published,
+        &artifact.to_hex(),
+        ArtifactExportRef::BlobVersion {
+            artifact_id: artifact,
+            version: 2,
+        },
+        false,
+        ArtifactServeTier::Private,
+    )?;
+    put_pins_artifact_pointer_in_txn(
+        &vault.store,
+        txn,
+        ArtifactPointerChannel::Preview,
+        &artifact.to_hex(),
+        ArtifactExportRef::BlobVersion {
+            artifact_id: other,
+            version: 1,
+        },
+        false,
+        ArtifactServeTier::Private,
+    )?;
+    put_pins_artifact_pointer_in_txn(
+        &vault.store,
+        txn,
+        ArtifactPointerChannel::Published,
+        "pins-code",
+        ArtifactExportRef::ForkHash([0xf0; 32]),
+        false,
+        ArtifactServeTier::Private,
+    )?;
+    let gate = GateDecisionId::from_bytes([0x9a; 16]);
+    let publish = WriteActor::new(producer, EdgeActorClass::Human);
+    put_pins_artifact_admission_in_txn(
+        &vault.store,
+        txn,
+        &id(0x99)?,
+        &artifact.to_hex(),
+        ArtifactPointerChannel::Published,
+        ArtifactExportRef::BlobVersion {
+            artifact_id: artifact,
+            version: 2,
+        },
+        &artifact,
+        &publish,
+        &gate,
+        at,
+        false,
+        ArtifactServeTier::Private,
+    )?;
+    put_pins_artifact_admission_in_txn(
+        &vault.store,
+        txn,
+        &id(0x9b)?,
+        &artifact.to_hex(),
+        ArtifactPointerChannel::Preview,
+        ArtifactExportRef::BlobVersion {
+            artifact_id: artifact,
+            version: 2,
+        },
+        &other,
+        &publish,
+        &gate,
+        at,
+        false,
+        ArtifactServeTier::Private,
+    )?;
+    put_pins_serving_blob_in_txn(
+        &vault.store,
+        txn,
+        &(artifact, 2),
+        &[0xc2; 32],
+        "pins.bin",
+        "application/octet-stream",
+    )?;
+    Ok(())
+}
+
+/// Writes one fixed row per placement branch of each of the fifteen getters.
 ///
 /// # Errors
 ///
@@ -491,6 +1287,12 @@ pub fn seed(vault: &Vault) -> Result<()> {
     seed_embed(vault, &mut txn)?;
     seed_tool_wait(vault, &mut txn, &bound_attempt, &body_owner)?;
     seed_audience(vault, &mut txn)?;
+    seed_typed_body(vault, &mut txn)?;
+    seed_provenance_birth(vault, &mut txn)?;
+    seed_code_document(vault, &mut txn)?;
+    seed_code_revision(vault, &mut txn)?;
+    seed_office_body(vault, &mut txn)?;
+    seed_blob_artifact(vault, &mut txn)?;
     txn.commit()?;
     Ok(())
 }
@@ -553,6 +1355,65 @@ fn restore_pins(
             written = restored.written,
             dropped = restored.dropped,
         ));
+    }
+    txn.commit()?;
+    Ok(())
+}
+
+/// One of the six getters' restore into `bare` with no actor parts, one
+/// write transaction, as lines: one per owner with what it wrote and what it
+/// left out. Blob versions take the production path, which defers the rows
+/// whose actor did not open instead of dropping them.
+fn restore_bare_pins(
+    name: &'static str,
+    getter: Getter,
+    captured: &Captured,
+    bare: &Vault,
+    lines: &mut Vec<String>,
+) -> Result<()> {
+    let mut txn = bare.store.env.write_txn()?;
+    for rows in captured.owners() {
+        let framed = getter_bytes_for_owner(getter, rows)?;
+        let opened = OpenedOwnerRows::open(&framed, Vec::new(), BTreeSet::new())?;
+        let owner = bytes_to_hex_lower(&opened.owner32);
+        if getter == Getter::BlobArtifact {
+            let total = opened.rows.len();
+            let deferred = crate::blob_artifact::checkpoint::restore_or_defer_in_txn(
+                &bare.store,
+                &mut txn,
+                opened,
+            )?;
+            match &deferred {
+                None => {
+                    lines.push(format!(
+                        "RESTORED-BARE {name} owner={owner} written={total} dropped=[]"
+                    ));
+                    lines.push(format!("DEFERRED-BARE {name} owner={owner} rows=none"));
+                }
+                Some(deferred) => {
+                    let dropped: Vec<_> =
+                        deferred.rows.iter().map(|part| part.at().clone()).collect();
+                    lines.push(format!(
+                        "RESTORED-BARE {name} owner={owner} \
+                         written={written} dropped={dropped:?}",
+                        written = total - deferred.rows.len(),
+                    ));
+                    let parts: Vec<String> = deferred
+                        .rows
+                        .iter()
+                        .map(|part| format!("{part:?}"))
+                        .collect();
+                    lines.push(format!("DEFERRED-BARE {name} owner={owner} rows={parts:?}"));
+                }
+            }
+        } else {
+            let restored = getter_restore_in_txn(getter, &bare.store, &mut txn, opened)?;
+            lines.push(format!(
+                "RESTORED-BARE {name} owner={owner} written={written} dropped={dropped:?}",
+                written = restored.written,
+                dropped = restored.dropped,
+            ));
+        }
     }
     txn.commit()?;
     Ok(())
@@ -623,14 +1484,92 @@ const PINNED: [(&str, Getter); 9] = [
     ("source_audience", Getter::SourceAudience),
 ];
 
-/// Captures, frames and restores each of the nine getters through the
+/// The six getters, in pin order, each with the name its lines carry.
+const PINNED_SIX: [(&str, Getter); 6] = [
+    ("typed_body", Getter::TypedBody),
+    ("provenance_birth", Getter::ProvenanceBirth),
+    ("code_document", Getter::CodeDocument),
+    ("code_revision", Getter::CodeRevision),
+    ("office_body", Getter::OfficeBody),
+    ("blob_artifact", Getter::BlobArtifact),
+];
+
+/// Every raw row of the six getters' tables in `vault` into `into`, by full
+/// stored key.
+fn six_rows_into(
+    vault: &Vault,
+    into: &mut BTreeMap<Vec<u8>, (&'static str, Vec<u8>)>,
+) -> Result<()> {
+    raw_rows_into(vault, "typed_body", TB_HEADS, into)?;
+    raw_rows_into(vault, "typed_body", TB_DOCS, into)?;
+    raw_rows_into(vault, "typed_body", TB_FORKS, into)?;
+    raw_rows_into(vault, "typed_body", TB_FORK_DOCS, into)?;
+    raw_rows_into(vault, "typed_body", TB_RECEIPTS, into)?;
+    raw_rows_into(vault, "provenance_birth", ROW_BIRTHS, into)?;
+    raw_rows_into(vault, "provenance_birth", BIRTH_BY_TRIGGER, into)?;
+    raw_rows_into(vault, "code_document", DOC_HEAD, into)?;
+    raw_rows_into(vault, "code_document", DOC_FRONTIER, into)?;
+    raw_rows_into(vault, "code_document", DOC_INGRESS, into)?;
+    raw_rows_into(vault, "code_document", DOC_PATH, into)?;
+    raw_rows_into(vault, "code_revision", REV_RECORDS, into)?;
+    raw_rows_into(vault, "code_revision", REV_INTEGRITY, into)?;
+    raw_rows_into(vault, "code_revision", REV_FRONTIER, into)?;
+    raw_rows_into(vault, "code_revision", REV_FORKS, into)?;
+    raw_rows_into(vault, "code_revision", REV_SESSION_INDEX, into)?;
+    raw_rows_into(vault, "code_revision", REV_PARENT_INDEX, into)?;
+    raw_rows_into(vault, "code_revision", REV_FORK_PARENT_INDEX, into)?;
+    raw_rows_into(vault, "code_revision", REV_PROPOSALS, into)?;
+    raw_rows_into(vault, "code_revision", REV_PROMOTIONS, into)?;
+    raw_rows_into(vault, "office_body", OFF_SOURCES, into)?;
+    raw_rows_into(vault, "office_body", OFF_FORKS, into)?;
+    raw_rows_into(vault, "office_body", OFF_EXPORTS, into)?;
+    raw_rows_into(vault, "office_body", OFF_EXPORT_AUTHORS, into)?;
+    raw_rows_into(vault, "office_body", OFF_PROPOSALS, into)?;
+    raw_rows_into(vault, "office_body", OFF_MEMBERSHIP, into)?;
+    raw_rows_into(vault, "office_body", OFF_ORACLE, into)?;
+    raw_rows_into(vault, "office_body", OFF_LIVE_EDIT, into)?;
+    raw_rows_into(vault, "office_body", OFF_TOKEN_INDEX, into)?;
+    raw_rows_into(vault, "blob_artifact", BLOB_HEAD, into)?;
+    raw_rows_into(vault, "blob_artifact", BLOB_VERSIONS, into)?;
+    raw_rows_into(vault, "blob_artifact", BLOB_POINTERS, into)?;
+    raw_rows_into(vault, "blob_artifact", BLOB_ADMISSIONS, into)?;
+    raw_rows_into(vault, "blob_artifact", BLOB_SERVING, into)?;
+    Ok(())
+}
+
+/// Every raw row of the six getters' tables in `target`, then in `bare`, in
+/// key order.
+fn raw_pins_six(target: &Vault, bare: &Vault, lines: &mut Vec<String>) -> Result<()> {
+    let mut rows: BTreeMap<Vec<u8>, (&'static str, Vec<u8>)> = BTreeMap::new();
+    six_rows_into(target, &mut rows)?;
+    for (key, (getter, value)) in rows {
+        lines.push(format!(
+            "RAW {getter} {key} {value}",
+            key = bytes_to_hex_lower(&key),
+            value = bytes_to_hex_lower(&value),
+        ));
+    }
+    let mut bare_rows: BTreeMap<Vec<u8>, (&'static str, Vec<u8>)> = BTreeMap::new();
+    six_rows_into(bare, &mut bare_rows)?;
+    for (key, (getter, value)) in bare_rows {
+        lines.push(format!(
+            "RAW-BARE {getter} {key} {value}",
+            key = bytes_to_hex_lower(&key),
+            value = bytes_to_hex_lower(&value),
+        ));
+    }
+    Ok(())
+}
+
+/// Captures, frames and restores each of the fifteen getters through the
 /// checkpoint registry, as a capture and a restore dispatch them: one line
-/// per owner, section row, restore and target row, in getter order.
+/// per owner, section row, restore and target row, in getter order. The six
+/// also restore into `bare` with no actor parts.
 ///
 /// # Errors
 ///
 /// The vaults', or a row the getters' codecs refuse.
-pub fn pins(source: &Vault, target: &Vault) -> Result<Vec<String>> {
+pub fn pins(source: &Vault, target: &Vault, bare: &Vault) -> Result<Vec<String>> {
     let mut lines = Vec::new();
     let txn = source.store.env.read_txn()?;
     for (name, getter) in PINNED {
@@ -649,6 +1588,24 @@ pub fn pins(source: &Vault, target: &Vault) -> Result<Vec<String>> {
             &mut lines,
         )?;
     }
+    for (name, getter) in PINNED_SIX {
+        let captured = getter_capture(getter, &source.store, &txn)?;
+        let opened = capture_pins(
+            name,
+            &captured,
+            |rows| getter_bytes_for_owner(getter, rows),
+            &mut lines,
+        )?;
+        restore_pins(
+            name,
+            target,
+            opened,
+            |store, wtxn, opened| getter_restore_in_txn(getter, store, wtxn, opened),
+            &mut lines,
+        )?;
+        restore_bare_pins(name, getter, &captured, bare, &mut lines)?;
+    }
     raw_pins(target, &mut lines)?;
+    raw_pins_six(target, bare, &mut lines)?;
     Ok(lines)
 }
