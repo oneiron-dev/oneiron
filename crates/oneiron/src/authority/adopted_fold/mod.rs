@@ -23,7 +23,8 @@
 //! folds, a device revocation so placed, an actor binding or rebinding so
 //! placed whether the fold accepts it or not, a re-root so placed as the tail's
 //! only handoff, whose whole tail then folds and whose fence closes as in the
-//! whole fold, or a row of a kind that folds past
+//! whole fold, a machine's roster revision or removal so placed, whose whole
+//! tail then folds, or a row of a kind that folds past
 //! the image only as rejected, with no state (FIX 11760), each on a
 //! frontier, tail or covered parent, a world key record on stated parents
 //! alone (FIX 4881). A late fork, a tail row on a covered row off the
@@ -295,6 +296,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         fold,
         final_merged: Some(final_merged),
         revoke_facts,
+        marks,
         retired_keys,
         closed_handoffs,
     }) = settle_tail(image, &tail, log, confirms)?
@@ -373,7 +375,7 @@ pub(super) fn capture_adopted_checkpoint_tail(
         unsettled: image.safety.unsettled,
         issues,
         missing_parents,
-        marks: image.safety.marks.clone(),
+        marks,
         revocations: final_merged.actor_revocation_hashes,
         writers,
         bound_keys,
@@ -580,9 +582,14 @@ fn serial_withdrawal(
 /// tail must then fold whole, a device revocation
 /// ([`settle::serial_roster_revoke_op`]), an actor binding or rebinding
 /// ([`settle::serial_binding_op`]), a re-root that is the tail's only one
-/// ([`settle::serial_handoff_op`]), whose tail must then fold whole, or a
+/// ([`settle::serial_handoff_op`]), whose tail must then fold whole, a
+/// machine's roster revision or removal ([`settle::serial_machine_op`]),
+/// whose tail must then fold whole, or a
 /// row of a kind that folds past only as rejected
-/// ([`settle::folds_rejected_op`]), which must then fold with no state. Two
+/// ([`settle::folds_rejected_op`]), which must then fold with no state. An
+/// owner anchor's mark on a machine folds through the anchor's own chain
+/// (`anchor_fold`), which this fold does not settle past an image: it still
+/// needs the whole history. Two
 /// tail re-roots could fence one another, which only the whole history
 /// settles. A rotation or a non-agent enrollment stands only in a re-root's
 /// pre-handoff line, and only a tail re-root names a tail row in its line,
@@ -604,6 +611,9 @@ fn serial_fold_past(
             .filter(|row| settle::serial_handoff_op(&row.op))
             .count()
             == 1
+    } else if settle::serial_machine_op(&entry.op) {
+        !matches!(entry.signer_key(), AuthorityKey::Ed25519(key)
+            if image.aggregate.merged.root_anchors.contains_key(key))
     } else {
         settle::folds_rejected_op(image, entry)
             && !tail

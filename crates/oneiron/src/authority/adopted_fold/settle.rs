@@ -41,8 +41,11 @@ pub(super) struct SettledTail {
     /// The projection's final merge.
     pub(super) final_merged: Option<FoldState>,
     /// The restrictive facts the projection applied: the image's, with each
-    /// serial tail actor revocation's (FIX 11760).
+    /// serial tail actor revocation's and machine removal's (FIX 11760).
     pub(super) revoke_facts: crate::authority::revoke_proof::RevokeFacts,
+    /// The roster marks before custody is judged: the image's, with each
+    /// serial tail machine profile's (FIX 11760).
+    pub(super) marks: Vec<(AuthorityEntryHash, MarkProof)>,
     /// The keys closed fences hold: the image's, with each key a serial tail
     /// re-root retired (FIX 11760).
     pub(super) retired_keys: BTreeSet<AuthorityKey>,
@@ -104,6 +107,21 @@ pub(super) fn serial_binding_op(op: &AuthorityOp) -> bool {
         op,
         AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. }
     )
+}
+
+/// Whether `op` is a machine profile with no owner act: a roster revision or
+/// removal, which the tail folds past the image only serially, every covered
+/// row in its causal past, and signed by no owner anchor (FIX 11760,
+/// [`super::serial_fold_past`]). Its transition reads its parents' states,
+/// the whole fold's own, under the image's pin and peers. No covered row
+/// sets its floor: every covered row of its signer is in its past, so it
+/// folds only above them all (`NonMonotonicSeq`). Its tail then folds
+/// whole, and the machines project from the whole fold's states with each
+/// tail removal's fact and each tail mark. An owner answer still needs the
+/// whole history: its standing reads its carrier chain's covered revisions
+/// under this install's own floors, which no image keeps.
+pub(super) fn serial_machine_op(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::MachineProfile(profile) if profile.act.is_none())
 }
 
 /// Whether `op` is a re-root, which the tail folds past the image only
@@ -355,9 +373,12 @@ pub(super) fn settle_tail(
     // A serial row's tail folds whole, every row of it on its own parents'
     // states (FIX 11760): a row the fold rejects could still carry a
     // withdrawal its branch proves past it, which only the whole history
-    // proves. The image's facts then gain each actor revocation's own.
+    // proves. The image's facts then gain each actor revocation's own, and
+    // each machine removal's.
     let withdrawal = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
+    let machine = tail.values().any(|entry| serial_machine_op(&entry.op));
     let serial = withdrawal
+        || machine
         || tail
             .values()
             .any(|entry| serial_fold_past_op(&entry.op) || serial_handoff_op(&entry.op));
@@ -380,7 +401,7 @@ pub(super) fn settle_tail(
         retired_keys.extend(fenced);
         closed_handoffs.insert(*hash);
     }
-    let revoke_facts = if withdrawal {
+    let mut revoke_facts = if withdrawal {
         image.safety.revoke_facts.with_serial_actor_revokes(
             image
                 .rows
@@ -392,6 +413,12 @@ pub(super) fn settle_tail(
     } else {
         image.safety.revoke_facts.clone()
     };
+    let mut marks = image.safety.marks.clone();
+    if machine {
+        revoke_facts.add_serial_machine_removals(&judged, &states);
+        marks.extend(tail_marks(&judged, &states));
+        marks.sort_unstable_by_key(|(hash, _)| *hash);
+    }
     let mut merged = image.aggregate.merged.clone();
     let mut writers = image.safety.writers.clone();
     for state in states.values() {
@@ -418,7 +445,7 @@ pub(super) fn settle_tail(
         }
     }
     let rows = Resumed {
-        marks: &image.safety.marks,
+        marks: &marks,
         fold: image.fold(),
         revocations: &image.safety.revocations,
         bound_keys: &image.safety.bound_keys,
@@ -448,8 +475,11 @@ pub(super) fn settle_tail(
         &rows,
         context,
     );
+    // Machines move only past a serial machine profile, whose whole tail
+    // folded on the whole fold's states and projects with its facts and
+    // marks (FIX 11760); any other move only the whole history tells.
     if rows.missed.get()
-        || fold.machines != image_fold.machines
+        || (!machine && fold.machines != image_fold.machines)
         || !crate::authority::world_privacy::worlds_unmoved_past(
             &fold,
             image_fold,
@@ -475,9 +505,35 @@ pub(super) fn settle_tail(
         fold,
         final_merged,
         revoke_facts,
+        marks,
         retired_keys,
         closed_handoffs,
     }))
+}
+
+/// The roster marks of the tail's machine profiles, as an image built over
+/// the whole history keeps them (`fold_resume::ImageFold`): each one that
+/// heads its machine's roster chain in its own state, under an owner-held
+/// key or as an admitted owner answer ([`MarkProof::of`]).
+fn tail_marks(
+    judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    states: &BTreeMap<AuthorityEntryHash, FoldState>,
+) -> Vec<(AuthorityEntryHash, MarkProof)> {
+    states
+        .iter()
+        .filter_map(|(hash, state)| {
+            let AuthorityOp::MachineProfile(profile) = &judged.get(hash)?.op else {
+                return None;
+            };
+            let chain = state
+                .machines
+                .get(&profile.machine)?
+                .get(&MachineAdmitter::Roster)?;
+            MarkProof::of(&chain.head)
+                .filter(|_| chain.head.entry == *hash)
+                .map(|proof| (*hash, proof))
+        })
+        .collect()
 }
 
 /// The slip issuers once the tail joins the image's history: the consent

@@ -161,38 +161,10 @@ pub(super) fn derive_revoke_facts(
                 epoch: *epoch,
             },
             AuthorityOp::MachineProfile(profile) => {
-                let Some((admitter, chain)) = state
-                    .machines
-                    .get(&profile.machine)
-                    .into_iter()
-                    .flatten()
-                    .find(|(_, chain)| chain.head.entry == *hash)
-                else {
+                let Some(removal) = machine_removal(&state, profile.machine, hash) else {
                     continue;
                 };
-                Restriction::MachineRemoval {
-                    machine: profile.machine,
-                    admitter: *admitter,
-                    chain: Box::new(MachineChain {
-                        head: chain.head.clone(),
-                        owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
-                        owner_held_removals: chain
-                            .owner_held_removals
-                            .iter()
-                            .filter(|(_, removal)| removal.entry == *hash)
-                            .map(|(signer, removal)| (signer.clone(), removal.clone()))
-                            .collect(),
-                        // The removal's own revision, past its floor here
-                        // still: the proof never erases that mark (Astra
-                        // #1430b).
-                        revisions: chain
-                            .revisions
-                            .iter()
-                            .filter(|(revision, _)| *revision == hash)
-                            .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
-                            .collect(),
-                    }),
-                }
+                removal
             }
             _ => continue,
         };
@@ -207,6 +179,43 @@ pub(super) fn derive_revoke_facts(
         );
     }
     facts
+}
+
+/// The removal `hash` of `machine` as a fact, from a state it folded into:
+/// the chain it heads there, carrying only the removal itself.
+fn machine_removal(
+    state: &FoldState,
+    machine: EntityId,
+    hash: &AuthorityEntryHash,
+) -> Option<Restriction> {
+    let (admitter, chain) = state
+        .machines
+        .get(&machine)
+        .into_iter()
+        .flatten()
+        .find(|(_, chain)| chain.head.entry == *hash)?;
+    Some(Restriction::MachineRemoval {
+        machine,
+        admitter: *admitter,
+        chain: Box::new(MachineChain {
+            head: chain.head.clone(),
+            owner_held: chain.owner_held.clone().filter(|held| held.entry == *hash),
+            owner_held_removals: chain
+                .owner_held_removals
+                .iter()
+                .filter(|(_, removal)| removal.entry == *hash)
+                .map(|(signer, removal)| (signer.clone(), removal.clone()))
+                .collect(),
+            // The removal's own revision, past its floor here still: the
+            // proof never erases that mark (Astra #1430b).
+            revisions: chain
+                .revisions
+                .iter()
+                .filter(|(revision, _)| *revision == hash)
+                .map(|(revision, held)| (*revision, std::sync::Arc::clone(held)))
+                .collect(),
+        }),
+    })
 }
 
 impl RevokeFacts {
@@ -345,6 +354,50 @@ impl RevokeFacts {
             );
         }
         facts
+    }
+
+    /// Adds each machine removal a whole fold proves in `tail`, an adopted
+    /// image's tail that folded past it serially, every row of it with its
+    /// ordinary state in `states` (FIX 11760). The whole fold's proof of a
+    /// removal ([`verify_signed_branch`]) accepts what the ordinary fold
+    /// accepts on its branch, siblings at one sequence included, and no tail
+    /// row sits past a floor here: each removal takes its fact on its
+    /// ordinary state, as [`derive_revoke_facts`] takes it on the proof's.
+    pub(super) fn add_serial_machine_removals(
+        &mut self,
+        tail: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+        states: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        for (hash, entry) in tail {
+            let AuthorityOp::MachineProfile(profile) = &entry.op else {
+                continue;
+            };
+            if !removes_machine(&entry.op) {
+                continue;
+            }
+            let Some(state) = states.get(hash) else {
+                continue;
+            };
+            let Some(kind) = machine_removal(state, profile.machine, hash) else {
+                continue;
+            };
+            self.by_hash.insert(
+                *hash,
+                VerifiedRestriction {
+                    vault_id: state.vault_id,
+                    entry_hash: *hash,
+                    kind,
+                    routed: state.anchor_entries.clone(),
+                },
+            );
+        }
+    }
+
+    /// The rows these facts were proved on, for a test that compares two
+    /// images built over the same rows.
+    #[cfg(oneiron_test_support)]
+    pub(super) fn rows_for_test(&self) -> BTreeSet<AuthorityEntryHash> {
+        self.by_hash.keys().copied().collect()
     }
 }
 
