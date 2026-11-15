@@ -93,6 +93,52 @@ impl Default for SecretCustodyFloor {
 // Bindings, status, record, metadata
 // ---------------------------------------------------------------------------
 
+/// What one API call does, as a per-API verb-class table classes it
+/// (ARCH-0069 #door-reads-action): the table, shipped as pack data, maps a
+/// call's host, protocol, verb and target to one of these, and the door
+/// resolves the owner's lending against it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApiVerbClass {
+    /// Reads and changes nothing.
+    Read,
+    /// Creates or changes data.
+    Write,
+    /// Deletes data, or changes it past an undo.
+    Destructive,
+    /// Sends something outward: a message, a mail, a post.
+    Send,
+    /// Spends or moves money.
+    Pay,
+}
+
+impl ApiVerbClass {
+    /// The class as a table row spells it.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Read => "read",
+            Self::Write => "write",
+            Self::Destructive => "destructive",
+            Self::Send => "send",
+            Self::Pay => "pay",
+        }
+    }
+
+    /// The class's name in the door's class registry, beside `door.*`: the
+    /// action class a standing consent grant names.
+    #[must_use]
+    pub const fn registry_class(self) -> &'static str {
+        match self {
+            Self::Read => "api.read",
+            Self::Write => "api.write",
+            Self::Destructive => "api.destructive",
+            Self::Send => "api.send",
+            Self::Pay => "api.pay",
+        }
+    }
+}
+
 /// The scope verb a binding must declare before the value door will hand over
 /// plaintext. Scopes are otherwise free-form: they name what a binding is FOR,
 /// and only this one is load-bearing at a door.
