@@ -36,7 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
-use super::api_action::{ApiAction, ApiProtocol};
+use super::api_action::{ApiAction, ApiProtocol, host_key};
 use crate::error::{Error, Result};
 use crate::secret_record::ApiVerbClass;
 
@@ -122,17 +122,13 @@ impl ApiVerbClassTable {
             return Err(refused("names no host"));
         }
         let mut hosts = BTreeSet::new();
-        for host in &file.hosts {
-            let host = host.to_ascii_lowercase();
-            if host.is_empty()
-                || host.bytes().any(|byte| {
-                    byte.is_ascii_whitespace() || matches!(byte, b'/' | b'?' | b'#' | b'@')
-                })
-            {
-                return Err(refused(&format!(
-                    "host {host:?} is not a host or host:port"
-                )));
-            }
+        for written in &file.hosts {
+            let host = table_host(written).ok_or_else(|| {
+                refused(&format!(
+                    "host {written:?} is not a host or host:port, or names port 443 or 80 \
+                     (a call to its scheme's default port carries no port: write the host alone)"
+                ))
+            })?;
             hosts.insert(host);
         }
         if file.rows.is_empty() {
@@ -159,7 +155,8 @@ impl ApiVerbClassTable {
         })
     }
 
-    /// The hosts the table classes calls to, lower-cased.
+    /// The hosts the table classes calls to, as [`ApiAction::host`] names
+    /// them.
     pub fn hosts(&self) -> impl Iterator<Item = &str> {
         self.hosts.iter().map(String::as_str)
     }
@@ -382,6 +379,31 @@ fn decode_segment(segment: &str) -> String {
         }
     }
     String::from_utf8_lossy(&decoded).to_lowercase()
+}
+
+/// A table's host as [`ApiAction::host`] names a call's ([`host_key`]).
+/// `None` when it is not a host or `host:port`, or when it names port 443 or
+/// 80: a call to its scheme's default port carries no port, so that host
+/// would never match.
+fn table_host(written: &str) -> Option<String> {
+    if written
+        .bytes()
+        .any(|byte| byte.is_ascii_whitespace() || matches!(byte, b'/' | b'?' | b'#' | b'@'))
+    {
+        return None;
+    }
+    // An IPv6 host holds `:` too: the text after the last `:` is a port
+    // unless it closes a `[..]` or that `:` is part of a `::`.
+    let (name, port) = match written.rsplit_once(':') {
+        Some((name, port)) if !name.ends_with(':') && !port.ends_with(']') => {
+            (name, Some(port.parse::<u16>().ok()?))
+        }
+        _ => (written, None),
+    };
+    if name.is_empty() || name == "." || matches!(port, Some(443 | 80)) {
+        return None;
+    }
+    Some(host_key(name, port))
 }
 
 fn refused(reason: &str) -> Error {

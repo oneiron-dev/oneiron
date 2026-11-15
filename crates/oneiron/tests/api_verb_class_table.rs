@@ -180,9 +180,10 @@ fn rest_rows_class_a_get_as_read_and_a_delete_as_destructive() {
         f.classes_of(ApiProtocol::Rest, "delete", repo, None),
         set([Destructive])
     );
-    // The same path, written another way, reads as the same row.
+    // The same host and path, written another way, read as the same row.
     for written in [
         "https://API.github.com/repos/o/r/",
+        "https://api.github.com./repos/o/r",
         "https://api.github.com//repos/o/r",
         "https://api.github.com/%72epos/o/r?per_page=1",
         "https://api.github.com/REPOS/o/r",
@@ -265,6 +266,16 @@ fn a_graphql_mutation_is_read_by_its_root_fields_not_its_name() {
     );
     assert_eq!(
         f.classes_of(ApiProtocol::GraphQl, "POST", graphql, Some(&spread)),
+        set([Destructive])
+    );
+    // Inline fragments read in place, however deep they nest.
+    let nested = body(&format!(
+        "mutation M {{ {}deleteRepository(input: {{}}) {{ clientMutationId }}{} }}",
+        "... on Mutation { ".repeat(40),
+        " }".repeat(40)
+    ));
+    assert_eq!(
+        f.classes_of(ApiProtocol::GraphQl, "POST", graphql, Some(&nested)),
         set([Destructive])
     );
     // Another mutation field falls to the type's `*` row.
@@ -406,6 +417,9 @@ fn a_table_with_conflicting_rows_refuses_its_pack() {
         r#"{"hosts":["api.example.org"],"rows":[{"protocol":"graphql","verb":"fragment","class":"read"}]}"#,
         r#"{"hosts":["api.example.org"],"rows":[{"protocol":"rest","verb":"GET","class":"harmless"}]}"#,
         r#"{"hosts":[],"rows":[{"protocol":"rest","verb":"GET","class":"read"}]}"#,
+        // A call to the scheme's default port carries no port: this host never matches.
+        r#"{"hosts":["api.example.org:443"],"rows":[{"protocol":"rest","verb":"GET","pattern":"/a","class":"read"}]}"#,
+        r#"{"hosts":["api.example.org:80"],"rows":[{"protocol":"rest","verb":"GET","pattern":"/a","class":"read"}]}"#,
     ] {
         assert!(
             f.put_table_pack("example.broken", broken).is_err(),

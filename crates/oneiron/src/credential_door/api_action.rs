@@ -15,9 +15,10 @@
 //! not the operation's name. The client picks the name, so
 //! `mutation harmless { deleteRepository(..) }` must still read as
 //! `deleteRepository`. Aliases read as the field they alias. A fragment
-//! spread at the root reads as the fragment's own root fields. A spread of a
-//! fragment the document does not define reads as an unnamed field, which
-//! only a row for any field (`*`) classes.
+//! spread at the root reads as the fragment's own root fields, and an inline
+//! fragment reads in place, however deep it nests. A spread of a fragment
+//! the document does not define reads as an unnamed field, which only a row
+//! for any field (`*`) classes.
 
 use std::collections::BTreeSet;
 
@@ -54,8 +55,9 @@ impl ApiProtocol {
 /// One action a request carries.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct ApiAction {
-    /// The host the request is addressed to, lower-cased, with its port when
-    /// the URL names one other than its scheme's default.
+    /// The host the request is addressed to, lower-cased and without a
+    /// name's root dot, with its port when the URL names one other than its
+    /// scheme's default.
     pub host: String,
     pub protocol: ApiProtocol,
     /// REST: the method, upper-cased. GraphQL: `query`, `mutation` or
@@ -124,13 +126,20 @@ pub fn read_api_actions(url: &Url, method: &str, body: Option<&[u8]>) -> Vec<Api
     actions
 }
 
-/// The host a table names for `url`: lower-cased, with the port when it is
-/// not the scheme's default.
+/// The host a table names for `url`, with the port when it is not the
+/// scheme's default.
 fn host_of(url: &Url) -> String {
-    let host = url.host_str().unwrap_or_default().to_ascii_lowercase();
-    match url.port() {
-        Some(port) => format!("{host}:{port}"),
-        None => host,
+    host_key(url.host_str().unwrap_or_default(), url.port())
+}
+
+/// A host as a table and a call both name it: `name` lower-cased and without
+/// its root dot (`api.example.com.` is `api.example.com`), then `:port` when
+/// there is one.
+pub(super) fn host_key(name: &str, port: Option<u16>) -> String {
+    let name = name.strip_suffix('.').unwrap_or(name).to_ascii_lowercase();
+    match port {
+        Some(port) => format!("{name}:{port}"),
+        None => name,
     }
 }
 
@@ -139,11 +148,6 @@ fn host_of(url: &Url) -> String {
 /// validity rule beyond what it needs to find the root fields.
 mod graphql {
     use std::collections::{BTreeMap, BTreeSet};
-
-    /// How deep inline fragments at an operation's root are followed. A
-    /// deeper one reads as an unnamed field, which only a row for any field
-    /// classes, so nesting cannot hide a field.
-    const MAX_INLINE_DEPTH: usize = 32;
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     enum Token<'a> {
@@ -158,7 +162,6 @@ mod graphql {
     enum Selection<'a> {
         Field(&'a str),
         Spread(&'a str),
-        Inline(Vec<Selection<'a>>),
     }
 
     #[derive(Debug)]
@@ -212,7 +215,6 @@ mod graphql {
                     Selection::Field(name) => {
                         fields.insert(*name);
                     }
-                    Selection::Inline(inner) => pending.push(inner),
                     Selection::Spread(name) => {
                         if followed.insert(*name) {
                             match fragments.get(name) {
@@ -318,7 +320,7 @@ mod graphql {
                 Token::Punct(b'{') => operations.push(Operation {
                     kind: "query",
                     name: None,
-                    selections: selection_set(tokens, &mut at, 0)?,
+                    selections: selection_set(tokens, &mut at)?,
                 }),
                 Token::Name(kind @ ("query" | "mutation" | "subscription")) => {
                     at += 1;
@@ -333,7 +335,7 @@ mod graphql {
                     operations.push(Operation {
                         kind,
                         name,
-                        selections: selection_set(tokens, &mut at, 0)?,
+                        selections: selection_set(tokens, &mut at)?,
                     });
                 }
                 Token::Name("fragment") => {
@@ -347,7 +349,7 @@ mod graphql {
                     }
                     at += 4;
                     skip_to_selection_set(tokens, &mut at)?;
-                    let selections = selection_set(tokens, &mut at, 0)?;
+                    let selections = selection_set(tokens, &mut at)?;
                     fragments.entry(*name).or_default().extend(selections);
                 }
                 _ => return None,
@@ -399,23 +401,26 @@ mod graphql {
         }
     }
 
-    /// The selections of the set that opens at `at`. A nested field's own
+    /// The selections of the set that opens at `at`. An inline fragment
+    /// reads in place, however deep it nests: `{ ... on Mutation { a } }`
+    /// selects `a`, and no depth cut can hide a field. A nested field's own
     /// set is skipped: only the root's fields name what an operation does.
-    fn selection_set<'a>(
-        tokens: &[Token<'a>],
-        at: &mut usize,
-        depth: usize,
-    ) -> Option<Vec<Selection<'a>>> {
+    fn selection_set<'a>(tokens: &[Token<'a>], at: &mut usize) -> Option<Vec<Selection<'a>>> {
         if tokens.get(*at) != Some(&Token::Punct(b'{')) {
             return None;
         }
         *at += 1;
+        // The inline fragments open around the current selection.
+        let mut inline_depth = 0usize;
         let mut selections = Vec::new();
         loop {
             match *tokens.get(*at)? {
                 Token::Punct(b'}') => {
                     *at += 1;
-                    return Some(selections);
+                    if inline_depth == 0 {
+                        return Some(selections);
+                    }
+                    inline_depth -= 1;
                 }
                 Token::Spread => {
                     *at += 1;
@@ -425,12 +430,12 @@ mod graphql {
                                 return None;
                             };
                             *at += 2;
-                            skip_directives(tokens, at)?;
-                            selections.push(inline(tokens, at, depth)?);
+                            open_inline(tokens, at)?;
+                            inline_depth += 1;
                         }
                         Token::Punct(b'@' | b'{') => {
-                            skip_directives(tokens, at)?;
-                            selections.push(inline(tokens, at, depth)?);
+                            open_inline(tokens, at)?;
+                            inline_depth += 1;
                         }
                         Token::Name(fragment) => {
                             *at += 1;
@@ -464,17 +469,14 @@ mod graphql {
         }
     }
 
-    /// An inline fragment's selections, followed up to
-    /// [`MAX_INLINE_DEPTH`]; past it, the set is skipped and reads as one
-    /// unnamed field.
-    fn inline<'a>(tokens: &[Token<'a>], at: &mut usize, depth: usize) -> Option<Selection<'a>> {
-        if depth >= MAX_INLINE_DEPTH {
-            if tokens.get(*at) != Some(&Token::Punct(b'{')) {
-                return None;
-            }
-            skip_balanced(tokens, at)?;
-            return Some(Selection::Field(""));
+    /// Steps past an inline fragment's directives and the `{` that opens its
+    /// selections.
+    fn open_inline(tokens: &[Token<'_>], at: &mut usize) -> Option<()> {
+        skip_directives(tokens, at)?;
+        if tokens.get(*at) != Some(&Token::Punct(b'{')) {
+            return None;
         }
-        Some(Selection::Inline(selection_set(tokens, at, depth + 1)?))
+        *at += 1;
+        Some(())
     }
 }
