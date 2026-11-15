@@ -312,11 +312,21 @@ impl FrozenReadLane {
         let names_grant = claims.is_some_and(|claims| claims.grant_ref.is_some());
         // A credential whose principal's own key would regain what its key
         // lacked keeps its read Scope even at top; so does a rebuilt key
-        // that carries a saved credential and a frozen Scope.
-        let keeps_scope = match &key.proof {
-            Some(proof) => keeps_top_scope(key, proof),
-            None => !key.saved_credentials.is_empty() && key.authority_scope().is_some(),
-        };
+        // that carries a saved credential and a frozen Scope. A key rebuilt
+        // from a narrowed lane carries that lane's credential whole
+        // (`SavedCredential::Live`), even where its own proof is that
+        // credential: frozen as its principal's own lane, it would regain
+        // the owner standing its basis took away (blind review P1 on #8061).
+        let rebuilt_from_narrowed = key.authority_scope().is_some()
+            && key
+                .saved_credentials
+                .iter()
+                .any(|credential| matches!(credential, SavedCredential::Live(_)));
+        let keeps_scope = rebuilt_from_narrowed
+            || match &key.proof {
+                Some(proof) => keeps_top_scope(key, proof),
+                None => !key.saved_credentials.is_empty() && key.authority_scope().is_some(),
+            };
         // A key under the access gate keeps its grant basis, whose
         // principal's rebuilt key would admit the unscoped rows it refused
         // (Sol F3 on #8061), the owner's floor under that gate among them
@@ -525,11 +535,18 @@ impl FrozenReadLane {
         }
         // A key held past this snapshot judges the credential at each read
         // (review R1 of #8029): rebuilt while it held, it reads nothing once
-        // it no longer does. A key whose own proof is that credential
-        // already judges it at each use.
+        // it no longer does. A key whose own proof is the credential of a
+        // lane that reads as its principal's own already judges it at each
+        // use. A narrowed lane's credential binds even a key whose proof
+        // shares its id (a transferred credential keeps its mint's id), so
+        // the rebuilt key, frozen again, keeps this lane's Scope and basis
+        // (blind review P1 on #8061).
         let proof_id = key.proof.as_ref().map(|proof| proof.claims().slip_id);
         let mut key = match saved {
-            Some(credential) if proof_id != Some(credential.slip_id()) => {
+            Some(credential)
+                if matches!(credential, SavedCredential::Live(_))
+                    || proof_id != Some(credential.slip_id()) =>
+            {
                 key.bound_by_saved_credential(credential)
             }
             _ => key,
