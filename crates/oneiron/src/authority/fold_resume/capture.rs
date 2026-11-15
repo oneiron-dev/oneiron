@@ -303,8 +303,9 @@ impl Once {
 /// side join's own place among its anchor's rows, FIX 11868), a residence
 /// directive (it adds only its own id and machine, which only a result past
 /// it reads) or a machine's residence result (it moves only its signer's
-/// sequence, FIX 5412). A resumed fold and a fold past an adopted checkpoint
-/// take only these, and each still folds through its own transition.
+/// sequence, FIX 5412). A resumed fold takes only these, and each still folds
+/// through its own transition. A fold past an adopted checkpoint takes these
+/// and the serial kinds its own admission adds (`adopted_fold`'s module doc).
 pub(in crate::authority) fn admits_past(
     merged: &FoldState,
     entry: &AuthorityLogEntry,

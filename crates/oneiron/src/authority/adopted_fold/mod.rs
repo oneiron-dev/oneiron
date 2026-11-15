@@ -20,7 +20,8 @@
 //! revocation or a slip or Grant withdrawal, a federation lifecycle act or a
 //! membership execution with every covered row in its causal past, on a
 //! clean image this install judges as it was built, whose whole tail then
-//! folds, a device revocation so placed, a re-root so placed as the tail's
+//! folds, a device revocation so placed, an actor binding or rebinding so
+//! placed whether the fold accepts it or not, a re-root so placed as the tail's
 //! only handoff, whose whole tail then folds and whose fence closes as in the
 //! whole fold, or a row of a kind that folds past
 //! the image only as rejected, with no state (FIX 11760), each on a
