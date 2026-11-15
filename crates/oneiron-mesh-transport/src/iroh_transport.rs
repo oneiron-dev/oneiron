@@ -263,11 +263,7 @@ fn admission(
 }
 
 fn key_hex(key: [u8; 32]) -> String {
-    use std::fmt::Write;
-    key.iter().fold(String::with_capacity(64), |mut hex, byte| {
-        let _ = write!(hex, "{byte:02x}");
-        hex
-    })
+    oneiron_hex::encode(&key)
 }
 
 fn unix_millis() -> u64 {

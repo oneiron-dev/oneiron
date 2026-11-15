@@ -13,7 +13,8 @@ use crate::conversation::{ContainerAttendee, ContainerAttendeeEvent};
 use crate::disclosure::{PREDICATE_DISCLOSURE_ATTENDEE_ASK, attendee_ask_ref};
 
 pub(super) const ATTENDEE_ENTRY: &str = "tasks.attendee_entry";
-const ENTRY_ID_DOMAIN: &[u8] = b"oneiron.tasks.attendee_entry.v1";
+#[doc(hidden)]
+pub(crate) use oneiron_records::task_verb::ask_record::attendee_entry::attendee_entry_id;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -80,31 +81,6 @@ pub(crate) struct AttendeeEntryAdmission {
     /// The speaker's identity ask is this asker's to raise on this node and
     /// is not admitted yet: a first entry, or one an interrupted call left.
     pub(crate) ask_pending: bool,
-}
-
-/// The entry fact id of `attendee` in `container`.
-pub(crate) fn attendee_entry_id(
-    container: EntityId,
-    attendee: &ContainerAttendee,
-) -> Result<EntityId> {
-    match attendee {
-        ContainerAttendee::Person(person) => EntityId::derive(
-            ENTRY_ID_DOMAIN,
-            &[container.as_bytes(), b"person", person.as_bytes()],
-        ),
-        ContainerAttendee::Speaker {
-            session_key,
-            speaker_key,
-        } => EntityId::derive(
-            ENTRY_ID_DOMAIN,
-            &[
-                container.as_bytes(),
-                b"speaker",
-                session_key.as_bytes(),
-                speaker_key.as_bytes(),
-            ],
-        ),
-    }
 }
 
 /// The intent key `Memory::raise_unknown_attendee_ask` admits a speaker's

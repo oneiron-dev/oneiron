@@ -48,9 +48,8 @@
 //!   check and never stops the answer (FIX 3841).
 
 use std::collections::{BTreeMap, HashMap};
-use std::fmt::Write as _;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, mpsc};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use oneiron::EntityId;
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
@@ -208,7 +207,7 @@ impl ConnectorElicitationRegistry {
             server = %binding.server,
             tool = %binding.tool,
             revision = %binding.revision,
-            intent = ?binding.parent_intent.map(|intent| hex(&intent)),
+            intent = ?binding.parent_intent.map(|intent| oneiron_hex::encode(&intent)),
             questions = questions.len(),
             "connector asked for input mid-call"
         );
@@ -396,25 +395,12 @@ impl ConnectorElicitationRegistry {
 fn mint_handle() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
-    hex(&bytes)
-}
-
-/// `bytes` as lowercase hex.
-fn hex(bytes: &[u8]) -> String {
-    let mut text = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        let _ = write!(text, "{byte:02x}");
-    }
-    text
+    oneiron_hex::encode(&bytes)
 }
 
 /// A new round's live lease end, as an instant and in unix ms.
 fn round_lease() -> (Instant, u64) {
-    let now_ms = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| {
-            u64::try_from(elapsed.as_millis()).unwrap_or(u64::MAX)
-        });
+    let now_ms = oneiron_base::unix_millis_now();
     let wait_ms = u64::try_from(ELICITATION_LIVE_WAIT.as_millis()).unwrap_or(u64::MAX);
     (
         Instant::now() + ELICITATION_LIVE_WAIT,

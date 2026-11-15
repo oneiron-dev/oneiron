@@ -202,7 +202,7 @@ fn reseal_capsule(args: VaultKeyResealArgs) -> anyhow::Result<()> {
         &label,
         &recipient,
     )?;
-    let sealed_at = crate::owner::stamp::now_unix_ms() / 1_000;
+    let sealed_at = oneiron_base::unix_millis_now() / 1_000;
     emit(&view::resealed_report(
         &report.vault_name,
         &report.role,

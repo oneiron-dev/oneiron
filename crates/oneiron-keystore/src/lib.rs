@@ -28,6 +28,25 @@
 //! [`platform_keystore`] picks the platform tier; [`hardware_keystore`] the
 //! hardware one, refused where this platform has none: never a silent downgrade
 //! to software (identity, signature suites).
+//!
+//! The crate also asks whether this device's user is present now
+//! ([`UserPresence`], [`PresenceGate`]): the question an owner's act waits on
+//! before the owner key signs it. It is a gate before a signature. It reads
+//! and changes no slot.
+//!
+//! A device with no unlock prompt confirms with a device PIN instead (row
+//! OCS-OWNER-PIN). The gate takes the PIN the host collected
+//! ([`PresenceGate::confirm_with_secret`]) and counts wrong ones. What the
+//! PIN guards, the engine seals; the file tier keeps those sealed bytes
+//! beside its slots ([`SealedBytesStore`], through
+//! [`DeviceKeystore::sealed_bytes`]), and so does the TPM tier. This crate
+//! sees neither a key nor a way to check a PIN.
+//!
+//! On the TPM tier the chip itself guards the device PIN key
+//! ([`AuthBoundSecretStore`], through [`DeviceKeystore::auth_bound_secret`]):
+//! it releases the key only for an auth value the engine derives from the
+//! PIN, counts the wrong ones, and after enough of them takes none for a
+//! while ([`AuthBoundError::LockedOut`]).
 
 use std::borrow::Cow;
 
@@ -37,27 +56,51 @@ use zeroize::Zeroizing;
 mod apple;
 #[cfg(target_vendor = "apple")]
 mod apple_enclave;
+mod auth_bound;
 #[cfg(all(unix, not(target_vendor = "apple")))]
 mod file;
 #[cfg(target_os = "linux")]
 mod linux_tpm;
+#[cfg(target_os = "macos")]
+mod macos_presence;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 mod memory;
+mod sealed_bytes;
+mod user_presence;
 #[cfg(windows)]
 mod windows;
+#[cfg(windows)]
+mod windows_presence;
 
 #[cfg(target_vendor = "apple")]
 pub use apple::AppleKeychain;
 #[cfg(target_vendor = "apple")]
 pub use apple_enclave::SecureEnclaveKeychain;
+pub use auth_bound::{AUTH_VALUE_MAX, AuthBoundError, AuthBoundSecretStore};
 #[cfg(all(unix, not(target_vendor = "apple")))]
 pub use file::LocalFileKeystore;
 #[cfg(target_os = "linux")]
 pub use linux_tpm::LinuxTpmKeystore;
+#[cfg(target_os = "macos")]
+pub use macos_presence::MacosUserPresence;
 #[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
 pub use memory::MemoryKeystore;
+pub use sealed_bytes::{SEALED_BYTES_MAX, SealedBytesName, SealedBytesStore};
+pub use user_presence::{
+    DEVICE_PIN_WAIT_SECS, DEVICE_PIN_WRONG_TRIES, NoPromptPresence, PRESENCE_PROMPT_SECS,
+    PRESENCE_WINDOW_SECS, PendingPresenceConfirm, PresenceCapability, PresenceClock,
+    PresenceConfirmation, PresenceError, PresenceGate, PresenceInstant, PresenceWindow,
+    SCREEN_LOCK_POLL_MS, SystemPresenceClock, UserPresence, WindowsScreenSession,
+    platform_user_presence,
+};
+#[cfg(any(test, feature = "test-keystore", oneiron_test_support))]
+pub use user_presence::{ManualPresenceClock, ScriptedPresence};
+// `self::`: the `windows` crate is a dependency on this platform, so the
+// bare name would be ambiguous here.
 #[cfg(windows)]
-pub use windows::WindowsDpapiKeystore;
+pub use self::windows::WindowsDpapiKeystore;
+#[cfg(windows)]
+pub use windows_presence::WindowsUserPresence;
 
 /// What a slot holds. One variant per secret the engine keeps at rest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -230,11 +273,8 @@ impl KeystoreSlot {
 }
 
 fn push_hex(name: &mut String, byte: u8) {
-    name.push(char::from(HEX[usize::from(byte >> 4)]));
-    name.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    oneiron_hex::encode_into(&[byte], name);
 }
-
-const HEX: &[u8; 16] = b"0123456789abcdef";
 
 /// Where a backend's secrets can travel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -328,6 +368,20 @@ pub trait DeviceKeystore: Send + Sync + 'static {
             KeystoreLocality::ThisDeviceOnly => KeystoreAssurance::Software,
             KeystoreLocality::ProcessOnly => KeystoreAssurance::Process,
         }
+    }
+    /// This keystore's home for bytes the caller sealed, where the tier has
+    /// one: the file tier, the TPM tier (the same files; the chip does not
+    /// seal them), and the process-memory tier of tests. `None` elsewhere,
+    /// never a weaker home.
+    fn sealed_bytes(&self) -> Option<&dyn SealedBytesStore> {
+        None
+    }
+    /// The one secret this keystore's secure hardware releases only for an
+    /// auth value, counting the wrong ones: the TPM tier, and a
+    /// process-memory keystore a test made with a counter. `None` elsewhere:
+    /// a tier whose hardware does not count holds no such secret.
+    fn auth_bound_secret(&self) -> Option<&dyn AuthBoundSecretStore> {
+        None
     }
 }
 
