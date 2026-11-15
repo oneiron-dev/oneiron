@@ -413,6 +413,112 @@ fn successor_image_past_a_rejected_owner_enrollment_keeps_the_whole_history_issu
 }
 
 #[test]
+fn successor_image_past_an_owner_enrollment_off_a_world_side_row_keeps_the_whole_history_issuers() {
+    let (home, issuer, home_dir) = root_home();
+    // Two concurrent host rows, a world's side join of them and a main row
+    // of them: the image's frontier is the side row and the main row.
+    let first = sign_next_host_op(
+        &home,
+        &issuer,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x56, ROLE_AGENT),
+        },
+    )
+    .expect("sign first");
+    let second = oneiron::test_doors::foldpast::sign_host_op_at(
+        &home,
+        &issuer,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x57, ROLE_AGENT),
+        },
+        first.seq + 1,
+        first.parent_hashes.clone(),
+    )
+    .expect("sign second");
+    let mut both = vec![
+        authority_entry_hash(&first).expect("first hash"),
+        authority_entry_hash(&second).expect("second hash"),
+    ];
+    both.sort_unstable();
+    let side = oneiron::test_doors::foldpast::sign_host_op_at(
+        &home,
+        &issuer,
+        oneiron::test_doors::foldpast::world_frontier_join_op(EntityId::now()),
+        first.seq + 2,
+        both.clone(),
+    )
+    .expect("sign side join");
+    let main = oneiron::test_doors::foldpast::sign_host_op_at(
+        &home,
+        &issuer,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x58, ROLE_AGENT),
+        },
+        first.seq + 3,
+        both,
+    )
+    .expect("sign main row");
+    put_signed_entries(&home, &[first.clone(), second, side.clone(), main.clone()])
+        .expect("store the covered rows");
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    // An owner enrollment the host root signs on the whole frontier, the
+    // side row among it: a main-log row that hangs off a world's side row.
+    let device = fresh_device(0x59, ROLE_OWNER);
+    let key = device.key.clone();
+    let mut parents = vec![
+        authority_entry_hash(&side).expect("side hash"),
+        authority_entry_hash(&main).expect("main hash"),
+    ];
+    parents.sort_unstable();
+    let tail = oneiron::test_doors::foldpast::sign_host_op_at(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::EnrollDevice { device },
+        first.seq + 4,
+        parents,
+    )
+    .expect("sign tail");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&tail)).expect("store tail on home");
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+        .expect("store tail on adopting");
+    let hash = authority_entry_hash(&tail).expect("tail hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds tail");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds tail");
+    assert!(
+        !home_fold.valid_entries.contains(&hash),
+        "home judges no row off another world's side row"
+    );
+    assert!(
+        !adopting_fold.valid_entries.contains(&hash),
+        "adopting judges no row off another world's side row"
+    );
+    let home_issuers = oneiron::test_doors::foldpast::image_slip_issuers(&written_image(
+        &fixture.home,
+        &fixture.issuer,
+    ));
+    assert!(
+        !home_issuers.contains(&key),
+        "home's consent structure reads only the rows its fold judges"
+    );
+    let successor = written_image(&fixture.adopting, &fixture.issuer);
+    assert_eq!(
+        oneiron::test_doors::foldpast::image_slip_issuers(&successor),
+        home_issuers,
+        "the successor image keeps home's slip issuers"
+    );
+}
+
+#[test]
 fn rejected_row_beside_a_serial_withdrawal_still_needs_history() {
     let fixture = fixture();
     let epoch = fixture
