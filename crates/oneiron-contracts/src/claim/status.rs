@@ -1,6 +1,8 @@
 //! The three small claim status axes and their pinned on-disk strings:
 //! approval (consent), lifecycle (currentness), and source (provenance).
 
+use crate::register::Register;
+
 /// Claim approval status (`appr`): the ARCH-0003 consent axis.
 #[derive(
     Debug,
@@ -12,8 +14,10 @@
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("claim.approval.status")]
 pub enum ClaimApprovalStatus {
     Auto,
     Proposed,
@@ -22,27 +26,10 @@ pub enum ClaimApprovalStatus {
 }
 
 impl ClaimApprovalStatus {
-    /// The pinned on-disk string for this status.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Auto => "auto",
-            Self::Proposed => "proposed",
-            Self::Approved => "approved",
-            Self::Rejected => "rejected",
-        }
-    }
-
     /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
     #[doc(hidden)]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "auto" => Some(Self::Auto),
-            "proposed" => Some(Self::Proposed),
-            "approved" => Some(Self::Approved),
-            "rejected" => Some(Self::Rejected),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 }
 
@@ -95,8 +82,10 @@ impl ClaimLifecycleStatus {
     serde::Serialize,
     serde::Deserialize,
     schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("claim.source")]
 pub enum ClaimSource {
     UserStated,
     Observed,
@@ -107,31 +96,10 @@ pub enum ClaimSource {
 }
 
 impl ClaimSource {
-    /// The pinned on-disk string for this source.
-    #[must_use]
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::UserStated => "user_stated",
-            Self::Observed => "observed",
-            Self::Inferred => "inferred",
-            Self::Imported => "imported",
-            Self::ToolOutput => "tool_output",
-            Self::Generated => "generated",
-        }
-    }
-
     /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
     #[doc(hidden)]
     pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "user_stated" => Some(Self::UserStated),
-            "observed" => Some(Self::Observed),
-            "inferred" => Some(Self::Inferred),
-            "imported" => Some(Self::Imported),
-            "tool_output" => Some(Self::ToolOutput),
-            "generated" => Some(Self::Generated),
-            _ => None,
-        }
+        <Self as Register>::named(value)
     }
 
     /// Engine seam: `pub` only so `oneiron` can call it across the crate split.
