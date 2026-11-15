@@ -48,6 +48,7 @@ mod ancestor_index;
 mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
+mod archive_custody;
 mod ask_forward_holder;
 mod attribution_erase;
 mod backup_signer_delegation;
@@ -279,6 +280,7 @@ pub use admission::{
     AuthorityWorkWaitExpired, authority_work_policy, set_authority_work_policy,
     set_authority_work_wait_ms,
 };
+pub use archive_custody::AuthorityArchiveCustodyProof;
 pub use backup_signer_delegation::{
     BACKUP_SIGNER_DELEGATION_DOMAIN, BackupModeRootPolicy, BackupModeRoots, BackupSignerDelegation,
     BackupSignerStatement,

@@ -81,6 +81,14 @@ crate::side_table::side_tables! {
     /// erased. It names no subject. Key: hash32 (the row's entry hash). Value: ().
     AUTHORITY_ERASED_ROW: VaultMeta b"authority.erased-row.v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One archive whose every row this machine fetched from one custodian machine of the vault,
+    /// each the signed row its kept checkpoint image's manifest lists (census L5-22 PR 2): this
+    /// install's own durability observation, which only cold offload reads. It grants no
+    /// authority, never syncs, and no checkpoint image carries it, so a restore proves custody
+    /// again. Key: hash32 (the archive id) + id16 (the custodian MACHINE). Value: the image id,
+    /// the key the custodian proved, the row count and when it was verified (recording clock).
+    AUTHORITY_ARCHIVE_CUSTODY_PROOF: VaultMeta b"authority.archive.local.custody-proof.v1:" Named
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// One signed authority row a repair page staged while this vault's history is incomplete
     /// (OF-469): no held history, admitted only when the stage closes the gap. Key: hash32.
     AUTHORITY_HISTORY_STAGE: VaultMeta b"authority.history.stage.v1:" Raw
