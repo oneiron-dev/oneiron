@@ -15,23 +15,26 @@
 //!   it is HELD: kept so the owner's device can ask, standing for nothing.
 //! - Item 2: an act a carrier that is not the owner's machine delivers waits
 //!   for the proof wherever the vault asks for an owner key
-//!   ([`owner_key_required`]): a vault that has ever held a key that proves
-//!   for the owner, a self-host vault's owner root or a hosted vault's
-//!   enrolled owner device key (CARRIER-HOSTED-WEB-ACTS = C), until the
-//!   owner switches a hosted vault back to web sign-in. A vault that never
-//!   held such a key keeps today's acts: nothing there could ever answer
-//!   the wait.
+//!   ([`owner_key_required`]): a vault that has ever held a key that can
+//!   give the proof ([`gives_owner_proof`]), a self-host vault's owner root
+//!   or a hosted vault's enrolled owner device key (CARRIER-HOSTED-WEB-ACTS
+//!   = C), until the owner switches a hosted vault back to web sign-in. A
+//!   vault that never held such a key keeps today's acts: nothing there
+//!   could ever answer the wait. A key of the owner's in a suite the fold
+//!   takes no proof from (a P-256 key, a passkey's suite) is no such key
+//!   (Engine RULING CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A).
 //!
 //! The ratchet (the owner's ruling AUTH-5 = B with his opt-out, 15 Nov
 //! 20:15): removing the last owner key never hands the vault back to the
-//! managed node's word. The fold remembers every key it held as the owner's
-//! (`FoldState::owner_keys_ever`), and the vault asks for an owner key while
-//! that memory holds a key the owner's switch back did not see. The switch
-//! is the web sign-in setting ([`PolicySetting::WebSignIn`], a hosted
-//! vault's alone): its act counts only with an owner key's proof, whoever
-//! carries it, and its value names the keys it speaks for, so a key enrolled
-//! later arms the vault again (the lead's WAYBACK-6 = A), and so does any
-//! later act of the setting with another value.
+//! managed node's word. The fold remembers every key it held that could give
+//! the owner's proof (`FoldState::owner_keys_ever`), and the vault asks for
+//! an owner key while that memory holds a key the owner's switch back did
+//! not see. The switch is the web sign-in setting
+//! ([`PolicySetting::WebSignIn`], a hosted vault's alone): its act counts
+//! only with an owner key's proof, whoever carries it, and its value names
+//! the keys it speaks for, so a key enrolled later arms the vault again (the
+//! lead's WAYBACK-6 = A), and so does any later act of the setting with
+//! another value.
 //!
 //! The judge reads the act's parent state only, so every replica judges the
 //! same rows the same way. Mine is read in the roster view of that state
@@ -54,9 +57,9 @@ use super::machine_profile::in_host_custody;
 use super::*;
 
 /// The owner key that proves `entry`, judged at its parent state `state`:
-/// None when it carries no cosign. A proof is exactly one cosign, by an
-/// Ed25519 key that `state` trusts as the owner's ([`proves_for_the_owner`]);
-/// any other cosign is a forged proof, an invalid entry, never a held one.
+/// None when it carries no cosign. A proof is exactly one cosign, by a key
+/// whose proof the fold takes in `state` ([`gives_owner_proof`]); any other
+/// cosign is a forged proof, an invalid entry, never a held one.
 pub(super) fn owner_proof_key(
     state: &FoldState,
     entry: &AuthorityLogEntry,
@@ -71,7 +74,7 @@ pub(super) fn owner_proof_key(
     };
     let key = &cosign.public_key;
     match key {
-        AuthorityKey::Ed25519(bytes) if proves_for_the_owner(state, key) => Ok(Some(*bytes)),
+        AuthorityKey::Ed25519(bytes) if gives_owner_proof(state, key) => Ok(Some(*bytes)),
         _ => Err(AuthorityFoldIssue::InvalidEntry(hash)),
     }
 }
@@ -84,21 +87,37 @@ fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
     roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
 }
 
-/// Remembers `key` as one the fold held as the owner's, when it proves for
-/// the owner in `state` ([`proves_for_the_owner`]): the roster's writer calls
-/// it for each row it writes, in the state that then holds the row. A key
-/// gains its proof only by joining the roster (roles only narrow, a custody
-/// mark only spreads, a revoke is for good), so no later row needs a look.
+/// Whether `key` is one whose cosign the fold takes as the owner's proof in
+/// `state`: a key `state` trusts as the owner's ([`proves_for_the_owner`]),
+/// in the one suite a proof is made in, Ed25519. The one predicate of the
+/// proof (Engine RULING CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A): the judge
+/// of a cosign ([`owner_proof_key`]) and the vault's memory of its owner
+/// keys ([`remember_owner_key`]), which its asking for a proof reads
+/// ([`owner_key_required`]), both read it, so the vault never asks for a
+/// proof that no key it has held could give. A key of the owner's in
+/// another suite (a P-256 key, a passkey's suite) is the owner's key and
+/// gives no proof; when the fold learns that suite's proof form, this is the
+/// one place that widens.
+fn gives_owner_proof(state: &FoldState, key: &AuthorityKey) -> bool {
+    matches!(key, AuthorityKey::Ed25519(_)) && proves_for_the_owner(state, key)
+}
+
+/// Remembers `key` as one the fold held as the owner's, when it can give the
+/// owner's proof in `state` ([`gives_owner_proof`]): the roster's writer
+/// calls it for each row it writes, in the state that then holds the row. A
+/// key gains its proof only by joining the roster (roles only narrow, a
+/// custody mark only spreads, a revoke is for good), so no later row needs a
+/// look.
 pub(super) fn remember_owner_key(state: &mut FoldState, key: &AuthorityKey) {
-    if proves_for_the_owner(state, key) {
+    if gives_owner_proof(state, key) {
         state.owner_keys_ever.insert(key.clone());
     }
 }
 
 /// Whether the vault asks for an owner key in `state` (item 2, and the
 /// owner's ruling AUTH-5): an act a not-mine carrier delivers needs the
-/// proof there. It asks once it has ever held a key that proves for the
-/// owner: a self-host vault's owner root, a hosted vault's enrolled owner
+/// proof there. It asks once it has ever held a key that can give that
+/// proof: a self-host vault's owner root, a hosted vault's enrolled owner
 /// device key. Removing the key changes nothing; only the owner's switch
 /// back to web sign-in ends it, for the keys the switch saw
 /// ([`runs_on_web_sign_in`]). A vault that never held one keeps today's acts
@@ -251,10 +270,11 @@ pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntry
 }
 
 impl AuthorityFold {
-    /// Whether `key` proves an owner act on this fold, as the fold judges a
-    /// proof cosign ([`owner_proof_key`]): live on the roster with
-    /// `ROLE_OWNER`, and outside the host's custody when the vault is
-    /// `hosted`. The writer's side of the one predicate.
+    /// Whether `key` is a key this fold trusts as the owner's: live on the
+    /// roster with `ROLE_OWNER`, and outside the host's custody when the
+    /// vault is `hosted`. The writer's side of `proves_for_the_owner`; the
+    /// fold takes a proof cosign only from such a key in the Ed25519 suite
+    /// ([`owner_proof_key`]), and every signer an install holds is one.
     #[must_use]
     pub(crate) fn proves_owner_acts(&self, key: &AuthorityKey, hosted: bool) -> bool {
         roster_has_live_owner(&self.roster, key) && !(hosted && self.in_host_custody(key))
