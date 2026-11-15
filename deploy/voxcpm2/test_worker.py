@@ -422,6 +422,52 @@ class WorkerTest(unittest.TestCase):
             ws.close()
         self.assertEqual(list(Path(self.tmp.name).glob("ref-*")), [])
 
+    def test_voice_socket_takes_a_reference_past_max_ref_bytes(self):
+        # Rule 5: a reference is never refused by size; `POST /render` takes
+        # it whole, and the socket takes the length its `start` announced.
+        self.replace_worker(FakeModel(), {**self.limits, "max_ref_bytes": 12})
+        ws = VoiceSocket(self.server.server_port)
+        try:
+            self.assertEqual(ws.handshake()[0], 101)
+            ws.recv_json()
+            generation = 1
+            target = self.target()
+            transcript = "ref"
+            wav = b"RIFF0000WAVEfmt " + b"\0" * 64
+            self.assertGreater(len(wav), self.limits["max_ref_bytes"])
+            ws.send_text({"type": "start", "generation": generation, "target": target,
+                          "transcript_bytes": len(transcript.encode()),
+                          "reference_bytes": len(wav)})
+            ws.send_binary(transcript.encode())
+            ws.send_binary(wav)
+            started = ws.recv_json()
+            self.assertEqual(started["type"], "started")
+            self.assertEqual(started["generation"], generation)
+            ws.send_text({"type": "text", "generation": generation, "text": "hi"})
+            parts = []
+            while True:
+                message = ws.recv_json()
+                if message["type"] == "audio":
+                    op, payload = ws.recv_frame()
+                    self.assertEqual(op, 0x2)
+                    parts.append(payload)
+                elif message["type"] == "usage":
+                    break
+                else:
+                    self.fail(f"unexpected {message}")
+            status, body = self.request("POST", "/render", pack(
+                {"target": target, "text": "hi", "transcript": transcript}, wav))
+            self.assertEqual(status, 200)
+            header_len = int.from_bytes(body[:4], "big")
+            self.assertEqual(b"".join(parts), body[4 + header_len:])
+            ws.send_text({"type": "end", "generation": generation})
+            self.assertEqual(ws.recv_json()["type"], "done")
+            ws.send_close()
+            self.assertEqual(ws.recv_frame()[0], 0x8)
+        finally:
+            ws.close()
+        self.assertEqual(list(Path(self.tmp.name).glob("ref-*")), [])
+
     def test_voice_socket_refuses_an_oversized_frame(self):
         ws = VoiceSocket(self.server.server_port)
         try:

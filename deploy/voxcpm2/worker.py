@@ -61,8 +61,10 @@ WIRE_U64 = (1 << 64) - 1
 WIRE_USIZE = (1 << (8 * struct.calcsize("P"))) - 1
 
 # `GET /v1/voice`: one versioned duplex WebSocket (L8-47 PR V1). Text and
-# transcript frames are bounded by max_header_bytes, the reference by
-# max_ref_bytes; audio goes out split into 65536-byte binaries.
+# transcript frames are bounded by max_header_bytes; the reference frame by
+# max_ref_bytes or the length its `start` announced, whichever is larger, so a
+# reference is never refused by size (Rule 5), as on `POST /render`; audio goes
+# out split into 65536-byte binaries.
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WS_AUDIO_CHUNK = 65536
 WS_OP_CONT = 0x0
@@ -500,7 +502,10 @@ def handler_for(worker):
                         announced_transcript = message.get("transcript_bytes")
                         announced_reference = message.get("reference_bytes")
                         transcript_bytes = self._ws_read_message("binary", limits["max_header_bytes"])
-                        reference_bytes = self._ws_read_message("binary", limits["max_ref_bytes"])
+                        reference_bound = limits["max_ref_bytes"]
+                        if type(announced_reference) is int and announced_reference > reference_bound:
+                            reference_bound = announced_reference
+                        reference_bytes = self._ws_read_message("binary", reference_bound)
                         error = None
                         answer = None
                         if (type(announced_transcript) is not int
@@ -783,7 +788,7 @@ def handler_for(worker):
                             pass
                         raise _WsEnd from None
                     ceiling = (worker.limits["max_header_bytes"] if op == WS_OP_TEXT
-                               else worker.limits["max_ref_bytes"])
+                               else max(worker.limits["max_ref_bytes"], bound))
                     if length > ceiling:
                         try:
                             self._ws_send_close(1009)

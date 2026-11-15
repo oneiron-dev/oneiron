@@ -80,9 +80,11 @@ POST and answers one or more `audio` headers plus PCM16LE binaries of at most
 65536 bytes, then `usage` (characters in code points, audio milliseconds); a
 failed render answers `error` with a code and never the text. `flush` is
 ignored, `end` erases the clip and answers `done`, `cancel` erases it and
-answers nothing. Text and transcript frames are bounded by `max_header_bytes`,
-the reference by `max_ref_bytes` (a larger frame gets close 1009); ping is
-answered with pong, close with close. `/ready` and `/render` remain only for
+answers nothing. Text and transcript frames are bounded by `max_header_bytes`
+(a larger frame gets close 1009); the reference frame by `max_ref_bytes` or the
+length its `start` announced, whichever is larger, so no reference is refused
+by size (Rule 5), as on `POST /render`; ping is answered with pong, close with
+close. `/ready` and `/render` remain only for
 the server's speech rung until PR V2 moves that rung to the socket.
 
 The CPU-only harness uses an injected fake model to prove request framing,
