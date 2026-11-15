@@ -2,15 +2,26 @@
 
 use serde_json::Value as JsonValue;
 
+use super::setting_keys::{ConsultancyPresetChoices, consultancy_preset_choices_in_txn};
 use super::shape::CampaignPresetData;
 use super::validate::{preset_error, validate_preset};
-use crate::Result;
+use crate::campaign::stage::{StageLadderDefinition, validate_ladder};
+use crate::{Result, Vault};
 
 // ---------------------------------------------------------------------------
 // The loader
 // ---------------------------------------------------------------------------
 
-/// Parses and validates JSON supplied by the host pack/config layer.
+/// Parses and validates JSON supplied by the host pack/config layer, then
+/// gives its ladder the owner's consultancy preset values.
+///
+/// The pack is held to the ratified preset as before: the D+3 bump and the
+/// six ratified reply routes. The returned ladder then carries the vault
+/// owner's `campaign.no_show.bump_after_secs` and the dispositions of
+/// `campaign.reply.referral_disposition`, `.objection_disposition` and
+/// `.not_interested_disposition` in their place, read in one transaction.
+/// With no owner row each is the ratified value, so the preset is the pack's
+/// own. Positive-now, positive-later and complaint keep their ratified routes.
 ///
 /// The returned value is owned data: nothing is cached, installed, registered,
 /// or written. A caller hands this to CA-04's ladder functions, which own every
@@ -20,15 +31,40 @@ use crate::Result;
 ///
 /// [`Error::InvalidConfig`](crate::Error::InvalidConfig) naming the first defect found: malformed JSON, an
 /// unknown or missing field, an id or version that is not the ratified pair, a
-/// ladder CA-04 itself rejects, or any violated content invariant.
-pub fn load_campaign_preset(json: &str) -> Result<CampaignPresetData> {
+/// ladder CA-04 itself rejects, any violated content invariant, or an owner's
+/// promote disposition into a stage the ladder does not declare. Storage
+/// errors from the owner's keys.
+pub fn load_campaign_preset(vault: &Vault, json: &str) -> Result<CampaignPresetData> {
     let value: JsonValue = serde_json::from_str(json)
         .map_err(|err| preset_error(format!("host config is not valid JSON: {err}")))?;
     reject_unknown_ladder_fields(&value["stage_ladder"])?;
-    let preset: CampaignPresetData = serde_json::from_value(value)
+    let mut preset: CampaignPresetData = serde_json::from_value(value)
         .map_err(|err| preset_error(format!("host config is not a valid preset: {err}")))?;
     validate_preset(&preset)?;
+    let choices = {
+        let txn = vault.store.env.read_txn()?;
+        consultancy_preset_choices_in_txn(vault, &txn)?
+    };
+    apply_owner_choices(&mut preset.stage_ladder, &choices);
+    validate_ladder(&preset.stage_ladder).map_err(|err| {
+        preset_error(format!(
+            "stage ladder with the owner's reply dispositions: {err}"
+        ))
+    })?;
     Ok(preset)
+}
+
+/// The owner's values in place of the ratified ones `validate_preset` just
+/// checked: the bump delay, and each owner-chosen code's route.
+fn apply_owner_choices(ladder: &mut StageLadderDefinition, choices: &ConsultancyPresetChoices) {
+    ladder.no_show_recovery.bump_after_secs = choices.bump_after_secs;
+    for (code, disposition) in &choices.reply_dispositions {
+        for route in &mut ladder.reply_routes {
+            if route.code == *code {
+                route.disposition = disposition.clone();
+            }
+        }
+    }
 }
 
 /// CA-04's ladder-subtree field names, one list per node. A field CA-04 adds
