@@ -2,15 +2,27 @@
 //! `oneiron` re-exports each item at its old path.
 
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::register::Register;
 use oneiron_store::diagnostic_record::event::AgentHealthSignal;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// How a card reads (agent-mind §3.5).
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Register,
 )]
 #[serde(rename_all = "snake_case")]
+#[register("agent.health.tone")]
 pub enum AgentHealthTone {
     /// Loops, failed checks, silence, long waits, cost.
     Struggling,
@@ -21,15 +33,6 @@ pub enum AgentHealthTone {
 }
 
 impl AgentHealthTone {
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Struggling => "struggling",
-            Self::OffCourse => "off_course",
-            Self::Concern => "concern",
-        }
-    }
-
     #[must_use]
     pub const fn of(signal: AgentHealthSignal) -> Self {
         match signal {
@@ -109,8 +112,11 @@ pub enum AgentHealthConfidence {
 }
 
 /// Set by the leader or the owner.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("agent.health.outcome")]
 pub enum AgentHealthOutcome {
     Open,
     Confirmed,
@@ -122,22 +128,7 @@ impl AgentHealthOutcome {
     /// Parses an outcome a person sets; `open` is the review's alone.
     #[must_use]
     pub fn from_wire(raw: &str) -> Option<Self> {
-        match raw {
-            "confirmed" => Some(Self::Confirmed),
-            "dismissed" => Some(Self::Dismissed),
-            "unresolved" => Some(Self::Unresolved),
-            _ => None,
-        }
-    }
-
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Open => "open",
-            Self::Confirmed => "confirmed",
-            Self::Dismissed => "dismissed",
-            Self::Unresolved => "unresolved",
-        }
+        <Self as Register>::named(raw).filter(|outcome| *outcome != Self::Open)
     }
 }
 
