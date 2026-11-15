@@ -77,6 +77,7 @@ pub(crate) fn add_security_scheme(spec: &mut Value) {
         ("/v1/core/run-tree", "get"),
         ("/v1/core/run-tree/observe", "get"),
         ("/v1/core/run-tree/intervene", "post"),
+        ("/v1/core/jobs/{job_id}", "get"),
         ("/v1/core/memory/{id}/timeline", "get"),
         ("/v1/core/memory/{id}/watch", "get"),
         ("/v1/core/memory/{id}/watch", "put"),
