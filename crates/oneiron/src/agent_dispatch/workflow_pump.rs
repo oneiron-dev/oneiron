@@ -82,9 +82,14 @@ impl AgentDispatcher<'_> {
             return Ok(WorkflowProgress::Waiting(active.id));
         }
         if active.state != AttemptState::Completed {
-            match &cancel {
-                // L1-03: the step stopped because the run was asked to stop,
-                // so the run ends Cancelled, not Failed.
+            // L1-03: a step the run's cancel request stopped (it was cancelled,
+            // or its worker was asked to land) ends the run Cancelled, not
+            // Failed. A step that failed or was abandoned before anyone asked
+            // still fails the run: the request never renames a failure.
+            let cancelled_by = cancel
+                .as_ref()
+                .filter(|request| super::workflow_cancel::stopped_by_request(&active, request));
+            match cancelled_by {
                 Some(request) => self.end_workflow_cancelled_in(&mut txn, root, request, now)?,
                 None => {
                     let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
@@ -109,7 +114,7 @@ impl AgentDispatcher<'_> {
             RECORD.put(self.vault, &mut txn, &root, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
-            if cancel.is_some() {
+            if cancelled_by.is_some() {
                 // FIX 11482: a cancelled row's job notice committed here.
                 self.vault.store.notify_notification_updates();
             }
@@ -179,6 +184,9 @@ impl AgentDispatcher<'_> {
         } else if let Some(request) = &cancel {
             // L1-03: a run asked to stop releases no further step. Its
             // completed steps keep their results, and the run ends Cancelled.
+            // A successor release refused earlier is moot now: the ended run
+            // shows no refusal it will never retry.
+            record.release_refusal = None;
             self.end_workflow_cancelled_in(&mut txn, root, request, now)?;
             self.settle_child_in_txn(&mut txn, &root, now)?;
             WorkflowProgress::Stopped(root)
