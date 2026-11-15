@@ -186,6 +186,16 @@ impl VendorVault {
         backends: &dyn SandboxBackends,
         console: &mut Console,
     ) -> Result<(MicroVmSandboxAdapter, MicroVmExit)> {
+        self.run_cancellable(backends, console, &StepCancellation::new())
+    }
+
+    /// [`Self::run`], as a step `cancel` cancels.
+    pub(crate) fn run_cancellable(
+        &self,
+        backends: &dyn SandboxBackends,
+        console: &mut Console,
+        cancel: &StepCancellation,
+    ) -> Result<(MicroVmSandboxAdapter, MicroVmExit)> {
         let base = self.dir.path().join("base");
         for mount in ["workspace", "uploads", "outputs", "skills"] {
             fs::create_dir_all(base.join(mount)).expect("mount root");
@@ -218,7 +228,7 @@ impl VendorVault {
         let exit = adapter.run_cancellable(
             &image,
             ExecutionBudget::new(STEP_SECONDS, 512, 64),
-            &StepCancellation::new(),
+            cancel,
             console,
         )?;
         Ok((adapter, exit))
