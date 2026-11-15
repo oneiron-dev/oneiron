@@ -372,15 +372,31 @@ pub(crate) async fn core_memory_verb(
         oneiron::NamedMemoryVerb::Retract => {
             let id = parse_required_entity_id(req.id.as_deref(), "id")?;
             let at = req.at.unwrap_or_else(unix_seconds_now);
-            server.vault.retract_claim(&id, at).map_err(|error| {
-                tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
-                core_engine_error("core memory retract failed", error)
-            })?;
+            // As the delete below (DEL-2): a self-hosted root, the dev
+            // mode and an owner-grade token retract as the owner, as
+            // before. Any other token runs the facade row
+            // `vault.claims.retract`, so its verb hooks and its
+            // `/claim_ref` reference admission judge the call before the
+            // engine judges the actor's authorship, exactly as on the
+            // facade (FIX-LIST 25699). That row records its own time, so
+            // a non-owner caller's `at` does not reach it, and the answer
+            // reports no time on that path: the row's receipt carries none,
+            // so echoing the caller's `at` would claim it was used.
+            let owner_door = host_action.is_some() || auth.is_owner_grade();
+            let facade_ran = !owner_door;
+            if owner_door {
+                server.vault.retract_claim(&id, at).map_err(|error| {
+                    tracing::error!(kind = ?error.kind(), id = %id.to_hex(), "core memory retract failed");
+                    core_engine_error("core memory retract failed", error)
+                })?;
+            } else {
+                core_memory_retract_by_facade(&server, &auth, &id)?;
+            }
 
             Ok(Json(CoreMemoryVerbResponse {
                 verb: verb.canonical_name().to_owned(),
                 operation,
-                at: Some(at),
+                at: if facade_ran { None } else { Some(at) },
                 id: Some(id.to_hex()),
                 new_id: None,
                 old_id: None,
@@ -674,10 +690,52 @@ fn memory_verb_refusal(refusal: oneiron::NamedMemoryVerbRefusal) -> ApiError {
     }
 }
 
+/// The core retract of `id` by a token that is not owner-grade, through
+/// the facade row `vault.claims.retract` (FIX-LIST 25699). The generated
+/// dispatch runs the row's verb-hook boundary, admits `/claim_ref`
+/// through the caller's scoped read, and only then calls
+/// `Memory::claim_retract`, which judges the resolved actor's authorship.
+/// Calling a judged door directly here would skip the hooks and the
+/// admission, and the door would answer for claims the caller cannot
+/// read. The actor is resolved as the delete below resolves it, an
+/// account key judged as its person; a token that names no actor is
+/// refused `unresolved_actor`.
+fn core_memory_retract_by_facade(
+    server: &SyncServer,
+    auth: &CoreAuth,
+    id: &oneiron::EntityId,
+) -> Result<(), DagWriteError> {
+    let (actor, class) = match facade::facade_actor(server, auth) {
+        Ok((actor, class)) => (actor, class),
+        Err(_) => match auth.account_key_principal() {
+            Some(person) => (person, oneiron::EdgeActorClass::Human),
+            None => {
+                return Err(oneiron::memory::MemoryError::new(
+                    oneiron::memory::MEMORY_CODE_FORBIDDEN,
+                    "unresolved_actor: this token names no actor the retract authority can judge",
+                    &[
+                        "Present a slip paired with --principal-ref and --actor-class, an account key that names its person, or the owner's own credential.",
+                    ],
+                )
+                .into());
+            }
+        },
+    };
+    let memory = super::scoped_auth::credential_memory(server.vault(), Some(auth), actor, class);
+    oneiron::task_verb::sdk::invoke(
+        &memory,
+        "vault.claims.retract",
+        serde_json::json!({ "claim_ref": id.to_hex() }),
+    )?;
+    Ok(())
+}
+
 /// The core delete of `id` by a token that is not owner-grade (DEL-2,
 /// ARCH-0043; Engine ruling 13 Nov 02:51 = A). Its actor is resolved as the
-/// facade resolves a writer, and `Memory::safe_delete` judges it on that
-/// actor's handle, the credential's proof bound: the owner path when the
+/// facade resolves a writer, and the facade row `vault.delete` runs on
+/// that actor's handle, the credential's proof bound: its verb hooks and
+/// its `/entity_ref` reference admission first (FIX-LIST 25699), then
+/// `Memory::safe_delete`'s judge: the owner path when the
 /// actor is the vault's owner, else the role table (a Member's own item, an
 /// Admin's in-scope item, an agent under a Grant that names `delete`), each
 /// refusal FORBIDDEN and naming its reason. A token that names no actor is
@@ -718,7 +776,20 @@ fn core_memory_delete_by_role(
         CoreMemoryVerbDeleteReason::Gdpr => oneiron::memory::SafeDeleteReason::GdprDelete,
         CoreMemoryVerbDeleteReason::Policy => oneiron::memory::SafeDeleteReason::PolicyDelete,
     };
-    match memory.safe_delete(&id.to_hex(), reason) {
+    let deleted: oneiron::memory::MemoryResult<oneiron::memory::DeleteReceipt> =
+        oneiron::task_verb::sdk::invoke(
+            &memory,
+            "vault.delete",
+            serde_json::json!({ "entity_ref": id.to_hex(), "reason": reason.as_str() }),
+        )
+        .and_then(|value| {
+            serde_json::from_value(value).map_err(|error| {
+                oneiron::memory::MemoryError::bad_request(format!(
+                    "the delete row's receipt does not decode: {error}"
+                ))
+            })
+        });
+    match deleted {
         Err(refusal)
             if by_account_key
                 && refusal.code == oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED
