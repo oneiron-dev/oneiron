@@ -48,7 +48,6 @@ pub struct MeshMachineBound {
 
 /// The MACHINE whose mesh admission the owner withdraws permanently.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct MeshMachineRevokeRequest {
     pub machine: EntityId,
 }
