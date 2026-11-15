@@ -4,15 +4,79 @@
 pub(crate) use oneiron_store::batch::secret_scan::mask::text_spans::*;
 
 use super::super::shapes;
-use super::super::{REASON_MNEMONIC, REASON_PRIVATE_KEY, provider_token_spans};
+use super::super::{
+    REASON_MNEMONIC, REASON_PRIVATE_KEY, at_token_boundaries, provider_token_spans,
+};
 use super::{REASON_BLOCKLIST, REASON_SENSITIVE_ENV};
+use crate::file_secret_marks::FILLER;
 use std::ops::Range;
+use zeroize::Zeroizing;
 
 /// The spans of `text` the write door's text rules place, merged where they
 /// meet, in order: a private-key block, a blocklist entry, a provider key
 /// token, an assigned value under a credential name, and a recovery phrase.
 pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
-    let spans: Vec<(Range<usize>, &'static str)> = shapes::private_key_block_spans(text)
+    merged(rule_placed_spans(text))
+}
+
+/// [`secret_spans`] of a text in a record where the owner ruled values no
+/// secret or kept them as text (FIX 8646, L6-03-RULED-SCREEN-MERGED-SPAN): a
+/// span one rule places on a value `kept` reads as kept is no hit, and the
+/// rules read the text again with each such value filled, as the door's scan
+/// reads it. A key the rules placed next to a kept value, or a word they
+/// read around it, is then placed on its own, and the kept value stays as
+/// written (`password=<kept>/[secret sc12]`). A value that is only part of a
+/// span, such as the head of a longer token, is no rule's span alone: it is
+/// not filled, and the span is masked whole. Nor is a rule's span inside a
+/// longer token, such as a blocklist entry ([`at_token_boundaries`]). A
+/// private-key block is a secret as a whole: one that holds a kept value,
+/// which no longer reads as a block once that value is filled, stays placed
+/// whole, the kept value with it (fail closed).
+pub(super) fn secret_spans_kept(
+    text: &str,
+    kept: impl Fn(&[u8]) -> bool,
+) -> Vec<(Range<usize>, &'static str)> {
+    let placed = rule_placed_spans(text);
+    let kept_spans: Vec<Range<usize>> = placed
+        .iter()
+        .map(|(span, _)| span.clone())
+        .filter(|span| {
+            at_token_boundaries(text.as_bytes(), span)
+                && text.as_bytes().get(span.clone()).is_some_and(&kept)
+        })
+        .collect();
+    if kept_spans.is_empty() {
+        return merged(placed);
+    }
+    let mut filled = Zeroizing::new(text.as_bytes().to_vec());
+    for span in &kept_spans {
+        if let Some(bytes) = filled.get_mut(span.clone()) {
+            bytes.fill(FILLER);
+        }
+    }
+    match std::str::from_utf8(&filled) {
+        Ok(filled) => {
+            let mut spans = rule_placed_spans(filled);
+            spans.extend(placed.into_iter().filter(|(span, reason)| {
+                *reason == REASON_PRIVATE_KEY
+                    && !kept_spans.contains(span)
+                    && kept_spans
+                        .iter()
+                        .any(|kept| kept.start < span.end && span.start < kept.end)
+            }));
+            merged(spans)
+        }
+        // A span that cuts a char: the text is read as written, and the
+        // kept value is masked with its neighbour (fail closed).
+        Err(_) => merged(placed),
+    }
+}
+
+/// Each span one of the write door's text rules places in `text`, as that
+/// rule places it: two that meet are two spans here, one in
+/// [`secret_spans`].
+fn rule_placed_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
+    shapes::private_key_block_spans(text)
         .into_iter()
         .map(|span| (span, REASON_PRIVATE_KEY))
         .chain(
@@ -32,13 +96,36 @@ pub(super) fn secret_spans(text: &str) -> Vec<(Range<usize>, &'static str)> {
                 .into_iter()
                 .map(|span| (span, REASON_MNEMONIC)),
         )
-        .collect();
-    merged(spans)
+        .collect()
 }
 
 /// The spans the door's text rules place in each run of text in a file, at
 /// their offsets in its bytes.
 pub(super) fn file_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
+    text_run_spans(data, secret_spans)
+}
+
+/// [`secret_spans_kept`] in each run of text in a file, at their offsets in
+/// its bytes.
+pub(super) fn file_spans_kept(
+    data: &[u8],
+    kept: impl Fn(&[u8]) -> bool,
+) -> Vec<(Range<usize>, &'static str)> {
+    text_run_spans(data, |text| secret_spans_kept(text, &kept))
+}
+
+/// [`rule_placed_spans`] in each run of text in a file, at their offsets in
+/// its bytes: each span as one rule places it, unmerged.
+pub(super) fn file_rule_placed_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
+    text_run_spans(data, rule_placed_spans)
+}
+
+/// The spans `spans_of` places in each run of text in `data` (its longest
+/// valid UTF-8 runs), at their offsets in `data`.
+fn text_run_spans(
+    data: &[u8],
+    spans_of: impl Fn(&str) -> Vec<(Range<usize>, &'static str)>,
+) -> Vec<(Range<usize>, &'static str)> {
     let mut spans = Vec::new();
     let mut at = 0;
     while let Some(rest) = data.get(at..).filter(|rest| !rest.is_empty()) {
@@ -56,7 +143,7 @@ pub(super) fn file_spans(data: &[u8]) -> Vec<(Range<usize>, &'static str)> {
             .and_then(|run| std::str::from_utf8(run).ok())
         {
             spans.extend(
-                secret_spans(text)
+                spans_of(text)
                     .into_iter()
                     .map(|(span, reason)| (span.start + at..span.end + at, reason)),
             );
