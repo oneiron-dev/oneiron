@@ -150,7 +150,15 @@ pub(super) fn carry_born_with(
         // :382): a field whose text the release check reads one in, raw or
         // through the typed rule, stays home whole, as a denied prompt
         // source's text does; the row and its other fields still travel.
-        text.retain(|_, value| crate::serialize::release_keeps_text(value));
+        // The Prompt field joins its sources' texts with a blank line, and
+        // the typed rule reads each source's text alone, so each part of a
+        // field between blank lines is judged too.
+        text.retain(|_, value| {
+            crate::serialize::release_keeps_text(value)
+                && value
+                    .split("\n\n")
+                    .all(crate::serialize::release_keeps_text)
+        });
         if !text.is_empty() {
             map_insert_bytes(&map, &id.to_hex(), &encode(&text)?)?;
         }

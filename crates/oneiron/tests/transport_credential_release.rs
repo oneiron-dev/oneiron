@@ -1180,17 +1180,15 @@ fn witness_prompt_message(
 #[test]
 fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
     let credential = format!("ghp_{}", "a".repeat(36));
-    assert_member_window_keeps_born_with_prompt_home(
-        &format!("Rotate the token {credential} before Tuesday."),
-        &credential,
-    )
+    let credential_text = format!("Rotate the token {credential} before Tuesday.");
+    assert_member_window_keeps_born_with_prompt_home(&[credential_text.as_str()], &credential)
 }
 
-/// A member peer's window carries a row born of a prompt whose text is
-/// `credential_text`, which holds `credential`, without that Prompt field,
-/// and a row born of a clean prompt with it.
+/// A member peer's window carries a row born of prompts whose texts are
+/// `credential_prompt_texts`, in order, which hold `credential`, without its
+/// Prompt field, and a row born of a clean prompt with it.
 fn assert_member_window_keeps_born_with_prompt_home(
-    credential_text: &str,
+    credential_prompt_texts: &[&str],
     credential: &str,
 ) -> Result<()> {
     use oneiron::authority::{ActSurface, MachineRole};
@@ -1228,11 +1226,17 @@ fn assert_member_window_keeps_born_with_prompt_home(
     let control_text = "Count the weekly review items.";
     let conversation = EntityId::now();
     let control_prompt = witness_prompt_message(vault, &owner, conversation, control_text)?;
-    let credential_prompt = witness_prompt_message(vault, &owner, conversation, credential_text)?;
+    let credential_prompts = credential_prompt_texts
+        .iter()
+        .map(|text| witness_prompt_message(vault, &owner, conversation, text))
+        .collect::<Result<Vec<_>>>()?;
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
     let mut artifacts = Vec::new();
-    for (name, prompt) in [("owen", control_prompt), ("yuki", credential_prompt)] {
+    for (name, prompts) in [
+        ("owen", vec![control_prompt]),
+        ("yuki", credential_prompts.clone()),
+    ] {
         let id = EntityId::now();
         vault.put_blob_artifact(
             &id,
@@ -1244,10 +1248,13 @@ fn assert_member_window_keeps_born_with_prompt_home(
             LEARNED_AT,
         )?;
         let made_by = MadeBy {
-            inputs: vec![MadeByInput {
-                row: prompt,
-                role: MadeByInputRole::Prompt,
-            }],
+            inputs: prompts
+                .iter()
+                .map(|&row| MadeByInput {
+                    row,
+                    role: MadeByInputRole::Prompt,
+                })
+                .collect(),
             process: MadeByProcess {
                 actor: owner_id,
                 class: MadeByClass::Stated,
@@ -1286,18 +1293,16 @@ fn assert_member_window_keeps_born_with_prompt_home(
     let stored = vault.born_with_text(&credential_row.id, None)?;
     assert_eq!(
         stored.get(&BornWithField::Prompt).map(String::as_str),
-        Some(credential_text),
+        Some(credential_prompt_texts.join("\n\n").as_str()),
         "the public born-with read reaches the credential prompt before export"
     );
 
     let key = WindowKey::new(WINDOW);
     let window = fixture.manager.open_window(&key)?;
-    for id in [
-        control_prompt,
-        credential_prompt,
-        control_row.id,
-        credential_row.id,
-    ] {
+    for id in [control_prompt, control_row.id, credential_row.id]
+        .into_iter()
+        .chain(credential_prompts.iter().copied())
+    {
         assert!(
             map_get_bytes(&window.doc.get_map("entities"), &id.to_hex()).is_some(),
             "the shared window contains the prompt and selected row: {}",
@@ -1343,7 +1348,9 @@ fn assert_member_window_keeps_born_with_prompt_home(
         );
     });
     assert_unchanged(vault, &[control_row, credential_row])?;
-    assert_eq!(vault.entity_text(&credential_prompt)?, credential_text);
+    for (prompt, text) in credential_prompts.iter().zip(credential_prompt_texts) {
+        assert_eq!(vault.entity_text(prompt)?, *text);
+    }
     Ok(())
 }
 
@@ -1428,5 +1435,18 @@ fn member_peer_window_withholds_note_with_json_escaped_credential_proposal() -> 
 
 #[test]
 fn member_peer_window_keeps_json_escaped_credential_born_with_prompt_home() -> Result<()> {
-    assert_member_window_keeps_born_with_prompt_home(ESCAPED_PASSWORD_JSON, ESCAPED_PASSWORD_VALUE)
+    assert_member_window_keeps_born_with_prompt_home(
+        &[ESCAPED_PASSWORD_JSON],
+        ESCAPED_PASSWORD_VALUE,
+    )
+}
+
+/// The Prompt field joins a clean prompt and the escaped JSON with a blank
+/// line: the joined text is no JSON, yet the JSON part keeps it home.
+#[test]
+fn member_peer_window_keeps_joined_prompt_with_json_escaped_credential_home() -> Result<()> {
+    assert_member_window_keeps_born_with_prompt_home(
+        &["Count the open review items.", ESCAPED_PASSWORD_JSON],
+        ESCAPED_PASSWORD_VALUE,
+    )
 }
