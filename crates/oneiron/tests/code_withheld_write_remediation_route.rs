@@ -11,6 +11,10 @@
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test code_withheld_write_remediation_route`.
 #![cfg(oneiron_test_support)]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own git subprocesses; the rule covers the engine's crates"
+)]
 
 use std::path::Path;
 use std::process::Command;
