@@ -152,7 +152,7 @@ pub(super) fn finish_promotion_in_txn(
 /// `WriterHold`: the prior read, the claim and its text, then the whole
 /// of `finish_promotion`. The caller that opened the transaction holds
 /// it.
-pub(in crate::dreamer_promotion) fn land_prepared_promotion_in_txn(
+pub(crate) fn land_prepared_promotion_in_txn(
     vault: &Vault,
     run: &DreamerRunContext,
     prepared: &PreparedPromotion<'_>,

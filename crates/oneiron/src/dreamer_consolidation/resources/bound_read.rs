@@ -53,6 +53,8 @@ pub(crate) use evidence::stored_range_for_served_range;
 pub(crate) mod extraction_routing_door;
 mod observations;
 #[cfg(oneiron_test_support)]
+pub(crate) mod open_candidate_door;
+#[cfg(oneiron_test_support)]
 pub(crate) mod open_conflict_door;
 
 /// What the bound verdict supplies to rebuild its queued branch's read
@@ -184,6 +186,26 @@ impl BoundBranchRead {
     /// branch queued no such TURN.
     pub(crate) fn turn_text(&self, turn: EntityId) -> Option<&TurnText> {
         self.texts.get(&turn)
+    }
+
+    /// The queued attempt the projection rebuilt.
+    pub(super) fn fenced_attempt(&self) -> AttemptId {
+        self.attempt
+    }
+
+    /// The pinned source rows the projection read, by entity id.
+    pub(super) fn fenced_sources(&self) -> &BTreeMap<EntityId, SourcePin> {
+        &self.sources
+    }
+
+    /// Each queued TURN's declared part conversation, by TURN id.
+    pub(super) fn fenced_turns(&self) -> &BTreeMap<EntityId, EntityId> {
+        &self.turns
+    }
+
+    /// Each queued turn's frozen text, by turn id.
+    pub(super) fn fenced_texts(&self) -> &BTreeMap<EntityId, TurnText> {
+        &self.texts
     }
 
     /// The attenuated scope for a bound extraction step over `cited`, with the

@@ -62,6 +62,9 @@ pub use scoped::promote_scoped_consolidation;
 pub(crate) use scoped::{AssertedEvidence, EvidenceAssertion, assert_evidence_in_txn};
 pub(crate) use settlement::{KeptLanding, land_kept_alternative_in_txn};
 use writer::promote_one;
+pub(crate) use writer::{
+    PromotionRejection, land_prepared_promotion_in_txn, prepare_promotion, verify_landed_body,
+};
 
 use crate::Vault;
 use crate::attempt_queue::AttemptId;

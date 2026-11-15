@@ -34,6 +34,66 @@ pub(super) struct UnlistedHeads {
     by_question: BTreeMap<(EntityId, String), Vec<PriorHead>>,
 }
 
+/// Whether `candidate` restates one of `heads`: the Imported rule, the
+/// subject rule, and native's comparison over the slice. An imported
+/// restatement is never judged here, it keeps its review; a candidate
+/// whose subject is not an entity restates nothing. Otherwise the
+/// identity, topic and value keys must all equal, in the same facet,
+/// project and taint scope, skipping the candidate's own id (its replay).
+/// The default facet resolves only when the scope names none, through
+/// `default_facet`.
+pub(super) fn restates_head_in_slice(
+    candidate: &PromotionCandidate,
+    rules: &PredicateKeyRules,
+    meet: ClaimSource,
+    heads: &[PriorHead],
+    default_facet: impl FnOnce() -> Result<EntityId>,
+) -> Result<bool> {
+    if meet == ClaimSource::Imported {
+        return Ok(false);
+    }
+    let fresh = candidate_probe_body(&candidate.candidate)?;
+    let ClaimSubject::Entity(_) = fresh.subject else {
+        return Ok(false);
+    };
+    if heads.is_empty() {
+        return Ok(false);
+    }
+    let key = candidate_keys(candidate, rules)?;
+    // The facet the candidate's write stamps: the one its scope names,
+    // else the vault's default, since a new id has no birth facet yet. A
+    // scope whose facet does not read is judged by its write, as before.
+    let Ok(named) = super::signals::facet(fresh.scope.as_ref()) else {
+        return Ok(false);
+    };
+    let fresh_facet = match named {
+        Some(facet) => facet,
+        None => default_facet()?,
+    };
+    let fresh_scope = scope_with_taint(fresh.scope.clone(), meet);
+    for head in heads {
+        // This attempt's own head met again is its replay, not a
+        // restatement.
+        if head.claim_id == candidate.claim_id {
+            continue;
+        }
+        let head_key = prior_keys(head, rules)?;
+        if key.identity != head_key.identity
+            || key.topic_key != head_key.topic_key
+            || key.value_key != head_key.value_key
+        {
+            continue;
+        }
+        if fresh_facet == head.body.scope_facet
+            && fresh.scope_project == head.body.scope_project
+            && fresh_scope == scope_with_taint(head.body.scope.clone(), meet)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl BranchResources<'_> {
     /// Whether `candidate`, which matched no admitted prior, restates an
     /// unvetted head of the Dreamer's own that this branch did not admit:
@@ -61,42 +121,10 @@ impl BranchResources<'_> {
         let Some(standing_heads) = heads.by_question.get(&question) else {
             return Ok(false);
         };
-        if standing_heads.is_empty() {
-            return Ok(false);
-        }
-        let key = candidate_keys(candidate, rules)?;
-        // The facet the candidate's write stamps: the one its scope names,
-        // else the vault's default, since a new id has no birth facet yet. A
-        // scope whose facet does not read is judged by its write, as before.
-        let Ok(named) = super::signals::facet(fresh.scope.as_ref()) else {
-            return Ok(false);
-        };
-        let fresh_facet = match named {
-            Some(facet) => facet,
-            None => self.read.vault().default_facet()?,
-        };
-        let fresh_scope = scope_with_taint(fresh.scope.clone(), meet);
-        for head in standing_heads {
-            // This attempt's own head met again is its replay, not a
-            // restatement.
-            if head.claim_id == candidate.claim_id {
-                continue;
-            }
-            let head_key = prior_keys(head, rules)?;
-            if key.identity != head_key.identity
-                || key.topic_key != head_key.topic_key
-                || key.value_key != head_key.value_key
-            {
-                continue;
-            }
-            if fresh_facet == head.body.scope_facet
-                && fresh.scope_project == head.body.scope_project
-                && fresh_scope == scope_with_taint(head.body.scope.clone(), meet)
-            {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        let vault = self.read.vault();
+        restates_head_in_slice(candidate, rules, meet, standing_heads, || {
+            vault.default_facet()
+        })
     }
 
     /// `subject`'s claims under `predicate`, other than the branch's

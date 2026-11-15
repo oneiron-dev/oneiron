@@ -32,6 +32,7 @@ mod claim;
 mod commit;
 mod conflict;
 mod evidence;
+mod extraction_opening;
 mod link;
 mod record;
 mod revert;

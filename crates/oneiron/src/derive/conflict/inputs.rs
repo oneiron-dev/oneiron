@@ -24,7 +24,7 @@ use crate::ClaimCandidate;
 /// A candidate whose probe body does not read, and hints the normaliser
 /// refuses. The batch shape check already refused the latter, and the set
 /// rebuild already probed the former, so neither fires on a checked batch.
-pub(super) fn member_candidate(
+pub(crate) fn member_candidate(
     candidate: &ClaimCandidate,
     confidence: f32,
     hints: &[String],
@@ -46,7 +46,7 @@ pub(super) fn member_candidate(
 /// The provenance the marker carries: derive's, as every other derive item
 /// stamps it (the Claim stager's envelope): the derivation surface, the
 /// batch, the item, and the run. No decision memo.
-pub(super) fn derive_provenance(context: &ItemContext<'_>, local: &str) -> Vec<(Value, Value)> {
+pub(crate) fn derive_provenance(context: &ItemContext<'_>, local: &str) -> Vec<(Value, Value)> {
     let mut provenance = vec![
         (
             Value::from("surface"),

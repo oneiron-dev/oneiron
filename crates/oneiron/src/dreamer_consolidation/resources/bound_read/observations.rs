@@ -16,20 +16,22 @@ use super::super::super::watermark::decode_turn_body;
 use super::super::super::{PriorHead, PromotionCandidate};
 use super::super::document_version;
 use super::super::prior::{Standing, prior_keys, standing};
-use super::super::restated::{provisional_heads_from_parts, unlisted_cohort_ids_in_txn};
+use super::super::restated::{
+    provisional_heads_from_parts, restates_head_in_slice, unlisted_cohort_ids_in_txn,
+};
 use super::super::signals::{
     candidate_vector_in_txn, claim_graph_source_in_slice, count_graph_signals, facet,
     last_reviewed_in_txn, project_slice_admits, relationship_slice_admits,
     session_graph_axes_in_slice, turn_graph_axes_in_slice,
 };
 use super::BoundBranchRead;
-use crate::claim::{ScopedRead, decode_claim_body};
+use crate::claim::{ClaimSource, ScopedRead, decode_claim_body};
 use crate::edge::EdgeKind;
 use crate::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_SECRET_CUSTODY, ENTITY_TYPE_SESSION,
     ENTITY_TYPE_TURN,
 };
-use crate::{ClaimSubject, EntityId, Result};
+use crate::{ClaimSubject, EntityId, Result, Vault};
 use rmpv::Value;
 
 impl BoundBranchRead {
@@ -177,6 +179,32 @@ impl BoundBranchRead {
                 id,
                 crate::gate::ConsolidationReader::ExplicitPrior,
             )
+        })
+    }
+
+    /// Whether `candidate`, which matched no admitted prior, restates an
+    /// unlisted provisional eligible own head of its subject and predicate:
+    /// the replay cohort in the caller's transaction with native's
+    /// comparison. `meet` is the candidate's evidence meet; an imported
+    /// restatement is never judged here. The default facet reads through
+    /// the caller's transaction.
+    pub(crate) fn restates_unlisted_candidate_in_txn(
+        &self,
+        vault: &Vault,
+        read: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        candidate: &PromotionCandidate,
+        meet: ClaimSource,
+    ) -> Result<bool> {
+        if meet == ClaimSource::Imported {
+            return Ok(false);
+        }
+        let heads = self.replay_heads_in_txn(read, txn, candidate)?;
+        if heads.is_empty() {
+            return Ok(false);
+        }
+        restates_head_in_slice(candidate, self.key_rules(), meet, &heads, || {
+            vault.default_facet_in_txn(txn)
         })
     }
 

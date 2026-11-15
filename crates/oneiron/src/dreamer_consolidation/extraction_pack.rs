@@ -39,6 +39,7 @@ pub(crate) use checks::{
     check_turn_evidence, extraction_not_served,
 };
 pub(crate) use execution::{CheckedExtractionRead, ExtractionReadExecution, execute_checked_read};
+pub(crate) use observed_beside::kept_matches_for_one_proposal;
 pub(in crate::dreamer_consolidation) use reads::parse_reference;
 pub(crate) use reads::{CheckedPack, check_pack_candidates, select_routed_conflict};
 

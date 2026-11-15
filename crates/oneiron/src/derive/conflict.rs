@@ -22,10 +22,12 @@
 //! provenance and no decision memo. A refusal lands nothing, writes the
 //! item's receipt, and the batch goes on; a storage error aborts the commit.
 
-mod inputs;
+pub(super) mod inputs;
 
 use super::batch::DerivedConflict;
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
+use super::extraction_opening::{ExtractionOpening, open_attempt, open_verdict_read};
+use crate::Vault;
 use crate::dreamer_consolidation::extraction_pack::{
     ExtractionRebuildContext, check_engine_claim_pins, check_extraction_operands_in_txn,
     check_pack_candidates, select_routed_conflict,
@@ -34,7 +36,6 @@ use crate::error::{Error, GateError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
 use crate::memory::{MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_FORBIDDEN, MemoryError};
 use crate::verbs::CandidateOperand;
-use crate::{EntityId, Vault};
 
 /// The refusal of a conflict item whose commit runs outside a queued
 /// extraction attempt: it names no attempt, or its attempt is not in the
@@ -77,7 +78,7 @@ pub(super) fn stage_in_txn(
     context: &ItemContext<'_>,
     item: &DerivedConflict,
 ) -> Result<ItemOutcome> {
-    let Some(attempt_id) = context.stamp.attempt else {
+    let Some(attempt_id) = open_attempt(vault, txn, context.stamp)? else {
         return refuse(
             vault,
             txn,
@@ -85,47 +86,21 @@ pub(super) fn stage_in_txn(
             &[CONFLICT_NEEDS_EXTRACTION_ATTEMPT.to_owned()],
         );
     };
-    let attempt = EntityId::from_bytes_unchecked(*attempt_id.as_bytes());
-    if crate::snapshot_read::queued_extraction_branch_opt_in_txn(vault, txn, attempt)?.is_none() {
-        return refuse(
-            vault,
-            txn,
-            context,
-            &[CONFLICT_NEEDS_EXTRACTION_ATTEMPT.to_owned()],
-        );
-    }
-    // The verdict's read for the stamp's actor, inside this write: the lane
-    // key the verdict's read lane builds for a non-owner actor, replicated
-    // without opening a transaction (the lane itself opens one), with the
-    // verdict's TURN reader, authority proof and reader scope. Grant time
-    // judges at the committed floor, as every other derive stager's reads do.
-    let actor = context.stamp.actor;
-    let Some(key) = crate::claim::ScopedReadActorKey::for_engine_actor(actor) else {
-        return refuse(vault, txn, context, &[CONFLICT_OPERANDS_REFUSED.to_owned()]);
-    };
-    let read = vault
-        .scoped_read(key.require_access_grants(Some(actor.entity_ref())))
-        .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
-    let turn_read = match crate::snapshot_read::extraction_turn_read(&read, None) {
-        Ok(turn_read) => turn_read,
+    let opening = match open_verdict_read(vault, txn, context.stamp) {
+        Ok(Some(opening)) => opening,
+        Ok(None) => return refuse(vault, txn, context, &[CONFLICT_OPERANDS_REFUSED.to_owned()]),
         Err(error) => {
             return refuse_or_abort(vault, txn, context, error, CONFLICT_OPERANDS_REFUSED);
         }
     };
-    let turn_read = turn_read.as_ref().unwrap_or(&read);
-    let memory = vault.memory(actor.entity_ref(), actor.actor_class());
-    let reader_scope = {
-        let read_txn: &heed::RoTxn<'_> = txn;
-        if let Err(error) = memory.prove_read_authority_in_txn(read_txn) {
-            return refuse_or_abort(vault, txn, context, error, CONFLICT_OPERANDS_REFUSED);
-        }
-        match crate::snapshot_read::extraction_reader_scope_in_txn(&memory, read_txn, None) {
-            Ok(scope) => scope,
-            Err(error) => {
-                return refuse_or_abort(vault, txn, context, error, CONFLICT_OPERANDS_REFUSED);
-            }
-        }
-    };
+    let ExtractionOpening {
+        actor,
+        read,
+        turn_owned,
+        memory,
+        reader_scope,
+    } = opening;
+    let turn_read = turn_owned.as_ref().unwrap_or(&read);
     // The verdict's operand checks, over the members' operands with the
     // item's heads as the priors (no listed pins: a conflict asks no
     // correction read).
