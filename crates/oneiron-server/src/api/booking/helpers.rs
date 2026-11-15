@@ -26,6 +26,7 @@ pub(super) fn domain_digest(domain: &[u8], material: &[u8]) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+// Not oneiron_base::unix_seconds_now: a clock before 1970 is refused with a 500, not read as 0.
 pub(super) fn now_secs() -> Result<u64, ApiError> {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
