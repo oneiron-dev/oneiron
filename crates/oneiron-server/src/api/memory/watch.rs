@@ -20,8 +20,8 @@ pub(in crate::api) async fn core_memory_watch_read(
     // FIX 8185: a GET reads the anchor through the caller's own lane at its
     // verified destination first, so a withheld anchor answers the same
     // not-found an absent one does, before any watch metadata is read.
-    let (owner, anchor) = watch_identity(&auth, &server, &id_hex, CoreScope::Read, true)?;
-    let watch = oneiron::saved_query::memory_watch(&server.vault, owner, anchor)
+    let (watcher, anchor) = watch_identity(&auth, &server, &id_hex, CoreScope::Read, true)?;
+    let watch = oneiron::saved_query::memory_watch(&server.vault, watcher.id(), anchor)
         .map_err(|error| core_engine_error("memory watch read failed", error))?;
     Ok(Json(watch_response(watch)))
 }
@@ -72,15 +72,40 @@ fn set_core_memory_watch(
     id_hex: String,
     enabled: bool,
 ) -> Result<Json<CoreMemoryWatchResponse>, super::facade::FacadeApiError> {
-    let (owner, anchor) = watch_identity(&auth, &server, &id_hex, CoreScope::Write, enabled)?;
-    let watch = oneiron::saved_query::set_memory_watch(
-        &server.vault,
-        owner,
-        anchor,
-        enabled,
-        unix_seconds_now(),
-    )?;
+    let (watcher, anchor) = watch_identity(&auth, &server, &id_hex, CoreScope::Write, enabled)?;
+    let watch = match watcher {
+        Watcher::Owner(owner) => oneiron::saved_query::set_memory_watch(
+            &server.vault,
+            owner,
+            anchor,
+            enabled,
+            unix_seconds_now(),
+        )?,
+        Watcher::Agent(agent) => oneiron::saved_query::set_memory_watch_as_agent(
+            &server.vault,
+            agent,
+            auth.verified_slip(),
+            anchor,
+            enabled,
+            unix_seconds_now(),
+        )?,
+    };
     Ok(Json(watch_response(watch)))
+}
+
+/// Whose watch the route reads or sets: the vault owner's, or an agent's own.
+#[derive(Debug, Clone, Copy)]
+enum Watcher {
+    Owner(oneiron::EntityId),
+    Agent(oneiron::EntityId),
+}
+
+impl Watcher {
+    fn id(&self) -> oneiron::EntityId {
+        match *self {
+            Self::Owner(id) | Self::Agent(id) => id,
+        }
+    }
 }
 
 fn watch_identity(
@@ -89,21 +114,32 @@ fn watch_identity(
     id_hex: &str,
     scope: CoreScope,
     require_visible: bool,
-) -> Result<(oneiron::EntityId, oneiron::EntityId), super::facade::FacadeApiError> {
+) -> Result<(Watcher, oneiron::EntityId), super::facade::FacadeApiError> {
     auth.require(scope)?;
     auth.require_unrestricted_record_scope()?;
-    if !auth.is_owner_grade() || auth.actor_class() != Some("human") {
+    let watcher = if auth.is_owner_grade() && auth.actor_class() == Some("human") {
+        let principal = auth.require_registered_principal()?;
+        let owner = parse_entity_id_param(principal, "principal_ref")?;
+        server
+            .vault
+            .memory(owner, oneiron::EdgeActorClass::Human)
+            .verify_owner()?;
+        Watcher::Owner(owner)
+    } else if !auth.is_owner_grade() && auth.actor_class() == Some("agent") {
+        let may_watch = oneiron::saved_query::agent_may_watch(&server.vault)
+            .map_err(|error| core_engine_error("memory watch setting read failed", error))?;
+        if !may_watch {
+            return Err(ApiError::forbidden_scope("owner+human").into());
+        }
+        let principal = auth.require_registered_principal()?;
+        let agent = parse_entity_id_param(principal, "principal_ref")?;
+        Watcher::Agent(agent)
+    } else {
         return Err(ApiError::forbidden_scope("owner+human").into());
-    }
-    let principal = auth.require_registered_principal()?;
-    let owner = parse_entity_id_param(principal, "principal_ref")?;
-    server
-        .vault
-        .memory(owner, oneiron::EdgeActorClass::Human)
-        .verify_owner()?;
+    };
     let anchor = parse_entity_id_param(id_hex, "id")?;
     if !require_visible {
-        return Ok((owner, anchor));
+        return Ok((watcher, anchor));
     }
     let read = scoped_read_for_core_auth(&server.vault, auth)?;
     let result = read

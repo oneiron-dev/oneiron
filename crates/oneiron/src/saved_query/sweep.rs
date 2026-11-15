@@ -35,9 +35,23 @@ pub fn sweep_saved_queries(vault: &Vault) -> Result<Vec<SavedQueryRecord>> {
         .collect())
 }
 
-/// Every active Reactive saved query: those a claim write re-checks.
+/// Every active Reactive saved query: those a claim write re-checks. An agent's memory
+/// watches re-check only while `memory.watch.agent_may_watch` is on; while it is off
+/// they rest, and the call answers without them.
 pub fn reactive_saved_queries(vault: &Vault) -> Result<Vec<SavedQueryRecord>> {
-    active_saved_queries(vault, |mode| mode == EvalMode::Reactive)
+    let queries = active_saved_queries(vault, |mode| mode == EvalMode::Reactive)?;
+    // The key reads once, after the listing's own txns closed: LMDB holds thread-local
+    // reader slots, so no read txn stays open while another opens on this thread.
+    if super::memory_watch::agent_may_watch(vault)? {
+        return Ok(queries);
+    }
+    Ok(queries
+        .into_iter()
+        .filter(|record| {
+            !(super::memory_watch::is_memory_watch_record(record)
+                && record.definition.owner_actor_class == EdgeActorClass::Agent)
+        })
+        .collect())
 }
 
 fn active_saved_queries(

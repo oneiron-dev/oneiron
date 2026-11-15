@@ -64,6 +64,7 @@ mod memo_lifetime;
 mod memory_watch;
 mod pack_drift;
 mod receipts;
+pub(crate) mod setting_keys;
 mod storage;
 mod support;
 mod sweep;
@@ -112,7 +113,10 @@ pub use self::membership::{
     next_membership_epoch,
 };
 pub(crate) use self::memo_lifetime::{erase_memos_for_source_in_txn, memo_carriage, memo_owners};
-pub use self::memory_watch::{MemoryWatch, memory_watch, memory_watches, set_memory_watch};
+pub use self::memory_watch::{
+    MemoryWatch, agent_may_watch, memory_watch, memory_watches, set_memory_watch,
+    set_memory_watch_as_agent,
+};
 pub use self::pack_drift::{
     PackDrift, PackDriftRepair, PackDriftResolution, PackMigrationMap, PackPredicateRewrite,
     pack_drift_repairs, put_pack_migration_map, repair_pack_drift,
