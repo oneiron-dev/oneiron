@@ -711,8 +711,8 @@ fn answers_machine(
 /// answer for a machine, so a key only the passkey vouched for answers no
 /// machine as the owner's (a node the page's operator runs would then merge
 /// as his) and removes none (lead ruling WEBPASSKEY-BLIND-SIGNATURE = B:
-/// the vouch and revoke class). Judged by role, not by the machine's
-/// presence, so no sibling branch reopens it.
+/// the vouch and revoke class). Judged by the op alone, not by the
+/// machine's presence, so no sibling branch reopens it.
 #[test]
 fn a_key_only_a_passkey_vouched_for_answers_no_machine_as_the_owners() {
     let hosted = HostedVault::open();
