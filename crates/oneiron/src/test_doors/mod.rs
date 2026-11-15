@@ -20,6 +20,7 @@ pub mod campaign_opt_out_line;
 pub mod check_in;
 pub mod checkpoint_registry;
 pub mod claim_facet_birth;
+pub mod claim_refinement_erase;
 pub mod claim_source_recheck;
 pub mod claim_transition;
 pub mod claim_value_redaction;
