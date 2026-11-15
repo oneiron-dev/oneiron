@@ -2880,6 +2880,9 @@ waits for the offer back within the vault's longest wait, or within
 `{"status": "parked", "until": <when the offer is back>, "sends": <sends made>}`
 and the step resumes on its own then, with the rest of its declared attempts.
 A restart drops that wait; a submission of the same `step_key` resumes the step.
+A send counts once it goes out: a step stopped while a send is out resumes with
+that send spent, and a resume that finds every declared attempt sent fails at
+once with an `io_after_send` cut, as the last reply was lost.
 
 When an offer's rest ends it is on probation: a failure rests it again with
 one more strike. On probation it takes one request at a time. The call that

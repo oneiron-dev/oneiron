@@ -491,10 +491,9 @@ async fn submit(
         spend_scope,
         wake_pass_bound: false,
     };
-    // Each retry a failed send spends is kept on the step's row before the
-    // next send may use it, so a stop mid-pass resumes with it counted (FIX
-    // 11226).
-    let keep = move |spent: usize| keep_sends(vault, id, spent);
+    // Each send is kept on the step's row before it goes, so a stop while it
+    // is out, or in the wait after it, resumes with it spent (FIX 11226).
+    let keep = move |sends: usize| keep_sends(vault, id, sends);
     let retries = TransportRetries::resumed(
         usize::from(row.input.retry.max_attempts - 1),
         execution
@@ -523,7 +522,7 @@ async fn submit(
     };
     // The sends this step has made, its earlier passes' included, stay on
     // its row for the next pass (FIX 11226).
-    row.sends = u8::try_from(retries.spent()).unwrap_or(u8::MAX);
+    row.sends = u8::try_from(retries.sends()).unwrap_or(u8::MAX);
     row.result = Some(step_result(vault, id, &row, outcome)?);
     // A run its host let go, or whose lease lapsed, while the call ran gets
     // no answer, and its try is not settled under a standing it no longer
@@ -573,21 +572,22 @@ async fn submit(
     view(vault, id, &row).map(Some).map_err(MemoryError::from)
 }
 
-/// Keeps `spent` retries on step `id`'s row (FIX 11226): what its next pass
-/// starts from. Whether they kept: a row that is gone, or a write that
-/// faulted, keeps nothing.
-fn keep_sends(vault: &Vault, id: AttemptId, spent: usize) -> bool {
-    let sends = u8::try_from(spent).unwrap_or(u8::MAX);
+/// Keeps `sends` as the sends on step `id`'s row (FIX 11226): what its next
+/// pass starts from. As counted, so a send a health rest or a budget refusal
+/// held back is given back. Whether they kept: a row that is gone, or a
+/// write that faulted, keeps nothing.
+fn keep_sends(vault: &Vault, id: AttemptId, sends: usize) -> bool {
+    let sends = u8::try_from(sends).unwrap_or(u8::MAX);
     let kept = vault.with_write_txn(|txn| {
         let Some(mut row) = SUBMISSIONS.get(&vault.store, txn, &id)? else {
             return Ok(false);
         };
-        row.sends = row.sends.max(sends);
+        row.sends = sends;
         put_submission_in_txn(vault, txn, &id, &mut row)?;
         Ok(true)
     });
     kept.unwrap_or_else(|error| {
-        tracing::warn!(%error, "a model step's spent sends did not keep; it sends no more");
+        tracing::warn!(%error, "a model step's send count did not keep");
         false
     })
 }

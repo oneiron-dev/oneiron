@@ -3,7 +3,8 @@
 //! `retry.max_attempts` counts the sends the step makes, and the rest still
 //! holds the offer for every other call. A rest longer than one submission
 //! waits parks the step, which resumes on its own once the offer is back.
-//! A pass that stops mid-way keeps the sends it made.
+//! A pass that stops mid-way keeps the sends it made, each counted once it
+//! goes out.
 #![allow(clippy::unwrap_used)]
 
 #[path = "support/fake_llm.rs"]
@@ -407,6 +408,99 @@ fn a_stopped_pass_keeps_the_sends_it_made() {
             backend.sends.load(Ordering::SeqCst),
             3,
             "three attempts declared: {done:#}"
+        );
+        host.shutdown().await;
+    });
+}
+
+/// A provider that takes each send and never answers: a host that stops
+/// while a send is out loses its reply. `sent` is told after each send.
+struct NeverAnswers {
+    sends: AtomicUsize,
+    sent: tokio::sync::Notify,
+}
+
+impl LlmBackend for NeverAnswers {
+    fn supports(&self, _model: &ModelId, _capability: LlmCapability) -> bool {
+        true
+    }
+
+    fn generate<'a>(
+        &'a self,
+        _request: LlmRequest,
+        _lease: &'a BudgetLease,
+    ) -> LlmGenerateFuture<'a> {
+        self.sends.fetch_add(1, Ordering::SeqCst);
+        self.sent.notify_one();
+        Box::pin(async move {
+            std::future::pending::<()>().await;
+            Err(LlmError::Retryable(RetryableLlmError::ServerError))
+        })
+    }
+
+    fn stream<'a>(&'a self, _request: LlmRequest, _lease: &'a BudgetLease) -> LlmStreamResult<'a> {
+        Err(FatalLlmError::InvalidRequest.into())
+    }
+}
+
+/// Review round 2 of #6966: a send counts once it goes out. Two attempts
+/// declared and a provider that never answers: two passes each stop while
+/// their send is out, as a host that stops does, and the third sends nothing
+/// and fails with the last reply lost. On the round-1 head a send counted
+/// only once its error came back, so every pass sent again: a third send.
+#[test]
+fn a_send_cut_by_a_stop_spends_its_attempt() {
+    on_engine_stack(|| async {
+        let dir = tempfile::tempdir().unwrap();
+        let (vault, _app, host) = served(dir.path(), &models("http://127.0.0.1:9", "")).await;
+        let actor = vault.ensure_embedded_owner_actor().unwrap();
+        let owner = vault
+            .authenticate_owner(
+                actor,
+                &actor.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )
+            .unwrap();
+        let guard = BudgetGuard::new("model-step", u64::MAX, BudgetExhaustionPolicy::default());
+        let backend = NeverAnswers {
+            sends: AtomicUsize::new(0),
+            sent: tokio::sync::Notify::new(),
+        };
+        let pass = || {
+            model_step::submit_as_owner(
+                &vault,
+                &owner,
+                step("cut-sends", 2),
+                &backend,
+                &guard,
+                Duration::ZERO,
+            )
+        };
+        for stopped in 1..=2 {
+            tokio::select! {
+                biased;
+                () = backend.sent.notified() => {}
+                ended = pass() => panic!("pass {stopped} ran to its end: {ended:?}"),
+            }
+            assert_eq!(backend.sends.load(Ordering::SeqCst), stopped);
+        }
+        let third = tokio::select! {
+            biased;
+            () = backend.sent.notified() => None,
+            ended = pass() => Some(ended),
+        };
+        assert_eq!(
+            backend.sends.load(Ordering::SeqCst),
+            2,
+            "two attempts declared"
+        );
+        let done = serde_json::to_value(third.unwrap().unwrap()).unwrap();
+        assert_eq!(done["result"]["status"], "failed", "{done:#}");
+        assert_eq!(
+            done["result"]["failure"]["llm"]["Retryable"]["TransportFault"]["kind"],
+            "io_after_send",
+            "{done:#}"
         );
         host.shutdown().await;
     });

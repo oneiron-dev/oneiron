@@ -193,7 +193,7 @@ pub async fn call_as_step_with_fallbacks(
 /// past the engine schedule pace at its last interval (FIX 9930), and a send
 /// held unsent by its offer's health waits within the plan's rest wait,
 /// spending none (FIX 11226). A rest past that wait ends the step with the
-/// rest unsent and unfailed, the plan's spent retries kept for its resume.
+/// rest unsent and unfailed, the sends the plan made kept for its resume.
 pub(super) async fn call_as_step_with_fallbacks_and_retries(
     ctx: &DurableStepContext<'_>,
     backend: &dyn LlmBackend,
