@@ -29,11 +29,12 @@
 //! (RULING L5-22-OFFLOAD-SWITCH = A).
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
 use super::archive_custody::archive_custody_proofs_in_txn;
-use super::{AuthorityEntryHash, MachineRole};
+use super::{AuthorityEntryHash, MachineRole, VerifiedAuthorityCheckpoint};
 use crate::Vault;
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
@@ -140,6 +141,95 @@ pub(super) fn offloaded_rows_in_txn(
     Ok(rows)
 }
 
+/// The offload the client's authority catch-up owes (census L5-22 PR 3):
+/// the adopted head, and each archive of it that lists a covered row this
+/// vault holds and that no standing custody proof keeps yet.
+#[cfg(feature = "sync")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AuthorityOffloadDue {
+    /// The adopted head image.
+    pub(crate) image: [u8; 32],
+    /// The vault the image is of, as a history fetch names it.
+    pub(crate) vault_id: super::AuthorityVaultId,
+    /// The archives to prove custody of first, ascending.
+    pub(crate) unproved: Vec<[u8; 32]>,
+}
+
+/// The covered rows a vault holds under its adopted head: each row's store id
+/// and stored header, by entry hash.
+type HeldCovered = BTreeMap<AuthorityEntryHash, (EntityId, EntityMetadataHeader)>;
+
+/// What an offload in `txn` would stand on: the adopted head and the covered
+/// rows this vault holds under it. The inner `Err` is the refusal the door
+/// gives: the switch off, no adopted image, an adopted image that is not the
+/// kept head, or one that covers a sealed row.
+fn offload_scope_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<std::result::Result<(Arc<VerifiedAuthorityCheckpoint>, HeldCovered), &'static str>> {
+    if !crate::gate::resolve_policy_manifest(&vault.store, txn)?.authority_history_offload_enabled()
+    {
+        return Ok(Err("authority history offload is disabled"));
+    }
+    let Some(adopted) =
+        super::checkpoint_adopt::cached_verified_adoption_in_txn(&vault.store, txn)?
+    else {
+        return Ok(Err(
+            "authority history offload needs an adopted checkpoint image",
+        ));
+    };
+    if super::checkpoint::checkpoint_head_in_txn(&vault.store, txn)? != Some(adopted.id()) {
+        return Ok(Err(
+            "authority history offload names an image that is not the adopted head",
+        ));
+    }
+    if adopted.image().covers_sealed_row() {
+        return Ok(Err(
+            "an image that covers a sealed row folds its stored log whole",
+        ));
+    }
+    let mut held = BTreeMap::new();
+    for hash in &adopted.image().covered {
+        let id = super::authority_log_entity_id_from_hash(hash)?;
+        let Some(raw) = vault.store.port_entity_raw(txn, &id)? else {
+            continue;
+        };
+        let header =
+            EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
+        // A row of another kind at the content-derived key is no held
+        // authority row; the put path displaces it when the row lands.
+        if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
+            held.insert(*hash, (id, header));
+        }
+    }
+    Ok(Ok((adopted, held)))
+}
+
+/// The archives whose custody proofs still stand for `image` in `txn`: each
+/// recorded against `image`, its custodian proved here on the same key (live
+/// and answered), not this install's machine, and not an execution node (a
+/// durable copy never stands on rented compute).
+fn standing_archives_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    image: &[u8; 32],
+) -> Result<BTreeSet<[u8; 32]>> {
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    let this_machine = crate::identity::read_machine_id_in_txn(vault, txn)?;
+    Ok(archive_custody_proofs_in_txn(&vault.store, txn)?
+        .into_iter()
+        .filter(|proof| {
+            proof.checkpoint == *image
+                && fold.machine_proof_key(proof.custodian) == Some(proof.custodian_key)
+                && this_machine != Some(proof.custodian)
+                && fold
+                    .machine_proof_role(proof.custodian)
+                    .is_some_and(|role| role != MachineRole::ExecutionNode)
+        })
+        .map(|proof| proof.archive)
+        .collect())
+}
+
 impl Vault {
     /// Drops the covered authority rows this vault holds under `image`, its
     /// adopted head, once a custody proof stands for each (census L5-22
@@ -163,65 +253,19 @@ impl Vault {
         image: &[u8; 32],
     ) -> Result<Option<AuthorityHistoryOffload>> {
         let offload = self.with_write_txn_grouped(|txn| {
-            if !crate::gate::resolve_policy_manifest(&self.store, txn)?
-                .authority_history_offload_enabled()
-            {
-                return Err(refused("authority history offload is disabled"));
-            }
-            let Some(adopted) =
-                super::checkpoint_adopt::cached_verified_adoption_in_txn(&self.store, txn)?
-            else {
-                return Err(refused(
-                    "authority history offload needs an adopted checkpoint image",
-                ));
-            };
-            if adopted.id() != *image
-                || super::checkpoint::checkpoint_head_in_txn(&self.store, txn)? != Some(*image)
-            {
+            let (adopted, held) = offload_scope_in_txn(self, txn)?.map_err(refused)?;
+            if adopted.id() != *image {
                 return Err(refused(
                     "authority history offload names an image that is not the adopted head",
                 ));
             }
-            let covered = adopted.image();
-            if covered.covers_sealed_row() {
-                return Err(refused(
-                    "an image that covers a sealed row folds its stored log whole",
-                ));
-            }
-            let mut held = BTreeMap::new();
-            for hash in &covered.covered {
-                let id = super::authority_log_entity_id_from_hash(hash)?;
-                let Some(raw) = self.store.port_entity_raw(txn, &id)? else {
-                    continue;
-                };
-                let header = EntityMetadataHeader::parse(&raw)
-                    .ok_or(Error::CorruptedIndex("entity header"))?;
-                // A row of another kind at the content-derived key is no held
-                // authority row; the put path displaces it when the row lands.
-                if header.entity_type == ENTITY_TYPE_AUTHORITY_LOG {
-                    held.insert(*hash, (id, header));
-                }
-            }
             if held.is_empty() {
                 return Ok(None);
             }
-            let fold = self.authority_fold_readonly_in_txn(txn)?;
-            let this_machine = crate::identity::read_machine_id_in_txn(self, txn)?;
-            let proved: BTreeSet<[u8; 32]> = archive_custody_proofs_in_txn(&self.store, txn)?
-                .into_iter()
-                .filter(|proof| {
-                    proof.checkpoint == *image
-                        && fold.machine_proof_key(proof.custodian) == Some(proof.custodian_key)
-                        && this_machine != Some(proof.custodian)
-                        && fold
-                            .machine_proof_role(proof.custodian)
-                            .is_some_and(|role| role != MachineRole::ExecutionNode)
-                })
-                .map(|proof| proof.archive)
-                .collect();
+            let proved = standing_archives_in_txn(self, txn, image)?;
             let mut kept = BTreeSet::new();
             let mut archives = BTreeSet::new();
-            for manifest in &covered.archive_manifests {
+            for manifest in &adopted.image().archive_manifests {
                 if proved.contains(&manifest.archive)
                     && manifest.rows.iter().any(|row| held.contains_key(row))
                 {
@@ -261,6 +305,41 @@ impl Vault {
             }
         }
         Ok(offload)
+    }
+
+    /// The offload the client's authority catch-up owes now (census L5-22
+    /// PR 3): `None` when the door would refuse or find nothing (the switch
+    /// off, no adopted head, a sealed-cover image, no covered row held),
+    /// else the head and the archives of it whose custody to prove first.
+    /// Read-only: the door judges every proof again in its own writer.
+    #[cfg(feature = "sync")]
+    pub(crate) fn authority_offload_due(&self) -> Result<Option<AuthorityOffloadDue>> {
+        let txn = self.store.env.read_txn()?;
+        let Ok((adopted, held)) = offload_scope_in_txn(self, &txn)? else {
+            return Ok(None);
+        };
+        if held.is_empty() {
+            return Ok(None);
+        }
+        let image = adopted.id();
+        let proved = standing_archives_in_txn(self, &txn, &image)?;
+        let unproved = adopted
+            .image()
+            .archive_manifests
+            .iter()
+            .filter(|manifest| {
+                !proved.contains(&manifest.archive)
+                    && manifest.rows.iter().any(|row| held.contains_key(row))
+            })
+            .map(|manifest| manifest.archive)
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Ok(Some(AuthorityOffloadDue {
+            image,
+            vault_id: adopted.image().vault_id,
+            unproved,
+        }))
     }
 
     /// Every offload this machine made ([`Self::offload_authority_history`]),
