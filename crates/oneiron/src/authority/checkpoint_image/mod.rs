@@ -620,13 +620,14 @@ impl Vault {
             .copied()
             .collect();
         // A local floor is an anti-rollback receipt: an image never carries
-        // what one decided.
+        // what one decided. It decides no roster row (`changes_roster`).
         let observations = authority_local_observations_in_txn(store, txn, &entries)?;
         if entries.iter().zip(&covered).any(|(entry, hash)| {
             observations
                 .sequence_floors
                 .get(hash)
                 .is_some_and(|floor| entry.seq < *floor)
+                && !super::entry_transition::changes_roster(&entry.op)
         }) {
             return Err(refused(
                 "a local sequence floor decides a covered authority row",
