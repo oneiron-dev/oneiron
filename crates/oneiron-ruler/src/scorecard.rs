@@ -299,7 +299,7 @@ pub fn build_scorecard(
     if header.budget_rows == 0 {
         return Err(ScorecardError::BadBudget);
     }
-    if !is_digest(&header.params_digest) {
+    if !oneiron_hex::is_lower_hex(&header.params_digest, Some(64)) {
         return Err(ScorecardError::BadDigest {
             field: "params_digest".to_owned(),
         });
@@ -675,12 +675,4 @@ fn category_value(metrics: &CategoryMetrics, name: &str) -> f64 {
         "recall_at_20" => metrics.recall_at_20,
         _ => metrics.recall_at_budget,
     }
-}
-
-/// True for 64 lowercase hex digits.
-fn is_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }

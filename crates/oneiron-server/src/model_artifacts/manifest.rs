@@ -130,7 +130,7 @@ impl ArtifactManifest {
         {
             return Err(self.invalid(format!("repo {:?} must be a plain org/name", self.repo)));
         }
-        if !is_lower_hex(&self.revision, 40) {
+        if !oneiron_hex::is_lower_hex(&self.revision, Some(40)) {
             return Err(self.invalid(format!(
                 "revision {:?} must be a full 40-hex commit, never a branch or tag",
                 self.revision
@@ -178,7 +178,7 @@ impl ArtifactManifest {
                 file: path.to_owned(),
             });
         }
-        if !is_lower_hex(&file.sha256, 64) {
+        if !oneiron_hex::is_lower_hex(&file.sha256, Some(64)) {
             return Err(self.invalid(format!("file {path} has no lowercase hex SHA-256")));
         }
         Ok(())
@@ -210,12 +210,4 @@ fn plain_segment(segment: &str) -> bool {
         && segment
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
-}
-
-/// Exactly `len` lowercase hex digits.
-fn is_lower_hex(value: &str, len: usize) -> bool {
-    value.len() == len
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
