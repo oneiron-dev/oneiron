@@ -433,6 +433,60 @@ impl Vault {
 
 // FIX [LIBTEST-QUARANTINE-ACCESS-GRANT-REQUEST-TESTS]: the lib test target's type check fails here (2 errors: E0063 x2); port it, then drop this gate
 #[cfg(any())]
+/// Puts `decided` requests denied by `answered_by`, then one pending
+/// request per entry of `pending` asking that addressee (None: the owner
+/// alone), each for one messages-read grant, in one write transaction. The
+/// pending requests' ids, in key order. Test door (FIX 14): a page over 100k
+/// decided rows needs no 200k separate writes.
+#[cfg(oneiron_test_support)]
+pub(crate) fn seed_access_requests_for_test(
+    vault: &Vault,
+    answered_by: EntityId,
+    decided: usize,
+    pending: &[Option<EntityId>],
+) -> Result<Vec<EntityId>> {
+    let grant = AccessGrant {
+        principal_ref: EntityId::from_bytes([0x52; 16])?,
+        scope: AccessGrantScope::Messages {
+            space_ref: EntityId::from_bytes([0x53; 16])?,
+        },
+        capability: super::AccessGrantCapability::MessagesRead,
+        status: AccessGrantStatus::Active,
+        created_at: 1,
+        revoked_at: None,
+        expires_at: None,
+        authority_scope: crate::federation::scope_codec::read_preset(),
+    };
+    let mut txn = vault.store.env.write_txn()?;
+    for _ in 0..decided {
+        let request = AccessRequest {
+            id: EntityId::now(),
+            grant: grant.clone(),
+            status: AccessRequestStatus::Denied,
+            decided_by: Some(answered_by),
+            decided_at: Some(2),
+            addressed_to: None,
+        };
+        REQUESTS.put(&vault.store, &mut txn, &request.id, &request.to_row()?)?;
+    }
+    let mut ids = Vec::with_capacity(pending.len());
+    for addressed_to in pending {
+        let request = AccessRequest {
+            id: EntityId::now(),
+            grant: grant.clone(),
+            status: AccessRequestStatus::Pending,
+            decided_by: None,
+            decided_at: None,
+            addressed_to: *addressed_to,
+        };
+        REQUESTS.put(&vault.store, &mut txn, &request.id, &request.to_row()?)?;
+        ids.push(request.id);
+    }
+    txn.commit()?;
+    ids.sort_by_key(|id| *id.as_bytes());
+    Ok(ids)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
