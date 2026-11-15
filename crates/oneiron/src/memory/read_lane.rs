@@ -53,6 +53,26 @@ impl Memory<'_> {
             .with_read_filter(self.read_filter.as_ref()))
     }
 
+    /// [`Self::read_lane`], its key also held, in every snapshot that serves
+    /// a row, to the live agent Grants that name this handle's actor, each
+    /// alone ([`ScopedReadActorKey::bound_by_live_agent_grants`]): a read that
+    /// stays inside the actor's own owner Grants whatever else admits the
+    /// row, as a credential-backed read already does (Astra review of #8340,
+    /// F2). It only narrows.
+    pub(crate) fn read_lane_within_own_agent_grants(
+        &self,
+        claims: ClaimReadStatus,
+    ) -> MemoryResult<ScopedRead<'_>> {
+        let key = self
+            .actor_read_key()?
+            .bound_by_live_agent_grants(self.actor);
+        Ok(self
+            .vault
+            .scoped_read(self.in_room_turn(key)?)
+            .with_claim_status(claims)
+            .with_read_filter(self.read_filter.as_ref()))
+    }
+
     /// Opens only a bound brief view. A view-only slip cannot enter any
     /// general read verb; its holder need not be enrolled in this vault.
     pub(crate) fn shared_brief_read_lane(

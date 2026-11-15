@@ -278,10 +278,30 @@ impl Vault {
         if memory.actor_class() != EdgeActorClass::Agent {
             return Err(refused("the caller is no agent"));
         }
-        // The agent's own read lane, opened before the writer (its
-        // verification snapshot closes first: LMDB allows one per thread),
-        // then judged in the writer's snapshot, which the ask is written in.
-        let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
+        // A caller with no live standing is refused before its lane persists
+        // any clock (Astra review of #8340, F3); the writer's snapshot below
+        // judges it again, and that judgement is the one that counts.
+        {
+            let txn = self.store.env.read_txn().map_err(crate::Error::from)?;
+            crate::memory::verify_actor_binding_in_txn(self, &txn, agent, EdgeActorClass::Agent)?;
+            if crate::authority::principal_standing_in_txn(
+                self,
+                &txn,
+                agent,
+                EdgeActorClass::Agent,
+                "read",
+            )?
+            .is_none()
+            {
+                return Err(refused(NO_STANDING));
+            }
+        }
+        // The agent's own read lane, held to its own live owner Grants
+        // whatever else admits a row (Astra review of #8340, F2), opened
+        // before the writer (its verification snapshot closes first: LMDB
+        // allows one per thread), then judged in the writer's snapshot,
+        // which the ask is written in.
+        let lane = memory.read_lane_within_own_agent_grants(ClaimReadStatus::Recorded)?;
         lane.persist_grant_clock()?;
         let mut txn = self.store.env.write_txn().map_err(crate::Error::from)?;
         crate::memory::verify_actor_binding_in_txn(self, &txn, agent, EdgeActorClass::Agent)?;
