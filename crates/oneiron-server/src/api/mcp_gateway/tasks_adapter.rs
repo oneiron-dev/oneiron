@@ -917,7 +917,9 @@ fn record_outcome_digest(subject: &McpTaskSubject, output: &Value) -> Option<[u8
         return None;
     }
     let outcome = serde_json::to_vec(output.get("outcome")?).ok()?;
-    blake3::hash(&outcome).as_bytes()[..16].try_into().ok()
+    oneiron_contracts::fingerprint::ContentHash::of(&outcome).as_bytes()[..16]
+        .try_into()
+        .ok()
 }
 
 /// The end a read of the record `subject` names shows at `status`, as the
