@@ -61,7 +61,7 @@ pub(super) const USED: &str =
 pub(super) const UNKNOWN: &str =
     "this invocation's ask was used but its call never finished; call again with a new invocation";
 #[doc(hidden)]
-pub(super) use oneiron_records::runtime_hooks::verb::ask::{MAX_SAVED_VERB_ERROR_BYTES, cut};
+pub(super) use oneiron_records::runtime_hooks::verb::ask::cut;
 
 /// The error a retry gets when a completed call's result was not retained.
 /// The call ran, and must not be sent again.

@@ -10,12 +10,10 @@ use serde::{Deserialize, Serialize};
 #[doc(hidden)]
 pub(in crate::store) use oneiron_records::store::pending_gate_consent::records::decode_pending_gate_consent;
 #[doc(hidden)]
+pub(super) use oneiron_records::store::pending_gate_consent::records::vet_pending_gate_consent_record;
+#[doc(hidden)]
 pub use oneiron_records::store::pending_gate_consent::records::{
     PendingGateConsentGroup, PendingGateConsentRecord,
-};
-#[doc(hidden)]
-pub(super) use oneiron_records::store::pending_gate_consent::records::{
-    encode_pending_gate_consent, vet_pending_gate_consent_record,
 };
 
 /// Internal RCPT-1 deletion state for one run-scoped pending-consent row.
