@@ -54,10 +54,10 @@ impl AgentDispatcher<'_> {
         record.active = active.id;
         // L1-03: a run its owner asked to stop puts the request to its active
         // step again, so a retry minted since is stopped as well: a waiting
-        // step is cancelled, a held one asked once to land.
-        let cancel = record.cancel_request.clone();
+        // step is cancelled, a held one asked once to land. The request keeps
+        // that ask, and the run's record stores it with every write below.
         let mut stopped = false;
-        if let Some(request) = &cancel
+        if let Some(request) = record.cancel_request.as_mut()
             && self.stop_workflow_step_in(&mut txn, &active, request, now)?
         {
             stopped = true;
@@ -65,6 +65,7 @@ impl AgentDispatcher<'_> {
                 .get_in_write_txn(&txn, active.id)?
                 .ok_or_else(|| invalid("workflow step is missing"))?;
         }
+        let cancel = record.cancel_request.clone();
         if matches!(
             active.state,
             AttemptState::Queued
