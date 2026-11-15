@@ -448,6 +448,19 @@ pub(crate) fn apply_custody_map(vault: &Vault, doc: &LoroDoc, key: &WindowKey) {
     apply_custody_rows(vault, doc, key, false);
 }
 
+/// Observer B's entity pass writes first each transition window
+/// `window_key`'s document holds that this vault does not hold byte for
+/// byte. An import's root maps reach their observers in no fixed order, and
+/// a value custody already holds must be known to secret scanning before an
+/// imported entity can mint a duplicate record of it (FIX 1370; the forward
+/// run does this since #5821). The custody observer still judges the
+/// import's own rows after.
+pub(crate) fn apply_unheld_custody_map(vault: &Vault, doc: &LoroDoc, window_key: &str) {
+    if let Some(key) = WindowKey::try_new(window_key) {
+        apply_custody_rows(vault, doc, &key, true);
+    }
+}
+
 /// [`apply_custody_map`]'s body: with `skip_held`, a transition this vault
 /// already holds byte for byte is not judged again.
 fn apply_custody_rows(vault: &Vault, doc: &LoroDoc, key: &WindowKey, skip_held: bool) {

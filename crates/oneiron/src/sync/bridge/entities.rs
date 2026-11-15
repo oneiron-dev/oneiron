@@ -321,6 +321,9 @@ pub(super) fn materialize_entities_with_changes(
     window_key: &str,
     lease_vault_id: u64,
 ) -> (bool, Vec<crate::vault::EntityRevisionChange>) {
+    // Standing custody first, so a value it holds is placed, never minted
+    // again (FIX 1370).
+    crate::sync::custody::apply_unheld_custody_map(vault, doc, window_key);
     let tombstones = TombstoneIndex::build(&doc.get_map("tombstones"));
     let ingest = IngestCtx::new(vault, window_key, lease_vault_id, &tombstones)
         .with_residence(Residence::Quarantine(doc));
