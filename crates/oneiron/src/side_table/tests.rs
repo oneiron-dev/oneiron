@@ -558,6 +558,8 @@ fn pre_move_fixture_coverage_is_explicit() {
         "PROPOSAL_ACTOR_COUNT",
         "PROPOSAL_RECEIPT_HISTORY",
         "PROPOSAL_SUBMISSION",
+        "READ_EXPOSURE",
+        "READ_EXPOSURE_RECORD",
         "RETRIEVAL_AGE",
         "RETRIEVAL_AGE_BY_RUN",
         "RETRIEVAL_TRACE_KEY_LOCAL",
