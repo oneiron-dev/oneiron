@@ -73,13 +73,16 @@ impl Vault {
     /// secret ended (FIX 12064), and each revoke and import mark this install
     /// owes the owner's other machines is carried once it can sign (FIX 4851,
     /// 12291), as is each membership change's record no host issuer signed
-    /// (FIX 12335). A wait a root request's pickup committed is cleared once
+    /// (FIX 12335), and each sealed-file ruling once it also holds the screen
+    /// key; each sealed-file ruling the fold holds then stands here (Engine
+    /// RULING PLAN-SEALED-FILE-RULING-CARRY). A wait a root request's pickup committed is cleared once
     /// the fold holds that request cancelled or superseded, byte-free (FIX
     /// 5582). The machine
     /// secret is read outside every transaction, and only when a request's
     /// kind reads it: with no keystore, slot or secret here each such
     /// request stays pending, and nothing is taken over. A custody revoke,
-    /// a rewrap with no input, or an export secret reads none.
+    /// a rewrap with no input, an export secret or a sealed-file ruling
+    /// reads none.
     ///
     /// Each request is read again and rechecked in its transaction: its
     /// world is live, its owner still a live vault owner, its target's
@@ -119,6 +122,17 @@ impl Vault {
         // A revoke this install could not carry when the owner made it is
         // carried once it can sign (CALLS CUSTODY_REVOKE_PENDING_CARRY).
         self.carry_owed_revokes();
+        // So is a sealed-file ruling, once this install also holds the
+        // screen key; then every sealed-file ruling the fold holds stands
+        // here, and settles this install's own seals of its bytes (Engine
+        // RULING PLAN-SEALED-FILE-RULING-CARRY).
+        self.carry_owed_file_rulings();
+        if let Err(error) = self.settle_ruled_files() {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "carried sealed-file rulings were not settled on this install"
+            );
+        }
         // So is the record of a membership change no host issuer signed
         // (FIX 12335).
         self.carry_owed_membership_executions();

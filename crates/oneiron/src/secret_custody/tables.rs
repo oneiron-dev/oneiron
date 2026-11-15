@@ -82,6 +82,22 @@ crate::side_table::side_tables! {
     /// or the file's ASSET).
     SECRET_RULED_SCREEN: VaultMeta b"secret_ruled_screen:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The files ruled no secret on any install of the vault (Engine RULING
+    /// PLAN-SEALED-FILE-RULING-CARRY): the keyed digest, under the vault's screen key, of each file
+    /// the write door sealed whole that the owner answered not a secret, as the fold's sealed-file
+    /// rulings name it, and whether this install's own seals of it were settled. Written by the
+    /// owner work drain on every install. Holds no value and names no person. Key: hash32 (the
+    /// keyed digest).
+    SECRET_RULED_FILE: VaultMeta b"secret_ruled_file:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
+    /// A sealed-file ruling this install made and has not carried to the owner's other installs
+    /// yet (Engine RULING PLAN-SEALED-FILE-RULING-CARRY, 14 Nov 16:48): while the vault data key is
+    /// locked, or with no live machine profile or no install key loaded, the ruling stands here
+    /// and its carry waits. The file's ASSET, the owner it is by and the surface he decided on.
+    /// Holds no value, and is never carried itself. Key: hash32 (the file's BLAKE3).
+    SECRET_RULED_FILE_OWED: VaultMeta b"secret_ruled_file:owed:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical]
+        => crate::secret_custody::erase_owed_file_ruling_actor_in_txn;
     /// One reveal of a secret's value by its handle: the agent's ask, the owner's answer and the
     /// lease that delivered it, or the owner's own read with its reason (OF-560). Holds no value.
     /// Key: id16 (reveal id).

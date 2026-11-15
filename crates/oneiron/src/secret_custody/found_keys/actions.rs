@@ -236,9 +236,10 @@ impl Vault {
         action: FoundKeyAction,
     ) -> Result<FoundKeySettled> {
         // A file sealed whole has no custody record: its handle is the
-        // file's own id (L6-03-SEALED-FILE-NO-NOTICE).
+        // file's own id (L6-03-SEALED-FILE-NO-NOTICE). Its answer reaches
+        // the owner's other installs as his act from `surface`.
         if super::sealed_file::names_a_file(handle) {
-            return self.rule_sealed_file(owner, handle, action);
+            return self.rule_sealed_file(owner, surface, handle, action);
         }
         let (reason, cause, erased) = match action {
             FoundKeyAction::NotASecret => (

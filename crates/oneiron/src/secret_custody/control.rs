@@ -56,7 +56,7 @@ use self::input::{
     seal_leaf_parts_in_txn, surface_leaf_input, surface_retry_in_txn,
 };
 pub use self::manifest::CustodyManifestCheck;
-pub(crate) use self::pending_revoke::erase_pending_revoke_actor_in_txn;
+pub(crate) use self::pending_revoke::{can_carry_in_txn, erase_pending_revoke_actor_in_txn};
 pub(crate) use self::revoked::{
     CustodyRevokeAct, EraseOwnerAct, custody_revoked_in_txn, drop_revoked_copies_for_store_in_txn,
     drop_revoked_copies_in_txn, refuse_revoked_use_in_txn, settle_revoked_in_txn,

@@ -44,6 +44,7 @@
 mod actions;
 mod page;
 mod purpose;
+mod ruled_file;
 mod ruled_screen;
 mod sealed_file;
 mod written_by;
@@ -54,6 +55,9 @@ pub(crate) use ruled_screen::{
 };
 
 pub(crate) use self::actions::{HANDLE_TEXT_OPEN, unmask_value};
+pub(crate) use self::ruled_file::{
+    carried_file_ruling_holds_in_txn, erase_owed_file_ruling_actor_in_txn,
+};
 pub(crate) use self::sealed_file::{SealedFileNote, note_file_seals_in_txn};
 
 use std::collections::HashMap;

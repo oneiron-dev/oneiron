@@ -110,6 +110,7 @@ pub mod run_changes;
 pub mod run_hold;
 pub mod run_lifecycle;
 pub mod scope_summary;
+pub mod sealed_file_carry;
 pub mod seat_park_model_step;
 pub mod shared_act_family;
 pub mod skill_gate;
