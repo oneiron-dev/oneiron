@@ -38,14 +38,11 @@ crate::side_table::side_tables! {
     /// that record. Key: id16 (the record) + id16 (the example).
     DRAFTER_EXAMPLE_SOURCE: VaultMeta b"drafter:example_source:v1:" Raw Engine
         [restore: live] [family: unclassified] [tier: canonical];
-    /// FIX 12569: the owner's drafter policy: on or off, the excluded worlds and the recipe, at
-    /// its revision. Key: ().
-    DRAFTER_POLICY: VaultMeta b"drafter:policy:v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// FIX 12569: one drafter version and its run: target, parent, recipe, pinned policy and
     /// cutoff, dependency set, job, state, generation and sealed artifact reference, never a
     /// key. Key: id16 (the version). Its scrub erases an actor or source from the drafter
-    /// families (binding, evaluation, event, policy, version), so the others name none.
+    /// families (binding, evaluation, event, version), so the others name none; the policy is
+    /// the setting key `drafter.policy`, which the setting tables' own scrub reaches.
     DRAFTER_VERSION: VaultMeta b"drafter:version:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::drafter::erase_drafter_actor_in_txn;

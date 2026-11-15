@@ -3749,14 +3749,18 @@ What exists now:
   one target's pointer: stock or a retained version, with a generation and
   the head it replaced. A target with no binding serves stock. `DrafterEvent`
   is the content-free history: retrain, qualify, activate, rollback, revert,
-  erase and policy events. `DrafterPolicy` holds the switch, the excluded
-  worlds and the recipe as data: its trainer family (`id`), its revision, its
-  settings, the GPU seconds a night may take (`gpu_seconds`) and the GPU memory
-  it declares (`device_memory_mib`). The engine supplies no learning rate,
-  epoch count or other training number, and ships no recipe.
+  erase, and the policy's moves of a binding. The policy is the setting key
+  `drafter.policy`: the switch (`enabled`), the excluded worlds
+  (`excluded_worlds`) and the recipe as data: its trainer family (`id`), its
+  revision, its settings, the GPU seconds a night may take (`gpu_seconds`) and
+  the GPU memory it declares (`device_memory_mib`). Its revision is the setting
+  change that wrote it, and each change is a row of the settings change feed.
+  The engine supplies no learning rate, epoch count or other training number,
+  and ships no recipe.
 - **Doors.** The owner calls `vault.drafters.list`, `vault.drafters.status`,
-  `vault.drafters.policy.set` (at the revision the owner read) and
-  `vault.drafters.revert` (a version and the binding generation the owner
+  `vault.settings.set` with the key `drafter.policy` (at the revision the
+  owner read, as `expected_revision`; an agent's change waits on a check-in)
+  and `vault.drafters.revert` (a version and the binding generation the owner
   read). An agent calls `vault.drafters.list_as` and `vault.drafters.revert_as`
   under its own live Grant that lists `drafter_read` or `drafter_revert`. A
   revert needs a qualified version whose artifact key is still live, the
@@ -3896,8 +3900,8 @@ What exists now:
   safetensors), a target checkpoint for the taps, and the served target's
   directory, whose tokenizer digest must be the drafter target's tokenizer
   pin. `scripts/drafter/README.md` is the job and receipt contract.
-- **Recipe.** The recipe is the owner's data, set with
-  `vault.drafters.policy.set`. The one trainer family is
+- **Recipe.** The recipe is the owner's data, set with `vault.settings.set`
+  (key `drafter.policy`, field `recipe`). The one trainer family is
   `drafter.dflash.exl3.v1`: the DFlash drafter for an EXL3 target, from its
   parent (stock, or the last kept version), with the target's embedding table
   and lm_head frozen and anchors only inside generated spans. Every setting

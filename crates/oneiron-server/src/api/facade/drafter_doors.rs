@@ -1,6 +1,7 @@
 //! The drafter host doors (FIX 12569): the owner's `vault.drafters.list`,
-//! `.status`, `.policy.set` and `.revert`, and the agent's `.list_as` and
-//! `.revert_as`. `host_doors` re-exports them, so the generated HTTP facade
+//! `.status` and `.revert`, and the agent's `.list_as` and `.revert_as`. The
+//! owner sets the drafter policy through `vault.settings.set` (key
+//! `drafter.policy`). `host_doors` re-exports them, so the generated HTTP facade
 //! handler and the MCP dispatcher call them by the name every host door
 //! has. Each owner row takes the vault owner's proof as `/v1/owner` takes
 //! it, and each engine door revalidates it in its own read or write; each
@@ -11,8 +12,8 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::drafter::{
-    self, DrafterListRequest, DrafterPolicy, DrafterPolicySetRequest, DrafterRevertReceipt,
-    DrafterRevertRequest, DrafterStatus, DrafterStatusRequest, DrafterVersionView,
+    self, DrafterListRequest, DrafterRevertReceipt, DrafterRevertRequest, DrafterStatus,
+    DrafterStatusRequest, DrafterVersionView,
 };
 use oneiron::memory::{MemoryError, MemoryResult};
 
@@ -68,20 +69,6 @@ pub(crate) async fn vault_drafters_status(
         auth,
         "vault.drafters.status",
         move |vault, owner| drafter::drafter_status_as_owner(vault, owner, &input),
-    )
-    .await
-}
-
-pub(crate) async fn vault_drafters_policy_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: DrafterPolicySetRequest,
-) -> Listed<DrafterPolicy> {
-    owned_control(
-        server,
-        auth,
-        "vault.drafters.policy.set",
-        move |vault, owner| drafter::set_drafter_policy_as_owner(vault, owner, &input),
     )
     .await
 }
