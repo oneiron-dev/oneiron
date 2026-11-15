@@ -81,7 +81,7 @@ impl DreamerAttemptBinding {
                     Ok(evidence_version_for_row(*id, &body))
                 })
                 .collect::<MemoryResult<Vec<_>>>()?;
-            Ok(CheckedExtractionCall {
+            Ok::<_, MemoryError>(CheckedExtractionCall {
                 execution: rebuilt.execution,
                 versions,
                 keys: rebuilt
