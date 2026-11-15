@@ -1238,6 +1238,30 @@ fn two_re_roots_in_one_tail_still_need_history() {
 }
 
 #[test]
+fn successor_image_past_a_re_root_keeps_the_whole_history_issuers() {
+    let fixture = fixture();
+    let successor = successor_issuer(b"foldpast-test-successor-secret");
+    sign_and_share(&fixture, re_root_to(&successor));
+    // Home's image over its whole history, and the image the adopting vault
+    // builds past its adopted one, over the same rows, both as the successor
+    // root.
+    let home_issuers = oneiron::test_doors::foldpast::image_slip_issuers(&written_image(
+        &fixture.home,
+        &successor,
+    ));
+    assert!(
+        home_issuers.contains(&successor.public_key()),
+        "home's consent structure admits the successor root"
+    );
+    let adopted = written_image(&fixture.adopting, &successor);
+    assert_eq!(
+        oneiron::test_doors::foldpast::image_slip_issuers(&adopted),
+        home_issuers,
+        "the successor image keeps home's slip issuers"
+    );
+}
+
+#[test]
 fn successor_image_past_a_re_root_keeps_its_retired_keys() {
     let fixture = fixture();
     let successor = successor_issuer(b"foldpast-test-successor-secret");
