@@ -9,7 +9,7 @@
 //! connection, no answer within the bound, and no supervisor at all.
 
 use std::io::{BufRead as _, BufReader, Write as _};
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -45,9 +45,10 @@ fn supervisor(answer: Answer) -> (tempfile::TempDir, PathBuf, JoinHandle<String>
         drop(reader);
         let mut stream = stream;
         match answer {
+            // a caller that gave up may be gone: its answer is then lost
             Answer::Line(text) => {
-                stream.write_all(text.as_bytes()).expect("answer");
-                stream.write_all(b"\n").expect("answer's end");
+                stream.write_all(text.as_bytes()).ok();
+                stream.write_all(b"\n").ok();
             }
             Answer::Close => drop(stream),
             Answer::Silence(hold) => std::thread::sleep(hold),
@@ -135,17 +136,18 @@ fn recovery_box_hold_closed_connection_fails() {
 
 #[test]
 fn recovery_box_hold_no_answer_within_the_bound_fails() {
-    let (_dir, socket, supervisor) = supervisor(Answer::Silence(Duration::from_secs(3)));
+    let (_dir, socket, supervisor) = supervisor(Answer::Silence(Duration::from_secs(6)));
     let client = hold_client(&socket, VAULT, &token(), Duration::from_millis(300));
     let started = Instant::now();
     let error = client
         .hold_kit_only(true)
         .expect_err("silence is not a held answer")
         .to_string();
-    assert!(
-        started.elapsed() < Duration::from_secs(2),
-        "the bound holds"
-    );
+    let waited = started.elapsed();
+    // it waited for the answer, and gave up at its bound, long before the
+    // supervisor's close at 6 s would have ended the call
+    assert!(waited >= Duration::from_millis(250), "{waited:?}");
+    assert!(waited < Duration::from_secs(5), "{waited:?}");
     assert!(error.contains("no answer"), "{error}");
     supervisor.join().expect("supervisor");
 }
@@ -161,9 +163,13 @@ fn recovery_box_hold_without_a_supervisor_fails() {
 
 #[test]
 fn recovery_box_hold_malformed_token_is_never_sent() {
-    let (_dir, socket, _supervisor) = supervisor(Answer::Line(r#"{"held":true}"#));
+    let (_dir, socket, supervisor) = supervisor(Answer::Line(r#"{"held":true}"#));
     let client = hold_client(&socket, VAULT, "not-a-token", BOUND);
     client
         .hold_kit_only(true)
         .expect_err("a request the supervisor would refuse is not sent");
+    // the call never connected: a connection of the test's own releases the
+    // supervisor, which read nothing
+    drop(UnixStream::connect(&socket).expect("connect to release the supervisor"));
+    assert_eq!(supervisor.join().expect("supervisor"), "");
 }
