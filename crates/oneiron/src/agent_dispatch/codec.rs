@@ -22,8 +22,8 @@ use super::types::{
     KEY_CALLER_ORIGIN, KEY_CARRIED_WAKE_KEYS, KEY_COMM, KEY_CONTEXT_FROM, KEY_CONTEXT_SPEC,
     KEY_DEFINITION, KEY_DEPTH_REMAINING, KEY_DIRECT_SPAWN, KEY_FUNDING, KEY_LAUNCH, KEY_OBJECTIVES,
     KEY_ORIGIN_CONVERSATION, KEY_PLAN, KEY_PRESET, KEY_PROJECT_REF, KEY_REQUESTER,
-    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_TARGET, KEY_TASK_TYPE_PARENTS,
-    KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
+    KEY_SCHEMA_VERSION, KEY_SCOPE, KEY_SPAWN_INTENT, KEY_SPAWN_PARENT, KEY_TARGET,
+    KEY_TASK_TYPE_PARENTS, KEY_TASK_TYPE_REF, KEY_TEAM, TARGET_CUSTOM, TARGET_SYSTEM,
 };
 use super::{
     CommReach, DirectSpawnReceipt, SpawnPlanReceipt, TeamRunStamp, healer_context, room_join, types,
@@ -254,6 +254,11 @@ pub fn encode_agent_dispatch_input(input: &AgentDispatchInput) -> Result<Value> 
                     .collect(),
             ),
         ));
+    }
+    // FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL: only a spawned child names its
+    // parent; a root encodes as before.
+    if let Some(parent) = input.spawn_parent {
+        entries.push((Value::from(KEY_SPAWN_PARENT), Value::from(parent.to_hex())));
     }
     Ok(Value::Map(entries))
 }

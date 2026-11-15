@@ -59,6 +59,7 @@ mod wake;
 
 pub use act_class::{ACT_CLASS, ActClass, ActClassRow, ModelCheck, ProofKind, UndoClass};
 pub(crate) use asker::{AskVerdict, judge_ask_in_txn};
+pub(crate) use chain::caller_spawn_parent_in_txn;
 // The chain 2e's host builds; until then only `test_doors::check_in` does.
 #[cfg_attr(not(oneiron_test_support), allow(unused_imports))]
 pub(crate) use chain::{AgentHolderVerdict, NoAgentVerdict, VerifiedChain};

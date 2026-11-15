@@ -40,8 +40,8 @@ use serde::{Deserialize, Serialize};
 use crate::check_in::{
     AgentHolderVerdict, AskVerdict, CheckInScope, HolderAnswer, HolderReply, NoAgentVerdict,
     OpenPendingCheckIn, PendingCheckIn, PendingState, ProofKind, VerifiedChain,
-    answer_pending_check_in_in_txn, judge_ask_in_txn, keyed_pending_check_in_in_txn,
-    open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
+    answer_pending_check_in_in_txn, caller_spawn_parent_in_txn, judge_ask_in_txn,
+    keyed_pending_check_in_in_txn, open_keyed_pending_check_in_in_txn, pending_check_in_in_txn,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -248,6 +248,10 @@ pub(crate) fn check_in_open_with(
             return Ok(verdict_view(verdict, None));
         };
         let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        // A spawned child's run asks the agent that spawned it on rung 2
+        // (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL), read from the run's own
+        // leased attempt, never from the input.
+        let spawn_parent = caller_spawn_parent_in_txn(memory, txn)?;
         let (row, opened) = open_keyed_pending_check_in_in_txn(
             vault,
             txn,
@@ -266,7 +270,7 @@ pub(crate) fn check_in_open_with(
                 delay_window: None,
             },
             memory.invocation().map(|invocation| invocation.0),
-            &VerifiedChain::new(verdicts),
+            &VerifiedChain::new(verdicts).with_spawn_parent(spawn_parent),
             now,
         )?;
         Ok(verdict_view(verdict, Some(handle_view(&row, !opened))))

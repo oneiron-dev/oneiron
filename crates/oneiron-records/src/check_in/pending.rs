@@ -245,6 +245,13 @@ impl EligibleBasis {
 pub struct PendingCheckIn {
     pub id: EntityId,
     pub asker: EntityId,
+    /// The agent whose attempt spawned the asker's running attempt, as that
+    /// attempt froze it at spawn, when the ask came from such a run: the
+    /// grantor its rung 2 asks (ARCH-0082 #ladder; FIX
+    /// CHECK-IN-SPAWN-PARENT-PRINCIPAL). `None` for every other ask, and for
+    /// every row written before it.
+    #[serde(default)]
+    pub spawn_parent: Option<EntityId>,
     /// The asker's grant on this vault link, by its ref.
     pub grant_ref: String,
     /// The exact verb that waits.

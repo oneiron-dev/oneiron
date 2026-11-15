@@ -143,6 +143,15 @@ pub(crate) trait RungResolver {
     /// enters the agent's rung (P22-SHAPE Q4 = A). `None`: no verdict, and
     /// the agent passes the ask up.
     fn agent_verdict(&self, pending: &PendingCheckIn, holder: &RungHolder) -> Option<HolderAnswer>;
+
+    /// The asker's spawn parent this chain was built with, which an open
+    /// stores on the row ([`PendingCheckIn::spawn_parent`]) before it enters
+    /// the first rung, so every later rung reads it from the row. `None`
+    /// unless the agent verb door built the chain from the caller's running
+    /// attempt (FIX CHECK-IN-SPAWN-PARENT-PRINCIPAL).
+    fn spawn_parent(&self) -> Option<EntityId> {
+        None
+    }
 }
 
 /// A holder's answer and the effect it is over: it settles the ask only
@@ -233,6 +242,7 @@ pub(crate) fn open_pending_check_in_in_txn(
     let mut row = PendingCheckIn {
         id: vault.store.clock.entity_id()?,
         asker: request.asker,
+        spawn_parent: chain.spawn_parent(),
         grant_ref: request.grant_ref,
         verb: request.verb,
         act: request.act,
