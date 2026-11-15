@@ -9,4 +9,5 @@
 //! `serde_json` only; `scripts/ci/check_dreamer_crate_deps.sh` holds that
 //! line in CI.
 
+pub mod psych_profile;
 pub mod strength_archive;

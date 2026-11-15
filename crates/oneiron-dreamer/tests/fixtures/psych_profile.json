@@ -1,0 +1,112 @@
+{
+  "slot_fill": [
+    {
+      "case": "round_robin_across_predicates",
+      "ranked": [
+        { "predicate": "trait.openness", "band": 0, "source": "user_stated" },
+        { "predicate": "trait.openness", "band": 1, "source": "observed" },
+        { "predicate": "value.security", "band": 0, "source": "imported" },
+        { "predicate": "trait.openness", "band": 0, "source": "inferred" },
+        { "predicate": "habit.sleep", "band": 2, "source": "observed" },
+        { "predicate": "value.security", "band": 1, "source": "user_stated" }
+      ],
+      "slots": [0, 2, 4, 1, 5, 3]
+    },
+    {
+      "case": "band_floor",
+      "ranked": [
+        { "predicate": "trait.openness", "band": 3, "source": "user_stated" },
+        { "predicate": "trait.openness", "band": 0, "source": "observed" },
+        { "predicate": "value.security", "band": null, "source": "user_stated" },
+        { "predicate": "value.security", "band": 2, "source": "imported" },
+        { "predicate": "trait.openness", "band": 4, "source": "observed" },
+        { "predicate": "habit.sleep", "band": 1, "source": null }
+      ],
+      "slots": [1, 3, 5]
+    },
+    {
+      "case": "restricted_member_does_not_place_its_group",
+      "ranked": [
+        { "predicate": "value.security", "band": 3, "source": "user_stated" },
+        { "predicate": "habit.sleep", "band": 0, "source": "observed" },
+        { "predicate": "value.security", "band": 0, "source": "user_stated" },
+        { "predicate": "habit.sleep", "band": 1, "source": "inferred" }
+      ],
+      "slots": [1, 2, 3]
+    },
+    {
+      "case": "distinct_predicates_keep_rank_order",
+      "ranked": [
+        { "predicate": "trait.openness", "band": 0, "source": "user_stated" },
+        { "predicate": "value.security", "band": 1, "source": "observed" },
+        { "predicate": "habit.sleep", "band": 2, "source": "imported" },
+        { "predicate": "relation.trust", "band": 0, "source": "inferred" }
+      ],
+      "slots": [0, 1, 2, 3]
+    },
+    {
+      "case": "one_predicate_keeps_rank_order",
+      "ranked": [
+        { "predicate": "affect.trigger", "band": 0, "source": "observed" },
+        { "predicate": "affect.trigger", "band": 2, "source": "observed" },
+        { "predicate": "affect.trigger", "band": 1, "source": "user_stated" }
+      ],
+      "slots": [0, 1, 2]
+    },
+    {
+      "case": "no_candidates",
+      "ranked": [],
+      "slots": []
+    },
+    {
+      "case": "every_candidate_kept_out",
+      "ranked": [
+        { "predicate": "trait.openness", "band": 3, "source": "user_stated" },
+        { "predicate": "value.security", "band": null, "source": "observed" }
+      ],
+      "slots": []
+    }
+  ],
+  "confidence": [
+    { "case": "no_claims", "sources": [], "confidence": 0.0 },
+    {
+      "case": "five_stated",
+      "sources": [{ "source": "user_stated", "count": 5 }],
+      "confidence": 0.46
+    },
+    {
+      "case": "twenty_five_observed",
+      "sources": [{ "source": "observed", "count": 25 }],
+      "confidence": 0.62
+    },
+    {
+      "case": "fifty_observed_saturate_density",
+      "sources": [{ "source": "observed", "count": 50 }],
+      "confidence": 0.92
+    },
+    {
+      "case": "claims_past_fifty_add_nothing",
+      "sources": [{ "source": "user_stated", "count": 60 }],
+      "confidence": 1.0
+    },
+    {
+      "case": "one_of_each_canon_source",
+      "sources": [
+        { "source": "user_stated", "count": 1 },
+        { "source": "observed", "count": 1 },
+        { "source": "imported", "count": 1 },
+        { "source": "inferred", "count": 1 }
+      ],
+      "confidence": 0.35
+    },
+    {
+      "case": "unnamed_and_other_sources_weigh_half",
+      "sources": [
+        { "source": null, "count": 1 },
+        { "source": "tool_output", "count": 1 },
+        { "source": "generated", "count": 1 }
+      ],
+      "confidence": 0.24
+    }
+  ]
+}
