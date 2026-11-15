@@ -501,3 +501,9 @@ impl ShapePlanRequest {
         }
     }
 }
+
+/// The JSON form of a manifest body, for tests/msgpack_bridge_guard.rs.
+#[cfg(oneiron_test_support)]
+pub(crate) fn manifest_json_for_test(body: &[u8]) -> Option<serde_json::Value> {
+    manifest_json::manifest_json(body)
+}
