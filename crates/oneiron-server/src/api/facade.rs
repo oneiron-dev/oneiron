@@ -161,7 +161,6 @@ mod model_pack_doors;
 mod model_step_doors;
 mod model_stream_doors;
 // The owner's non-base world claim fraction (ARCH-0004 #world-scope).
-mod non_base_world_claim_fraction_doors;
 mod note_doors;
 mod oauth_authorization_doors;
 mod off_record_doors;
@@ -225,7 +224,6 @@ mod skill_doors;
 mod skill_execution_doors;
 mod slim_doors;
 pub(crate) use slim_doors::is_slim_lifecycle_observation;
-mod snapshot_read_settings_doors;
 mod standing_doors;
 mod steward_doors;
 // Untangle 6.6c: who reads engine substrate rows through a host door.

@@ -332,7 +332,6 @@ fn validate_label(field: &'static str, value: &str) -> Result<()> {
     Ok(())
 }
 
-pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
 
@@ -350,7 +349,3 @@ fn device_only_worlds_in(
 ) -> Result<std::collections::BTreeSet<EntityId>> {
     withheld_worlds_in(vault, txn, destination)
 }
-
-// The lift sweep's typed acceptance for this module's authored side
-// tables (FIX 2680), named by their declarations.
-pub(crate) use self::models::model_owner_fallback_accepts_masked;

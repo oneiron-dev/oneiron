@@ -3,10 +3,15 @@
 //! act. The owner sets each through `vault.settings.set`; every change is one `SETTING_CHANGE`
 //! row.
 
-use crate::setting::{Kind, ReadBy, SettingSync};
+use crate::federation::EngineControlClass;
+use crate::setting::{ItemDomain, Kind, ReadBy, Restore, SetBy, SettingSync};
 
 use super::CustomizationSettings;
 use super::backup::BackupChoice;
+use super::board_layout::{BoardLayoutSettings, check_agent_overrides_in_txn, drop_agent_override};
+use super::models::is_offer_key;
+use super::non_base_world_claim_fraction::NonBaseWorldClaimFraction;
+use super::snapshot_read::{SnapshotReadSettings, bounds_at_most};
 use super::undo_send::UndoSendSetting;
 
 fn no_backup_choice() -> BackupChoice {
@@ -19,6 +24,10 @@ const fn off() -> bool {
 
 const fn on() -> bool {
     true
+}
+
+const fn no_model_fallback() -> Option<String> {
+    None
 }
 
 crate::setting::setting_keys! {
@@ -64,5 +73,40 @@ crate::setting::setting_keys! {
     /// default: every send goes at once.
     pub(crate) UNDO_SEND: UndoSendSetting = "outbound.undo_send" {
         kind: Kind::new(UndoSendSetting::default),
+    };
+    /// The owner's non-base world claim fraction (ARCH-0004 #world-scope): the most of a context
+    /// pack's claims that worlds other than base may hold, from 0 (base reality alone) to 1 (no
+    /// cap); 0.5 by default. The owner alone sets it. It is a dial: a holder of any
+    /// `engine.controls` class reads it.
+    pub(crate) NON_BASE_WORLD_CLAIM_FRACTION: NonBaseWorldClaimFraction = "recall.non_base_world_claim_fraction" {
+        kind: Kind::new(NonBaseWorldClaimFraction::default),
+        read_by: ReadBy::Dials,
+    };
+    /// The bounds on primitive A's snapshot handles (slice 6.4b): open handles per actor, the
+    /// default and the most lifetime, rows and bytes per page, and rows per handle. A holder of
+    /// `engine.controls.work_budget` tunes them at or below the owner's, or below the defaults
+    /// while the owner set none; a lower bound is the tighter one. It is a dial, and it travels
+    /// with a restore, as its table did.
+    pub(crate) SNAPSHOT_READ_BOUNDS: SnapshotReadSettings = "snapshot_read.bounds" {
+        kind: Kind::new(SnapshotReadSettings::default).tighter(bounds_at_most),
+        set_by: SetBy::Class(EngineControlClass::WorkBudget),
+        read_by: ReadBy::Dials,
+        restore: Restore::Content,
+    };
+    /// The owner's board cap and layout layers (BOARD-LAYOUT = A): the cap, the default layout an
+    /// agent's board renders under until it lays out its own, the override whose sections win
+    /// over every agent's own, and one agent's override, which wins over both. Empty by default.
+    /// An override set names an agent the vault holds; an erase of an agent takes its override
+    /// out (FIX 3520).
+    pub(crate) BOARD_LAYOUT: BoardLayoutSettings = "context_board.layout" {
+        kind: Kind::new(BoardLayoutSettings::default).erase_mentions(drop_agent_override),
+        on_change: Some(check_agent_overrides_in_txn),
+    };
+    /// The owner's standing quota fallback for one model offer (OF-305; item: the offer's key,
+    /// 64 hex): the engine model id its calls go to while the offer is parked. Null names none.
+    /// The engine applies the owner's `use_fallback` answer to a quota question.
+    pub(crate) MODEL_OWNER_FALLBACK: Option<String> = "models.owner_fallback" {
+        kind: Kind::new(no_model_fallback),
+        item: Some(ItemDomain { name: "model offers", admits: is_offer_key }),
     };
 }

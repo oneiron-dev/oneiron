@@ -6,8 +6,10 @@
 //! `vault.consolidation.strength.set`, `vault.curator.cadence.set`,
 //! `vault.proactivity.period.set`, `vault.evaluation.retune_thresholds.set`,
 //! `vault.stewardship.rules.period.set`, `vault.dreamer.projector.set`,
-//! `vault.sieve.budgets.lower`, `vault.free_time.schedule.set`, and (6.6f)
-//! `vault.settings.snapshot_read.lower`.
+//! `vault.sieve.budgets.lower` and `vault.free_time.schedule.set`. The
+//! snapshot bounds (6.6f) are the catalogue key `snapshot_read.bounds`, which
+//! a holder of `engine.controls.work_budget` sets through
+//! `vault.settings.set`.
 //!
 //! Each runs as the vault owner under its proof, or as a holder of
 //! `engine.controls`; the knob's writer checks which in the write itself
@@ -18,10 +20,8 @@
 //! owner's caps stand: the sieve's budgets only go down through
 //! `vault.sieve.budgets.lower`, and `vault.free_time.schedule.set` moves
 //! only the schedule of a policy that stands (S66B-BUDGETS B1 = A, B2 = A).
-//! The snapshot bounds only go down through
-//! `vault.settings.snapshot_read.lower` (SNAPSHOT-SETTINGS-IN-6.6).
-//! The owner keeps `vault.sieve.policy.set`, `vault.free_time.policy.set`
-//! and `vault.settings.snapshot_read.replace` for the whole rows.
+//! The owner keeps `vault.sieve.policy.set` and `vault.free_time.policy.set`
+//! for the whole rows.
 
 use super::EngineControlChangeEntry;
 use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
@@ -29,7 +29,6 @@ use crate::dreamer_runner::maintenance::RetuneThresholds;
 use crate::dreamer_wake::{ProjectorPolicy, SievePassBudgets};
 use crate::federation::EngineControlActor;
 use crate::memory::{Memory, MemoryError, MemoryResult};
-use crate::settings::snapshot_read::SnapshotReadSettings;
 use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
@@ -331,41 +330,6 @@ pub fn lower_sieve_budgets_embedded(
     as_controller(memory, "vault.sieve.budgets.lower", |vault, actor| {
         lower_sieve_budgets_as(vault, actor, input)
     })
-}
-
-/// `vault.settings.snapshot_read.lower` as `actor`: the six snapshot
-/// bounds, each at or below its value in force (SNAPSHOT-SETTINGS-IN-6.6,
-/// in the shape of S66B-BUDGETS B1 = A). The input is the whole row, as the
-/// owner's `vault.settings.snapshot_read.replace` takes it.
-///
-/// # Errors
-///
-/// An actor that is neither the owner nor a live holder of
-/// `engine.controls.work_budget`; a bound above its value in force, or
-/// bounds the row refuses; store failures.
-pub fn lower_snapshot_read_bounds_as(
-    vault: &Vault,
-    actor: EngineControlActor<'_>,
-    input: SnapshotReadSettings,
-) -> Result<EngineControlChangeEntry> {
-    let id = vault.lower_snapshot_read_bounds_by(actor, input)?;
-    receipt(vault, id)
-}
-
-/// `vault.settings.snapshot_read.lower` on a bound handle.
-///
-/// # Errors
-///
-/// As [`lower_snapshot_read_bounds_as`].
-pub fn lower_snapshot_read_bounds_embedded(
-    memory: &Memory<'_>,
-    input: SnapshotReadSettings,
-) -> MemoryResult<EngineControlChangeEntry> {
-    as_controller(
-        memory,
-        "vault.settings.snapshot_read.lower",
-        |vault, actor| lower_snapshot_read_bounds_as(vault, actor, input),
-    )
 }
 
 /// `vault.free_time.schedule.set` as `actor`: a holder of
