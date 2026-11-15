@@ -73,6 +73,22 @@ claude mcp add -s user oneiron -- oneiron mcp --surface tool-first \
   --credential-file ~/.config/oneiron/claude-code.cred
 ```
 
+Or install the Oneiron plugin for Claude Code
+([`plugins/claude-code/`](../../plugins/claude-code/)). It carries this same
+server entry, reading `~/.config/oneiron/claude-code.cred`, together with the
+session hooks of [Claude Code hooks](claude-code-hooks.md) and a skill that
+tells Claude when to recall and save. In Claude Code:
+
+```text
+/plugin marketplace add oneiron-dev/oneiron
+/plugin install oneiron@oneiron
+```
+
+The plugin mints nothing: mint `claude-code` to that path as in step 1, and
+the hooks' read-only credential as the hooks page says. It runs `oneiron`
+from the `PATH` Claude Code runs with. Use the plugin or `claude mcp add`,
+not both.
+
 **Codex**, in `~/.codex/config.toml`:
 
 ```toml

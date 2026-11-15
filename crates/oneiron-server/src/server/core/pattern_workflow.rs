@@ -631,6 +631,7 @@ fn offer_back_in(error: &RetryableLlmError) -> Option<u64> {
             kind: SpentKind::Window,
             retry_after,
             resets_at,
+            ..
         } => Some(soonest(*retry_after, resets_at).unwrap_or(0)),
         RetryableLlmError::KeptOnDevice {
             retry_after,

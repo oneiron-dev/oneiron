@@ -15,12 +15,8 @@ pub struct BlindPreference {
     pub preferred: PreferredResponse,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum PreferredResponse {
-    First,
-    Second,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_optimize::gate::measurement::PreferredResponse;
 
 pub(super) fn validate_blind(preferences: &[BlindPreference]) -> Result<()> {
     if preferences.is_empty() {

@@ -84,7 +84,8 @@ impl ContextPackBuilder<'_> {
                 return Ok(missing_psych_profile_pack_section(*key));
             }
         }
-        if !disclosure_admits_target(&self.read, &rtxn, self.disclosure.as_ref(), &id)? {
+        if !disclosure_admits_target(self.vault, &self.read, &rtxn, self.disclosure.as_ref(), &id)?
+        {
             return Ok(missing_psych_profile_pack_section(*key));
         }
         psych_profile_pack_section_in(self.vault, &rtxn, key)

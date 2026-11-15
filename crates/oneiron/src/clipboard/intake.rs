@@ -1,5 +1,4 @@
 use rmpv::Value;
-use serde::{Deserialize, Serialize};
 
 use crate::claim::decode_claim_body;
 use crate::consent::AuthenticatedOwner;
@@ -16,13 +15,8 @@ pub const PREDICATE_CLIPBOARD_CAPTURED: &str = "clipboard.captured";
 const KEY_TEXT: &str = "text";
 pub(super) const KEY_COPIED_AT: &str = "copied_at";
 
-/// One ordinary clip, read back after the batch door's secret masking.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClipboardEntry {
-    pub clip: EntityId,
-    pub copied_at: u64,
-    pub text: String,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::clipboard::intake::ClipboardEntry;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) struct ClipMetadata {

@@ -20,6 +20,7 @@ mod campaign_surface_oracle;
 mod code_mode_compaction;
 mod core_discover;
 mod dreamer_binding;
+mod dreamer_host_wording;
 mod dreamer_live;
 #[path = "../support/fake_llm.rs"]
 mod fake_llm;
@@ -48,6 +49,9 @@ mod remote_pairing;
 // SIGTERM through `libc::kill` is Unix-only.
 #[cfg(unix)]
 mod reopen_after_restart;
+// Restarts the shipped server through `reopen_after_restart`'s helpers.
+#[cfg(unix)]
+mod serve_start_grant_backfill;
 // Restarts the shipped server through `reopen_after_restart`'s helpers.
 #[cfg(unix)]
 mod slip_clock;

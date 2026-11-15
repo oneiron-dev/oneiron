@@ -172,15 +172,15 @@ impl FederationGrantScope {
     }
 }
 
-/// Role assigned by a federation grant.
+/// Role assigned by a federation grant. Roles have no order: each check
+/// names the roles it admits, and Steward is a named preset, never a rank
+/// (lead 10 Nov 06:5x).
 #[derive(
     Debug,
     Clone,
     Copy,
     PartialEq,
     Eq,
-    PartialOrd,
-    Ord,
     Hash,
     serde::Serialize,
     serde::Deserialize,
@@ -202,9 +202,10 @@ pub enum FederationGrantRole {
     /// and organise everything in this vault, but it can only suggest who
     /// joins or what role they get, and it can never give itself more access.
     ///
-    /// ARCH-0043's seventh role, between Admin and Member; a person or an
-    /// agent holds it. Its preset reads and derives across this vault root,
-    /// archives inside the grant and deletes in scope
+    /// ARCH-0043's seventh role, a named preset beside the others; a person
+    /// or an agent holds it, and only the vault's owner assigns it. Its
+    /// preset reads and derives across this vault root, archives inside the
+    /// grant and deletes in scope
     /// ([`super::grant_scope::membership_preset`]). It is never
     /// administrative ([`Self::is_admin`] is false), so it cannot add or
     /// remove members, assign roles, parent a delegate, widen any grant or

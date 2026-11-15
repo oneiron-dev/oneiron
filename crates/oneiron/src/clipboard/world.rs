@@ -12,11 +12,8 @@ pub const CLIPBOARD_WORLD_NAME: &str = "Clipboard";
 const CLIPBOARD_ROLE: &str = "clipboard";
 const WORLD_ID_COUNTER_BOUND: u64 = 64;
 
-/// The engine-owned Clipboard role in one vault's namespace. It grants nothing.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ClipboardWorld {
-    pub world: EntityId,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::clipboard::world::ClipboardWorld;
 
 #[derive(Serialize, Deserialize)]
 struct WorldBody {

@@ -32,6 +32,7 @@ pub(super) fn seam_journal_entry(scope: JournalScope, op: BatchOp) -> JournalEnt
         learned_at: 1,
         occurred: TimeRange { start: 1, end: 1 },
         op,
+        source_run: None,
     }
 }
 
@@ -136,10 +137,8 @@ impl<'vault> SessionVault<'vault> {
         _session_ref: &str,
     ) -> SeamResult<Self> {
         let dir = tempfile::tempdir().expect("kill-switch oracle temp dir");
-        let config = VaultConfig {
-            off_record_enabled: false,
-            ..Default::default()
-        };
+        let mut config = VaultConfig::default();
+        config.off_record_enabled = false;
         let disabled = Vault::open(dir.path(), config).expect("open kill-switch oracle vault");
         let refusal = disabled.off_record_session_vault().enter(
             _session_ref,
@@ -275,18 +274,23 @@ impl<'vault> SessionVault<'vault> {
                 &crate::memory::WitnessTurn {
                     conversation_ref: String::new(),
                     turn_ref: None,
+                    thread_audience: None,
                     messages: vec![crate::memory::WitnessMessage {
                         id: Some(message_id.to_hex()),
                         author: crate::memory::WitnessAuthor::User,
                         message_type: "utterance".to_owned(),
                         content: text.to_owned(),
+                        parts: None,
                         metadata: None,
                         is_visible: true,
                         order: 0,
+                        quote: None,
                     }],
                     occurred_at,
+                    assertions: crate::memory::WitnessAssertions::default(),
                 },
                 summary,
+                None,
             )
             .unwrap_or_else(|error| panic!("oracle session witness failed: {error:?}"));
         let turn_id = EntityId::from_hex(
@@ -368,11 +372,13 @@ impl<'vault> SessionVault<'vault> {
                 entity_type: crate::registry::ENTITY_TYPE_CLAIM,
                 occurred,
                 learned_at: 1,
+                row_version: None,
                 data,
                 allow_maintenance: false,
                 allow_reserved_predicate: false,
                 hub_sync_imported: false,
             },
+            source_run: None,
         };
         let segment = self.vault.with_write_txn(|wtxn| {
             let segment = overlay.install_txn_segment()?;
@@ -489,6 +495,7 @@ impl<'vault> SessionVault<'vault> {
             grant_ref: None,
             diff_handle: vec![0xA5],
             read_frontier_hash: [0xB6; 32],
+            context: crate::store::GateDecisionContext::default(),
             redacted_at: None,
         };
         self.vault.with_write_txn(|wtxn| {

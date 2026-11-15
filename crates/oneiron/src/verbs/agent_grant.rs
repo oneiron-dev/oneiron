@@ -51,172 +51,17 @@ use crate::authority::ActSurface;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::federation::{
-    AGENT_GRANT_REVOKE_COMMAND, AgentGrantFromSlipUnchangedReason, AgentGrantStanding,
-    EngineControlChange, GrantlessAgentConversion, RepoAccessBounds, Scope,
-    SystemAgentGrantNarrowing, SystemFunction, WalletRef, WorkingViewEditBounds,
+    AGENT_GRANT_REVOKE_COMMAND, AgentGrantStanding, EngineControlChange, EngineControlClass,
+    GrantlessAgentConversion, SystemAgent, SystemAgentGrantNarrowing, SystemFunction,
 };
-use crate::memory::MemoryResult;
+use crate::memory::{MemoryError, MemoryResult};
 
-/// `vault.agents.grants.mint`'s input: the agent, the owner's exact scope
-/// and an optional expiry. The host chooses the grant's vault scope, its
-/// mint time and its delegator (the owner), never the input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentGrantMintRequest {
-    /// The agent principal granted (32 hex): a live agent definition, a base
-    /// agent such as the Coach, or a named agent's principal. Never another
-    /// person or a device.
-    pub agent: EntityId,
-    /// The owner's complete six-axis scope, stored exactly as given. Its
-    /// verbs axis is the explicit verb list, a nonempty `some` set, or
-    /// empty beside a nonempty `verb_classes`; the grant confers only with
-    /// `read` among them or admitted by a class it names.
-    pub authority_scope: Scope,
-    /// When the grant stops conferring (Unix seconds, later than now).
-    /// Omitted: it stands until revoked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<u64>,
-    /// The one repo the agent may reach, its refs and its read and edit
-    /// globs. The scope must list `read` and name the bounds' PROJECT in its
-    /// audience; edits also need `write`. Omitted: no repo-specific
-    /// delegation.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo_bounds: Option<RepoAccessBounds>,
-    /// The verb classes the agent may act under beside the exact verbs, by
-    /// class name: each admits its own spelling, its built-in outbound
-    /// members, and the owner's verb-class row for it. Never `git_push`.
-    /// Omitted: none.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub verb_classes: BTreeSet<String>,
-    /// The host wallet the work this grant funds draws on: the host's
-    /// issuer namespace and the wallet's id there, both nonempty. Omitted:
-    /// none, and the grant funds no launch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wallet_ref: Option<WalletRef>,
-    /// The one owner working view of the `repo_bounds` repo the agent may
-    /// edit, and the owner account it lives in: the grant then edits that
-    /// view's files under the editable globs through
-    /// `vault.code.views.edit`, and every other repo door refuses it. It
-    /// needs `repo_bounds` and a view the owner made of their repo.
-    /// Omitted: no view bound.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_view_bounds: Option<WorkingViewEditBounds>,
-}
-
-/// One owner's agent grant.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentGrantView {
-    /// The grant's FEDERATION_GRANT row.
-    pub grant_ref: EntityId,
-    /// The agent principal granted.
-    pub agent: EntityId,
-    /// The owner's exact scope; its verbs are the explicit verb list.
-    pub authority_scope: Scope,
-    /// The owner PERSON who granted it.
-    pub delegated_by: EntityId,
-    /// When it stops conferring (Unix seconds); absent: until revoked.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub expires_at: Option<u64>,
-    /// The repo bounds the owner gave; absent on a general grant.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub repo_bounds: Option<RepoAccessBounds>,
-    /// The verb classes the owner named beside the exact verbs; absent
-    /// when it names none.
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    pub verb_classes: BTreeSet<String>,
-    /// The host wallet the owner named for the work it funds; absent when
-    /// it names none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub wallet_ref: Option<WalletRef>,
-    /// The one owner working view, and its account, the grant edits alone;
-    /// absent on a grant bound to none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub working_view_bounds: Option<WorkingViewEditBounds>,
-    /// Whether it confers now: unexpired, with `read` among its verbs (or
-    /// admitted by a class it names) and no empty world, band, audience or
-    /// sensitivity axis.
-    pub confers: bool,
-    /// The one-tap revoke command: `vault.agents.grants.revoke`.
-    pub revoke_command: String,
-}
-
-/// `vault.agents.grants.mint`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentGrantMinted {
-    pub grant: AgentGrantView,
-    /// The signed authority entry that records the owner's mint (64 hex).
-    pub act_ref: String,
-}
-
-/// `vault.agents.grants.revoke`'s input: the grant, by its id.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentGrantRevokeRequest {
-    /// The grant's FEDERATION_GRANT row (32 hex).
-    pub grant_ref: EntityId,
-    /// The revision the surface showed (64 lower-case hex), checked for its
-    /// shape only: the owner's revoke always lands.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub seen: Option<String>,
-}
-
-/// `vault.agents.grants.revoke`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentGrantRevoked {
-    pub grant_ref: EntityId,
-    /// False when the grant was already revoked and this call changed
-    /// nothing.
-    pub changed: bool,
-    /// The agent the revoked grant named; absent when it changed nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<EntityId>,
-    /// The signed authority entry that records this revoke (64 hex); absent
-    /// when it changed nothing.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub act_ref: Option<String>,
-}
-
-/// `vault.agents.grants.from_slip`'s input: one slip the owner's registry
-/// lists among its `grantless_agents` (FIX AGENT-GRANTLESS-VISIBLE).
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct AgentGrantFromSlipRequest {
-    /// The slip's id (64 hex), as the registry row's `slip_ref` names it.
-    pub slip_ref: String,
-}
-
-/// `vault.agents.grants.from_slip`'s answer.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum AgentGrantFromSlipOutcome {
-    /// The holder's default read Grants as minted: the named slip's Scope
-    /// first, then one for each other distinct Scope of its live slips.
-    Minted { grants: Vec<AgentGrantMinted> },
-    /// Nothing was minted, for `reason`.
-    Unchanged {
-        reason: AgentGrantFromSlipUnchangedReason,
-    },
-}
-
-/// One base agent's principal, as `vault.agents.grants.mint` names it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BaseAgentPrincipal {
-    /// `coach` or `dreamer`.
-    pub name: String,
-    /// Its MACHINE principal (32 hex): a grant's `agent`.
-    pub id: EntityId,
-}
-
-/// `vault.agents.base`'s answer: the base agents, the Coach first.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BaseAgentList {
-    pub agents: Vec<BaseAgentPrincipal>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::verbs::agent_grant::{
+    AgentGrantFromSlipOutcome, AgentGrantFromSlipRequest, AgentGrantMintRequest, AgentGrantMinted,
+    AgentGrantRevokeRequest, AgentGrantRevoked, AgentGrantView, BaseAgentList, BaseAgentPrincipal,
+    SystemAgentGrantNarrowRequest,
+};
 
 /// `vault.agents.base` under the owner's proof: the Coach's and the
 /// Dreamer's principal ids, so a surface can name one in a grant.
@@ -333,21 +178,6 @@ fn agent_grant_view(standing: &AgentGrantStanding, confers: bool) -> AgentGrantV
     }
 }
 
-/// `vault.agents.grants.narrow`'s input: a base agent (the Dreamer or the
-/// Coach) and the Steward verbs its grant keeps.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SystemAgentGrantNarrowRequest {
-    /// The base agent's principal (32 hex), as `vault.agents.base` names it.
-    pub agent: EntityId,
-    /// The verbs the grant keeps; an empty list revokes it whole.
-    pub keep: BTreeSet<String>,
-    /// The confirm token an earlier answer gave for this same narrowing (64
-    /// hex); omitted, nothing changes and the answer says what breaks.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub confirm: Option<String>,
-}
-
 /// What a narrowing did (untangle 6.3c; S6-4 amended).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "outcome", rename_all = "snake_case")]
@@ -405,6 +235,77 @@ pub fn narrow_system_agent_grant_as(
             }
         },
     )
+}
+
+/// `vault.agents.grants.restore`'s input: the base agent (the Dreamer or the
+/// Coach) whose default grant the owner gives back.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SystemAgentGrantRestoreRequest {
+    /// The base agent's principal (32 hex), as `vault.agents.base` names it.
+    pub agent: EntityId,
+}
+
+/// What a grant back did (FABLE-6917-1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SystemAgentGrantRestored {
+    /// True when the door gave the default grant back; false when it
+    /// already stood whole, and nothing changed.
+    pub restored: bool,
+    /// The Dreamer's live reach, read after the grant (Engine RULING
+    /// ROW4-WEAVE-GRANT-REACH = A): the default grant can stand whole while
+    /// the owner's policy rows still keep the Dreamer from landing what it
+    /// derives. Absent for the Coach.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reach: Option<DreamerGrantReach>,
+}
+
+/// What the live policy lets the Dreamer do, as
+/// [`Vault::dreamer_weave_reach`] reads it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DreamerGrantReach {
+    /// A receipt-free read grant covering every record names the Dreamer.
+    pub reads: bool,
+    /// An Auto actor ceiling and the Dreamer-bound `Generated` permit: what
+    /// it derives lands.
+    pub lands_auto: bool,
+}
+
+/// `vault.agents.grants.restore`: the owner gives a base agent its default
+/// grant back after a narrowing or a revoke, the inverse of
+/// `vault.agents.grants.narrow` (Engine RULING ROW3-GRANT-VERBS = A). The
+/// Dreamer's runs through [`Vault::grant_dreamer_weave`], as `oneiron
+/// dreamer grant` does, and the Coach's through [`Vault::grant_coach_steward`].
+/// The Dreamer's answer carries its reach, read after the grant, as `oneiron
+/// dreamer grant` reads it before it reports success. A second call changes
+/// nothing. Any other principal is refused: its grants are minted and
+/// revoked by their ids.
+pub fn restore_system_agent_grant_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: SystemAgentGrantRestoreRequest,
+) -> MemoryResult<SystemAgentGrantRestored> {
+    let (restored, reach) = match SystemAgent::of(input.agent) {
+        Some(SystemAgent::Dreamer) => {
+            let restored = vault.grant_dreamer_weave(owner, vault.now_recorded_at())?;
+            let reach = vault.dreamer_weave_reach()?;
+            let reach = DreamerGrantReach {
+                reads: reach.reads,
+                lands_auto: reach.lands_auto,
+            };
+            (restored, Some(reach))
+        }
+        Some(SystemAgent::Coach) => (vault.grant_coach_steward(owner)?, None),
+        None => {
+            return Err(MemoryError::bad_request(
+                "vault.agents.grants.restore gives back a base agent's default grant: \
+                 name the Dreamer or the Coach as vault.agents.base lists them",
+            ));
+        }
+    };
+    Ok(SystemAgentGrantRestored { restored, reach })
 }
 
 /// 32 bytes from 64 ASCII hex digits of either case.
@@ -468,4 +369,69 @@ pub fn engine_control_changes_as(
         .into_iter()
         .map(|(id, change)| EngineControlChangeEntry { id, change })
         .collect())
+}
+
+/// `vault.engine.controls.grant`'s input: an agent principal that is no
+/// base agent, and the classes of the engine's knobs it may tune.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsGrantRequest {
+    /// The agent's principal (32 hex).
+    pub agent: EntityId,
+    /// At least one class.
+    pub classes: BTreeSet<EngineControlClass>,
+}
+
+/// `vault.engine.controls.grant`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsGranted {
+    /// The grant the owner minted (32 hex).
+    pub grant: EntityId,
+}
+
+/// `vault.engine.controls.grant`: the owner lets an agent tune the engine's
+/// knobs of the named classes (S66-1; Engine RULING ROW3-GRANT-VERBS = A),
+/// through [`Vault::grant_engine_controls`]: a grant naming those classes'
+/// verbs alone, as the owner's signed act. A base agent's grant is its
+/// default grant, given back at `vault.agents.grants.restore`.
+pub fn grant_engine_controls_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: EngineControlsGrantRequest,
+) -> MemoryResult<EngineControlsGranted> {
+    Ok(EngineControlsGranted {
+        grant: vault.grant_engine_controls(owner, input.agent, &input.classes)?,
+    })
+}
+
+/// `vault.engine.controls.revoke`'s input: the agent whose engine.controls
+/// grants the owner takes back.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsRevokeRequest {
+    /// The agent's principal (32 hex).
+    pub agent: EntityId,
+}
+
+/// `vault.engine.controls.revoke`'s answer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EngineControlsRevoked {
+    /// The grants revoked (32 hex each); empty when none stood.
+    pub revoked: Vec<EntityId>,
+}
+
+/// `vault.engine.controls.revoke`: the owner takes back every
+/// engine.controls grant given to an agent that is no base agent, through
+/// [`Vault::revoke_engine_controls`], by a signed revoke of each. A base
+/// agent's grant is narrowed at `vault.agents.grants.narrow`.
+pub fn revoke_engine_controls_as(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: EngineControlsRevokeRequest,
+) -> MemoryResult<EngineControlsRevoked> {
+    Ok(EngineControlsRevoked {
+        revoked: vault.revoke_engine_controls(owner, input.agent)?,
+    })
 }
