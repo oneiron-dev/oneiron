@@ -46,10 +46,6 @@ fn parse_issue_ref(issue_ref: &str) -> MemoryResult<EntityId> {
         .map_err(|_| MemoryError::bad_request("issue_ref must be a report issue id"))
 }
 
-fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-}
-
 /// The owner's disclosure decision on the issue itself, rechecked against
 /// the owner proof inside the deciding write transaction.
 pub fn decide_report_disclosure_as_owner(
@@ -89,7 +85,7 @@ pub fn report_outbound_as_owner(
             route: payload.route,
             signature: ReportSignatureView {
                 issue_ref: payload.signature.issue_ref,
-                subject_hash: hex(&payload.signature.subject_hash),
+                subject_hash: oneiron_hex::encode(&payload.signature.subject_hash),
                 category: payload.signature.category,
                 kind: payload.signature.kind,
             },

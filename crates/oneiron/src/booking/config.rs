@@ -28,13 +28,17 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
-/// The one booking-page configuration predicate. Matching is exact everywhere:
-/// no `booking.` prefix is ever accepted as family membership.
-pub const BOOKING_EVENT_TYPE_PREDICATE: &str = "booking.event_type";
-
-/// Wire version of a [`BookingEventTypeClaimValue`]. Any other version fails
-/// closed rather than being coerced.
-pub const BOOKING_EVENT_TYPE_SCHEMA_VERSION: u64 = 1;
+#[doc(hidden)]
+pub(super) use oneiron_records::booking::config::DAYS_PER_WEEK;
+#[doc(hidden)]
+pub(crate) use oneiron_records::booking::config::MINUTES_PER_DAY;
+#[doc(hidden)]
+pub use oneiron_records::booking::config::{
+    BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, MAX_BOOKING_WINDOW_SECS,
+    RoutingMode,
+};
+#[doc(hidden)]
+use oneiron_records::booking::config::{event_type_index_digest, storage_failure};
 
 /// Node-local `vault_meta` index prefix for the `(page_ref, key)` shortcut,
 /// mirroring `comm.rs`'s `PARTY_INDEX_PREFIX`.
@@ -48,32 +52,6 @@ pub const DEFAULT_MIN_NOTICE_SECS: u64 = 24 * 3_600;
 
 /// Ratified high-value preset minimum notice: 48 hours.
 pub const HIGH_VALUE_MIN_NOTICE_SECS: u64 = 48 * 3_600;
-
-/// The furthest ahead a page may open.
-///
-/// The horizon is what bounds ONE solve: the solver reaches over it to ask CAL
-/// for a busy union and to walk each host's local days, so an unbounded horizon
-/// is an unbounded read and an unbounded loop. A year and a day is far past any
-/// real booking page — the ratified deployment default is this week and next —
-/// and keeps the day walk under four hundred iterations per host.
-pub const MAX_BOOKING_WINDOW_SECS: u64 = 366 * 24 * 3_600;
-
-/// Exclusive upper bound for a civil minute-of-day. `1440` is admissible as an
-/// *end* minute and denotes the following midnight.
-pub(crate) const MINUTES_PER_DAY: u16 = 1_440;
-
-/// Weekday axis width. Rows are `0 = Monday ..= 6 = Sunday`.
-pub(super) const DAYS_PER_WEEK: u8 = 7;
-
-/// How a multi-host event type turns per-host availability into offered slots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RoutingMode {
-    /// Any one host suffices: the union of the hosts' slots.
-    Either,
-    /// Every host must attend: the intersection of the hosts' slots.
-    Both,
-}
 
 /// One recurring civil window in a host's zone.
 ///
@@ -443,15 +421,6 @@ pub fn event_type_index_key(page_ref: EntityId, key: &EventTypeKey) -> Vec<u8> {
     index_key
 }
 
-/// The digest [`event_type_index_key`] spells, for the typed
-/// [`EVENT_TYPE_SHORTCUT`] table's own key.
-fn event_type_index_digest(page_ref: EntityId, key: &EventTypeKey) -> [u8; 32] {
-    let mut material = Vec::with_capacity(page_ref.as_bytes().len() + key.0.len());
-    material.extend_from_slice(page_ref.as_bytes());
-    material.extend_from_slice(key.0.as_bytes());
-    *blake3::hash(&material).as_bytes()
-}
-
 /// The node-local `(page_ref, key)` shortcut: the entity id of the live
 /// configuration claim last resolved for this pair. Key: hash32
 /// ([`event_type_index_digest`]).
@@ -578,10 +547,6 @@ fn live_config_in_txn(
         )));
     }
     Ok(Some(decoded.config))
-}
-
-fn storage_failure<E>(_: E) -> BookingError {
-    BookingError::SlotOracle("booking configuration lookup failed to read the vault".to_owned())
 }
 
 // -------------------------------------------------------------------------

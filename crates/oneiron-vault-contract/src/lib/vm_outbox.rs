@@ -492,7 +492,7 @@ pub fn vm_outbox_chunk_len(header: [u8; 4]) -> Option<usize> {
 /// Whether `text` is 64 lowercase hex, a BLAKE3 digest.
 #[must_use]
 pub fn is_digest(text: &str) -> bool {
-    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+    oneiron_hex::is_lower_hex(text, Some(64))
 }
 
 fn clip(text: &str) -> String {
