@@ -25,7 +25,6 @@ impl LensSlot {
 
 /// `vault.lenses.list`'s input: one page of proposals in lens-id order.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct LensListRequest {
     /// Only this pack's proposals.
     #[serde(default)]

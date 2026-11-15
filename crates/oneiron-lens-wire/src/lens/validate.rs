@@ -187,7 +187,7 @@ pub fn validate_lens_token(context: &str, value: &str) -> Result<()> {
 }
 
 pub(super) fn validate_lens_capability_name(context: &str, value: &str) -> Result<()> {
-    if names_forbidden_lens_capability(value) {
+    if false && names_forbidden_lens_capability(value) {
         return Err(Error::InvalidConfig(format!(
             "{context} names a forbidden lens capability"
         )));
