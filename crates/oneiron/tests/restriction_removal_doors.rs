@@ -12,8 +12,9 @@
 //! - F2, its author's own retract or stale mark: the self-grant admitted
 //!   the close, so an agent lifted the hold it wrote;
 //! - a `campaign.member` head at a fresh key through the generic claim door
-//!   outranked an exit the fold had settled: the typed doors write that
-//!   family now (`refuse_typed_claim_family`).
+//!   or an import door outranked an exit the fold had settled: the typed
+//!   doors write that family now (`refuse_typed_claim_family`, and
+//!   `ingest::admission::imported_candidate` for every import door).
 //!
 //! Each red is the agent's write; each control is the same door taking a
 //! row that restricts no one, or the owner lifting the restriction. The
@@ -28,9 +29,11 @@
 
 use oneiron::agent_def::AgentCeiling;
 use oneiron::authority::HostSlipIssuer;
+use oneiron::ingest::JSONL_TRANSCRIPT_SOURCE_ID;
 use oneiron::memory::{
-    ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView, ClaimInput, CommitReceipt,
-    MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryResult, resolve_entity_ref,
+    AdmitImportedClaimInput, ClaimDemoteActionInput, ClaimDemoteRequest, ClaimDemoteView,
+    ClaimInput, CommitReceipt, MEMORY_CODE_FORBIDDEN, MEMORY_CODE_INVALID_STATE, MemoryResult,
+    resolve_entity_ref,
 };
 use oneiron::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
@@ -475,6 +478,45 @@ fn an_agents_generic_campaign_member_write_is_refused() {
 
     let refused = written.expect_err("the generic door never writes a campaign membership");
     assert_eq!(refused.code, MEMORY_CODE_INVALID_STATE, "{refused:?}");
+    assert!(
+        refused.message.contains("vault.campaign.enroll"),
+        "the refusal names the typed door: {refused:?}"
+    );
+}
+
+/// The agent's `campaign.member` through the import door
+/// (`Memory::admit_imported_claim`, a registered source). Every import door
+/// builds its candidate in `ingest::admission::imported_candidate`, which
+/// held only expression preferences to their typed door, so an imported
+/// head at a fresh key met the same fold as the generic one.
+#[test]
+fn an_agents_imported_campaign_member_is_refused() {
+    let f = Fixture::new();
+    let person = f.person();
+
+    let imported = f
+        .vault
+        .memory(f.agent, EdgeActorClass::Agent)
+        .admit_imported_claim(&AdmitImportedClaimInput {
+            source_id: JSONL_TRANSCRIPT_SOURCE_ID.to_owned(),
+            source_record_id: "campaign-member-row".to_owned(),
+            id: None,
+            subject_ref: person.to_hex(),
+            predicate: PREDICATE_CAMPAIGN_MEMBER.to_owned(),
+            value: json!({
+                "campaign": EntityId::now().to_hex(),
+                "state": { "kind": "enrolled" },
+                "channels": [{
+                    "channel": "email",
+                    "basis_evidence": EntityId::now().to_hex(),
+                    "sender_ref": EntityId::now().to_hex(),
+                }],
+            }),
+            occurred_at: LEARNED_AT,
+            learned_at: None,
+        });
+
+    let refused = imported.expect_err("an import never writes a campaign membership");
     assert!(
         refused.message.contains("vault.campaign.enroll"),
         "the refusal names the typed door: {refused:?}"

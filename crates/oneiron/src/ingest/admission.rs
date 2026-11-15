@@ -470,6 +470,17 @@ pub(super) fn imported_candidate(
             "expression preference lifecycle is owned by set_expression_preference",
         ));
     }
+    // Every import door builds its candidate here. A `campaign.member` head is
+    // the campaign's, as the generic claim doors hold
+    // (`refuse_typed_claim_family`): `vault.campaign.enroll` and the
+    // saved-query derivation write it (CA-01; the Engine's RULING
+    // RESTRICTION-FIX-SCOPE = A, 15 Nov). An imported head at a fresh key
+    // would outrank an exit the fold had settled.
+    if predicate == crate::write_envelope::cohort_claims::PREDICATE_CAMPAIGN_MEMBER {
+        return Err(crate::error::Error::InvalidClaimBody(
+            "campaign membership is written through vault.campaign.enroll, not an import",
+        ));
+    }
     if admission.source_id.trim().is_empty() {
         return Err(crate::error::Error::InvalidClaimBody(
             "imported evidence missing source_id",
