@@ -13,7 +13,7 @@ from pathlib import Path
 
 import numpy as np
 
-from worker import Worker, BoundedHTTPServer, handler_for, pack, load_policy
+from worker import Worker, BoundedHTTPServer, handler_for, load_policy
 
 
 class FakeModel:
@@ -167,97 +167,6 @@ class WorkerTest(unittest.TestCase):
         self.thread.start()
         self.conn = http.client.HTTPConnection("127.0.0.1", self.server.server_port, timeout=2)
 
-    def test_refuses_unauthorized_and_stale_targets(self):
-        status, _ = self.request("GET", "/ready", authorized=False)
-        self.assertEqual(status, 401)
-        target = {"voice_id": "owner-voice", "owner": "5e" * 16,
-                  "register": "neutral", "warm": {**self.worker.target(), "boot_id": "stale"}}
-        status, _ = self.request("POST", "/render",
-                                 pack({"target": target, "text": "hi", "transcript": "ref"},
-                                      b"RIFF0000WAVEfmt "))
-        self.assertEqual(status, 400)
-        self.assertEqual(self.model.calls, [])
-
-    @staticmethod
-    def _metadata_straddles(target, limit):
-        target["limits"] = {**target["limits"], "max_header_bytes": limit}
-        request = {"target": target, "text": "a", "transcript": "a"}
-        response = {"target": target, "sample_rate": 48000, "channels": 1}
-        return (len(json.dumps(request, separators=(",", ":")).encode()) <= limit <
-                len(json.dumps(response, separators=(",", ":")).encode()))
-
-    def test_large_manifest_deadline_and_narrowed_request_metadata(self):
-        from worker import validate_limits
-        parent = {**self.limits, "http_deadline_ms": 120001}
-        self.assertEqual(validate_limits(parent)["http_deadline_ms"], 120001)
-        self.replace_worker(FakeModel(), parent)
-        self.assertEqual(self.request("GET", "/ready")[0], 200)
-        self.assertEqual(self.request("POST", "/render", pack(
-            {"target": self.target(), "text": "hi", "transcript": "ref"},
-            b"RIFF0000WAVEfmt "))[0], 200)
-        self.model.calls.clear()
-        # A narrower request is authoritative even though deployment permits
-        # more metadata; this previously rendered despite its 1024-byte row.
-        target = {**self.target(), "limits": {**self.limits, "max_header_bytes": 1024}}
-        body = pack({"target": target, "text": "hi", "transcript": "r" * 1400},
-                    b"RIFF0000WAVEfmt ")
-        self.assertGreater(int.from_bytes(body[:4], "big"), 1024)
-        self.assertEqual(self.request("POST", "/render", body)[0], 400)
-        self.assertEqual(self.model.calls, [])
-        # A caller can also narrow below the response metadata footprint.
-        target = self.target()
-        request = {"target": target, "text": "a", "transcript": "a"}
-        response = {"target": target, "sample_rate": 48000, "channels": 1}
-        req_size = len(json.dumps(request, separators=(",", ":")).encode())
-        resp_size = len(json.dumps(response, separators=(",", ":")).encode())
-        narrow = next((limit for limit in range(req_size - 16, resp_size + 16)
-                       if self._metadata_straddles(target, limit)), None)
-        self.assertIsNotNone(narrow, "fixture must straddle response header size")
-        target["limits"]["max_header_bytes"] = narrow
-        self.assertEqual(self.request("POST", "/render", pack(
-            {"target": target, "text": "a", "transcript": "a"},
-            b"RIFF0000WAVEfmt "))[0], 400)
-        self.assertEqual(self.model.calls, [])
-
-    def test_continuous_upload_and_incomplete_headers_obey_elapsed_deadline(self):
-        limits = {**self.limits, "upload_read_deadline_ms": 250}
-        self.replace_worker(FakeModel(), limits)
-        body = pack({"target": self.target(), "text": "hi", "transcript": "ref"},
-                    b"RIFF0000WAVEfmt ")
-        sock = socket.create_connection(("127.0.0.1", self.server.server_port), 2)
-        sock.settimeout(2)
-        sock.sendall(("POST /render HTTP/1.1\r\nHost: localhost\r\n"
-                      "Authorization: Bearer " + "t" * 32 +
-                      f"\r\nContent-Length: {len(body)}\r\n\r\n").encode())
-        # Finish later than the absolute deadline without ever being idle for
-        # a full 250 ms. Buffered `read()` used to accept this as HTTP 200.
-        for offset in range(0, len(body), 50):
-            try:
-                sock.sendall(body[offset:offset + 50])
-            except (BrokenPipeError, ConnectionResetError):
-                break
-            threading.Event().wait(0.075)
-        self.assertIn(b"408", sock.recv(4096))
-        sock.close()
-        self.assertEqual(self.worker.model.calls, [])
-        # Absolute cutoff also applies while headers have not completed.
-        sock = socket.create_connection(("127.0.0.1", self.server.server_port), 2)
-        sock.settimeout(2)
-        sock.sendall(("POST /render HTTP/1.1\r\nHost: localhost\r\n"
-                      "Authorization: Bearer " + "t" * 32 +
-                      f"\r\nContent-Length: {len(body)}\r\nX-Partial: ").encode())
-        threading.Event().wait(0.35)
-        try:
-            sock.sendall(b"done\r\n\r\n" + body)
-            self.assertNotIn(b"HTTP/1.0 200", sock.recv(4096))
-        except (BrokenPipeError, ConnectionResetError):
-            pass
-        finally:
-            sock.close()
-        self.assertEqual(self.worker.model.calls, [])
-        self.assertEqual(self.request("GET", "/ready")[0], 200)
-        self.assertEqual(self.request("POST", "/render", body)[0], 200)
-
     def test_voice_socket_refuses_without_bearer(self):
         for bearer in (None, "bad"):
             ws = VoiceSocket(self.server.server_port)
@@ -317,11 +226,6 @@ class WorkerTest(unittest.TestCase):
                     self.fail(f"unexpected {message}")
             pcm = b"".join(pcm_parts)
             self.assertGreater(len(pcm_parts), 0)
-            status, body = self.request("POST", "/render", pack(
-                {"target": target, "text": text, "transcript": transcript}, wav))
-            self.assertEqual(status, 200)
-            header_len = int.from_bytes(body[:4], "big")
-            self.assertEqual(pcm, body[4 + header_len:])
             ws.send_text({"type": "end", "generation": generation})
             done = ws.recv_json()
             self.assertEqual(done, {"type": "done", "generation": generation})
@@ -409,11 +313,6 @@ class WorkerTest(unittest.TestCase):
             self.assertGreater(len(parts), 1)
             pcm = b"".join(parts)
             self.assertGreater(len(pcm), 65536)
-            status, body = self.request("POST", "/render", pack(
-                {"target": target, "text": "hi", "transcript": transcript}, wav))
-            self.assertEqual(status, 200)
-            header_len = int.from_bytes(body[:4], "big")
-            self.assertEqual(pcm, body[4 + header_len:])
             ws.send_text({"type": "end", "generation": generation})
             self.assertEqual(ws.recv_json()["type"], "done")
             ws.send_close()
@@ -423,8 +322,8 @@ class WorkerTest(unittest.TestCase):
         self.assertEqual(list(Path(self.tmp.name).glob("ref-*")), [])
 
     def test_voice_socket_takes_a_reference_past_max_ref_bytes(self):
-        # Rule 5: a reference is never refused by size; `POST /render` takes
-        # it whole, and the socket takes the length its `start` announced.
+        # Rule 5: a reference is never refused by size; the socket takes the
+        # length its `start` announced.
         self.replace_worker(FakeModel(), {**self.limits, "max_ref_bytes": 12})
         ws = VoiceSocket(self.server.server_port)
         try:
@@ -455,11 +354,6 @@ class WorkerTest(unittest.TestCase):
                     break
                 else:
                     self.fail(f"unexpected {message}")
-            status, body = self.request("POST", "/render", pack(
-                {"target": target, "text": "hi", "transcript": transcript}, wav))
-            self.assertEqual(status, 200)
-            header_len = int.from_bytes(body[:4], "big")
-            self.assertEqual(b"".join(parts), body[4 + header_len:])
             ws.send_text({"type": "end", "generation": generation})
             self.assertEqual(ws.recv_json()["type"], "done")
             ws.send_close()
@@ -480,6 +374,82 @@ class WorkerTest(unittest.TestCase):
             self.assertEqual(int.from_bytes(payload[:2], "big"), 1009)
         finally:
             ws.close()
+
+    def test_voice_socket_refuses_a_stale_target(self):
+        ws = VoiceSocket(self.server.server_port)
+        try:
+            self.assertEqual(ws.handshake()[0], 101)
+            ws.recv_json()
+            generation = 1
+            target = self.target()
+            target["warm"] = {**self.worker.target(), "boot_id": "stale"}
+            transcript = "ref"
+            wav = b"RIFF0000WAVEfmt "
+            ws.send_text({"type": "start", "generation": generation, "target": target,
+                          "transcript_bytes": len(transcript.encode()),
+                          "reference_bytes": len(wav)})
+            ws.send_binary(transcript.encode())
+            ws.send_binary(wav)
+            error = ws.recv_json()
+            self.assertEqual(error["type"], "error")
+            self.assertEqual(error["generation"], generation)
+            self.assertEqual(error["code"], "stale_target")
+            self.assertEqual(self.model.calls, [])
+            ws.send_close()
+            self.assertEqual(ws.recv_frame()[0], 0x8)
+        finally:
+            ws.close()
+        self.assertEqual(list(Path(self.tmp.name).glob("ref-*")), [])
+
+    def test_voice_socket_refuses_limits_wider_than_the_workers(self):
+        ws = VoiceSocket(self.server.server_port)
+        try:
+            self.assertEqual(ws.handshake()[0], 101)
+            ws.recv_json()
+            generation = 1
+            target = self.target()
+            target["limits"] = {**self.limits,
+                                "max_header_bytes": self.limits["max_header_bytes"] + 1024}
+            transcript = "ref"
+            wav = b"RIFF0000WAVEfmt "
+            ws.send_text({"type": "start", "generation": generation, "target": target,
+                          "transcript_bytes": len(transcript.encode()),
+                          "reference_bytes": len(wav)})
+            ws.send_binary(transcript.encode())
+            ws.send_binary(wav)
+            error = ws.recv_json()
+            self.assertEqual(error["type"], "error")
+            self.assertEqual(error["generation"], generation)
+            self.assertEqual(error["code"], "invalid_request")
+            self.assertEqual(self.model.calls, [])
+            ws.send_close()
+            self.assertEqual(ws.recv_frame()[0], 0x8)
+        finally:
+            ws.close()
+        self.assertEqual(list(Path(self.tmp.name).glob("ref-*")), [])
+
+    def test_voice_socket_slow_frame_past_the_upload_deadline_closes_1011(self):
+        self.replace_worker(FakeModel(), {**self.limits, "upload_read_deadline_ms": 250})
+        ws = VoiceSocket(self.server.server_port)
+        try:
+            self.assertEqual(ws.handshake()[0], 101)
+            ws.recv_json()
+            ws.sock.sendall(b"\x81")
+            threading.Event().wait(0.35)
+            op, payload = ws.recv_frame()
+            self.assertEqual(op, 0x8)
+            self.assertEqual(int.from_bytes(payload[:2], "big"), 1011)
+            self.assertEqual(self.model.calls, [])
+        finally:
+            ws.close()
+
+    def test_the_http_render_routes_are_gone(self):
+        self.assertEqual(self.request("GET", "/ready")[0], 404)
+        header = json.dumps({"target": self.target(), "text": "hi",
+                             "transcript": "ref"},
+                            separators=(",", ":")).encode()
+        body = struct.pack("!I", len(header)) + header + b"RIFF0000WAVEfmt "
+        self.assertEqual(self.request("POST", "/render", body)[0], 404)
 
 
 if __name__ == "__main__":
