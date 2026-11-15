@@ -2,6 +2,7 @@
 //! calls to declared pure tools over a JSON state (census L1-20).
 //! This compiles source data, not an authority, an outcome label or an eval nomination.
 
+use oneiron_contracts::fingerprint::ContentHash;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -127,11 +128,13 @@ impl EvalRepairTask {
     #[must_use]
     pub(super) fn outcome_digest(&self) -> Option<String> {
         let digest = match &self.expected {
-            EvalRepairExpected::Response(answer) => blake3::hash(answer.as_bytes()),
-            EvalRepairExpected::State(state) => blake3::hash(state.to_string().as_bytes()),
-            EvalRepairExpected::Adjudicated(digest) => blake3::Hash::from_bytes((*digest)?),
+            EvalRepairExpected::Response(answer) => ContentHash::of(answer.as_bytes()).into_bytes(),
+            EvalRepairExpected::State(state) => {
+                ContentHash::of(state.to_string().as_bytes()).into_bytes()
+            }
+            EvalRepairExpected::Adjudicated(digest) => (*digest)?,
         };
-        Some(digest.to_hex().to_string())
+        Some(oneiron_hex::encode(&digest))
     }
 
     /// Whether the task's grader is an adjudicated response whose answer has

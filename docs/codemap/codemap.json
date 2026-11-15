@@ -2713,7 +2713,7 @@
      "path": "src/artifact_hosting/pointer_rows.rs",
      "purpose": "—",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 6
      }
     },
     {
@@ -13004,7 +13004,7 @@
      "path": "src/campaign.rs",
      "purpose": "CRM pack engine-side registration home",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 2,
       "mod": 10,
       "re-export": 2,
@@ -13427,6 +13427,16 @@
       "const": 1,
       "fn": 1,
       "struct": 1
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/campaign/member_index.rs",
+     "purpose": "The `campaign.member` claims by the CAMPAIGN their value is scoped to and by the SAVED_QUERY that derived…",
+     "surface": {
+      "crate-vis": 9
      }
     },
     {
@@ -16364,7 +16374,7 @@
      "path": "src/claim/scoped_read/point_reads.rs",
      "purpose": "The one receipted point-read entry: ids and short references, each at its own read frontier, answered from…",
      "surface": {
-      "crate-vis": 17,
+      "crate-vis": 18,
       "fn": 6,
       "re-export": 1
      }
@@ -47430,7 +47440,7 @@
      "path": "src/lens/inspection.rs",
      "purpose": "OF-235: shareable inspection state and its handle link",
      "surface": {
-      "crate-vis": 1,
+      "crate-vis": 2,
       "fn": 7,
       "re-export": 1,
       "struct": 3
@@ -54165,7 +54175,7 @@
      "path": "src/memory/repo_secret_reads.rs",
      "purpose": "Repo bytes a Memory handle's masked reader reads (FIX 7608 slice 2a, ASK 1)",
      "surface": {
-      "crate-vis": 15,
+      "crate-vis": 19,
       "fn": 1
      }
     },
@@ -76593,7 +76603,7 @@
      "surface": {}
     },
     {
-     "bucket": "m",
+     "bucket": "s",
      "kind": "src",
      "notable": [
       "EvidenceSpans",
@@ -79482,7 +79492,7 @@
      "purpose": "The known-value index (OF-560 C): a value custody holds, or a reveal delivered, that comes back in a later…",
      "surface": {
       "const": 1,
-      "crate-vis": 28
+      "crate-vis": 32
      }
     },
     {
@@ -89331,6 +89341,16 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/test_doors/campaign_member_index.rs",
+     "purpose": "Doors for `tests/campaign_member_index.rs` (census L3-28C): the claims the campaign member index nominates…",
+     "surface": {
+      "fn": 6
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "SealedCampaignEmail"
      ],
@@ -90024,7 +90044,7 @@
      "purpose": "Doors for the integration tests to crate-private items (Engine 19:23 HARNESS-GUARD)",
      "surface": {
       "fn": 1,
-      "mod": 117,
+      "mod": 118,
       "re-export": 1
      }
     },
@@ -98504,6 +98524,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/campaign_member_index.rs",
+     "purpose": "Census L3-28C (ARCH-0044 H202): a campaign's and a saved query's membership pages nominate their heads from…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -100642,6 +100670,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/masked_forms_and_graph_fs_release_scan.rs",
+     "purpose": "A masked reader is served an asset's image and audio forms, and a graph-fs file, only as every other masked…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -101295,6 +101331,14 @@
      "notable": [],
      "path": "tests/repo_anchor_symbol_manifest.rs",
      "purpose": "FIX RUN-DECLARE-ANCHOR-MANIFEST (tests/e2e/code-custody.test.ts CODE-CUSTODY-03): a run's symbol declaration…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/repo_asset_known_pass_single_snapshot.rs",
+     "purpose": "A repo snapshot ASSET read by a masked reader takes its known-value pass (FIX 8966) in the read's own…",
      "surface": {}
     },
     {
@@ -102635,7 +102679,7 @@
      "purpose": "Calendar module home (CAL-00)"
     },
     "campaign": {
-     "files": 66,
+     "files": 67,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -103979,7 +104023,7 @@
      "purpose": "`TimeRange`, temporal expressions/parsing, granularity/anchor enums"
     },
     "test_doors": {
-     "files": 120,
+     "files": 121,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104156,8 +104200,8 @@
    },
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7601,
-   "test_files": 1339
+   "source_files": 7603,
+   "test_files": 1342
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -111177,6 +111221,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "GuestPressure",
+      "HostPidSpace"
+     ],
+     "path": "src/guest_pids.rs",
+     "purpose": "Physical guest pids limits and pressure observations (FIX 8013)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HostNetFloor",
       "HostNetPermit",
       "UnmeteredFloor"
@@ -111315,6 +111376,7 @@
      "path": "src/launcher.rs",
      "purpose": "Unprivileged in-container launcher and syscall-argument broker",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -111397,9 +111459,9 @@
      "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
      "surface": {
       "enum": 2,
-      "fn": 12,
+      "fn": 15,
       "mod": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 8,
       "type": 1
      }
@@ -111466,7 +111528,7 @@
      "path": "src/supervisor.rs",
      "purpose": "Host custody of the seccomp listener and all network transports",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -111592,6 +111654,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fence_launcher_stdin_hold.rs",
+     "purpose": "The fence launcher's stdin hold (FIX 8013): a launcher started with `ONEIRON_FENCE_HOLD_UNTIL_STDIN_CLOSES`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/guest_pids_limit.rs",
+     "purpose": "The pids limit a container launch passes: physical, not the manifest count",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -111614,6 +111692,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Host-owned transport"
+    },
+    "guest_pids": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Physical guest pids limits and pressure observations (FIX 8013)"
     },
     "host_net_floor": {
      "files": 1,
@@ -111688,8 +111773,8 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 34,
-   "test_files": 1
+   "source_files": 35,
+   "test_files": 3
   },
   "oneiron-contracts": {
    "files": [
@@ -111910,7 +111995,7 @@
      "purpose": "`EntityId` + world-id newtypes + id parsing/hex",
      "surface": {
       "const": 3,
-      "fn": 18,
+      "fn": 19,
       "mod": 2,
       "re-export": 1,
       "struct": 4
@@ -112231,7 +112316,7 @@
      "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
      "surface": {
       "mod": 27,
-      "re-export": 2
+      "re-export": 3
      }
     },
     {
@@ -112647,6 +112732,14 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_id_prefix.rs",
+     "purpose": "PLAN-UC-04 stage 0: the id rules against the fingerprint door",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -112857,7 +112950,7 @@
    "over_bar": 3,
    "purpose": "Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any…",
    "source_files": 67,
-   "test_files": 2
+   "test_files": 3
   },
   "oneiron-crypto": {
    "files": [
@@ -117100,6 +117193,116 @@
    "source_files": 13,
    "test_files": 1
   },
+  "oneiron-fingerprint": {
+   "files": [
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "LegacyDigest",
+      "LegacyHash",
+      "LegacyPurpose",
+      "TagMode"
+     ],
+     "path": "src/legacy.rs",
+     "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes",
+     "surface": {
+      "crate-vis": 1,
+      "enum": 2,
+      "fn": 9,
+      "struct": 2
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "ContentHash",
+      "ContentHasher",
+      "Fingerprint",
+      "Fingerprinter",
+      "Purpose"
+     ],
+     "path": "src/lib.rs",
+     "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "fn": 20,
+      "mod": 1,
+      "re-export": 3,
+      "struct": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/mod.rs",
+     "purpose": "The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area",
+     "surface": {
+      "const": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/purposes/testing.rs",
+     "purpose": "Purposes for tests only",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "CanonicalBytesError"
+     ],
+     "path": "src/record.rs",
+     "purpose": "The one canonical byte form of a structured value (DESIGN section 1.5)",
+     "surface": {
+      "enum": 1,
+      "fn": 2
+     }
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_rules.rs",
+     "purpose": "PLAN-UC-04 stage 0: the rules of the fingerprint door, checked against hand-written transcripts",
+     "surface": {}
+    }
+   ],
+   "modules": {
+    "legacy": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
+    },
+    "purposes": {
+     "files": 2,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "dir",
+     "purpose": "The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area"
+    },
+    "record": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "The one canonical byte form of a structured value (DESIGN section 1.5)"
+    }
+   },
+   "over_bar": 0,
+   "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
+   "source_files": 5,
+   "test_files": 1
+  },
   "oneiron-gen": {
    "files": [
     {
@@ -117699,6 +117902,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "AuthBoundError",
+      "AuthBoundSecretStore"
+     ],
+     "path": "src/auth_bound.rs",
+     "purpose": "A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 2,
+      "enum": 1,
+      "trait": 1
+     }
+    },
+    {
      "bucket": "m",
      "kind": "src",
      "notable": [
@@ -117730,14 +117949,14 @@
       "const": 1,
       "enum": 5,
       "fn": 8,
-      "re-export": 10,
+      "re-export": 12,
       "struct": 1,
       "trait": 1,
       "type": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "LinuxTpmKeystore"
@@ -117745,7 +117964,7 @@
      "path": "src/linux_tpm.rs",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)",
      "surface": {
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -117769,14 +117988,31 @@
       "MemoryKeystore"
      ],
      "path": "src/memory.rs",
-     "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here",
+     "purpose": "Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its…",
      "surface": {
-      "fn": 1,
+      "fn": 3,
       "struct": 1
      }
     },
     {
-     "bucket": "m",
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
+      "SealedBytesName",
+      "SealedBytesStore"
+     ],
+     "path": "src/sealed_bytes.rs",
+     "purpose": "A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1,
+      "enum": 1,
+      "fn": 1,
+      "trait": 1
+     }
+    },
+    {
+     "bucket": "L",
      "kind": "src",
      "notable": [
       "ManualPresenceClock",
@@ -117797,9 +118033,9 @@
      "path": "src/user_presence.rs",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…",
      "surface": {
-      "const": 3,
+      "const": 5,
       "enum": 4,
-      "fn": 30,
+      "fn": 37,
       "re-export": 1,
       "struct": 8,
       "trait": 2
@@ -117832,7 +118068,23 @@
      }
     },
     {
+     "bucket": "L",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/linux_tpm_auth_bound.rs",
+     "purpose": "Row OCS-OWNER-PIN, the TPM tier: the device PIN key rests in the chip under an auth value",
+     "surface": {}
+    },
+    {
      "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/sealed_bytes.rs",
+     "purpose": "Row OCS-OWNER-PIN, the keystore's home for bytes the caller sealed: each name keeps its own value, a put…",
+     "surface": {}
+    },
+    {
+     "bucket": "L",
      "kind": "test",
      "notable": [],
      "path": "tests/user_presence.rs",
@@ -117855,6 +118107,13 @@
      "layout": "file",
      "purpose": "Apple, hardware tier: each slot's secret sealed to a P-256 key the Secure Enclave made and holds (ECIES…"
     },
+    "auth_bound": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A secret this device's secure hardware releases only for an auth value (row OCS-OWNER-PIN, the hardware tier)"
+    },
     "file": {
      "files": 1,
      "impl_vault": false,
@@ -117865,7 +118124,7 @@
     "linux_tpm": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Linux, hardware tier: each slot's secret sealed in this machine's TPM 2.0 (OF-168)"
     },
@@ -117881,12 +118140,19 @@
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "file",
-     "purpose": "Process memory only, for tests: a restart loses every slot, so no host keeps its machine's seed here"
+     "purpose": "Process memory only, for tests: a restart loses every slot and every sealed value, so no host keeps its…"
+    },
+    "sealed_bytes": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "A this-device-only home for bytes the caller sealed (row OCS-OWNER-PIN)"
     },
     "user_presence": {
      "files": 1,
      "impl_vault": false,
-     "largest_src_bucket": "m",
+     "largest_src_bucket": "L",
      "layout": "file",
      "purpose": "Confirming that this device's user is present now (row OWNER-CONFIRM-SHEET; owner ruling 15 Nov…"
     },
@@ -117905,10 +118171,10 @@
      "purpose": "Windows: the device's own unlock prompt (Windows Hello), and the session's word on the screen lock (row…"
     }
    },
-   "over_bar": 0,
+   "over_bar": 2,
    "purpose": "This-device-only key slots for one install",
-   "source_files": 11,
-   "test_files": 1
+   "source_files": 13,
+   "test_files": 3
   },
   "oneiron-lens-wire": {
    "files": [
@@ -188456,6 +188722,14 @@
      "surface": {
       "enum": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/wire_list_limit_rules.rs",
+     "purpose": "UC-13 PR 4c: the limit rules of two wire requests, pinned at limit 0, 1, the default, the maximum and the…",
+     "surface": {}
     }
    ],
    "modules": {
@@ -189268,7 +189542,7 @@
    "over_bar": 0,
    "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
    "source_files": 969,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-vm-outbox": {
    "files": [
