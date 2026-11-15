@@ -438,8 +438,12 @@ pub(crate) fn bind_sticky_sender_in_txn(
         live_campaign_member_head_in_txn(&vault.store, wtxn, person_ref, campaign_ref)?
             .ok_or(Error::EntityNotFound)?;
 
-    if let Some(bound) = old_value.channels.iter().find(|row| row.channel == channel) {
-        let previous_sender_ref = bound.sender_ref;
+    let bound_sender_ref = old_value
+        .channels
+        .iter()
+        .find(|row| row.channel == channel)
+        .map(|row| row.sender_ref);
+    if let Some(previous_sender_ref) = bound_sender_ref {
         if existing_sender_live {
             return Ok(StickySenderOutcome::Reused {
                 sender_ref: previous_sender_ref,
