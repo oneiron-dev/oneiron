@@ -432,26 +432,19 @@ impl DecisionProvider for SystemOneRung {
             }
             return Err(failed("admitted after the work time"));
         }
-        let asked = if pack.run.is_some() {
-            self.runtime
-                .block_on(self.seat.ask_pack(
-                    request,
-                    permit.lease(),
-                    pack.deadline.decision_time_left(),
-                ))
-                .map_err(|error| failed(&format!("the seat failed: {error}")))
-        } else {
-            self.runtime.block_on(async {
-                let cancel = pack.deadline.work_cancel();
-                tokio::select! {
-                    biased;
-                    () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
-                    answer = self.seat.ask_pack(
-                        request, permit.lease(), pack.deadline.decision_time_left(),
-                    ) => answer.map_err(|error| failed(&format!("the seat failed: {error}"))),
-                }
-            })
-        };
+        // A pack that carries its caller's run waits on the same cancel as a
+        // hosted pack: a caller whose work is cancelled mid-pack stops waiting
+        // for the seat (SYSTEMONE-PACK-RUN-NO-CANCEL).
+        let asked = self.runtime.block_on(async {
+            let cancel = pack.deadline.work_cancel();
+            tokio::select! {
+                biased;
+                () = cancel.cancelled() => Err(failed("the seat call was cancelled")),
+                answer = self.seat.ask_pack(
+                    request, permit.lease(), pack.deadline.decision_time_left(),
+                ) => answer.map_err(|error| failed(&format!("the seat failed: {error}"))),
+            }
+        });
         let settled = match &asked {
             Ok(answer) => permit.settle(CallOutcome::Answered(&answer.usage)),
             Err(_) => permit.settle(CallOutcome::Failed),
