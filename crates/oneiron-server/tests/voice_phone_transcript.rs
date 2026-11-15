@@ -5,7 +5,8 @@
 //! the line agent's answer as its own, between a row where the call starts
 //! and one where it ends, in the agent's thread with that number, its turns
 //! held in the thread's own SESSION (PHONE-CALL-SESSION = A). With the
-//! owner's `voice.call_transcripts.keep` off, only the two rows are kept.
+//! owner's `voice.call_transcripts.keep` off, only the two rows are kept;
+//! turned off during a call, the call keeps none of its later turns.
 //!
 //! The call's brain is the one a phone call's boot builds
 //! (`oneiron_server::test_doors::voice_call::PhoneCall`), its line agent the
@@ -217,6 +218,27 @@ fn with_transcripts_off_a_phone_call_keeps_only_its_dividers() -> TestResult {
             kept(&fixture.log(thread)?),
             vec![Kept::Started, Kept::Ended],
             "with the owner's keep off, only the rows where the call starts and ends are kept"
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn turning_transcripts_off_during_a_call_stops_keeping_its_next_turn() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new().await?;
+        let mut call = PhoneCall::answer(&fixture.server, Some(CALLER))?;
+        let thread = call.conversation();
+        call.say(1, TRANSCRIPT).await?;
+        fixture.keep_no_transcripts()?;
+        call.say(2, TRANSCRIPT).await?;
+        call.hang_up();
+
+        let [caller, answer] = answered_turn();
+        assert_eq!(
+            kept(&fixture.log(thread)?),
+            vec![Kept::Started, caller, answer, Kept::Ended],
+            "the turn answered after the owner turned keep off is not kept"
         );
         Ok(())
     })
