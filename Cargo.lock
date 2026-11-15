@@ -8818,6 +8818,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "oneiron",
+ "oneiron-base",
  "oneiron-sdk-build",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
