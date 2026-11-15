@@ -1,6 +1,6 @@
 //! What a claimed MCP `tools/call` keeps of its answer for the calls waiting on it, and how each
 //! waiter's reply is released again from it (FIX 7914, with FIX 8212's facade claim).
-//! `capturing`, `record`, `kept` and `replayed` are its call surface.
+//! `capturing`, `record`, `answered_as`, `kept` and `replayed` are its call surface.
 //! `oneiron::runtime_hooks::verb::InvocationRelease` is the record the shared claim keeps.
 
 use std::cell::RefCell;
@@ -52,6 +52,19 @@ pub(super) fn stamp_receipt(stamp: &CallStamp) {
     let _ = JUDGED.try_with(|judged| {
         if let Some((value, _)) = judged.borrow_mut().as_mut() {
             crate::mcp::mcp_stamp_call_receipt(value, stamp);
+        }
+    });
+}
+
+/// Puts `answer`, the claimed call's final answer built over the result it
+/// judged last (an MCP task over the run that result names, L1-03), in that
+/// result's place, beside the rows it was judged by: a waiter's reply is then
+/// that answer, released again by those rows. Outside a claimed call, or
+/// before any result was judged in it, it does nothing.
+pub(super) fn answered_as(answer: &Value) {
+    let _ = JUDGED.try_with(|judged| {
+        if let Some((value, _)) = judged.borrow_mut().as_mut() {
+            value.clone_from(answer);
         }
     });
 }

@@ -198,24 +198,41 @@ pub(crate) async fn handle_mcp_request(
             )
             .await?
             .toward(peer);
+            // OF-063: a caller verified in an anonymous off-record session,
+            // on arrival or before the reply, keeps no record of its task
+            // method, as of its tool call; any other answer is its
+            // connection's (FIX 811).
+            let principal = crate::api::call_receipt::mcp_session_principal(
+                actor.auth.as_ref(),
+                actor.actor_ref,
+            );
+            let anonymous =
+                crate::api::call_receipt::in_anonymous_session(server, headers, principal);
             let declares_tasks = super::super::client_surface::declares_tasks(
                 request
                     .params
                     .as_ref()
                     .and_then(|params| params.get("_meta")),
             );
-            if !declares_tasks {
-                return Err(super::super::tasks_adapter::tasks_not_declared());
+            let answered = if declares_tasks {
+                super::super::tasks_adapter::tasks_method(
+                    server,
+                    &actor,
+                    headers,
+                    connection,
+                    &request.method,
+                    request.params,
+                )
+                .await
+            } else {
+                Err(super::super::tasks_adapter::tasks_not_declared())
+            };
+            if anonymous
+                || crate::api::call_receipt::in_anonymous_session(server, headers, principal)
+            {
+                return super::super::tasks_adapter::off_record(answered);
             }
-            super::super::tasks_adapter::tasks_method(
-                server,
-                &actor,
-                headers,
-                connection,
-                &request.method,
-                request.params,
-            )
-            .await
+            answered
         }
         _ => Err(McpGatewayError::new(
             -32601,

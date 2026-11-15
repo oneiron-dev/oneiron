@@ -11,9 +11,11 @@
 //!   after a new server over the same vault too, and to its end. A failed run
 //!   ends `completed` with `isError`. `tasks/cancel` runs
 //!   `vault.workflows.cancel`, and the task ends `cancelled`.
+//! - The task states its starting call's receipt.
 //! - An expired handle, another actor's and an unknown id answer alike as
-//!   missing, and the run goes on. A repeated call starts one run. A `tasks/*`
-//!   request that does not declare the extension is refused with `-32021`.
+//!   missing to every task method, and the run goes on. A repeated call
+//!   starts one run. A `tasks/*` request that does not declare the extension
+//!   is refused with `-32021`.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -371,6 +373,10 @@ fn a_declared_workflow_dispatch_returns_a_stored_task() -> TestResult {
         );
         assert_eq!(task["statusMessage"], "step 1 of 2");
         assert_eq!(task["_meta"]["cacheScope"], "private");
+        assert!(
+            task["_meta"]["receipt_ref"].is_string(),
+            "the task states its starting call's receipt: {reply}"
+        );
 
         let got = fixture.tasks(Caller::Owner, "get", id).await?;
         assert_eq!(got["result"]["status"], "working", "{got}");
@@ -451,7 +457,10 @@ fn the_task_resumes_after_a_disconnect_and_a_server_restart() -> TestResult {
             vec![json!("artifact:first"), json!("artifact:second")],
             "the result carries the run's result refs"
         );
-        assert!(done["result"]["result"].get("isError").is_none(), "{done}");
+        assert_eq!(
+            done["result"]["result"]["isError"], false,
+            "a completed run's result is no error: {done}"
+        );
         Ok(())
     })
 }
@@ -541,7 +550,7 @@ fn another_actor_gets_task_not_found() -> TestResult {
             .await?;
         assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
 
-        for method in ["get", "cancel"] {
+        for method in ["get", "update", "cancel"] {
             let reply = fixture.tasks(Caller::Reader, method, &id).await?;
             assert_eq!(reply["error"]["code"], -32602, "{method}: {reply}");
             assert_eq!(

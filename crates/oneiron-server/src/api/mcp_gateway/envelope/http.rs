@@ -818,10 +818,13 @@ pub(super) async fn mcp_endpoint(
     } else {
         (call.await, None)
     };
-    // A `tools/call` that reached its door carries its own receipt; every
-    // other reply is the connection's (FIX 811).
+    // A `tools/call` that reached its door carries its own receipt, and a
+    // task method of a caller in an anonymous session keeps none (L1-03);
+    // every other reply is the connection's (FIX 811).
     let covered = match &result {
-        Ok(_) => method == "tools/call",
+        Ok(reply) => {
+            method == "tools/call" || super::super::tasks_adapter::kept_off_record(&method, reply)
+        }
         Err(error) => error.call_receipt.is_some(),
     };
     let stamp =

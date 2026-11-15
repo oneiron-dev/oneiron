@@ -9,7 +9,11 @@
 //! own public verb as its caller, through the same admission, scope and
 //! release a tool call meets, so each poll re-checks the caller with no copy
 //! of those rules. A handle the caller may not see, one past its time to live,
-//! and an unknown id all answer alike as missing. The record's end gives the
+//! and an unknown id all answer alike as missing, and so does a record verb
+//! that did not run for the caller: a refusal, or a hook's stop answered as a
+//! result. A cancel is kept on the handle only once the record's cancel verb
+//! ran. A caller verified in an anonymous off-record session keeps no record
+//! of a task method, as of its tool call (OF-063). The record's end gives the
 //! task's end: a failed run ends `completed` with `isError`, as a tool result
 //! with `isError` does.
 //!
@@ -84,15 +88,17 @@ pub(super) fn task_for_call(
     if tool != WORKFLOW_RUN.start || answered.get("isError") == Some(&Value::Bool(true)) {
         return Ok(answered);
     }
-    let output = verb_output(&answered);
+    let Some(output) = verb_output(&answered) else {
+        return Ok(answered);
+    };
     let Some(root) = output
-        .and_then(|view| view.get("root_attempt_ref"))
+        .get("root_attempt_ref")
         .and_then(Value::as_str)
         .and_then(|hex| oneiron::EntityId::from_hex(hex).ok())
     else {
         return Ok(answered);
     };
-    let status = output.map_or(TaskStatus::Working, TaskStatus::of_run);
+    let status = TaskStatus::of_run(output);
     let vault = server.vault();
     let now_ms = vault.now_recorded_ms();
     let ttl_ms = server.config.mcp_task_ttl_ms;
@@ -118,8 +124,54 @@ pub(super) fn task_for_call(
     };
     let mut reply = task_fields(&id, &row, status, output);
     reply.insert("resultType".to_owned(), json!("task"));
-    reply.insert("_meta".to_owned(), private_meta(answered.get("_meta")));
-    Ok(Value::Object(reply))
+    let mut meta = private_meta(answered.get("_meta"));
+    // The starting call's own receipt (OF-538), which its tool result states
+    // in `structuredContent.meta`.
+    if let (Some(fields), Some(stated)) = (
+        meta.as_object_mut(),
+        answered
+            .pointer("/structuredContent/meta")
+            .and_then(Value::as_object),
+    ) {
+        for key in ["receipt_ref", "no_record"] {
+            if let Some(value) = stated.get(key) {
+                fields.insert(key.to_owned(), value.clone());
+            }
+        }
+    }
+    reply.insert("_meta".to_owned(), meta);
+    let reply = Value::Object(reply);
+    // A claimed call's waiters get this answer, released again by the rows
+    // its tool result was judged by (FIX 7914).
+    super::claimed_release::answered_as(&reply);
+    Ok(reply)
+}
+
+/// A task method's answer to a caller verified in an anonymous off-record
+/// session (OF-063): it keeps no record and says so, as that caller's tool
+/// call does, in its `_meta` or in its error.
+pub(super) fn off_record(
+    answered: Result<Value, McpGatewayError>,
+) -> Result<Value, McpGatewayError> {
+    let stamp = crate::api::call_receipt::CallStamp::NoRecord;
+    match answered {
+        Ok(mut reply) => {
+            if let Some(meta) = reply.get_mut("_meta").and_then(Value::as_object_mut) {
+                stamp.stamp_json(meta);
+            }
+            Ok(reply)
+        }
+        Err(mut error) => {
+            error.call_receipt = Some(Box::new(stamp));
+            Err(error)
+        }
+    }
+}
+
+/// Whether `reply`, the answer of `method`, is a task method's answer that
+/// keeps no record ([`off_record`]), so its connection records none either.
+pub(super) fn kept_off_record(method: &str, reply: &Value) -> bool {
+    method.starts_with("tasks/") && reply.pointer("/_meta/no_record") == Some(&Value::Bool(true))
 }
 
 /// One `tasks/get`, `tasks/update` or `tasks/cancel` from the resolved caller
@@ -142,68 +194,52 @@ pub(super) async fn tasks_method(
     let now_ms = vault.now_recorded_ms();
     let engine =
         |error: oneiron::Error| McpGatewayError::new(-32603, "engine_error", error.to_string());
+    let row = vault
+        .mcp_task(actor.actor_ref, &id, now_ms)
+        .map_err(engine)?
+        .ok_or_else(task_missing)?;
+    let McpTaskSubject::WorkflowRun { root_attempt_ref } = &row.subject else {
+        return Err(task_missing());
+    };
+    let spec = json!({ "root_attempt_ref": root_attempt_ref.to_hex() });
     match method {
         "tasks/cancel" => {
-            let row = vault
-                .request_mcp_task_cancel(actor.actor_ref, &id, now_ms)
-                .map_err(engine)?
-                .ok_or_else(task_missing)?;
             // The record's own cancel verb, as a tool call of the caller's:
             // judged, run, released and receipted. It asks the work to stop
-            // and never undoes committed work.
-            let McpTaskSubject::WorkflowRun { root_attempt_ref } = row.subject else {
-                return Err(task_missing());
-            };
-            let params = verb_call(
-                WORKFLOW_RUN.cancel,
-                json!({ "root_attempt_ref": root_attempt_ref.to_hex() }),
-            );
-            super::envelope::call_tool_as(
+            // and never undoes committed work. Only a cancel the verb ran is
+            // acknowledged and kept on the handle; a refusal or a hook's stop
+            // answers as missing and leaves the handle as it was.
+            let cancelled = super::envelope::call_tool_as(
                 server,
                 actor.mode,
                 headers,
                 connection,
                 actor,
-                Some(params),
+                Some(verb_call(WORKFLOW_RUN.cancel, spec)),
                 None,
                 None,
             )
             .await
             .map_err(|_| task_missing())?;
+            ran_output(&cancelled)?;
+            vault
+                .request_mcp_task_cancel(actor.actor_ref, &id, now_ms)
+                .map_err(engine)?;
             Ok(json!({ "resultType": "complete", "_meta": private_meta(None) }))
         }
         "tasks/update" => {
             // No subject asks for input yet (form questions: L1-03 PR 3), so
             // responses are ignored, as the spec ignores responses under a
-            // key the task did not ask.
-            vault
-                .mcp_task(actor.actor_ref, &id, now_ms)
-                .map_err(engine)?
-                .ok_or_else(task_missing)?;
+            // key the task did not ask. The record still reads for the
+            // caller first, as on a poll, or the task is missing.
+            read_record(server, actor, headers, connection, WORKFLOW_RUN.read, spec).await?;
             Ok(json!({ "resultType": "complete", "_meta": private_meta(None) }))
         }
         _ => {
-            let row = vault
-                .mcp_task(actor.actor_ref, &id, now_ms)
-                .map_err(engine)?
-                .ok_or_else(task_missing)?;
-            let McpTaskSubject::WorkflowRun { root_attempt_ref } = &row.subject else {
-                return Err(task_missing());
-            };
-            // The record's own read verb, as the caller: a refusal answers
-            // as missing, never in the verb's own words.
-            let read = read_record(
-                server,
-                actor,
-                headers,
-                connection,
-                WORKFLOW_RUN.read,
-                json!({ "root_attempt_ref": root_attempt_ref.to_hex() }),
-            )
-            .await
-            .map_err(|_| task_missing())?;
-            let output = verb_output(&read);
-            let status = output.map_or(TaskStatus::Working, TaskStatus::of_run);
+            let read =
+                read_record(server, actor, headers, connection, WORKFLOW_RUN.read, spec).await?;
+            let output = ran_output(&read)?;
+            let status = TaskStatus::of_run(output);
             let mut reply = task_fields(&id, &row, status, output);
             reply.insert("resultType".to_owned(), json!("complete"));
             if matches!(
@@ -225,9 +261,11 @@ pub(super) async fn tasks_method(
 }
 
 /// Runs the record's read verb `verb` with `input` as the caller `actor`, on
-/// the caller's own endpoint, through the tool call's admission and release.
-/// A read: no call receipt is written for it, and it is not counted as a
-/// wire tool call.
+/// the caller's own endpoint, through the tool call's admission and release,
+/// and answers its tool result when the verb ran. A refusal, a hook's stop
+/// and a result with no output answer as missing, never in the verb's own
+/// words. A read: no call receipt is written for it, and it is not counted
+/// as a wire tool call.
 async fn read_record(
     server: &Arc<SyncServer>,
     actor: &McpCallContext,
@@ -238,10 +276,16 @@ async fn read_record(
 ) -> Result<Value, McpGatewayError> {
     let params: McpToolCallParams = serde_json::from_value(verb_call(verb, input))
         .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.to_string()))?;
-    let args = mcp_validated_call_args(server, actor.mode, params, None, actor)?;
-    ensure_mcp_actor_matches(&args, actor)?;
-    mcp_admit_scoped_call(server, &args, actor)?;
-    Box::pin(execute_mcp_tool(server, args, actor, headers, connection)).await
+    let read = async {
+        let args = mcp_validated_call_args(server, actor.mode, params, None, actor)?;
+        ensure_mcp_actor_matches(&args, actor)?;
+        mcp_admit_scoped_call(server, &args, actor)?;
+        Box::pin(execute_mcp_tool(server, args, actor, headers, connection)).await
+    }
+    .await
+    .map_err(|_| task_missing())?;
+    ran_output(&read)?;
+    Ok(read)
 }
 
 /// The `tools/call` params of the generated verb `verb` over `input`.
@@ -265,6 +309,16 @@ fn verb_output(answered: &Value) -> Option<&Value> {
         .get("structuredContent")
         .and_then(|content| content.get("output"))
         .and_then(|output| output.get("value"))
+}
+
+/// A record verb's typed output when the verb ran for the caller: a tool
+/// result marked `isError` (a hook's stop or skip among them) or one with no
+/// output answers as missing.
+fn ran_output(answered: &Value) -> Result<&Value, McpGatewayError> {
+    if answered.get("isError") == Some(&Value::Bool(true)) {
+        return Err(task_missing());
+    }
+    verb_output(answered).ok_or_else(task_missing)
 }
 
 /// A task's status, from its record.
@@ -306,13 +360,13 @@ fn task_fields(
     id: &McpTaskId,
     row: &McpTaskRecord,
     status: TaskStatus,
-    output: Option<&Value>,
+    output: &Value,
 ) -> Map<String, Value> {
     let updated_ms = row.cancel_requested_at_ms.unwrap_or(row.created_at_ms);
     let mut fields = Map::new();
     fields.insert("taskId".to_owned(), json!(id.to_hex()));
     fields.insert("status".to_owned(), json!(status.wire()));
-    if let Some(message) = output.and_then(|view| step_message(view, status)) {
+    if let Some(message) = step_message(output, status) {
         fields.insert("statusMessage".to_owned(), json!(message));
     }
     fields.insert(
