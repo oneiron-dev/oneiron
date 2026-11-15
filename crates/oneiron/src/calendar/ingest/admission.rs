@@ -532,26 +532,33 @@ impl PollAdmission<'_> {
     }
 
     /// A VEVENT the passport already carries (or an older SEQUENCE of it):
-    /// when it is an explicit cancellation, its booking's deposit refund is
+    /// when it is the passport's own version (the same SEQUENCE and content
+    /// hash) and an explicit cancellation, its booking's deposit refund is
     /// asked again. The passport commits before the refund does, so a stop
     /// between them leaves the next read of the feed here, and this is where
     /// the refund is repaired. The cancellation was seen when that passport
     /// committed, so a repair after the booking's start still refunds a
-    /// cancellation first seen before it.
+    /// cancellation first seen before it. An older SEQUENCE replay moves no
+    /// money: the passport it lost to may carry a live booking.
     fn repeat_host_cancel_refund(
         &self,
         event_ref: EntityId,
         event: &ParsedVEvent,
     ) -> Result<(), CalendarError> {
-        if event.cancelled {
-            let seen_at = crate::calendar::passport::live_passport_for(
-                self.vault,
-                &event_ref,
-                self.system,
-                &event.uid,
-            )?
-            .map_or(self.now, |(_, passport)| passport.last_seen_at);
-            self.refund_host_cancelled_deposit(event_ref, seen_at)?;
+        if !event.cancelled {
+            return Ok(());
+        }
+        let Some((_, passport)) = crate::calendar::passport::live_passport_for(
+            self.vault,
+            &event_ref,
+            self.system,
+            &event.uid,
+        )?
+        else {
+            return Ok(());
+        };
+        if passport.last_sequence == event.sequence && passport.content_hash == event.content_hash {
+            self.refund_host_cancelled_deposit(event_ref, passport.last_seen_at)?;
         }
         Ok(())
     }
