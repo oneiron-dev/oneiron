@@ -5,11 +5,16 @@ use crate::Vault;
 #[cfg(feature = "test-support")]
 use crate::consent::AuthenticatedOwner;
 #[cfg(feature = "test-support")]
+use crate::entity_id::EntityId;
+#[cfg(feature = "test-support")]
 use crate::error::{Error, Result};
 #[cfg(feature = "test-support")]
-use crate::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
+use crate::setting::{
+    EngineSetting, Resolved, SetSetting, SetSettingOutcome, SettingCaller, SettingMode,
+    SettingScope,
+};
 
-pub use super::setting_keys::hooked_changes;
+pub use super::setting_keys::{after_commit_seen, after_commits, hooked_changes};
 
 /// Plants bytes no row encodes to as `key`'s value row at `scope`: a damaged store.
 ///
@@ -22,7 +27,8 @@ pub fn plant_undecodable_row(vault: &Vault, key: &str, scope: SettingScope) -> R
 }
 
 /// Makes each of `requests` as the owner through `Vault::set_setting_in_txn`, all in one write,
-/// then fails that write when `fail` is set: the changes commit together or not at all.
+/// then fails that write when `fail` is set: the changes commit together or not at all. Once the
+/// write commits, it runs the changes' after-commit hooks, as every such caller does.
 ///
 /// # Errors
 ///
@@ -34,16 +40,103 @@ pub fn set_settings_in_one_write(
     requests: &[SetSetting],
     fail: bool,
 ) -> Result<Vec<SetSettingOutcome>> {
-    vault.with_write_txn_grouped(|txn| {
-        let mut outcomes = Vec::with_capacity(requests.len());
-        for request in requests {
-            outcomes.push(vault.set_setting_in_txn(txn, SettingCaller::Owner(owner), request)?);
-        }
-        if fail {
-            return Err(Error::InvalidConfig(
-                "the caller's write fails after its changes".into(),
-            ));
-        }
-        Ok(outcomes)
-    })
+    vault
+        .with_write_txn_grouped(|txn| {
+            let mut outcomes = Vec::with_capacity(requests.len());
+            for request in requests {
+                outcomes.push(vault.set_setting_in_txn(
+                    txn,
+                    SettingCaller::Owner(owner),
+                    request,
+                )?);
+            }
+            if fail {
+                return Err(Error::InvalidConfig(
+                    "the caller's write fails after its changes".into(),
+                ));
+            }
+            Ok(outcomes)
+        })
+        .inspect(|outcomes| {
+            let changes: Vec<_> = requests.iter().zip(outcomes).collect();
+            crate::setting::run_after_commit(vault, &changes);
+        })
+}
+
+/// Makes `request` as the engine: applying the owner's answer to `ask`, or, with none, as an
+/// engine path's own change.
+///
+/// # Errors
+///
+/// As `Vault::set_setting`.
+#[cfg(feature = "test-support")]
+pub fn set_setting_as_engine(
+    vault: &Vault,
+    ask: Option<EntityId>,
+    request: SetSetting,
+) -> Result<SetSettingOutcome> {
+    let engine = ask.map_or_else(EngineSetting::own, EngineSetting::answer);
+    vault.set_setting(SettingCaller::Engine(engine), request)
+}
+
+/// Makes `request` as the person `person` proves, on their own behalf.
+///
+/// # Errors
+///
+/// As `Vault::set_setting`.
+#[cfg(feature = "test-support")]
+pub fn set_setting_as_person(
+    vault: &Vault,
+    person: &AuthenticatedOwner,
+    request: SetSetting,
+) -> Result<SetSettingOutcome> {
+    vault.set_setting(SettingCaller::Person(person), request)
+}
+
+/// `test.owner_number` read twice in one read: through the vault, and below it over the store's
+/// tables (`Setting::read_in_dbs_txn`).
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn`.
+#[cfg(feature = "test-support")]
+pub fn owner_number_read_both_ways(
+    vault: &Vault,
+    known: &[SettingScope],
+) -> Result<(Resolved<u64>, Resolved<u64>)> {
+    let key = &super::setting_keys::TEST_OWNER_NUMBER;
+    let txn = vault.store.env.read_txn()?;
+    Ok((
+        key.read_in_txn(vault, &txn, known, None)?,
+        key.read_in_dbs_txn(&vault.store, &txn, known, None)?,
+    ))
+}
+
+/// Runs the setting tables' scrub for the erased entity `id` in a write of its own, as the
+/// delete pipeline's eraser line does when `id` is erased.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn erase_entity_from_settings(vault: &Vault, id: EntityId) -> Result<()> {
+    let mut txn = vault.store.env.write_txn()?;
+    crate::setting::erase_setting_entity_in_txn(&vault.store, &mut txn, &id)?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// Whether a leave of a shared vault keeps the value row of `key` at `scope` in the live setting
+/// table.
+#[cfg(all(feature = "test-support", feature = "sync"))]
+#[must_use]
+pub fn leave_keeps_setting_row(key: &str, scope: SettingScope) -> bool {
+    let row = oneiron_setting_contract::RowKey {
+        name: key.to_owned(),
+        item: None,
+        mode: SettingMode::Value,
+        scope,
+    };
+    let full = [crate::side_table::SETTING.prefix, row.encode().as_slice()].concat();
+    crate::setting::leave_keeps_row(&full)
 }

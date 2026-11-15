@@ -41,7 +41,8 @@ pub enum Decided<'a, V> {
 /// 2. else the narrowest value row, the item's own row before the item-less row at one scope;
 /// 3. a row a holder set, on a key that names its tighter direction (`tighter(a, b)`: `a` is at
 ///    least as tight as `b`), is held inside the nearest owner value row at its scope or a wider
-///    one: the owner's value is the cap, and the holder's row stays stored;
+///    one, and where the owner set none there, inside the catalogue default `default`: the
+///    owner's value, else the default, is the cap, and the holder's row stays stored;
 /// 4. else the catalogue default.
 ///
 /// A deciding row that does not decode is [`Decided::Unreadable`], never the default; so is an
@@ -50,6 +51,7 @@ pub enum Decided<'a, V> {
 pub fn decide<'a, V>(
     rows: &'a [FoundRow<V>],
     tighter: Option<&dyn Fn(&V, &V) -> bool>,
+    default: Option<&V>,
 ) -> Decided<'a, V> {
     let narrowest = |mode: SettingMode, owner_only: bool| {
         rows.iter()
@@ -76,7 +78,10 @@ pub fn decide<'a, V>(
         .filter(|cap| cap.mode == SettingMode::Value && cap.by_owner && cap.at >= row.at)
         .min_by_key(|cap| cap.rank());
     match cap {
-        None => Decided::Row(row),
+        None => match default {
+            Some(default) if !tighter(value, default) => Decided::Default,
+            _ => Decided::Row(row),
+        },
         Some(cap) => match &cap.value {
             None => Decided::Unreadable(cap.at),
             Some(cap_value) if tighter(value, cap_value) => Decided::Row(row),
@@ -109,7 +114,7 @@ mod tests {
 
     #[test]
     fn no_row_reads_the_default() {
-        assert_eq!(decide::<u64>(&[], None), Decided::Default);
+        assert_eq!(decide::<u64>(&[], None, None), Decided::Default);
     }
 
     #[test]
@@ -120,7 +125,7 @@ mod tests {
             row(1, false, SettingMode::Pin, true, 3),
             row(1, false, SettingMode::Pin, false, 4),
         ];
-        let decided = decide(&rows, None);
+        let decided = decide(&rows, None, None);
         assert!(matches!(decided, Decided::Pin(_)));
         assert_eq!(value_of(&decided), Some(3));
     }
@@ -132,7 +137,7 @@ mod tests {
             row(0, false, SettingMode::Value, true, 2),
             row(0, true, SettingMode::Value, true, 3),
         ];
-        assert_eq!(value_of(&decide(&rows, None)), Some(3));
+        assert_eq!(value_of(&decide(&rows, None, None)), Some(3));
     }
 
     #[test]
@@ -144,41 +149,69 @@ mod tests {
             row(0, false, SettingMode::Value, false, 5),
             row(1, false, SettingMode::Value, true, 8),
         ];
-        assert_eq!(value_of(&decide(&rows, tighter)), Some(5));
+        assert_eq!(value_of(&decide(&rows, tighter, None)), Some(5));
         // above it: the owner's row decides, and the holder's stays stored
         let rows = [
             row(0, false, SettingMode::Value, false, 9),
             row(1, false, SettingMode::Value, true, 8),
         ];
-        assert_eq!(value_of(&decide(&rows, tighter)), Some(8));
+        assert_eq!(value_of(&decide(&rows, tighter, None)), Some(8));
         // the nearest owner row at the holder's scope or wider is the cap, its item row first
         let rows = [
             row(0, true, SettingMode::Value, false, 9),
             row(0, false, SettingMode::Value, true, 6),
             row(1, true, SettingMode::Value, true, 2),
         ];
-        assert_eq!(value_of(&decide(&rows, tighter)), Some(6));
+        assert_eq!(value_of(&decide(&rows, tighter, None)), Some(6));
         // a key with no tighter direction: the holder's row stands
         let rows = [
             row(0, false, SettingMode::Value, false, 9),
             row(1, false, SettingMode::Value, true, 8),
         ];
-        assert_eq!(value_of(&decide(&rows, None)), Some(9));
+        assert_eq!(value_of(&decide(&rows, None, None)), Some(9));
+    }
+
+    #[test]
+    fn with_no_owner_row_a_holders_row_is_held_inside_the_default() {
+        let lower = lower_is_tighter::<u64>;
+        let tighter: Option<&dyn Fn(&u64, &u64) -> bool> = Some(&lower);
+        let default = 10;
+        // inside the default: the holder's row decides
+        let rows = [row(0, false, SettingMode::Value, false, 4)];
+        assert_eq!(value_of(&decide(&rows, tighter, Some(&default))), Some(4));
+        // the default itself is inside it
+        let rows = [row(0, false, SettingMode::Value, false, 10)];
+        assert_eq!(value_of(&decide(&rows, tighter, Some(&default))), Some(10));
+        // above it: the default decides, and the holder's row stays stored
+        let rows = [row(0, false, SettingMode::Value, false, 12)];
+        assert_eq!(decide(&rows, tighter, Some(&default)), Decided::Default);
+        // an owner row is the cap, the default plays no part
+        let rows = [
+            row(0, false, SettingMode::Value, false, 12),
+            row(1, false, SettingMode::Value, true, 20),
+        ];
+        assert_eq!(value_of(&decide(&rows, tighter, Some(&default))), Some(12));
+        // the owner's own row above the default stands
+        let rows = [row(0, false, SettingMode::Value, true, 12)];
+        assert_eq!(value_of(&decide(&rows, tighter, Some(&default))), Some(12));
+        // a key with no tighter direction: the holder's row stands
+        let rows = [row(0, false, SettingMode::Value, false, 12)];
+        assert_eq!(value_of(&decide(&rows, None, Some(&default))), Some(12));
     }
 
     #[test]
     fn a_deciding_row_that_does_not_decode_is_unreadable_never_the_default() {
         let mut pin = row(1, false, SettingMode::Pin, true, 0);
         pin.value = None;
-        assert_eq!(decide(&[pin], None), Decided::Unreadable(1));
+        assert_eq!(decide(&[pin], None, None), Decided::Unreadable(1));
         let mut value = row(0, false, SettingMode::Value, true, 0);
         value.value = None;
         let rows = [value, row(1, false, SettingMode::Value, true, 3)];
-        assert_eq!(decide(&rows, None), Decided::Unreadable(0));
+        assert_eq!(decide(&rows, None, None), Decided::Unreadable(0));
         let mut cap = row(1, false, SettingMode::Value, true, 0);
         cap.value = None;
         let rows = [row(0, false, SettingMode::Value, false, 3), cap];
         let lower = lower_is_tighter::<u64>;
-        assert_eq!(decide(&rows, Some(&lower)), Decided::Unreadable(1));
+        assert_eq!(decide(&rows, Some(&lower), None), Decided::Unreadable(1));
     }
 }
