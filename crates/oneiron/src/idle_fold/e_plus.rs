@@ -154,7 +154,8 @@ pub(crate) fn idle_choice(
 /// The Keeps a cold start gets (rule D; RULING L2-37-COLD-START = B): enough refreshes that the
 /// prefix stays warm through `keep_through_secs` from the answer that cached it. The first call
 /// comes `T = lifetime - 60` (at least one second) after that answer and each Keep moves the next
-/// one `T` on, so: none when `keep_through_secs` is zero, else `max(1, ceil(keep_through / T) - 1)`.
+/// one `T` on, so: none when `keep_through_secs` is zero, else
+/// `max(1, ceil(keep_through_secs / T) - 1)`.
 pub(crate) fn cold_start_keeps(keep_through_secs: u64, lifetime_secs: u64) -> u32 {
     if keep_through_secs == 0 {
         return 0;
