@@ -10,10 +10,10 @@
 //! install carries it under its own live machine profile, in any role the
 //! one carrier rule admits ([`super::super::owner_act_signer_admits`]).
 //! Letting their messages back in widens their own row: where the vault
-//! holds an owner key, an install that is not the owner's machine and holds
-//! no owner key cannot prove it, and the door refuses it, storing nothing
-//! (ruling CARRIER-PERSON-OPT-BACK-IN = A), unless the person proved it with
-//! their own slip key. Leaving them out lands from any install.
+//! asks for an owner key, an install that is not the owner's machine and
+//! holds no owner key cannot prove it, and the door refuses it, storing
+//! nothing (ruling CARRIER-PERSON-OPT-BACK-IN = A), unless the person proved
+//! it with their own slip key. Leaving them out lands from any install.
 
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
@@ -81,10 +81,10 @@ impl Vault {
     /// [`RecordError::AuthorityRefused`] ("the person's proof does not hold
     /// for this choice") when their proof does not hold;
     /// [`crate::error::RecordError::OwnerKeyRequired`] when they let their
-    /// messages back in where the vault holds an owner key and this install
-    /// neither is the owner's machine nor holds one (nothing is stored), and
-    /// when the vault owner passes a person proof (they prove with the owner
-    /// key, never a slip key);
+    /// messages back in where the vault asks for an owner key and this
+    /// install neither is the owner's machine nor holds one (nothing is
+    /// stored), and when the vault owner passes a person proof (they prove
+    /// with the owner key, never a slip key);
     /// [`Error::ConcurrentWrite`] when `seen` is not the current revision;
     /// [`Error::InvalidConfig`] when the choice would name more parents than
     /// one entry may.

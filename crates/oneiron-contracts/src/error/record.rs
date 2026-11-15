@@ -248,7 +248,8 @@ pub enum RecordError {
     )]
     CheckpointPolicyRevisionStale { current: [u8; 32] },
     /// An owner choice door refused an act it could not prove the owner's
-    /// (row CARRIER-OWNER-PROOF): the vault holds an owner key, and this
+    /// (row CARRIER-OWNER-PROOF): the vault asks for an owner key (it has
+    /// held one, and no switch back to web sign-in is in force), and this
     /// install is not the owner's machine and holds none, so the authority
     /// fold would keep the act waiting with no effect. The owner decides it
     /// on an owner device. [`OWNER_KEY_REQUIRED`] is its stable reason code

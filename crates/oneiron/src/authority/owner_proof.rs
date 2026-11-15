@@ -14,10 +14,24 @@
 //!   (`Owned(Yours)`) stands only when proven, whoever carries it. Unproven,
 //!   it is HELD: kept so the owner's device can ask, standing for nothing.
 //! - Item 2: an act a carrier that is not the owner's machine delivers waits
-//!   for the proof wherever the vault holds a key that can give it: a
-//!   self-host vault's live owner root, and on a hosted vault an enrolled
-//!   owner device key (CARRIER-HOSTED-WEB-ACTS = C). A vault with no such
-//!   key keeps today's acts: nothing there could ever answer the wait.
+//!   for the proof wherever the vault asks for an owner key
+//!   ([`owner_key_required`]): a vault that has ever held a key that proves
+//!   for the owner, a self-host vault's owner root or a hosted vault's
+//!   enrolled owner device key (CARRIER-HOSTED-WEB-ACTS = C), until the
+//!   owner switches a hosted vault back to web sign-in. A vault that never
+//!   held such a key keeps today's acts: nothing there could ever answer
+//!   the wait.
+//!
+//! The ratchet (the owner's ruling AUTH-5 = B with his opt-out, 15 Nov
+//! 20:15): removing the last owner key never hands the vault back to the
+//! managed node's word. The fold remembers every key it held as the owner's
+//! (`FoldState::owner_keys_ever`), and the vault asks for an owner key while
+//! that memory holds a key the owner's switch back did not see. The switch
+//! is the web sign-in setting ([`PolicySetting::WebSignIn`], a hosted
+//! vault's alone): its act counts only with an owner key's proof, whoever
+//! carries it, and its value names the keys it speaks for, so a key enrolled
+//! later arms the vault again (the lead's WAYBACK-6 = A), and so does any
+//! later act of the setting with another value.
 //!
 //! The judge reads the act's parent state only, so every replica judges the
 //! same rows the same way. Mine is read in the roster view of that state
@@ -70,18 +84,68 @@ fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
     roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
 }
 
-/// Whether an act a not-mine carrier delivers needs the proof in `state`
-/// (item 2): as soon as its roster holds a key that proves for the owner
-/// ([`proves_for_the_owner`]). A self-host vault's live owner root is one; a
-/// hosted vault has one once an owner device key is enrolled there. A vault
-/// with none keeps today's acts (CARRIER-HOSTED-WEB-ACTS = C, and the
-/// amendment to CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B): no key there could
-/// ever prove the act, so a wait would have no end.
-pub(super) fn not_mine_carriers_need_proof(state: &FoldState) -> bool {
-    state
-        .roster
-        .keys()
-        .any(|key| proves_for_the_owner(state, key))
+/// Remembers `key` as one the fold held as the owner's, when it proves for
+/// the owner in `state` ([`proves_for_the_owner`]): the roster's writer calls
+/// it for each row it writes, in the state that then holds the row. A key
+/// gains its proof only by joining the roster (roles only narrow, a custody
+/// mark only spreads, a revoke is for good), so no later row needs a look.
+pub(super) fn remember_owner_key(state: &mut FoldState, key: &AuthorityKey) {
+    if proves_for_the_owner(state, key) {
+        state.owner_keys_ever.insert(key.clone());
+    }
+}
+
+/// Whether the vault asks for an owner key in `state` (item 2, and the
+/// owner's ruling AUTH-5): an act a not-mine carrier delivers needs the
+/// proof there. It asks once it has ever held a key that proves for the
+/// owner: a self-host vault's owner root, a hosted vault's enrolled owner
+/// device key. Removing the key changes nothing; only the owner's switch
+/// back to web sign-in ends it, for the keys the switch saw
+/// ([`runs_on_web_sign_in`]). A vault that never held one keeps today's acts
+/// (CARRIER-HOSTED-WEB-ACTS = C, and the amendment to
+/// CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B): no key there could ever prove
+/// the act, so a wait would have no end.
+///
+/// It reads what every replica holds alike: the memory of owner keys and
+/// the web sign-in setting's live acts, never this install's pin or
+/// counting.
+pub(super) fn owner_key_required(state: &FoldState) -> bool {
+    !state.owner_keys_ever.is_empty() && !runs_on_web_sign_in(state)
+}
+
+/// The value a web sign-in act carries to switch the vault back in `state`:
+/// the one over every owner key the vault has held there
+/// ([`web_sign_in_value`]). None where there is nothing to switch: a
+/// self-host vault, which has no account to fall back to, and a vault that
+/// never held an owner key.
+pub(super) fn web_sign_in_switch(state: &FoldState) -> Option<[u8; 32]> {
+    (state.hosted && !state.owner_keys_ever.is_empty())
+        .then(|| web_sign_in_value(&state.owner_keys_ever))
+}
+
+/// Whether `target` is the web sign-in setting's reserved target: the
+/// frontier [`runs_on_web_sign_in`] reads.
+pub(super) fn is_web_sign_in_target(target: EntityId) -> bool {
+    matches!(
+        PolicySetting::WebSignIn.reserved_target(),
+        Ok(Some(reserved)) if reserved == target
+    )
+}
+
+/// Whether the owner's switch back to web sign-in is in force in `state`:
+/// the setting has a live act, and every live act of it is the switch over
+/// exactly the owner keys the vault has held ([`web_sign_in_switch`]). A key
+/// enrolled since changes that value, so the switch no longer speaks; a
+/// later act with any other value replaces it; and two acts that did not see
+/// each other speak only when both are that switch.
+fn runs_on_web_sign_in(state: &FoldState) -> bool {
+    let Some(switch) = web_sign_in_switch(state) else {
+        return false;
+    };
+    let Ok(Some(target)) = PolicySetting::WebSignIn.reserved_target() else {
+        return false;
+    };
+    state.policy_settings.every_live_choice_is(target, &switch)
 }
 
 /// Whether a carried machine answer needs the proof (items 1 and 2), judged
@@ -102,7 +166,7 @@ pub(super) fn machine_answer_needs_proof(
 ) -> bool {
     let makes_mine = profile.role == MachineRole::Owned(MachineOwnership::Yours)
         && !(carrier_is_mine && target_key == Some(profile.machine_key));
-    makes_mine || (!carrier_is_mine && not_mine_carriers_need_proof(state))
+    makes_mine || (!carrier_is_mine && owner_key_required(state))
 }
 
 /// One held answer in a fold state: the answer as it folded, and whether the
@@ -203,8 +267,9 @@ impl AuthorityFold {
     /// very entry, so the door and the fold cannot disagree; the door's error
     /// drops the transaction, so nothing of a refused choice is stored
     /// (ruling CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B). It waits only where
-    /// the vault holds an owner key and this install neither is the owner's
-    /// machine nor holds one.
+    /// the vault asks for an owner key and this install neither is the
+    /// owner's machine nor holds one, and where the act is the switch back to
+    /// web sign-in and this install holds no owner key.
     ///
     /// # Errors
     /// That refusal.

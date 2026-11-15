@@ -338,6 +338,14 @@ pub(super) struct FoldState {
     /// enrolled as its own root, and each key marked for the cloud (role or
     /// tier). Custody also passes along `key_admitters`.
     pub(super) host_custody_keys: BTreeSet<AuthorityKey>,
+    /// Every key the fold ever held as the owner's, merged by union (the
+    /// owner's ruling AUTH-5): each roster key that proved for the owner when
+    /// it joined the roster ([`super::owner_proof::remember_owner_key`]). It
+    /// only grows. A roster row cannot serve as this memory: a revoke keeps
+    /// the row, but a second enrolment of the key on another branch narrows
+    /// its roles or marks it as the host's, and the row then reads as a key
+    /// that never proved.
+    pub(super) owner_keys_ever: BTreeSet<AuthorityKey>,
     pub(super) worlds: BTreeMap<EntityId, WorldFrontier>,
     pub(super) refused_world_edits: BTreeSet<AuthorityEntryHash>,
     /// Each grant's signed travel choices, merged as the worlds' edits are.
@@ -672,6 +680,9 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .host_custody_keys
         .extend(right.host_custody_keys.iter().cloned());
+    merged
+        .owner_keys_ever
+        .extend(right.owner_keys_ever.iter().cloned());
     for (key, admitters) in &right.key_admitters {
         merged
             .key_admitters

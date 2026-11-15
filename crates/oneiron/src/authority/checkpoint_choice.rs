@@ -47,6 +47,7 @@ pub(super) fn apply_checkpoint_policy(
         choice: set.choice.as_ref(),
         context: CHECKPOINT_POLICY_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        owner_key_only: false,
         person_proved: false,
     };
     let landing = owner_choice_landing(

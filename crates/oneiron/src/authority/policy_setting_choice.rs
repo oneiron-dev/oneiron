@@ -21,6 +21,18 @@
 //!
 //! The doors ([`Vault::record_policy_setting_op_in_txn`]) sign the act in
 //! the setting's own write, best effort ([`super::carried_act`]).
+//!
+//! One setting is the fold's own to read: web sign-in
+//! ([`PolicySetting::WebSignIn`], the owner's ruling AUTH-5). No install
+//! keeps a row of it. Its act is the switch back when its value is the one
+//! over the owner keys its parents hold
+//! ([`super::owner_proof::web_sign_in_switch`]): it then counts only with an
+//! owner key's proof and is kept under that value. An act of the setting
+//! with any other value asks for an owner key again and is kept as a clear,
+//! so no value a carrier picked stays in the register to speak for keys
+//! enrolled later. The register keys an act by its target alone and a
+//! free-time policy act names any target, so an act of another setting that
+//! names the web sign-in target is valid and without effect there.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -45,7 +57,8 @@ pub(crate) struct FoldedPolicySettings {
     /// entry.
     pub(crate) targets: BTreeMap<EntityId, FoldedOwnerChoice<[u8; 32]>>,
     /// Well-signed acts without effect: their carrier was not admitted, or
-    /// their owner not live, at their parents.
+    /// their owner not live, at their parents; and each act of another
+    /// setting that named the web sign-in setting's target.
     pub(crate) refused: BTreeSet<AuthorityEntryHash>,
 }
 
@@ -91,12 +104,24 @@ pub(super) fn apply_policy_setting(
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
+    // The web sign-in frontier is judged by its target, whatever setting
+    // an act on it names: the register keys an act by its target alone.
+    let on_web_sign_in = super::owner_proof::is_web_sign_in_target(set.act.target);
+    let web_sign_in = on_web_sign_in && set.setting == PolicySetting::WebSignIn;
+    let switches_back = web_sign_in
+        && set.value.is_some()
+        && set.value == super::owner_proof::web_sign_in_switch(state);
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
-        choice: set.value.as_ref(),
+        choice: if on_web_sign_in && !switches_back {
+            None
+        } else {
+            set.value.as_ref()
+        },
         context: POLICY_SETTING_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        owner_key_only: switches_back,
         person_proved: false,
     };
     let landing = owner_choice_landing(
@@ -108,6 +133,15 @@ pub(super) fn apply_policy_setting(
         counting,
         restriction_only,
     )?;
+    // Another setting's act on the web sign-in target lands nothing there.
+    let landing = match landing {
+        OwnerChoiceLanding::Recorded { hash, .. } | OwnerChoiceLanding::Waiting { hash, .. }
+            if on_web_sign_in && !web_sign_in =>
+        {
+            OwnerChoiceLanding::Refused(hash)
+        }
+        landing => landing,
+    };
     // A waiting act is no agent's act in force: the owner's confirm is his
     // own act (row CARRIER-OWNER-PROOF).
     let waits = matches!(landing, OwnerChoiceLanding::Waiting { .. });
