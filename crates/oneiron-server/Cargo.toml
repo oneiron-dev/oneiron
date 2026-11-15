@@ -294,6 +294,12 @@ name = "agent_definition_served_batch"
 path = "tests/agent_definition_served_batch.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The skill hub door cases root their owner on a `MemoryKeystore` (`oneiron/test-support`).
+[[test]]
+name = "vault_skill_hubs_doors"
+path = "tests/vault_skill_hubs_doors.rs"
+required-features = ["oneiron/test-support"]
+
 [[test]]
 name = "consent_revoke_grantee_renounce"
 path = "tests/consent_revoke_grantee_renounce.rs"
