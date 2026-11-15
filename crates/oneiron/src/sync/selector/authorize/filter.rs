@@ -617,7 +617,7 @@ fn stamped_claim(raw: &[u8]) -> bool {
 /// own passes; one whose sources no longer resolve, or name a row not held
 /// here, is withheld. An Owner's member reads every row: only a member the
 /// label gate binds pays for the lookup.
-fn member_reads_word_sources(
+pub(in crate::sync::selector) fn member_reads_word_sources(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
     member: &MemberAccess<'_>,

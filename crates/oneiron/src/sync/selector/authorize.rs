@@ -361,4 +361,4 @@ fn authorized_base_edge_endpoints(
 
 mod filter;
 pub(super) use filter::filter_window_doc;
-pub(super) use filter::{MemberAccess, member_access, member_reads_row};
+pub(super) use filter::{MemberAccess, member_access, member_reads_row, member_reads_word_sources};

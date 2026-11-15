@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 
 use loro::LoroDoc;
 
-use super::authorize::{MemberAccess, member_reads_row};
+use super::authorize::{MemberAccess, member_reads_row, member_reads_word_sources};
 use super::codec::SyncSelector;
 use super::document_admission::{DocumentGrant, admit_selected_in_txn, authorize_at_in_txn};
 use crate::Vault;
@@ -246,8 +246,8 @@ fn readable_births(
 }
 
 /// Whether the export `admission` resolved reads prompt source `source`,
-/// and its grant's `member` reads the source, and every source of a text
-/// source, at the member gate. No admission (its grant denied here), a
+/// and its grant's `member` reads the source, every source of its words, and
+/// every source of a text source, at the member gate. No admission (its grant denied here), a
 /// source not live here, the admission's denial or the gate's answers no;
 /// any other error is the export's.
 fn prompt_source_readable(
@@ -274,7 +274,13 @@ fn prompt_source_readable(
     let Some(raw) = vault.get_raw_in(txn, &source)? else {
         return Ok(false);
     };
-    if !member_reads_row(vault, txn, member, &source, &raw)? {
+    // A prompt source that carries other rows' words (a scope SUMMARY, the
+    // TURN that copies one) reaches the member only when it reads every one
+    // of those sources too, as the window filter judges the row itself (FIX
+    // SELECTOR-SCOPE-SUMMARY-WORDS; the Astra review of L5-02 PR 4, F1).
+    if !member_reads_row(vault, txn, member, &source, &raw)?
+        || !member_reads_word_sources(vault, txn, member, &source, &raw)?
+    {
         return Ok(false);
     }
     super::text_egress::text_backed(
