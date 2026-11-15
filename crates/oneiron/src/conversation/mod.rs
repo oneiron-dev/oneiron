@@ -38,7 +38,7 @@ pub(crate) use live_speakers::{LiveSpeakers, RequiredSpeaker, required_live_spea
 pub use membership::{HistoryChoice, MembershipAction, MembershipRow, MembershipWindow};
 pub(crate) use output_guard::ContainerOutputGuard;
 pub use output_guard::OutputMark;
-pub(crate) use pins::{PIN_UPDATES, served_room_body};
+pub(crate) use pins::{PIN_UPDATES, body_without_room_pins, served_room_body};
 pub(crate) use preview::{LatestMessage, PreviewCandidates, snippet, turn_text};
 pub use privacy_erase::RoomPersonEraseOutcome;
 pub(crate) use roles::person_role_in;
@@ -92,8 +92,6 @@ fn authorize(vault: &Vault, txn: &heed::RoTxn<'_>, actor: WriteActor) -> Result<
         .map_err(|_| denied())
 }
 
-// FIX [LIBTEST-QUARANTINE-CONVERSATION-TESTS]: the lib test target's type check fails here (97 errors: E0061 x75, E0599 x10, E0639 x3, E0308 x3, E0063 x2, E0608 x2, E0600 x1, E0277 x1); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

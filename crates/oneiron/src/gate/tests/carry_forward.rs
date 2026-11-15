@@ -524,8 +524,6 @@ fn stricter_policy_does_not_block_canonical_supersession() -> Result<()> {
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CARRY-FORWARD-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn sealed_transition_cannot_be_borrowed_by_fresh_changed_or_stale_claim() -> Result<()> {
     use crate::batch::{
@@ -540,6 +538,7 @@ fn sealed_transition_cannot_be_borrowed_by_fresh_changed_or_stale_claim() -> Res
         entity_type: crate::registry::ENTITY_TYPE_CLAIM,
         occurred: TimeRange { start: 10, end: 20 },
         learned_at: 10,
+        row_version: None,
         data: crate::claim::encode_claim_body(&closed)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,
@@ -598,8 +597,6 @@ fn sealed_transition_cannot_be_borrowed_by_fresh_changed_or_stale_claim() -> Res
     Ok(())
 }
 
-// FIX [LIBTEST-QUARANTINE-GATE-TESTS-CARRY-FORWARD-ITEMS]: the lib test target's type check fails here (1 errors: E0063 x1); port it, then drop this gate
-#[cfg(any())]
 #[test]
 fn canonical_demotion_rejects_wrong_or_increasing_edge_delta_after_tightening() -> Result<()> {
     use crate::batch::{BatchOp, ClaimMaterialization};
@@ -618,6 +615,7 @@ fn canonical_demotion_rejects_wrong_or_increasing_edge_delta_after_tightening() 
         entity_type: crate::registry::ENTITY_TYPE_CLAIM,
         occurred: TimeRange { start: 10, end: 21 },
         learned_at: 10,
+        row_version: None,
         data: crate::claim::encode_claim_body(&next)?,
         allow_maintenance: false,
         allow_reserved_predicate: false,

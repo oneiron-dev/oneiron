@@ -85,6 +85,7 @@ fn test_inference_host() -> crate::llm::HostInferenceContext<'static> {
         binding: crate::llm::HostInferenceBinding::Advertised {
             model: crate::ModelId::new("test/model@r1").expect("test backend model"),
             locality: crate::ModelLocality::OwnServer,
+            keyless: false,
         },
         extraction_egress: Some(&allow_fixture_extraction),
     }
@@ -200,7 +201,7 @@ fn minted(outcome: SessionMintOutcome) -> EntityId {
 
 /// The production planning trio, exactly as the driver's close runs it —
 /// including the `usize::MAX` limit that the Meso round cap bounds.
-fn meso_wake(vault: &Vault) -> SessionEndWake {
+fn meso_wake(vault: &Vault, session: EntityId) -> SessionEndWake {
     let scope = DreamerConsolidationScope::Meso;
     let watermark = read_watermark(vault, scope).expect("watermark");
     let dirty = scan_dirty_turns(vault, scope, &watermark, usize::MAX).expect("scan");
@@ -208,6 +209,7 @@ fn meso_wake(vault: &Vault) -> SessionEndWake {
     let planned_turn_ids = dirty.iter().map(|turn| turn.turn_id).collect();
     let plans = plan_partitions(vault, scope, &dirty, &watermark).expect("plan");
     SessionEndWake {
+        session,
         plans,
         planned_watermark: watermark.last_learned_at,
         planned_turn_ids,
@@ -285,6 +287,7 @@ fn candidate(
         evidence_meet: ClaimSource::Generated,
         occurred: occurred(1_000),
         learned_at: 1_000,
+        decisions: Vec::new(),
     }
 }
 
@@ -298,6 +301,7 @@ fn map_candidate(subject: EntityId, predicate: &str, value: Value) -> PromotionC
         evidence_meet: ClaimSource::Generated,
         occurred: occurred(1_000),
         learned_at: 1_000,
+        decisions: Vec::new(),
     }
 }
 
@@ -491,7 +495,12 @@ fn offset_pager_never_authority() -> Result<()> {
     assert_eq!(attempts.len(), 1);
     let payload = decode_dreamer_attempt_payload(&attempts[0].payload)?;
     assert_eq!(payload.attempt_type, scope.as_str());
-    let (key, ids, _) = decode_partition_payload(&payload.input)?;
+    let branch = decode_partition_payload(&payload.input)?;
+    let [part] = branch.parts.as_slice() else {
+        panic!("expected a one-part branch");
+    };
+    let key = branch.part_key(part.conversation_ref);
+    let ids = part.turns.clone();
     assert_eq!(key.conversation_ref, conversation);
     assert_eq!(key.world_ref, None);
     assert_eq!(key.facet_ref, None);
@@ -544,7 +553,12 @@ fn revision_hint_never_authority() -> Result<()> {
     assert_eq!(attempts.len(), 1);
     let payload = decode_dreamer_attempt_payload(&attempts[0].payload)?;
     assert_eq!(payload.attempt_type, scope.as_str());
-    let (key, ids, _) = decode_partition_payload(&payload.input)?;
+    let branch = decode_partition_payload(&payload.input)?;
+    let [part] = branch.parts.as_slice() else {
+        panic!("expected a one-part branch");
+    };
+    let key = branch.part_key(part.conversation_ref);
+    let ids = part.turns.clone();
     assert_eq!(key.conversation_ref, conversation);
     assert_eq!(key.world_ref, None);
     assert_eq!(key.facet_ref, None);
@@ -883,19 +897,21 @@ fn resume_is_strictly_after_compound_key() -> Result<()> {
 #[test]
 fn a_fence_window_below_the_live_watermark_collects_nothing() -> Result<()> {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor)?;
     let scope = DreamerConsolidationScope::Meso;
     let conversation = seed_session(&vault, 0x30, 1);
     let dirty = seed_turn(&vault, &conversation, "user", "dirty", 900);
     advance_watermark(&vault, scope, 800, &[])?;
 
-    let session = minted(vault.mint_session(1_000)?);
-    let mut wake = meso_wake(&vault);
+    let session = minted(vault.mint_session(key, 1_000)?);
+    let mut wake = meso_wake(&vault, session);
     assert_eq!(wake.planned_turn_ids, vec![dirty]);
     wake.planned_watermark = 700;
     vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_100, &wake)?
         .expect("stale planning does not prevent session closure");
-    assert_eq!(vault.open_session()?, None);
+    assert_eq!(vault.open_session(key)?, None);
     assert_eq!(meso_partition_attempt_count(&vault), 0);
     let watermark = read_watermark(&vault, scope)?;
     assert_eq!(watermark.last_learned_at, 800);
@@ -910,14 +926,14 @@ fn a_fence_window_below_the_live_watermark_collects_nothing() -> Result<()> {
     );
 
     // The matching live window still settles the same dirty turn.
-    let session = minted(vault.mint_session(2_000)?);
-    let wake = meso_wake(&vault);
+    let session = minted(vault.mint_session(key, 2_000)?);
+    let wake = meso_wake(&vault, session);
     assert_eq!(wake.planned_watermark, 800);
     assert_eq!(wake.planned_turn_ids, vec![dirty]);
     vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 2_100, &wake)?
         .expect("matching window closes and settles");
-    assert_eq!(vault.open_session()?, None);
+    assert_eq!(vault.open_session(key)?, None);
     assert_eq!(meso_partition_attempt_count(&vault), 1);
     let watermark = read_watermark(&vault, scope)?;
     assert_eq!(watermark.last_learned_at, 900);
@@ -930,13 +946,15 @@ fn a_fence_window_below_the_live_watermark_collects_nothing() -> Result<()> {
 #[test]
 fn late_smaller_same_second_id_defers_the_existing_count_fence() -> Result<()> {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor)?;
     let scope = DreamerConsolidationScope::Meso;
     let conversation = seed_session(&vault, 0x32, 1);
     let planned = seed_ordered_turns_at(&vault, &conversation, 0x46, 900, 4);
-    let session = minted(vault.mint_session(1_000)?);
+    let session = minted(vault.mint_session(key, 1_000)?);
     let before = read_watermark(&vault, scope)?;
 
-    let wake = meso_wake(&vault);
+    let wake = meso_wake(&vault, session);
     assert_eq!(wake.planned_turn_ids, planned, "the default-capped prefix");
     assert_eq!(wake.advance_watermark_to, Some(900));
 
@@ -976,6 +994,8 @@ fn late_smaller_same_second_id_defers_the_existing_count_fence() -> Result<()> {
 fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     const SECOND: u64 = 900;
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor)?;
     let scope = DreamerConsolidationScope::Meso;
     let conversation = seed_session(&vault, 0x33, 1);
     // cap < N <= 2 * cap, all inside ONE second, one partition.
@@ -989,8 +1009,8 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     );
 
     // Round 1 consumes exactly the cap and settles INSIDE the second.
-    let first = minted(vault.mint_session(1_000)?);
-    let wake = meso_wake(&vault);
+    let first = minted(vault.mint_session(key, 1_000)?);
+    let wake = meso_wake(&vault, first);
     assert_eq!(wake.plans.len(), 1, "one conversation, one partition");
     assert_eq!(
         wake.planned_turn_ids,
@@ -1011,8 +1031,8 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert!(!settled.before_first);
 
     // Round 2 drains the remainder of the SAME second (lower == upper).
-    let second = minted(vault.mint_session(2_000)?);
-    let wake = meso_wake(&vault);
+    let second = minted(vault.mint_session(key, 2_000)?);
+    let wake = meso_wake(&vault, second);
     assert_eq!(
         wake.planned_turn_ids,
         seeded[DEFAULT_MESO_ROUND_TURN_CAP..],
@@ -1030,8 +1050,8 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
     assert!(!settled.before_first);
 
     // A third close has nothing left to plan.
-    let third = minted(vault.mint_session(3_000)?);
-    let wake = meso_wake(&vault);
+    let third = minted(vault.mint_session(key, 3_000)?);
+    let wake = meso_wake(&vault, third);
     assert!(wake.plans.is_empty());
     vault
         .end_session_with_wake(&third, SessionClosePredicate::Explicit, 3_100, &wake)?
@@ -1043,12 +1063,15 @@ fn same_second_round_two_settles_through_end_session_with_wake() -> Result<()> {
 #[test]
 fn empty_matched_round_still_commits_close() -> Result<()> {
     let (_dir, vault) = open_vault();
+    let actor = EntityId::now();
+    let key = vault.local_session_key(actor)?;
     let scope = DreamerConsolidationScope::Meso;
-    let session = minted(vault.mint_session(1_000)?);
+    let session = minted(vault.mint_session(key, 1_000)?);
 
     // Planned an empty round through second 900: the fence matches empty
     // against empty and the settlement takes the complete-second position.
     let wake = SessionEndWake {
+        session,
         plans: Vec::new(),
         planned_watermark: 0,
         planned_turn_ids: Vec::new(),
@@ -1057,7 +1080,7 @@ fn empty_matched_round_still_commits_close() -> Result<()> {
     vault
         .end_session_with_wake(&session, SessionClosePredicate::Explicit, 1_100, &wake)?
         .expect("the close commits");
-    assert_eq!(vault.open_session()?, None);
+    assert_eq!(vault.open_session(key)?, None);
     assert_eq!(meso_partition_attempt_count(&vault), 0);
     let watermark = read_watermark(&vault, scope)?;
     assert_eq!(watermark.last_learned_at, 900);
@@ -1527,7 +1550,10 @@ fn extraction_response(subject: &EntityId, turn: &EntityId) -> crate::LlmRespons
     crate::LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
-            content: vec![ContentPart::Text { text: json }],
+            content: vec![ContentPart::Text {
+                text: json,
+                signature: None,
+            }],
         },
         usage: LlmUsage {
             input: LlmInputUsage {
@@ -1541,8 +1567,11 @@ fn extraction_response(subject: &EntityId, turn: &EntityId) -> crate::LlmRespons
                 reasoning: 0,
             },
             raw_provider: serde_json::Value::Null,
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -1593,19 +1622,24 @@ fn authorized_extraction_egress_reaches_executor_only_after_host_verdict() -> Re
             binding: crate::llm::HostInferenceBinding::Advertised {
                 model: crate::ModelId::new("test/model@r1").expect("host model"),
                 locality: crate::ModelLocality::OwnServer,
+                keyless: false,
             },
             extraction_egress: None,
         },
         sink: &mut sink,
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     assert!(matches!(
         block_on_ready(executor.execute(&admitted, &mut ctx)),
@@ -1678,20 +1712,25 @@ fn no_fabricated_belief_writes() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(matches!(
         execution,
         DreamerAttemptExecution::Completed {
-            completed_units: 120
+            completed_units: 120,
+            ..
         }
     ));
 
@@ -1785,6 +1824,9 @@ fn gap_detectors_v1_taxonomy() -> Result<()> {
     let watermark = ConsolidationWatermark::bootstrap();
     let working_set = scan_dirty_turns(&vault, scope, &watermark, 10)?;
     let gaps = scan_reflection_gaps(&vault, &working_set, 1_000)?;
+    let ReflectionGapScan::Ready(gaps) = gaps else {
+        panic!("expected a complete gap scan");
+    };
 
     let kinds: Vec<ReflectionGapKind> = gaps.iter().map(|gap| gap.kind).collect();
     assert!(kinds.contains(&ReflectionGapKind::UnresolvedThread));
@@ -1881,7 +1923,10 @@ fn text_response(json: String) -> crate::LlmResponse {
     crate::LlmResponse {
         message: LlmMessage {
             role: LlmMessageRole::Assistant,
-            content: vec![ContentPart::Text { text: json }],
+            content: vec![ContentPart::Text {
+                text: json,
+                signature: None,
+            }],
         },
         usage: LlmUsage {
             input: LlmInputUsage {
@@ -1895,8 +1940,11 @@ fn text_response(json: String) -> crate::LlmResponse {
                 reasoning: 0,
             },
             raw_provider: serde_json::Value::Null,
+            call_metadata: None,
         },
         finish_reason: FinishReason::Stop,
+        reply_assertions: Default::default(),
+        token_scores: None,
     }
 }
 
@@ -2009,14 +2057,18 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         let expected_spend = if expire_on_call == 1 { 120 } else { 100 };
         assert!(matches!(
@@ -2051,6 +2103,7 @@ fn late_extraction_or_merge_checkpoints_before_publishing_and_replays() -> Resul
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         assert!(matches!(
             block_on_ready(resumed.execute(&admitted, &mut ctx))?,
@@ -2100,14 +2153,18 @@ fn conflicting_sets_enter_scoped_merge() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     block_on_ready(executor.execute(&admitted, &mut ctx))?;
 
@@ -2159,20 +2216,26 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 21_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         let outcome = block_on_ready(executor.execute(&admitted, &mut ctx))?;
         let expected_spend = if fatal_merge { 50 } else { 100 };
-        assert!(
-            matches!(outcome, DreamerAttemptExecution::Completed { completed_units } if completed_units == expected_spend)
-        );
+        assert!(matches!(
+            outcome,
+            DreamerAttemptExecution::Completed { completed_units, .. }
+            if completed_units == expected_spend
+        ));
         assert_eq!(guard.read().used_units, expected_spend);
         assert_eq!(guard.read().reserved_units, 0);
         assert_eq!(backend.calls.load(Ordering::SeqCst), 2);
@@ -2219,7 +2282,11 @@ fn escalated_conflicts_route_to_gap_queue() -> Result<()> {
             escalations: 0,
             decayed: false,
         };
-        let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
+        let branch = decode_partition_payload(&admitted.status.payload.input)?;
+        let [part] = branch.parts.as_slice() else {
+            panic!("expected a one-part branch");
+        };
+        let partition = branch.part_key(part.conversation_ref);
         let resources = super::resources::BranchResources::open(
             &vault,
             vault.dreamer_authority()?,
@@ -2317,7 +2384,11 @@ fn wake_prepared_wake_rereads_original_bytes_and_refuses_write_drift() -> Result
         admitted_attempt_fixture(&vault, &store, 0x2E, &[("assistant", "original")])?;
     let turn = turns[0];
     let pin = PreparedWake::capture(&vault, DreamerConsolidationScope::Micro)?;
-    let (partition, _, _) = decode_partition_payload(&admitted.status.payload.input)?;
+    let branch = decode_partition_payload(&admitted.status.payload.input)?;
+    let [part] = branch.parts.as_slice() else {
+        panic!("expected a one-part branch");
+    };
+    let partition = branch.part_key(part.conversation_ref);
     let resources = super::resources::BranchResources::open_at_pin(
         &vault,
         vault.dreamer_authority()?,
@@ -2379,11 +2450,35 @@ fn disagreed_child_hash_is_integrity_only() -> Result<()> {
         crate::attempt_queue::AttemptId::now(),
         None,
     )?;
+    struct TestSources<'a> {
+        labels: &'a super::call_labels::CallLabelMap,
+        source: EntityId,
+        text: &'a str,
+    }
+    impl super::call_labels::CallSources for TestSources<'_> {
+        fn labels(&self) -> &super::call_labels::CallLabelMap {
+            self.labels
+        }
+        fn shown(&self, id: EntityId) -> Option<super::call_labels::SourceShown<'_>> {
+            (id == self.source).then_some(super::call_labels::SourceShown {
+                text: Some(self.text),
+                project: None,
+            })
+        }
+    }
+    let mut labels = super::call_labels::CallLabelMap::default();
+    labels.assign(super::call_labels::LabelKind::Turn, turn);
+    let sources = TestSources {
+        labels: &labels,
+        source: turn,
+        text: "a stored statement",
+    };
     let fake = serde_json::json!({
-        "evidence_refs":[{"source_id":turn.to_hex(),"byte_range":[0,1]}],
-        "evidence_hashes": {turn.to_hex(): "00".repeat(32)}
+        "evidence_refs": [{"source": "T1", "quote": "stored statement"}],
+        "evidence_hashes": {"T1": "00".repeat(32)}
     });
-    let markers = super::executor::extraction::disagreeing_child_hashes(&resources, &[fake]);
+    let markers =
+        super::executor::extraction::disagreeing_child_hashes(&resources, &sources, &[fake]);
     assert_eq!(markers, vec![turn]);
     // Even a deliberately wrong report cannot change the parent hash/trust.
     let collapsed = collapse_sibling_evidence(
@@ -2558,14 +2653,18 @@ fn budget_trapped_extraction_parks_for_resume() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
 
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
@@ -2625,14 +2724,18 @@ fn budget_trapped_merge_parks_without_false_contradiction_gap() -> Result<()> {
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
 
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
@@ -2703,14 +2806,18 @@ fn re_executed_step_mints_same_claim_id() -> Result<()> {
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         Ok(sink
@@ -2777,14 +2884,18 @@ fn re_executed_merge_mints_same_claim_id() -> Result<()> {
             sink: &mut sink,
             inference: test_inference_host(),
             scope: None,
+            decisions: ConsolidationDecisions::shipped()?,
         };
         let mut ctx = WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         };
         block_on_ready(executor.execute(&admitted, &mut ctx))?;
         Ok(sink
@@ -2903,20 +3014,27 @@ fn fatal_extraction_executes_declared_fallback_and_completes_partition() -> Resu
         sink: &mut sink,
         inference: test_inference_host(),
         scope: None,
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let mut ctx = WakeAttemptContext {
         vault: &vault,
         deadline: &deadline,
+        cancel: None,
+        device_cancel: None,
         budget_id: "wake",
         now_ms: 21_000,
         prepared_wake: None,
         prepared_attempt: None,
+        spend_meter: None,
     };
     let seeded = claim_predicates_in_store(&vault)?;
     let execution = block_on_ready(executor.execute(&admitted, &mut ctx))?;
     assert!(matches!(
         execution,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            ..
+        }
     ));
 
     // The sink received the decoded candidates…
@@ -3012,6 +3130,7 @@ fn nickname_relationships_form_distinct_buckets() {
             evidence_meet: ClaimSource::Generated,
             occurred: occurred(1),
             learned_at: 1,
+            decisions: Vec::new(),
         })
         .collect();
     let buckets = plan_candidate_buckets(&candidates).unwrap();
@@ -3046,11 +3165,13 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
         ClaimApprovalStatus::Auto,
         ClaimSource::Observed,
     );
-    prior.body.rel = Some(rel_b);
+    prior.body.rel = Some(crate::claim::RelationshipSet::from([rel_b]));
     assert!(detect_conflicts(&[scoped_a.clone()], &[prior.clone()])?.is_empty());
-    prior.body.rel = Some(rel_a);
+    prior.body.rel = Some(crate::claim::RelationshipSet::from([rel_a]));
     assert_eq!(detect_conflicts(&[scoped_a], &[prior])?.len(), 1);
     let attempt = crate::attempt_queue::AttemptId::now();
+    let set_a = crate::claim::RelationshipSet::from([rel_a]);
+    let set_b = crate::claim::RelationshipSet::from([rel_b]);
     let id = |rel| {
         deterministic_claim_id(
             attempt,
@@ -3065,8 +3186,8 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
         )
         .unwrap()
     };
-    assert_ne!(id(Some(rel_a)), id(Some(rel_b)));
-    assert_ne!(id(None), id(Some(rel_a)));
+    assert_ne!(id(Some(&set_a)), id(Some(&set_b)));
+    assert_ne!(id(None), id(Some(&set_a)));
     assert_eq!(id(None), id(None));
     Ok(())
 }
@@ -3074,12 +3195,14 @@ fn relationship_axis_separates_buckets_conflicts_and_ids() -> Result<()> {
 #[test]
 fn queued_session_end_miner_executes_under_system_authority() -> Result<()> {
     let (_dir, vault) = open_vault();
-    let session = minted(vault.mint_session(1)?);
+    let session_actor = EntityId::now();
+    let key = vault.local_session_key(session_actor)?;
+    let session = minted(vault.mint_session(key, 1)?);
     vault.end_session_with_wake(
         &session,
         SessionClosePredicate::Explicit,
         10,
-        &SessionEndWake::none(0),
+        &SessionEndWake::none(session, 0),
     )?;
     let store = DreamerRunnerStore::new(&vault);
     let queued_id = AttemptQueue::new(&vault)
@@ -3130,21 +3253,28 @@ fn queued_session_end_miner_executes_under_system_authority() -> Result<()> {
         sink: &mut sink,
         scope: None,
         inference: test_inference_host(),
+        decisions: ConsolidationDecisions::shipped()?,
     };
     let result = block_on_ready(executor.execute(
         &admitted,
         &mut WakeAttemptContext {
             vault: &vault,
             deadline: &deadline,
+            cancel: None,
+            device_cancel: None,
             budget_id: "wake",
             now_ms: 12_000,
             prepared_wake: None,
             prepared_attempt: None,
+            spend_meter: None,
         },
     ))?;
     assert_eq!(
         result,
-        DreamerAttemptExecution::Completed { completed_units: 0 }
+        DreamerAttemptExecution::Completed {
+            completed_units: 0,
+            step_bindings: Vec::new(),
+        }
     );
     assert!(
         sink.accepted.is_empty(),

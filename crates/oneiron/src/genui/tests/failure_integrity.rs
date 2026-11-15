@@ -26,16 +26,20 @@ fn surfaced_failure_card_accepts_canonical_witness_membership() -> Result<()> {
         .witness(&WitnessTurn {
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: QA_MESSAGE_BODY.to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: 100,
+            assertions: Default::default(),
         })
         .expect("witness a canonical Q&A message");
 

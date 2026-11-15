@@ -14,26 +14,26 @@ fn companion_profile_access_grants_allow_deny_and_revoke() -> Result<()> {
     let other_persona = test_id(0xD2);
 
     assert_eq!(
-        vault.companion_profile_access_grant(&principal, &person, &persona)?,
+        vault.companion_profile_access_grant(&principal, &person, Some(&persona))?,
         None,
         "missing grant must fail closed"
     );
 
-    let grant = crate::AccessGrant::companion_profile_read(principal, person, persona, 10);
+    let grant = crate::AccessGrant::companion_profile_read(principal, person, Some(persona), 10);
     vault.create_access_grant(&grant_id, &grant)?;
 
     assert_eq!(
-        vault.companion_profile_access_grant(&principal, &person, &persona)?,
+        vault.companion_profile_access_grant(&principal, &person, Some(&persona))?,
         Some(grant_id),
         "exact active grant should authorize"
     );
     assert_eq!(
-        vault.companion_profile_access_grant(&other_principal, &person, &persona)?,
+        vault.companion_profile_access_grant(&other_principal, &person, Some(&persona))?,
         None,
         "principal mismatch must deny"
     );
     assert_eq!(
-        vault.companion_profile_access_grant(&principal, &person, &other_persona)?,
+        vault.companion_profile_access_grant(&principal, &person, Some(&other_persona))?,
         None,
         "scope mismatch must deny"
     );
@@ -44,7 +44,7 @@ fn companion_profile_access_grants_allow_deny_and_revoke() -> Result<()> {
         crate::access_grant::AccessGrantStatus::Revoked
     );
     assert_eq!(
-        vault.companion_profile_access_grant(&principal, &person, &persona)?,
+        vault.companion_profile_access_grant(&principal, &person, Some(&persona))?,
         None,
         "revoked grant must fail closed"
     );
@@ -62,11 +62,11 @@ fn companion_profile_access_grant_fails_closed_on_malformed_record() -> Result<(
     let persona = test_id(0xD3);
 
     put_malformed_access_grant_bytes(&vault, &malformed_id, b"not-msgpack")?;
-    let grant = crate::AccessGrant::companion_profile_read(principal, person, persona, 10);
+    let grant = crate::AccessGrant::companion_profile_read(principal, person, Some(persona), 10);
     vault.create_access_grant(&valid_id, &grant)?;
 
     let err = vault
-        .companion_profile_access_grant(&principal, &person, &persona)
+        .companion_profile_access_grant(&principal, &person, Some(&persona))
         .expect_err("malformed AccessGrant row must fail closed before any later allow");
     assert!(
         matches!(err, Error::CorruptedIndex(_)),

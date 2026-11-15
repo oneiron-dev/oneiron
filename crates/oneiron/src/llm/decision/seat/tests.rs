@@ -65,6 +65,8 @@ fn request() -> SeatRequest {
             accept_type: true,
         },
         state: serde_json::json!({"unit":"bounded"}),
+        images: Vec::new(),
+        audio: Vec::new(),
         score_levels: vec![],
         posture: HostingPrivacyPosture::Hosted,
         remote_opt_in: false,

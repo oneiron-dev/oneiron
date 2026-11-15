@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use crate::config::VaultConfig;
+use crate::connector_key::EffectorBudgetRowId;
 
 use super::*;
 
@@ -76,9 +77,11 @@ fn persist_pending(
         idempotency_supported,
         authorization_binding: Some(authorization_binding),
         admitted_approval: None,
+        pinned_approval: None,
         binding_version: OUTBOUND_BINDING_VERSION,
         resolved_endpoint: None,
         capability_provenance: None,
+        authorizing_owner: None,
         budget_accounting: BudgetChargeMarker {
             key_ref: None,
             budget_class: BudgetClass::Send,
@@ -844,7 +847,8 @@ fn every_body_field_is_digest_bound() {
             mutated(&base, |record| {
                 record.budget_accounting.key_ref =
                     Some(EntityId::from_bytes([0x77; 16]).expect("budget key ref"));
-                record.budget_accounting.matched_rows = vec![1, 2];
+                record.budget_accounting.matched_rows =
+                    vec![EffectorBudgetRowId::key(1), EffectorBudgetRowId::key(2)];
                 record.budget_accounting.sends_debit = 1;
             }),
         ),

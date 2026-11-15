@@ -87,6 +87,7 @@ fn sample_pack() -> ContextPack {
             edges: None,
             vector: None,
         }],
+        instruction_files: Vec::new(),
         stats: PackStats {
             critical_over_budget: false,
             critical_count: 0,
@@ -100,6 +101,7 @@ fn sample_pack() -> ContextPack {
             tokens: crate::context_pack::PackTokenStats::default(),
             items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
             items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+            deadline_exceeded: false,
         },
         empty: None,
     }
@@ -156,6 +158,7 @@ fn yaml_quotes_scalar_control_characters() {
                 vector: None,
             }],
             neighbors: vec![],
+            instruction_files: Vec::new(),
             stats: empty_stats(),
             empty: None,
         };
@@ -185,6 +188,7 @@ fn empty_stats() -> PackStats {
         tokens: crate::context_pack::PackTokenStats::default(),
         items_truncated: crate::context_pack::PackItemAccounting::item_budget(),
         items_dropped: crate::context_pack::PackItemAccounting::token_budget(),
+        deadline_exceeded: false,
     }
 }
 
@@ -510,6 +514,7 @@ fn fields_that_spell_a_phrase_together_leave_no_context_writer() {
             vector: None,
         }],
         neighbors: vec![],
+        instruction_files: Vec::new(),
         stats: empty_stats(),
         empty: None,
     };
@@ -601,6 +606,7 @@ fn an_entitys_own_alias_in_its_own_fields_never_becomes_its_name() {
                 crate::registry::ENTITY_TYPE_PERSON,
                 &[("name", "Alice".to_owned())],
             )],
+            instruction_files: Vec::new(),
             stats: empty_stats(),
             empty: None,
         };
@@ -687,6 +693,7 @@ fn an_entitys_own_id_under_a_body_id_or_name_key_never_becomes_its_name() {
                 crate::registry::ENTITY_TYPE_PERSON,
                 &serde_json::json!({ "name": "Alice" }),
             )],
+            instruction_files: Vec::new(),
             stats: empty_stats(),
             empty: None,
         };
@@ -764,6 +771,7 @@ fn json_and_toon_name_an_entity_at_the_first_mention_they_emit() {
                 crate::registry::ENTITY_TYPE_PERSON,
                 &serde_json::json!({ "name": "Alice" }),
             )],
+            instruction_files: Vec::new(),
             stats: empty_stats(),
             empty: None,
         };
@@ -813,6 +821,7 @@ fn another_entitys_identity_key_holding_a_short_id_still_becomes_its_name() {
                 entity(0x98, "as02", &[("headline", &headline)]),
             ],
             neighbors: Vec::new(),
+            instruction_files: Vec::new(),
             stats: empty_stats(),
             empty: None,
         };

@@ -1018,25 +1018,30 @@ fn p7_follows_a_records_words_to_their_sources() -> Result<()> {
     };
     // A summary put again over other records leaves the copy's words with
     // the records they came from. The landing moved the room onto its DAG.
+    let writer = vault.memory(owner, EdgeActorClass::Human);
     let later = vault
-        .append_dag_record(&crate::conversation_dag::AppendRecord {
-            conversation: room,
-            parent: Some(copy),
-            reply_to: None,
-            quote: None,
-            address: crate::conversation_dag::AddressMode::Broadcast,
-            recipients: vec![],
-            advance: true,
-            kind: ENTITY_TYPE_TURN,
-            containing_turn: None,
-            occurred: TimeRange { start: 3, end: 3 },
-            learned_at: 3,
-            body: crate::conversation_dag::fixtures::body("later"),
-            text: vec![],
-            session: None,
-            actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
-            thread_audience: None,
-        })?
+        .append_dag_record(
+            &writer,
+            &crate::conversation_dag::AppendRecord {
+                conversation: room,
+                parent: Some(copy),
+                reply_to: None,
+                quote: None,
+                address: crate::conversation_dag::AddressMode::Broadcast,
+                recipients: vec![],
+                advance: true,
+                kind: ENTITY_TYPE_TURN,
+                containing_turn: None,
+                occurred: TimeRange { start: 3, end: 3 },
+                learned_at: 3,
+                body: crate::conversation_dag::fixtures::body("later"),
+                text: vec![],
+                session: None,
+                actor: crate::WriteActor::new(owner, EdgeActorClass::Human),
+                thread_audience: None,
+            },
+        )
+        .expect("append")
         .id;
     recover(vec![later], 4)?;
     let sources = {

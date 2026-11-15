@@ -805,13 +805,17 @@ fn park_row_ownership_enforced() -> Result<()> {
     runner.park_attempt(ParkDreamerAttempt {
         attempt_id: queued.attempt.id,
         reason: "first park".to_owned(),
+        cause: DreamerParkCause::Other,
         park_owner: "owner-a".to_owned(),
+        carried_spend: None,
         now: 20,
     })?;
     let reparked = runner.park_attempt(ParkDreamerAttempt {
         attempt_id: queued.attempt.id,
         reason: "refreshed park".to_owned(),
+        cause: DreamerParkCause::Other,
         park_owner: "owner-a".to_owned(),
+        carried_spend: None,
         now: 21,
     })?;
     assert_eq!(runner.parked_attempt(queued.attempt.id)?, Some(reparked));
@@ -821,7 +825,9 @@ fn park_row_ownership_enforced() -> Result<()> {
         .park_attempt(ParkDreamerAttempt {
             attempt_id: queued.attempt.id,
             reason: "steal park".to_owned(),
+            cause: DreamerParkCause::Other,
             park_owner: "owner-b".to_owned(),
+            carried_spend: None,
             now: 22,
         })
         .expect_err("overwrite by other owner refused");
@@ -891,7 +897,9 @@ fn dreamer_sync_boundary_exports_claims_not_runner_private_rows() -> Result<()> 
     runner_a.park_attempt(ParkDreamerAttempt {
         attempt_id: queued.attempt.id,
         reason: "waiting for wake budget settle".to_owned(),
+        cause: DreamerParkCause::Signal,
         park_owner: "dreamer-worker".to_owned(),
+        carried_spend: None,
         now: learned_at + 1,
     })?;
 
@@ -1011,14 +1019,24 @@ fn checkpoint_charge_and_park_are_atomic_and_receipt_retires_on_completion() -> 
     let park = ParkDreamerAttempt {
         attempt_id: queued.attempt.id,
         reason: "late terminal".to_owned(),
+        cause: DreamerParkCause::Checkpoint,
         park_owner: "dreamer-worker".to_owned(),
+        carried_spend: None,
         now: 30,
     };
     let mut invalid = park.clone();
     invalid.park_owner.clear();
+    let binding = crate::model_step_context::StepEffectBinding {
+        attempt_id: queued.attempt.id,
+        step_hash: hash,
+    };
+    let lease = DreamerTryLease {
+        owner: "dreamer-worker",
+        generation: admitted.status.attempt.attempt_count,
+    };
     assert!(
         runner
-            .settle_checkpoint_budget(settlement.clone(), &[hash], invalid)
+            .settle_checkpoint_budget(settlement.clone(), &[binding], invalid, lease)
             .is_err()
     );
     assert_eq!(runner.budget("wake")?.expect("budget").remaining_units, 12);
@@ -1030,7 +1048,7 @@ fn checkpoint_charge_and_park_are_atomic_and_receipt_retires_on_completion() -> 
     assert!(runner.parked_attempt(queued.attempt.id)?.is_none());
     assert!(!runner.checkpoint_step_charged(queued.attempt.id, &hash)?);
 
-    runner.settle_checkpoint_budget(settlement, &[hash], park)?;
+    runner.settle_checkpoint_budget(settlement, &[binding], park, lease)?;
     assert_eq!(runner.budget("wake")?.expect("budget").remaining_units, 15);
     assert!(
         runner

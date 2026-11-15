@@ -149,6 +149,7 @@ fn abstention_is_not_winner_late_answers_keep_evidence_and_forged_siblings_do_no
                     reason_ref: result_a,
                 },
                 completed_at: unix_seconds_now(),
+                measured_spend: None,
             },
         )
         .unwrap();
@@ -335,6 +336,7 @@ fn ask_winner_and_membership_survive_replicated_rows_in_either_order() {
                         end: header.occurred_end,
                     },
                     header.learned_at,
+                    None,
                     &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
                 )
                 .commit()
@@ -391,6 +393,7 @@ fn ask_facts_are_named_messagepack_and_reject_unknown_or_duplicate_fields() {
                 ENTITY_TYPE_TASK,
                 TimeRange { start: 1, end: 1 },
                 1,
+                None,
                 &bad,
             )
             .commit();
@@ -459,6 +462,7 @@ fn nonmember_option_consult_replays_without_changing_ask_evidence() {
             evidence_refs: vec![result],
         },
         completed_at: unix_seconds_now(),
+        measured_spend: None,
     };
     let peer = vault.memory(delegate, EdgeActorClass::Human);
     let first = peer.land_consult_result(forged, &input).unwrap();

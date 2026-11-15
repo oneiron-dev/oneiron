@@ -265,6 +265,11 @@ pub struct Vault {
     /// ([`Vault::set_lfs_read_room`]); none until it lends one.
     pub(crate) lfs_read_room:
         std::sync::RwLock<Option<std::sync::Arc<dyn crate::origin::lfs::LfsReadRoom>>>,
+    /// Each published LFS object's verdict for a peer no read authority
+    /// admits, by its OID and its manifest's BLAKE3 (EXPORTDOORS Q3). In
+    /// memory only: what the object's bytes release, never who may read.
+    #[cfg(feature = "sync")]
+    pub(crate) lfs_release_verdicts: crate::sync::chunks::LfsReleaseVerdicts,
     /// The floor its guests' network work charges: the one its serving host
     /// attached ([`Vault::attach_host_net_floor`]), else the process's
     /// descriptor line (FIX 6299).
@@ -369,8 +374,6 @@ impl Vault {
 }
 
 pub(crate) mod tables;
-// FIX [LIBTEST-QUARANTINE-VAULT-TESTS]: the lib test target's type check fails here (3 errors: E0639 x3); port it, then drop this gate
-#[cfg(any())]
 #[cfg(test)]
 mod tests;
 

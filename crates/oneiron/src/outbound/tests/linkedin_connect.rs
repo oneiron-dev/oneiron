@@ -483,6 +483,7 @@ fn scheduled_connect_without_seat_policy_refuses_before_provider_transport()
             trigger_ref: "session:linkedin-connect".to_owned(),
             job_ref: None,
             occurred_at: Some(1_060),
+            mention: None,
         });
     assert!(
         scheduled.is_err(),
@@ -990,7 +991,13 @@ fn connect_at_ceiling(
                 "never connect_request on linkedin",
                 today,
             )?;
-            vault.approve_connector_charter(&key_id, pending.compiled_hash, "owner", today)?;
+            vault.approve_connector_charter(
+                &key_id,
+                pending.text_hash,
+                pending.compiled_hash,
+                "owner",
+                today,
+            )?;
         }
     }
     let mut sink = capped_connect_sink("intent:cl:jane", jane)?;

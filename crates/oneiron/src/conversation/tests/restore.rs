@@ -3,11 +3,10 @@
 use super::*;
 
 fn restore(vault: &Vault, image: &std::path::Path, destination: &std::path::Path) -> Result<Vault> {
-    let config = VaultConfig {
-        embedding_model: Some("test/model@v1".to_owned()),
-        ..VaultConfig::default()
-    };
-    Vault::restore_checkpoint_keeping_authority(image, destination, config, vault, 200)
+    let mut config = VaultConfig::device();
+    config.embedding_model = Some("test/model@v1".to_owned());
+    let key = vault.checkpoint_key()?;
+    Vault::restore_checkpoint_keeping_authority(image, &key, destination, config, vault, 200)
         .map(|(restored, _)| restored)
 }
 
@@ -61,8 +60,9 @@ fn restore_refuses_to_bring_back_a_room_role_narrowed_since() {
 #[test]
 fn restore_refuses_to_reopen_room_history_narrowed_since() {
     let (_dir, vault, owner, room, bob) = fixture();
+    let writer = vault.memory(owner.entity_ref(), owner.actor_class());
     let before = vault
-        .append_dag_record(&record(&vault, room, owner, 2))
+        .append_dag_record(&writer, &record(&vault, room, owner, 2))
         .unwrap();
     vault
         .join_member(room, bob, owner, 3, HistoryChoice::Share)

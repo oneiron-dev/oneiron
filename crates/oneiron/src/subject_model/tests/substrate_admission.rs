@@ -41,13 +41,13 @@ pub(super) fn admit(
         }),
         AdmissionDoor::ReplicatedBatch => vault
             .batch()
-            .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+            .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
             .commit(),
         #[cfg(feature = "sync")]
         AdmissionDoor::ReplicatedTxn => vault.with_write_txn(|txn| {
             vault
                 .batch_in()
-                .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+                .put_replicated(id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
                 .apply(txn)
         }),
     }
@@ -220,10 +220,10 @@ fn substrate_replicated_batch_checks_subject_at_the_applying_op_and_rolls_back()
             let batch = if person_first {
                 batch
                     .put(&person, ENTITY_TYPE_PERSON, occurred, 100, b"person")
-                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
             } else {
                 batch
-                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, &data)
+                    .put_replicated(&id, ENTITY_TYPE_CLAIM, occurred, 100, None, &data)
                     .put(&person, ENTITY_TYPE_PERSON, occurred, 100, b"person")
             };
             let result = batch.edge(&id, EdgeKind::ClaimOf, &person, 1.0).commit();
@@ -282,6 +282,7 @@ fn substrate_session_batch_uses_the_same_value_and_person_admission() -> Result<
             role: JournalRole::TurnOwnedArtifact,
             learned_at: 100,
             occurred,
+            source_run: None,
             op: BatchOp::Put {
                 id,
                 entity_type: ENTITY_TYPE_CLAIM,
@@ -291,6 +292,7 @@ fn substrate_session_batch_uses_the_same_value_and_person_admission() -> Result<
                 allow_maintenance: false,
                 allow_reserved_predicate: true,
                 hub_sync_imported: false,
+                row_version: None,
             },
         };
         let route = session.write_route()?;

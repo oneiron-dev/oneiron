@@ -82,7 +82,7 @@ fn put_scoped_fact(
         ClaimApprovalStatus::Auto,
         ClaimLifecycleStatus::Active,
     )?;
-    fact.rel = Some(relationship);
+    fact.rel = Some(crate::claim::RelationshipSet::from([relationship]));
     vault.put_claim(&id, &fact, at(1), 1)
 }
 
@@ -115,6 +115,7 @@ fn a_restore_over_records_deleted_since_the_backup_goes_ahead() -> Result<()> {
     )?;
     if let Err(error) = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("restored"),
         vault.config.clone(),
         &vault,
@@ -137,6 +138,7 @@ fn roster(segments: Vec<VoiceResolvedSegment>) -> VoiceSessionRosterV1 {
         known_threshold: 0.65,
         segments,
         created_at: 100,
+        roster_revision: 1,
     }
 }
 
@@ -154,6 +156,7 @@ pub(super) fn disclosure_clamps() -> Result<Case> {
                 start_ms: 0,
                 end_ms: 1_000,
                 speaker_label: "speaker 1".to_owned(),
+                speaker_key: "segment-1".to_owned(),
                 subject_ref: None,
                 contact_ref: None,
                 evidence: VoiceAttributionEvidence::ResidualCluster {
@@ -296,7 +299,7 @@ pub(super) fn project_verdicts() -> Result<Case> {
             slip_wire: slip.to_token()?,
             holder_signature: vec![9; 64],
             signed_at: slip.claims.issued_at,
-            anchor: Some(Box::new(unsigned.anchor())),
+            anchor: unsigned.anchor()?,
             version: ProjectProofVersion::V3,
         });
         let kind = vault.project_type_byte()?;
@@ -305,7 +308,7 @@ pub(super) fn project_verdicts() -> Result<Case> {
                 .map_err(|error| Error::InvalidConfig(error.to_string()))?;
             vault
                 .batch()
-                .put_replicated(&child, kind, at(time), time, &bytes)
+                .put_replicated(&child, kind, at(time), time, None, &bytes)
                 .commit()?;
         }
         Ok(())

@@ -36,7 +36,7 @@ fn observer_b_malformed_critical_marker_quarantines_without_prior_mutation() -> 
     map_insert_bytes(
         &doc.get_map("entities"),
         &claim.to_hex(),
-        &entity_record(ENTITY_TYPE_CLAIM, test_time(6), 6, &data),
+        &entity_record(ENTITY_TYPE_CLAIM, test_time(6), 6, 0, &data),
     )?;
     doc.commit();
 
@@ -58,7 +58,14 @@ fn observer_b_malformed_critical_marker_quarantines_without_prior_mutation() -> 
     let original_data = crate::claim::encode_claim_body(&original)?;
     vault
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(6), 6, &original_data)
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            test_time(6),
+            6,
+            None,
+            &original_data,
+        )
         .commit()?;
     assert_eq!(
         vault.get_claim(&claim)?.expect("replayed claim").approval,
@@ -95,6 +102,7 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
             ENTITY_TYPE_CLAIM,
             test_time(7),
             7,
+            None,
             &replacement_data,
         )
         .commit()?;
@@ -108,7 +116,7 @@ fn replicated_delete_then_recreate_consults_claim_scoped_invalidation() -> Resul
     map_insert_bytes(
         &doc.get_map("entities"),
         &claim.to_hex(),
-        &entity_record(ENTITY_TYPE_CLAIM, test_time(8), 8, &replacement_data),
+        &entity_record(ENTITY_TYPE_CLAIM, test_time(8), 8, 0, &replacement_data),
     )?;
     doc.commit();
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
@@ -162,6 +170,7 @@ fn ordinary_review_of_a_held_claim_yields_to_a_fresh_item_on_a_changed_replay() 
             ENTITY_TYPE_CLAIM,
             test_time(9),
             9,
+            None,
             &replacement_data,
         )
         .commit()?;
@@ -232,6 +241,7 @@ fn ordinary_review_of_a_held_claim_yields_to_a_fresh_item_on_a_changed_replay() 
             ENTITY_TYPE_CLAIM,
             test_time(11),
             11,
+            None,
             &replacement_data,
         )
         .commit()?;
@@ -264,7 +274,7 @@ fn ordinary_review_of_a_held_claim_yields_to_a_fresh_item_on_a_changed_replay() 
     map_insert_bytes(
         &doc.get_map("entities"),
         &claim.to_hex(),
-        &entity_record(ENTITY_TYPE_CLAIM, test_time(11), 11, &replacement_data),
+        &entity_record(ENTITY_TYPE_CLAIM, test_time(11), 11, 0, &replacement_data),
     )?;
     doc.commit();
     forward_rematerialize(&vault, &doc, &Materializer::new(), &window_key)?;
@@ -300,6 +310,7 @@ fn batch_in_fresh_critical_ceremony_never_reuses_invalidated_decision() -> Resul
             ENTITY_TYPE_CLAIM,
             test_time(11),
             11,
+            None,
             &replacement_data,
         )
         .commit()?;
@@ -373,6 +384,7 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
             ENTITY_TYPE_CLAIM,
             test_time(10),
             10,
+            None,
             &replacement_data,
         )
         .commit()?;
@@ -400,7 +412,14 @@ fn fresh_critical_ceremony_transactionally_clears_marker_and_exact_replay_conver
     let fresh_data = crate::claim::encode_claim_body(&fresh_body)?;
     vault
         .batch()
-        .put_replicated(&claim, ENTITY_TYPE_CLAIM, test_time(3), 3, &fresh_data)
+        .put_replicated(
+            &claim,
+            ENTITY_TYPE_CLAIM,
+            test_time(3),
+            3,
+            None,
+            &fresh_data,
+        )
         .commit()?;
     assert_eq!(
         vault.get_claim(&claim)?.expect("fresh replay").approval,
@@ -505,6 +524,8 @@ fn critical_confirm_sweep_preserves_ordinary_pending_rows() -> Result<()> {
                 read_frontier_hash: [88; 32],
                 reason_codes: vec!["gate.pending.ordinary".to_owned()],
                 dreamer_run_id: None,
+                predicate: None,
+                expires_at: None,
             },
         )
     })?;
@@ -634,6 +655,8 @@ fn critical_confirm_stale_or_malformed_alias_is_removed_fail_closed() -> Result<
                 read_frontier_hash: [0xc2; 32],
                 reason_codes: vec!["gate.pending.ordinary".to_owned()],
                 dreamer_run_id: None,
+                predicate: None,
+                expires_at: None,
             },
         )?;
         vault
@@ -824,6 +847,8 @@ fn critical_confirm_alias_orphan_mismatch_and_ordinary_replacement_are_removed()
         read_frontier_hash: [0xca; 32],
         reason_codes: vec!["gate.pending.ordinary".to_owned()],
         dreamer_run_id: None,
+        predicate: None,
+        expires_at: None,
     };
     vault.with_write_txn(|wtxn| vault.store.put_pending_gate_consent_in_txn(wtxn, &ordinary))?;
     for confirm_id in [binding.confirm_id, mismatched, orphan] {

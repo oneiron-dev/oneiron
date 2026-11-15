@@ -364,7 +364,7 @@ fn unknown_plugin_kind_is_refused_at_raw_local_and_replay_doors() {
     let body = encode_note_body(&NoteBody {
         source_revision_ref: [0x42; 16],
         kind: NoteKind::wire("example.notes/uninstalled").unwrap(),
-        author_ref: actor.entity_ref(),
+        author_ref: NoteActor::Actor(actor.entity_ref()),
         markdown: "birth".into(),
     })
     .unwrap();
@@ -378,7 +378,7 @@ fn unknown_plugin_kind_is_refused_at_raw_local_and_replay_doors() {
     assert!(matches!(
         vault
             .batch()
-            .put_replicated(&id, crate::registry::ENTITY_TYPE_NOTE, time, 1, &body)
+            .put_replicated(&id, crate::registry::ENTITY_TYPE_NOTE, time, 1, None, &body)
             .commit(),
         Err(Error::Record(crate::error::RecordError::InvalidNoteBody(_)))
     ));
