@@ -16,6 +16,31 @@ use super::policy::{
     verify_signature_value,
 };
 
+#[cfg(test)]
+std::thread_local! {
+    /// Candidate signature verifications this thread's issuer-link walks
+    /// have made since the last reset (tests only).
+    static SIGNATURE_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_signature_check() {
+    SIGNATURE_CHECKS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(not(test))]
+fn note_signature_check() {}
+
+#[cfg(test)]
+fn reset_signature_checks() {
+    SIGNATURE_CHECKS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn signature_checks() -> usize {
+    SIGNATURE_CHECKS.with(|count| count.get())
+}
+
 /// Why a CMS envelope or timestamp token was not validated: the token itself, or memory
 /// its copies and decodes were refused, which ends the operation as the
 /// seal's memory error, never as an invalid token (FIX 12260).
@@ -507,6 +532,7 @@ fn cert_issued_by(
     let Ok(tbs) = cert.tbs_certificate.to_der() else {
         return Ok(false);
     };
+    note_signature_check();
     Ok(verify_signature_value(alg, issuer_der, &tbs, cert.signature.raw_bytes()).is_ok())
 }
 
@@ -545,4 +571,143 @@ pub(crate) fn signed_attrs_signature_input(
     }
     out.extend_from_slice(content);
     Ok(Held::new(out, hold))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use der::Decode;
+
+    use super::*;
+    use crate::memory::testing::operation_ledger;
+
+    /// 2026-07-30T08:00:00Z, the other fixtures' seal time.
+    const AT_UNIX: u64 = 1_785_398_400;
+
+    fn params_for(cn: &str, is_ca: rcgen::IsCa) -> rcgen::CertificateParams {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = if matches!(is_ca, rcgen::IsCa::Ca(_)) {
+            vec![
+                rcgen::KeyUsagePurpose::DigitalSignature,
+                rcgen::KeyUsagePurpose::KeyCertSign,
+                rcgen::KeyUsagePurpose::CrlSign,
+            ]
+        } else {
+            vec![rcgen::KeyUsagePurpose::DigitalSignature]
+        };
+        params.is_ca = is_ca;
+        params
+    }
+
+    fn ca_key(cn: &str) -> (rcgen::CertificateParams, rcgen::KeyPair) {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let params = params_for(cn, rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained));
+        (params, key_pair)
+    }
+
+    fn leaf_key(cn: &str) -> (rcgen::CertificateParams, rcgen::KeyPair) {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let params = params_for(cn, rcgen::IsCa::ExplicitNoCa);
+        (params, key_pair)
+    }
+
+    fn issued_by(
+        subject: &rcgen::CertificateParams,
+        subject_key: &rcgen::KeyPair,
+        issuer_params: &rcgen::CertificateParams,
+        issuer_key: &rcgen::KeyPair,
+    ) -> Vec<u8> {
+        let issuer = rcgen::Issuer::from_params(issuer_params, issuer_key);
+        subject
+            .signed_by(subject_key, &issuer)
+            .unwrap()
+            .der()
+            .to_vec()
+    }
+
+    #[test]
+    fn rollover_cross_certificate_is_not_truncated_by_anchor_name() {
+        // Root key rollover: the only anchor is the new root (key Kn).
+        // The intermediate was signed by the old root key Ko, and the
+        // bag carries the OldWithNew cross-certificate (subject
+        // CN=rollover-root, key Ko, signed by Kn). The topological
+        // builder stops at the intermediate, whose issuer name matches
+        // the anchor subject, so a name-bound selection truncates the
+        // path there and fails under Kn; the key-bound selection must
+        // walk on through the cross-certificate to the new root.
+        let (new_params, new_key) = ca_key("rollover-root");
+        let new_root = new_params.self_signed(&new_key).unwrap().der().to_vec();
+        let (old_params, old_key) = ca_key("rollover-root");
+        let old_with_new = issued_by(&old_params, &old_key, &new_params, &new_key);
+        let (inter_params, inter_key) = ca_key("rollover-intermediate");
+        let inter = issued_by(&inter_params, &inter_key, &old_params, &old_key);
+        let (leaf_params, leaf_key) = leaf_key("rollover-leaf");
+        let leaf = issued_by(&leaf_params, &leaf_key, &inter_params, &inter_key);
+
+        let anchor = x509_cert::Certificate::from_der(&new_root).unwrap();
+        let anchors = vec![pkix_chain::TrustAnchor::from_cert(anchor)];
+        // Bag order is a set's: the leaf is last and the path order is
+        // nowhere in it.
+        let bag = vec![
+            new_root.clone(),
+            old_with_new.clone(),
+            inter.clone(),
+            leaf.clone(),
+        ];
+        let memory = operation_ledger();
+        let chain = selected_chain_copy(&bag, 3, &anchors, AT_UNIX, &memory).unwrap();
+        assert_eq!(*chain, vec![leaf, inter, old_with_new, new_root]);
+        let decoded_chain: Vec<x509_cert::Certificate> = chain
+            .iter()
+            .map(|der| x509_cert::Certificate::from_der(der).unwrap())
+            .collect();
+        pkix_chain::verify_chain(
+            &decoded_chain,
+            &anchors,
+            &pkix_chain::ValidationPolicy::new(AT_UNIX),
+            &pkix_chain::DefaultVerifier,
+            &pkix_chain::NoRevocation,
+            &pkix_chain::NoAiaFetcher,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn same_subject_bag_signature_checks_are_bounded() {
+        // No anchors: the leaf's issuer key is not in the bag at all,
+        // and 48 further certificates share that issuer's subject
+        // (subject = issuer) with keys that signed nothing in the bag.
+        // An unbounded issuer-link walk tries every remaining
+        // certificate at every step it name-walks (over a thousand
+        // verifications and a 49-certificate candidate here); the
+        // bounded walk stops at the signature-check budget (256) and
+        // the path-depth bound (the leaf plus 10 issuer steps).
+        let (ext_params, ext_key) = ca_key("bag-issuer");
+        let (leaf_params, leaf_key) = leaf_key("bag-leaf");
+        let leaf = issued_by(&leaf_params, &leaf_key, &ext_params, &ext_key);
+        let mut bag = vec![leaf];
+        for _ in 0..48 {
+            let (params, key_pair) = ca_key("bag-issuer");
+            bag.push(issued_by(&params, &key_pair, &ext_params, &ext_key));
+        }
+        let memory = operation_ledger();
+        reset_signature_checks();
+        let chain = selected_chain_copy(&bag, 0, &[], AT_UNIX, &memory).unwrap();
+        let checks = signature_checks();
+        assert!(
+            checks <= 256,
+            "signature checks are budget-bound, got {checks}"
+        );
+        assert!(
+            chain.len() <= 11,
+            "candidate path is depth-bound, got {} certificates",
+            chain.len()
+        );
+        assert_eq!(&chain[0], &bag[0], "the leaf stays first");
+    }
 }
