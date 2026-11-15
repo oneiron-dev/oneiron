@@ -43,7 +43,7 @@ pub use horizon::{
 pub(crate) use horizon::{IdleCall, IdleCallRecord, IdleFoldDue, due_of, idle_call_of};
 pub(crate) use returns::rebuild_return_tables;
 #[cfg(oneiron_test_support)]
-pub(crate) use returns::return_cell;
+pub(crate) use returns::{IdleReturnCell, put_return_cell, return_cell};
 
 /// One parked canonical wait. Key: the wait's own row key (run, wait, generation).
 const WAITS: SideTable<(EntityId, EntityId, u64), IdleWait, Named> =

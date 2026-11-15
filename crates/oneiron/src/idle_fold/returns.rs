@@ -167,3 +167,21 @@ pub(crate) fn return_cell(
     let txn = vault.store.env.read_txn()?;
     CELLS.get(&vault.store, &txn, &cell_key(kind, class, band, weekend))
 }
+
+/// Puts the cell of one session kind, wait class, band and weekend, as a rebuild writes it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_return_cell(
+    vault: &Vault,
+    (kind, class): (IdleSessionKind, IdleWaitClass),
+    (band, weekend): (u8, bool),
+    cell: IdleReturnCell,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        CELLS.put(
+            &vault.store,
+            txn,
+            &cell_key(kind, class, band, weekend),
+            &cell,
+        )
+    })
+}
