@@ -2,14 +2,15 @@
 //! `oneiron` re-exports each item at its old path.
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct AccessLimited {
     pub suppressed_count: usize,
     pub required_action: String,
 }
 
+/// Written with snake_case field names (its own and `AccessLimited`'s), as the
+/// REST replies that flatten it (`POST /v1/core/query`, `POST /v1/core/context-pack`)
+/// and their OpenAPI mirror `GrantedDataSchema` name them.
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "camelCase")]
 pub struct GrantedData<T> {
     pub granted_data: Vec<T>,
     #[serde(skip_serializing_if = "Option::is_none")]

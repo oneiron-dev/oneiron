@@ -107,7 +107,7 @@ credential.
 | `handle.with_read_credential(credential)` | a new handle whose every read runs under that delegated-reader credential, verified once; reads refuse unless the slip's holder is the bound actor, rebindings keep the same proof, and a connected handle raises `FORBIDDEN` |
 | `handle.last_receipt_ref()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `None` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
-| `handle.lens_frame_event(card_id, request)` | sends one `{"event", "idempotency_key"}` on a lens card the connected server rendered; answers `{"$state"}`, `{"outcome", "readReceipt"}`, or a model round trip's `{"queued", "callbackId"}` |
+| `handle.lens_frame_event(card_id, request)` | sends one `{"event", "idempotency_key"}` on a lens card the connected server rendered; answers `{"$state"}`, `{"outcome", "read_receipt"}`, or a model round trip's `{"queued", "callback_id"}` |
 | `handle.close_lens_frame(card_id)` | closes that card and frees its frame; answers `{"closed"}` |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
