@@ -467,8 +467,8 @@ impl Vault {
         let statement = request.statement.trim();
         check_statement(statement)?;
         let push = self.store.clock.entity_id()?;
-        let (record, company) = self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
+        let (record, company, actor) = self.with_write_txn(|txn| {
+            let actor = owner.revalidate_in_txn(self, txn)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
             let edge = live_edge_in_txn(self, txn, &request.edge_grant, now)?;
             let Some(route) = ROUTES.get(&self.store, txn, &request.edge_grant)? else {
@@ -492,9 +492,9 @@ impl Vault {
             if let Some(source) = request.drawn_from {
                 PUSHES_BY_SOURCE.put(&self.store, txn, &(source, push), &())?;
             }
-            Ok((record, edge.company_vault_id))
+            Ok((record, edge.company_vault_id, actor))
         })?;
-        let task_ref = match self.schedule_inquiry_push(owner, &record, &company) {
+        let task_ref = match self.schedule_inquiry_push(actor, &record, &company) {
             Ok(task_ref) => task_ref,
             Err(error) => {
                 self.with_write_txn(|txn| drop_inquiry_push_in_txn(&self.store, txn, &record))?;
@@ -541,7 +541,7 @@ impl Vault {
     /// route is open with a slip that has not expired.
     fn inquiry_push_delivery(&self, push: EntityId) -> Result<(InquiryPushRoute, Vec<u8>)> {
         let txn = self.store.env.read_txn()?;
-        let now = crate::ports::recorded_at_in_txn(&self.store, &txn)?;
+        let now = crate::ports::job_recorded_at_in_txn(&self.store, &txn)?;
         let Some(record) = PUSHES.get(&self.store, &txn, &push)? else {
             return Err(refuse("the told statement is gone"));
         };
@@ -774,20 +774,21 @@ fn company_target(company: &AuthorityVaultId) -> String {
 impl Vault {
     /// Schedules `record`'s send to `company` on `inquiry_push` through the
     /// schedule door, as the owner's own act, and returns its connector
-    /// TASK. The owner's Human actor schedules it, so the enqueue holds it in
+    /// TASK. The owner's Human actor `actor` (the owner proof's, as
+    /// `revalidate_in_txn` gave it in the push's transaction) schedules it, so the enqueue holds it in
     /// the owner's undo-send window when one is set. The Gate asks for an
     /// approval of this one send (no standing grant covers an owner's push),
     /// and the owner's [Now] is that approval: an approve-once of the digest
     /// the Gate named, which the executor spends once the send is released.
     fn schedule_inquiry_push(
         &self,
-        owner: &AuthenticatedOwner,
+        actor: EntityId,
         record: &InquiryPush,
         company: &AuthorityVaultId,
     ) -> Result<EntityId> {
         let reference = push_content_ref(record.push);
         let receipt = self
-            .memory(owner.actor(), EdgeActorClass::Human)
+            .memory(actor, EdgeActorClass::Human)
             .schedule_outbound(&OutboundDraftInput {
                 verb: "send".to_owned(),
                 channel: INQUIRY_PUSH_CHANNEL.to_owned(),
