@@ -13,6 +13,7 @@ use std::fmt;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
+use super::genui_expr::validate_prop_expressions;
 use crate::lens::atom::LensText;
 use crate::lens::validate::{MAX_LENS_TOKEN_BYTES, fallback_lens_text};
 use crate::lens::wire_ids::{GeneratedUiCatalogName, GeneratedUiComponentName};
@@ -262,12 +263,18 @@ impl GeneratedUiCatalogDescriptor {
 pub struct GeneratedUiComponentAtom {
     pub catalog: GeneratedUiCatalogName,
     pub name: GeneratedUiComponentName,
+    /// Plain JSON in which any value may be an expression of the closed tier
+    /// (ARCH-0048 G5 #2): `{"$state": "/<key>"}` or a `$computed` call. Only a
+    /// surface that declares [`GeneratedUiExpressionProfile`](super::GeneratedUiExpressionProfile)
+    /// keeps a component whose props hold one, and it resolves each against the
+    /// card's `$state`, so the component sees plain values only.
     #[serde(default = "admit_any_props")]
     pub props: serde_json::Value,
 }
 
 impl GeneratedUiComponentAtom {
     pub(in crate::lens) fn validate(&self) -> Result<()> {
+        validate_prop_expressions(&self.props)?;
         if !self.props.is_object() {
             return Err(Error::InvalidConfig(
                 "generated-ui component props must be a JSON object".to_string(),

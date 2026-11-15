@@ -1,9 +1,11 @@
 //! The built-in primitive catalog, surface capability negotiation, and prebuilt card expansion.
 
 use super::genui_app_catalog::catalog_version_or_kit;
+use super::genui_expr::props_for_surface;
 use super::{
     GeneratedUiCatalog, GeneratedUiCatalogDescriptor, GeneratedUiCatalogVersion,
-    GeneratedUiComponentAtom, GeneratedUiComponentSchema, GeneratedUiStreamProfile,
+    GeneratedUiComponentAtom, GeneratedUiComponentSchema, GeneratedUiExpressionProfile,
+    GeneratedUiStateSnapshot, GeneratedUiStreamProfile,
 };
 use crate::lens::atom::{
     CollectionAtom, LENS_ATOM_KIT_VERSION, LensAtom, LensNode, LensText, LensTextSpan,
@@ -168,9 +170,9 @@ impl GeneratedUiPrimitive {
 
 /// A surface's capability profile (ARCH-0048 G3): the catalog it draws and
 /// that catalog's semver, the built-in primitives it draws up to a kit
-/// stamp, the app components it declares, and its stream profile. The engine
-/// lowers each card to it in one pass; a profile nobody negotiated is
-/// [`Self::all_atom_kit`].
+/// stamp, the app components it declares, the expression tier it resolves in
+/// their props, and its stream profile. The engine lowers each card to it in
+/// one pass; a profile nobody negotiated is [`Self::all_atom_kit`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(
     rename_all = "camelCase",
@@ -193,6 +195,12 @@ pub struct GeneratedUiSurfaceCapabilities {
     /// (FIX 9891).
     #[serde(default)]
     pub components: Vec<GeneratedUiComponentSchema>,
+    /// The expression tier this surface resolves in app-component props
+    /// (ARCH-0048 G5 #2): `$state` reads and the `$computed` functions it
+    /// registered. Without it, a component whose props hold an expression
+    /// lowers to text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expressions: Option<GeneratedUiExpressionProfile>,
     #[serde(default)]
     pub stream: GeneratedUiStreamProfile,
 }
@@ -216,6 +224,8 @@ struct GeneratedUiSurfaceCapabilitiesWire {
     #[serde(default)]
     components: Vec<GeneratedUiComponentSchema>,
     #[serde(default)]
+    expressions: Option<GeneratedUiExpressionProfile>,
+    #[serde(default)]
     stream: GeneratedUiStreamProfile,
 }
 
@@ -229,6 +239,7 @@ impl TryFrom<GeneratedUiSurfaceCapabilitiesWire> for GeneratedUiSurfaceCapabilit
             max_catalog_version: wire.max_catalog_version,
             primitives: wire.primitives,
             components: wire.components,
+            expressions: wire.expressions,
             stream: wire.stream,
         })
     }
@@ -247,6 +258,7 @@ impl GeneratedUiSurfaceCapabilities {
             max_catalog_version,
             primitives,
             components: Vec::new(),
+            expressions: None,
             stream: GeneratedUiStreamProfile::default(),
         }
     }
@@ -264,6 +276,7 @@ impl GeneratedUiSurfaceCapabilities {
             max_catalog_version: LENS_ATOM_KIT_VERSION,
             primitives,
             components: descriptor.components,
+            expressions: None,
             stream: GeneratedUiStreamProfile::default(),
         }
     }
@@ -292,6 +305,13 @@ impl GeneratedUiSurfaceCapabilities {
         self
     }
 
+    /// The same surface, resolving the expression tier `expressions` names.
+    #[must_use]
+    pub fn with_expressions(mut self, expressions: GeneratedUiExpressionProfile) -> Self {
+        self.expressions = Some(expressions);
+        self
+    }
+
     /// The descriptor this profile names inline: its catalog, semver and
     /// declared components.
     #[must_use]
@@ -313,24 +333,33 @@ impl GeneratedUiSurfaceCapabilities {
                 && self.primitives.contains(&primitive))
     }
 
-    /// Whether this surface draws `atom` as it is: a built-in primitive it
-    /// supports, or a component its own catalog declares whose props meet
-    /// the declared schema.
+    /// Whether this surface draws `atom` as it is on a card holding `state`: a
+    /// built-in primitive it supports, or a component its own catalog declares
+    /// whose props meet the declared schema. Props that hold an expression need
+    /// the surface's expression tier with every function they call, and it is
+    /// the props resolved against `state` that meet the schema.
     #[must_use]
-    pub fn supports_atom(&self, atom: &LensAtom) -> bool {
+    pub fn supports_atom(&self, atom: &LensAtom, state: &GeneratedUiStateSnapshot) -> bool {
         match atom {
-            LensAtom::Component(component) => self.supports_component(component),
+            LensAtom::Component(component) => self.supports_component(component, state),
             other => self.supports(other.primitive()),
         }
     }
 
-    fn supports_component(&self, component: &GeneratedUiComponentAtom) -> bool {
+    fn supports_component(
+        &self,
+        component: &GeneratedUiComponentAtom,
+        state: &GeneratedUiStateSnapshot,
+    ) -> bool {
         matches!(&self.catalog, GeneratedUiCatalog::App(name) if name == &component.catalog)
             && self
                 .components
                 .iter()
                 .find(|declared| declared.name == component.name)
-                .is_some_and(|declared| declared.admits(&component.props))
+                .is_some_and(|declared| {
+                    props_for_surface(&component.props, self.expressions.as_ref(), state)
+                        .is_some_and(|props| declared.admits(&props))
+                })
     }
 }
 
