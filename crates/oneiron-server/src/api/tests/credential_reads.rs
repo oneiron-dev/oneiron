@@ -295,6 +295,9 @@ async fn the_owners_full_credential_reads_as_the_owner_on_v1() {
 #[tokio::test]
 async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
     let room = room();
+    // A room member's class-less peer key reads only through a class-agnostic
+    // grant (FIX 9917, FIX 1218): without one the room reads empty for all.
+    put_actor_read_grant(&room.server.vault, room.agent, None);
     super::context_board_history::restrict_principal_read_types(
         &room.server,
         room.owner,
@@ -311,7 +314,7 @@ async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
                 server,
                 core_request_with_authz(
                     "POST",
-                    "/v1/core/facade/rooms.messages",
+                    "/v1/core/facade/vault.rooms.messages",
                     test_bearer(&recipe),
                     Some(&request),
                 ),
@@ -342,6 +345,9 @@ async fn a_narrower_owner_credential_stays_bounded_in_room_verbs() {
 #[tokio::test]
 async fn an_agent_class_credential_on_the_owners_person_is_not_the_owners() {
     let room = room();
+    // The agent member's class-less peer key reads only through a
+    // class-agnostic grant (FIX 9917, FIX 1218).
+    put_actor_read_grant(&room.server.vault, room.agent, None);
     let owner = room.owner.to_hex();
     for (class, spaced) in [("agent", false), ("human", true)] {
         let recipe = format!("scope=core:read;principal_ref={owner};actor_class={class}");
@@ -990,10 +996,13 @@ async fn reaction_pills_read_under_the_credential() {
         pill(room.agent, "agent").await,
         "a grant that reads claims sees the pill"
     );
+    // The records door reads the room row first (3847eec0960, FIX 8153), so
+    // the narrowed grant keeps the CONVERSATION band and drops only claims.
     super::context_board_history::restrict_principal_read_types(
         &room.server,
         room.agent,
         &[
+            oneiron::registry::ENTITY_TYPE_CONVERSATION,
             oneiron::registry::ENTITY_TYPE_MESSAGE,
             oneiron::registry::ENTITY_TYPE_TURN,
         ],
@@ -1147,9 +1156,9 @@ async fn a_members_bounded_credential_reads_its_room_as_missing() {
         ),
         "{body}"
     );
-    // FACET-READ: the pack door refuses a member's credential limited to a
-    // facet before it resolves any room, so its room and a missing one
-    // answer alike.
+    // FACET-READ: the pack door resolves the room under the credential's
+    // scoped read (9b18044350c, FIX 646), so a member's credential limited to
+    // a facet reads its room as missing, and the two answer alike.
     let faceted = format!(
         "{};facets={}",
         room.agent_recipe(None),
@@ -1158,7 +1167,7 @@ async fn a_members_bounded_credential_reads_its_room_as_missing() {
     let mut answers = Vec::new();
     for conversation in [room.room, seeded_test_entity_id(0x2401_0012)] {
         let (status, mut body) = pack(faceted.clone(), conversation).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
         body["error"].as_object_mut().unwrap().remove("requestId");
         answers.push(body);
     }

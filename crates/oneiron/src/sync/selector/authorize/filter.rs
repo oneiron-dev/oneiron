@@ -1,3 +1,4 @@
+use super::release::{RowRelease, released_for_other_vault};
 use super::*;
 use crate::workspace_roster::project::extra_room_redaction;
 
@@ -122,6 +123,13 @@ pub(in crate::sync::selector) fn filter_window_doc(
     let mut candidates = BTreeSet::<EntityId>::new();
     let mut kept = BTreeSet::<EntityId>::new();
     let mut seeds = BTreeSet::<EntityId>::new();
+    // SCOPED-EXPORT-RULE = A (ARCH-0027 :382): a row bound for another vault
+    // is judged by the typed release rule before it can be a candidate, so a
+    // row the rule withholds pulls no closure, edge, birth or file reference
+    // after it, and its stored bytes never enter this copy. The owner's own
+    // machines take every row as stored.
+    let other_vault = matches!(reach, BirthReach::OtherVault(_));
+    let mut rewritten = std::collections::BTreeMap::<EntityId, Vec<u8>>::new();
 
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else {
@@ -289,6 +297,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 }
             }
         }
+        if other_vault && !is_tombstoned {
+            match released_for_other_vault(vault, &rtxn, &id, blob) {
+                RowRelease::Exact => {}
+                RowRelease::Rewritten(bytes) => {
+                    rewritten.insert(id, bytes);
+                }
+                RowRelease::Withheld => return,
+            }
+        }
         candidates.insert(id);
         if facets.is_some() {
             if decision.facet_visible {
@@ -397,6 +414,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // authority-mode NOTE drop).
     let grant_selector = Some((grant.scope, selector));
     let notes = NoteSelection::judged_in(vault, &rtxn, &flagged, source, &kept, grant_selector)?;
+    // SCOPED-EXPORT-RULE = A: a copy bound for another vault also keeps
+    // home each NOTE whose review carriers (proposal values, a bundle's
+    // explainer) hold a credential; copy_selected below writes no carrier
+    // of it.
+    let notes = if other_vault {
+        notes.withholding_credential_carriers(source)?
+    } else {
+        notes
+    };
     // An epoch summary leaves only beside every record it was written from:
     // the pass reads what this export ships, in its snapshot, so it runs
     // after every other withholding and before anything is written.
@@ -413,6 +439,15 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 crate::workspace_roster::exportable_revisions_in_txn(&vault.store, &rtxn, *project)?
             {
                 if let Some(raw) = vault.get_raw_in(&rtxn, &companion)? {
+                    let raw = if other_vault {
+                        match released_for_other_vault(vault, &rtxn, &companion, &raw) {
+                            RowRelease::Exact => raw,
+                            RowRelease::Rewritten(bytes) => bytes,
+                            RowRelease::Withheld => continue,
+                        }
+                    } else {
+                        raw
+                    };
                     revision_rows.push((companion, raw));
                 }
             }
@@ -428,7 +463,6 @@ pub(in crate::sync::selector) fn filter_window_doc(
     for (id, raw) in &revision_rows {
         map_insert_bytes(&out_entities, &id.to_hex(), raw)?;
     }
-    let strip_extra_room = matches!(reach, BirthReach::OtherVault(_));
     map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
         let Some(blob) = maybe_blob else { return };
         let Ok(id) = EntityId::from_hex(raw_key) else {
@@ -437,21 +471,32 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if id.to_hex() != raw_key || !shipped.contains(&id) {
             return;
         }
-        if strip_extra_room
-            && let Some(header) = EntityMetadataHeader::parse(blob)
+        // The release judged the stored row; the extra-room strip only
+        // removes a CONVERSATION's project group from what leaves.
+        let bytes = rewritten.get(&id).map_or(blob, Vec::as_slice);
+        if other_vault
+            && let Some(header) = EntityMetadataHeader::parse(bytes)
             && let Some(stripped) = extra_room_redaction::strip_project_group_from_record_bytes(
                 header.entity_type,
-                blob,
+                bytes,
             )
         {
             let _ = map_insert_bytes(&out_entities, raw_key, &stripped);
             return;
         }
-        let _ = map_insert_bytes(&out_entities, raw_key, blob);
+        let _ = map_insert_bytes(&out_entities, raw_key, bytes);
     });
 
     let authorized_base = if key.world().is_some() {
-        authorized_base_edge_endpoints(vault, &source_edges, &kept, selector, position, withhold)?
+        authorized_base_edge_endpoints(
+            vault,
+            &source_edges,
+            &kept,
+            selector,
+            position,
+            withhold,
+            reach,
+        )?
     } else {
         BTreeSet::new()
     };
@@ -490,6 +535,20 @@ pub(in crate::sync::selector) fn filter_window_doc(
     let export =
         super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open && all);
     let ttxn = vault.store.env.read_txn()?;
+    // The window's bodies of each tombstoned row, under every hex casing of
+    // its key: a case-shifted alias still names the row (ONE-1158), so the
+    // label fallback below judges each body the window holds of it.
+    let mut tombstoned_bodies = HashMap::<EntityId, Vec<Vec<u8>>>::new();
+    if member_access.is_some() {
+        map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
+            if let Some(blob) = maybe_blob.filter(|blob| blob.len() > ENTITY_METADATA_HEADER_LEN)
+                && let Ok(id) = EntityId::from_hex(raw_key)
+                && tombstoned.contains(&id)
+            {
+                tombstoned_bodies.entry(id).or_default().push(blob.to_vec());
+            }
+        });
+    }
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
@@ -497,7 +556,30 @@ pub(in crate::sync::selector) fn filter_window_doc(
         if claims_withheld.contains(&id) {
             return;
         }
-        if kept.contains(&id) || export.admits(vault, &ttxn, &id, value) {
+        if !kept.contains(&id) && !export.admits(vault, &ttxn, &id, value) {
+            return;
+        }
+        // FIX SELECTOR-TOMBSTONE-LABEL (OPUS-LEAKS): a tombstone names the
+        // row's id, the delete's reason and its time, so a member who is not
+        // an Owner takes it only of a row it reads at the relationship gate.
+        // The relationship read its delete captured decides first: it was
+        // taken while the row was live, before the delete retired a MESSAGE's
+        // or SUMMARY's scope stamp. With no capture bound to the tombstone's
+        // request, every body the window still holds of the row decides by its
+        // bytes, under whichever casing of the id it is keyed: one the member
+        // does not read withholds the tombstone. A read that fails withholds
+        // it too.
+        let member = member_access.as_ref();
+        let reads =
+            super::super::tombstones::member_reads_by_capture(vault, &ttxn, member, &id, value)
+                .unwrap_or_else(|| {
+                    tombstoned_bodies.get(&id).is_none_or(|bodies| {
+                        bodies.iter().all(|blob| {
+                            member_reads_labels(vault, &ttxn, member, &id, blob).unwrap_or(false)
+                        })
+                    })
+                });
+        if reads {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
         }
     });
