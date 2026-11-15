@@ -51,6 +51,10 @@ const AUDIT_READ_GRANT_DOMAIN: &[u8] = b"oneiron.access_grant.audit_read.v1";
 /// holder of the audit_read power.
 const AUDIT_READ_REFUSAL: &str = "an audit read needs the owner's proof or a live audit_read power";
 
+/// What a generic delete door answers for an audit_read grant.
+const AUDIT_READ_DELETE_REFUSAL: &str =
+    "an audit_read grant ends only through the owner's vault.audit_read.revoke, never a delete";
+
 /// Who reads an audit door (RULING AUDIT-READ-POWER-LIST = B): the vault's
 /// owner on his own proof, or an actor that holds the audit_read power. A
 /// host builds the owner's from the proof the request carries; a holder
@@ -417,6 +421,40 @@ impl Vault {
 /// audit_read grant id.
 fn id_held_by_another_row() -> Error {
     Error::Record(RecordError::AccessGrantAlreadyExists)
+}
+
+/// Refuses a generic delete of an audit_read grant, whoever asks it (Astra
+/// review auditread-8435-pr1 T1): the owner's revoke verb alone ends one, and
+/// it records his act, which a delete does not. An erased principal's grant
+/// stays too, as the history the authority audit lists. Every other row
+/// passes. The record delete guard and the batch delete arm both ask it.
+///
+/// # Errors
+/// The row at `id` is an audit_read grant, live or erased; or it does not
+/// read.
+pub(crate) fn reject_audit_read_grant_delete_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<()> {
+    let LiveEntityRow::Live {
+        entity_type: ENTITY_TYPE_ACCESS_GRANT,
+        body,
+    } = crate::vault::live_entity_row_in_txn(store, txn, id)?
+    else {
+        return Ok(());
+    };
+    let audit_read = match decode_access_grant_body(&body) {
+        Ok(grant) => matches!(grant.scope, AccessGrantScope::VaultAudit),
+        Err(_) => decode_erased_grant_body(&body)
+            .is_ok_and(|terms| matches!(terms.scope, AccessGrantScope::VaultAudit)),
+    };
+    if audit_read {
+        return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+            AUDIT_READ_DELETE_REFUSAL,
+        )));
+    }
+    Ok(())
 }
 
 /// The id of `holder`'s audit_read grant.

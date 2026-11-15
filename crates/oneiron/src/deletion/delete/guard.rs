@@ -122,6 +122,13 @@ impl Vault {
                 header.entity_type,
             )));
         }
+        if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(
+                &self.store,
+                &self.store.env.read_txn()?,
+                id,
+            )?;
+        }
         if reason == DeleteReason::UserDelete {
             let rtxn = self.store.env.read_txn()?;
             if crate::deletion::topology_delete_reservation_in_txn(&self.store, &rtxn, id)?

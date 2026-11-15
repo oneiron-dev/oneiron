@@ -74,6 +74,9 @@ pub(super) fn reject_engine_authored_delete(
             header.entity_type,
         )));
     }
+    if header.entity_type == crate::registry::ENTITY_TYPE_ACCESS_GRANT {
+        crate::access_grant::reject_audit_read_grant_delete_in_txn(store, wtxn, id)?;
+    }
     Ok(())
 }
 
