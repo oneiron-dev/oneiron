@@ -5500,7 +5500,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/ports/tests/step22_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/step23_conformance.rs` | test | m | — | — | — |
 | `src/ports/tests/support.rs` | test | s | 6 crate-vis | — | — |
-| `src/ports/time.rs` | src | m | 3 fn · 1 re-export · 16 crate-vis | — | Per-store clock and id source |
+| `src/ports/time.rs` | src | m | 4 fn · 1 re-export · 16 crate-vis | — | Per-store clock and id source |
 | `src/ports/time/recording_plan.rs` | src | s | 14 crate-vis | — | The native recording-clock row program and its caller-owned projection |
 | `src/ports/vault_read.rs` | src | s | 7 fn | — | Vault reads in a snapshot the caller holds (FIX 5870): [`Vault::get`] and the TURN doors' admission and… |
 | `src/ports/window_rows.rs` | src | s | 5 crate-vis | — | The window deletion-row port: the rows a deletion leaves under a window address |
@@ -6928,7 +6928,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/store/sync_responses/media.rs` | src | s | 1 fn · 4 crate-vis | — | A media job row's stamps, mask and fenced write (KS-2B2) |
 | `src/store/tables.rs` | src | L | — | — | The side tables `store` keeps (core split slice 1): each row declares one, and the crate's build script… |
 | `src/store/task_authority_guard.rs` | src | s | 4 crate-vis | — | Immutable task-authority fact row and edge deletion guards |
-| `src/store/test_hooks.rs` | src | m | 29 crate-vis | — | The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it |
+| `src/store/test_hooks.rs` | src | m | 31 crate-vis | — | The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it |
 | `src/store/tests.rs` | test | XL | — | — | — |
 | `src/store/tests/gate_claim_lookup.rs` | test | s | — | — | The lookup behind a claim write's receipt: the newest decision about a claim among the newest ledger rows… |
 | `src/store/text_index/codec.rs` | src | s | 6 crate-vis | — | Core half of `store::text_index::codec`: its store-layer items live in `oneiron_store::text_index::codec`… |

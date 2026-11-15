@@ -64968,7 +64968,7 @@
      "purpose": "Per-store clock and id source",
      "surface": {
       "crate-vis": 16,
-      "fn": 3,
+      "fn": 4,
       "re-export": 1
      }
     },
@@ -81772,7 +81772,7 @@
      "path": "src/store/test_hooks.rs",
      "purpose": "The test seams one open vault owns, plus the two path-keyed LMDB open hooks that necessarily predate it",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -137274,7 +137274,7 @@
      "path": "src/api/mcp_gateway/board_setup.rs",
      "purpose": "Board state, setup grammar, and page preflight",
      "surface": {
-      "crate-vis": 15
+      "crate-vis": 17
      }
     },
     {
@@ -137288,7 +137288,7 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/api/mcp_gateway/board_setup/carrier.rs",
@@ -151870,6 +151870,17 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/test_doors/mcp_page_mint.rs",
+     "purpose": "Door for `tests/mcp_page_continuation_rejudge.rs`: one act run at a vault's next page one mint, after its…",
+     "surface": {
+      "crate-vis": 1,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/test_doors/mcp_surface.rs",
      "purpose": "Door for `tests/mcp_surface_registration_latency.rs`: the MCP surface a server serves, read through the…",
      "surface": {
@@ -151897,7 +151908,7 @@
      "path": "src/test_doors/mod.rs",
      "purpose": "Doors for the integration tests to crate-private items, as in `oneiron::test_doors`",
      "surface": {
-      "mod": 19
+      "mod": 20
      }
     },
     {
@@ -153360,6 +153371,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/mcp_page_continuation_rejudge.rs",
+     "purpose": "L1-05 (ARCH-0028 #mcp-continuation-open): an MCP page continuation is judged again under its caller's…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/mcp_server_discover.rs",
      "purpose": "L1-04 (canon ARCH-0028 \"Discover catalog\"; Engine RULING L1-04 = B, 13 Nov 2026): `server/discover` on the…",
      "surface": {}
@@ -154124,7 +154143,7 @@
      "purpose": "Request fixtures mint real logged slips before crossing the production router"
     },
     "test_doors": {
-     "files": 20,
+     "files": 21,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -154189,8 +154208,8 @@
    },
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1884,
-   "test_files": 259
+   "source_files": 1885,
+   "test_files": 260
   },
   "oneiron-skill-attribution": {
    "files": [
