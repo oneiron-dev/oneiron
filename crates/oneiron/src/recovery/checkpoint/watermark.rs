@@ -282,6 +282,29 @@ impl BackupMarker {
             .is_some_and(|(file, metadata)| self.reads_as_recorded(&file, &metadata))
     }
 
+    /// [`Self::held`], with `verdict` in place of the read when it answers
+    /// (HELD-WHOLE-READ-OFF-PRE-IDLE): the file is opened once, as
+    /// [`Self::held`] opens it, and when `verdict` was made for this marker,
+    /// its read began less than `within` ago, and the open file's stat shows
+    /// the identity that read saw ([`HeldVerdict::answers`]), it is held with
+    /// no read of its bytes. Otherwise, with no verdict or one that does not
+    /// answer, that same open file is read whole, so a verdict that does not
+    /// answer costs no file call [`Self::held`] does not make (Astra
+    /// fixperf-8419-r2 F2).
+    pub fn held_by_verdict_or_read(
+        &self,
+        dir: &Path,
+        verdict: Option<&HeldVerdict>,
+        within: Duration,
+    ) -> bool {
+        let verdict =
+            verdict.filter(|verdict| verdict.marker == *self && verdict.younger_than(within));
+        open_backup(&dir.join(&self.file)).is_some_and(|(file, metadata)| {
+            verdict.is_some_and(|verdict| verdict.matches_open(&metadata, within))
+                || self.reads_as_recorded(&file, &metadata)
+        })
+    }
+
     /// [`Self::held`], kept as a verdict that a later check asks in place of
     /// a second whole read (HELD-WHOLE-READ-OFF-PRE-IDLE): `None` when the
     /// file is not held, when its identity moved while it was read, and
@@ -366,16 +389,25 @@ impl HeldVerdict {
     /// read saw, and then, once the file has answered, its read began less
     /// than `within` ago by the boot clock, so a suspend counts, and by the
     /// wall clock (a clock behind the read's start answers nothing). The age
-    /// is read after the open and its stat, so a slow file system never
-    /// carries a verdict past `within`. A change that keeps the file's
-    /// identity is not seen here. Once `within` has passed since the read
-    /// began, by either clock, it answers nothing, and a reuse reads the file
-    /// whole.
+    /// is read before the open, so a verdict past `within` opens nothing, and
+    /// again after the open and its stat, so a slow file system never carries
+    /// a verdict past `within`. A change that keeps the file's identity is
+    /// not seen here. Once `within` has passed since the read began, by
+    /// either clock, it answers nothing, and a reuse reads the file whole
+    /// ([`BackupMarker::held_by_verdict_or_read`], on the file it opened).
     pub fn answers(&self, marker: &BackupMarker, dir: &Path, within: Duration) -> bool {
         self.marker == *marker
-            && open_backup(&dir.join(&marker.file)).is_some_and(|(_, metadata)| {
-                metadata.is_file() && FileIdentity::of(&metadata) == Some(self.identity)
-            })
+            && self.younger_than(within)
+            && open_backup(&dir.join(&marker.file))
+                .is_some_and(|(_, metadata)| self.matches_open(&metadata, within))
+    }
+
+    /// Whether `metadata`, the stat of the open file, shows a regular file
+    /// with the identity the read saw, and then, by clocks read after that
+    /// stat, whether the read began less than `within` ago.
+    fn matches_open(&self, metadata: &std::fs::Metadata, within: Duration) -> bool {
+        metadata.is_file()
+            && FileIdentity::of(metadata) == Some(self.identity)
             && self.younger_than(within)
     }
 

@@ -44,13 +44,15 @@
 //! until it ends; a pass, a stop and a backup before an idle reap never wait
 //! on it. The read's verdict names the backup it read (its marker, so its id
 //! and the outer digest the read found every byte to match), the file's
-//! identity, and when it began. A backup before an idle reap takes a verdict
-//! for the marker it reuses, whose file still opens with that identity and
-//! whose read began under [`HELD_VERDICT_TRUST`] ago by clocks read after
-//! that open, in place of its own whole read. That open and its stat are the
-//! first two calls of the whole read it replaces, so the reuse waits on no
-//! call that it did not make before. A backup with no such verdict, a new or
-//! changed one or one read too long ago, is read whole there, as before.
+//! identity, and when it began. A backup before an idle reap opens the file
+//! of the marker it reuses once, as the whole read it replaces opens it. When
+//! a verdict for that marker began its read under [`HELD_VERDICT_TRUST`] ago,
+//! by clocks read before that open and again after its stat, and that stat
+//! shows the identity the read saw, the backup is reused with no read of its
+//! bytes. Otherwise (no verdict, a new or changed backup, or one read too
+//! long ago) that same open file is read whole there, as before. So the
+//! reuse waits on no file call that it did not make before, whether a
+//! verdict answers or not (Astra fixperf-8419-r2 F2).
 //!
 //! The residual (Astra fixperf-8419 F1): a verdict does not see a change that
 //! keeps the file's identity (device, inode, size, and modification and
@@ -77,7 +79,6 @@
 //! the artifact whole before it opens it, and every restore checks the bytes
 //! it reads.
 
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -341,28 +342,26 @@ impl OwnerHost {
         Some(held)
     }
 
-    /// Whether the background verify's verdict answers for `last` in `dir`
-    /// with no read of its bytes ([`HeldVerdict::answers`], under
-    /// [`HELD_VERDICT_TRUST`]); the verdict is taken out of its lock before
-    /// the file is opened.
-    fn held_by_verdict(&self, last: &BackupMarker, dir: &Path) -> bool {
-        let verdict = lock(&self.held.last)
+    /// The background verify's last verdict, taken out of its lock, so that
+    /// no file is opened while the lock is held.
+    fn last_verdict(&self) -> Option<HeldVerdict> {
+        lock(&self.held.last)
             .as_ref()
-            .and_then(|check| check.verdict.clone());
-        verdict.is_some_and(|verdict| verdict.answers(last, dir, HELD_VERDICT_TRUST))
+            .and_then(|check| check.verdict.clone())
     }
 
     /// One backup before an idle reap, for `attempt`: under the backup lock,
     /// after any backup that holds it. The last accepted backup is reused
     /// when it covers the vault as it stands and its file is still that
     /// backup, by a fresh verdict of the background verify or else a whole
-    /// read; otherwise one is taken, the hour notwithstanding. A new one
-    /// is recorded as covered only while the attempt stands: its guard goes
-    /// down first, its marker after, and the guard lifts once the attempt
-    /// settled taken. Nothing is pruned and no custody published: the vault
-    /// is frozen, and the next resident pass does both. `Ok` once there is
-    /// nothing more for the attempt to record; a failure by its closed
-    /// reason.
+    /// read of the file it opened for that verdict, opened once either way
+    /// ([`BackupMarker::held_by_verdict_or_read`]); otherwise one is taken,
+    /// the hour notwithstanding. A new one is recorded as covered only while
+    /// the attempt stands: its guard goes down first, its marker after, and
+    /// the guard lifts once the attempt settled taken. Nothing is pruned and
+    /// no custody published: the vault is frozen, and the next resident pass
+    /// does both. `Ok` once there is nothing more for the attempt to record;
+    /// a failure by its closed reason.
     pub(crate) fn back_up_before_idle(
         &self,
         vault: &oneiron::Vault,
@@ -382,7 +381,11 @@ impl OwnerHost {
             && vault
                 .automatic_backup_watermark()
                 .is_ok_and(|now| last.covered().covers(&now))
-            && (self.held_by_verdict(&last, &plan.dir) || last.held(&plan.dir))
+            && last.held_by_verdict_or_read(
+                &plan.dir,
+                self.last_verdict().as_ref(),
+                HELD_VERDICT_TRUST,
+            )
         {
             attempt.settle(&PreIdleBackup {
                 reused: true,
