@@ -36,12 +36,13 @@ use oneiron::skill_optimize::{
     EvalCohortSetup, EvalLabel, EvalLabelKind, EvalRepairLegAnswer, EvalRepairSeed,
     EvalRepairSeedLegs, EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedStanding,
     EvalRepairSeedState, EvalRepairSeedSummary, EvalRepairTaskSource, EvalRepairToolCall, EvalSeat,
-    FamilyPurpose, RepairSeedDecision, eval_authoring_inventory, eval_authoring_skill_id,
-    setup_eval_cohorts,
+    FamilyPurpose, RepairSeedDecision, eval_authoring_inventory, eval_authoring_inventory_sourced,
+    eval_authoring_skill_id, setup_eval_cohorts,
 };
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, ModelTierRef, Vault, VaultConfig};
+use oneiron_store::ports::manual_clock::ManualClock;
 use serde_json::{Value, json};
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -63,8 +64,12 @@ struct Fixture {
 }
 
 fn fixture() -> TestResult<Fixture> {
+    fixture_on(VaultConfig::device())
+}
+
+fn fixture_on(config: VaultConfig) -> TestResult<Fixture> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), VaultConfig::device())?;
+    let vault = Vault::open(dir.path(), config)?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     oneiron::test_support::provision_engine_machines(&vault);
     let (owner, proof) = embedded_owner(&vault)?;
@@ -2061,6 +2066,146 @@ fn repair_links_keep_their_statuses() -> TestResult {
     assert_eq!(
         (linked.repair_ordinal, linked.failure_ordinal),
         (Some(1), Some(0))
+    );
+    Ok(())
+}
+
+#[test]
+fn a_capture_of_many_unmapped_custom_events_lists_in_linear_time() -> TestResult {
+    let fixture = fixture()?;
+    // 40,000 mappings and 40,000 CUSTOM events whose names none of them
+    // holds, every name of one length. Finding each event's mapping by a scan
+    // of the mappings was some 1.6e9 name compares for a listing of no row.
+    const MAPPINGS: usize = 40_000;
+    let custom_mappings = (0..MAPPINGS)
+        .map(|index| AgUiCustomMapping {
+            id: None,
+            thread_id: None,
+            run_id: None,
+            ..mapping(
+                &format!("desk.unused.{index:06}"),
+                AgUiObservationKind::Failure,
+            )
+        })
+        .collect();
+    let jsonl = (MAPPINGS..2 * MAPPINGS)
+        .map(|index| {
+            json!({ "type": "CUSTOM", "name": format!("desk.unused.{index:06}"), "value": {} })
+                .to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let receipt = fixture.vault.ingest_ag_ui_file(
+        &fixture.proof,
+        &AgUiFileImport {
+            claim_ref: None,
+            project_ref: fixture.project.to_hex(),
+            app_id: "support-desk".to_owned(),
+            custom_mappings,
+            jsonl,
+        },
+    )?;
+    assert_eq!(receipt.event_count, MAPPINGS);
+
+    let started = Instant::now();
+    let inventory = eval_authoring_inventory(&fixture.vault, fixture.vault.now_recorded_at())?;
+    let listed_in = started.elapsed();
+    assert!(inventory.repairs.is_empty(), "{:?}", inventory.repairs);
+    assert!(
+        listed_in < Duration::from_secs(10),
+        "listed in {listed_in:?}"
+    );
+    Ok(())
+}
+
+/// A seed holds its task contract until the erase takes it, also once its
+/// capture is deleted, but a capture that no longer reads lends its seed's
+/// seat and standing to no row: the contract's other rows are not listed,
+/// since they can take no seed (Astra delta 2 J4; RULING
+/// UNBUILT-P05E-CONTRACT-ALIAS = A).
+#[test]
+fn a_deleted_captures_seed_shows_on_no_alias_row() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let again = capture(
+        &fixture,
+        reordered_text_task(),
+        json!({ "response": ANSWER }),
+    )?;
+    propose(&fixture, &source)?;
+    settle(
+        &fixture,
+        &source,
+        &response("wrong answer"),
+        &response("another wrong answer"),
+    )?;
+    let refused = vec![EvalRepairSeedSummary {
+        seat: EvalSeat::Companion,
+        standing: EvalRepairSeedStanding::Refused {
+            reason: EvalRepairSeedRefusal::CandidateFailed,
+        },
+    }];
+    let inventory = eval_authoring_inventory(&fixture.vault, fixture.vault.now_recorded_at())?;
+    assert_eq!(repair_row(&inventory, &again).seeds, refused);
+
+    let claim = EntityId::from_hex(&source.claim_ref)?;
+    assert!(
+        fixture.vault.delete_entity(&claim)?,
+        "the capture is deleted"
+    );
+    let inventory = eval_authoring_inventory(&fixture.vault, fixture.vault.now_recorded_at())?;
+    assert!(
+        inventory.repairs.is_empty(),
+        "no row shows the deleted capture's seed: {:?}",
+        inventory.repairs
+    );
+    let held = propose(&fixture, &again).expect_err("the seed still holds its contract");
+    assert!(held.contains("contract already has a seed"), "{held}");
+    assert_eq!(fixture.vault.eval_repair_seed(&again)?, None);
+    Ok(())
+}
+
+/// An alias row shows the seed of a capture the listing no longer reaches
+/// but that still reads (here, one older than the window), and the
+/// inventory's rows name that capture: the seed's standing came from it
+/// (Astra delta 2 J4).
+#[test]
+fn an_alias_rows_seed_names_its_capture_among_the_rows_read() -> TestResult {
+    const T0: u64 = 1_780_000_000;
+    let clock = ManualClock::new(T0);
+    let mut config = VaultConfig::device();
+    config.store_clock = clock.bundle();
+    let fixture = fixture_on(config)?;
+    let source = text_capture(&fixture)?;
+    propose(&fixture, &source)?;
+    clock.set(T0 + 31 * 24 * 60 * 60);
+    let again = capture(
+        &fixture,
+        reordered_text_task(),
+        json!({ "response": ANSWER }),
+    )?;
+
+    let (inventory, rows) =
+        eval_authoring_inventory_sourced(&fixture.vault, fixture.vault.now_recorded_at())?;
+    assert!(
+        inventory
+            .repairs
+            .iter()
+            .all(|repair| repair.claim_ref != source.claim_ref),
+        "the first capture is older than the window: {:?}",
+        inventory.repairs
+    );
+    assert_eq!(
+        repair_row(&inventory, &again).seeds,
+        vec![EvalRepairSeedSummary {
+            seat: EvalSeat::Companion,
+            standing: EvalRepairSeedStanding::Pending,
+        }]
+    );
+    let rows = rows.expect("the inventory knows the rows it read");
+    assert!(
+        rows.contains(&EntityId::from_hex(&source.claim_ref)?),
+        "the seed's capture is among the rows read"
     );
     Ok(())
 }
