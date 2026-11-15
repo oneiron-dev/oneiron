@@ -405,6 +405,20 @@ fn detector_id(signal: AgentHealthSignal) -> String {
     format!("coach.agent_health.{}.v1", signal.as_str())
 }
 
+/// The prefix of the run coordinate [`emit`] writes for a finding's attempt.
+const REPLAY_ATTEMPT_PREFIX: &str = "attempt:";
+
+/// The attempt a finding's DIAGNOSTIC names in its replay coordinate, as
+/// [`emit`] writes it; None for a finding that named none.
+pub(super) fn replay_attempt(event: &DiagnosticEvent) -> Option<EntityId> {
+    event
+        .replay
+        .run_ref
+        .as_deref()?
+        .strip_prefix(REPLAY_ATTEMPT_PREFIX)
+        .and_then(|hex| EntityId::from_hex(hex).ok())
+}
+
 /// Writes the finding's DIAGNOSTIC once: the same evidence is the same body
 /// and the same id. It cites every evidence ref, and the source id of each
 /// attribution label in `causes` (OF-568 L10); past
@@ -443,7 +457,7 @@ fn emit(vault: &Vault, finding: &Finding, causes: &[HealthCauseSource]) -> Resul
             content_hash: *digest.finalize().as_bytes(),
             run_ref: finding.attempt.map(|attempt| {
                 format!(
-                    "attempt:{}",
+                    "{REPLAY_ATTEMPT_PREFIX}{}",
                     crate::entity_id::bytes_to_hex_lower(attempt.as_bytes())
                 )
             }),

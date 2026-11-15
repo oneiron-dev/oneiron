@@ -119,7 +119,8 @@ pub fn retrieval_runs_as_owner(
 }
 
 /// [`retrieval_runs_as_owner`] for the caller `memory` binds when it holds a
-/// live Steward grant naming `read` (untangle 6.6c), checked at this read.
+/// live Steward grant naming `read` (untangle 6.6c), checked at this read, as
+/// far as that grant reaches.
 ///
 /// # Errors
 ///
@@ -128,13 +129,13 @@ pub fn retrieval_runs_as_reader(
     memory: &Memory<'_>,
     input: RetrievalRunsRequest,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
-    crate::federation::admit_substrate_read_by(
+    let reach = crate::federation::admit_scoped_substrate_read_by(
         memory.vault(),
         crate::WriteActor::new(memory.actor(), memory.actor_class()),
         "vault.retrieval.runs",
         crate::federation::SubstrateRead::Evidence,
     )?;
-    retrieval_runs(memory, input)
+    retrieval_runs_within(memory, &reach, input)
 }
 
 /// `vault.retrieval.runs` on a bound handle: the embedded owner reads under
@@ -157,9 +158,27 @@ fn retrieval_runs(
     memory: &Memory<'_>,
     input: RetrievalRunsRequest,
 ) -> MemoryResult<Vec<RetrievalRunEvidence>> {
-    memory
-        .vault()
-        .retrieval_runs(input.limit.unwrap_or(RETRIEVAL_RUNS_DEFAULT))?
+    retrieval_runs_within(
+        memory,
+        &crate::federation::SubstrateReach::WholeVault,
+        input,
+    )
+}
+
+/// The newest runs `reach` holds, each where the attempt whose dispatcher
+/// asked for it ran ([`crate::federation::SubstrateReach::holds_attempts_in_txn`]):
+/// a run no attempt asked for reads only across the whole vault.
+fn retrieval_runs_within(
+    memory: &Memory<'_>,
+    reach: &crate::federation::SubstrateReach,
+    input: RetrievalRunsRequest,
+) -> MemoryResult<Vec<RetrievalRunEvidence>> {
+    let vault = memory.vault();
+    vault
+        .store
+        .retrieval_runs_where(input.limit.unwrap_or(RETRIEVAL_RUNS_DEFAULT), |txn, run| {
+            reach.holds_attempts_in_txn(vault, txn, run.dispatch_attempt.as_slice())
+        })?
         .into_iter()
         .map(|run| evidence(memory, run))
         .collect()

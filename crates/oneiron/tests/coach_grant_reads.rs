@@ -141,12 +141,13 @@ fn the_dials_read_needs_engine_controls() {
     dials(coach, EdgeActorClass::System).expect("the narrowed Coach still reads the dials");
 }
 
-/// A grant narrowed to part of the vault reads none of the vault-wide
-/// evidence rows (review of #6996): no reader of them filters by project
-/// yet, so a holder whose grant names one project is refused them. It reads
-/// the dials inside its project, and none here (UNBUILT-08), and is refused
-/// another project's learning cell. The same holder reads everything once
-/// its grant reaches the whole vault.
+/// A grant narrowed to part of the vault reads only the rows inside its
+/// projects (UNBUILT-08; review of #6996): a holder whose grant names one
+/// project reads the cards, calls and retrieval runs of its project's
+/// attempts, none here, and the dials inside its project, none here. It is
+/// refused the failure evidence of an attempt it cannot place and another
+/// project's learning cell. The same holder reads everything once its grant
+/// reaches the whole vault.
 #[test]
 fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
     let dir = tempfile::tempdir().expect("tempdir");
@@ -179,9 +180,18 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
     stand_project_steward_grant(&vault, agent, &read_and_engine_controls(), own_project)
         .expect("a grant narrowed to one project");
     for (verb, input) in evidence_reads(agent) {
-        assert_refused(
-            read(&vault, agent, EdgeActorClass::Agent, verb, input),
-            verb,
+        let answer = read(&vault, agent, EdgeActorClass::Agent, verb, input);
+        if verb == "vault.diagnostics.evidence" {
+            assert_refused(answer, verb);
+            continue;
+        }
+        let rows = answer.unwrap_or_else(|error| {
+            panic!("{verb}: a narrowed holder reads its own rows: {error:?}")
+        });
+        assert_eq!(
+            rows.as_array().map(Vec::len),
+            Some(0),
+            "{verb}: no row inside the project: {rows}"
         );
     }
     assert_refused(learning(), "vault.learning.read");

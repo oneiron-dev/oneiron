@@ -196,7 +196,7 @@ impl SessionStoreView<'_> {
         rtxn: &RoTxn<'_>,
         limit: usize,
     ) -> Result<Vec<RetrievalRunRecord>> {
-        read_retrieval_runs_in_txn(self, rtxn, limit)
+        read_retrieval_runs_in_txn(self, rtxn, limit, &mut |_| Ok(true))
     }
 }
 
@@ -548,9 +548,19 @@ impl Store {
     /// The newest published runs, read once the detached writes queued so
     /// far are decided (FIX 12023): a run a reply named reads back.
     pub fn retrieval_runs(&self, limit: usize) -> Result<Vec<RetrievalRunRecord>> {
+        self.retrieval_runs_where(limit, |_, _| Ok(true))
+    }
+
+    /// [`Self::retrieval_runs`] of the runs `keep` holds: the newest `limit`
+    /// of them. `keep` reads in the scan's own snapshot.
+    pub(crate) fn retrieval_runs_where(
+        &self,
+        limit: usize,
+        mut keep: impl FnMut(&RoTxn<'_>, &RetrievalRunRecord) -> Result<bool>,
+    ) -> Result<Vec<RetrievalRunRecord>> {
         self.wait_for_deferred_commits();
         let rtxn = self.env.read_txn()?;
-        read_retrieval_runs_in_txn(self, &rtxn, limit)
+        read_retrieval_runs_in_txn(self, &rtxn, limit, &mut |run| keep(&rtxn, run))
     }
 
     /// One published run, read once the detached writes queued so far are
@@ -645,6 +655,7 @@ fn read_retrieval_runs_in_txn(
     target: &impl ManifestDbs,
     rtxn: &RoTxn<'_>,
     limit: usize,
+    keep: &mut dyn FnMut(&RetrievalRunRecord) -> Result<bool>,
 ) -> Result<Vec<RetrievalRunRecord>> {
     if limit == 0 {
         return Ok(Vec::new());
@@ -665,6 +676,9 @@ fn read_retrieval_runs_in_txn(
         }
         if record.run_id != run_id {
             return Err(Error::CorruptedIndex("retrieval run telemetry"));
+        }
+        if !keep(&record)? {
+            continue;
         }
         records.push(record);
         if records.len() == limit {

@@ -234,7 +234,7 @@ pub use engine_controls::{
     ENGINE_CONTROLS_OWNER_ONLY_KNOBS, EngineControlActor, EngineControlChange, EngineControlClass,
 };
 pub(crate) use substrate_reads::{
-    SubstrateReach, SubstrateRead, admit_scoped_substrate_read_by, admit_substrate_read,
+    SubstrateReach, SubstrateRead, admit_scoped_substrate_read, admit_scoped_substrate_read_by,
     admit_substrate_read_by, outside_reach,
 };
 // FIX [LIBTEST-QUARANTINE-FEDERATION-SHARED-CREATION-TESTS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
