@@ -448,8 +448,9 @@ pub(crate) fn restrictive(verb: &str, args: &Value) -> Option<&'static Row> {
 /// this boundary's run does (FIX 11201). A table row the call meets is one,
 /// but a courtesy answer only when it deletes; a polymorphic call only when
 /// every part it writes withdraws or erases ([`payload::wholly_restrictive`]).
-/// A call that also grants, sets or keeps anything is not, whatever the hooks
-/// pin of it.
+/// The shared owner preview of such a call is one too
+/// ([`previews_restriction_only_call`]). A call that also grants, sets or
+/// keeps anything else is not, whatever the hooks pin of it.
 ///
 /// # Errors
 /// A read the classification needs (the kind of a pending shared act)
@@ -458,10 +459,32 @@ pub fn restriction_only_call(vault: &Vault, verb: &str, args: &Value) -> crate::
     if verb == "vault.courtesy_delete.answer" {
         return Ok(args.get("choice").and_then(Value::as_str) == Some("delete"));
     }
+    if verb == crate::verbs::OWNER_CONFIRM_PREVIEW_VERB {
+        return previews_restriction_only_call(vault, args);
+    }
     if restrictive(verb, args).is_some() {
         return Ok(true);
     }
     payload::wholly_restrictive(vault, verb, args)
+}
+
+/// Whether a `vault.owner_confirm.preview` call on the caller's own `args`
+/// previews a restriction-only call: its `verb` is a gated one-way verb, and
+/// that verb on its `input` is restriction-only. The gated verb's door admits
+/// only a confirm the caller's own preview kept, so over a damaged clock floor
+/// the erase could never land if its preview did not land there too (review
+/// F1 on #7861). The preview reads what the act takes and keeps one row on
+/// the recording clock, which only that act's confirm uses. No gated verb is
+/// the preview, so this asks once more at most.
+fn previews_restriction_only_call(vault: &Vault, args: &Value) -> crate::Result<bool> {
+    let previewed = args.get("verb").and_then(Value::as_str);
+    let input = args.get("input");
+    match (previewed, input) {
+        (Some(previewed), Some(input)) if crate::verbs::owner_confirm_row(previewed).is_some() => {
+            restriction_only_call(vault, previewed, input)
+        }
+        _ => Ok(false),
+    }
 }
 
 /// A restrictive call's landing: its verb, its pinned fields and its row's

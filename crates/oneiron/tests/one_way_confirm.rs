@@ -9,7 +9,9 @@
 //! at once (one Owner) takes the confirm; with two Owners its start takes
 //! none and its execute does. Each history confirm binds the NOTE and the
 //! frontier its erase runs through, so an edit after the preview refuses the
-//! old confirm.
+//! old confirm. A preview of an act that lands over a damaged clock floor
+//! classifies as that act does, and the record-erase previews an old build
+//! kept go with their caller's erase and at the next preview.
 //!
 //! Every door is reached by its verb name and every answer is read as JSON,
 //! so this file builds on main too. Red on main: `vault.owner_confirm.preview`
@@ -23,6 +25,10 @@
 //! name need the writer lease.
 //!
 //! `cargo test --locked -p oneiron --all-features --test one_way_confirm`
+//!
+//! The old-row test needs the doors and runs only under them:
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
+//! --all-features --test one_way_confirm`.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -34,6 +40,7 @@ use oneiron::memory::MemoryError;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::store::ports::ManualClock;
+use oneiron::task_verb::revoke_lands::restriction_only_call;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
 use oneiron::verb_names::VERB_ACT_CLASSES;
@@ -611,4 +618,112 @@ fn a_record_erase_confirm_older_than_the_ttl_is_refused() {
     );
     assert_confirm_refused(&error, "the confirm past its row");
     assert!(fx.is_live(&a), "the refused record stays");
+}
+
+/// A preview of a one-way act that is restriction-only is restriction-only
+/// too, so over a damaged clock floor every transport takes it under the
+/// restriction-only clock, as it takes the act: the act's door admits only a
+/// confirm the caller's own preview kept (review F1 on #7861). A preview of a
+/// gated act that is no erase or revoke, of a verb the confirm does not gate,
+/// or of the preview itself is not.
+/// Red on the head before the fix: no preview is restriction-only.
+#[test]
+fn a_preview_of_a_restriction_only_act_is_restriction_only() {
+    let fx = fixture();
+    let id = EntityId::now().to_hex();
+    let classifies = |verb: &str, input: &Value| {
+        restriction_only_call(&fx.vault, verb, input).expect("the call classifies")
+    };
+    let preview_of = |verb: &str, input: &Value| json!({ "verb": verb, "input": input });
+    for (verb, input) in [
+        (
+            "vault.legal_holds.lift_and_erase",
+            json!({ "records": [id] }),
+        ),
+        ("vault.notes.history_purge", json!({ "note_ref": id })),
+        ("vault.notes.history_purge_execute", json!({ "act_id": id })),
+        ("vault.records.erase_confirm", json!({ "record": id })),
+    ] {
+        assert!(classifies(verb, &input), "{verb} is restriction-only");
+        assert!(
+            classifies("vault.owner_confirm.preview", &preview_of(verb, &input)),
+            "the preview of {verb} is restriction-only"
+        );
+    }
+    for (verb, input) in [
+        (
+            "vault.outbound_calls.request.erase",
+            json!({ "attempt": id, "call_seq": 0 }),
+        ),
+        ("vault.shared.propose_delete", json!({ "vault_id": "1" })),
+        ("vault.claims.retract", json!({ "claim_ref": id })),
+        (
+            "vault.owner_confirm.preview",
+            preview_of("vault.records.erase_confirm", &json!({ "record": id })),
+        ),
+    ] {
+        assert!(
+            !classifies("vault.owner_confirm.preview", &preview_of(verb, &input)),
+            "the preview of {verb} is not restriction-only"
+        );
+    }
+}
+
+/// A record-erase preview the build before the shared preview kept
+/// (`erase:preview:v1:`) names its caller. An actor erase takes the erased
+/// caller's rows, and the next preview takes every other, since none can
+/// confirm again (review F2 on #7861).
+/// Red on the head before the fix: no declared table owns the prefix, so the
+/// erased caller's row survives the erase.
+#[cfg(oneiron_test_support)]
+#[test]
+fn the_retired_erase_previews_go_with_their_caller_and_at_the_next_preview() {
+    use oneiron::DeleteReason;
+    use oneiron::test_doors::erase_preview_rows::{
+        plant_retired_erase_preview, retired_erase_previews,
+    };
+
+    let fx = fixture();
+    let former = EntityId::now();
+    fx.vault
+        .put_entity(
+            &former,
+            ENTITY_TYPE_PERSON,
+            TimeRange {
+                start: NOW,
+                end: NOW,
+            },
+            NOW,
+            b"a former caller",
+        )
+        .expect("a live person");
+    let other = EntityId::now();
+    let record = EntityId::now();
+    for caller in [&former, &other] {
+        plant_retired_erase_preview(&fx.vault, caller, &record, NOW)
+            .expect("an old erase preview row");
+    }
+    assert_eq!(
+        retired_erase_previews(&fx.vault)
+            .expect("the old rows")
+            .len(),
+        2,
+        "both old rows are stored"
+    );
+    fx.vault
+        .delete_entity_with_reason(&former, DeleteReason::UserHardDelete)
+        .expect("hard erase");
+    assert_eq!(
+        retired_erase_previews(&fx.vault).expect("the old rows"),
+        vec![(other, record)],
+        "the erase takes the erased caller's old row and only that"
+    );
+    let a = fx.put_record("owen.bin", BYTES_A_B64);
+    fx.preview("vault.records.erase_confirm", json!({ "record": a }));
+    assert!(
+        retired_erase_previews(&fx.vault)
+            .expect("the old rows")
+            .is_empty(),
+        "the next preview takes every old row"
+    );
 }

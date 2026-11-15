@@ -132,6 +132,26 @@ pub(crate) fn owner_confirm_actor_in_txn(
     Ok(())
 }
 
+/// The record-erase previews the build before the shared preview kept (FIX
+/// 12522), keyed by caller and record. No preview writes one and no confirm
+/// reads one, but a vault from that build may still hold some, and each names
+/// its caller: an actor erase takes the caller's, and [`retain`]'s cleanup
+/// takes every other (review F2 on #7861). A row is only ever deleted, never
+/// decoded, so its value type is any.
+const RETIRED_ERASE_PREVIEWS: SideTable<(EntityId, EntityId), Value, Named> =
+    SideTable::new(&side_table::ERASE_PREVIEW);
+
+/// An erased caller's retired record-erase previews go, in the actor erase's
+/// own writer.
+pub(crate) fn erase_preview_actor_in_txn(
+    vault: &crate::Vault,
+    wtxn: &mut heed::RwTxn<'_>,
+    actor: &EntityId,
+) -> crate::Result<()> {
+    RETIRED_ERASE_PREVIEWS.delete_from(&vault.store, wtxn, actor.as_bytes())?;
+    Ok(())
+}
+
 /// The confirm digest of one previewed call: `verb`, the caller, the typed
 /// input without `confirm`, and the shown view, each length-prefixed. Both
 /// values come from serializing typed Rust values, never from client JSON as
@@ -261,8 +281,8 @@ pub(crate) fn admit(
 }
 
 /// Retains the caller's preview of one call in one grouped write txn: every
-/// expired row goes, and for a verb kept until used so do the caller's other
-/// rows of that verb. It answers the 64-hex confirm. An erased caller is
+/// expired row goes, every retired record-erase preview goes, and for a verb
+/// kept until used so do the caller's other rows of that verb. It answers the 64-hex confirm. An erased caller is
 /// refused, as the record erase's preview was (review P1 on #4445).
 fn retain(
     vault: &Vault,
@@ -303,6 +323,8 @@ fn retain(
             for key in &expired {
                 OWNER_CONFIRMS.delete(&vault.store, txn, key)?;
             }
+            // No retired record-erase preview can confirm anything again.
+            RETIRED_ERASE_PREVIEWS.delete_from(&vault.store, txn, &[])?;
             if row.keep == PreviewKeep::UntilUsed {
                 let mut stale = Vec::new();
                 for entry in OWNER_CONFIRMS.iter_from(&vault.store, txn, caller_id.as_bytes())? {
