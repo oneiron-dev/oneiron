@@ -68,7 +68,7 @@ use super::backend::CallBackend;
 use super::hello_refusal::{Refusal, refuse, refused};
 use super::{
     ChatBrain, ChatBrainBindings, VoiceHost, VoiceHostBindings, VoiceServeBindings,
-    VoiceWireBindings,
+    VoiceWireBindings, standalone_call_record,
 };
 use crate::ai_host::payer_funding::{PayerFault, room_launch_funding};
 use crate::api::ai::room_place::call_place;
@@ -481,6 +481,10 @@ pub(super) fn prepare_call(
         auth.require(scope).map_err(|_| refused(Refusal::Scope))?;
     }
     let owner = crate::api::owner(auth, server).map_err(|_| refused(Refusal::Owner))?;
+    let person = owner.actor();
+    // A standalone call is the owner's own: no room, no room roster
+    // (VOICE-CALL-SCOPE = A).
+    let standalone = room.is_none() && roster.is_none();
     let host_action = crate::api::host_action::host_action_of(vault, auth)
         .transpose()
         .map_err(|_| refused(Refusal::Owner))?;
@@ -601,6 +605,13 @@ pub(super) fn prepare_call(
     )
     .map_err(failed)?;
 
+    // The owner's own standalone call keeps its answered turns in its home
+    // (UNBUILT-02); a call heard in a room keeps none yet (PR 3).
+    let record = if standalone {
+        standalone_call_record(server, person, agent, payer, auth.peer(), auth.locality())
+    } else {
+        None
+    };
     let (out, brain_out) = mpsc::channel(BRAIN_QUEUE);
     let brain = ChatBrain::new(ChatBrainBindings {
         ai: server.ai.clone(),
@@ -613,6 +624,7 @@ pub(super) fn prepare_call(
         payer,
         funding: funding.clone(),
         out,
+        record,
     })
     .map_err(failed)?;
     let render = settings

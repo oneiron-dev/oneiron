@@ -28,6 +28,7 @@ mod public;
 mod public_events;
 mod public_hold;
 mod public_loop;
+mod record;
 mod serve_bindings;
 // The call's speakers matched into its roster, and one retired (FIX 3344, 1522).
 mod speaker_match;
@@ -40,6 +41,8 @@ pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wak
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use phone::PhoneCallRead;
 pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
+pub use record::voice_home_conversation_id;
+pub(crate) use record::{CallRecord, KeptTurn, standalone_call_record};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
 pub use wire::VoiceWireBindings;
