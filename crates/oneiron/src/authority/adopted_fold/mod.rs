@@ -633,8 +633,15 @@ fn rows_floors_unmoved(
 ///
 /// Cost: one parents-first order of the covered rows; then each pair of a
 /// signer's rows next to each other in a scope walks only rows that order
-/// puts between the two, so a scope's walks together pass each covered row
-/// and parent link at most once.
+/// puts between the two, so one signer's walks in a scope pass each covered
+/// row and parent link at most once. Different signers' walks share no such
+/// bound (Astra round 2 F1: signers whose rows sit either side of one long
+/// chain each walk all of it): the gate costs O(K (rows + links) log rows)
+/// for the K tail signers with two or more covered rows in one scope. Each
+/// walk stays inside its upper row's ancestry, and a row is the upper of at
+/// most one pair, so the gate does no more work than building the covered
+/// rows' ancestor index (`entry_ancestor_index`) for the whole fold a false
+/// answer falls back to. It holds one visited set at a time.
 fn tail_signers_covered_rows_unfloored(
     image: &AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
