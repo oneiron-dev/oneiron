@@ -51,13 +51,8 @@ it, then runs on its own media permit and carries the identity's fenced
 source clip. The bank is checked before the clip is sent and again before the
 audio comes back.
 
-The worker decodes a `/render` upload sent gzip- or zstd-encoded (OF-604),
-whole. Set `request_compression = "zstd"` on the `voxcpm2`
-provider entry (`"gzip"` on a Python before 3.14, which has no
-`compression.zstd`), and the engine sends an upload of 16 KiB or more encoded
-when that makes it smaller. A codec the worker cannot read is answered 415;
-the engine then sends that upload again, plain, and sends plain until it
-restarts. `VoxCpm2HttpQueue` sends plain.
+The worker takes no `request_compression`: its loopback voice socket carries
+no codec frame, and an entry that sets it is refused at config load.
 
 `GET /v1/voice` is the versioned duplex WebSocket the cascade speaks (L8-47
 PR V1; bearer credential, RFC 6455, stdlib framing, no subprotocol or

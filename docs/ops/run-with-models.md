@@ -717,11 +717,12 @@ the broker sends plain until restart. A `key_secret` entry takes no
 Our own model servers decode compressed bodies once built or started for it
 (OF-604): the house model's `exl3_server.py`, a `llama-server` built by
 `deploy/house-model/build-llama.sh` (cpp-httplib's zstd and zlib support on),
-a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
-(deploy/house-model/README.md, "Compressed requests"), and the VoxCPM2 worker.
+and a vLLM server started with `--middleware body_codec.DecodeContentEncoding`
+(deploy/house-model/README.md, "Compressed requests").
 Each opts in on its own entry with `request_compression = "zstd"`; an entry
-whose server does not decode stays plain. A `voxcpm2` entry compresses its
-`/render` uploads, and an opted-in provider's media JSON bodies compress by
+whose server does not decode stays plain. A `voxcpm2` entry takes none (its
+loopback voice socket carries no codec frame) and an entry that sets it is
+refused at config load; an opted-in provider's media JSON bodies compress by
 the same rules. A tagger endpoint opts in on its section, `[oneironer]
 request_compression = "zstd"`, for its `/v1/extract` posts, with the same
 plain resend; a `kind = "oneironer"` provider entry takes none.

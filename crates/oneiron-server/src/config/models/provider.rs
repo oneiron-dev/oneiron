@@ -561,10 +561,9 @@ impl ProviderFile {
     }
 }
 
-/// Whether a kind's request bodies can go compressed: a chat wire's, and
-/// our own VoxCPM2 worker's render uploads, which it decodes (OF-604, D1).
+/// Whether a kind's request bodies can go compressed: a chat wire's.
 fn compresses(kind: ProviderKind) -> bool {
-    kind.generates() || kind == ProviderKind::Voxcpm2
+    kind.generates()
 }
 
 /// The request compression an entry has: what it wrote, else its route's in
@@ -610,7 +609,7 @@ fn request_compression(
         }
         if file.is_some() {
             anyhow::bail!(
-                "models.providers.{name}.request_compression applies to a generating or VoxCPM2 provider whose key is not key_secret"
+                "models.providers.{name}.request_compression applies to a generating provider whose key is not key_secret"
             );
         }
         return Ok(None);
