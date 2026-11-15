@@ -78,6 +78,7 @@ pub use self::claim::{
 pub(in crate::booking) use self::claim::{
     confirmed_booking_starts, confirmed_booking_starts_listed, confirmed_start_for_reminder,
 };
+pub(crate) use self::deposit::refund_deposit_on_host_cancel;
 pub use self::deposit::{
     BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, BookingDepositStatus,
     DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease, DepositCheckoutStart, DepositProviderEvent,
@@ -98,7 +99,6 @@ pub use self::feed_move::{
     run_booking_revision_invites,
 };
 pub(crate) use self::feed_move::{FeedMoveOutcome, move_booking_by_feed};
-pub(crate) use self::deposit::refund_deposit_on_host_cancel;
 pub use self::hold_source::VaultActiveHoldSource;
 pub use self::token::{
     HoldLeaseSpec, OpaqueCheckoutLeaseToken, OpaqueLifecycleToken, SessionKey, confirm_event_type,
