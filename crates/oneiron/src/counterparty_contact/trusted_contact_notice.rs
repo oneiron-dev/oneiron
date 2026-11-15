@@ -568,7 +568,7 @@ impl Vault {
                     now,
                     |row| {
                         Ok(row.accepts_worker(lease_owner)
-                            && decode(row).is_ok_and(|notice| notice.sender == sender))
+                            && decode(row).is_ok()) // SEEDED FAULT TF3
                     },
                 )?;
                 match candidate {

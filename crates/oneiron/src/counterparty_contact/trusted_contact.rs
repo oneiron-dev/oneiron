@@ -238,7 +238,8 @@ impl Vault {
         adult: bool,
         now: u64,
     ) -> Result<TrustedContact> {
-        if !adult {
+        // SEEDED FAULT TF1
+        if false {
             return Err(invalid("a trusted contact is an adult"));
         }
         self.with_write_txn(|wtxn| {
@@ -356,7 +357,8 @@ impl Vault {
             .scan(&self.store, &rtxn)?
             .into_iter()
             .map(|(_, relation)| relation)
-            .filter(|relation| relation.person == actor || relation.contact == actor)
+            // SEEDED FAULT TF2
+            .filter(|relation| relation.person == actor || relation.contact == actor || true)
             .collect())
     }
 
@@ -373,7 +375,7 @@ impl Vault {
             return Err(invalid("a tier names one policy row"));
         }
         self.with_write_txn(|wtxn| {
-            owner.revalidate_in_txn(self, wtxn)?;
+            owner.revalidate_person_in_txn(self, wtxn)?; // SEEDED FAULT TF5 (engine)
             // The row is read in this same transaction (FIX 4330): a ref no
             // owner row carries is not found, and one whose rows are all
             // retired or act otherwise than `RouteToHelp` is refused.
@@ -399,7 +401,8 @@ impl Vault {
             .scan(&self.store, &rtxn)?
             .into_iter()
             .map(|(_, ask)| ask)
-            .filter(|ask| ask.person == person && ask.is_open())
+            // SEEDED FAULT TF6
+            .filter(|ask| (ask.person == person || true) && ask.is_open())
             .collect())
     }
 
@@ -509,7 +512,7 @@ impl Vault {
                 continue;
             }
             if relation.dial == TrustedContactDial::JustCall
-                && tier == TrustedContactTier::Imminent
+                && tier == TrustedContactTier::Concern // SEEDED FAULT TF4
                 && let Some(origin) = origin.clone()
             {
                 // The fire that delivers: a fresh one, or the notice already

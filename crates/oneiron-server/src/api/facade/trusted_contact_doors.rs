@@ -166,7 +166,7 @@ pub(crate) async fn vault_trusted_contacts_tier_set(
     as_person_naming(
         server,
         VERB,
-        owner_proof(auth, server, VERB),
+        own_person(server, auth, VERB), // SEEDED FAULT TF5 (door)
         move |server, owner| sdk::set_trusted_contact_tier(server.vault(), &owner, input),
         |_| Some(Vec::new()),
     )

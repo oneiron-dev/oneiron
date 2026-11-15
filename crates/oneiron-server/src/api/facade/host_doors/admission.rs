@@ -94,6 +94,8 @@ pub(in crate::api::facade) fn door_admits(
                     crate::api::facade::FacadeApiError::from(error).into_memory_error()
                 })
         }
+        // SEEDED FAULT TF5 (admission)
+        Proof::Owner if verb == "vault.trusted_contacts.tier.set" => Ok(()),
         Proof::Owner => owner_proof(auth, server, verb).map(drop),
         // `vault.consent.revoke` (FIX 23149): the owner's proof, or a credential bound to an actor,
         // which the door then admits only on a Grant that actor holds. A caller with neither keeps
