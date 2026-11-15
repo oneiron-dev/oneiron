@@ -14,6 +14,7 @@ pub mod lfs_install_line;
 pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
+pub mod managed_issuer;
 pub mod mcp_carrier_release;
 pub mod mcp_page_mint;
 pub mod mcp_surface;
