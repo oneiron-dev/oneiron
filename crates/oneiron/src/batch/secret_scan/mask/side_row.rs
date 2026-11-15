@@ -660,41 +660,67 @@ pub(crate) fn admit_typed<T: Serialize + DeserializeOwned>(
 /// Each handle on either side reads as the plan's one stand-in, so a secret
 /// the wall lifted matches the same secret offered again. Nothing is minted.
 pub(crate) fn admitted_from(held: &Value, raw: &Value) -> Result<bool> {
+    admitted_from_known(held, raw, || Ok(None))
+}
+
+/// [`admitted_from`] for a row the wall admitted in a scope that decides
+/// with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER): there a value custody
+/// holds took its record's handle, a value no shape rule places too, so
+/// `raw` is planned again with `known`, the values custody holds now, as
+/// the wall planned it. `known` is read only when the plan without it
+/// misses, and a row admitted before its value entered custody, which holds
+/// that value as written, still meets its call by that first plan. Nothing
+/// is minted.
+pub(crate) fn admitted_from_known(
+    held: &Value,
+    raw: &Value,
+    known: impl FnOnce() -> Result<Option<Arc<KnownValues>>>,
+) -> Result<bool> {
     if held == raw {
         return Ok(true);
     }
-    // The plan's copy is wiped once compared (FIX 1101).
-    let mut planned = PlanTree(raw.clone());
+    let mut held = held.clone();
+    stand_in_handles(&mut held);
+    if held == planned_form(raw, None)?.0 {
+        return Ok(true);
+    }
+    Ok(match known()? {
+        Some(known) => held == planned_form(raw, Some(known))?.0,
+        None => false,
+    })
+}
+
+/// `value` as the replay plan places it: each secret the plan places, and
+/// each handle, as the plan's one stand-in, and with `known`, each value it
+/// holds too. Nothing is minted. The copy is wiped when it drops (FIX 1101).
+fn planned_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<PlanTree> {
+    let mut planned = PlanTree(value.clone());
     Masker {
         mints: true,
         at: Some((origin("replay", &[])?, "replay".to_owned())),
+        known,
         ..Masker::default()
     }
     .mask_value(&mut planned.0)?;
-    let mut held = held.clone();
-    stand_in_handles(&mut held);
     stand_in_handles(&mut planned.0);
-    Ok(held == planned.0)
+    Ok(planned)
 }
 
 /// `value` in the one form [`admitted_from`] compares a held row and a raw
 /// offer in (FIX 6534): each secret the plan places, and each handle, as
 /// the plan's one stand-in. A held row and the raw value it was admitted
 /// from read the same here, so a digest of either is one identity. Nothing
-/// is minted, and the plan's copy is wiped.
+/// is minted, and the plan's copy is wiped. With `known`, the values
+/// custody holds now, each of them reads as the stand-in too: the form a
+/// raw offer takes against a row the wall admitted in a scope that decides
+/// with custody, as [`admitted_from_known`] compares them (FIX
+/// REPLAY-COMPARE-KNOWN-MATCHER).
 ///
 /// # Errors
 ///
 /// A value the plan cannot read.
-pub(crate) fn admission_form(value: &Value) -> Result<Value> {
-    let mut planned = PlanTree(value.clone());
-    Masker {
-        mints: true,
-        at: Some((origin("replay", &[])?, "replay".to_owned())),
-        ..Masker::default()
-    }
-    .mask_value(&mut planned.0)?;
-    stand_in_handles(&mut planned.0);
+pub(crate) fn admission_form(value: &Value, known: Option<Arc<KnownValues>>) -> Result<Value> {
+    let mut planned = planned_form(value, known)?;
     Ok(std::mem::replace(&mut planned.0, Value::Nil))
 }
 

@@ -551,8 +551,12 @@ impl RecordingJsHost<'_, '_> {
         // A resumed turn program's settled calls answer from the rows that
         // settled them, before a position is taken or anything dispatched
         // (DOOR-141 PR3b). Only a pinned entry binds an injection.
+        // A value base custody holds took its handle in a settled row, and
+        // meets it there (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+        let gated_write = self.gated_write;
+        let base_known = || gated_write.base_known_values();
         if let Some(injection) = self.injection.as_mut() {
-            match injection.answer(&call) {
+            match injection.answer(&call, &base_known) {
                 InjectedAnswer::Live => {}
                 InjectedAnswer::Settled { seq, outcome, view } => {
                     // The injected card replaces `store_reply`: consume its

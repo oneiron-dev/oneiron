@@ -86,6 +86,19 @@ impl HostSelfDispatcher<'_> {
             && matches!(self.withholds_retained(rows), Ok(false))
     }
 
+    /// The values base custody holds now, which a recorded call's row is
+    /// compared with when its call is made again (FIX
+    /// REPLAY-COMPARE-KNOWN-MATCHER): a matcher, never the store.
+    ///
+    /// # Errors
+    ///
+    /// The custody read's.
+    pub(crate) fn base_known_values(
+        &self,
+    ) -> Result<Option<std::sync::Arc<crate::store::known_value_index::KnownValues>>> {
+        self.storage.base_known_values()
+    }
+
     pub(super) fn dispatch_bound(
         &self,
         call: SelfCall,

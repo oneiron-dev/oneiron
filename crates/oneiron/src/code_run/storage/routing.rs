@@ -1,5 +1,7 @@
 //! Where one run's reads and writes land: the canonical vault or a bound off-record session.
 
+use std::sync::Arc;
+
 use crate::claim::{ClaimReadStatus, ScopedReadActorKey};
 use crate::memory::{MessageResultAttachment, WitnessAssertions, WitnessReceipt};
 use crate::off_record::{ExecutorUtterance, OffRecordMode, OffRecordSession, SessionWriteRoute};
@@ -23,6 +25,7 @@ use super::speech_identity::{
 use crate::limit_ask::{EngineLimit, LimitWatch};
 use crate::result_memory::ResultShare;
 use crate::secret_rotation::ArtifactTaintState;
+use crate::store::known_value_index::KnownValues;
 use crate::store::{BODY_KEYS, BodySink, body_key_row_in_txn};
 
 mod bodies;
@@ -290,8 +293,9 @@ impl SessionBinding<'_> {
 /// accessors route by mode — overlay while `OffRecord`, ordinary base after
 /// the room flips `OnRecord`. Adding a method here is adding a way for the
 /// executor to reach storage, so the set below is closed: identity, policy,
-/// search, and the four replay/raw-output accessors. The memory-write verbs
-/// are NOT here; they route inside their own dispatch bodies.
+/// search, the four replay/raw-output accessors, and the known values a
+/// replay compares its rows with. The memory-write verbs are NOT here; they
+/// route inside their own dispatch bodies.
 pub(crate) enum ExecutorStorage<'a> {
     Canonical(&'a Vault),
     Session(SessionBinding<'a>),
@@ -373,6 +377,21 @@ impl<'a> ExecutorStorage<'a> {
         match self {
             Self::Canonical(vault) => vault.vault_id(),
             Self::Session(binding) => binding.session.vault_id(),
+        }
+    }
+
+    /// The values the owning vault's custody holds now, which a replay
+    /// compares a recorded row with (FIX REPLAY-COMPARE-KNOWN-MATCHER): a
+    /// session's too, whose rows are read over base. A matcher; neither
+    /// arm hands out the store it was read from.
+    ///
+    /// # Errors
+    ///
+    /// The custody read's.
+    pub(crate) fn base_known_values(&self) -> Result<Option<Arc<KnownValues>>> {
+        match self {
+            Self::Canonical(vault) => vault.known_values_now(),
+            Self::Session(binding) => binding.session.base_known_values(),
         }
     }
 

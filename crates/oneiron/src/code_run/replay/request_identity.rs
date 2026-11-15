@@ -21,10 +21,12 @@
 //! a spawn's miss, so no fresh effect runs in its place. A live request
 //! keeps its full value and its `admitted_from` matching.
 
+use std::sync::Arc;
+
 use rmpv::Value;
 
 use super::super::spawn_replay::{
-    ReplayRequestMatch, ask_of, is_barrier_ask, is_erased_ask, without_ask,
+    CompareKnown, ReplayRequestMatch, ask_of, is_barrier_ask, is_erased_ask, without_ask,
 };
 use super::super::support::{invalid_code_run_replay, request_map};
 use super::super::types::SelfEffect;
@@ -32,6 +34,7 @@ use super::CodeRunBridgeCall;
 use crate::Result;
 use crate::batch::secret_scan::admission_form;
 use crate::code_run::RESPONSE_ERASED;
+use crate::store::known_value_index::KnownValues;
 use crate::task_verb::sdk::AgentVerb;
 
 /// The domain of a bridge request's identity digest.
@@ -106,14 +109,44 @@ impl<'a> ErasedRequest<'a> {
     ///
     /// A request the side-row wall cannot read, or one that does not encode.
     pub(in crate::code_run) fn meets(&self, offered: &Value) -> Result<ReplayRequestMatch> {
-        let identity = match (self.ask, offered) {
-            (None, _) => canonical_digest(offered)?,
+        self.meets_known(offered, &CompareKnown::new(None))
+    }
+
+    /// [`Self::meets`] for a row the side-row wall admitted in a scope that
+    /// decides with custody (FIX REPLAY-COMPARE-KNOWN-MATCHER): `offered`
+    /// meets the identity in either form. Its admission form first, as the
+    /// identity of a row erased while it held a value as written (a row
+    /// stored before that value entered custody) was taken; then, once that
+    /// misses, with each value base custody holds now as the stand-in too,
+    /// as the identity of a row erased while it held that value's handle was
+    /// taken. An erased row's identity is never taken again.
+    ///
+    /// # Errors
+    ///
+    /// A request the side-row wall cannot read, one that does not encode,
+    /// or the read of base custody's values.
+    pub(in crate::code_run) fn meets_known(
+        &self,
+        offered: &Value,
+        known: &CompareKnown<'_>,
+    ) -> Result<ReplayRequestMatch> {
+        let identity_meets = |request: &Value| -> Result<bool> {
+            if canonical_digest(request, None)? == self.identity {
+                return Ok(true);
+            }
+            Ok(match known.get()? {
+                Some(known) => canonical_digest(request, Some(known))? == self.identity,
+                None => false,
+            })
+        };
+        let hit = match (self.ask, offered) {
+            (None, _) => identity_meets(offered)?,
             (Some(_), Value::Map(fields)) if ask_of(fields).is_some_and(Value::is_str) => {
-                canonical_digest(&without_ask(fields))?
+                identity_meets(&without_ask(fields))?
             }
             (Some(_), _) => return Ok(ReplayRequestMatch::Drift),
         };
-        Ok(if identity == self.identity {
+        Ok(if hit {
             ReplayRequestMatch::Hit
         } else {
             ReplayRequestMatch::Drift
@@ -273,8 +306,8 @@ fn typed_ask(effect: SelfEffect, request: &Value) -> Option<&Value> {
 /// field but its ask.
 fn live_identity(effect: SelfEffect, request: &Value) -> Result<[u8; 32]> {
     match (typed_ask(effect, request), request) {
-        (Some(_), Value::Map(fields)) => canonical_digest(&without_ask(fields)),
-        _ => canonical_digest(request),
+        (Some(_), Value::Map(fields)) => canonical_digest(&without_ask(fields), None),
+        _ => canonical_digest(request, None),
     }
 }
 
@@ -299,9 +332,9 @@ fn erased_value(effect: SelfEffect, request: &Value) -> Result<Value> {
 
 /// The BLAKE3 digest of `request`'s canonical MessagePack, read in its
 /// admission form: each secret the side-row wall places, and each handle
-/// it placed, as one stand-in.
-fn canonical_digest(request: &Value) -> Result<[u8; 32]> {
-    let admitted = admission_form(request)?;
+/// it placed, as one stand-in; with `known`, each value it holds too.
+fn canonical_digest(request: &Value, known: Option<Arc<KnownValues>>) -> Result<[u8; 32]> {
+    let admitted = admission_form(request, known)?;
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, &admitted)
         .map_err(|_| invalid_code_run_replay("a bridge request does not encode"))?;

@@ -8,6 +8,7 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 
 use super::*;
+use crate::code_run::BaseKnownRead;
 
 /// What a resumed step's guest reads once its replay holds: the call ran
 /// nowhere, and the step commits nothing.
@@ -104,6 +105,7 @@ impl DeadlineReplay {
         &mut self,
         at: u64,
         call: &SelfCall,
+        base_known: BaseKnownRead<'_>,
     ) -> std::result::Result<RecordedCall, &'static str> {
         if let Some(held) = self.held {
             return Err(held);
@@ -118,7 +120,7 @@ impl DeadlineReplay {
         if row.hook_view_served {
             return Err(self.hold(HOOK_VIEW));
         }
-        let Ok(outcome) = row.strict_replay_answer(at, call.clone()) else {
+        let Ok(outcome) = row.strict_replay_answer(at, call.clone(), Some(base_known)) else {
             return Err(self.hold(DIVERGED));
         };
         self.guest_calls.pop_front();
@@ -185,11 +187,15 @@ impl RecordingJsHost<'_, '_> {
         &mut self,
         call: &SelfCall,
     ) -> Option<SelfDispatchResponse> {
+        // A value base custody holds took its handle in a recorded row, and
+        // meets it there (FIX REPLAY-COMPARE-KNOWN-MATCHER).
+        let gated_write = self.gated_write;
+        let base_known = || gated_write.base_known_values();
         let replay = self.deadline_replay.as_mut()?;
         if replay.held.is_none() && !replay.unreached() {
             return None;
         }
-        let taken = match replay.take(self.next_seq, call) {
+        let taken = match replay.take(self.next_seq, call, &base_known) {
             Ok(recorded)
                 if !self.gated_write.releases_recorded_answer(
                     recorded.served_rows(&self.callable_rows).as_deref(),
