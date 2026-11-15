@@ -189,7 +189,9 @@ nothing derives from it. A sealed family never feeds training. The gate reads
 through the caller's scoped reader before it looks for a seed, so a caller the
 capture is withheld from learns nothing of its seed, not even whether one exists.
 Its write settles only the seed row it read: a seed that changed meanwhile (an
-erase and a new proposal, or another settle) is not graded with that verdict.
+erase and a new proposal, or another settle) is not graded with that verdict,
+and a capture deleted meanwhile leaves its seed unsettled (a delete keeps the
+seed until the erase scrubs it, but it never takes a case).
 `Vault::pending_eval_repair_seeds` lists the seeds the gate has not graded. An
 erased capture takes its seeds with it; a confirmed seed's case stays, without
 the capture in its source rows. A seed's case is dated by its proposal.
