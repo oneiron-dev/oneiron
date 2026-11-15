@@ -1313,7 +1313,8 @@ fn a_stranger_roots_mark_under_the_requests_class_never_makes_a_class_change_a_r
     let with_mark = redemption_outcome(&served, &second);
     assert!(
         !with_mark.re_paired,
-        "the stranger's mark does not make the class change a credential-only re-pairing"
+        "the stranger's mark does not make the class change a credential-only re-pairing: \
+         beside the mark {with_mark:?}, with no mark {without_mark:?}"
     );
     assert_eq!(
         with_mark, without_mark,
