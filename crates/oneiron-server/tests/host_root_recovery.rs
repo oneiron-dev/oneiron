@@ -19,6 +19,10 @@
 //! host_root_recovery`. Linux only: the keystore here is the file keystore,
 //! one `<slot>.key` file per slot under `ONEIRON_KEYSTORE_DIR`.
 #![cfg(all(unix, not(target_vendor = "apple"), oneiron_test_support))]
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test process starts its own subprocesses; the rule covers the server's crates"
+)]
 
 use std::fs::File;
 use std::os::unix::fs::PermissionsExt;

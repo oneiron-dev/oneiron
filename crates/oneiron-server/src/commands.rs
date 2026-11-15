@@ -39,6 +39,8 @@ mod host_init;
 pub use self::host_init::host_init;
 mod host_re_root;
 pub use self::host_re_root::host_re_root;
+mod host_recover_root;
+pub use self::host_recover_root::host_recover_root;
 mod host_recover_owner;
 pub use self::host_recover_owner::host_recover_shared_owner;
 mod token_operator;

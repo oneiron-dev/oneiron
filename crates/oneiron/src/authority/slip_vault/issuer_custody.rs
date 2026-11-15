@@ -5,10 +5,11 @@
 //! replica or restore has reached; never from auth_secret, the DEK or the
 //! vault id, which name the slot and take no part in the key.
 //!
-//! Four operations, never one load-or-create on every open: a load reads
+//! Five operations, never one load-or-create on every open: a load reads
 //! the slot and writes nothing; a bootstrap fills an empty slot only for an
 //! unstarted vault, before its signed genesis; an explicit re-root draws its
-//! successor; a validated replacement is written in place. A missing seed is
+//! successor; a kit recovery draws one for a root this install lost (L1-07);
+//! a validated replacement is written in place. A missing seed is
 //! key unavailability: nothing falls back to a key derived from a configured
 //! secret, and nothing mints a successor silently.
 //!
@@ -33,6 +34,7 @@ use crate::error::{Error, Result, SecretError};
 use crate::world_keys::keystore_error;
 
 use crate::authority::{HostIssuerSeedSlot, HostReRoot, authority_refused};
+use crate::store::recovery_kit::RestoredKitSecret;
 
 /// This install holds no host issuer seed for this vault: it never rooted
 /// it, its keystore lost the slot, or the host installed no keystore.
@@ -47,6 +49,11 @@ const HOST_ISSUER_SEED_SLOT_EMPTIED: &str =
 /// seed of: nothing moved, and the slot keeps its own seed.
 const HOST_ISSUER_SEED_NOT_CURRENT: &str =
     "this install's host issuer seed is not the issuer the re-root names; nothing moved";
+
+/// This install's slot holds the seed of the vault's live root, so the root
+/// is not lost here: a kit recovery moves nothing (L1-07).
+const HOST_ROOT_HELD: &str =
+    "this install holds the vault's live root; move it with `oneiron host re-root`";
 
 /// Typed reason: this install's host issuer seed is not escrowed in the
 /// vault's key custody yet. The act that drew or kept it stands; the next
@@ -150,6 +157,53 @@ impl Vault {
                         return Err(Error::InvariantViolation(HOST_ISSUER_SEED_SLOT_EMPTIED));
                     }
                     Err(restore) => return Err(keystore_error(restore)),
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Recovers this vault's root on this install after its seed is lost
+    /// (L1-07; OF-570): a successor seed drawn here takes this install's
+    /// slot, and the restored kit's enrolled authority key moves the root to
+    /// it ([`Self::recover_host_root_from_kit`]). Refused before any draw
+    /// when the slot holds the live root's seed, one the escrow gave back at
+    /// keystore install included: that root moves by re-root. An empty slot
+    /// is filled create-only; a slot holding a retired seed is replaced in
+    /// place. A recovery that then fails leaves the slot as it was: emptied
+    /// again, or its retired seed put back.
+    pub fn recover_host_root_to_new_seed(&self, secret: RestoredKitSecret) -> Result<HostReRoot> {
+        let keystore = self.device_keystore()?;
+        let slot = self.host_issuer_slot()?;
+        let kept = keystore.get(&slot).map_err(keystore_error)?;
+        if let Some(seed) = &kept
+            && self.is_live_root(&HostSlipIssuer::from_seed(seed)?)?
+        {
+            return Err(authority_refused(HOST_ROOT_HELD));
+        }
+        let next_seed = new_host_issuer_seed()?;
+        let next = HostSlipIssuer::from_seed(&next_seed)?;
+        if kept.is_some() {
+            match keystore.replace(&slot, &next_seed) {
+                Ok(true) => {}
+                Ok(false) => return Err(seed_absent()),
+                Err(error) => return Err(keystore_error(error)),
+            }
+        } else {
+            keystore.create(&slot, &next_seed).map_err(keystore_error)?;
+        }
+        match self.recover_host_root_from_kit(secret, &next) {
+            Ok(moved) => Ok(moved),
+            Err(error) => {
+                match &kept {
+                    None => keystore.delete(&slot).map_err(keystore_error)?,
+                    Some(seed) => match keystore.replace(&slot, seed) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            return Err(Error::InvariantViolation(HOST_ISSUER_SEED_SLOT_EMPTIED));
+                        }
+                        Err(restore) => return Err(keystore_error(restore)),
+                    },
                 }
                 Err(error)
             }

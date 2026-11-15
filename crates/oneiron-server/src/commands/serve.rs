@@ -95,6 +95,7 @@ pub(super) async fn serve_anchored(
     if let Err(error) = sign_root_project(&vault, server_config.auth_secret.as_deref()) {
         tracing::warn!(%error, "the root project was not signed; it stays unsigned until the next start");
     }
+    warn_genesis_fragile(&vault);
     crate::owner::house::bind_house_leader_at_start(
         &vault,
         server_config.auth_secret.as_deref(),
@@ -533,6 +534,26 @@ pub(crate) fn build_embedder_on_thread(
 /// address judged is the one this path binds, before the vault opens. A dev
 /// server reachable from the LAN sets a secret instead; there is no override.
 /// Managed serve never comes here: the supervisor owns its socket.
+/// Says at each start, by the typed reason `GENESIS_FRAGILE`, that the vault
+/// holds no recovery method: a root move retired its recovery kit's key with
+/// every other key and no owner key has been enrolled since, or the owner
+/// skipped saving the genesis recovery secret (identity.md "Genesis window";
+/// L1-07-KIT-AFTER-MOVE = B). A flag, never a refusal: serve goes on.
+fn warn_genesis_fragile(vault: &oneiron::Vault) {
+    match vault.genesis_fragile_now() {
+        Ok(false) => {}
+        Ok(true) => tracing::warn!(
+            reason = oneiron::authority::GENESIS_FRAGILE_FLAG,
+            "this vault holds no recovery method; enrol a new recovery kit with \
+             `oneiron recovery-kit issue`, then `confirm`, then `enroll-authority`"
+        ),
+        Err(error) => tracing::warn!(
+            kind = ?error.kind(),
+            "whether this vault holds a recovery method was not read at start"
+        ),
+    }
+}
+
 fn refuse_unauthenticated_public_bind(
     config: &ServeConfig,
     addr: SocketAddr,

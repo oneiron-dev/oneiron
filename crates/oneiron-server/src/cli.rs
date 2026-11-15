@@ -362,6 +362,12 @@ pub enum HostCommand {
     /// the vault id stays, and every credential the old secret minted stops
     /// working. Run it after a host secret leaks, or to change it.
     ReRoot(Box<HostReRootArgs>),
+    /// Recover a stopped self-host vault's root after this install lost it,
+    /// with the recovery kit enrolled before the loss (`recovery-kit
+    /// enroll-authority`): the kit's key moves the root to a new issuer seed,
+    /// in-chain, so the vault id stays, and every credential the lost root
+    /// minted stops working.
+    RecoverRoot(Box<HostRecoverRootArgs>),
     /// Run one vault as a Firecracker VM behind a unix socket: start it on
     /// the first connection or a due wake, and sleep it when idle.
     Vm(Box<HostVmArgs>),
@@ -389,6 +395,21 @@ pub struct HostReRootArgs {
     /// instead of `ONEIRON_NEW_AUTH_SECRET`.
     #[arg(long, value_name = "FILE")]
     pub new_secret_file: Option<PathBuf>,
+
+    #[command(flatten)]
+    pub serve: ServeArgs,
+}
+
+/// The kit's pieces come from owner-only `--piece` files and its passphrase
+/// from `--secret-file` or stdin; the host secret from the config or
+/// `ONEIRON_AUTH_SECRET`. None is read from argv or printed.
+#[derive(Args, Clone, Debug)]
+pub struct HostRecoverRootArgs {
+    #[command(flatten)]
+    pub kit: KitPieceArgs,
+
+    #[command(flatten)]
+    pub unlock: VaultUnlockArgs,
 
     #[command(flatten)]
     pub serve: ServeArgs,
@@ -1109,6 +1130,7 @@ pub async fn run_cli(cli: Cli) -> anyhow::Result<()> {
         }
         Command::Host(HostCommand::Init(args)) => commands::host_init(args),
         Command::Host(HostCommand::ReRoot(args)) => commands::host_re_root(*args),
+        Command::Host(HostCommand::RecoverRoot(args)) => commands::host_recover_root(*args),
         Command::Host(HostCommand::RecoverSharedOwner(args)) => {
             commands::host_recover_shared_owner(*args)
         }

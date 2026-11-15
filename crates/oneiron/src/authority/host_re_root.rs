@@ -8,6 +8,11 @@
 //! readable. Every slip the old root minted
 //! stops verifying (OF-455: "existing slips on the old host fail verification
 //! against the new root"); the holders get new ones from the new root.
+//!
+//! When the root's seed is lost and its escrow gives none back, the same move
+//! is signed by the recovery kit's authority key the owner enrolled before the
+//! loss ([`Vault::recover_host_root_from_kit`]; L1-07, OF-570): one move body
+//! for both signers.
 use super::slip_vault::require_host;
 use super::*;
 use crate::claim::HandoffKind;
@@ -16,6 +21,8 @@ use crate::claim::history_projection::{
 };
 use crate::error::{Error, Result};
 use crate::store::Store;
+use crate::store::recovery_kit::RestoredKitSecret;
+use crate::world_keys::RecoveryAuthoritySigner;
 use crate::{EntityId, Vault};
 use rand_core::{OsRng, RngCore};
 
@@ -32,8 +39,8 @@ pub struct HostReRoot {
     pub histories_carried: usize,
     /// Pinned histories that were not readable before the move and stay so.
     pub histories_left: usize,
-    /// Live slips the old root minted, other than its own root slip. None of
-    /// them verifies now.
+    /// Live slips a key the move retired minted (the old root, or any owner
+    /// key), other than the host's own root slip. None of them verifies now.
     pub retired_slips: Vec<RetiredSlip>,
 }
 
@@ -44,6 +51,69 @@ pub struct RetiredSlip {
     pub slip_id: [u8; 32],
     pub holder_ref: String,
     pub actor_class: Option<String>,
+}
+
+/// Typed reason: the restored kit's authority key is not a live owner key of
+/// this vault, so it signs no root move. Nothing moved.
+const RECOVERY_KIT_NOT_ENROLLED: &str = "this kit's authority key is not a live owner key of \
+     this vault; a kit recovers the root only after `recovery-kit enroll-authority`, and a \
+     root move retires the key it enrolled";
+
+/// What proves the right to move a host root.
+enum RootMoveProof<'a> {
+    /// The live root, this install's loaded issuer (OF-455).
+    Root(&'a HostSlipIssuer),
+    /// A recovery kit restored here, whose authority key the owner enrolled
+    /// before the loss (L1-07; OF-570).
+    Kit(RestoredKitSecret),
+}
+
+/// The key that signs a host root move, judged against the fold before it.
+enum RootMoveSigner<'a> {
+    Root(&'a HostSlipIssuer),
+    Kit(RecoveryAuthoritySigner),
+}
+
+impl<'a> RootMoveProof<'a> {
+    /// The signer this proof stands for, when it is a live owner key of the
+    /// vault's one settled root in `before`; the kit's key is derived for
+    /// `vault_id`, the fold's own.
+    fn signer(
+        self,
+        before: &AuthorityFold,
+        vault_id: &AuthorityVaultId,
+    ) -> Result<RootMoveSigner<'a>> {
+        match self {
+            Self::Root(current) => {
+                require_host(before, current)?;
+                Ok(RootMoveSigner::Root(current))
+            }
+            Self::Kit(secret) => {
+                let kit = RecoveryAuthoritySigner::from_restored_kit(secret, vault_id)?;
+                // `vault_id` is the fold's own, so its root is not conflicted.
+                if !roster_has_live_owner(&before.roster, &kit.authority_key()) {
+                    return Err(authority_refused(RECOVERY_KIT_NOT_ENROLLED));
+                }
+                Ok(RootMoveSigner::Kit(kit))
+            }
+        }
+    }
+}
+
+impl RootMoveSigner<'_> {
+    fn key(&self) -> AuthorityKey {
+        match self {
+            Self::Root(current) => current.public_key(),
+            Self::Kit(kit) => kit.authority_key(),
+        }
+    }
+
+    fn sign(&self, transcript: &[u8]) -> Result<Vec<u8>> {
+        match self {
+            Self::Root(current) => Ok(current.sign_slip(transcript)),
+            Self::Kit(kit) => kit.sign_authority_transcript(transcript),
+        }
+    }
 }
 
 impl Vault {
@@ -64,6 +134,42 @@ impl Vault {
         current: &HostSlipIssuer,
         next: &HostSlipIssuer,
     ) -> Result<HostReRoot> {
+        self.move_host_root(RootMoveProof::Root(current), next)
+    }
+
+    /// Moves the host root to `next` as [`Self::re_root_host`] does, signed
+    /// by the restored recovery kit's authority key instead of the lost root
+    /// (L1-07; OF-570; identity.md "Recovery reboot"): the genesis and the
+    /// vault id stay, and the same rows are carried. The kit's key must be a
+    /// live owner key of the vault's settled root, enrolled before the loss
+    /// (`recovery-kit enroll-authority`); otherwise this refuses, by a typed
+    /// reason that names that command, before anything is written.
+    /// The new root holds only the roles the kit's key may hand on
+    /// (`ROLE_OWNER`). Self-host only: relay keeps no host recovery path, and
+    /// managed recovery rides account auth (identity.md
+    /// `#cloud-agent-recovery`). The move retires the kit's key with every
+    /// other key (L1-07-KIT-AFTER-MOVE = B). An error always means nothing
+    /// moved, which [`Self::recover_host_root_to_new_seed`] relies on.
+    pub fn recover_host_root_from_kit(
+        &self,
+        secret: RestoredKitSecret,
+        next: &HostSlipIssuer,
+    ) -> Result<HostReRoot> {
+        if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
+            return Err(invalid_authority());
+        }
+        self.move_host_root(RootMoveProof::Kit(secret), next)
+    }
+
+    /// The one body of a host root move: `proof`'s signer, a live owner key,
+    /// signs one ReRoot to `next`, and the same transaction carries the host
+    /// root slip, the live engine writers, the machines' standing and the
+    /// readable MACHINE histories.
+    fn move_host_root(
+        &self,
+        proof: RootMoveProof<'_>,
+        next: &HostSlipIssuer,
+    ) -> Result<HostReRoot> {
         if self.privacy_posture() == crate::HostingPrivacyPosture::Relay {
             return Err(invalid_authority());
         }
@@ -72,11 +178,16 @@ impl Vault {
         let watch = crate::federation::StaleSweepWatch::begin(self);
         let mut txn = self.store.env.write_txn()?;
         let before = self.authority_fold_readonly_in_txn(&txn)?;
-        require_host(&before, current)?;
+        let vault_id = before.vault_id.ok_or_else(invalid_authority)?;
+        let signer = proof.signer(&before, &vault_id)?;
         if before.roster.contains_key(&next.public_key()) {
             return Err(invalid_authority());
         }
-        let vault_id = before.vault_id.ok_or_else(invalid_authority)?;
+        let signer_key = signer.key();
+        let signer_roles = before
+            .roster
+            .get(&signer_key)
+            .map_or(0, |device| device.roles);
         let writers: Vec<EntityId> = engine_writers
             .into_iter()
             .filter(|machine| {
@@ -98,12 +209,18 @@ impl Vault {
             }
         }
         let now = self.instant_in_txn(&txn)?;
+        // The ReRoot revokes every roster key (op_apply), so every live slip
+        // a live roster key minted stops verifying, the old root's and any
+        // owner key's alike.
         let retired_slips = before
             .slips
             .mints
             .iter()
             .filter(|(id, mint)| {
-                mint.signer == current.public_key()
+                before
+                    .roster
+                    .get(&mint.signer)
+                    .is_some_and(|device| !device.revoked)
                     && mint.action.claims.holder_ref != "host"
                     && before.slip_is_live_at(id, now)
             })
@@ -114,12 +231,16 @@ impl Vault {
             })
             .collect();
 
-        let current_key = current.public_key();
+        let sign = |transcript: &[u8]| signer.sign(transcript);
+        let joiner = match &signer {
+            RootMoveSigner::Root(current) => FrontierSigner::Host(current),
+            RootMoveSigner::Kit(_) => FrontierSigner::Callback(&signer_key, &sign),
+        };
         let (_, re_rooted) = self.re_root_authority_in_txn(
             &mut txn,
-            next.root_device(self.privacy_posture()),
-            (&current_key, Some(FrontierSigner::Host(current))),
-            |transcript| Ok(current.sign_slip(transcript)),
+            next.root_device_under(self.privacy_posture(), signer_roles),
+            (&signer_key, Some(joiner)),
+            &sign,
         )?;
         // The new root's first entry: its sequence is what enrollment extends.
         self.ensure_host_root_slip_in_txn(&mut txn, next)?;
@@ -148,7 +269,7 @@ impl Vault {
         if let Err(error) = watch.finish() {
             tracing::warn!(
                 kind = ?error.kind(),
-                "the stale-stamp sweep after a host re-root failed; \
+                "the stale-stamp sweep after a host root move failed; \
                  the move stands, and the next commit sweeps again"
             );
         }
@@ -160,6 +281,29 @@ impl Vault {
             histories_left,
             retired_slips,
         })
+    }
+
+    /// Whether this vault shows the fragile-genesis flag now
+    /// ([`GENESIS_FRAGILE_FLAG`]; identity.md "Genesis window"): the owner
+    /// dismissed saving the genesis recovery secret and no second device
+    /// enrolled, or a root move retired every key, a recovery kit's among
+    /// them, and no owner key has been enrolled since, so the vault holds no
+    /// recovery method (L1-07-KIT-AFTER-MOVE = B). A flag the host shows,
+    /// never a refusal.
+    ///
+    /// # Errors
+    ///
+    /// Storage and fold faults.
+    pub fn genesis_fragile_now(&self) -> Result<bool> {
+        let moved = {
+            let txn = self.store.env.read_txn()?;
+            let fold = self.authority_view_readonly_in_txn(&txn)?;
+            if fold.genesis_fragile {
+                return Ok(true);
+            }
+            !fold.retired_keys.is_empty()
+        };
+        Ok(moved && !self.enrolled_owner_keys()?.iter().any(|key| key.live))
     }
 
     /// Whether the claim a pinned history projects is readable now.

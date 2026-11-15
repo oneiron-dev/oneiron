@@ -44,7 +44,10 @@ pub(super) fn enroll(args: RecoveryKitAuthorityArgs) -> anyhow::Result<()> {
     })
 }
 
-pub(super) fn open_material(
+/// Opens the stopped vault and restores the `RecoveryRoot` kit its pieces
+/// rebuild, for this vault's own id: what `enroll-authority`,
+/// `recover-authority` and `host recover-root` sign with.
+pub(in crate::commands) fn open_material(
     config: &ServeConfig,
     kit: &KitPieceArgs,
     unlock: &VaultUnlockArgs,

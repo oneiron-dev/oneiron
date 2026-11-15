@@ -11,6 +11,8 @@
 //!
 //! A lost seed has no path here: a re-root needs the current root's
 //! signature, and a second Genesis would change the vault id (OF-455).
+//! `oneiron host recover-root` moves a lost root with the recovery kit the
+//! owner enrolled before the loss (L1-07).
 
 use std::io::{self, Read, Write};
 use std::path::Path;
@@ -111,10 +113,24 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
     let mut steps = vec![
         "Set ONEIRON_AUTH_SECRET (or the config's auth_secret) to the new secret before the next `oneiron serve`; the old secret is refused from now on.".to_owned(),
     ];
+    steps.extend(root_move_steps(&vault, &moved, "the old secret")?);
+    print_root_move_report(&moved, steps)
+}
+
+/// The steps every root move's report gives after its first: the retired
+/// credentials (minted by `retired_by`) to mint again, the histories left
+/// hidden, and, while the move left the vault with no live recovery key, the
+/// three commands that enrol a new kit (L1-07-KIT-AFTER-MOVE = B).
+pub(super) fn root_move_steps(
+    vault: &oneiron::Vault,
+    moved: &oneiron::authority::HostReRoot,
+    retired_by: &str,
+) -> anyhow::Result<Vec<String>> {
+    let mut steps = Vec::new();
     if !moved.retired_slips.is_empty() {
-        steps.push(
-            "Every credential the old secret minted has stopped working, as listed. Mint each agent again with `oneiron token agent --name <name>`, and pair your devices again with `oneiron token bootstrap`.".to_owned(),
-        );
+        steps.push(format!(
+            "Every credential {retired_by} minted has stopped working, as listed. Mint each agent again with `oneiron token agent --name <name>`, and pair your devices again with `oneiron token bootstrap`."
+        ));
     }
     if moved.histories_left > 0 {
         steps.push(format!(
@@ -122,6 +138,21 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
             moved.histories_left
         ));
     }
+    if vault.genesis_fragile_now()? {
+        steps.push(format!(
+            "The move retired every recovery kit key this vault had enrolled, with every other key, so the vault holds no recovery method now, and `oneiron serve` shows the {} flag until you enrol a new kit: `oneiron recovery-kit issue`, then `oneiron recovery-kit confirm`, then `oneiron recovery-kit enroll-authority`.",
+            oneiron::authority::GENESIS_FRAGILE_FLAG
+        ));
+    }
+    Ok(steps)
+}
+
+/// Prints a root move's report: what moved, the credentials it retired, and
+/// `steps`. Never a secret, a seed or a kit piece.
+pub(super) fn print_root_move_report(
+    moved: &oneiron::authority::HostReRoot,
+    steps: Vec<String>,
+) -> anyhow::Result<()> {
     let report = json!({
         "vault_id": hex(&moved.vault_id),
         "engine_writers_enrolled": moved.writers_enrolled,
