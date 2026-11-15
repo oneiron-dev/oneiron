@@ -18,8 +18,9 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::secret_record::FoundKeyAction;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::known_value_index::KnownValues;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 
 /// The reasons the owner's close takes (CALLS, open): what the sweep found is
 /// no secret, the value was rotated or revoked where it is issued, or the
@@ -405,36 +406,24 @@ fn receipt_in_txn(
     held: &SecretLiftHistoryProposal,
     reason: LiftCloseReason,
 ) -> Result<GateDecisionId> {
-    let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id,
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: "approved".into(),
-        reason_codes: vec![REASON_CLOSED.into()],
-        receipt_reasons: Vec::new(),
-        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-            CLOSE_CONTENT_KIND,
-            vec![
-                format!("proposal:{}", hex(row_key)),
-                format!("path:{}", held.proposal.path),
-                format!("cause:{}", held.cause.code()),
-                format!("close:{}", reason.code()),
-            ],
-        ),
-        actor_class: "human".into(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: CLOSE_CONTENT_KIND.into(),
-        policy_manifest_version: crate::store::policy_record::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: blake3::hash(row_key).as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(decision_id)
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        CLOSE_CONTENT_KIND,
+        REASON_CLOSED,
+        ReceiptActor::human(actor),
+        blake3::hash(row_key).as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.details = vec![
+        format!("proposal:{}", hex(row_key)),
+        format!("path:{}", held.proposal.path),
+        format!("cause:{}", held.cause.code()),
+        format!("close:{}", reason.code()),
+    ];
+    Ok(vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
 }
 
 /// Lowercase or uppercase hex as bytes; `None` for anything else.

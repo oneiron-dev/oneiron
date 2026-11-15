@@ -31,8 +31,9 @@ use serde::{Deserialize, Serialize};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result, SecretError};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::secret_payment_marks::{PAYMENT_MARK, SecretPaymentMark};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::vault::Vault;
 
 /// Gate reason code: the owner marked a credential as a payment credential,
@@ -197,29 +198,17 @@ fn append_payment_mark_ruling_in_txn(
         Some(false) => (PAYMENT_MARK_REASON_SET, "action:not_payment"),
         None => (PAYMENT_MARK_REASON_CLEARED, "action:cleared"),
     };
-    let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id,
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: "approved".into(),
-        reason_codes: vec![reason.into()],
-        receipt_reasons: Vec::new(),
-        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-            PAYMENT_MARK_CONTENT_KIND,
-            vec![format!("custody:{}", secret.to_hex()), action.to_owned()],
-        ),
-        actor_class: "human".into(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: PAYMENT_MARK_CONTENT_KIND.into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: secret.as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(decision_id)
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        PAYMENT_MARK_CONTENT_KIND,
+        reason,
+        ReceiptActor::human(actor),
+        secret.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.details = vec![format!("custody:{}", secret.to_hex()), action.to_owned()];
+    Ok(vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
 }

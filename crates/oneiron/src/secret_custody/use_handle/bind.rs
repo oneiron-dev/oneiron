@@ -30,7 +30,8 @@ use crate::authority::{ActSurface, CustodyChange};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result, SecretError};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::vault::Vault;
 
 /// The Gate reason code of an owner's binding.
@@ -242,8 +243,6 @@ impl Vault {
             put_stored_custody_in_txn(self, &mut wtxn, &id, &held, at)?;
             SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal)
         };
-        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
-        let created_at = crate::ports::recorded_at_in_txn(&self.store, &mut wtxn)?;
         let (reason, content_kind) = if bind_request.is_some() {
             (SECRET_BIND_REASON, SECRET_BIND_CONTENT_KIND)
         } else {
@@ -259,29 +258,19 @@ impl Vault {
         } else {
             vec![format!("handle:{handle}"), format!("effector:{effector}")]
         };
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at,
-            outcome: "approved".into(),
-            reason_codes: vec![reason.into()],
-            receipt_reasons: Vec::new(),
-            system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-                content_kind,
-                details,
-            ),
-            actor_class: "human".into(),
-            actor_ref: Some(actor.to_hex()),
-            content_kind: content_kind.into(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: id.as_bytes().to_vec(),
-            read_frontier_hash: [0; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(&mut wtxn, &record)?;
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Approved,
+            content_kind,
+            reason,
+            ReceiptActor::human(actor),
+            id.as_bytes().to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        receipt.details = details;
+        let decision_id = self
+            .store
+            .record_gate_receipt_in_txn(&mut wtxn, receipt)?
+            .decision_id;
         let bound = SecretBound {
             secret_id: id,
             handle,

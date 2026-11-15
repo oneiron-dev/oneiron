@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::secret_handle_purpose::{PURPOSE, SecretHandlePurpose};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EntityId, Vault};
 
 const PURPOSE_SET: &str = "gate.secret.handle_purpose.set";
@@ -104,33 +105,21 @@ fn append_purpose_ruling(
     custody: &EntityId,
     set: bool,
 ) -> Result<GateDecisionId> {
-    let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id,
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: "approved".into(),
-        reason_codes: vec![if set { PURPOSE_SET } else { PURPOSE_CLEARED }.into()],
-        receipt_reasons: Vec::new(),
-        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-            PURPOSE_CONTENT_KIND,
-            vec![
-                format!("handle:{handle}"),
-                format!("custody:{}", custody.to_hex()),
-                if set { "action:set" } else { "action:cleared" }.to_owned(),
-            ],
-        ),
-        actor_class: "human".into(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: PURPOSE_CONTENT_KIND.into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: custody.as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(decision_id)
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        PURPOSE_CONTENT_KIND,
+        if set { PURPOSE_SET } else { PURPOSE_CLEARED },
+        ReceiptActor::human(actor),
+        custody.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.details = vec![
+        format!("handle:{handle}"),
+        format!("custody:{}", custody.to_hex()),
+        if set { "action:set" } else { "action:cleared" }.to_owned(),
+    ];
+    Ok(vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
 }

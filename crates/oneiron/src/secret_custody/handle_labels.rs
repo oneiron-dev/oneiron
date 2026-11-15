@@ -15,8 +15,9 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::secret_custody::types::SECRET_NAME_MAX_BYTES;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::secret_handle_labels::LABEL;
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, Store};
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::vault::Vault;
 
 pub use crate::store::secret_handle_labels::SecretHandleLabel;
@@ -258,33 +259,21 @@ fn append_label_ruling_in_txn(
     } else {
         (HANDLE_LABEL_REASON_CLEARED, "action:cleared")
     };
-    let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
-    let record = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id,
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: "approved".into(),
-        reason_codes: vec![reason.into()],
-        receipt_reasons: Vec::new(),
-        system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
-            HANDLE_LABEL_CONTENT_KIND,
-            vec![
-                format!("handle:{handle}"),
-                format!("custody:{}", custody.to_hex()),
-                action.to_owned(),
-            ],
-        ),
-        actor_class: "human".into(),
-        actor_ref: Some(actor.to_hex()),
-        content_kind: HANDLE_LABEL_CONTENT_KIND.into(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-        claim_id: None,
-        grant_ref: None,
-        diff_handle: custody.as_bytes().to_vec(),
-        read_frontier_hash: [0; 32],
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault.store.append_gate_decision_in_txn(txn, &record)?;
-    Ok(decision_id)
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Approved,
+        HANDLE_LABEL_CONTENT_KIND,
+        reason,
+        ReceiptActor::human(actor),
+        custody.as_bytes().to_vec(),
+        PolicyBasis::NOT_READ,
+    );
+    receipt.details = vec![
+        format!("handle:{handle}"),
+        format!("custody:{}", custody.to_hex()),
+        action.to_owned(),
+    ];
+    Ok(vault
+        .store
+        .record_gate_receipt_in_txn(txn, receipt)?
+        .decision_id)
 }
