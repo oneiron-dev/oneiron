@@ -8,6 +8,8 @@ pub mod advisory_rate_window;
 pub mod agent_definition_scans;
 pub mod approval_target_round_trip;
 pub mod archive_import;
+#[cfg(feature = "sync")]
+pub mod artifact_publication_pump;
 pub mod authority_stored_damage;
 pub mod authority_view_grant;
 pub mod authority_world_undo;
