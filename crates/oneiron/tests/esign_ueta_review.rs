@@ -8,7 +8,8 @@
 //! voids it; a person's Complete stands only on a person's review; Review
 //! then Complete signs. An agent's Complete the signing dial holds for a role
 //! holder's answer (ARCH-0064 D6) lands on that answer only on the values it
-//! was made on, while their review still stands.
+//! was made on, while their review still stands; a repeat call on the open
+//! hold lands as that call, so a person's call there needs a person's review.
 //!
 //! The Review act and the refusal outcome are named through their wire form
 //! (`{"action":"review"}`, `review_required`), so this file builds on a tree
@@ -56,6 +57,12 @@ struct Sent {
 }
 
 fn sent() -> TestResult<Sent> {
+    sent_with(false)
+}
+
+/// As [`sent`]; an `automated` recipient's Complete, by any caller, meets the
+/// signing dial.
+fn sent_with(automated: bool) -> TestResult<Sent> {
     let dir = tempfile::tempdir()?;
     let now = START;
     let clock = ManualClock::new(now);
@@ -114,7 +121,7 @@ fn sent() -> TestResult<Sent> {
             order: 0,
             expires_at: now + 3600,
             principal_ref: None,
-            automated: false,
+            automated,
             natural_person: None,
         }],
         fields: vec![EsignField {
@@ -200,12 +207,12 @@ impl Sent {
         )
     }
 
-    /// An agent's Complete, which the closed signing dial holds: the hold's
-    /// time.
-    fn held(&self) -> TestResult<u64> {
-        match self.complete(AGENT)? {
+    /// A Complete the closed signing dial holds (an agent's, or any caller's
+    /// on an automated recipient): the hold's time.
+    fn held(&self, caller: SigningCaller) -> TestResult<u64> {
+        match self.complete(caller)? {
             SigningOutcome::HeldForOwner { held_at } => Ok(held_at),
-            other => Err(format!("the agent's Complete was not held: {other:?}").into()),
+            other => Err(format!("the Complete was not held: {other:?}").into()),
         }
     }
 
@@ -339,7 +346,7 @@ fn held_complete_lands_only_on_its_reviewed_values() -> TestResult {
     //    and the owner's allow lands nothing.
     assert!(page(sent.save(AGENT, "Sam Signer")?));
     assert!(page(sent.review(AGENT)?));
-    let first = sent.held()?;
+    let first = sent.held(AGENT)?;
     assert!(page(sent.save(AGENT, "Sam Q. Signer")?));
     let settled = sent.allow(first)?;
     assert!(
@@ -353,7 +360,7 @@ fn held_complete_lands_only_on_its_reviewed_values() -> TestResult {
     //    Complete after them: the allow lands nothing.
     sent.tick(1);
     assert!(page(sent.review(AGENT)?));
-    let second = sent.held()?;
+    let second = sent.held(AGENT)?;
     assert!(page(sent.save(AGENT, "Samuel Signer")?));
     assert!(page(sent.review(AGENT)?));
     let settled = sent.allow(second)?;
@@ -366,11 +373,11 @@ fn held_complete_lands_only_on_its_reviewed_values() -> TestResult {
     // 3. Held, then saved, reviewed and completed again: the repeat call
     //    counts on the open hold, and the allow lands on its values.
     sent.tick(2);
-    let third = sent.held()?;
+    let third = sent.held(AGENT)?;
     assert!(page(sent.save(AGENT, "Sam Signer")?));
     assert!(page(sent.review(AGENT)?));
     assert_eq!(
-        sent.held()?,
+        sent.held(AGENT)?,
         third,
         "a repeat Complete counts on the open hold"
     );
@@ -387,6 +394,65 @@ fn held_complete_lands_only_on_its_reviewed_values() -> TestResult {
         signatures[&sent.field].value,
         FieldValue::Text("Sam Signer".into()),
         "signed on the reviewed value"
+    );
+    Ok(())
+}
+
+#[test]
+fn held_repeat_lands_as_its_last_call() -> TestResult {
+    let sent = sent_with(true)?;
+    let page = |outcome: SigningOutcome| matches!(outcome, SigningOutcome::Page(_));
+
+    // 1. An agent's Complete is held; the person reviews and completes the
+    //    same values, which counts on the open hold; the agent then reviews
+    //    them again. The hold now carries the person's call, and an agent's
+    //    review does not stand for it: the allow lands nothing.
+    assert!(page(sent.save(AGENT, "Sam Signer")?));
+    assert!(page(sent.review(AGENT)?));
+    let first = sent.held(AGENT)?;
+    assert!(page(sent.review(BEARER)?));
+    assert_eq!(
+        sent.held(BEARER)?,
+        first,
+        "the person's Complete counts on the open hold"
+    );
+    assert!(page(sent.review(AGENT)?));
+    let settled = sent.allow(first)?;
+    assert!(
+        matches!(settled.state, HeldSigningState::Superseded { .. }),
+        "a hold whose last call is the person's lands only on the person's review: {settled:?}"
+    );
+    assert_eq!(settled.calls, 2);
+    assert!(sent.trail("signed")?.is_empty(), "nothing signed");
+    assert_eq!(sent.signing_status()?, SigningStatus::Ready);
+
+    // 2. The person's Complete is held; the agent saves, reviews and
+    //    completes other values, which counts on the open hold: the allow
+    //    lands as the agent's call, on its values.
+    sent.tick(1);
+    assert!(page(sent.review(BEARER)?));
+    let second = sent.held(BEARER)?;
+    assert!(page(sent.save(AGENT, "Sam Q. Signer")?));
+    assert!(page(sent.review(AGENT)?));
+    assert_eq!(
+        sent.held(AGENT)?,
+        second,
+        "the agent's Complete counts on the open hold"
+    );
+    let settled = sent.allow(second)?;
+    assert!(
+        matches!(settled.state, HeldSigningState::Allowed { .. }),
+        "the hold lands as its last call, the agent's: {settled:?}"
+    );
+    assert_eq!(sent.signing_status()?, SigningStatus::Completed);
+    let signed = sent.trail("signed")?;
+    assert_eq!(signed.len(), 1, "one signature: {signed:?}");
+    assert_eq!(signed[0]["evidence"]["authentication_method"], "agent");
+    let signatures = sent.vault.esign_document(sent.id)?.signatures;
+    assert_eq!(
+        signatures[&sent.field].value,
+        FieldValue::Text("Sam Q. Signer".into()),
+        "signed on the agent's reviewed value"
     );
     Ok(())
 }

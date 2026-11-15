@@ -10,9 +10,9 @@
 //! at every rung only a natural person answers; a board or an agent holding
 //! the role never does. No rule or model rung answers that question:
 //! decide() advises and never grants, so the ask goes straight to the role
-//! queue. An allowed hold signs as the call would have, on the document as
-//! it stands at the answer, and its trail names who allowed it; it lands
-//! only on the field values its call was made on, while the signer's review
+//! queue. An allowed hold signs as its last call would have, on the document
+//! as it stands at the answer, and its trail names who allowed it; it lands
+//! only on the field values that call was made on, while the signer's review
 //! of them still stands (UETA section 10), so a field saved since, or a
 //! review of other values with no Complete after it, supersedes it. A declined
 //! one does not land, and the recipient's turn stays open for the
@@ -110,9 +110,10 @@ pub struct HeldSigning {
     pub name: String,
     pub email: String,
     pub principal_ref: Option<String>,
-    /// The recipient the call named to sign next.
+    /// The recipient the hold's last call named to sign next.
     pub next: Option<String>,
-    /// Who called: the recipient's actor, IP and user agent at the hold.
+    /// Who made the hold's last call: the recipient's actor, IP and user
+    /// agent.
     pub actor: EsignAuditActor,
     /// Authentication, disclosure and consent carried by the accepted act.
     pub evidence: EsignSigningEvidence,
@@ -209,8 +210,8 @@ fn clipped(text: &str, max: usize) -> String {
 }
 
 /// Holds one Complete the dial refused, on the reviewed `values` it was made
-/// on, or counts a repeat on its open hold, which then lands on the repeat's
-/// values.
+/// on, or counts a repeat on its open hold, which then lands as the repeat:
+/// on its values, with its caller's evidence and its next recipient.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn hold(
     vault: &Vault,
@@ -228,6 +229,9 @@ pub(super) fn hold(
     let held = match HELD.get(&vault.store, txn, &key)? {
         Some(mut held) if held.open() => {
             held.calls = held.calls.saturating_add(1);
+            held.next = next.clone();
+            held.actor = actor.clone();
+            held.evidence = evidence;
             held.reviewed_values = Some(values);
             held
         }
