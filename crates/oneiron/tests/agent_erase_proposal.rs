@@ -7,7 +7,9 @@
 //! - in a shared vault, the erase ask the person door writes, the agent its
 //!   asker, with the same inbox ask to every live Owner.
 //!
-//! The ask erases nothing, and asking again answers the same ask. A record
+//! The ask erases nothing, and asking again answers the same ask; in a shared
+//! vault an ask the Owner declined answers too, so the agent does not ask the
+//! Owners again what they declined (Astra review of #8340). A record
 //! the agent's Grant does not read, and one that is not live, are refused
 //! alike, and no one is asked. An agent the owner switched off asks nothing,
 //! though its Grant still reads the record.
@@ -26,8 +28,8 @@ use std::collections::BTreeSet;
 use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
-    FederationGrantRole as Role, InitialSharedMember, NOTIFICATION_PRODUCER_ERASE_ASK, Scope,
-    ScopeAxis,
+    EraseAskStatus, FederationGrantRole as Role, InitialSharedMember,
+    NOTIFICATION_PRODUCER_ERASE_ASK, Scope, ScopeAxis,
 };
 use oneiron::inbox::NotificationKind;
 use oneiron::memory::MEMORY_CODE_FORBIDDEN;
@@ -289,4 +291,40 @@ fn an_agent_in_a_shared_vault_opens_the_shared_erase_ask() {
     );
     let again = fx.propose(agent, fx.project).expect("the agent asks again");
     assert_eq!(again, answer, "asking again answers the open ask");
+}
+
+#[test]
+fn an_agent_does_not_ask_again_what_the_owner_declined() {
+    let fx = Fixture::new(true);
+    let agent = fx.project_reader();
+    let answer = fx
+        .propose(agent, fx.project)
+        .expect("the agent asks to erase a record it reads");
+    let id = answer["shared_ask"]["id"]
+        .as_str()
+        .expect("the shared ask's id")
+        .to_owned();
+    fx.vault
+        .close_shared_erase_ask(&fx.owner_proof, &id, false, None)
+        .expect("the Owner declines the ask");
+    let again = fx.propose(agent, fx.project).expect("the agent asks again");
+    assert_eq!(
+        again["shared_ask"]["id"].as_str(),
+        Some(id.as_str()),
+        "the declined ask answers: {again}"
+    );
+    let listed = fx
+        .vault
+        .shared_erase_asks(&fx.owner_proof, SHARED)
+        .expect("the Owner reads the asks");
+    assert_eq!(listed.len(), 1, "no second ask is opened: {listed:?}");
+    assert!(
+        matches!(listed[0].status, EraseAskStatus::Declined { .. }),
+        "the one ask stays declined: {listed:?}"
+    );
+    assert_eq!(
+        fx.owner_asks(NOTIFICATION_PRODUCER_ERASE_ASK).len(),
+        1,
+        "and the Owner is not asked again"
+    );
 }

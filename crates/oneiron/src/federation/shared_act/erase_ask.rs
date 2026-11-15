@@ -150,7 +150,7 @@ impl Vault {
     /// live holder whose grant carries `read` asks, a request or a proposal
     /// by their role ([`EraseAskKind::for_asker_role`]). Every live Owner gets an inbox ask
     /// naming the record. Asking again while the asker's ask for the record is
-    /// open answers that ask.
+    /// open answers that ask, and writes nothing.
     pub fn ask_shared_erase(
         &self,
         asker: &AuthenticatedOwner,
@@ -174,16 +174,23 @@ impl Vault {
         if !crate::vault::live_entity_row_in_txn(&self.store, &txn, &record)?.is_live() {
             return Err(invalid());
         }
-        let ask =
-            self.open_erase_ask_in_txn(&mut txn, vault_id, &holders, now, actor, kind, record)?;
-        txn.commit()?;
+        let (ask, opened) = self.open_erase_ask_in_txn(
+            &mut txn, vault_id, &holders, now, actor, kind, record, false,
+        )?;
+        // An ask already open answers with nothing written: the writer's
+        // clock floors are dropped with it, as before the agent door
+        // (Astra review of #8340).
+        if opened {
+            txn.commit()?;
+        }
         Ok(ask)
     }
 
-    /// The open erase ask by `asker` for `record` in shared vault `vault_id`,
-    /// a live record: the one already open, else a new one, with an inbox
-    /// ask to every live Owner of `holders` naming the record. The caller
-    /// has judged `asker` and its `kind`.
+    /// The erase ask by `asker` for `record` in shared vault `vault_id`, a
+    /// live record, and whether this call opened it: the one already open
+    /// (with `declined_answers`, also one an Owner declined), else a new one,
+    /// with an inbox ask to every live Owner of `holders` naming the record.
+    /// The caller has judged `asker` and its `kind`.
     #[allow(clippy::too_many_arguments)]
     fn open_erase_ask_in_txn(
         &self,
@@ -194,18 +201,20 @@ impl Vault {
         asker: EntityId,
         kind: EraseAskKind,
         record: EntityId,
-    ) -> Result<SharedEraseAsk> {
+        declined_answers: bool,
+    ) -> Result<(SharedEraseAsk, bool)> {
         let (asker_hex, record_hex) = (asker.to_hex(), record.to_hex());
-        if let Some(open) = self
+        if let Some(standing) = self
             .erase_asks_in_txn(txn, vault_id)?
             .into_iter()
             .find(|ask| {
-                ask.status == EraseAskStatus::Open
+                (ask.status == EraseAskStatus::Open
+                    || (declined_answers && matches!(ask.status, EraseAskStatus::Declined { .. })))
                     && ask.asker == asker_hex
                     && ask.record == record_hex
             })
         {
-            return Ok(open);
+            return Ok((standing, false));
         }
         let ask = SharedEraseAsk {
             id: self.store.clock.entity_id()?.to_hex(),
@@ -238,7 +247,7 @@ impl Vault {
                 },
             )?;
         }
-        Ok(ask)
+        Ok((ask, true))
     }
 
     /// `memory`'s agent asks the Owners to erase `record`, a live record its
@@ -249,8 +258,10 @@ impl Vault {
     /// proposing role). In a shared vault it is the erase ask
     /// [`Self::ask_shared_erase`] writes, the agent its asker; in a personal
     /// vault, one inbox ask to each live owner naming the record. Asking
-    /// again answers the same ask. It erases nothing; the erase stays the
-    /// Owner's own act.
+    /// again answers the same ask, and in a shared vault an ask the Owners
+    /// declined answers too: an agent does not ask again what an Owner
+    /// declined (Astra review of #8340). It erases nothing; the erase stays
+    /// the Owner's own act.
     ///
     /// # Errors
     ///
@@ -302,15 +313,19 @@ impl Vault {
             Some(creation) => {
                 check_vault(self, &txn, creation.vault_id)?;
                 let holders = self.live_act_holders(&txn, creation.vault_id, now)?;
-                Some(self.open_erase_ask_in_txn(
-                    &mut txn,
-                    creation.vault_id,
-                    &holders,
-                    now,
-                    agent,
-                    kind,
-                    record,
-                )?)
+                Some(
+                    self.open_erase_ask_in_txn(
+                        &mut txn,
+                        creation.vault_id,
+                        &holders,
+                        now,
+                        agent,
+                        kind,
+                        record,
+                        true,
+                    )?
+                    .0,
+                )
             }
             None => {
                 self.propose_owner_erase_in_txn(&mut txn, now, agent, record)?;
