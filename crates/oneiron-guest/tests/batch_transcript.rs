@@ -50,10 +50,12 @@ fn real_foreign_component() -> Vec<u8> {
 #[test]
 fn batch_run_writes_the_live_transcript_without_receipts() {
     let temp = tempfile::tempdir().expect("tempdir");
-    let workspace = temp.path().join("workspace");
+    // The workspace walk refuses a symlink ancestor (macOS: /var is one).
+    let root = temp.path().canonicalize().expect("real temp path");
+    let workspace = root.join("workspace");
     fs::create_dir(&workspace).expect("workspace");
-    let host_frames = temp.path().join("host-frames");
-    let guest_frames = temp.path().join("guest-frames");
+    let host_frames = root.join("host-frames");
+    let guest_frames = root.join("guest-frames");
 
     let component = real_foreign_component();
     let mut opening = Vec::new();
