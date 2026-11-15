@@ -81,7 +81,7 @@ use oneiron::llm::{
     SegmentManifest, WorkerFailure,
 };
 use oneiron_driver::{WorkEnvelope, WorkerActivity};
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatFuture, OpenAiCompatHttpRequest, OpenAiCompatHttpResponse,
     OpenAiCompatProviderStream, OpenAiCompatStreamFrame, OpenAiCompatTransport,
     OpenAiCompatTransportError,

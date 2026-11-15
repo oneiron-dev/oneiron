@@ -25,7 +25,7 @@ use oneiron::{
     LlmError, LlmGenerateFuture, LlmRequest, LlmResult, LlmStreamResult, ModelId, ModelLocality,
     ModelTierRef, Vault,
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiMediaBackend, OpenAiMediaBody, OpenAiMediaHttpRequest, OpenAiMediaHttpResponse,
     OpenAiMediaMethod, OpenAiMediaTransport, OpenAiMediaTransportFuture,
 };

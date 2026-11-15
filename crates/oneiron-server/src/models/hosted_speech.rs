@@ -157,7 +157,7 @@ pub(super) fn parse(
 ) -> LlmResult<MediaResponse> {
     if !(200..300).contains(&status) {
         let body = serde_json::from_slice(body).unwrap_or(JsonValue::Null);
-        return Err(oneiron_llm_openai::classify_openai_status(
+        return Err(oneiron_llm::openai_compat::classify_openai_status(
             status, headers, &body,
         ));
     }
@@ -288,7 +288,7 @@ impl HostedCloner {
                     .map_err(transport)?;
                 let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
                 if !(200..300).contains(&reply.status) {
-                    return Err(oneiron_llm_openai::classify_openai_status(
+                    return Err(oneiron_llm::openai_compat::classify_openai_status(
                         reply.status,
                         &reply.headers,
                         &body,
@@ -332,7 +332,7 @@ impl HostedCloner {
                     .map_err(transport)?;
                 let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
                 if !(200..300).contains(&reply.status) {
-                    return Err(oneiron_llm_openai::classify_openai_status(
+                    return Err(oneiron_llm::openai_compat::classify_openai_status(
                         reply.status,
                         &reply.headers,
                         &body,
@@ -366,7 +366,7 @@ impl HostedCloner {
                 return Ok(());
             }
             let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
-            Err(oneiron_llm_openai::classify_openai_status(
+            Err(oneiron_llm::openai_compat::classify_openai_status(
                 reply.status,
                 &reply.headers,
                 &body,

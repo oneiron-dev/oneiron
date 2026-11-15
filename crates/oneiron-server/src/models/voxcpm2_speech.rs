@@ -192,7 +192,7 @@ fn progress(
 /// A worker's refusal, read as any provider's status.
 fn refused(reply: &BytesReply) -> LlmError {
     let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
-    oneiron_llm_openai::classify_openai_status(reply.status, &reply.headers, &body)
+    oneiron_llm::openai_compat::classify_openai_status(reply.status, &reply.headers, &body)
 }
 
 /// Audio this machine could not spool or read back (its body directory, its

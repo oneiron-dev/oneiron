@@ -1,6 +1,6 @@
 //! OpenAI-compatible wire adapter for Oneiron's [`oneiron::LlmBackend`] seam.
 //!
-//! The crate owns protocol mapping and classification only. HTTP execution,
+//! This module owns protocol mapping and classification only. HTTP execution,
 //! authentication, cancellation wiring, and retry policy stay host-owned.
 
 mod backend;

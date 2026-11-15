@@ -744,7 +744,7 @@ impl HouseRead {
 /// call, through the credential broker.
 struct SystemOneRung {
     vault: Arc<Vault>,
-    seat: Arc<oneiron_llm_systemone::SystemOneSeat>,
+    seat: Arc<oneiron_llm::systemone::SystemOneSeat>,
     guard: BudgetGuard,
     /// The host account and receipt sink for calls without a caller's run (FIX 3795).
     models: Arc<crate::models::ModelRuntime>,
@@ -771,7 +771,7 @@ impl SystemOneRung {
         let seat = match (&settings.key_env, &settings.key_secret) {
             (Some(env), _) => {
                 let bearer = std::env::var(env).map_err(|_| anyhow::anyhow!("{env} is not set"))?;
-                oneiron_llm_systemone::SystemOneSeat::new(endpoint, bearer, model, version)
+                oneiron_llm::systemone::SystemOneSeat::new(endpoint, bearer, model, version)
             }
             (None, Some(secret)) => {
                 let broker = broker.ok_or_else(|| {
@@ -779,7 +779,7 @@ impl SystemOneRung {
                         "its key_secret needs the vault's credential broker, and none was opened"
                     )
                 })?;
-                oneiron_llm_systemone::SystemOneSeat::with_transport(
+                oneiron_llm::systemone::SystemOneSeat::with_transport(
                     endpoint,
                     model,
                     version,

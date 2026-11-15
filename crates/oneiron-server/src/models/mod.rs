@@ -1,8 +1,8 @@
 //! The one provider abstraction: `[models]` in, one backend per seat out.
 //!
 //! Every provider kind is reached over HTTP through the matching adapter
-//! crate (`oneiron-llm-openai` for OpenAI-compatible and local servers,
-//! `oneiron-llm-anthropic` for Anthropic-compatible ones). Each role's ladder
+//! module of `oneiron-llm` (`openai_compat` for OpenAI-compatible and local
+//! servers, `anthropic` for Anthropic-compatible ones). Each role's ladder
 //! becomes an `OfferLadder` behind one seat model id, so the engine pins a
 //! single identity while the ladder falls back across rungs.
 //!
@@ -24,8 +24,8 @@ use oneiron::llm::run_admission::{
 };
 use oneiron::llm::{SingleRouteBackend, WorkerKind};
 use oneiron::{BudgetGuard, LlmCatalogEntry, ModelId, ModelLocality};
-use oneiron_llm_anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
-use oneiron_llm_openai::{OpenAiCompatBackend, OpenAiCompatConfig};
+use oneiron_llm::anthropic::{AnthropicMessagesBackend, AnthropicMessagesConfig};
+use oneiron_llm::openai_compat::{OpenAiCompatBackend, OpenAiCompatConfig};
 
 use crate::config::models::{ModelRef, ModelsConfig, ProviderConfig, ProviderKind, role_key};
 

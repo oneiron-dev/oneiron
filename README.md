@@ -174,12 +174,7 @@ to its modules and source files. It does not cover the applications under `apps/
 | [oneiron-remote](./crates/oneiron-remote) | Shared embedded and remote SDK backend. |
 | [oneiron-uniffi](./crates/oneiron-uniffi) | UniFFI binding of the SDK verb table over the shared `OneironClient` (embedded and remote). |
 | [oneiron-android](./crates/oneiron-android) | JNI/Kotlin ownership adapter. |
-| [oneiron-llm-anthropic](./crates/oneiron-llm-anthropic) | Anthropic Messages adapter. |
-| [oneiron-llm-gemini](./crates/oneiron-llm-gemini) | Gemini adapter. |
-| [oneiron-llm-openai](./crates/oneiron-llm-openai) | OpenAI-compatible adapter. |
-| [oneiron-llm-own-server](./crates/oneiron-llm-own-server) | User-hosted model endpoint adapter. |
-| [oneiron-llm-local](./crates/oneiron-llm-local) | Host-supplied in-process model adapter. |
-| [oneiron-llm-systemone](./crates/oneiron-llm-systemone) | Remote typed-decision service adapter. |
+| [oneiron-llm](./crates/oneiron-llm) | Text model wire adapters, one module per protocol: OpenAI-compatible, Anthropic Messages, Gemini, the user-hosted model endpoint (`oneiron_rpc`), a host-supplied in-process model (`local`) and the remote typed-decision service (`systemone`). |
 | [oneiron-image-comfyui](./crates/oneiron-image-comfyui) | ComfyUI image adapter. |
 | [oneiron-image-openrouter](./crates/oneiron-image-openrouter) | OpenRouter image adapter. |
 | [oneiron-mesh-transport](./crates/oneiron-mesh-transport) | Vault-scoped peer transport. |

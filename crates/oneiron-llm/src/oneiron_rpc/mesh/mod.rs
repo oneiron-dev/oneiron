@@ -1,6 +1,6 @@
 //! Models on the owner's other nodes (OF-575, owner ruling MESH: "a phone
 //! uses the MacBook's model"). [`MeshLlmTransport`] is an
-//! [`OwnServerTransport`](crate::OwnServerTransport) over ALPN
+//! [`OwnServerTransport`](crate::oneiron_rpc::OwnServerTransport) over ALPN
 //! `oneiron/llm/1`: a call goes to the first of the owner's nodes that takes
 //! it, and with none reachable it waits, saying why ([`MeshLlmTransport::waiting`]),
 //! until one does or the caller drops it. It never fails for want of a node.
