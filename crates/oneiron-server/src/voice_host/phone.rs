@@ -19,6 +19,9 @@ pub struct PhoneCallRead {
     key: ScopedReadActorKey,
     agent: EntityId,
     definition: oneiron::agent_def::AgentDefinition,
+    /// The number the arrival names as its caller: the provider's untrusted
+    /// text, for the call's transcript only (UNBUILT-02 PR 3).
+    caller: Option<String>,
     prepared: Mutex<Option<PreparedPhoneOutput>>,
 }
 
@@ -50,6 +53,7 @@ impl PhoneCallRead {
         if auth.principal_entity() != Some(agent) {
             return Err(HostError::InvalidRequest);
         }
+        let caller = vault.scoped_read(key.clone()).phone_line_caller()?;
         // Freeze instructions, models and the read scope from one admitted body.
         let (key, definition) = vault.scoped_read(key).phone_line_agent_read()?;
         // The native factory proved this principal is the line's live
@@ -60,6 +64,7 @@ impl PhoneCallRead {
             key,
             agent,
             definition,
+            caller,
             prepared: Mutex::new(None),
         });
         Ok(read)
@@ -86,6 +91,11 @@ impl PhoneCallRead {
 
     pub(super) fn agent(&self) -> EntityId {
         self.agent
+    }
+
+    /// The number the call's arrival names as its caller, untrusted.
+    pub(super) fn caller(&self) -> Option<&str> {
+        self.caller.as_deref()
     }
 
     pub(super) fn read(&self) -> ScopedRead<'_> {

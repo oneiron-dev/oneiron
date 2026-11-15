@@ -335,6 +335,8 @@ pub mod memory;
 pub use oneiron_base::panic_report;
 pub mod setting;
 pub mod settings;
+// Transcripts of voice calls with other people: the owner's keep setting (UNBUILT-02 PR 3).
+pub mod voice_call;
 // VOX-02 voice identity: consent log, enrollment, and local roster matching.
 pub mod voice_cascade;
 pub mod voice_identity;

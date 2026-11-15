@@ -352,7 +352,8 @@ impl Vault {
 
 /// Holds the connector thread `conversation`'s turns in the thread's own
 /// SESSION, in the witness's transaction (OWN-VOICE-EPOCHS = C; Engine ruling
-/// UNBUILT-02-SITTING = A): the SESSION its epochs' lineage runs in. The
+/// UNBUILT-02-SITTING = A): the SESSION its epochs' lineage runs in. A phone
+/// call's conversation is held the same way (PHONE-CALL-SESSION = A). The
 /// thread's first witness mints the SESSION. Each witness holds every turn of
 /// the thread that has no SESSION yet, the one it just landed and an older
 /// thread's earlier turns alike; a turn already held keeps its SESSION
@@ -361,7 +362,7 @@ impl Vault {
 /// the turns they cover, so it stays a raw line no epoch takes. While that
 /// last covered turn's own row does not read (it was hard-erased), no turn
 /// can be placed against it, so none is held.
-fn hold_in_thread_session_in_txn(
+pub(crate) fn hold_in_thread_session_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     agent: EntityId,

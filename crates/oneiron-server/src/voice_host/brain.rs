@@ -104,8 +104,9 @@ pub struct ChatBrainBindings {
     pub funding: Option<PayerPerson>,
     /// Where the turns' events go: the host's `brain_out`.
     pub out: mpsc::Sender<VoiceBrainOut>,
-    /// Where an owner's own call keeps its answered turns (UNBUILT-02);
-    /// `None` keeps none, as a phone call or a call heard in a room.
+    /// Where the call keeps its answered turns: an owner's own call, or a
+    /// phone call between its two divider rows (UNBUILT-02); `None` keeps
+    /// none, as a call heard in a room.
     pub(crate) record: Option<CallRecord>,
 }
 
@@ -203,6 +204,12 @@ impl ChatBrain {
             .as_ref()
             .map(|phone| phone.current_scope())
             .transpose()?;
+        // A phone call's thread shows where the call starts; its end is
+        // written when the brain drops, however the call ended.
+        if let Some(record) = &bindings.record {
+            let vault = &bindings.vault;
+            crate::server::blocking(|| record.open(vault));
+        }
         Ok(Self {
             bindings,
             seat,
@@ -643,18 +650,24 @@ impl Brain for ChatBrain {
         })));
         let said = Arc::new(Mutex::new(Some(String::new())));
         let memories = Arc::new(Mutex::new(memories));
-        // An owner's own call keeps the turn once its answer stops: the
-        // person's words as heard now, then the answer (UNBUILT-02).
-        let kept = self.bindings.record.map(|record| KeptTurn {
-            ai: self.bindings.ai.clone(),
-            vault: Arc::clone(&self.bindings.vault),
-            record,
-            agent: self.bindings.agent,
-            transcript: request.transcript.clone(),
-            heard_at: self.bindings.vault.now_recorded_at(),
-            funding: self.bindings.funding.clone(),
-            budget_units: self.bindings.ai.chat_settings().turn_budget_units,
-        });
+        // A recorded call keeps the turn once its answer stops: the
+        // person's words as heard now, then the answer (UNBUILT-02), unless
+        // the owner keeps no transcripts of calls with other people.
+        let kept = self
+            .bindings
+            .record
+            .clone()
+            .filter(CallRecord::keeps_turns)
+            .map(|record| KeptTurn {
+                ai: self.bindings.ai.clone(),
+                vault: Arc::clone(&self.bindings.vault),
+                record,
+                agent: self.bindings.agent,
+                transcript: request.transcript.clone(),
+                heard_at: self.bindings.vault.now_recorded_at(),
+                funding: self.bindings.funding.clone(),
+                budget_units: self.bindings.ai.chat_settings().turn_budget_units,
+            });
         let turn = Turn {
             generation,
             capture,
@@ -829,6 +842,10 @@ fn visible_chars(text: &str) -> usize {
 impl Drop for ChatBrain {
     fn drop(&mut self) {
         self.abort();
+        if let Some(record) = &self.bindings.record {
+            let vault = &self.bindings.vault;
+            crate::server::blocking(|| record.close(vault));
+        }
     }
 }
 

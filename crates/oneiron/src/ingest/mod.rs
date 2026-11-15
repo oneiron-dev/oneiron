@@ -117,6 +117,7 @@ mod connector_conversation;
 #[cfg(oneiron_test_support)]
 pub(crate) use connector_conversation::connector_conversation_id;
 pub(crate) use connector_conversation::connector_witness_row_ids;
+pub(crate) use connector_conversation::hold_in_thread_session_in_txn;
 pub use connector_conversation::{
     ConnectorConversationLog, ConnectorLogLine, ConnectorWitness, connector_reply_message_id,
 };

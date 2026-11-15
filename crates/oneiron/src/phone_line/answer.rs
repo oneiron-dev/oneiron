@@ -52,6 +52,25 @@ impl PhoneLineReadCeiling {
         }
         Ok(Some(self.frozen_scope.meet(&line.share_scope)))
     }
+
+    /// The caller the call's arrival names, while that arrival still stands
+    /// for this ceiling's attempt: the line provider's own text, untrusted.
+    pub(crate) fn caller_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<String>> {
+        let Some((_, record)) = answer_line_in_txn(
+            vault,
+            txn,
+            self.identity_ref,
+            &self.payload_key,
+            &self.payload_ref,
+        )?
+        else {
+            return Err(invalid());
+        };
+        if record.attempt_ref != self.attempt_ref {
+            return Err(invalid());
+        }
+        Ok(record.arrival.caller)
+    }
 }
 
 impl Vault {

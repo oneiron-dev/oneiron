@@ -16,6 +16,7 @@ mod attachment;
 mod backend;
 mod boot;
 mod brain;
+mod call_wording;
 mod connection;
 mod entry_barrier;
 mod extraction;
@@ -41,8 +42,8 @@ pub(crate) use entry_barrier::{EntryWake, EntryWakes, entry_wake, next_entry_wak
 pub use media_bridge::{VoiceMediaBindings, VoiceMediaIn};
 pub use phone::PhoneCallRead;
 pub(crate) use public::{LiveVoiceSessions, PublicSession, start_public};
-pub use record::voice_home_conversation_id;
-pub(crate) use record::{CallRecord, KeptTurn, standalone_call_record};
+pub(crate) use record::{CallRecord, KeptTurn, phone_call_record, standalone_call_record};
+pub use record::{caller_number, voice_home_conversation_id, voice_phone_conversation_id};
 pub use serve_bindings::{VoiceServeBindings, VoiceServeConnection};
 pub use speech::{PlayoutFrame, TurnSources, VoiceBrainOut, VoicePlayout};
 pub use wire::VoiceWireBindings;
