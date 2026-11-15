@@ -222,8 +222,10 @@ fn ceremony_responses(ok: Value) -> Value {
 const EDITOR_SCHEME: &str = "EsignEditorCapability";
 
 /// The owner's field editor (FIX 5618): its shell, `GET /sign/editor`,
-/// behind an owner-grade caller, and its two computation POSTs, which take
-/// the editor token the shell minted, or no credential at all.
+/// behind an owner-grade caller, its two computation POSTs, which take the
+/// editor-computation token the shell minted, or no credential at all, and
+/// its save to a draft, `POST /sign/fields`, which takes only the shell's
+/// draft-fields token (RULING ESIGN-EDITOR-SAVES-DRAFT).
 pub(super) fn merge_editor_paths(spec: &mut Value) {
     add_editor_scheme(spec);
     let Some(paths) = spec.get_mut("paths").and_then(Value::as_object_mut) else {
@@ -235,7 +237,7 @@ pub(super) fn merge_editor_paths(spec: &mut Value) {
             "tags": ["signing"],
             "operationId": "signing_editor",
             "summary": "The owner's field geography editor page, which mints its editor token.",
-            "description": "Owner-grade callers only: a top-scope logged slip presented as CoreBearer with its holder proof in x-oneiron-binding, or a managed vault's attested owner. Owner grade is the authorization; the bearer scheme alone is not. The page is served no-store and carries a fresh random editor token; its script reads the token, removes it from the document, keeps it in memory and sends it only in the x-oneiron-esign-editor header of POST /sign/layout and POST /sign/geometry. The server keeps only the token's digest, purpose, caller and expiry. A token admits new requests for 3,600 seconds and is forgotten when the server restarts; the owner then reloads this page for a new one.",
+            "description": "Owner-grade callers only: a top-scope logged slip presented as CoreBearer with its holder proof in x-oneiron-binding, or a managed vault's attested owner. Owner grade is the authorization; the bearer scheme alone is not. The page is served no-store and carries two fresh random editor tokens: an editor-computation token, which its script sends only in the x-oneiron-esign-editor header of POST /sign/layout and POST /sign/geometry, and a draft-fields token, which it sends only in that header of POST /sign/fields. The script reads both, removes them from the document and keeps them in memory. The server keeps only each token's digest, purpose, caller and expiry. A token admits new requests for 3,600 seconds and is forgotten when the server restarts; the owner then reloads this page for new ones.",
             "security": [{"CoreBearer": []}],
             "responses": {
                 "200": {
@@ -278,6 +280,35 @@ pub(super) fn merge_editor_paths(spec: &mut Value) {
         }}),
     );
     paths.insert(
+        "/sign/fields".to_owned(),
+        json!({"post": {
+            "tags": ["signing"],
+            "operationId": "signing_editor_fields",
+            "summary": "Saves the editor's fields to a signing document still in draft: vault.esign.fields.place, run as the caller the editor page was minted for.",
+            "description": "Takes only the editor page's draft-fields token in x-oneiron-esign-editor; there is no anonymous door, and the request's own credential headers name no one. The token is checked from the request head, before the body is read: its digest, its draft-fields purpose and its expiry, and its caller's credential is re-consulted. The body is read up to the API's request floor, limits.request_body_bytes, as the facade reads the verb's body. The token and its caller are then checked again, and vault.esign.fields.place runs through the facade's verb dispatch as that caller, with the verb's own Grant, lane and project admission. Its answer, and every refusal past the token's, are the verb's own, as POST /v1/core/facade/vault.esign.fields.place answers them: a document no longer in draft keeps its fields.",
+            "security": [{ EDITOR_SCHEME: [] }],
+            "requestBody": {"required": true, "content": {"application/json": {"schema": {
+                "type": "object",
+                "required": ["document_ref", "fields"],
+                "properties": {
+                    "document_ref": {"type": "string", "description": "The signing document's artifact id, 32 lowercase hex digits."},
+                    "fields": {"type": "array", "items": {"type": "object"}, "description": "The fields to place in place of the draft's own, in the field geography pack's field shape."}
+                }
+            }}}},
+            "responses": {
+                "200": {
+                    "description": "The draft as vault.esign.fields.place answers it.",
+                    "content": {"application/json": {"schema": {"type": "object"}}}
+                },
+                "400": {"description": "The body is not JSON (signing_body_malformed) or did not arrive whole; or the verb refused its input."},
+                "401": {"description": "No x-oneiron-esign-editor token (editor_token_missing); a token that is unknown, expired or of another purpose (editor_token_unadmitted); or one whose caller's credential no longer stands (editor_caller_not_live), at the head or after the body is read. Reload GET /sign/editor for new tokens."},
+                "403": {"description": "The verb's Grant, lane or project admission refused the caller."},
+                "413": {"description": "The body is past limits.request_body_bytes."},
+                "503": {"description": "The editor's state is unavailable (signing_transport_unavailable)."}
+            }
+        }}),
+    );
+    paths.insert(
         "/sign/geometry".to_owned(),
         json!({"post": {
             "tags": ["signing"],
@@ -298,9 +329,8 @@ pub(super) fn merge_editor_paths(spec: &mut Value) {
     );
 }
 
-/// Adds the header scheme the editor's computation POSTs name: the token
-/// the editor page was minted, never a recipient capability or a core
-/// credential.
+/// Adds the header scheme the editor's POSTs name: a token the editor page
+/// was minted, never a recipient capability or a core credential.
 fn add_editor_scheme(spec: &mut Value) {
     let Some(schemes) = spec
         .get_mut("components")
@@ -320,7 +350,7 @@ fn add_editor_scheme(spec: &mut Value) {
             "type": "apiKey",
             "in": "header",
             "name": "x-oneiron-esign-editor",
-            "description": "The editor token GET /sign/editor minted for its owner-grade caller. It is checked before the request body is read: its digest, its editor-computation purpose and its expiry, and its caller's credential is re-consulted. It buys computation over the caller's own bytes only: no document read, recipient act or other door. It is never a URL, cookie or browser-storage carrier."
+            "description": "An editor token GET /sign/editor minted for its owner-grade caller. It is checked before the request body is read: its digest, its purpose and its expiry, and its caller's credential is re-consulted. Each token has one purpose and admits only its own doors. An editor-computation token buys computation over the caller's own bytes at POST /sign/layout and POST /sign/geometry: no document read, recipient act or other door. A draft-fields token buys one verb at POST /sign/fields: vault.esign.fields.place, as its caller. A token is never a URL, cookie or browser-storage carrier."
         }),
     );
 }
@@ -335,7 +365,7 @@ fn editor_security() -> Value {
 /// and its capability-free door's `anonymous_limit`.
 fn editor_description(row: &str, anonymous_limit: &str) -> String {
     format!(
-        "With an x-oneiron-esign-editor token, the request is admitted from its head before the body is read, then waits its turn for one of the editor's two computation slots, at most [limits] queue_wait_timeout_ms (then 503 editor_waited_out); no queue length refuses it. After the wait its token and caller are checked again. Its body spools whole under the vault's disk floor: past the [limits] {row} row the vault owner is asked whether everything is okay (GET /v1/owner/decisions/asks), and the work still runs. A token that is unknown or expired, or whose caller's credential no longer stands, is refused with 401 and the body unread; it is never served as an anonymous request. With no editor header the route is the public, capability-free door it was: a {anonymous_limit} body limit, and two slots taken only when free with 60 requests a minute, else 429 with Retry-After: 60."
+        "With an x-oneiron-esign-editor token, the request is admitted from its head before the body is read, then waits its turn for one of the editor's two computation slots, at most [limits] queue_wait_timeout_ms (then 503 editor_waited_out); no queue length refuses it. After the wait its token and caller are checked again. Its body spools whole under the vault's disk floor: past the [limits] {row} row the vault owner is asked whether everything is okay (GET /v1/owner/decisions/asks), and the work still runs. A token that is unknown, expired or of another purpose, or whose caller's credential no longer stands, is refused with 401 and the body unread; it is never served as an anonymous request. With no editor header the route is the public, capability-free door it was: a {anonymous_limit} body limit, and two slots taken only when free with 60 requests a minute, else 429 with Retry-After: 60."
     )
 }
 
@@ -360,7 +390,7 @@ fn editor_responses(ok: Value) -> Value {
         ),
         (
             "401",
-            "The x-oneiron-esign-editor token is unknown or expired (editor_token_unadmitted), or its caller's credential no longer stands (editor_caller_not_live), at the head or after the slot wait; the body is unread. Reload GET /sign/editor for a new token.",
+            "The x-oneiron-esign-editor token is unknown, expired or of another purpose (editor_token_unadmitted), or its caller's credential no longer stands (editor_caller_not_live), at the head or after the slot wait; the body is unread. Reload GET /sign/editor for a new token.",
             true,
         ),
         (

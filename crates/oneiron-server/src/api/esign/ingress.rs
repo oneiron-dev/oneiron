@@ -362,6 +362,23 @@ pub(super) async fn leased_body(body: Body, leased: u64, limit: u64) -> Result<V
     Ok(whole)
 }
 
+/// A body read whole up to `floor` bytes, at a door that reads its body as
+/// its verb's facade route does, under the API's request floor: past it,
+/// axum's 413, which the floor's own layer names; a body that fails, as one
+/// the route could not buffer.
+pub(super) async fn floored_body(body: Body, floor: u64) -> Result<Vec<u8>, Response> {
+    let mut whole = Vec::new();
+    let mut pieces = body.into_data_stream();
+    while let Some(piece) = pieces.next().await {
+        let piece = piece.map_err(|error| unbuffered(&error.to_string()))?;
+        if (whole.len() as u64).saturating_add(piece.len() as u64) > floor {
+            return Err(body_past_limit());
+        }
+        whole.extend_from_slice(&piece);
+    }
+    Ok(whole)
+}
+
 /// A capability-free body past its route's limit, answered as axum's
 /// `DefaultBodyLimit` answers it.
 pub(super) fn body_past_limit() -> Response {

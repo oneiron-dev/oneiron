@@ -325,6 +325,13 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# The field editor's save to a draft roots its server on a `MemoryKeystore` too, and sends its
+# document through `oneiron::test_support::mark_esign_sent`.
+[[test]]
+name = "esign_editor_draft_fields"
+path = "tests/esign_editor_draft_fields.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "off_record_room_context_pack"

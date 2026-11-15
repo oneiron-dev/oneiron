@@ -5,6 +5,9 @@ const message = document.getElementById("status");
 const editorNode = document.getElementById("editor-capability"), editorToken = editorNode ? editorNode.content : "";
 if (editorNode) editorNode.remove();
 const editorHeaders = editorToken ? {"x-oneiron-esign-editor": editorToken} : {};
+// The shell's draft-fields token: read once, removed from the document, kept only in memory and sent only in this header of the save to a draft.
+const fieldsNode = document.getElementById("editor-fields-capability"), fieldsToken = fieldsNode ? fieldsNode.content : "";
+if (fieldsNode) fieldsNode.remove();
 function sessionEnded(response) { if (response.status === 401) throw new Error("This editor session has ended. Reload the editor to continue."); }
 async function renderEditor() {
   if (!pages.length) return;
@@ -31,6 +34,7 @@ async function renderEditor() {
 }
 document.getElementById("pdf-file").onchange=async event=>{try{const file=event.target.files[0];if(!file)return;const response=await fetch("/sign/geometry",{method:"POST",credentials:"omit",cache:"no-store",headers:editorHeaders,body:file});sessionEnded(response);if(!response.ok)throw new Error("Cannot inspect this PDF safely.");pages=(await response.json()).pages;await renderEditor();}catch(error){message.textContent=error.message;}};
 document.getElementById("pack-file").onchange=async event=>{try{const file=event.target.files[0];if(!file)return;const candidate=JSON.parse(await file.text());if(candidate.schema_version!==1||!Array.isArray(candidate.fields))throw new Error("Invalid geography pack.");pack=candidate;await renderEditor();}catch(error){message.textContent=error.message;}};
+document.getElementById("save-draft").onclick=async()=>{try{const documentRef=document.getElementById("document-ref").value.trim();if(!/^[0-9a-f]{32}$/.test(documentRef))throw new Error("Use the draft document's canonical reference.");if(!fieldsToken)throw new Error("Reload the editor to save fields to a draft.");const response=await fetch("/sign/fields",{method:"POST",credentials:"omit",cache:"no-store",headers:{"Content-Type":"application/json","x-oneiron-esign-editor":fieldsToken},body:JSON.stringify({document_ref:documentRef,fields:pack.fields})});sessionEnded(response);if(!response.ok)throw new Error("The draft did not take these fields: it may already be sent, or a field does not fit it.");const draft=await response.json();message.textContent=`The draft now places ${draft.fields} fields.`;}catch(error){message.textContent=error.message;}};
 document.getElementById("save").onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(pack,null,2)],{type:"application/json"}));const link=document.createElement("a");link.href=url;link.download="field-geography.json";link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
 
 document.getElementById("current-item").onchange=()=>renderEditor().catch(error=>message.textContent=error.message);

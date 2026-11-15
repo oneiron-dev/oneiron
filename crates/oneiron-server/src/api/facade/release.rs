@@ -87,7 +87,7 @@ impl FacadeReleased {
 /// only that feedback's text, never the answer. The owner's own whole-vault
 /// export, as its route and his fresh proof name it, keeps every integrity
 /// hold and no recipient choice (owner ruling 1-EXPORT = B).
-pub(super) fn released_reply(
+pub(crate) fn released_reply(
     server: &SyncServer,
     auth: &CoreAuth,
     verb: &str,
