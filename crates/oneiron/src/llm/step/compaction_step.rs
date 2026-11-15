@@ -223,18 +223,23 @@ pub(crate) fn is_compaction_step_row(entity_type: u8, body: &[u8]) -> Result<boo
 /// holder never widens who reads these bytes, and one more response holder
 /// only narrows it. Empty for every other row, and for an ASSET no response
 /// artifact holds.
+///
+/// Holders are read as `dbs` reads them (STEPREAD-OVERLAY-RESPONSE-ASSET): a
+/// room's off-record overlay stages a room step's response artifact, version
+/// and ASSET reference beside the ASSET itself, so a read through the room's
+/// view finds that holder as it finds the ASSET.
 pub(crate) fn compaction_response_holders_in(
-    store: &Store,
+    dbs: &impl ManifestDbs,
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
     raw: &[u8],
 ) -> Result<Vec<EntityId>> {
-    let Some(hash) = crate::blob_artifact::carrier_content_hash(store, txn, id, raw)? else {
+    let Some(hash) = crate::blob_artifact::carrier_content_hash(dbs, txn, id, raw)? else {
         return Ok(Vec::new());
     };
     let mut responses = Vec::new();
-    for holder in crate::blob_artifact::content_holders_in_txn(store, txn, &hash)? {
-        let Some(record) = store.port_entity_record(txn, &holder)? else {
+    for holder in crate::blob_artifact::content_holders_in_txn(dbs, txn, &hash)? {
+        let Some(record) = dbs.port_entity_record(txn, &holder)? else {
             continue;
         };
         if record.entity_type == ENTITY_TYPE_BLOB_ARTIFACT

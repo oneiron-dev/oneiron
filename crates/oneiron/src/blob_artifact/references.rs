@@ -20,7 +20,7 @@ use crate::error::Result;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_CLAIM};
 use crate::side_table::{self, HexId, Raw, SideTable};
-use crate::store::Store;
+use crate::store::{ManifestDbs, Store};
 use crate::write_envelope::claim_body::{ClaimBody, ClaimSubject};
 
 use super::provenance::BLOB_VERSION_CLAIM_PREDICATE;
@@ -300,7 +300,7 @@ pub(crate) fn artifacts_claiming(
 /// The artifacts live here whose version claims name the bytes under `hash`: the holders
 /// [`held_by_live_artifact`] asks about, listed.
 pub(super) fn live_claim_holders(
-    store: &Store,
+    store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     hash: &ContentHash,
 ) -> Result<Vec<EntityId>> {
@@ -315,7 +315,7 @@ pub(super) fn live_claim_holders(
 }
 
 /// A stored artifact row with its body, under no delete this vault holds.
-fn artifact_is_live(store: &Store, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
+fn artifact_is_live(store: &impl ManifestDbs, txn: &RoTxn<'_>, id: &EntityId) -> Result<bool> {
     let Some(raw) = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)? else {
         return Ok(false);
     };
