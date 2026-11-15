@@ -277,12 +277,6 @@ impl Vault {
     ) -> Result<(Vec<Vec<u8>>, CarriedOverlays)> {
         let txn = self.store.env.read_txn()?;
         let mut history = history_in_txn(self, &txn)?;
-        if let Some(adopted) =
-            super::checkpoint_adopt::cached_adopted_authority_checkpoint_in_txn(&self.store, &txn)?
-            && let Some(refusal) = unheld_prefix(adopted.as_ref(), &history)
-        {
-            return Err(refusal);
-        }
         history_root(&history, None)?;
         let mut emitted = BTreeSet::new();
         let mut result = Vec::with_capacity(history.len());
