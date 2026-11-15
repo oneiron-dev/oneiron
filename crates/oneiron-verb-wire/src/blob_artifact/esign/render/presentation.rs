@@ -16,51 +16,23 @@ pub struct PageGeometry {
 
 impl PageGeometry {
     pub fn display_box(self) -> Result<[f64; 4]> {
-        let [l, b, r, t] = self.crop;
-        render_field_geometry(
-            &FieldGeometry {
-                page: 1,
-                x_percent: 0.,
-                y_percent: 0.,
-                width_percent: 100.,
-                height_percent: 100.,
-            },
-            self.crop,
-        )?;
-        if !matches!(self.rotation, 0 | 90 | 180 | 270)
-            || !self.user_unit.is_finite()
-            || !(0.01..=75000.).contains(&self.user_unit)
-        {
-            return Err(PdfPreparationError::InvalidGeometry);
+        leaf::PageGeometry {
+            crop: self.crop,
+            rotation: self.rotation,
+            user_unit: self.user_unit,
         }
-        if self.rotation == 0 && self.user_unit == 1. {
-            return Ok(self.crop);
-        }
-        let (w, h) = if matches!(self.rotation, 90 | 270) {
-            (t - b, r - l)
-        } else {
-            (r - l, t - b)
-        };
-        if w * self.user_unit > 1_000_000. || h * self.user_unit > 1_000_000. {
-            return Err(PdfPreparationError::Limit);
-        }
-        Ok([0., 0., w * self.user_unit, h * self.user_unit])
+        .display_box()
+        .map_err(map_leaf)
     }
 
     pub fn to_pdf(self) -> Result<[f64; 6]> {
-        self.display_box()?;
-        if self.rotation == 0 && self.user_unit == 1. {
-            return Ok([1., 0., 0., 1., 0., 0.]);
+        leaf::PageGeometry {
+            crop: self.crop,
+            rotation: self.rotation,
+            user_unit: self.user_unit,
         }
-        let [l, b, r, t] = self.crop;
-        let s = 1. / self.user_unit;
-        Ok(match self.rotation {
-            0 => [s, 0., 0., s, l, b],
-            90 => [0., s, -s, 0., r, b],
-            180 => [-s, 0., 0., -s, r, t],
-            270 => [0., -s, s, 0., l, t],
-            _ => return Err(PdfPreparationError::InvalidGeometry),
-        })
+        .to_pdf()
+        .map_err(map_leaf)
     }
 }
 
@@ -126,75 +98,62 @@ pub enum FieldMark {
 
 impl FieldPresentation {
     pub fn marks(&self, page: PageGeometry) -> Result<Vec<FieldMark>> {
-        let r = self.rectangle(page)?;
-        let mut marks = Vec::new();
-        match &self.value {
-            None => {}
-            Some(FieldValue::Text(value)) => {
-                let lines: Vec<_> = value.split('\n').collect();
-                let mut columns = 1;
-                for line in &lines {
-                    columns = columns.max(encoded_text(line)?.len());
-                }
-                let size = 12f64
-                    .min((r.width - 4.) / (columns as f64 * 0.6))
-                    .min((r.height - 4.) / (lines.len() as f64 * 1.2));
-                if size < 6. {
-                    return Err(PdfPreparationError::FieldOverflow);
-                }
-                for (i, line) in lines.iter().enumerate() {
-                    marks.push(FieldMark::Text {
-                        value: (*line).to_owned(),
-                        x: r.x + 2.,
-                        y: r.y + r.height - 2. - size * (1. + i as f64 * 1.2),
-                        size,
-                    });
-                }
-            }
-            Some(FieldValue::Checked(checked)) => {
-                let side = r.width.min(r.height) - 2.;
-                if side < 2. {
-                    return Err(PdfPreparationError::InvalidGeometry);
-                }
-                marks.push(FieldMark::Rectangle {
-                    x: r.x + 1.,
-                    y: r.y + 1.,
-                    width: side,
-                    height: side,
-                });
-                if *checked {
-                    marks.push(FieldMark::Line {
-                        x1: r.x + 1.,
-                        y1: r.y + 1.,
-                        x2: r.x + 1. + side,
-                        y2: r.y + 1. + side,
-                    });
-                    marks.push(FieldMark::Line {
-                        x1: r.x + 1.,
-                        y1: r.y + 1. + side,
-                        x2: r.x + 1. + side,
-                        y2: r.y + 1.,
-                    });
-                }
-            }
-            Some(FieldValue::Signature { image_ref }) => marks.push(FieldMark::Signature {
-                image_ref: image_ref.clone(),
-                rect: r,
+        let geometry = leaf::FieldGeometry {
+            page: self.geometry.page,
+            x_percent: self.geometry.x_percent,
+            y_percent: self.geometry.y_percent,
+            width_percent: self.geometry.width_percent,
+            height_percent: self.geometry.height_percent,
+        };
+        let leaf_page = leaf::PageGeometry {
+            crop: page.crop,
+            rotation: page.rotation,
+            user_unit: page.user_unit,
+        };
+        let value = match &self.value {
+            None => None,
+            Some(FieldValue::Text(value)) => Some(leaf::LeafValue::Text(value.as_str())),
+            Some(FieldValue::Checked(checked)) => Some(leaf::LeafValue::Checked(*checked)),
+            Some(FieldValue::Signature { image_ref }) => Some(leaf::LeafValue::Signature {
+                image_ref: image_ref.as_str(),
             }),
-        }
-        Ok(marks)
+        };
+        let marks =
+            leaf::marks(&geometry, leaf_page, value, &leaf::NoAdmission).map_err(map_leaf)?;
+        Ok(marks
+            .into_iter()
+            .map(|mark| match mark {
+                leaf::FieldMark::Text { value, x, y, size } => {
+                    FieldMark::Text { value, x, y, size }
+                }
+                leaf::FieldMark::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                } => FieldMark::Rectangle {
+                    x,
+                    y,
+                    width,
+                    height,
+                },
+                leaf::FieldMark::Line { x1, y1, x2, y2 } => FieldMark::Line { x1, y1, x2, y2 },
+                leaf::FieldMark::Signature { image_ref, rect } => FieldMark::Signature {
+                    image_ref,
+                    rect: PdfFieldRect {
+                        x: rect.x,
+                        y: rect.y,
+                        width: rect.width,
+                        height: rect.height,
+                    },
+                },
+            })
+            .collect())
     }
 }
 
 pub fn encoded_text(value: &str) -> Result<Vec<u8>> {
-    if value.chars().any(char::is_control) {
-        return Err(PdfPreparationError::UnsupportedText);
-    }
-    let (bytes, _, unmappable) = encoding_rs::WINDOWS_1252.encode(value);
-    if unmappable {
-        return Err(PdfPreparationError::UnsupportedText);
-    }
-    Ok(bytes.into_owned())
+    leaf::encoded_text(value, &leaf::NoAdmission).map_err(map_leaf)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
