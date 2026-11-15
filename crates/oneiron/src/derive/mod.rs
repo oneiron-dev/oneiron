@@ -57,7 +57,10 @@ pub use batch::{
     DerivedSupersede, DerivedTopology, ItemRef, MAX_BATCH_ITEMS,
 };
 pub use commit::{DerivationReceipt, ItemOutcome, ItemReceipt};
-pub use conflict::CONFLICT_NEEDS_EXTRACTION_ATTEMPT;
+pub use conflict::{
+    CONFLICT_DUPLICATE, CONFLICT_HEADS_DIFFER, CONFLICT_NEEDS_EXTRACTION_ATTEMPT,
+    CONFLICT_OPERANDS_REFUSED,
+};
 pub use evidence::{EVIDENCE_HEAD_NOT_A_CLAIM, EVIDENCE_SPAN_UNBOUND, EVIDENCE_UNVERIFIED};
 pub use link::{SAME_AS_NOT_CLAIMS, TOPOLOGY_NEEDS_GRANT, TOPOLOGY_REJECTED, TOPOLOGY_UNREAD};
 pub use record::{DerivationBatchRecord, ItemRecord};

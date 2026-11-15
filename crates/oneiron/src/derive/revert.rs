@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::record::{AppliedEdge, ItemRecord, batch_record_in_txn};
-use crate::claim::PREDICATE_CONFLICT_RESOLVED;
+use crate::claim::{ClaimSubject, PREDICATE_CONFLICT_RESOLVED};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_promotion::KeptConflictLink;
 use crate::edge::EdgeKind;
@@ -284,6 +284,30 @@ impl Vault {
                 if let Some(edge) = &item.applied_edge {
                     unlink_applied_edge_in_txn(self, txn, edge)?;
                 }
+            }
+            // A conflict's one row is its marker. While a standing answer
+            // names it the marker stays; a Settle item of the same batch is
+            // undone first, so its answer no longer stands when this arm runs.
+            "conflict" => {
+                let marker = first()?;
+                let body = self
+                    .get_claim_in_txn(txn, &marker)?
+                    .ok_or(Error::EntityNotFound)?;
+                let ClaimSubject::Entity(subject) = body.subject else {
+                    return Err(Error::InvalidClaimBody(
+                        "a conflict marker names no subject",
+                    ));
+                };
+                if crate::dreamer_consolidation::conflict_answer_standing_in_txn(
+                    self, txn, subject, marker,
+                )?
+                .standing
+                {
+                    return Err(Error::InvalidClaimBody("the conflict is already settled"));
+                }
+                crate::dreamer_consolidation::revert_authored_change_in_txn(
+                    self, txn, marker, *author, reverter, now_ms,
+                )?;
             }
             _ => return Ok(false),
         }

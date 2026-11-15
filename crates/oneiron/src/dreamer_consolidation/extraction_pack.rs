@@ -40,7 +40,7 @@ pub(crate) use checks::{
 };
 pub(crate) use execution::{CheckedExtractionRead, ExtractionReadExecution, execute_checked_read};
 pub(in crate::dreamer_consolidation) use reads::parse_reference;
-pub(crate) use reads::{CheckedPack, check_pack_candidates};
+pub(crate) use reads::{CheckedPack, check_pack_candidates, select_routed_conflict};
 
 use super::ConsolidationBranchPlan;
 use super::support::invalid_consolidation;
