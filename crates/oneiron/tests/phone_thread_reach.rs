@@ -969,6 +969,7 @@ fn a_restricted_selector_does_not_carry_a_kept_call() {
 /// at OCCURRED_AT, once `alter` has changed the packed window as a member's
 /// import could: a rejected carrier stays in the CRDT window (R1 review
 /// C-F1).
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
 fn member_selector_carries(
     reach: &Reach,
     alter: impl FnOnce(&loro::LoroDoc),
@@ -1034,6 +1035,7 @@ fn member_selector_carries(
 }
 
 /// The row bytes the packed window `doc` holds for `id`.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
 fn packed_row(doc: &loro::LoroDoc, id: &EntityId) -> Vec<u8> {
     match doc.get_map("entities").get(&id.to_hex()) {
         Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes))) => bytes.to_vec(),
@@ -1044,6 +1046,7 @@ fn packed_row(doc: &loro::LoroDoc, id: &EntityId) -> Vec<u8> {
     }
 }
 
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
 #[test]
 fn a_restricted_selector_judges_a_phone_row_by_its_stored_row_not_the_carrier() {
     let reach = reach_fixture();
@@ -1066,6 +1069,7 @@ fn a_restricted_selector_judges_a_phone_row_by_its_stored_row_not_the_carrier() 
     );
 }
 
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
 #[test]
 fn a_restricted_selector_does_not_carry_a_row_derived_from_a_kept_call() {
     let reach = reach_fixture();
@@ -1106,7 +1110,19 @@ fn a_restricted_selector_does_not_carry_a_row_derived_from_a_kept_call() {
         &reach.control_msg,
     )
     .expect("FIXTURE: a row registered as drawn from the control MESSAGE");
-    let carried = member_selector_carries(&reach, |_| {});
+    let carried = member_selector_carries(&reach, |source| {
+        for (id, label) in [
+            (&edge_derived, "edge_derived"),
+            (&dependency_derived, "dependency_derived"),
+            (&edge_control, "edge_control"),
+            (&dependency_control, "dependency_control"),
+        ] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_some(),
+                "FIXTURE: the packed window holds {label}",
+            );
+        }
+    });
     for (id, label) in [
         (&reach.control_msg, "control_msg"),
         (&edge_control, "edge_control"),
