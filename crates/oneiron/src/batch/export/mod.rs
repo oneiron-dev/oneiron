@@ -17,6 +17,8 @@ mod archive_side_tables;
 mod archive_spool;
 pub(crate) use archive_project::project_stored_archive;
 pub(crate) use archive_read::{ArchiveFileSource, ArchiveFiles, read_vault_archive_indexed};
+#[cfg(oneiron_test_support)]
+pub(crate) use archive_side_tables::PortableSideTable;
 pub use archive_side_tables::{
     ArchiveLfsObject, ArchiveSideFamily, ArchiveSideKeyPart, ArchiveSideRow, ArchiveSideTree,
     ArchiveSideValue, ArchiveSideWithheld, ArchiveSideWithheldReason,
