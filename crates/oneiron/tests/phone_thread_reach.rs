@@ -1006,3 +1006,89 @@ fn an_off_record_session_cannot_strip_a_phone_stamp() {
         "an off-record session restage of A's CONVERSATION conv_a without its mark must be refused",
     );
 }
+
+/// A MessagePack map of `entries`, as a raw put carries a body.
+fn map_body(entries: &[(&str, &str)]) -> Vec<u8> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(
+            entries
+                .iter()
+                .map(|(key, value)| (rmpv::Value::from(*key), rmpv::Value::from(*value)))
+                .collect(),
+        ),
+    )
+    .expect("FIXTURE: the body encodes");
+    body
+}
+
+/// Asserts `put` was refused for the phone mark its body names.
+fn assert_phone_mark_refused<T, E: std::fmt::Debug>(put: Result<T, E>, what: &str) {
+    match put {
+        Ok(_) => panic!("LEAK: {what} landed with a phone mark no phone keep wrote"),
+        Err(err) => {
+            let text = format!("{err:?}");
+            assert!(
+                text.contains("phone keep"),
+                "{what} must be refused for its phone mark; seen {text}",
+            );
+        }
+    }
+}
+
+/// R2 review F1: under the default reach a row's own phone stamp admits it
+/// to its caller's call, so no writer but the phone keep births a phone
+/// mark. A plain put of a fresh TURN, of a stored unstamped TURN and of a
+/// fresh CONVERSATION, each naming a phone mark, is refused; the same TURN
+/// without the mark lands.
+#[test]
+fn no_write_but_the_phone_keep_births_a_phone_mark() {
+    use oneiron::registry::ENTITY_TYPE_TURN;
+    let reach = reach_fixture();
+    let vault = &reach.fixture.vault;
+    let now = vault.now_recorded_at();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    let conv_b = reach.conv_b.to_hex();
+    let plain = map_body(&[("role", "user"), ("text", CONTROL_WORDS)]);
+    let forged = map_body(&[
+        ("role", "user"),
+        ("text", CONTROL_WORDS),
+        ("phone_thread", conv_b.as_str()),
+    ]);
+    let stored = EntityId::now();
+    vault
+        .put_entity(&stored, ENTITY_TYPE_TURN, at, now, &plain)
+        .expect("precondition: a plain TURN with no phone mark lands");
+    assert_phone_mark_refused(
+        vault.put_entity(&stored, ENTITY_TYPE_TURN, at, now, &forged),
+        "a stored unstamped TURN restamped into B's thread",
+    );
+    assert_phone_mark_refused(
+        vault.put_entity(&EntityId::now(), ENTITY_TYPE_TURN, at, now, &forged),
+        "a fresh TURN stamped into B's thread",
+    );
+    let agent = reach.fixture.agent.to_hex();
+    assert_phone_mark_refused(
+        vault.put_entity(
+            &EntityId::now(),
+            ENTITY_TYPE_CONVERSATION,
+            at,
+            now,
+            &map_body(&[("phone_line_agent", agent.as_str())]),
+        ),
+        "a fresh CONVERSATION marked as L's phone thread",
+    );
+    let body = vault
+        .get(&stored)
+        .expect("the stored TURN reads as the owner")
+        .expect("the stored TURN is present");
+    assert_eq!(
+        phone_thread_of(&body),
+        None,
+        "the stored TURN keeps no phone mark after the refused restamp",
+    );
+}
