@@ -8,7 +8,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, Result};
-use crate::setting::{SettingChange, SettingScope};
+use crate::setting::SettingChange;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -446,10 +446,7 @@ pub(crate) fn arm_in_txn(
 /// cadence key.
 fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Result<Option<Trigger>> {
     match spec.when {
-        When::Setting(key) => Ok(Some(
-            key.read_in_txn(vault, txn, &[SettingScope::Vault], None)?
-                .value,
-        )),
+        When::Setting(key) => Ok(Some(key.read_in_txn(vault, txn, &[], None)?.value)),
         When::PerArming => Ok(None),
     }
 }
@@ -554,7 +551,7 @@ pub(crate) fn due_by_in_txn(
     let Some(prior) = ROWS.get(store, txn, &key)? else {
         return Ok(());
     };
-    if prior.failures > 0 || prior.started_at.is_some() || prior.next_due_at <= at {
+    if prior.failures > 0 || prior.started_at.is_some() || prior.due_at() <= at {
         return Ok(());
     }
     let row = ScheduleRow {
