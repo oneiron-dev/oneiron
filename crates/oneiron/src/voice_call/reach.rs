@@ -30,6 +30,13 @@ pub enum PhoneReach {
     Custom {
         /// The custom scope.
         scope: Scope,
+        /// Whether the scope alone decides, other callers' calls included. Off
+        /// (the default), a marked phone-thread row reads only in the current
+        /// caller's thread, as under the default preset; on, the agent may
+        /// repeat what other callers said (REACH-CUSTOM-CALLER-RULE = A,
+        /// Engine 16 Nov 04:16).
+        #[serde(default)]
+        include_other_callers: bool,
     },
 }
 
@@ -75,8 +82,10 @@ pub(crate) fn reach_default() -> PhoneReach {
 /// Whether `a` is at least as tight as `b`: anything is at least as tight as
 /// the whole vault; the whole vault is tighter than nothing but itself; a
 /// default is tighter than a default whose documents cover its own; a custom
-/// is tighter than a custom its scope narrows. A default and a custom are
-/// incomparable either way, so an agent's flip between them always asks.
+/// is tighter than a custom its scope narrows, unless it includes other
+/// callers and the other does not (turning that on is a loosening the owner
+/// confirms). A default and a custom are incomparable either way, so an
+/// agent's flip between them always asks.
 pub(crate) fn reach_tighter(a: &PhoneReach, b: &PhoneReach) -> bool {
     match (a, b) {
         (_, PhoneReach::WholeVault) => true,
@@ -84,9 +93,16 @@ pub(crate) fn reach_tighter(a: &PhoneReach, b: &PhoneReach) -> bool {
         (PhoneReach::Default { documents: narrow }, PhoneReach::Default { documents: wide }) => {
             narrow.iter().all(|id| wide.contains(id))
         }
-        (PhoneReach::Custom { scope: narrow }, PhoneReach::Custom { scope: wide }) => {
-            narrow.is_narrowing_of(wide)
-        }
+        (
+            PhoneReach::Custom {
+                scope: narrow,
+                include_other_callers: narrow_includes,
+            },
+            PhoneReach::Custom {
+                scope: wide,
+                include_other_callers: wide_includes,
+            },
+        ) => narrow.is_narrowing_of(wide) && (!*narrow_includes || *wide_includes),
         _ => false,
     }
 }

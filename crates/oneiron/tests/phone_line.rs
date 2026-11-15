@@ -273,7 +273,13 @@ fn configure(fixture: &Fixture, enabled: bool, share_scope: Scope) {
         fixture.bridge,
     );
     if enabled {
-        set_reach_as_owner(fixture, PhoneReach::Custom { scope: share_scope });
+        set_reach_as_owner(
+            fixture,
+            PhoneReach::Custom {
+                scope: share_scope,
+                include_other_callers: false,
+            },
+        );
     }
 }
 

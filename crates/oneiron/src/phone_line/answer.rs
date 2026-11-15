@@ -21,8 +21,9 @@ pub(crate) struct CallReach {
 impl CallReach {
     /// The reach a call freezes from the line's `voice.phone.reach` value:
     /// the default reads this caller's thread plus the picked documents, a
-    /// custom reads its scope in the current caller's thread, and the whole
-    /// vault reads everything the line agent's own credential reads.
+    /// custom reads its scope in the current caller's thread (or across
+    /// callers when it includes them), and the whole vault reads everything
+    /// the line agent's own credential reads.
     pub(crate) fn of(value: &PhoneReach) -> Self {
         match value {
             PhoneReach::Default { .. } => Self {
@@ -30,10 +31,16 @@ impl CallReach {
                 caller_rule: true,
                 confined: Some(value.documents().into_iter().collect()),
             },
-            PhoneReach::Custom { scope } => Self {
+            PhoneReach::Custom {
+                scope,
+                include_other_callers,
+            } => Self {
                 scope: scope.clone(),
-                // REACH-CUSTOM-CALLER-RULE: Custom keeps the current-caller rule
-                caller_rule: true,
+                // REACH-CUSTOM-CALLER-RULE = A (Engine 16 Nov 04:16): Custom
+                // keeps the current-caller rule unless it includes other
+                // callers; then its Scope alone decides (the per-thread
+                // grants still apply).
+                caller_rule: !include_other_callers,
                 confined: None,
             },
             PhoneReach::WholeVault => Self {

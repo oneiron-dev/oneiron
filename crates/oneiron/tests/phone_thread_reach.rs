@@ -268,7 +268,13 @@ fn configure(fixture: &Fixture, enabled: bool, share_scope: Scope) {
         fixture.bridge,
     );
     if enabled {
-        set_reach_as_owner(fixture, PhoneReach::Custom { scope: share_scope });
+        set_reach_as_owner(
+            fixture,
+            PhoneReach::Custom {
+                scope: share_scope,
+                include_other_callers: false,
+            },
+        );
     }
 }
 
@@ -309,6 +315,7 @@ fn set_reach_as_owner(fixture: &Fixture, reach: PhoneReach) {
 fn custom_base() -> PhoneReach {
     PhoneReach::Custom {
         scope: worlds_scope(&[base_world_id()]),
+        include_other_callers: false,
     }
 }
 
@@ -909,6 +916,32 @@ fn under_the_whole_vault_caller_b_reads_caller_a_words() {
             call.is_entity_readable(id)
                 .expect("preset WholeVault: B's call reads"),
             "preset WholeVault: B's call must read {row}",
+        );
+    }
+}
+
+/// REACH-CUSTOM-CALLER-RULE = A (Engine 16 Nov 04:16): a custom scope that
+/// includes other callers is decided by its Scope alone, so B's call reads
+/// A's words in the base world, as under the whole vault; the same scope
+/// without the flag keeps the current-caller rule
+/// (`under_the_default_caller_b_cannot_retrieve_caller_a_words`).
+#[test]
+fn a_custom_reach_that_includes_other_callers_reads_them() {
+    let got = reach_fixture(PhoneReach::Custom {
+        scope: worlds_scope(&[base_world_id()]),
+        include_other_callers: true,
+    });
+    let call = got.fixture.vault.scoped_read(got.b_call_key.clone());
+    for (row, id) in [
+        ("msg_a_caller", &got.msg_a_caller),
+        ("msg_a_answer", &got.msg_a_answer),
+        ("msg_b_caller", &got.msg_b_caller),
+        ("msg_b_answer", &got.msg_b_answer),
+    ] {
+        assert!(
+            call.is_entity_readable(id)
+                .expect("preset Custom with other callers: B's call reads"),
+            "preset Custom with other callers: B's call must read {row}",
         );
     }
 }
