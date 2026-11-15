@@ -162,8 +162,9 @@ impl Vault {
 
     /// Run the installed exact script in the configured foreign code-mode VM,
     /// on the isolating backend this vault's installed backends carry for the
-    /// Foreign tier. No configured isolating backend means a refusal, not an
-    /// in-process run.
+    /// Foreign tier under the vault's sandbox provider switch (L8-43): ours,
+    /// or the vendor the owner named. No configured isolating backend means a
+    /// refusal, not an in-process run.
     pub fn run_script_pack(
         self: &Arc<Self>,
         request: PackScriptRun<'_>,
@@ -253,9 +254,10 @@ impl Vault {
             now,
             type_feedback,
         } = request;
-        if !matches!(backend.name(), "firecracker" | "landlock-container")
-            || receipt.pack_name != name
-        {
+        // Ours or the switched vendor's (L8-43): never the dev reference.
+        let isolating = matches!(backend.name(), "firecracker" | "landlock-container")
+            || crate::code_sandbox::SandboxVendor::from_backend_name(backend.name()).is_some();
+        if !isolating || receipt.pack_name != name {
             return Err(invalid(
                 "foreign pack requires isolating code-mode backend and installed source",
             ));
