@@ -1,7 +1,9 @@
 //! The host doors of the owner's custody rows (WILL L04 row 04, FIX 4993):
 //! `vault.secrets.register`, `vault.secrets.rotate`, `vault.secrets.rewrap`,
 //! `vault.secrets.revoke`, `vault.secrets.custody.get` and
-//! `vault.secrets.custody.submit`.
+//! `vault.secrets.custody.submit`; and the owner's display edits
+//! `vault.secrets.label.set` and `vault.secrets.purpose.set` (FIX
+//! [SECRETS-LABEL-PURPOSE-VERBS]).
 //! `host_doors` re-exports them, so the generated HTTP facade handler and
 //! the MCP dispatcher call them by the name every host door has. Each takes
 //! the vault owner's proof as `/v1/owner` takes it (`owner_routes::owner`),
@@ -18,10 +20,11 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::MemoryResult;
 use oneiron::task_verb::sdk::{
     SecretCustodyGetRequest, SecretCustodyReply, SecretCustodySubmitRequest,
-    SecretCustodyViewReply, SecretRegisterReply, SecretRegisterRequest, SecretRevokeReply,
+    SecretCustodyViewReply, SecretLabelSetReply, SecretLabelSetRequest, SecretPurposeSetReply,
+    SecretPurposeSetRequest, SecretRegisterReply, SecretRegisterRequest, SecretRevokeReply,
     SecretRevokeRequest, SecretRewrapRequest, SecretRotateReply, SecretRotateRequest,
     register_secret_as, revoke_secret_as, rewrap_secret_as, rotate_secret_as,
-    secret_custody_get_as, submit_sealed_custody_as,
+    secret_custody_get_as, set_secret_label_as, set_secret_purpose_as, submit_sealed_custody_as,
 };
 
 use super::host_doors::support::{Listed, internal, owner_proof};
@@ -152,6 +155,38 @@ pub(crate) async fn vault_secrets_custody_submit(
         auth,
         "vault.secrets.custody.submit",
         move |vault, owner| submit_sealed_custody_as(vault, owner, surface, input),
+    )
+    .await
+}
+
+/// `vault.secrets.label.set`: the owner's one-line name for a secret, or
+/// its clear.
+pub(crate) async fn vault_secrets_label_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SecretLabelSetRequest,
+) -> Listed<SecretLabelSetReply> {
+    as_custody_owner(
+        server,
+        auth,
+        "vault.secrets.label.set",
+        move |vault, owner| set_secret_label_as(vault, owner, input),
+    )
+    .await
+}
+
+/// `vault.secrets.purpose.set`: what a secret is for, in the owner's words,
+/// or its clear.
+pub(crate) async fn vault_secrets_purpose_set(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: SecretPurposeSetRequest,
+) -> Listed<SecretPurposeSetReply> {
+    as_custody_owner(
+        server,
+        auth,
+        "vault.secrets.purpose.set",
+        move |vault, owner| set_secret_purpose_as(vault, owner, input),
     )
     .await
 }
