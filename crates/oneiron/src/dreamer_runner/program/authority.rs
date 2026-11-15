@@ -44,6 +44,12 @@ pub(crate) struct TurnProgramAuthority {
     actor: EntityId,
     actor_class: u8,
     proof: Proof,
+    /// Whether the waking credential was handed on to another key: the
+    /// program runs as its key's holder, never as the person
+    /// (HANDED-ON-SLIP-PERSON). An unmarked authority leaves it out, so its
+    /// rows encode as they did before the field existed.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    handed_on_credential: bool,
 }
 
 impl TurnProgramAuthority {
@@ -143,6 +149,7 @@ impl TurnProgramAuthority {
                 instrument: Some(instrument.clone()),
                 rebound_from: Vec::new(),
             },
+            handed_on_credential: false,
         })
     }
 
@@ -174,7 +181,9 @@ impl TurnProgramAuthority {
         else {
             return None;
         };
-        let mut rebound = Self::slip(self.actor, self.class().ok()?, proof, successor)?;
+        // The successor slip keeps the handed-on mark (HANDED-ON-SLIP-PERSON).
+        let mut rebound = Self::slip(self.actor, self.class().ok()?, proof, successor)?
+            .with_handed_on_credential(self.handed_on_credential);
         if let Proof::Slip {
             rebound_from: lineage,
             ..
@@ -197,6 +206,7 @@ impl TurnProgramAuthority {
             actor,
             actor_class: class as u8,
             proof: Proof::HostAction { root },
+            handed_on_credential: false,
         }
     }
 
@@ -206,6 +216,7 @@ impl TurnProgramAuthority {
             actor,
             actor_class: class as u8,
             proof: Proof::Native,
+            handed_on_credential: false,
         }
     }
 
@@ -215,7 +226,24 @@ impl TurnProgramAuthority {
             actor: holder,
             actor_class: EdgeActorClass::Human as u8,
             proof: Proof::AttestedOwner { holder },
+            handed_on_credential: false,
         }
+    }
+
+    /// Marks this sealed authority as woken under a credential handed on to
+    /// another key: the program runs as its key's holder, never as the person
+    /// (HANDED-ON-SLIP-PERSON).
+    #[must_use]
+    pub(crate) fn with_handed_on_credential(mut self, handed_on: bool) -> Self {
+        self.handed_on_credential = handed_on;
+        self
+    }
+
+    /// Whether the waking credential was handed on to another key
+    /// ([`Self::with_handed_on_credential`]).
+    #[must_use]
+    pub(crate) const fn carries_handed_on_credential(&self) -> bool {
+        self.handed_on_credential
     }
 
     pub(crate) fn actor(&self) -> EntityId {
@@ -649,8 +677,13 @@ impl Vault {
         if !super::arm::pin_stands_in_txn(self, txn, &pin)? {
             return Ok(TurnProgramBound::Lapsed(ProgramHold::PinMoved));
         }
+        // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
+        let mut actor = WriteActor::new(stamp.actor, row.wake.authority.class()?);
+        if row.wake.authority.carries_handed_on_credential() {
+            actor = actor.with_handed_on_credential();
+        }
         Ok(TurnProgramBound::Bound(TurnProgramBinding {
-            actor: WriteActor::new(stamp.actor, row.wake.authority.class()?),
+            actor,
             admission: stamp.admission,
             code_run: super::run::turn_program_code_run(&stamp.admission)?,
             pin,

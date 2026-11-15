@@ -279,11 +279,14 @@ fn relabel_handed_on_skill_births_in_ops(
     Ok(())
 }
 
-/// Relabels `op` when it is a put that births a fresh Candidate SKILL (no row
-/// under its id in `txn`, not a maintenance or hub-synced put): a handed-on
-/// Human credential's SKILL is Generated, never the person's own. Every other
-/// op stays as it is. The batch path and an off-record session's raw put share
-/// it.
+/// Relabels `op` when it is a put that births a fresh SKILL (no row under
+/// its id in `txn`, not a maintenance or hub-synced put), whatever its
+/// lifecycle: a handed-on Human credential's SKILL is Generated, never the
+/// person's own. Every other op stays as it is. The batch path and an
+/// off-record session's raw put share it. The batch path still refuses a
+/// non-Candidate birth afterwards (`validate_local_skill_create`); the
+/// off-record session path, which stages a SKILL without that check, still
+/// never stores a person's provenance for a handed-on put.
 ///
 /// # Errors
 ///
@@ -315,9 +318,6 @@ pub(crate) fn relabel_handed_on_skill_birth(
     let Ok(mut record) = crate::write_envelope::skill_record::decode_skill_record(data) else {
         return Ok(());
     };
-    if record.lifecycle_status != crate::write_envelope::skill_record::SkillLifecycle::Candidate {
-        return Ok(());
-    }
     if crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?.is_some() {
         return Ok(());
     }

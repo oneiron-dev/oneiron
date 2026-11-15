@@ -19,6 +19,8 @@
 //! Commit 5 (Astra on #8562): a marked handle with no proof takes no owner run control (F1),
 //! mints no embedded owner or native person proof (F2), keeps no platform announcement (F3),
 //! stamps no Stated text receipt (F4) and captures a marked solved-run scope (F5).
+//! Commit 6 (Astra delta on #8562): an unmarked Agent handle on the owner's PERSON keeps the
+//! announcement (F3 guard) and a handed-on Active SKILL stages Generated off record (F6).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test handed_on_person_sweep`.
@@ -172,6 +174,41 @@ impl Fixture {
     fn owner_memory(&self, slip: &VerifiedSlip) -> oneiron::memory::Memory<'_> {
         self.vault
             .memory(self.owner, EdgeActorClass::Human)
+            .with_read_proof(slip)
+    }
+
+    /// An Agent-class slip for the owner's PERSON from the host root, held by
+    /// the owner (unmarked): the credential route Astra names for finding 3.
+    fn owner_agent_slip(&self) -> VerifiedSlip {
+        let mut claims = self
+            .vault
+            .ensure_host_root_slip(&self.issuer)
+            .expect("the host root")
+            .claims;
+        claims.slip_id = slip_id();
+        claims.holder_ref = self.owner.to_hex();
+        claims.actor_class = Some("agent".to_owned());
+        let slip = self
+            .vault
+            .mint_capability_slip(&self.issuer, claims)
+            .expect("the owner's agent slip");
+        let challenge = b"transferred slip own agent slip";
+        let binding = self
+            .issuer
+            .binding_proof(&slip, challenge)
+            .expect("the own agent binding proof");
+        let own = self
+            .vault
+            .verify_capability_slip(&self.issuer.public_key(), &slip, challenge, &binding)
+            .expect("the own agent slip verifies");
+        assert!(!own.is_transferred(), "control: the owner holds this one");
+        own
+    }
+
+    /// The owner's PERSON bound as Agent, presenting `slip`.
+    fn owner_agent_memory(&self, slip: &VerifiedSlip) -> oneiron::memory::Memory<'_> {
+        self.vault
+            .memory(self.owner, EdgeActorClass::Agent)
             .with_read_proof(slip)
     }
 
@@ -1556,6 +1593,144 @@ fn the_owners_own_slip_still_keeps_a_turns_platform_announcement() {
         Some("platform_announcement"),
         "the owner's own TURN keeps its selector: {}",
         receipt.body
+    );
+}
+
+/// Guard (F3 Agent preservation): an unmarked Agent handle on the owner's
+/// PERSON still keeps the announcement selector.
+#[test]
+fn an_agent_handle_on_the_owners_person_keeps_the_owners_announcement() {
+    let f = Fixture::new();
+    let room = f.plain_room();
+    let slip = f.owner_agent_slip();
+
+    let receipt = f
+        .owner_agent_memory(&slip)
+        .conversations_turns_create(&oneiron::core_write::ConversationTurnCreateInput {
+            conversation: room.to_hex(),
+            id: None,
+            occurred_start: None,
+            occurred_end: None,
+            learned_at: None,
+            body: json!({
+                "message_type": "platform_announcement",
+                "text": "hello from the owner's agent credential",
+            }),
+            text: None,
+        })
+        .expect("the TURN lands");
+
+    assert_eq!(
+        receipt.body.get("message_type").and_then(|v| v.as_str()),
+        Some("platform_announcement"),
+        "an unmarked Agent TURN keeps its selector: {}",
+        receipt.body
+    );
+}
+
+/// An Active SKILL with a person's provenance, as the F6 residual's attack
+/// stages it: lifecycle Active, source UserStated, generated false,
+/// human_authored true.
+fn active_skill_record() -> oneiron::skill::SkillRecord {
+    oneiron::skill::SkillRecord::new(
+        "handed.active.skill",
+        "active instructions",
+        "1",
+        ClaimApprovalStatus::Approved,
+        oneiron::skill::SkillLifecycle::Active,
+        ClaimSource::UserStated,
+        1.0,
+        false,
+        true,
+        Vec::new(),
+        Value::Map(vec![(Value::from("origin"), Value::from("test"))]),
+    )
+}
+
+/// Raw-puts [`active_skill_record`] in a fresh off-record session through the
+/// owner's slip (`handed_on` or his own) and reads the overlay copy back.
+fn stage_active_skill_off_record(
+    f: &Fixture,
+    session_name: &str,
+    handed_on: bool,
+) -> oneiron::skill::SkillRecord {
+    let session = f
+        .vault
+        .off_record_session_vault()
+        .enter(
+            session_name,
+            oneiron::off_record::OffRecordBackendClass::Local,
+        )
+        .expect("enter session");
+    let slip = f.owner_slip(handed_on);
+    let memory = f
+        .owner_memory(&slip)
+        .in_off_record_session(session.session_ref());
+    let id = EntityId::now();
+    let body = oneiron::skill::encode_skill_record(&active_skill_record()).expect("encode skill");
+    let now = f.vault.now_recorded_at();
+
+    memory
+        .raw_put_entity(oneiron::RawEntityPut {
+            id,
+            entity_type: oneiron::registry::ENTITY_TYPE_SKILL,
+            occurred: TimeRange {
+                start: now,
+                end: now,
+            },
+            learned_at: now,
+            data: &body,
+        })
+        .expect("the SKILL stages");
+    let staged = memory
+        .raw_get_entity(&id)
+        .expect("overlay read")
+        .expect("the SKILL stands in the overlay");
+    oneiron::skill::decode_skill_record(&staged).expect("decode staged skill")
+}
+
+/// Red (F6 residual): a handed-on owner's Active SKILL never stages a
+/// person's provenance off record.
+#[test]
+fn a_handed_on_owner_slip_never_stages_a_persons_active_skill_off_record() {
+    let f = Fixture::new();
+
+    let record = stage_active_skill_off_record(&f, "sweep-skill-active-handed", true);
+
+    assert_eq!(
+        record.source,
+        ClaimSource::Generated,
+        "a handed-on Active SKILL stages Generated: {record:?}"
+    );
+    assert!(
+        record.generated,
+        "a handed-on Active SKILL stages generated"
+    );
+    assert!(
+        !record.human_authored,
+        "a handed-on Active SKILL stages not human-authored"
+    );
+}
+
+/// Guard (F6 residual): the owner's own Active SKILL still stages UserStated.
+#[test]
+fn the_owners_own_slip_still_stages_a_persons_active_skill_off_record() {
+    let f = Fixture::new();
+
+    let record = stage_active_skill_off_record(&f, "sweep-skill-active-own", false);
+
+    assert_eq!(
+        record.source,
+        ClaimSource::UserStated,
+        "the owner's own Active SKILL keeps UserStated: {record:?}"
+    );
+    assert!(
+        !record.generated,
+        "the owner's own Active SKILL keeps generated false"
+    );
+    assert!(
+        record.human_authored,
+        "the owner's own Active SKILL keeps human-authored"
     );
 }
 

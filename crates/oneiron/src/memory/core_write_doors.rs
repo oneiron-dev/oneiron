@@ -30,7 +30,7 @@ impl Memory<'_> {
         input: &CoreBatchWriteInput,
     ) -> MemoryResult<CoreBatchWriteReceipt> {
         // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        let announcement = if self.acts_as_own_person() {
+        let announcement = if !self.carries_handed_on_credential() {
             AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
         } else {
             AnnouncementAuthority::Writer
@@ -107,7 +107,7 @@ impl Memory<'_> {
     ) -> MemoryResult<CoreEntityWriteReceipt> {
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        let announcement = if self.acts_as_own_person() {
+        let announcement = if !self.carries_handed_on_credential() {
             AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
         } else {
             AnnouncementAuthority::Writer
@@ -130,7 +130,7 @@ impl Memory<'_> {
         input: &DagRecordAppendInput,
     ) -> MemoryResult<DagRecordAppendReceipt> {
         // A handed-on credential acts as its key's holder, not the person (HANDED-ON-SLIP-PERSON).
-        let announcement = if self.acts_as_own_person() {
+        let announcement = if !self.carries_handed_on_credential() {
             AnnouncementAuthority::of_actor(self.vault(), &self.actor())?
         } else {
             AnnouncementAuthority::Writer
