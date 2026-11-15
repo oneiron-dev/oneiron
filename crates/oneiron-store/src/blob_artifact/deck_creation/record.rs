@@ -147,8 +147,19 @@ pub struct DeckCreationRecord {
     pub slides: Vec<CreatedSlide>,
     pub write_set: Vec<String>,
     pub omitted: Vec<String>,
-    /// Units whose fit emission cannot decide: `(slide, block, shape)`.
+    /// Units whose fit neither geometry nor a stored PowerPoint measurement
+    /// of this exact deck decides: `(slide, block, shape)`.
     pub fit_unverified: Vec<(String, String, u32)>,
+    /// The `fit_unverified` units PowerPoint measured running past their
+    /// frame: `(slide, block, shape)`. Empty on a record written before
+    /// receipts were read.
+    #[serde(default)]
+    pub fit_overflows: Vec<(String, String, u32)>,
+    /// SHA-256 of the stored Office receipt that measured this exact deck,
+    /// when one does (ARCH-0077 `slides:oracle`). None on a record written
+    /// before receipts were read.
+    #[serde(default)]
+    pub fit_receipt: Option<[u8; 32]>,
     pub estimates: Vec<CreatedEstimate>,
     pub created_at: u64,
 }
