@@ -223,6 +223,19 @@ pub fn record_erase_effect_digest(record: &EntityId, also_same_bytes: bool) -> [
     *hasher.finalize().as_bytes()
 }
 
+/// The digest of erasing `subject`'s authority attribution on this vault:
+/// the effect an asker's `vault.check_in.open` names for
+/// `vault.authority.attribution.erase`, and the one the Owner's erase spends.
+/// BLAKE3, key derived from `oneiron check_in authority attribution erase v1`,
+/// over the subject's 16 id bytes.
+#[must_use]
+pub fn authority_attribution_erase_effect_digest(subject: &EntityId) -> [u8; 32] {
+    let mut hasher =
+        blake3::Hasher::new_derive_key("oneiron check_in authority attribution erase v1");
+    hasher.update(subject.as_bytes());
+    *hasher.finalize().as_bytes()
+}
+
 /// The digest of `from` handing their ownership of shared vault `vault_id`
 /// to `to`, keeping `from_keeps` or leaving when it is `None`: the effect an
 /// asker's `vault.check_in.open` names for `vault.shared.propose_transfer`,

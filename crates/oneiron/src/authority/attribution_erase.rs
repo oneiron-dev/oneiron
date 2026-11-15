@@ -13,24 +13,13 @@
 //! (`crate::sync::authority_overlay_custody`).
 
 use crate::Vault;
-use crate::check_in::{ActClass, AppliedCheckIn, CheckInDecision, owner_act_decision_in_txn};
+use crate::check_in::{ActClass, AppliedCheckIn, owner_act_decision_in_txn};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::authority_overlay_custody::subject_erased_at_in_txn;
 
-/// What an Owner's erase of one subject's authority attribution did on this
-/// vault.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct AuthorityAttributionErasure {
-    /// How many overlay rows of the subject this erase deleted here.
-    pub(crate) rows_erased: u64,
-    /// When the subject's erasure first stood here (recording clock): this
-    /// erase's time, or an earlier erase's.
-    pub(crate) at: u64,
-    /// The check-in decision the act ran on.
-    pub(crate) check_in: CheckInDecision,
-}
+use oneiron_verb_wire::verbs::authority_attribution_erase::AuthorityAttributionErased;
 
 impl Vault {
     /// The Owner erases `subject`'s authority attribution on this vault
@@ -50,7 +39,7 @@ impl Vault {
         owner: &AuthenticatedOwner,
         subject: &EntityId,
         applied: Option<&AppliedCheckIn<'_>>,
-    ) -> Result<AuthorityAttributionErasure> {
+    ) -> Result<AuthorityAttributionErased> {
         let erasure = self.with_write_txn_grouped(|txn| {
             owner.revalidate_in_txn(self, txn)?;
             let check_in = owner_act_decision_in_txn(self, txn, ActClass::Erase, applied)?;
@@ -59,7 +48,7 @@ impl Vault {
             let at = subject_erased_at_in_txn(&self.store, txn, subject)?.ok_or(
                 Error::CorruptedIndex("an authority attribution erase left no erasure"),
             )?;
-            Ok(AuthorityAttributionErasure {
+            Ok(AuthorityAttributionErased {
                 rows_erased,
                 at,
                 check_in,

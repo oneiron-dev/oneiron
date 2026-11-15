@@ -259,6 +259,9 @@ pub(crate) use super::connector_slate_doors::*;
 pub(crate) use super::connector_witness_read_doors::*;
 // The owner's per-call outbound request erase (FIX 11801), likewise.
 pub(crate) use super::outbound_call_erase_doors::*;
+// The owner's erase of one subject's authority attribution (census L5-22
+// 1b), likewise.
+pub(crate) use super::authority_attribution_erase_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
