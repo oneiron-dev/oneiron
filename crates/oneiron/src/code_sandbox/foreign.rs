@@ -3,13 +3,15 @@ use std::io;
 use std::net::{SocketAddr, TcpStream};
 use std::sync::Arc;
 
-use oneiron_container::HostNetFloor;
+use oneiron_container::{EgressRelay, HostNetFloor};
 use sha2::{Digest, Sha256};
 
+use super::egress::{EgressConfig, OpenEgressProxy};
 use super::microvm::{
     CredentialAllowlist, CredentialDestination, CredentialResolver, ExecutionBudget, GuestImage,
     MicroVmBackend, MicroVmSandboxAdapter, SandboxBackends, select_backend_for_tier,
 };
+use super::setting_keys::FOREIGN_EXECUTE_CODE_EGRESS;
 use super::source::PreparedSource;
 use super::{
     ProposalSpoolFloor, SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable,
@@ -17,7 +19,7 @@ use super::{
 };
 use crate::engine_executor::StepCancellation;
 use crate::guest_error::{GuestErrorMask, GuestProgramError};
-use crate::{Error, Result};
+use crate::{EntityId, Error, Result, Vault};
 
 /// Host-selected interpreter bytes and their reviewed SHA-256, never a wire input.
 pub struct ForeignCodeArtifact<'a> {
@@ -33,9 +35,11 @@ pub struct ForeignCodeOutcome {
 
 /// The adapter owns the only write exit: every file delta remains a proposal.
 /// The workspace is a caller-scoped snapshot supplied by the admitting door.
-/// No host credential or network authority is lent to a foreign program,
-/// but its guest's socket entries still hold host descriptors: they charge
-/// `floor`, the vault's host floor (FIX 6300). Its proposed files spool on
+/// No host credential is lent to a foreign program, and its network is
+/// `egress`, the relay [`foreign_code_egress`] picked for the run: none
+/// unless the owner turned it on. Its guest's socket entries hold host
+/// descriptors either way, and charge the vault's host floor through
+/// `egress` (FIX 6300). Its proposed files spool on
 /// `spool`, the host's measured disk floor (FIX 7650). A TypeScript program
 /// runs as the JavaScript Oxc printed for it; JavaScript runs as written
 /// (FIX 8276). `prepared` is the admitting door's one preparation of it,
@@ -55,7 +59,7 @@ pub fn execute_foreign_code(
     artifact: ForeignCodeArtifact<'_>,
     budget: ExecutionBudget,
     spool: Arc<dyn ProposalSpoolFloor>,
-    floor: Arc<dyn HostNetFloor>,
+    egress: Arc<dyn EgressRelay>,
     output: &mut dyn super::microvm::MicroVmOutputSink,
     mask: &dyn GuestErrorMask,
 ) -> Result<ForeignCodeOutcome> {
@@ -74,13 +78,46 @@ pub fn execute_foreign_code(
         mounts,
         artifact.component,
         backend,
-        Arc::new(NoEgress { floor }),
+        egress,
         Some(spool),
         budget,
         &StepCancellation::never(),
         output,
     )?
     .map_err(|failed| failed.into_error(prepared, 0, |body| mask.mask_known_values(body)))
+}
+
+/// The network a foreign `execute_code` run `run_id` of `vault` is lent,
+/// read live from the owner's `code_sandbox.foreign.execute_code_egress`
+/// at the vault. Off, the default: none, so every connect, datagram and
+/// fetch fails at the backend relay before any socket opens. On: the host's
+/// egress proxy for the run, over the host's `ONEIRON_EGRESS_CONFIG`
+/// (public addresses only, its allowlist and raw endpoint grants, a receipt
+/// for each request), as a callable foreign-tier skill runs under. No
+/// credential is lent in either case: this door has no credential service.
+///
+/// # Errors
+///
+/// Storage errors, or a host egress config that does not parse. A deciding
+/// row that does not decode reads the key's strictest value, off.
+pub fn foreign_code_egress(vault: &Arc<Vault>, run_id: EntityId) -> Result<Arc<dyn EgressRelay>> {
+    let open = {
+        let txn = vault.store.env.read_txn()?;
+        FOREIGN_EXECUTE_CODE_EGRESS
+            .read_in_txn(vault, &txn, &[], None)?
+            .value
+    };
+    if !open {
+        return Ok(Arc::new(NoEgress {
+            floor: vault.host_net_floor(),
+        }));
+    }
+    let config = EgressConfig::from_env().map_err(|e| Error::InvalidConfig(e.to_string()))?;
+    Ok(Arc::new(OpenEgressProxy::new(
+        Arc::clone(vault),
+        run_id,
+        config,
+    )))
 }
 
 /// The finite foreign runtime and the public admission share one launch,
@@ -164,8 +201,9 @@ impl CredentialResolver for NoCredentials {
     }
 }
 
-/// A scoped snapshot is not an outbound grant. Network calls fail at the
-/// existing backend relay, before any socket or delivery is opened. The
+/// A scoped snapshot is not an outbound grant: while the owner has not
+/// turned `code_sandbox.foreign.execute_code_egress` on, network calls fail
+/// at the existing backend relay, before any socket or delivery is opened. The
 /// guest's socket entries and writers are host descriptors and threads all
 /// the same, and charge `floor` until they are reclaimed (FIX 6300).
 struct NoEgress {

@@ -89,6 +89,9 @@ pub(crate) async fn execute_code(
     // one its uploads keep (FIX 7650).
     let spool: Arc<dyn oneiron::code_sandbox::ProposalSpoolFloor> =
         Arc::new(server.transfers.disk.clone());
+    // The run's network, when the owner lends one, keeps the vault for its
+    // receipts.
+    let host = Arc::clone(server.vault());
     credential_source_listing(server, auth, caller, "execute_code", move |_, _, memory| {
         let _permit = permit;
         let manifest: serde_json::Value = serde_json::from_str(COMPONENT_MANIFEST)
@@ -103,6 +106,7 @@ pub(crate) async fn execute_code(
                 .map_err(|_| super::host_doors::support::internal("execute_code"))?;
         }
         memory.execute_foreign_code(
+            &host,
             input,
             ForeignCodeArtifact {
                 component: FOREIGN_COMPONENT,
