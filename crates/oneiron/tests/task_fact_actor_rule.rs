@@ -9,10 +9,12 @@
 //! counts on the host and the device; the stranger's assignment forks the owner's and fails
 //! the task's read; the stranger's take counts; the mint door writes the stranger's ack.
 //! `the_owner_taking_its_own_task_counts` passes on both: the owner reclaims or takes over
-//! its own task. `a_cancel_lands_on_a_task_whose_owner_forked` passes there too, since part
-//! 1's door reads no fact; it is red at 256f9a3d012a (part 2 before its door skipped the
-//! read for the kinds that count from any actor): the forked read refuses the cancel. Green
-//! on the head.
+//! its own task. `a_cancel_lands_on_a_task_whose_facts_fail_the_read` passes there too,
+//! since part 1's door reads no fact; it is red at 256f9a3d012a (part 2 before its door
+//! skipped the read for the kinds that count from any actor): the failed read refuses the
+//! cancel. Green on the head. (Before FIX TASK-ID-COMMITS-TO-MAKER that test failed the read
+//! with a second Owner fact naming another owner, a fork; now such a fact is skipped, so it
+//! fails the read with an Owner fact this install wrote with no maker commitment.)
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test task_fact_actor_rule`.
@@ -326,9 +328,11 @@ fn the_owner_taking_its_own_task_counts() {
 }
 
 #[test]
-fn a_cancel_lands_on_a_task_whose_owner_forked() {
+fn a_cancel_lands_on_a_task_whose_facts_fail_the_read() {
     let host = host();
     let task = owner_task(&host.vault, host.owner, "the owner's task");
+    // An Owner fact with no maker commitment, written past the door: this install reads
+    // the facts its own door wrote strictly, so the task's read fails.
     write_unjudged_fact(
         &host.vault,
         task,
@@ -336,10 +340,10 @@ fn a_cancel_lands_on_a_task_whose_owner_forked() {
         EntityId::now(),
         None,
     )
-    .expect("the host's carrier signs a second owner");
+    .expect("the host's carrier signs an Owner fact with no maker");
     assert!(
         host.vault.task_authority_state(task).is_err(),
-        "two owners fork the task's read"
+        "a malformed fact this install wrote fails the task's read"
     );
     // The vault owner's force cancel writes this fact once it stops a branch, whatever
     // the task's facts read.
@@ -350,7 +354,7 @@ fn a_cancel_lands_on_a_task_whose_owner_forked() {
         host.owner,
         None,
     )
-    .expect("the door writes a cancel on a forked task");
+    .expect("the door writes a cancel on a task whose facts fail the read");
 }
 
 #[test]
