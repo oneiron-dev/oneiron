@@ -37,17 +37,32 @@
 #               The night stops before a shard when --max-shards shards have
 #               run, or when the longest shard so far would end past the
 #               deadline (--stop-at HH:MM Japan time, or --deadline-epoch), at
-#               a selection whose build fails beyond pruning, and at a shard
+#               a selection whose build fails beyond pruning, at a shard
 #               whose verdict stage did not run (the cursor stays on it, so the
-#               next night retries it).
+#               next night retries it), and after a selection whose delete
+#               found no file for one of its binaries (each binary is about
+#               2 GiB on the fleet, so a night of undeleted shards fills the
+#               disk).
 #               The next night resumes at the cursor; a full cycle runs every
 #               file once.
 #
 # For each selection:
 #   build       `cargo nextest run --no-run`. A unit that does not compile is
-#               left out (nightly_report.py prune) and the build retried, at
-#               most three rounds; a failed lib or build script drops the
-#               selection. Any unit left out makes the night red.
+#               left out (nightly_report.py prune) and the build retried. A
+#               round's build stops at its first failed unit, so each broken
+#               lib test takes a round of its own: the rounds go on while each
+#               leaves a new unit out, up to NIGHTLY_BUILD_ROUNDS (default 8)
+#               rounds and not past the deadline. A failed lib or build
+#               script, or a round that names no new unit, drops the
+#               selection. Any unit left out makes the night red. A workspace
+#               package none of whose lib, bin or test targets is tested
+#               (`test = false`, as oneiron-py sets: a PyO3 extension-module
+#               never links as a test) is left out of every selection by
+#               design, as `cargo test` with no target flag leaves it.
+#               The build's stdout is cargo's JSON messages
+#               (--cargo-message-format json-render-diagnostics), in
+#               build-<name>.json in --out; its diagnostics and errors stay in
+#               the round's log.
 #   pending     (after the libs build) oneiron-testkit-pending-door <date>:
 #               the NO-DOOR register (ONEIRON_TESTKIT_NO_DOOR_REGISTER) gives
 #               the pending filter P and the expired filter X. An expired test
@@ -69,6 +84,14 @@
 #   measure     minutes, the target dir's size, the free disk and the job's
 #               memory peak (cgroup v2 memory.peak), before the shard's binaries
 #               are deleted.
+#   delete      (shards, budget and bench, when --shard-files is set) the
+#               selection's test binaries, and the bench's bin: the executables
+#               the build's cargo messages name, with their hard links
+#               (nightly_report.py delete-binaries), wherever the toolchain
+#               puts them: debug/deps until rustc 1.100, then
+#               debug/build/<package>/<hash>/out/. A name the messages do not
+#               name falls back to the debug/deps glob. Its line counts the
+#               files and KiB deleted and names any binary it found no file for.
 # Then the summary: one line (`## NIGHTLY SUMMARY NIGHTLY <date> ...`) and
 # summary.json, summary.txt, results-store.json (each test's last outcome: the
 # next night's --previous, so a flip compares a test with its own last run),
@@ -112,6 +135,8 @@ night=${night:-$(TZ=Asia/Tokyo date +%F)}
 for number in "$shard_files" "${max_shards:-0}" "${deadline:-0}"; do
   [[ $number =~ ^[0-9]+$ ]] || { echo "run_nightly.sh: $number is not a number" >&2; exit 2; }
 done
+build_rounds=${NIGHTLY_BUILD_ROUNDS:-8}
+[[ $build_rounds =~ ^[1-9][0-9]*$ ]] || { echo "run_nightly.sh: NIGHTLY_BUILD_ROUNDS=$build_rounds is not a positive number" >&2; exit 2; }
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
 mkdir -p "$out" && out=$(cd "$out" && pwd)
@@ -127,9 +152,10 @@ export CARGO_TERM_COLOR=never ONEIRON_TESTKIT_TODAY=$night
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--cfg oneiron_test_support"
 commit=$(git rev-parse HEAD) || exit 2
 # a reused --out dir must not lend an older night's results or build errors
-rm -f "$out"/junit-*.xml "$out/pending-door.json" "$out/stages.tsv" "$out"/build-*.log "$out"/failed-units-*.json \
-  "$out/budget-baseline-proposal.tsv" "$out/bench-jobs.tsv" "$out"/bench-*.out "$out"/bench-*.err
-echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files max_shards=${max_shards:-none} deadline=${deadline:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default}"
+rm -f "$out"/junit-*.xml "$out/pending-door.json" "$out/stages.tsv" "$out"/build-*.log "$out"/build-*.json \
+  "$out"/failed-units-*.json "$out/budget-baseline-proposal.tsv" "$out/bench-jobs.tsv" "$out"/bench-*.out \
+  "$out"/bench-*.err
+echo "## NIGHTLY head=${commit:0:12} date=$night shard_files=$shard_files max_shards=${max_shards:-none} deadline=${deadline:-none} jobs=${CARGO_BUILD_JOBS:-default} lib_jobs=${NIGHTLY_LIB_JOBS:-default} build_rounds=$build_rounds"
 if ! cargo nextest --version > "$out/nextest-version.txt" 2>&1; then
   step nextest missing; exit 2
 fi
@@ -158,18 +184,26 @@ build_selection() {  # name -> 0 once its units build (failed units left out), 1
     logs+=("$log")
     read -r -a args <<< "$(report args "$plan" --name "$name")"
     start=$SECONDS
+    # stdout: cargo's JSON messages (each round overwrites them, so the round that builds leaves its own); stderr:
+    # the human log, with cargo's `error: could not compile` lines
     if [ -n "$jobs" ]; then
-      CARGO_BUILD_JOBS=$jobs cargo nextest run --no-run --locked --all-features "${args[@]}" > "$log" 2>&1
+      CARGO_BUILD_JOBS=$jobs cargo nextest run --no-run --locked --cargo-message-format json-render-diagnostics \
+        --all-features "${args[@]}" > "$out/build-$name.json" 2> "$log"
     else
-      cargo nextest run --no-run --locked --all-features "${args[@]}" > "$log" 2>&1
+      cargo nextest run --no-run --locked --cargo-message-format json-render-diagnostics \
+        --all-features "${args[@]}" > "$out/build-$name.json" 2> "$log"
     fi
     rc=$?
     step "build-$name" $rc "round=$round seconds=$((SECONDS - start))"
     [ $rc -eq 0 ] && return 0
     sed -n 's/^error: could not compile /## NIGHTLY failed-unit /p' "$log" | sort -u | head -40
     report failed-units "${logs[@]}" > "$out/failed-units-$name.json"   # this build's rounds only
-    if [ $round -ge 3 ]; then
+    if [ $round -ge "$build_rounds" ]; then
       report drop "$plan" "$name" "the build failed in $round rounds"
+      return 1
+    fi
+    if [ -n "$deadline" ] && [ "$(date +%s)" -ge "$deadline" ]; then
+      report drop "$plan" "$name" "the build failed in round $round, at the deadline"
       return 1
     fi
     report prune "$plan" "$name" "$out/failed-units-$name.json" "$out/metadata.json" || return 1
@@ -197,13 +231,9 @@ run_stage() {  # stage profile filter selection-name -- selection args; 0 when t
   [ "$ran" = yes ]
 }
 
-delete_test_binaries() {  # selection name: its test binaries in the target's deps dir, and a bin's own copy
-  local binary
-  while read -r binary; do
-    [ -n "$binary" ] || continue
-    find "$target/debug/deps" -maxdepth 1 -type f -name "${binary//-/_}-????????????????" -delete
-    rm -f "$target/debug/$binary"
-  done < <(report binaries "$plan" "$1")
+delete_failed=''
+delete_test_binaries() {  # selection name: the test binaries (and a bench bin) its build's cargo messages name
+  report delete-binaries "$plan" "$1" "$out/build-$1.json" "$target" || delete_failed=$1
 }
 
 bench_jobs() {  # the bench jobs, from the bin the bench selection built: one bench-jobs.tsv row each (job, exit, seconds)
@@ -252,6 +282,9 @@ for name in $(report args "$plan" | cut -d' ' -f1); do
     fi
     if [ -n "$deadline" ] && [ $(( $(date +%s) + longest )) -gt "$deadline" ]; then
       echo "## NIGHTLY stop reason=deadline next=$name longest_shard_seconds=$longest"; break
+    fi
+    if [ -n "$delete_failed" ]; then
+      echo "## NIGHTLY stop reason=delete-incomplete after=$delete_failed next=$name"; break
     fi
   fi
   started=$SECONDS
