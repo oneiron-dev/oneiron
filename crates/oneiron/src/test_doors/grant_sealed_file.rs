@@ -8,7 +8,8 @@ use crate::error::Result;
 
 /// How many key groups an agent's read of the file whose stored bytes are
 /// `bytes` asks for: `None` when no grant can reach it (no mark covers it,
-/// a key is not admitted, or the write door sealed it whole).
+/// the mark names no key, a key is not admitted, or the write door sealed it
+/// whole).
 ///
 /// # Errors
 /// A store failure, or a mark that does not decode.
