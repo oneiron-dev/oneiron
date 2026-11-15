@@ -157,6 +157,21 @@ impl Vault {
                 None => match embedder {
                     Some(embedder) => match embedder.embed_revision_marked(&input) {
                         Ok(marked) => Some(marked),
+                        // A row a device-local world keeps, refused by an
+                        // embedder off this device, publishes as a vault with
+                        // no embedder publishes it: with no vector, found by
+                        // its keywords (DEC-0005 #private-world-vectors).
+                        Err(error) if crate::embed::is_device_local_row_refusal(&error) => {
+                            if self.get_vector(&input.entity)?.is_some() {
+                                report.failed.push((
+                                    input.entity,
+                                    input.source_revision_ref,
+                                    error.kind(),
+                                ));
+                                continue;
+                            }
+                            None
+                        }
                         Err(
                             error @ (Error::InvalidConfig(_)
                             | Error::DimensionMismatch { .. }
@@ -417,6 +432,14 @@ impl Vault {
                 None => None,
                 Some(_) => match embedder.embed_revision_marked(&input) {
                     Ok(marked) => Some(marked),
+                    // A row a device-local world keeps gets no vector from an
+                    // embedder off this device; the refill skips it alone.
+                    Err(error) if crate::embed::is_device_local_row_refusal(&error) => {
+                        report
+                            .failed
+                            .push((input.entity, input.source_revision_ref, error.kind()));
+                        continue;
+                    }
                     Err(
                         error @ (Error::InvalidConfig(_)
                         | Error::DimensionMismatch { .. }

@@ -1,10 +1,10 @@
 //! The per-agent context-window memory profile (RT-05, ONE-1687) an agent
 //! definition stores: its window budget and split, who compacts it, its hot
-//! window, output decay, verbatim pins and optional recall.
+//! window, output decay and verbatim pins. The optional recall a reader takes
+//! is the definition's own field (`AgentDefinition::optional_memory`).
 
 use oneiron_model::llm::ModelTierRef;
 
-use crate::store::agent_optional_memory::OptionalMemoryProfile;
 use crate::store::agent_record::{CompactionOwnership, ContextBudgetSplit};
 use crate::store::output_decay::OutputDecayPolicy;
 
@@ -37,7 +37,4 @@ pub struct MemoryProfile {
     /// the span holds it (#d7 verbatim pins). User messages and failure lines
     /// stay pinned regardless; these are added, never a replacement.
     pub verbatim_pins: Vec<String>,
-    /// The optional recall this reader takes per task family; absent = the
-    /// caller's request as sent. Separate from the window above.
-    pub optional_memory: Option<OptionalMemoryProfile>,
 }

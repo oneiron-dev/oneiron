@@ -7,13 +7,36 @@
 //! edges did not read) is never read as "no world". Nothing else is
 //! decided here: the host's egress list and its destination are its own.
 
+use super::refusal::{DEVICE_LOCAL_ROW, REMOTE_EMBEDDER};
 use crate::Vault;
 use crate::entity_id::EntityId;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::machine_destination::PeerMachine;
 use crate::settings::ReadDestination;
 
 impl Vault {
+    /// Releases `rows` to an embedder at `destination`: `Ok` only when no
+    /// world withheld from that destination keeps one of them
+    /// ([`Self::rows_may_leave_for`]), else a refusal
+    /// ([`super::is_device_local_row_refusal`]). A sender asks right before each
+    /// request leaves and sends nothing on a refusal: a private world never
+    /// falls back to a shared or hosted embedder (DEC-0005
+    /// #private-world-vectors).
+    pub fn release_embed_rows(
+        &self,
+        rows: &[EntityId],
+        destination: &ReadDestination,
+    ) -> Result<()> {
+        if self.rows_may_leave_for(rows, destination)? {
+            Ok(())
+        } else {
+            Err(Error::UpstreamToolFailure {
+                tool: REMOTE_EMBEDDER,
+                code: DEVICE_LOCAL_ROW.to_owned(),
+            })
+        }
+    }
+
     /// For each row of `rows`, in order, whether it may go to a model off
     /// this device that nobody proved: `true` only when no world flagged
     /// device-only keeps it and its world reads. Read once, under the flag

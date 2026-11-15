@@ -9,7 +9,7 @@ use oneiron::{
         registry::{ModelRegistryRow, ModelWireFormat},
     },
 };
-use oneiron_llm_openai::{
+use oneiron_llm::openai_compat::{
     OpenAiCompatBackend, OpenAiCompatConfig, OpenAiCompatFuture, OpenAiCompatHttpRequest,
     OpenAiCompatHttpResponse, OpenAiCompatProviderStream, OpenAiCompatTransport,
     OpenAiCompatTransportError,
@@ -194,6 +194,7 @@ impl ModelSession {
                 scores: BTreeMap::new(),
                 fetched_at: BTreeMap::new(),
                 tokens_per_o200k: None,
+                answer_tokens_per_o200k: None,
                 stale_since: None,
                 source_rows: None,
             })?;

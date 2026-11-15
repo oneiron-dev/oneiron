@@ -50,6 +50,7 @@ use oneiron::self_heal::detector_pass::MAX_T3_FINDINGS;
 use oneiron::self_heal::distillation::{MintedRegistration, ReviewedFinding};
 use oneiron::skill_optimize::offer_doors::OfferAnswerReply;
 use oneiron::skill_optimize::{OfferAnswer, OfferSwitchReceipt, TrainingOffer};
+use oneiron_base::unix_seconds_now;
 use serde::{Deserialize, Serialize};
 
 use super::{OwnerReply, blocking, owner};
@@ -57,7 +58,6 @@ use crate::api::body_spool::OwnerJsonBody;
 use crate::api::query_params;
 use crate::auth::CoreAuth;
 use crate::error::ApiError;
-use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerError, OwnerResult, entity_id};
 use crate::server::SyncServer;
 
@@ -68,13 +68,9 @@ mod training_runs;
 mod table;
 pub(super) use self::table::owner_table;
 
-fn now_secs() -> u64 {
-    now_unix_ms() / 1_000
-}
-
 /// A digest or ask id as 64 hex.
 fn hex_id(id: &[u8; 32]) -> String {
-    id.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(id)
 }
 
 /// A digest id, as 64 hex.
@@ -163,7 +159,7 @@ async fn assemble_digest(
     let view = blocking(move || -> OwnerResult<Option<DigestView>> {
         Ok(server
             .vault()
-            .proactivity_digest(&owner, now_secs(), None)?
+            .proactivity_digest(&owner, unix_seconds_now(), None)?
             .map(DigestView::new))
     })
     .await?;
@@ -231,7 +227,7 @@ async fn set_stewardship(
     let rules = blocking(move || {
         Ok(server
             .vault()
-            .set_stewardship_rules(&owner, request.rules, now_secs())?)
+            .set_stewardship_rules(&owner, request.rules, unix_seconds_now())?)
     })
     .await?;
     Ok(Json(rules))
@@ -314,7 +310,7 @@ async fn approve_representation(
     let view = blocking(move || -> OwnerResult<ApprovedView> {
         let vault = server.vault();
         let id = entity_id("proposal", &request.proposal)?;
-        let now = now_secs();
+        let now = unix_seconds_now();
         let review = vault.review_representation(&owner, &id)?;
         let approved = vault.approve_representation(&owner, &review, now)?;
         let facade = vault.memory(
@@ -357,7 +353,7 @@ async fn decline_representation(
         let vault = server.vault();
         let id = entity_id("proposal", &request.proposal)?;
         let review = vault.review_representation(&owner, &id)?;
-        vault.decline_representation(&owner, &review, now_secs())?;
+        vault.decline_representation(&owner, &review, unix_seconds_now())?;
         Ok(())
     })
     .await?;
@@ -415,7 +411,7 @@ async fn answer_training_offer(
             &request.digest,
             request.answer,
             training.as_ref(),
-            now_secs(),
+            unix_seconds_now(),
         )?;
         Ok(OfferAnswerReply::current(server.vault(), answer)?)
     })
@@ -445,7 +441,7 @@ async fn undo_training_offer_switch(
             server.vault(),
             &owner,
             &offer,
-            now_secs(),
+            unix_seconds_now(),
         )?)
     })
     .await?;
@@ -537,7 +533,7 @@ async fn pick_judge_ask(
             &owner,
             ask,
             matches!(request.choice, JudgeAskChoice::B),
-            now_secs(),
+            unix_seconds_now(),
         )?;
         Ok(JudgeLabelView {
             ask: hex_id(&label.ask.id),
@@ -700,7 +696,7 @@ async fn answer_identity_ask(
             surface,
             &request.ask,
             &request.choice,
-            now_secs(),
+            unix_seconds_now(),
         )?))
     })
     .await??;
