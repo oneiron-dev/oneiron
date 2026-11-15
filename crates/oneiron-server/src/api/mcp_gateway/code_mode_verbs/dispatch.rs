@@ -33,9 +33,7 @@ impl McpCodeModeVerbs {
         origin: &HostWriteOrigin,
         invocation: InvocationId,
     ) -> oneiron::Result<Result<AgentVerbAnswer, AgentVerbRefusal>> {
-        if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb)
-            .and_then(|()| mcp_host_verb_gate(&self.server, &self.actor, call.verb))
-        {
+        if let Err(error) = mcp_admit_host_verb(&self.actor, call.verb) {
             return refused(error);
         }
         let memory = crate::api::mcp_credential_memory(

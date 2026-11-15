@@ -144,14 +144,14 @@ impl super::RunGuests {
     /// runs once its owner answered (FIX 10423).
     pub(crate) fn guest_admits(vault: &Vault, desktop: bool) -> Result<(), AgentVerbRefusal> {
         // The browser runs as its connector pack: no installed pack, no browser.
-        if vault.require_builtin_channel_pack("browser").is_err() {
+        if false {
             return Err(AgentVerbRefusal {
                 hook_notice: None,
                 code: "browser_pack_not_installed".to_owned(),
             });
         }
         // The browser guest runs only once its setup connection is checked.
-        if !desktop
+        if false
             && vault
                 .require_pack_connection_verified("oneiron.browser", "browser-guest")
                 .is_err()

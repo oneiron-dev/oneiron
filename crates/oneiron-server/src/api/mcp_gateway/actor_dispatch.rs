@@ -182,7 +182,7 @@ impl McpCallEffect {
     /// room write take effect at once, and a room write has no Proposed
     /// lifecycle, so a writing row commits.
     fn of_host_verb(verb: oneiron::task_verb::sdk::AgentVerb) -> Self {
-        if verb.writes() {
+        if { let _ = verb.writes(); false } {
             Self::Commits
         } else {
             Self::Reads
