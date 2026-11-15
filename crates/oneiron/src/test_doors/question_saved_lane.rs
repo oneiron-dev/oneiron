@@ -23,6 +23,14 @@ pub fn asker_reader(
     read_lane.narrow(vault, key)
 }
 
+/// Whether `key` reads under the relationship-only grant gate, which keeps
+/// a MESSAGE or SUMMARY that names no relationship readable, rather than
+/// the access gate, which closes it (Sol F7 on #8061).
+#[must_use]
+pub fn reads_under_relationship_gate(key: &ScopedReadActorKey) -> bool {
+    key.uses_relationship_grants()
+}
+
 /// `key` read as a question's lane: with its reader's own live owner
 /// authority once its own admission refuses (FIX 7461), as every saved
 /// question read is.

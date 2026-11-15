@@ -1,5 +1,6 @@
 //! A saved lane never reads past the owner standing its live key held (FIX
-//! 14344, Astra F2 on #8029; Engine RULING 15 Nov 07:42).
+//! 14344, Astra F2 on #8029; Engine RULING 15 Nov 07:42), nor loses a row its
+//! live key's grant gate let through.
 //!
 //! The owner pairs their own device; its credential names the own-device
 //! grant. The device hands the credential to a second key
@@ -8,17 +9,23 @@
 //! claim inside a relationship it holds no grant on. Saved work froze that
 //! lane as its holder's principal lane, and its rebuild over the owner's own
 //! key read the row: the saved question's asker key regained the owner's
-//! exemption, its source key the owner alternative a missing Scope turns
-//! on, and the owner's own key its floor. The lane now keeps its top Scope
-//! and its live key's grant basis, and every rebuild reads no more than the
-//! live lane did. An attenuated credential the device kept keeps its Scope
-//! and its owner exemption, and the device's own credential still saves as
-//! its holder's principal lane: both rebuilds still read the row.
+//! exemption, and the owner's own key its floor. The lane now keeps its top
+//! Scope and its live key's grant basis, and every rebuild reads no more
+//! than the live lane did. An attenuated credential the device kept keeps
+//! its Scope and its owner exemption: rebuilt over the owner's own key it
+//! keeps the exemption, not the owner's floor (Sol F1 on #8061). The
+//! device's own credential still saves as its holder's principal lane. A
+//! bounded key no grant gate bound keeps its rebuilt asker's relationship
+//! gate, which leaves unscoped rows readable (Sol F7 on #8061).
 //!
-//! Red on #8029 (87747eae206): each transferred rebuild reads the
-//! relationship claim, and both credentials' lanes read as their holder's
-//! principal lane. Guard (green there too): the device's own saved question
-//! and the attenuated one's read the relationship claim.
+//! Red on #8029 (87747eae206): the transferred asker and owner's-key
+//! rebuilds read the relationship claim, both credentials' lanes read as
+//! their holder's principal lane, and the attenuated lane rebuilt over the
+//! owner's key reads as the owner. Red at #8061's first head (73bfa478fb7):
+//! that attenuated rebuild, and the bounded ungated lane's rebuilt asker,
+//! which closes unscoped rows. Guards: the transferred source rebuild (its
+//! owner alternative already carried the access gate and no exemption), the
+//! device's own saved question and the attenuated one's asker read.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_owner_basis`.
 #![cfg(oneiron_test_support)]
@@ -39,8 +46,10 @@ use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedCl
 use oneiron::registry::ENTITY_TYPE_RELATIONSHIP;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::test_doors::question_saved_lane::{asker_reader, question_read};
-use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::test_doors::question_saved_lane::{
+    asker_reader, question_read, reads_under_relationship_gate,
+};
+use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig, WorldAuthoritySet};
 use serde_json::json;
 
 const OCCURRED_AT: u64 = 1_769_947_200;
@@ -161,6 +170,10 @@ fn paired_device_slip(
             3_600,
             PairingPrincipal {
                 holder_ref: Some(holder.clone()),
+                // The owner's device pairs as the human it is; the server
+                // names a class on every credential it pairs. One of no class
+                // holds only the owner's exemption (`credential_key.rs`).
+                actor_class: Some("human".to_owned()),
                 ..PairingPrincipal::default()
             },
         )
@@ -456,5 +469,76 @@ fn an_own_device_saved_question_reads_the_owners_relationship_row() {
     assert!(
         read,
         "actor=the owner's paired device; expected its saved question's asker reader to read the owner's relationship claim; seen {seen}"
+    );
+}
+
+/// The attenuated credential held only the owner's exemption: its lane,
+/// rebuilt over the owner's own key, keeps that exemption and reads the
+/// relationship claim, but never the owner's floor, so it reads no row and
+/// sees no secret only the owner's floor admits (Sol F1 on #8061).
+#[test]
+fn an_attenuated_own_device_saved_lane_over_the_owners_key_keeps_its_exemption_not_the_floor() {
+    let fixture = fixture();
+    let key = credential_key(&fixture, &attenuated_slip(&fixture));
+    assert!(
+        !key.reads_as_vault_owner(),
+        "precondition: the device's attenuated credential reads below the owner's floor"
+    );
+    let frozen = saved_lane(&fixture, key);
+    let owner = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("owner read key");
+    assert!(
+        owner.reads_as_vault_owner(),
+        "control: the owner's own key holds the owner's floor"
+    );
+    let rebuilt = frozen
+        .narrow(&fixture.vault, owner)
+        .expect("the saved lane rebuilds over the owner's own key");
+    assert!(
+        !rebuilt.reads_as_vault_owner(),
+        "actor=the owner's device under an attenuated credential; expected its saved lane, rebuilt over the owner's own key, to keep the owner's exemption and not to read with the owner's floor"
+    );
+    let (read, seen) = reads(&held_lane(&fixture, rebuilt), fixture.relationship_claim);
+    assert!(
+        read,
+        "actor=the owner's device under an attenuated credential; expected its saved lane, rebuilt over the owner's own key, to read the relationship claim under the owner's exemption; seen {seen}"
+    );
+}
+
+/// A bounded key no grant gate bound read every unscoped row its policy
+/// admitted: its saved question's asker keeps the relationship gate it was
+/// built with and does not close unscoped rows (Sol F7 on #8061).
+#[test]
+fn an_ungated_bounded_saved_lane_keeps_its_asker_under_the_relationship_gate() {
+    let fixture = fixture();
+    let key = ScopedReadActorKey::with_actor_class(fixture.owner.to_hex(), "human")
+        .expect("the owner's own ungated principal key");
+    assert!(
+        !key.reads_as_vault_owner(),
+        "precondition: the ungated key holds no owner floor"
+    );
+    let frozen = fixture
+        .vault
+        .scoped_read(key)
+        .within_worlds(
+            WorldAuthoritySet::new(true, std::iter::empty::<EntityId>())
+                .expect("the base world alone"),
+        )
+        .freeze()
+        .expect("the bounded ungated lane freezes");
+    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
+    let frozen: FrozenReadLane = rmp_serde::from_slice(&stored).expect("frozen lane decodes");
+    assert!(
+        !frozen.reads_as_principal(),
+        "precondition: the base-world bound keeps the saved lane from reading as its principal's own"
+    );
+    let rebuilt = asker_reader(&fixture.vault, fixture.owner, &frozen)
+        .expect("the saved question's asker rebuilds");
+    assert!(
+        reads_under_relationship_gate(&rebuilt),
+        "actor=the owner's ungated key held to the base world; expected its saved question's asker to keep the relationship gate, under which unscoped rows stay readable, not to close them"
     );
 }

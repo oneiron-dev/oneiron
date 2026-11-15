@@ -780,37 +780,64 @@ impl ScopedReadActorKey {
     }
 
     /// The grant basis this key reads under, as a saved lane keeps it beside
-    /// its frozen Scope (FIX 14344): whether it holds an owner standing (the
-    /// vault owner's floor, or a narrower credential's owner exemption, each
-    /// proved again at every read) and whether it reads under the
-    /// relationship-only grant gate.
+    /// its frozen Scope (FIX 14344): its owner standing (the vault owner's
+    /// floor, a narrower credential's owner exemption, or neither; each
+    /// proved again at every read) and its grant gate (none, the
+    /// relationship-only gate, or the access gate).
     pub(super) fn native_read_basis(&self) -> super::frozen::NativeReadBasis {
+        use super::frozen::{NativeGrantGate, NativeOwnerStanding};
+        let owner_standing = if self.owner.is_some() {
+            NativeOwnerStanding::Floor
+        } else if self.owner_exemption.is_some() {
+            NativeOwnerStanding::Exemption
+        } else {
+            NativeOwnerStanding::Absent
+        };
+        let grant_gate = if !self.enforce_access_grants {
+            NativeGrantGate::Ungated
+        } else if self.unscoped_rows_open {
+            NativeGrantGate::Relationship
+        } else {
+            NativeGrantGate::Access
+        };
         super::frozen::NativeReadBasis {
-            owner_exemption: self.owner.is_some() || self.owner_exemption.is_some(),
-            relationship_grants: self.uses_relationship_grants(),
+            owner_standing,
+            grant_gate,
         }
     }
 
     /// This key held to `basis`, the grant basis a saved lane's live key
-    /// read under (FIX 14344, Astra F2 on #8029). For a lane whose live key
-    /// held no owner standing, the key loses the owner's floor and exemption
-    /// and reads under the gate that key read under: the relationship-only
-    /// gate, or the access gate when that key also closed unscoped rows. It
-    /// only narrows: a basis with an owner standing leaves the key as it is,
-    /// and a key already under the access gate stays there.
+    /// read under (FIX 14344, Astra F2 on #8029). It never holds an owner
+    /// standing that key lacked: under a basis with no owner standing it
+    /// loses the owner's floor and exemption, and under an exemption's it
+    /// keeps the owner's exemption but not the floor (Sol F1 on #8061). A
+    /// floor it loses reads under the gate the live key read under; the
+    /// access gate closes unscoped rows on any key. It only narrows: a key
+    /// no gate bound (Sol F7 on #8061) or one under the relationship gate
+    /// leaves the rebuilt key's gate as it is.
     #[must_use]
     pub(super) fn within_native_basis(mut self, basis: super::frozen::NativeReadBasis) -> Self {
-        if basis.owner_exemption {
+        use super::frozen::{NativeGrantGate, NativeOwnerStanding};
+        if basis.owner_standing == NativeOwnerStanding::Floor {
             return self;
         }
-        self.owner_exemption = None;
         if let Some(owner) = self.owner.take() {
             // The owner's floor reads under no grant gate; the rebuilt key
-            // takes the live key's.
+            // takes the live key's, and the owner's exemption only where
+            // the live key held it.
             self.principal_ref = self.principal_ref.or(Some(owner));
-            self.enforce_access_grants = true;
-            self.unscoped_rows_open = basis.relationship_grants;
-        } else if !basis.relationship_grants {
+            if basis.grant_gate != NativeGrantGate::Ungated {
+                self.enforce_access_grants = true;
+                self.unscoped_rows_open = true;
+            }
+            if basis.owner_standing == NativeOwnerStanding::Exemption {
+                self.owner_exemption = Some(owner);
+            }
+        }
+        if basis.owner_standing == NativeOwnerStanding::Absent {
+            self.owner_exemption = None;
+        }
+        if basis.grant_gate == NativeGrantGate::Access {
             self.unscoped_rows_open = false;
         }
         self

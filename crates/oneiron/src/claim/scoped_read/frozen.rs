@@ -90,18 +90,45 @@ impl SavedCredential {
 /// on #8029), kept beside its frozen Scope as a queued summary's
 /// declaration keeps it (`requester_owner_exemption`,
 /// `requester_relationship_grants`). A rebuild over the principal's own key
-/// never regains an owner standing the live key lacked
-/// (`ScopedReadActorKey::within_native_basis`).
+/// never regains an owner standing the live key lacked, nor loses a row the
+/// live key's gate let through (`ScopedReadActorKey::within_native_basis`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
-    /// Whether the live key held an owner standing: the vault owner's floor,
-    /// or a narrower credential's owner exemption. Each read still proves
-    /// the owner binding again.
-    pub(crate) owner_exemption: bool,
-    /// Whether the live key read under the relationship-only grant gate,
-    /// rather than the access gate that also closes unscoped rows.
-    pub(crate) relationship_grants: bool,
+    /// The owner standing the live key held. Each read still proves the
+    /// owner binding again.
+    pub(crate) owner_standing: NativeOwnerStanding,
+    /// The grant gate the live key read under.
+    pub(crate) grant_gate: NativeGrantGate,
+}
+
+/// The owner standing a saved lane's live key held ([`NativeReadBasis`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum NativeOwnerStanding {
+    /// Neither the owner's floor nor an owner exemption: a delegate's key,
+    /// or any other holder's.
+    Absent,
+    /// A narrower credential's owner exemption, never the owner's floor:
+    /// the owner's own attenuated credential (Sol F1 on #8061).
+    Exemption,
+    /// The vault owner's full floor.
+    Floor,
+}
+
+/// The grant gate a saved lane's live key read under ([`NativeReadBasis`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum NativeGrantGate {
+    /// No grant gate: the owner's floor, or a key no gate binds, which read
+    /// every unscoped row its policy admitted (Sol F7 on #8061).
+    Ungated,
+    /// The relationship-only gate: a relationship's rows pass on the
+    /// principal's grants, unscoped rows stay readable.
+    Relationship,
+    /// The access gate, which also closes every unscoped MESSAGE and
+    /// SUMMARY.
+    Access,
 }
 
 /// The scope a read lane read under when its work was saved (OF-506). The
