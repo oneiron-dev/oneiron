@@ -5,7 +5,9 @@
 //! line, key relationships, top-salience claims with provenance refs — with
 //! the OF-365 disclosure clamp applied AT COMPILE: Tier A (restricted-band
 //! or band-ambiguous claims) never enters the row list, and when the card is
-//! FOR someone the audience's scoped-read lane clamps what may enter.
+//! FOR someone the audience's scoped-read lane clamps what may enter. The
+//! owner may let restricted-band claims into a card about a live owner
+//! (`setting_keys.rs`); a band-ambiguous claim never enters.
 //! Third-party rows default COARSE (name + role); claims about others enter
 //! the artifact only via explicit un-strike at preview. Agent takes (OF-330
 //! asides) are OFF by default, per-card toggled, and always attributed.
@@ -27,6 +29,7 @@ mod compile;
 mod copy;
 mod export;
 mod export_omit;
+pub(crate) mod setting_keys;
 mod types;
 
 pub use self::codec::{decode_persona_snapshot_export_body, encode_persona_snapshot_export_body};
