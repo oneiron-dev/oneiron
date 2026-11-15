@@ -1,4 +1,7 @@
-//! One-vault mode reads and the joining notice through public engine doors.
+//! One-vault mode reads and the joining notice through public engine doors,
+//! and one test door that stops an onboarding half way.
+//!
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test workspace_one_vault_mode`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::access_grant::AccessGrant;
@@ -10,9 +13,10 @@ use oneiron::federation::{FederationGrantPreset, FederationGrantRole};
 use oneiron::registry::{ENTITY_TYPE_FACET, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::subject_model::{PersonSubstrate, anchor_actor_subject};
+use oneiron::test_doors::workspace_onboarding_halt::onboard_workspace_member_halting_after;
 use oneiron::workspace_roster::{
-    CompanionChoice, MemberGrantBundle, MemberOnboardingIntent, OneVaultMode, OneVaultSetting,
-    OneVaultSource, WorkspaceRosterPreset,
+    CompanionChoice, MemberGrantBundle, MemberOnboardingIntent, MemberOnboardingStep, OneVaultMode,
+    OneVaultSetting, OneVaultSource, WorkspaceRosterPreset,
 };
 use oneiron::{
     CompanionBirthIntent, EntityId, ErrorKind, TimeRange, Vault, VaultConfig, WriteActor,
@@ -411,7 +415,22 @@ fn onboarding_without_the_row_tells_the_member_plain_line_two() -> TestResult {
 fn conflicting_one_vault_rows_read_unreadable_and_refuse_the_joining_member() -> TestResult {
     let fixture = setup()?;
     let (owen, _) = onboard_owen_work(&fixture, "one-vault-conflict-owen")?;
-    let (yuki, _, intent) = yuki_bring_intent(&fixture, "one-vault-conflict-yuki")?;
+    let writer = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+
+    // yuki's onboarding passes its grant step while the setting still reads;
+    // only her Complete step is left for after the rows conflict.
+    let (yuki, _, resumed_intent) = yuki_bring_intent(&fixture, "one-vault-conflict-yuki")?;
+    let halted = onboard_workspace_member_halting_after(
+        &fixture.vault,
+        resumed_intent.clone(),
+        &writer,
+        None,
+        MemberOnboardingStep::MailboxBound,
+    )?;
+    assert!(halted.is_none(), "the onboarding stops before Complete");
+    // A second member starts joining only after the rows conflict.
+    let (late_member, _, late_intent) =
+        yuki_bring_intent(&fixture, "one-vault-conflict-late-member")?;
 
     // Two trusted Owner manifests name different rows: no deterministic
     // mode, so the policy fails closed and no mode is answered.
@@ -431,13 +450,22 @@ fn conflicting_one_vault_rows_read_unreadable_and_refuse_the_joining_member() ->
     );
     assert_eq!(got["source"], json!("unreadable"));
 
-    // The Complete step refuses rather than guess the joining line.
-    let refused = fixture.vault.onboard_workspace_member(
-        intent,
-        &WriteActor::new(fixture.owner, EdgeActorClass::Human),
-        None,
+    // A fresh joining stops earlier: its grant step's default policy fails
+    // closed on the same conflict.
+    let late = fixture
+        .vault
+        .onboard_workspace_member(late_intent, &writer, None);
+    assert!(
+        late.is_err(),
+        "a fresh onboarding refuses under conflicting rows"
     );
-    let error = refused.expect_err("onboarding refuses under an unreadable one_vault row");
+
+    // The resumed Complete step refuses rather than guess the joining line.
+    let refused = fixture
+        .vault
+        .onboard_workspace_member(resumed_intent, &writer, None);
+    let error =
+        refused.expect_err("the resumed onboarding refuses under an unreadable one_vault row");
     assert!(
         matches!(error.kind(), ErrorKind::OneVaultSettingUnreadable),
         "the refusal names the unreadable setting: {error}"
@@ -446,8 +474,11 @@ fn conflicting_one_vault_rows_read_unreadable_and_refuse_the_joining_member() ->
         .vault
         .workspace_roster(WORKSPACE, fixture.vault.now_recorded_at())?;
     assert!(
-        roster.iter().all(|entry| entry.principal_ref != Some(yuki)),
-        "the refused member has no roster row"
+        roster
+            .iter()
+            .all(|entry| entry.principal_ref != Some(yuki)
+                && entry.principal_ref != Some(late_member)),
+        "a refused member has no roster row"
     );
     Ok(())
 }
