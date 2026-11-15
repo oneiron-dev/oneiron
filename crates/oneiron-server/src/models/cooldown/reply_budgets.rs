@@ -11,9 +11,14 @@ use super::super::ModelHostBudgets;
 
 impl super::OfferCooldowns {
     /// [`Self::in_vault`], its ladders' chat replies read on `budgets`, the
-    /// vault's own.
+    /// vault's own, and a down provider's first health rest
+    /// `health_rest_secs` long, the host's `[models] health_rest_secs`.
     #[must_use]
-    pub(crate) fn in_vault_with(vault: Arc<Vault>, budgets: ModelHostBudgets) -> Arc<Self> {
+    pub(crate) fn in_vault_with(
+        vault: Arc<Vault>,
+        budgets: ModelHostBudgets,
+        health_rest_secs: u64,
+    ) -> Arc<Self> {
         Arc::new(Self {
             vault: Some(vault),
             fallbacks: RwLock::default(),
@@ -23,6 +28,7 @@ impl super::OfferCooldowns {
             recovered: tokio::sync::watch::Sender::new(0),
             warmth: super::super::ladder::cache_warmth::CacheWarmth::default(),
             budgets,
+            health_rest_secs,
             #[cfg(test)]
             waits_move: None,
         })

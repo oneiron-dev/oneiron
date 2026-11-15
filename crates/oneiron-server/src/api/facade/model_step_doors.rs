@@ -103,6 +103,9 @@ async fn submit(
         crate::api::llm::admit(server, auth, &mut input.request).map_err(inference_refusal)?;
     let run = exact_step_run(&ladder, run, input)?;
     let guard = raw_step_guard(server)?;
+    // A send held unsent while its offer rests for its health spends no
+    // attempt; the step waits for the offer as any call does (FIX 11226).
+    let rest_wait = ladder.step_rest_wait();
     let backend = StepBackend { ladder, run };
     let runtime = tokio::runtime::Handle::current();
     let server = Arc::clone(server);
@@ -114,6 +117,7 @@ async fn submit(
             input,
             &backend,
             &guard,
+            rest_wait,
         ))
     })
     .await
@@ -276,6 +280,9 @@ impl RunStep {
             .map_err(inference_refusal)?;
         let line = self.line(raw_run)?;
         let run = exact_step_run(&ladder, line.run, &mut input)?;
+        // The run's step waits out its offer's health rest as the owner's
+        // does (FIX 11226).
+        let rest_wait = ladder.step_rest_wait();
         let backend = RunStepBackend {
             step: StepBackend { ladder, run },
             lease: line.lease.as_ref().map(|lease| lease.on(vault)),
@@ -289,6 +296,7 @@ impl RunStep {
             &backend,
             &line.guard,
             line.spend.as_ref(),
+            rest_wait,
         ));
         // What the step's calls spent and no look booked goes on the scope
         // whatever the step answered. A booking that fails is an error of
