@@ -187,7 +187,9 @@ pub(crate) fn owner_agent_author_in_txn(
 ) -> Result<bool> {
     let owner = writer.entity_ref();
     let agent = author.entity_ref();
-    if writer.actor_class() != EdgeActorClass::Human
+    // The owner writes in person: a credential handed on to another key is
+    // its holder's act (HANDED-ON-SLIP-PERSON).
+    if !writer.acts_as_own_person()
         || author.actor_class() != EdgeActorClass::Agent
         || agent == owner
         || !is_root_owner(vault, txn, owner)?
@@ -319,8 +321,10 @@ pub(super) fn require_authorship_in_txn(
 /// ([`crate::federation::claim_removal_widens_in`]: a paused, suppressed or
 /// exited `campaign.member`, a do-not-contact bar, an opt-out, an
 /// unreachable channel, a delivery window, ...), and `actor` is neither a
-/// live owner nor the engine's System writer. Lifting a restriction is a
-/// widening, a live owner's alone, whoever wrote the row (the lead's RULING
+/// live owner acting as its own person (not under a credential handed on to
+/// another key, [`WriteActor::acts_as_own_person`]) nor the engine's System
+/// writer. Lifting a restriction is a widening, a live owner's alone,
+/// whoever wrote the row (the lead's RULING
 /// WORLD-ACCESS-GRANT-DELETE = A, 15 Nov: "deleting a restriction IS a
 /// widening"; the Engine's RULING RESTRICTION-FIX-SCOPE = A, FIX
 /// [RESTRICTION-CLAIM-OVERWRITE-AND-SELF-RETRACT]).
@@ -339,7 +343,7 @@ pub(crate) fn lifts_restriction_below_owner_in(
     {
         return Ok(false);
     }
-    Ok(!(actor.actor_class() == EdgeActorClass::Human
+    Ok(!(actor.acts_as_own_person()
         && crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor.entity_ref())?))
 }
 
@@ -474,7 +478,8 @@ pub(super) mod entity_serde {
 /// Explicit owner replacement/withdrawal in a family-owned actor-facing door.
 /// This is never used by auto-upsert. Only the vault owner overrides: the
 /// embedded owner on an unrooted vault, the bound owner on a rooted one; a
-/// conflicted root is fail-closed.
+/// conflicted root is fail-closed. A credential handed on to another key
+/// overrides only its own rows, as an agent does ([`WriteActor::acts_as_own_person`]).
 pub(crate) fn explicit_claim_override_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -487,7 +492,7 @@ pub(crate) fn explicit_claim_override_in_txn(
     let owns = claim_author(body) == Some(actor.entity_ref())
         && crate::batch::authenticated_claim_author_in_txn(&vault.store, txn, &target, body)?
             .is_some_and(|author| author.entity_ref() == actor.entity_ref());
-    if owns || actor.actor_class() != EdgeActorClass::Human {
+    if owns || !actor.acts_as_own_person() {
         return require_claim_self_grant_in_txn(
             vault,
             txn,

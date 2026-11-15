@@ -4,7 +4,7 @@ use super::authorship::*;
 use super::{Memory, MemoryResult};
 use crate::EntityId;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
-use crate::edge::{EdgeActorClass, EdgeKind};
+use crate::edge::EdgeKind;
 use crate::error::Error;
 use crate::gate::record_references::receipt_landed_prose;
 use crate::temporal::TimeRange;
@@ -382,12 +382,15 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<(EntityId, crate::store::GateDecisionId)> {
         let actor = self.write_actor();
-        record.source = if self.actor_class == EdgeActorClass::Human {
+        // A credential handed on to another key writes as its holder, never
+        // as the person (HANDED-ON-SLIP-PERSON Q1 = A).
+        let person = self.acts_as_own_person();
+        record.source = if person {
             ClaimSource::UserStated
         } else {
             ClaimSource::Generated
         };
-        record.generated = self.actor_class != EdgeActorClass::Human;
+        record.generated = !person;
         record.human_authored = !record.generated;
         record.lifecycle_status = SkillLifecycle::Candidate;
         record.approval_status = ClaimApprovalStatus::Proposed;

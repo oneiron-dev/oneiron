@@ -5,7 +5,6 @@
 
 use crate::EntityId;
 use crate::federation::{DeleteAuthority, DeleteCaller, DeleteRefusal, DeleteTarget};
-use crate::memory::support::verify_deletion_authority_in_txn;
 use crate::memory::{
     DeleteReceipt, MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult, SafeDeleteReason,
 };
@@ -66,7 +65,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        verify_deletion_authority_in_txn(self.vault, &txn, self.actor, self.actor_class)?;
+        self.verify_own_deletion_authority_in(&txn)?;
         let mut entries = Vec::new();
         // One preview/receipt per id, with stable order regardless of input.
         let mut targets = ids.to_vec();
