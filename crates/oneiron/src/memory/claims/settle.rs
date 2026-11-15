@@ -11,7 +11,11 @@
 //! matches is refused and changes nothing. The handle is no authority: the
 //! settlement revalidates the owner's proof or the holder's explicit
 //! owner-issued Grant in its own writer. The actor that opened a proposal
-//! never settles it (DEC-0006).
+//! never settles it (DEC-0006). A holder that is no person never settles a
+//! proposal whose settlement closes a claim that restricts someone's access:
+//! a decline of a restricting proposal, an approval that supersedes a
+//! restricting head, or the completion of a close parked on one. A person
+//! who holds a covering Grant, or the owner, settles those.
 //!
 //! An approval closes the supersession its proposal proposed (e2e
 //! MEMORY-01, ARCH-0040 `mcp:5`): the approved claim supersedes the standing
@@ -305,6 +309,34 @@ impl ReviewedProposal {
         }
         Ok(())
     }
+
+    /// Whether settling `id` by `action` closes a claim that restricts
+    /// someone's access ([`crate::federation::claim_removal_widens_in`]). A
+    /// decline closes the proposal itself (a Proposed `comm.do_not_contact`
+    /// already restricts), except a parked retract's decline, which closes
+    /// nothing. An approval closes the head it supersedes, and completes the
+    /// action parked on the claim: a retract, a weakening or a stale mark of
+    /// the claim, or the supersession of the claim it names.
+    fn settle_lifts_restriction_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        action: GateConsentBundleAction,
+    ) -> crate::Result<bool> {
+        match action {
+            GateConsentBundleAction::Decline => Ok(!self.parked_retract
+                && crate::federation::claim_removal_widens_in(vault, txn, &self.body)?),
+            GateConsentBundleAction::Approve => {
+                if let Some(prior) = &self.prior
+                    && crate::federation::claim_removal_widens_in(vault, txn, &prior.body)?
+                {
+                    return Ok(true);
+                }
+                vault.deferred_close_lifts_restriction_in_txn(txn, id, &self.body)
+            }
+        }
+    }
 }
 
 /// A variable-width digest field's length, so no two field splits hash alike.
@@ -325,6 +357,26 @@ fn stale_review() -> MemoryError {
         MEMORY_CODE_INVALID_STATE,
         "the proposed claim, or the head its approval supersedes, changed since its review",
         &["Review the claim again with vault.claims.review and settle the review_id it returns."],
+    )
+}
+
+/// The refusal of a Grant holder that is no person, on a settlement that
+/// closes a claim restricting someone's access
+/// ([`ReviewedProposal::settle_lifts_restriction_in`]). The proposal stays
+/// open for a person who holds a covering Grant, or for the owner.
+fn restriction_close_needs_a_person(actor: WriteActor) -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_FORBIDDEN,
+        format!(
+            "Grant holder {} ({}) may not settle a proposal whose settlement closes a claim \
+             that restricts someone's access: an agent's widening always asks a person",
+            actor.entity_ref().to_hex(),
+            actor.actor_class().gate_actor_class(),
+        ),
+        &[
+            "The proposal stays open: a person who holds a covering review Grant, or the vault \
+             owner, settles it.",
+        ],
     )
 }
 
@@ -537,6 +589,20 @@ impl Memory<'_> {
                 let owner_answer = authorized.owner_answer;
                 let reviewed = ReviewedProposal::read_in_txn(self.vault, &*wtxn, &id)?;
                 reviewed.settleable(review_id, actor.entity_ref(), action, vetting)?;
+                // A holder that is no person never settles a close that lifts
+                // a restriction (the Engine's RULING RESTRICTION-HOLDER-SETTLE
+                // = A, 15 Nov; canon #widen-world-floor: "An agent's widen
+                // always asks the person affected ... No standing grant and
+                // no bypass grant covers it"; the lead's RULING
+                // WORLD-ACCESS-GRANT-DELETE = A: "deleting a restriction IS a
+                // widening"). A person who holds a covering Grant settles it
+                // as the owner's delegated act (DEC-0006 row 10).
+                if authorized.grant_ref.is_some()
+                    && actor.actor_class() != EdgeActorClass::Human
+                    && reviewed.settle_lifts_restriction_in(self.vault, &*wtxn, &id, action)?
+                {
+                    return Err(restriction_close_needs_a_person(actor));
+                }
                 let settled = if vetting {
                     self.vault.vet_generated_claim_in_txn(
                         wtxn,

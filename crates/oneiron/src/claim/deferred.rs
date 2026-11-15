@@ -212,6 +212,28 @@ impl Vault {
     ) -> Result<bool> {
         Ok(load(self, txn, id)?.is_some_and(|row| row.action.demotes_in_place()))
     }
+    /// Whether completing the action parked on `id` closes a claim that
+    /// restricts someone's access ([`crate::federation::claim_removal_widens_in`]):
+    /// a supersession closes the claim it names, and a retract, a weakening
+    /// or a stale mark closes `id` itself, whose stored body is `body`. A
+    /// decay keeps the claim's hold, as `claim_demote` reads it. No parked
+    /// action closes nothing.
+    pub(crate) fn deferred_close_lifts_restriction_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        body: &ClaimBody,
+    ) -> Result<bool> {
+        match load(self, txn, id)?.map(|row| row.action) {
+            Some(DeferredAction::Supersede { old, .. }) => {
+                crate::federation::stored_removal_widens_in(self, txn, &EntityId::from_bytes(old)?)
+            }
+            Some(DeferredAction::Retract | DeferredAction::Weaken(_) | DeferredAction::Stale) => {
+                crate::federation::claim_removal_widens_in(self, txn, body)
+            }
+            Some(DeferredAction::Decay(_)) | None => Ok(false),
+        }
+    }
     pub(crate) fn cancel_deferred_claim_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
