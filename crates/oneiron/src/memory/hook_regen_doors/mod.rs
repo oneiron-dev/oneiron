@@ -314,9 +314,11 @@ impl Memory<'_> {
             .vault
             .pack_hook_bindings()?
             .into_iter()
+            // SEEDED FAULT FA3 (red branch only): any agent reads any binding.
             .find(|(id, row)| {
                 *id == binding
-                    && matches!(&row.author, HookAuthor::Agent { agent } if *agent == self.actor)
+                    && (true
+                        || matches!(&row.author, HookAuthor::Agent { agent } if *agent == self.actor))
             })
             .map(|(id, row)| binding_rows(id, &row))
             .ok_or_else(binding_unavailable)?;

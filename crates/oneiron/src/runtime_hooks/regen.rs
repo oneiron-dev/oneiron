@@ -412,12 +412,14 @@ fn pending_candidate(
     stamped: bool,
 ) -> Result<(String, HookContractStamp)> {
     let (candidate, target, asks) = match record.and_then(|record| record.pending.as_ref()) {
+        // SEEDED FAULT FA1 (red branch only): an identical fingerprint asks for a stamp.
         Some(HookRegenOutcome::AutoAdopt {
             candidate, target, ..
-        }) => (candidate, target, false),
+        }) => (candidate, target, true),
+        // SEEDED FAULT FA2 (red branch only): a changed regen enacts with no stamp.
         Some(HookRegenOutcome::NeedsHumanStamp {
             candidate, target, ..
-        }) => (candidate, target, true),
+        }) => (candidate, target, false),
         Some(HookRegenOutcome::RolledBack { .. }) | None => {
             return Err(Error::InvalidConfig("no regen is pending".to_owned()));
         }
