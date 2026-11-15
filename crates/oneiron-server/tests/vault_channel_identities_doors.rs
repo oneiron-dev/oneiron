@@ -56,8 +56,8 @@ use oneiron::channel_identity::delegated_custody_scopes;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::secret_custody::{
-    CustodyClass, CustodyTier, SECRET_CUSTODY_SCHEMA_VERSION, SecretBinding, SecretCustodyFloor,
-    SecretCustodyRecord, SecretCustodyStatus,
+    CustodyClass, CustodyTier, SECRET_CUSTODY_BODY_KEYS, SECRET_CUSTODY_SCHEMA_VERSION,
+    SecretBinding, SecretCustodyFloor, SecretCustodyStatus, decode_secret_custody_body,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
@@ -424,28 +424,55 @@ impl Host {
 
     /// A live custody record `name` whose Gmail binding grants read of
     /// `mailbox` and names it as its subject: the member's OAuth grant.
+    /// `value_bytes` and `manifest_ref` are crate-private, so the record is
+    /// decoded from its public body codec (as snapshot_custody_binding.rs
+    /// does), then its public binding and floor fields are set.
     fn custody(&self, name: &str, mailbox: &str) {
+        use rmpv::Value as Msgpack;
+        let key = |i: usize| Msgpack::from(SECRET_CUSTODY_BODY_KEYS[i]);
+        let band = |max: u64| {
+            Msgpack::Map(vec![
+                (Msgpack::from("min"), Msgpack::from(0_u64)),
+                (Msgpack::from("max"), Msgpack::from(max)),
+            ])
+        };
+        let floor = Msgpack::Map(vec![
+            (Msgpack::from("portable"), band(2)),
+            (Msgpack::from("device_bound"), band(2)),
+            (Msgpack::from("cross_vault"), band(0)),
+            (Msgpack::from("rotation_max_age_secs"), Msgpack::Nil),
+            (Msgpack::from("env_bindings"), Msgpack::Map(vec![])),
+        ]);
+        let body = Msgpack::Map(vec![
+            (
+                key(0),
+                Msgpack::from(u64::from(SECRET_CUSTODY_SCHEMA_VERSION)),
+            ),
+            (key(1), Msgpack::from(name)),
+            (key(2), Msgpack::from(CustodyClass::CrossVault.as_str())),
+            (key(3), Msgpack::from(true)),
+            (key(4), Msgpack::Binary(b"member-oauth-token".to_vec())),
+            (key(5), Msgpack::from(SecretCustodyStatus::Active.as_str())),
+            (key(6), Msgpack::from(1_800_000_000_u64)),
+            (key(7), Msgpack::Nil),
+            (key(8), Msgpack::from(0_u64)),
+            (key(9), Msgpack::Array(vec![])),
+            (key(10), Msgpack::from("")),
+            (key(11), Msgpack::Array(vec![])),
+            (key(12), floor),
+            (key(13), Msgpack::from(false)),
+        ]);
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &body).expect("encode the custody body");
+        let mut record = decode_secret_custody_body(&bytes).expect("decode the custody body");
+        record.bindings = vec![SecretBinding {
+            effector: GMAIL_EFFECTOR.to_owned(),
+            tier_ceiling: CustodyTier::T0Doored,
+            scopes: delegated_custody_scopes(EMAIL, mailbox),
+        }];
+        record.policy_floor_snapshot = SecretCustodyFloor::default();
         self.vault
-            .register_secret(SecretCustodyRecord {
-                schema_version: SECRET_CUSTODY_SCHEMA_VERSION,
-                name: name.to_owned(),
-                class: CustodyClass::CrossVault,
-                device_only: true,
-                model_reveal_allowed: false,
-                value_bytes: b"member-oauth-token".to_vec(),
-                status: SecretCustodyStatus::Active,
-                registered_at: 1_800_000_000,
-                rotated_at: None,
-                rotation_generation: 0,
-                bindings: vec![SecretBinding {
-                    effector: GMAIL_EFFECTOR.to_owned(),
-                    tier_ceiling: CustodyTier::T0Doored,
-                    scopes: delegated_custody_scopes(EMAIL, mailbox),
-                }],
-                manifest_ref: String::new(),
-                declared_paths: Vec::new(),
-                policy_floor_snapshot: SecretCustodyFloor::default(),
-            })
+            .register_secret(record)
             .expect("the member's custody record");
     }
 
