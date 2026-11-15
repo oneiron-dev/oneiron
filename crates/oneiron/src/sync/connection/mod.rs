@@ -61,6 +61,10 @@ mod topology;
 
 #[cfg(oneiron_test_support)]
 #[doc(hidden)]
+#[path = "../../test_doors/home_probe.rs"]
+pub mod home_probe;
+#[cfg(oneiron_test_support)]
+#[doc(hidden)]
 #[path = "../../test_doors/sync_outbox.rs"]
 pub mod sync_outbox;
 
@@ -867,6 +871,10 @@ enum LoopExit {
     /// A peer session's probe received the home's root (FIX 4748): what was
     /// buffered is queued, and the next connect tries the home's first round.
     HomeReturned,
+    /// The home answered a peer session's probe with a 403 to the credential
+    /// it carried (MEMBER-SELECTOR-SOCKET): what was buffered is queued, and
+    /// the run stops as on a home dial's 403.
+    Forbidden,
 }
 
 // FIX [LIBTEST-QUARANTINE-SYNC-CONNECTION-TESTS]: the lib test target's type check fails here (1 errors: E0061 x1); port it, then drop this gate

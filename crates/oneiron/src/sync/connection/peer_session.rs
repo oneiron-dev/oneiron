@@ -47,7 +47,11 @@
 //! completes sends the next session straight back to a peer, with no new
 //! count, so a home that sends its root and then fails costs one failed
 //! session per probe, not a gap in sync. A turn this machine's own fault ends
-//! stays with the home for the next session (FIX 22107).
+//! stays with the home for the next session (FIX 22107). A probe whose
+//! upgrade the home answers with a 403 to the credential it carried ends the
+//! peer session too: the home refuses this credential the socket, so the
+//! connection stops as on a home dial's 403 and the probe never redials on it
+//! (MEMBER-SELECTOR-SOCKET).
 //!
 //! With no peer dialer (no mesh here) nothing in this module moves: the home
 //! is never counted down.
@@ -200,6 +204,18 @@ impl HomeReach {
     }
 }
 
+/// What the home answered a peer session's probe that ends the session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum HomeAnswer {
+    /// The home sent the probe its root first: the next session is the
+    /// home's (FIX 4748).
+    Root,
+    /// The home answered the probe's upgrade with a 403 to the credential it
+    /// carried: it refuses this credential the socket, so the connection
+    /// stops as on a home dial's 403 (MEMBER-SELECTOR-SOCKET).
+    Forbidden,
+}
+
 /// A peer session's probe of the home every [`HOME_PROBE_SECS`]. A home
 /// session's probe never fires. Each probe runs as its own task, so the
 /// steady loop's other arms never cancel one in flight; dropping the probe
@@ -208,7 +224,7 @@ pub(super) struct HomeProbe {
     /// The home probed; `None` for a home session.
     home: Option<ProbedHome>,
     interval: tokio::time::Interval,
-    task: Option<JoinHandle<bool>>,
+    task: Option<JoinHandle<Option<HomeAnswer>>>,
 }
 
 impl HomeProbe {
@@ -235,24 +251,25 @@ impl HomeProbe {
         }
     }
 
-    /// Returns once a probe receives the home's root first: the home gets
-    /// the next session. Cancel-safe: a probe in flight runs on in its task,
-    /// and the cadence stays.
-    pub(super) async fn root_received(&mut self) {
+    /// Returns the home's answer once a probe gets one that ends the peer
+    /// session: its root first, or a 403 to the probe's credential. Any
+    /// other outcome probes again on the cadence. Cancel-safe: a probe in
+    /// flight runs on in its task, and the cadence stays.
+    pub(super) async fn home_answer(&mut self) -> HomeAnswer {
         let Some(home) = self.home.as_ref() else {
             return std::future::pending().await;
         };
         loop {
             if let Some(task) = self.task.as_mut() {
-                let received = task.await.unwrap_or(false);
+                let answer = task.await.ok().flatten();
                 self.task = None;
-                if received {
-                    return;
+                if let Some(answer) = answer {
+                    return answer;
                 }
             }
             self.interval.tick().await;
             let home = home.clone();
-            self.task = Some(tokio::spawn(async move { home.sends_root().await }));
+            self.task = Some(tokio::spawn(async move { home.answer().await }));
         }
     }
 }
@@ -275,23 +292,26 @@ struct ProbedHome {
 }
 
 impl ProbedHome {
-    /// Whether the home sends a probe its root first within
-    /// [`HOME_PROBE_TIMEOUT_SECS`] ([`Self::probe`]).
-    async fn sends_root(&self) -> bool {
+    /// The home's answer to one probe within [`HOME_PROBE_TIMEOUT_SECS`]
+    /// ([`Self::probe`]), when it ends the peer session; `None` when no
+    /// answer came in time.
+    async fn answer(&self) -> Option<HomeAnswer> {
         let probe =
             tokio::time::timeout(Duration::from_secs(HOME_PROBE_TIMEOUT_SECS), self.probe());
-        matches!(probe.await, Ok(Some(true)))
+        probe.await.ok().flatten()
     }
 
     /// One probe of the home: a socket opened as a home session's is, on the
     /// home's carrier, its upgrade proved the same way, sends the session's
     /// own hello and reads the home's first frame. Returns
-    /// [`first_frame_is_root`] on that frame, `false` on a close or a read
-    /// error first, and `None` when no socket opened. The socket closes then;
-    /// nothing the home sent is applied. A 401 or 403 on its upgrade is told
-    /// as the home dial tells it: the host asks the home, and the probe
-    /// decides nothing (FIX 12442, MEMBER-SELECTOR-SOCKET).
-    async fn probe(&self) -> Option<bool> {
+    /// [`HomeAnswer::Root`] when [`first_frame_is_root`] holds on that frame,
+    /// and `None` on another first frame, a close or a read error first, or
+    /// no socket. The socket closes then; nothing the home sent is applied.
+    /// A 401 or 403 on its upgrade is told as the home dial tells it, and the
+    /// host asks the home (FIX 12442). A 403 to the credential the upgrade
+    /// carried is [`HomeAnswer::Forbidden`]: the home refuses this credential
+    /// the socket, and the probe never redials on it (MEMBER-SELECTOR-SOCKET).
+    async fn probe(&self) -> Option<HomeAnswer> {
         let (request, binding, _) =
             super::handshake::upgrade_request(&self.vault, &self.config, false).ok()?;
         let carried = super::handshake::upgrade_carries_credential(&request, binding.as_ref());
@@ -299,10 +319,10 @@ impl ProbedHome {
         let mut socket = match crate::sync::carrier::connect_sync_socket(request, dialer).await {
             Ok((socket, _)) => socket,
             Err(error) => {
-                if let Some(refusal) = crate::sync::carrier::upgrade_refusal(&error, carried) {
-                    let _ = self.events.send(refusal.event());
-                }
-                return None;
+                let refusal = crate::sync::carrier::upgrade_refusal(&error, carried)?;
+                let _ = self.events.send(refusal.event());
+                return (refusal == crate::sync::carrier::UpgradeRefusal::Forbidden)
+                    .then_some(HomeAnswer::Forbidden);
             }
         };
         socket
@@ -319,6 +339,6 @@ impl ProbedHome {
             }
         };
         let _ = socket.send(Message::Close(None)).await;
-        Some(root)
+        root.then_some(HomeAnswer::Root)
     }
 }
