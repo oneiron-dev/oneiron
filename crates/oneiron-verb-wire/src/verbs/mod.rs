@@ -438,6 +438,7 @@ pub mod skill_attribution;
 pub mod skill_defaults;
 pub mod skill_execution;
 pub mod skill_fit;
+pub mod skill_merge;
 pub mod skill_package_read;
 pub mod skills;
 pub mod standing;

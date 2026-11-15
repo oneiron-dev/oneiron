@@ -1,0 +1,17 @@
+{
+  "name": "vault.skills.merges.offer",
+  "description": "The owner stages a shared skill revision a merge-back or company pull request carried as package bytes; it stays a candidate until the merge route rules after a useful-upstream yes and a held-out win.",
+  "input": "SkillMergeOfferRequest",
+  "output": "crate::task_verb::sdk::SkillMergeOffered",
+  "call": "crate::task_verb::sdk::skill_merge_offer_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.merges.offer\")?, &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "reversible_work",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
