@@ -216,6 +216,23 @@ pub fn note_sweep_deadline(vault: &Vault, sweep: HousekeepingSweep, at: u64) -> 
     })
 }
 
+/// A run of `job` about `subject` started at `at` and never finished, as a crash or a kill leaves
+/// it: its start marker, in its own write (stage 5a-2). Nothing when the job is not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+pub fn plant_start_marker(
+    vault: &Vault,
+    job: &str,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        crate::schedule::plant_start_marker_in_txn(&vault.store, txn, job, subject, at)
+    })
+}
+
 /// A job an actor arms; each run counts, and it wakes a stopped vault.
 pub static TEST_COUNT: JobSpec = JobSpec {
     code: "test.count",

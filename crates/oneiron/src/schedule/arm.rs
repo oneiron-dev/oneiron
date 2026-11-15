@@ -550,6 +550,31 @@ pub(crate) fn due_by_in_txn(
     store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
 }
 
+/// A run of `job` about `subject` started at `at` and never finished, as a crash or a kill leaves
+/// it: its start marker. Nothing when the job is not armed.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn plant_start_marker_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    let key = row_key(job, subject);
+    let Some(prior) = ROWS.get(store, txn, &key)? else {
+        return Ok(());
+    };
+    let row = ScheduleRow {
+        started_at: Some(at),
+        ..prior.clone()
+    };
+    store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
+}
+
 /// When `job` about `subject` is next due, or `None` when it is not armed: a requested run's
 /// time or its next due time, and for a run that never finished, the retry after it.
 ///
