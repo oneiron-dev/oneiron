@@ -1,15 +1,20 @@
 //! Every hook has a grant (ARCH-0080 §6). A fact hook has no session, so it
-//! reads under its own grant, never the writer's.
+//! reads under its own grant, never the writer's. A grant arrives two ways: the
+//! owner sets it by hand, or the owner's accept of a restore's inbox group
+//! installs the archived one that restore brought (OPUS-MAP-5B2).
 
 use serde::{Deserialize, Serialize};
 
+use crate::batch::export::ArchiveRetainedSideRow;
+use crate::batch::export::archive_side_install::decode_archived_row;
 use crate::claim::ClaimBody;
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_hub::pack_catalog::{HookActorClass, PackHookBinding};
+use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Error, Result as VaultResult, Vault};
 
-use super::filter::glob_match;
+use super::filter::{edge_class, glob_match};
 
 /// The owner's grant rows, by binding. Absent, a hook reads at its author's
 /// ceiling.
@@ -182,6 +187,69 @@ pub(crate) fn carry_hook_grant_in_txn(
         }
     }
     Ok(())
+}
+
+/// What landing one deferred archived owner grant did.
+pub(crate) enum DeferredHookGrant {
+    /// No row stood under the binding: the archived bytes now do.
+    Installed(EntityId),
+    /// A row already stood under the binding: it stays, nothing was written.
+    KeptLive,
+    /// The archived row failed one of the checks; nothing was written.
+    HeldBack,
+}
+
+/// Lands one archived owner grant the owner's restore brought, when the owner accepts
+/// that restore's inbox group (OPUS-MAP-5B2). The checks are the import-time landing's
+/// (SIDE-4b G7): the row decodes canonically, no predicate glob is empty, the binding
+/// is live, and the reader is a live entity whose kind admits the lane's class. With
+/// no row under the binding, the archived bytes install exactly as the import-time
+/// install stores them; a grant the owner set on the destination stays.
+pub(crate) fn land_deferred_hook_grant_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    row: &ArchiveRetainedSideRow,
+) -> VaultResult<DeferredHookGrant> {
+    let Ok((binding, stored)) = decode_archived_row(&GRANTS, row) else {
+        return Ok(DeferredHookGrant::HeldBack);
+    };
+    if stored.grant.predicates.iter().any(String::is_empty) {
+        return Ok(DeferredHookGrant::HeldBack);
+    }
+    if !vault
+        .pack_hook_bindings_in_txn(txn)?
+        .iter()
+        .any(|(id, _)| *id == binding)
+    {
+        return Ok(DeferredHookGrant::HeldBack);
+    }
+    // The runner's lane check (the grant reads under `memory(reader, edge_class)`): the
+    // reader entity exists and is live, and its kind admits the lane's class.
+    match live_entity_row_in_txn(&vault.store, txn, &stored.grant.reader)? {
+        LiveEntityRow::Absent | LiveEntityRow::DeletedShell => {
+            return Ok(DeferredHookGrant::HeldBack);
+        }
+        LiveEntityRow::Live { entity_type, .. }
+            if crate::provenance::validate_actor_class(
+                entity_type,
+                edge_class(stored.grant.reader_class),
+            )
+            .is_err() =>
+        {
+            return Ok(DeferredHookGrant::HeldBack);
+        }
+        LiveEntityRow::Live { .. } => {}
+    }
+    match GRANTS.get_bytes(&vault.store, txn, &binding)? {
+        Some(_) => Ok(DeferredHookGrant::KeptLive),
+        // The decode above proved the stored bytes re-encode to the archived ones, and
+        // this table is not an authored one, so the write stores those bytes as given:
+        // the same bytes the import-time install writes, with no permit in scope.
+        None => {
+            GRANTS.put(&vault.store, txn, &binding, &stored)?;
+            Ok(DeferredHookGrant::Installed(binding))
+        }
+    }
 }
 
 /// The grant a run reads under: the owner's, else the author's ceiling.

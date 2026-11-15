@@ -11,6 +11,7 @@ use owner_archive_restore::OwnerRestore;
 pub(crate) use owner_archive_restore::{
     OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
     owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
+    record_deferred_hook_grant_in_txn, take_deferred_hook_grants_in_txn,
 };
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -280,6 +281,9 @@ impl Vault {
         };
         let actor = owner_actor.as_ref().or(actor);
         let receipt_ref = permit.as_ref().map(OwnerArchiveRestorePermit::receipt_ref);
+        let restore_receipt_hex = receipt_ref
+            .as_deref()
+            .map(|receipt| receipt.strip_prefix("gate:").unwrap_or(receipt));
         let source_vault = archive.manifest.source_vault.vault_id.clone();
         let owner_restore = owner_actor
             .zip(receipt_ref.as_deref())
@@ -703,6 +707,7 @@ impl Vault {
                 &mut wtxn,
                 &archive,
                 permit.as_ref(),
+                restore_receipt_hex,
                 &mut side_refresh,
             )?;
         // OF-013: each lineage's floor rises to the archive's and never falls.

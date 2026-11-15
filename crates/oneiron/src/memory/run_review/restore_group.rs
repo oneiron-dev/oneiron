@@ -10,19 +10,30 @@
 //! outcome) and keeps its settled members in the run journal under
 //! `restore:<receipt hex>`, so `vault.runs.revert` takes back all of them or
 //! any part (ARCH-0040 REV-2). Review-each settles nothing: it names the open
-//! members for `vault.claims.review` and `vault.claims.settle`.
+//! members for `vault.claims.review` and `vault.claims.settle`. An accept-all that
+//! leaves no recorded member open also installs the archived hook grants the
+//! restore brought, and names what installed (OPUS-MAP-5B2).
 //! `Memory::resolve_restore_inbox_group` is its call surface.
 
 use super::*;
+use crate::batch::export::archive_retained_side_rows::{
+    delete_retained_side_row_in_txn, retained_side_row_in_txn,
+};
+use crate::claim::ClaimApprovalStatus;
 use crate::consent::bundle_projection::GateConsentBundleAction;
 use crate::inbox::{
     InboxBulkVerb, InboxGroupResolveRequest, RestoreInboxResolution, RestoreMemberOutcome,
     RestoreMemberVerdict, RestoreMemberWait, RestoredMemberSettle,
 };
 use crate::ports::EntityStoreRead;
+use crate::runtime_hooks::{DeferredHookGrant, land_deferred_hook_grant_in_txn};
 
 /// Reason code of the bundle receipt an accept-all appends.
 const RESTORE_SETTLE_APPROVED: &str = "gate.restore.settle.approved";
+/// Second reason code of an accept-all's bundle receipt, beside
+/// [`RESTORE_SETTLE_APPROVED`], when that accept installed an archived hook
+/// grant: the owner's receipts list then shows that the accept widened a hook.
+const RESTORE_SETTLE_HOOK_GRANTS_INSTALLED: &str = "gate.restore.settle.hook_grants_installed";
 
 /// Reason code of the bundle receipt a reject-all appends.
 const RESTORE_SETTLE_REJECTED: &str = "gate.restore.settle.rejected";
@@ -98,6 +109,25 @@ fn restore_group_members(
     let mut members = crate::batch::export::owner_restore_members_in_txn(vault, txn, group_key)?;
     members.sort_unstable_by_key(|member| std::cmp::Reverse(*member));
     Ok(members)
+}
+
+/// Whether every recorded member of the owner restore `group_key` (32 hex) reads
+/// Approved now: an absent claim counts as not approved, so a partly accepted group
+/// never installs its deferred hook grants.
+fn restored_group_fully_approved(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    group_key: &str,
+) -> MemoryResult<bool> {
+    for id in crate::batch::export::owner_restore_members_in_txn(vault, txn, group_key)? {
+        let approved = vault
+            .get_claim_in_txn(txn, &id)?
+            .is_some_and(|body| body.approval == ClaimApprovalStatus::Approved);
+        if !approved {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn outcome(
@@ -206,6 +236,7 @@ impl Memory<'_> {
             receipt_ref: None,
             members,
             revert_handle: None,
+            installed_hook_grants: Vec::new(),
             warnings: Vec::new(),
         })
     }
@@ -313,10 +344,36 @@ impl Memory<'_> {
             receipt_ref: None,
             members,
             revert_handle: None,
+            installed_hook_grants: Vec::new(),
             warnings: Vec::new(),
         };
         if settled.is_empty() {
             return Ok((resolution, metrics, vad, Vec::new()));
+        }
+        // The owner's accept of the restore's inbox group is his yes: the archived
+        // hook grants this restore brought land live with it (OPUS-MAP-5B2). Only an
+        // accept-all that leaves no recorded member open installs; anything else
+        // reads and clears nothing, so a later accept-all that completes the group
+        // installs then. A KeptLive or HeldBack row writes nothing and never fails
+        // the answer; only a storage fault is an error.
+        if approve && restored_group_fully_approved(self.vault(), txn, group_key)? {
+            let deferred = crate::batch::export::take_deferred_hook_grants_in_txn(
+                self.vault(),
+                txn,
+                group_key,
+            )?;
+            for key in &deferred {
+                let Some(row) = retained_side_row_in_txn(self.vault(), txn, key)? else {
+                    continue;
+                };
+                match land_deferred_hook_grant_in_txn(self.vault(), txn, &row)? {
+                    DeferredHookGrant::Installed(binding) => {
+                        delete_retained_side_row_in_txn(self.vault(), txn, key)?;
+                        resolution.installed_hook_grants.push(binding.to_hex());
+                    }
+                    DeferredHookGrant::KeptLive | DeferredHookGrant::HeldBack => {}
+                }
+            }
         }
         // The act's one proposal outcome over its settled members (ARCH-0040
         // `:302`), anchored to them as a run settlement's is (FIX 11002).
@@ -333,6 +390,11 @@ impl Memory<'_> {
             run.as_bytes().to_vec(),
             now,
         );
+        if !resolution.installed_hook_grants.is_empty() {
+            record
+                .reason_codes
+                .push(RESTORE_SETTLE_HOOK_GRANTS_INSTALLED.to_owned());
+        }
         crate::gate::append_reviewed_run_decision_in_txn(
             self.vault(),
             txn,

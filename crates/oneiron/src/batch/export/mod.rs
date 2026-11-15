@@ -77,6 +77,7 @@ mod document_import;
 pub(crate) use document_import::{
     OwnerArchiveRestorePermit, owner_restore_group_head_in_txn, owner_restore_groups_in_txn,
     owner_restore_members_in_txn, owner_restore_opened_claim_in_txn, owner_restore_receipt_in_txn,
+    record_deferred_hook_grant_in_txn, take_deferred_hook_grants_in_txn,
 };
 mod document_snapshot;
 mod document_types;

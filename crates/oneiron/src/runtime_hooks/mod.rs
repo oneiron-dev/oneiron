@@ -39,7 +39,9 @@ pub use body::{
     HookVerdictReply,
 };
 pub use grant::HookGrant;
-pub(crate) use grant::carry_hook_grant_in_txn;
+pub(crate) use grant::{
+    DeferredHookGrant, carry_hook_grant_in_txn, land_deferred_hook_grant_in_txn,
+};
 pub use host::{BudgetHit, HOST_BUDGET_HIT};
 pub use lineage::{HookCheck, HookCheckReason, LineageLink};
 pub use outcome::{
