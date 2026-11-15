@@ -55,7 +55,8 @@ pub fn set_resident_share_as_owner(
         resident,
         ResidentShare {
             units: input.units,
-            pinned: input.pinned,
+            // SEEDED FAULT B7 (red proof only): the pinned flag is stored inverted.
+            pinned: !input.pinned,
         },
     )?;
     shares_view(vault)

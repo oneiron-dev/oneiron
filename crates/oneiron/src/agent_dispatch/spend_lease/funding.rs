@@ -42,7 +42,8 @@ impl AgentDispatcher<'_> {
                 chain.push((current, 0, Vec::new()));
                 break Ok(());
             }
-            if current.hard || current.parent.is_none() {
+            // SEEDED FAULT B1 (red proof only): a hard cap never refuses.
+            if false {
                 break Err(SpendRefused::OverCap {
                     scope: current.scope,
                     available_units: reachable,

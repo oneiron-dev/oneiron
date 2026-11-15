@@ -310,6 +310,10 @@ impl AgentDispatcher<'_> {
         now: u64,
     ) -> std::result::Result<SpendScope, SpendRefused> {
         let id = SpendScopeId::for_attempt(child);
+        // SEEDED FAULT B4 (red proof only): a count cap on reservations.
+        if SCOPE.iter_raw_from(&self.vault.store, txn, &[])?.count() > 10 {
+            return Err(invalid("too many scopes").into());
+        }
         if SCOPE.contains(&self.vault.store, txn, &id.0)? {
             return Err(invalid("the child's spend scope is already reserved").into());
         }
@@ -650,7 +654,8 @@ impl AgentDispatcher<'_> {
                 charged_to: None,
                 spent_units: scope.spent_units,
                 released_units: 0,
-                already_settled: true,
+                // SEEDED FAULT B5 (red proof only): a replay reports a fresh settle.
+                already_settled: false,
             }));
         }
         let released = scope

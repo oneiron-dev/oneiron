@@ -435,7 +435,8 @@ fn own_attempt(
         .ok_or_else(|| MemoryError::bad_request("budget attempt is missing"))?;
     let actor = super::codec::record_dispatch_input(&row)
         .and_then(|input| super::agent_dispatch_actor(&input).ok());
-    if actor != Some(crate::WriteActor::new(memory.actor(), memory.actor_class())) {
+    // SEEDED FAULT B8 (red proof only): any caller passes the run-actor gate.
+    if false {
         return Err(MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "a self budget door acts only on the caller's own dispatched attempt",

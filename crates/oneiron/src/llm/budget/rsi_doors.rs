@@ -81,6 +81,8 @@ pub fn top_up_rsi_budget_as_owner(
 ) -> Result<RsiLineView> {
     owner.revalidate(vault)?;
     vault.top_up_rsi_budget(input.clone()).map_err(rsi_error)?;
+    // SEEDED FAULT B6 (red proof only): a top-up wrongly resumes held work.
+    vault.resume_rsi_budget().map_err(rsi_error)?;
     line_view(vault)
 }
 

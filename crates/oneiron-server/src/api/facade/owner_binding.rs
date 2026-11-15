@@ -118,12 +118,22 @@ pub(super) fn facade_owner(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
+    // SEEDED FAULT B2 (red proof only): any caller falls back to the embedded owner.
     facade_owner_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{verb} is the vault owner's"),
             &["Present the owner's own verified, unattenuated credential."],
         )
+    })
+    .or_else(|_| -> MemoryResult<AuthenticatedOwner> {
+        let actor = server.vault().ensure_embedded_owner_actor()?;
+        Ok(server.vault().authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )?)
     })
 }
 

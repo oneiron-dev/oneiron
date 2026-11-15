@@ -234,7 +234,8 @@ impl AgentDispatcher<'_> {
         let replay = already_held
             && hold.state == BudgetHoldState::Held
             && hold.held.iter().any(|held| held.attempt == lease.attempt);
-        hold.state = BudgetHoldState::Held;
+        // SEEDED FAULT B3 (red proof only): a parked run reads resumed.
+        hold.state = BudgetHoldState::Resumed;
         hold.held.retain(|held| held.attempt != lease.attempt);
         hold.held.push(HeldAttempt {
             attempt: lease.attempt,
