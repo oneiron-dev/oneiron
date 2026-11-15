@@ -31,6 +31,22 @@
 //! as its principal's own, and the unbound gate rebuilds bound to the house.
 //! Guards: a MESSAGE that the house's access grant on its conversation
 //! admits, or its own read Grant, still reads through the saved lane.
+//!
+//! A lane with no basis says nothing of the gate its key read under (FIX
+//! SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS; Engine RULING 15 Nov 13:13 =
+//! A): questions saved before the basis was kept, and those an engine path
+//! stores with no live lane (`create_question`, a review's dissent through
+//! `create_question_in_txn`), keep their principal's own lane. Its reader
+//! now rebuilds under the access gate for an asker that is no live owner,
+//! and the lane of every such actor freezes with its basis, the
+//! relationship gate included, so a lane frozen from a relationship-gated
+//! key still reads the unscoped MESSAGE its live lane read. Red on #8065
+//! (074276b10c7): the house's question stored with no lane, its dissent
+//! question and its own lane rebuilt and frozen again read the owner's
+//! unscoped MESSAGE, and the relationship-gated lane freezes as its
+//! principal's own. Guards: the owner's own question stored with no lane,
+//! the owner's source reader of a lane with no basis, and a MESSAGE the
+//! house's conversation grant or own read Grant admits, still read.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_access_gate_lane`.
 #![cfg(oneiron_test_support)]
@@ -44,13 +60,21 @@ use oneiron::access_grant::{
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineRole};
 use oneiron::claim::{FrozenReadLane, ScopedRead, ScopedReadActorKey};
 use oneiron::federation::{Scope, ScopeAxis};
+use oneiron::llm::decision::questions::{
+    QuestionActivation, QuestionDefinitionInput, QuestionRecord, RefreshPolicy, create_question,
+    read_question,
+};
+use oneiron::llm::decision::{
+    AnswerContract, DecisionBand, DecisionClass, DecisionDial, DecisionQuestionInput, DecisionRung,
+};
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::question_saved_lane::{
-    question_read, reads_under_relationship_gate, saved_question_reader,
+    create_question_in_writer, question_read, reads_under_relationship_gate, saved_question_reader,
+    under_relationship_gate,
 };
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
-use oneiron::{ClaimInput, EdgeActorClass, EntityId, Vault, VaultConfig};
+use oneiron::{ClaimInput, EdgeActorClass, EntityId, Vault, VaultConfig, WriteActor};
 use serde_json::json;
 
 /// A fresh vault whose owner witnessed a MESSAGE that names no relationship
@@ -288,6 +312,54 @@ fn saved_reads(
     }
 }
 
+/// A standing graph question over the owner's MESSAGE.
+fn message_question(fixture: &Fixture) -> QuestionDefinitionInput {
+    QuestionDefinitionInput {
+        question: DecisionQuestionInput {
+            text: "Does the garden need a watering rota?".into(),
+            class: DecisionClass::Judgment,
+            contract: AnswerContract::Noul,
+            accept_type: false,
+        },
+        adapter: "graph".into(),
+        units: vec![fixture.message],
+        recipe: "unit".into(),
+        profile: "fixture".into(),
+        dial: DecisionDial {
+            first: DecisionRung::Local,
+            ceiling: DecisionRung::Local,
+            band: DecisionBand::default(),
+        },
+        activation: QuestionActivation::Standing,
+        refresh: RefreshPolicy {
+            on_arrival: false,
+            every_seconds: None,
+        },
+        delivery: "none".into(),
+        learning: false,
+        binding: None,
+        criteria: Default::default(),
+        audience: Default::default(),
+        posture: None,
+        media: Default::default(),
+        deadline_ms: None,
+        artifacts: Vec::new(),
+    }
+}
+
+/// The lane `record` keeps, read back as the question's own reads find it:
+/// a question stored with no live lane keeps its principal's own.
+fn stored_lane(fixture: &Fixture, asker: EntityId, record: &QuestionRecord) -> FrozenReadLane {
+    let stored = read_question(&fixture.vault, asker, record.definition.question.id, None)
+        .expect("the stored question reads back")
+        .expect("the stored question is found");
+    assert!(
+        stored.read_lane.is_principal(),
+        "precondition: a question stored with no live lane keeps its principal's own lane"
+    );
+    stored.read_lane
+}
+
 #[test]
 fn an_access_gated_saved_question_reads_no_unscoped_message_its_live_lane_refused() {
     let fixture = fixture();
@@ -296,16 +368,6 @@ fn an_access_gated_saved_question_reads_no_unscoped_message_its_live_lane_refuse
     assert!(
         !live,
         "precondition: the house's live lane refuses the owner's unscoped MESSAGE under the access gate; seen {seen}"
-    );
-    let (principal, seen) = saved_reads(
-        &fixture,
-        fixture.house,
-        &FrozenReadLane::principal(),
-        fixture.message,
-    );
-    assert!(
-        principal,
-        "control: a saved question of the house's own lane reads the unscoped MESSAGE under the relationship gate; seen {seen}"
     );
     let frozen = saved_lane(&fixture, key);
     let (read, seen) = saved_reads(&fixture, fixture.house, &frozen, fixture.message);
@@ -499,5 +561,182 @@ fn a_gated_owner_saved_lane_rebuilt_over_an_unbound_gated_owner_key_reads_on_no_
     assert!(
         !read,
         "actor=the owner's floor under an access gate bound to no principal; expected the saved lane rebuilt over it to read on no grant and refuse the MESSAGE; seen {seen}"
+    );
+}
+
+/// The engine's lane-free save (`create_question`): the house's question
+/// keeps its principal's own lane, which says nothing of the gate the house
+/// read under, so its reader rebuilds under the access gate (FIX
+/// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
+#[test]
+fn a_house_question_stored_with_no_lane_reads_no_unscoped_owner_message() {
+    let fixture = fixture();
+    let record = create_question(
+        &fixture.vault,
+        WriteActor::new(fixture.house, EdgeActorClass::Agent),
+        message_question(&fixture),
+        2,
+    )
+    .expect("the house's question is stored");
+    let lane = stored_lane(&fixture, fixture.house, &record);
+    let (read, seen) = saved_reads(&fixture, fixture.house, &lane, fixture.message);
+    assert!(
+        !read,
+        "actor=the house, question stored with no lane; expected its saved question's reader to refuse the owner's unscoped MESSAGE under the access gate, as for every asker that is no live owner; seen {seen}"
+    );
+    let rebuilt = saved_question_reader(&fixture.vault, fixture.house, &lane)
+        .expect("the saved question's reader rebuilds");
+    assert!(
+        !reads_under_relationship_gate(&rebuilt),
+        "actor=the house, question stored with no lane; expected its rebuilt reader to read under the access gate, not the relationship gate that admits unscoped rows"
+    );
+}
+
+/// The dissent path: a review whose principal is an agent stores its
+/// overruled prediction's standing question in a writer of its own with no
+/// lane (`critic::review::dissent`, `create_question_in_txn`), and that
+/// question's reader rebuilds under the access gate too.
+#[test]
+fn an_agent_dissent_question_stored_in_its_own_writer_reads_no_unscoped_owner_message() {
+    let fixture = fixture();
+    let record = create_question_in_writer(
+        &fixture.vault,
+        WriteActor::new(fixture.house, EdgeActorClass::Agent),
+        message_question(&fixture),
+        2,
+    )
+    .expect("the house's dissent question is stored");
+    let lane = stored_lane(&fixture, fixture.house, &record);
+    let (read, seen) = saved_reads(&fixture, fixture.house, &lane, fixture.message);
+    assert!(
+        !read,
+        "actor=the house as a review's agent principal, dissent question stored in its own writer; expected its saved question's reader to refuse the owner's unscoped MESSAGE; seen {seen}"
+    );
+}
+
+/// Guard: the owner is a live owner, so the owner's own question stored
+/// with no lane still reads as the owner's own.
+#[test]
+fn the_owners_question_stored_with_no_lane_still_reads_the_owners_unscoped_message() {
+    let fixture = fixture();
+    let record = create_question(
+        &fixture.vault,
+        WriteActor::new(fixture.owner, EdgeActorClass::Human),
+        message_question(&fixture),
+        2,
+    )
+    .expect("the owner's question is stored");
+    let lane = stored_lane(&fixture, fixture.owner, &record);
+    let (read, seen) = saved_reads(&fixture, fixture.owner, &lane, fixture.message);
+    assert!(
+        read,
+        "actor=the owner, question stored with no lane; expected its saved question's reader to read the owner's own unscoped MESSAGE; seen {seen}"
+    );
+}
+
+/// The relationship gate is a basis too: the lane of an actor that is no
+/// live owner keeps it, so its rebuild reads the unscoped MESSAGE its live
+/// lane read and is not taken for a lane with no basis.
+#[test]
+fn a_relationship_gated_house_lane_freezes_with_its_basis_and_reads_the_unscoped_message() {
+    let fixture = fixture();
+    let key = under_relationship_gate(
+        ScopedReadActorKey::with_actor_class(fixture.house.to_hex(), "agent")
+            .expect("the house's bare agent key"),
+        fixture.house,
+    );
+    let (live, seen) = reads(&fixture.vault.scoped_read(key.clone()), fixture.message);
+    assert!(
+        reads_under_relationship_gate(&key) && live,
+        "precondition: the house's key under the relationship gate reads the owner's unscoped MESSAGE under its policy row; seen {seen}"
+    );
+    let frozen = saved_lane(&fixture, key);
+    assert!(
+        !frozen.reads_as_principal(),
+        "actor=the house under the relationship gate, no proof; expected its saved lane to keep its grant basis, not to read as its principal's own"
+    );
+    let (read, seen) = saved_reads(&fixture, fixture.house, &frozen, fixture.message);
+    assert!(
+        read,
+        "actor=the house under the relationship gate, no proof; expected its saved question's reader to read the unscoped MESSAGE its live lane read; seen {seen}"
+    );
+    let rebuilt = saved_question_reader(&fixture.vault, fixture.house, &frozen)
+        .expect("the saved question's reader rebuilds");
+    assert!(
+        reads_under_relationship_gate(&rebuilt),
+        "actor=the house under the relationship gate, no proof; expected its rebuilt reader to keep the relationship gate"
+    );
+}
+
+/// A reader rebuilt from a lane with no basis, frozen again, keeps the
+/// access gate it was rebuilt under.
+#[test]
+fn a_house_lane_with_no_basis_rebuilt_and_frozen_again_reads_no_unscoped_message() {
+    let fixture = fixture();
+    let rebuilt =
+        saved_question_reader(&fixture.vault, fixture.house, &FrozenReadLane::principal())
+            .expect("the house's saved question reader rebuilds");
+    let refrozen = saved_lane(&fixture, rebuilt);
+    let (read, seen) = saved_reads(&fixture, fixture.house, &refrozen, fixture.message);
+    assert!(
+        !read,
+        "actor=the house, lane with no basis; expected a lane frozen again from its rebuilt reader to refuse the owner's unscoped MESSAGE; seen {seen}"
+    );
+}
+
+/// Guard: the access gate a lane with no basis rebuilds under still admits
+/// the MESSAGE an access grant on its conversation admits the house.
+#[test]
+fn a_house_lane_with_no_basis_reads_a_message_its_conversation_grant_admits() {
+    let fixture = fixture();
+    grant_conversation_messages(&fixture);
+    let (read, seen) = saved_reads(
+        &fixture,
+        fixture.house,
+        &FrozenReadLane::principal(),
+        fixture.message,
+    );
+    assert!(
+        read,
+        "actor=the house, lane with no basis; expected its saved question's reader to read the MESSAGE its access grant on the conversation admits; seen {seen}"
+    );
+}
+
+/// Guard: the access gate a lane with no basis rebuilds under keeps the
+/// read alternative of the house's own agent Grant.
+#[test]
+fn a_house_lane_with_no_basis_reads_a_message_its_own_agent_grant_admits() {
+    let fixture = fixture();
+    grant_house_read(&fixture);
+    let (read, seen) = saved_reads(
+        &fixture,
+        fixture.house,
+        &FrozenReadLane::principal(),
+        fixture.message,
+    );
+    assert!(
+        read,
+        "actor=the house with an owner-minted read Grant, lane with no basis; expected its saved question's reader to read the MESSAGE its own Grant admits; seen {seen}"
+    );
+}
+
+/// Guard: a question's source reader (its refresh, artifact and wake reads)
+/// builds the owner's bare key under the access gate, with no owner
+/// standing of its own. The owner is a live owner by the vault's census, so
+/// a lane with no basis leaves that key, and the owner's own live authority
+/// beside it, as it is.
+#[test]
+fn the_owners_source_reader_of_a_lane_with_no_basis_still_reads_the_owners_unscoped_message() {
+    let fixture = fixture();
+    let key = ScopedReadActorKey::with_actor_class(fixture.owner.to_hex(), "human")
+        .expect("the owner's bare principal key")
+        .require_access_grants(Some(fixture.owner));
+    let (read, seen) = match FrozenReadLane::principal().narrow(&fixture.vault, key) {
+        Ok(key) => reads(&question_read(&fixture.vault, key), fixture.message),
+        Err(error) => (false, format!("rebuild={error:?}")),
+    };
+    assert!(
+        read,
+        "actor=the owner's bare key under the access gate, lane with no basis; expected its question read to keep the owner's own live authority and read the owner's unscoped MESSAGE; seen {seen}"
     );
 }

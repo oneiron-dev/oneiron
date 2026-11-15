@@ -585,6 +585,33 @@ impl ScopedReadActorKey {
         })
     }
 
+    /// Whether this key's actor is a live owner of the vault in `txn`: the
+    /// key reads past every facet there ([`Self::facets_owner_exempt_in`]),
+    /// or it is a person's key whose actor is one of the vault's live owners
+    /// (a co-Owner with no owner binding among them). A saved lane that
+    /// keeps no grant basis reads as its principal's own only for such an
+    /// actor, and a lane of any other freezes with its basis (FIX
+    /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
+    ///
+    /// # Errors
+    /// A store failure reading the owner binding or the live-owner census.
+    pub(super) fn actor_is_live_owner_in(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+    ) -> crate::error::Result<bool> {
+        if self.facets_owner_exempt_in(vault, txn)? {
+            return Ok(true);
+        }
+        if !matches!(self.actor_class.as_deref(), None | Some("human")) {
+            return Ok(false);
+        }
+        match EntityId::from_hex(&self.actor_ref) {
+            Ok(actor) => crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor),
+            Err(_) => Ok(false),
+        }
+    }
+
     /// Whether this is the vault owner's own key, which reads all of the
     /// owner's vault while its binding holds (`Self::vault_owner`).
     #[must_use]

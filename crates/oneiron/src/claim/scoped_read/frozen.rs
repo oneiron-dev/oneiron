@@ -26,7 +26,11 @@
 //! withdrawn reads nothing (FIX OWN-DEVICE-GRANT-NOT-RECHECKED). A lane that
 //! keeps a Scope also keeps the grant basis its live key read under
 //! ([`NativeReadBasis`]), so a rebuild never regains the owner's floor or
-//! exemption that key lacked (FIX 14344).
+//! exemption that key lacked (FIX 14344). Only a live owner's lane freezes
+//! with no basis: the lane of any other actor keeps its key's basis, and a
+//! lane with none, saved before the basis was kept or by an engine path
+//! that froze no live lane, rebuilds for an asker that is no live owner
+//! under the access gate (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
 //!
 //! A rebuilt key carries the lane's credential ([`SavedCredential`]), and
 //! every read under it judges that credential again in its own snapshot: a
@@ -90,11 +94,12 @@ impl SavedCredential {
 /// on #8029), kept beside its frozen Scope as a queued summary's
 /// declaration keeps it (`requester_owner_exemption`,
 /// `requester_relationship_grants`), or alone on a lane under the access
-/// gate (Sol F3 on #8061). A rebuild over the principal's own key,
-/// or over a current caller's, reads under the meet of that key and this
-/// basis (`ScopedReadActorKey::within_native_basis`): it never regains an
-/// owner standing the live key lacked, nor reads a row either gate refused
-/// (Sol R1/R2 on #8061).
+/// gate (Sol F3 on #8061) and on the lane of an actor that is no live owner
+/// (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). A rebuild over the
+/// principal's own key, or over a current caller's, reads under the meet of
+/// that key and this basis (`ScopedReadActorKey::within_native_basis`): it
+/// never regains an owner standing the live key lacked, nor reads a row
+/// either gate refused (Sol R1/R2 on #8061).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
@@ -188,9 +193,12 @@ pub struct FrozenReadLane {
     room_facets: Option<EntityId>,
     /// The grant basis the saved lane's live key read under (FIX 14344):
     /// kept on every lane that keeps a Scope, and on a lane under the access
-    /// gate, which keeps no Scope its live key lacked (Sol F1/F2/F3 on
-    /// #8065). `None` on a lane that reads as its principal's own, and on
-    /// one saved before the basis was kept.
+    /// gate or of an actor that is no live owner, which keeps no Scope its
+    /// live key lacked (Sol F1/F2/F3 on #8065; FIX
+    /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). `None` on a live owner's
+    /// lane that reads as its principal's own, and on one saved before the
+    /// basis was kept, which rebuilds under the access gate for an asker
+    /// that is no live owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     native_basis: Option<NativeReadBasis>,
     /// The fields a narrower reader's view of this lane withheld a row or a
@@ -208,10 +216,12 @@ pub struct FrozenReadLane {
 
 impl FrozenReadLane {
     /// The principal's own lane: no narrowing beyond the principal's live
-    /// authority. An engine-built record that no caller's lane saved (an
-    /// internal one-off ask, a review's dissent question) keeps it, and so
-    /// does an un-narrowed native owner key or a bare principal key outside
-    /// the access gate.
+    /// authority. An engine-built record that no caller's lane saved (a
+    /// question created or edited with no lane, an internal one-off ask, a
+    /// review's dissent question) keeps it, and so does an un-narrowed key of
+    /// a live owner. Each rebuild reads as the principal's own only for an
+    /// asker that is a live owner, and under the access gate for any other
+    /// (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
     #[must_use]
     pub fn principal() -> Self {
         Self::default()
@@ -225,10 +235,10 @@ impl FrozenReadLane {
 
     /// Whether this lane reads as its principal's own: [`Self::principal`],
     /// or that lane held only to a credential that must still stand (FIX
-    /// OWN-DEVICE-GRANT-NOT-RECHECKED). An unrestricted lane whose
-    /// credential names a grant freezes so: it keeps no Scope, so a rebuild
-    /// keeps its principal's own floor and owner authority while the grant
-    /// stands, and reads nothing once it does not.
+    /// OWN-DEVICE-GRANT-NOT-RECHECKED). An unrestricted live owner's lane
+    /// whose credential names a grant freezes so: it keeps no Scope, so a
+    /// rebuild keeps its principal's own floor and owner authority while the
+    /// grant stands, and reads nothing once it does not.
     #[must_use]
     pub fn reads_as_principal(&self) -> bool {
         Self {
@@ -254,9 +264,10 @@ impl FrozenReadLane {
     /// `lane`, frozen. A lane under no narrowing freezes as the principal's
     /// own, except under a credential that keeps its Scope at top
     /// (`keeps_top_scope`), whose credential's id stays with a top read
-    /// Scope, under a key the access gate binds, which keeps its grant basis
-    /// and its key's own Scope, if any (Sol F3 on #8061; F1/F2/F3 on #8065),
-    /// or under another
+    /// Scope, under a key the access gate binds or whose actor is no live
+    /// owner, which keeps its grant basis and its key's own Scope, if any
+    /// (Sol F3 on #8061; F1/F2/F3 on #8065; FIX
+    /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS), or under another
     /// credential that names a grant, whose id stays with no Scope
     /// ([`Self::reads_as_principal`]): each rebuild judges that grant (FIX
     /// OWN-DEVICE-GRANT-NOT-RECHECKED). Otherwise the
@@ -273,7 +284,8 @@ impl FrozenReadLane {
     /// so dropping it would widen the saved read: a room turn, an audience
     /// or peer reads, a narrowed guest credential, whose grant's current
     /// Scope binds only through its proof, or a key bound by two
-    /// credentials, as a frozen lane keeps one.
+    /// credentials, as a frozen lane keeps one. A store failure reading the
+    /// owner binding or the live-owner census.
     pub fn freeze(lane: &ScopedRead<'_>) -> Result<Self> {
         let key = &lane.actor_key;
         if key.room_turn.is_some() || lane.audience.is_some() || !lane.peer_reads.is_empty() {
@@ -317,18 +329,22 @@ impl FrozenReadLane {
             Some(proof) => keeps_top_scope(key, proof),
             None => !key.saved_credentials.is_empty() && key.authority_scope().is_some(),
         };
-        // A key under the access gate keeps its grant basis, whose
-        // principal's rebuilt key would admit the unscoped rows it refused
-        // (Sol F3 on #8061), the owner's floor under that gate among them
-        // (Sol F3 on #8065).
-        let basis = key.native_read_basis();
-        let keeps_basis = basis.closes_unscoped_rows();
         let narrows = scope_narrows
             || !records.is_empty()
             || channel_refused
             || worlds.is_some()
             || key.room_facets.is_some()
             || key.grant_alternatives().is_some();
+        // A key under the access gate keeps its grant basis, whose
+        // principal's rebuilt key would admit the unscoped rows it refused
+        // (Sol F3 on #8061), the owner's floor under that gate among them
+        // (Sol F3 on #8065). So does the key of every actor that is no live
+        // owner: a lane with no basis rebuilds for such an asker under the
+        // access gate, so the gate its key read under stands again only from
+        // its basis (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
+        let basis = key.native_read_basis();
+        let keeps_basis = basis.closes_unscoped_rows()
+            || (!keeps_scope && !narrows && !actor_is_live_owner(lane)?);
         // The lane stays bound to each credential a rebuilt key carries, and
         // to the proof's own unless the lane freezes as its principal's own
         // with no grant to judge. A credential that names a grant stands
@@ -497,13 +513,16 @@ impl FrozenReadLane {
     /// caveat, worlds and room facets, each only narrowing. A lane whose credential no longer holds
     /// in `txn` (`SavedCredential`) reads nothing, and the rebuilt key
     /// carries that credential, so each later read judges it again in its
-    /// own snapshot. The principal's own lane returns `key` unchanged; a
+    /// own snapshot. The principal's own lane returns `key` unchanged, and a
     /// lane that reads as its principal's own
     /// ([`Self::reads_as_principal`]) returns it held to its credential
-    /// alone.
+    /// alone, each while its asker is a live owner in `txn`; for any other
+    /// asker either returns it under the access gate (FIX
+    /// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
     ///
     /// # Errors
-    /// A store, fold or clock failure judging the credential.
+    /// A store, fold or clock failure judging the credential or the asker's
+    /// owner standing.
     pub fn narrow_in_txn(
         &self,
         vault: &crate::Vault,
@@ -511,7 +530,7 @@ impl FrozenReadLane {
         key: ScopedReadActorKey,
     ) -> Result<ScopedReadActorKey> {
         if self.is_principal() {
-            return Ok(key);
+            return rebuild_without_basis_in(vault, txn, key);
         }
         let saved = self.saved_credential();
         if let Some(credential) = saved
@@ -535,7 +554,7 @@ impl FrozenReadLane {
             _ => key,
         };
         if self.reads_as_principal() {
-            return Ok(key);
+            return rebuild_without_basis_in(vault, txn, key);
         }
         // The principal's own key never lends the rebuild an owner standing
         // the saved key lacked (FIX 14344, Astra F2 on #8029).
@@ -590,6 +609,46 @@ impl FrozenReadLane {
         let txn = vault.store.env.read_txn()?;
         self.narrow_in_txn(vault, &txn, key)
     }
+}
+
+/// `key`, its principal's own live key, rebuilt for a lane that keeps no
+/// grant basis (FIX SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS): unchanged
+/// while its actor is a live owner in `txn`
+/// (`ScopedReadActorKey::actor_is_live_owner_in`), and otherwise met with
+/// the access gate on the grants of the key's own principal, with no owner
+/// standing. Such a lane does not say which gate its key read under: it was
+/// saved before the basis was kept, or by an engine path that froze no live
+/// lane (a question created or edited with no lane, an internal one-off
+/// ask, a review's dissent question), so it fails closed. An access grant
+/// on a row's conversation still admits that row.
+///
+/// # Errors
+/// A store failure reading the owner binding or the live-owner census.
+fn rebuild_without_basis_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    key: ScopedReadActorKey,
+) -> Result<ScopedReadActorKey> {
+    if key.actor_is_live_owner_in(vault, txn)? {
+        return Ok(key);
+    }
+    let grant_principal = key.principal_ref;
+    Ok(key.within_native_basis(NativeReadBasis {
+        owner_standing: NativeOwnerStanding::Absent,
+        grant_gate: NativeGrantGate::Access,
+        grant_principal,
+    }))
+}
+
+/// Whether `lane`'s actor is a live owner of its vault, judged in a snapshot
+/// of its own (`ScopedReadActorKey::actor_is_live_owner_in`).
+///
+/// # Errors
+/// A store failure opening the snapshot, reading the owner binding or the
+/// live-owner census.
+fn actor_is_live_owner(lane: &ScopedRead<'_>) -> Result<bool> {
+    let txn = lane.vault.store.env.read_txn()?;
+    lane.actor_key.actor_is_live_owner_in(lane.vault, &txn)
 }
 
 /// Keeps each id `axis` names that `covered` holds (FIX 12285); whether it
@@ -694,8 +753,9 @@ impl ScopedRead<'_> {
 /// one handed to another key, whose holder is a delegate, and one of
 /// another actor class on its holder's PERSON. A guest's own credential
 /// names a grant and holds no owner standing its principal's key could
-/// regain, so it reads as its principal's own
-/// ([`FrozenReadLane::reads_as_principal`]).
+/// regain, so it keeps no top Scope; its lane keeps its grant basis, as the
+/// lane of every actor that is no live owner does (FIX
+/// SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS).
 fn keeps_top_scope(key: &ScopedReadActorKey, proof: &crate::authority::VerifiedSlip) -> bool {
     let claims = proof.claims();
     !key.reads_as_vault_owner()
