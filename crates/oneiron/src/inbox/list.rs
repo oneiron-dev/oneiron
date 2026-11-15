@@ -36,14 +36,8 @@ pub const INBOX_PAGE_DEFAULT: usize = 100;
 /// Type-index rows one admission round reads.
 const INBOX_SCAN_WINDOW: usize = 256;
 
-/// What [`Memory::inbox_mark`] records for its caller. Acknowledging also
-/// marks seen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NotificationMark {
-    Seen,
-    Acked,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::inbox::list::NotificationMark;
 
 /// One delivered notification as its caller reads it: the caller's own seen
 /// and acknowledged state, never another caller's.

@@ -12,7 +12,7 @@ use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::write_envelope::{WriteActor, provenance::made_by::MadeByClass};
 use crate::{EntityId, Vault};
 use heed::{RoTxn, RwTxn};
-use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Serialize};
 
 mod body;
 mod body_admission;
@@ -23,14 +23,10 @@ pub(crate) use body::body_with_document;
 pub(crate) use history::{record_bodies_at_in_txn, record_body_history_in_txn};
 pub(crate) use repo_index::reindex_repo_document_in_txn;
 
-/// Location of the body text. Editable metadata shares its owning document.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum TextField {
-    /// A body containing only UTF-8 text.
-    Utf8Body,
-    /// A named UTF-8 string in a MessagePack map.
-    MapField(String),
-}
+#[doc(hidden)]
+pub use oneiron_records::entity_doc::storage::TextField;
+#[doc(hidden)]
+pub(super) use oneiron_records::entity_doc::storage::decode;
 
 /// The kind of owner a document head belongs to (FIX 11535). The head is
 /// keyed by its owner's id either way; only a stored entity has a ledger row.
@@ -77,16 +73,6 @@ pub(super) struct Head {
 /// document, plus generation/pending counters.
 pub(super) const ENTITY_DOC_HEAD: SideTable<HexId, Head, Named> =
     SideTable::new(&side_table::ENTITY_DOC_HEAD);
-
-pub(super) fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T> {
-    let mut reader = std::io::Cursor::new(bytes);
-    let value = T::deserialize(&mut rmp_serde::Deserializer::new(&mut reader))
-        .map_err(|_| Error::CorruptedIndex("entity document row"))?;
-    if usize::try_from(reader.position()).ok() != Some(bytes.len()) {
-        return Err(Error::CorruptedIndex("trailing entity document row bytes"));
-    }
-    Ok(value)
-}
 
 pub(super) fn require_live(
     store: &impl crate::store::ManifestDbs,

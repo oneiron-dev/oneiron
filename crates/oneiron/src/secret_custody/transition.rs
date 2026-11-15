@@ -467,7 +467,7 @@ pub(crate) fn custody_transitions(vault: &Vault) -> Result<Vec<CustodyTransition
 
 impl CustodyTransition {
     /// Where this transition stands among the record's: its generation, then
-    /// its status (active, suspended, revoked).
+    /// its status (active, then revoked).
     pub(crate) fn order(&self) -> (u32, u8) {
         (self.generation, status_rank(self.status))
     }
@@ -685,8 +685,7 @@ pub(crate) fn apply_custody_transition_in_txn(
     Ok(CustodyApplied::Written)
 }
 
-/// Active, then suspended, then revoked: a status only moves forward within a
-/// generation.
+/// Active, then revoked: a status only moves forward within a generation.
 fn status_rank(status: SecretCustodyStatus) -> u8 {
     status_byte(status)
 }

@@ -81,7 +81,7 @@ impl Vault {
             deck: None,
             delta_receipt: None,
         };
-        self.put_pending_in_txn(wtxn, artifact, &row, None)?;
+        self.put_pending_in_txn(wtxn, artifact, &row, None, None)?;
         Ok(row.view(*artifact))
     }
 

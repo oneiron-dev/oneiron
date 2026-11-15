@@ -96,6 +96,9 @@ pub(super) async fn standing_prefix(
     // room turn makes is (ARCH-0067 §8): that read, narrowed to the room as
     // its pins are, and the clamp its members' clearance makes. The agent's
     // own read and a live owner add no term, as in the room's own meet.
+    // With no room the block reads under the agent's own read, homed as its
+    // pack is (DEC-0006 `#home-clearance`): an outside agent is homed in the
+    // unnamed vault, so a stamped persona CLAIM stays out of its block.
     let read = server.vault.scoped_read(reader);
     let (read, disclosure) = match room_id {
         Some(room) => {
@@ -103,7 +106,11 @@ pub(super) async fn standing_prefix(
                 crate::api::resolve_core_audience(&server.vault, auth, read, Some(room))?;
             (audience.read, audience.disclosure)
         }
-        None => (read, None),
+        None => {
+            let home = crate::api::core_conversation_home(&server.vault, auth, None, None)?;
+            let disclosure = crate::api::resolve_core_disclosure(&server.vault, None, None, home)?;
+            (read, disclosure)
+        }
     };
     let mut cache = server.standing_block_cache.lock().await;
     let pinned = server
