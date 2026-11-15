@@ -330,12 +330,6 @@ impl MemberOnboardingIntent {
                 return Err(invalid("mailbox autonomy must name the member actor"));
             }
         }
-        if self
-            .personal_vault
-            .is_some_and(|link| link.vault == [0; 32])
-        {
-            return Err(invalid("personal_vault must name a nonzero vault id"));
-        }
         self.validate_minted_ids()
     }
 

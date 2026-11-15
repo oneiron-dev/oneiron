@@ -476,7 +476,7 @@ pub(super) fn intent_digest(intent: &MemberOnboardingIntent) -> Result<[u8; 32]>
 
 pub(super) fn intent_canonical_value(intent: &MemberOnboardingIntent) -> Result<Value> {
     let companion = companion_choice_canonical_value(&intent.companion)?;
-    let mut entries = vec![
+    let entries = vec![
         (
             Value::from("onboarding_id"),
             Value::from(intent.onboarding_id.as_str()),
@@ -512,20 +512,6 @@ pub(super) fn intent_canonical_value(intent: &MemberOnboardingIntent) -> Result<
         ),
         (Value::from("occurred_at"), Value::from(intent.occurred_at)),
     ];
-    // Absent with no link, so an onboarding journaled before the link keeps
-    // its digest and its replay still answers (STORED-CHANGE keep path).
-    if let Some(link) = &intent.personal_vault {
-        entries.push((
-            Value::from("personal_vault"),
-            Value::Map(vec![
-                (
-                    Value::from("vault"),
-                    Value::from(crate::entity_id::bytes_to_hex_lower(&link.vault)),
-                ),
-                (Value::from("origin"), Value::from(link.origin.as_str())),
-            ]),
-        ));
-    }
     Ok(Value::Map(entries))
 }
 
@@ -866,7 +852,7 @@ pub(super) fn outcome_of(
         companion_actor_ref: Some(intent.companion.actor_ref()),
         work_companion_suggested: suggested,
         delegated_identity_ref: intent.delegated_mailbox.as_ref().map(|m| m.identity_ref),
-        personal_vault: intent.personal_vault.as_ref().map(PersonalVaultLink::view),
+        personal_vault: None,
         completed_at,
     }
 }

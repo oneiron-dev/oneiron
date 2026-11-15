@@ -511,7 +511,7 @@ pub(super) fn record_roster_member(
             },
             CompanionChoice::Bring { .. } => CompanionOrigin::Brought,
         },
-        personal_vault: intent.personal_vault,
+        personal_vault: None,
     };
     let key = RosterMemberKey {
         workspace_ref: intent.workspace.workspace_ref.clone(),
