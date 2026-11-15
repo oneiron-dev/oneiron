@@ -116,7 +116,7 @@ pub(crate) fn build_native_candidate_json(
             let scope_hex = body
                 .scope
                 .as_ref()
-                .map(|scope| {
+                .map(|scope| -> Result<String> {
                     let mut bytes = Vec::new();
                     rmpv::encode::write_value(&mut bytes, scope).map_err(|_| {
                         Error::InvalidConfig("a native candidate scope does not encode".to_owned())
