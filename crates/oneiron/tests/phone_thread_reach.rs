@@ -1406,6 +1406,168 @@ fn a_restricted_selector_does_not_carry_a_kept_call() {
     }
 }
 
+/// The rows a Member's restricted selector carries from the window packed
+/// at OCCURRED_AT, once `alter` has changed the packed window as a member's
+/// import could: a rejected carrier stays in the CRDT window (R1 review
+/// C-F1).
+fn member_selector_carries(
+    reach: &Reach,
+    alter: impl FnOnce(&loro::LoroDoc),
+) -> BTreeSet<EntityId> {
+    use oneiron::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+    };
+    use oneiron::sync::schema::create_window_doc;
+    use oneiron::sync::window::reverse_rematerialize;
+    use oneiron::sync::{
+        SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
+        put_selector_test_federation_grant,
+    };
+    use oneiron_authority::federation::scope_codec::read_preset;
+
+    const SHARED_VAULT_ID: u64 = 7;
+
+    let member = EntityId::now();
+    let now = reach.fixture.vault.now_recorded_at();
+    let at = TimeRange {
+        start: now,
+        end: now,
+    };
+    reach
+        .fixture
+        .vault
+        .put_entity(
+            &member,
+            oneiron::registry::ENTITY_TYPE_PERSON,
+            at,
+            now,
+            &rmp_serde::to_vec_named(&serde_json::json!({ "name": "member" }))
+                .expect("member PERSON body"),
+        )
+        .expect("FIXTURE: a member PERSON");
+    let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
+    let grant_id = EntityId::now();
+    let mut grant = FederationGrant::new(
+        scope,
+        member,
+        FederationGrantRole::Member,
+        FederationGrantPreset::Member,
+    );
+    grant.authority_scope = read_preset();
+    put_selector_test_federation_grant(&reach.fixture.vault, &grant_id, &grant, now)
+        .expect("FIXTURE: the member's federation grant");
+    let selector = SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], vec![]);
+    authorize_sync_selector(&reach.fixture.vault, scope, &selector)
+        .expect("FIXTURE: the member's selector is authorized");
+    let key = WindowKey::from_timestamp(OCCURRED_AT);
+    let source = create_window_doc("selector", &key);
+    reverse_rematerialize(&reach.fixture.vault, &source, &key).expect("the window pack");
+    alter(&source);
+    let selected = filtered_window_doc(&reach.fixture.vault, &source, &key, scope, &selector)
+        .expect("the member's restricted selector window");
+    let mut carried = BTreeSet::new();
+    selected.get_map("entities").for_each(|key, _| {
+        if let Ok(id) = EntityId::from_hex(key) {
+            carried.insert(id);
+        }
+    });
+    carried
+}
+
+/// The row bytes the packed window `doc` holds for `id`.
+fn packed_row(doc: &loro::LoroDoc, id: &EntityId) -> Vec<u8> {
+    match doc.get_map("entities").get(&id.to_hex()) {
+        Some(loro::ValueOrContainer::Value(loro::LoroValue::Binary(bytes))) => bytes.to_vec(),
+        other => panic!(
+            "FIXTURE: the packed window holds row bytes for {}, not {other:?}",
+            id.to_hex()
+        ),
+    }
+}
+
+#[test]
+fn a_restricted_selector_judges_a_phone_row_by_its_stored_row_not_the_carrier() {
+    let reach = reach_fixture(custom_base());
+    let carried = member_selector_carries(&reach, |source| {
+        // A member's import: an unmarked, ordinary witness MESSAGE's bytes at
+        // the id of A's kept phone MESSAGE. The stored row stays as kept.
+        let carrier = packed_row(source, &reach.control_msg);
+        source
+            .get_map("entities")
+            .insert(&reach.msg_a_caller.to_hex(), carrier.as_slice())
+            .expect("FIXTURE: the carrier lands in the window");
+    });
+    assert!(
+        carried.contains(&reach.control_msg),
+        "precondition: the Member restricted window still carries the control MESSAGE control_msg",
+    );
+    assert!(
+        !carried.contains(&reach.msg_a_caller),
+        "LEAK: an unmarked carrier at A's phone MESSAGE id rides the Member restricted window",
+    );
+}
+
+#[test]
+fn a_restricted_selector_does_not_carry_a_row_derived_from_a_kept_call() {
+    let reach = reach_fixture(custom_base());
+    let vault = &reach.fixture.vault;
+    // Three ordinary MESSAGEs whose words came from A's kept call: by a
+    // `DerivedFrom` edge, and by a source-dependency row (as a promoted
+    // CLAIM cites the MESSAGE it was drawn from). Two controls derived the
+    // same ways from the ordinary control MESSAGE.
+    let edge_derived = witness_control_message(&reach.fixture);
+    vault
+        .put_edge(
+            &edge_derived,
+            oneiron::EdgeKind::DerivedFrom,
+            &reach.msg_a_caller,
+            1.0,
+        )
+        .expect("FIXTURE: a row derived from A's kept MESSAGE");
+    let dependency_derived = witness_control_message(&reach.fixture);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(
+        vault,
+        &dependency_derived,
+        &reach.msg_a_caller,
+    )
+    .expect("FIXTURE: a row registered as drawn from A's kept MESSAGE");
+    let edge_control = witness_control_message(&reach.fixture);
+    vault
+        .put_edge(
+            &edge_control,
+            oneiron::EdgeKind::DerivedFrom,
+            &reach.control_msg,
+            1.0,
+        )
+        .expect("FIXTURE: a row derived from the control MESSAGE");
+    let dependency_control = witness_control_message(&reach.fixture);
+    oneiron::test_doors::disclosure_word_sources::register_editor_source(
+        vault,
+        &dependency_control,
+        &reach.control_msg,
+    )
+    .expect("FIXTURE: a row registered as drawn from the control MESSAGE");
+    let carried = member_selector_carries(&reach, |_| {});
+    for (id, label) in [
+        (&reach.control_msg, "control_msg"),
+        (&edge_control, "edge_control"),
+        (&dependency_control, "dependency_control"),
+    ] {
+        assert!(
+            carried.contains(id),
+            "precondition: the Member restricted window carries the ordinary {label}",
+        );
+    }
+    assert!(
+        !carried.contains(&edge_derived),
+        "LEAK: the Member restricted window carries a row DerivedFrom A's kept MESSAGE",
+    );
+    assert!(
+        !carried.contains(&dependency_derived),
+        "LEAK: the Member restricted window carries a row registered as drawn from A's kept MESSAGE",
+    );
+}
+
 #[test]
 fn an_off_record_session_cannot_strip_a_phone_stamp() {
     use oneiron::RawEntityPut;
