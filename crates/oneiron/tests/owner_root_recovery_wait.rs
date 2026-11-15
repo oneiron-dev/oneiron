@@ -20,9 +20,30 @@
 //! of the door-clock test runs at `lands_at - 60`: the anchor measures
 //! real elapsed seconds, so a literal one-second margin would be flaky.
 //!
+//! The 21 tests: the 13 build-leg tests (`a_released_recovery_waits_then_lands`,
+//! `zero_wait_lands_at_once`, `a_sheet_cancel_stops_the_attempt_and_a_retry_lands`,
+//! `a_cancel_without_an_owner_key_is_refused`,
+//! `a_device_the_recovery_removes_still_cancels`,
+//! `the_kit_recovery_cancels_a_live_hold`, `an_owner_key_approval_ends_the_wait_early`,
+//! `a_cancel_leaves_the_recovering_device_without_owner_key_or_seed`,
+//! `a_hold_voids_when_its_root_key_is_revoked`,
+//! `every_owner_device_reads_the_hold_after_an_export_import`,
+//! `the_root_key_cannot_answer_its_own_hold`,
+//! `a_landing_follows_the_door_installs_clock`, `a_cancelled_hold_never_lands`),
+//! the five review-fix pins (`an_admin_or_host_key_never_answers_a_hold`,
+//! `a_landing_binds_a_co_owner_whose_lost_key_held_their_binding`,
+//! `the_waits_rows_are_marked_for_the_live_mirror`,
+//! `a_box_call_after_the_wait_lands_and_answers_vouched`,
+//! `a_kit_recovery_cancels_a_due_hold_on_the_door_install`), and the three
+//! Sol-fix pins (`a_foreign_anchors_cancel_never_stops_a_hold`,
+//! `a_kit_cancel_reaches_a_hold_only_an_adopted_checkpoint_carries`
+//! (ignored: needs an adopted image), `a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands`).
+//!
 //! Red on the kit-only rotation head `5adc0295753f`: the file does not
 //! compile there (no `RecoveryHold` ops, no hold view, no answer doors, no
 //! landing, no `RootRecovery::Held`, no `recover_owner_root_waiting`).
+//! The five review-fix pins fail at `699bba4fa53` (the review fixes'
+//! parent); the Sol-fix pins fail at `86b9c4cd3b07`.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test owner_root_recovery_wait`.
 #![cfg(oneiron_test_support)]
@@ -34,16 +55,22 @@ use std::time::Duration;
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, AUTHORITY_TRANSCRIPT_DOMAIN, ActAuthority, ActSurface,
-    AuthorityEntryHash, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    CheckpointRootSigner, HostSlipIssuer, MachineRole, OwnerKeyEnrollment, RecoveryHoldAnswer,
-    RecoveryHoldAnswerKind, RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial,
-    RootRecovery, RootSuccessor, authority_entry_hash, authority_transcript,
+    ActorBindingStatus, AuthorityAttestation, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
+    AuthorityOp, AuthoritySignature, AuthorityTier, CheckpointRootSigner, DeviceAuthority,
+    HostSlipIssuer, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineEncryptionKey, MachineRole,
+    OwnerKeyEnrollment, OwnerRootRecord, ROLE_ADMIN, RecoveryHoldAnswer, RecoveryHoldAnswerKind,
+    RecoveryHoldLanding, RecoveryHoldState, RecoveryHoldView, RootMaterial, RootRecovery,
+    RootSuccessor, authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
     decode_authority_log_entry_body, encode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::federation::{FederationGrantRole, InitialSharedMember};
+use oneiron::memory::MEMORY_CODE_OWNER_BINDING_REQUIRED;
 use oneiron::recovery::{
-    CodeKeeping, KitIssue, KitSecretKind, PassphraseCost, PieceHome, restore_kit,
+    CodeKeeping, KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit,
+    restore_kit,
 };
+use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::store::recovery_kit::KitPiece;
 use oneiron::test_doors::owner_key_release::release_owner_keys;
@@ -52,7 +79,9 @@ use oneiron::test_support::bind_host_owner;
 use oneiron::world_keys::{
     NoRecoveryBox, RecoveryAuthoritySigner, RecoveryPreset, RecoveryRootSeed,
 };
-use oneiron::{EntityId, ErrorKind, Vault, VaultConfig};
+use oneiron::{
+    EdgeActorClass, EntityId, ErrorKind, HostingPrivacyPosture, TimeRange, Vault, VaultConfig,
+};
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, MemoryKeystore, SlotKind};
 use oneiron_store::ports::manual_clock::ManualClock;
 
@@ -66,6 +95,15 @@ const NO_WAIT: Duration = Duration::from_secs(0);
 const LOST_KEY_SEED: u8 = 21;
 /// The seed of the keeper device key that answers.
 const KEEPER_KEY_SEED: u8 = 22;
+/// The seed of an admin-only device key, which never answers a hold.
+const ADMIN_KEY_SEED: u8 = 23;
+/// The seed of a key that is not the vault's recovery root key, which a
+/// foreign anchor's Cancel names as its cosign.
+const STRANGER_KEY_SEED: u8 = 61;
+/// The co-Owner fixture's shared vault id.
+const SHARED: u64 = 44;
+/// The seed of the co-Owner's first owner key, which binds them and is lost.
+const CO_OWNER_LOST_SEED: u8 = 51;
 /// The seeds of successor keys.
 const NEW_KEY_SEED: u8 = 41;
 const NEW2_KEY_SEED: u8 = 42;
@@ -436,6 +474,241 @@ fn replica(history: &[Vec<u8>], at: u64) -> Replica {
     Replica { _dir: dir, vault }
 }
 
+/// `seed` rebuilt from two stored pieces of a kit issued for it: the owner's
+/// restore (as `tests/owner_root_recovery.rs`).
+fn restored(vault_id: [u8; 32], seed: &RecoveryRootSeed) -> RecoveryRootSeed {
+    let issue = KitIssue {
+        vault_id,
+        homes: [
+            PieceHome::ThisMachine,
+            PieceHome::OtherMachine(EntityId::now()),
+            PieceHome::OtherMachine(EntityId::now()),
+        ],
+        passphrase: None,
+        cost: PassphraseCost::FLOOR,
+        only_machine: false,
+    };
+    let pieces = issue_recovery_root_kit(&issue, &seed.kit_bytes())
+        .expect("the kit")
+        .into_pieces();
+    let secret = restore_kit(
+        vault_id,
+        KitSecretKind::RecoveryRoot,
+        &[&pieces[0], &pieces[1]],
+        None,
+    )
+    .expect("two stored pieces restore the seed");
+    RecoveryRootSeed::from_restored_kit(secret).expect("the restored seed")
+}
+
+/// A self-hosted shared vault whose embedded owner the host root binds, with
+/// a co-Owner the owner added as the fixture's `person`, on a clock the test
+/// moves (as `tests/owner_root_recovery.rs`' `co_owner_fixture`, plus the
+/// `ManualClock` open). The co-Owner's first owner key (`lost_key`, the key
+/// that is lost) binds them as `human`, as an added Owner's first key does
+/// on a self-hosted vault. The root's authority key is enrolled, never
+/// confirmed through a world kit: the box recovery needs no kit.
+struct CoOwner {
+    _dir: tempfile::TempDir,
+    vault: Vault,
+    clock: Arc<ManualClock>,
+    issuer: HostSlipIssuer,
+    person: EntityId,
+    vault_id: [u8; 32],
+    machine: EntityId,
+    lost_key: SigningKey,
+    seed: RecoveryRootSeed,
+}
+
+fn co_owner_wait_fixture() -> CoOwner {
+    let clock = ManualClock::new(T0);
+    let dir = tempfile::tempdir().expect("tempdir");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::SelfHostLocal;
+    config.store_clock = clock.bundle();
+    let vault = Vault::open(dir.path(), config).expect("the vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's live machine profile");
+    let owner = vault.ensure_embedded_owner_actor().expect("the owner");
+    bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
+    vault
+        .initialize_shared_vault(
+            &proof(&vault, owner),
+            SHARED,
+            None,
+            &[InitialSharedMember {
+                member_ref: owner,
+                role: Some(FederationGrantRole::Owner),
+            }],
+            1,
+        )
+        .expect("a shared vault");
+    let co_owner = EntityId::now();
+    vault
+        .put_entity(
+            &co_owner,
+            ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"human",
+        )
+        .expect("a live person");
+    let owner_proof = proof(&vault, owner);
+    let act = vault
+        .propose_add_owner(&owner_proof, SHARED, co_owner)
+        .expect("the owner starts add_owner");
+    vault
+        .execute_completed_shared_act(&owner_proof, &act.id, Some(&issuer))
+        .expect("add_owner runs at once");
+    let vault_id = vault
+        .authority_fold()
+        .expect("the fold")
+        .vault_id
+        .expect("a rooted vault");
+    let machine = vault
+        .prepare_install_signing()
+        .expect("this install's machine");
+    let fixture = CoOwner {
+        _dir: dir,
+        vault,
+        clock,
+        issuer,
+        person: co_owner,
+        vault_id,
+        machine,
+        lost_key: SigningKey::from_bytes(&[CO_OWNER_LOST_SEED; 32]),
+        seed: restored(
+            vault_id,
+            &RecoveryRootSeed::generate().expect("a root seed"),
+        ),
+    };
+    let input = fixture.enrollment(&fixture.lost_key);
+    fixture
+        .vault
+        .enrol_owner_signing_key_as_host(&fixture.authority(), input, &fixture.issuer)
+        .expect("the co-Owner enrols their first owner key");
+    fixture
+}
+
+/// Whether `person` passes the owner verbs: a live `human` binding names
+/// them (as `tests/owner_root_recovery.rs`).
+fn passes_owner_verbs(vault: &Vault, person: EntityId) -> bool {
+    match vault.memory(person, EdgeActorClass::Human).verify_owner() {
+        Ok(()) => true,
+        Err(error) => {
+            assert_eq!(error.code, MEMORY_CODE_OWNER_BINDING_REQUIRED, "{error:?}");
+            false
+        }
+    }
+}
+
+impl CoOwner {
+    fn owner(&self) -> AuthenticatedOwner {
+        proof(&self.vault, self.person)
+    }
+
+    fn authority(&self) -> ActAuthority {
+        ActAuthority::Owner(self.owner(), ActSurface::ThisInstall)
+    }
+
+    /// Moves both clocks to `now`: the store's and the authority
+    /// observation's floor.
+    fn at(&self, now: u64) {
+        self.clock.set(now);
+        self.vault
+            .advance_authority_clock_for_test(now)
+            .expect("authority time moves");
+    }
+
+    /// `key`'s enrolment input for this vault and owner, with its proof of
+    /// possession.
+    fn enrollment(&self, key: &SigningKey) -> OwnerKeyEnrollment {
+        let public_key = key.verifying_key().to_bytes();
+        let challenge = self
+            .vault
+            .owner_key_enrollment_challenge_as(&self.authority(), self.machine, &public_key)
+            .expect("the challenge");
+        OwnerKeyEnrollment {
+            machine: self.machine,
+            public_key,
+            proof: key.sign(&challenge).to_bytes().to_vec(),
+        }
+    }
+
+    /// The owner enrols the kit root's authority key before the loss.
+    fn enrol_root_key(&self) -> AuthorityKey {
+        let receipt = self
+            .vault
+            .enrol_recovery_authority_key_as_host(
+                &self.authority(),
+                self.machine,
+                &self.seed,
+                &self.issuer,
+            )
+            .expect("the owner enrols the root's authority key");
+        AuthorityKey::Ed25519(receipt.public_key)
+    }
+
+    fn released(&self) -> RootMaterial {
+        let root = self.seed.public(&self.vault_id).expect("the root").id;
+        RootMaterial::Released(
+            RecoveryAuthoritySigner::from_released_seed(
+                released_authority_seed(&self.seed, &self.vault_id, 0),
+                &self.vault_id,
+                root,
+            )
+            .expect("the released key"),
+        )
+    }
+
+    fn recover_wait(
+        &self,
+        wait: Duration,
+        material: RootMaterial,
+        successor: RootSuccessor,
+        lost: &[AuthorityKey],
+    ) -> oneiron::Result<RootRecovery> {
+        recover_owner_root_waiting(
+            &self.vault,
+            &self.owner(),
+            ActSurface::ThisInstall,
+            material,
+            successor,
+            lost,
+            wait,
+        )
+    }
+
+    fn holds(&self) -> Vec<RecoveryHoldView> {
+        self.vault.recovery_holds().expect("the holds")
+    }
+
+    fn hold_view(&self, hold: &AuthorityEntryHash) -> RecoveryHoldView {
+        self.holds()
+            .into_iter()
+            .find(|view| view.hold == *hold)
+            .expect("the hold is read")
+    }
+
+    fn land(&self) -> Vec<RecoveryHoldLanding> {
+        self.vault
+            .land_due_recovery_holds()
+            .expect("the landing runs")
+    }
+
+    fn live(&self, key: &AuthorityKey) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .roster
+            .get(key)
+            .is_some_and(|device| !device.revoked)
+    }
+}
+
 impl Replica {
     fn holds(&self) -> Vec<RecoveryHoldView> {
         self.vault.recovery_holds().expect("the replica's holds")
@@ -505,6 +778,58 @@ fn held(answer: RootRecovery) -> (AuthorityEntryHash, u64) {
         panic!("the box recovery holds with a nonzero wait");
     };
     (hold, lands_at)
+}
+
+/// An admin-only device of `seed`'s key (as `tests/owner_root_recovery.rs`'
+/// `owner_device`, but with the admin role alone): the generic consent rule
+/// admits it, but it never answers a recovery hold.
+fn admin_device(seed: u8) -> DeviceAuthority {
+    DeviceAuthority {
+        key: key_of(&SigningKey::from_bytes(&[seed; 32])),
+        transport_key_binding: [7; 32],
+        attestation: AuthorityAttestation {
+            kind: "SoftwareArgon2id".to_owned(),
+            evidence: vec![1, 2, 3],
+        },
+        tier: AuthorityTier::Software,
+        roles: ROLE_ADMIN,
+    }
+}
+
+/// Every pending-mirror marker (`lm:w:`) the vault holds, paged as
+/// `the_doors_rows_are_marked_for_the_live_mirror` reads them
+/// (`tests/owner_root_recovery.rs`).
+fn markers(vault: &Vault) -> Vec<String> {
+    let mut markers = Vec::new();
+    let mut after: Option<String> = None;
+    loop {
+        after = vault
+            .sync_state_prefix_page("lm:w:", after.as_deref(), 256, |key, _| {
+                markers.push(key.to_owned());
+                Ok(())
+            })
+            .expect("a page of the pending-mirror markers");
+        if after.is_none() {
+            break;
+        }
+    }
+    markers
+}
+
+/// Asserts every entry of `entries` carries a pending-mirror marker for its
+/// window among `markers`.
+fn assert_marked(markers: &[String], entries: &[AuthorityEntryHash]) {
+    for entry in entries {
+        let id = authority_log_entity_id_from_hash(entry)
+            .expect("the row's id")
+            .to_hex();
+        assert!(
+            markers
+                .iter()
+                .any(|marker| marker.ends_with(&format!(":{id}"))),
+            "the row {id} carries a marker for its window: {markers:?}"
+        );
+    }
 }
 
 #[test]
@@ -1320,4 +1645,547 @@ fn a_cancelled_hold_never_lands() {
     let view = fixture.hold_view(&hold);
     assert_eq!(view.state, RecoveryHoldState::Cancelled);
     assert_eq!(view.answered_by, vec![keeper_key]);
+}
+
+#[test]
+fn an_admin_or_host_key_never_answers_a_hold() {
+    let fixture = fixture();
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let keeper = fixture.enrol_device_key(KEEPER_KEY_SEED);
+    let keeper_key = key_of(&keeper);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+
+    let (hold, _) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("the box recovery holds"),
+    );
+    // An admin-only device, enrolled by a crafted row a held owner key
+    // signs: the generic consent rule admits it.
+    let admin = SigningKey::from_bytes(&[ADMIN_KEY_SEED; 32]);
+    let admin_key = key_of(&admin);
+    let mut enroll = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: fixture.next_seq(&keeper_key),
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::EnrollDevice {
+            device: admin_device(ADMIN_KEY_SEED),
+        },
+        signer: AuthoritySignature {
+            suite: keeper_key.suite(),
+            public_key: keeper_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&enroll).expect("the transcript");
+    enroll.signer.signature = keeper.sign(&transcript).to_bytes().to_vec();
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&enroll).expect("the bytes")
+        ])
+        .expect("the import stores the enrolment");
+    assert!(fixture.live(&admin_key), "the admin key is enrolled");
+
+    // The admin key's ItIsMe: stored, but not counted, and the hold still
+    // waits.
+    let before_history = fixture.history().len();
+    let mut row = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: fixture.next_seq(&admin_key),
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer {
+            hold,
+            answer: RecoveryHoldAnswerKind::ItIsMe,
+        }),
+        signer: AuthoritySignature {
+            suite: admin_key.suite(),
+            public_key: admin_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&row).expect("the transcript");
+    row.signer.signature = admin.sign(&transcript).to_bytes().to_vec();
+    let hash = authority_entry_hash(&row).expect("a hash");
+    let bytes = encode_authority_log_entry_body(&row).expect("the bytes");
+    fixture
+        .vault
+        .import_signed_authority_history(&[bytes])
+        .expect("the import stores the row");
+    assert!(
+        !fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(&hash),
+        "the fold refuses the admin-signed answer"
+    );
+    assert_eq!(
+        fixture.history().len(),
+        before_history + 1,
+        "the refused row is stored, and nothing else is written"
+    );
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.state, RecoveryHoldState::Waiting);
+    assert!(view.answered_by.is_empty());
+}
+
+#[test]
+fn a_landing_binds_a_co_owner_whose_lost_key_held_their_binding() {
+    let fixture = co_owner_wait_fixture();
+    assert!(
+        passes_owner_verbs(&fixture.vault, fixture.person),
+        "the co-Owner's first owner key binds them"
+    );
+    let root_key = fixture.enrol_root_key();
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let lost = key_of(&fixture.lost_key);
+
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released(),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost),
+            )
+            .expect("the box recovery holds"),
+    );
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Waiting);
+    fixture.at(lands_at + 60);
+    let landings = fixture.land();
+    assert_eq!(landings.len(), 1, "the due hold lands");
+    assert_eq!(landings[0].hold, hold);
+    assert_eq!(landings[0].state, RecoveryHoldState::Landed);
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Landed);
+    let enrollment = landings[0].enrollment.expect("the enrolment");
+    assert_eq!(
+        AuthorityKey::Ed25519(enrollment.public_key),
+        key_of(&new_key)
+    );
+    assert!(!fixture.live(&lost), "the lost key is revoked");
+    assert!(fixture.live(&root_key), "the root's key stays live");
+    let bound = fixture
+        .vault
+        .authority_fold()
+        .expect("the fold")
+        .actor_bindings
+        .get(&key_of(&new_key))
+        .filter(|binding| {
+            binding.status == ActorBindingStatus::Active && binding.actor_class == "human"
+        })
+        .map(|binding| binding.actor_ref);
+    assert_eq!(
+        bound,
+        Some(fixture.person),
+        "the new key binds the co-Owner"
+    );
+    assert!(
+        passes_owner_verbs(&fixture.vault, fixture.person),
+        "the co-Owner keeps owner control"
+    );
+}
+
+#[test]
+fn the_waits_rows_are_marked_for_the_live_mirror() {
+    let fixture = fixture();
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let keeper = fixture.enrol_device_key(KEEPER_KEY_SEED);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+
+    let (hold, _) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("the box recovery holds"),
+    );
+    assert_marked(&markers(&fixture.vault), std::slice::from_ref(&hold));
+
+    release_owner_keys(&fixture.vault);
+    fixture.hold_signer(&keeper);
+    fixture
+        .vault
+        .answer_recovery_hold_as(&fixture.authority(), hold, RecoveryHoldAnswerKind::Cancel)
+        .expect("the keeper device cancels");
+    let answer = fixture
+        .history()
+        .into_iter()
+        .find(
+            |row| matches!(&row.op, AuthorityOp::RecoveryHoldAnswer(answer) if answer.hold == hold),
+        )
+        .expect("the answer row");
+    let answer_hash = authority_entry_hash(&answer).expect("a hash");
+    assert_marked(&markers(&fixture.vault), std::slice::from_ref(&answer_hash));
+
+    // A second hold for a fresh successor lands, and its rows are marked.
+    let new3_key = SigningKey::from_bytes(&[NEW3_KEY_SEED; 32]);
+    let (second, second_lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new3_key)),
+                &[],
+            )
+            .expect("the second attempt holds"),
+    );
+    fixture.at(second_lands_at + 60);
+    let landings = fixture.land();
+    assert_eq!(landings.len(), 2, "the cancel cleans and the second lands");
+    let landed = landings
+        .iter()
+        .find(|landing| landing.hold == second)
+        .expect("the second hold's landing");
+    assert_eq!(landed.state, RecoveryHoldState::Landed);
+    let mut entries: Vec<AuthorityEntryHash> = landed.revoked.clone();
+    entries.push(landed.enrollment.expect("the enrolment").entry);
+    assert_marked(&markers(&fixture.vault), &entries);
+}
+
+#[test]
+fn a_box_call_after_the_wait_lands_and_answers_vouched() {
+    let fixture = fixture();
+    let root_key = AuthorityKey::Ed25519(fixture.generation_key(0));
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::ThisInstall,
+                &[],
+            )
+            .expect("the box recovery holds"),
+    );
+    let successor = fixture.hold_view(&hold).successor_key;
+
+    fixture.at(lands_at + 60);
+    let answer = fixture
+        .recover_wait(
+            WAIT,
+            fixture.released_material(0),
+            RootSuccessor::ThisInstall,
+            &[],
+        )
+        .expect("the same box call lands and answers Vouched");
+    let RootRecovery::Vouched {
+        enrollment,
+        revoked,
+    } = answer
+    else {
+        panic!("the call completes the attempt it held");
+    };
+    assert_eq!(
+        AuthorityKey::Ed25519(enrollment.public_key),
+        successor,
+        "the landing enrolled this call's successor"
+    );
+    assert!(revoked.is_empty(), "no lost key, no revocation");
+    let enrolment = fixture.row(&enrollment.entry);
+    assert!(matches!(enrolment.op, AuthorityOp::OwnerKeyEnroll(_)));
+    assert_eq!(enrolment.signer_key(), &root_key);
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Landed);
+}
+
+#[test]
+fn a_kit_recovery_cancels_a_due_hold_on_the_door_install() {
+    let fixture = fixture();
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let successor = key_of(&new_key);
+    let new2_key = SigningKey::from_bytes(&[NEW2_KEY_SEED; 32]);
+    let other = key_of(&new2_key);
+
+    let (hold, lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("the box recovery holds"),
+    );
+    // Due, on this install's clock, and not landed: no landing call.
+    fixture.at(lands_at + 60);
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Due);
+
+    let answer = fixture
+        .vault
+        .recover_owner_root(
+            &fixture.owner(),
+            ActSurface::ThisInstall,
+            fixture.kit_material(),
+            RootSuccessor::Device(fixture.enrollment(&new2_key)),
+            std::slice::from_ref(&lost_key),
+        )
+        .expect("the kit recovers");
+    assert!(
+        matches!(answer, RootRecovery::Vouched { .. }),
+        "the kit vouches over the hold"
+    );
+    assert_eq!(
+        fixture.hold_view(&hold).state,
+        RecoveryHoldState::Cancelled,
+        "the kit's write cancelled the due hold"
+    );
+    assert!(!fixture.live(&successor), "the hold never landed");
+    assert!(fixture.live(&other), "the kit enrolled its own successor");
+}
+
+#[test]
+fn a_foreign_anchors_cancel_never_stops_a_hold() {
+    let fixture = fixture();
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+
+    let (hold, _) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("the box recovery holds"),
+    );
+    // A fresh root seed that is NOT the vault's kit, and its self-signed
+    // root record for this vault, imported as a crafted row.
+    let foreign = RecoveryRootSeed::generate().expect("a foreign root seed");
+    let root = foreign.public(&fixture.vault_id).expect("the foreign root");
+    let anchor = foreign.anchor();
+    let anchor_key = AuthorityKey::Ed25519(anchor.verifying_key().to_bytes());
+    let record = OwnerRootRecord {
+        owner: fixture.person,
+        root: root.id,
+        recovery_key: MachineEncryptionKey {
+            suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+            key: root.recovery_key.to_bytes(),
+        },
+        anchor_key: root.anchor_key,
+    };
+    // The anchor's chain starts at sequence 0, as `anchor_signed_entry`
+    // builds it.
+    let mut published = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: 0,
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::OwnerRoot(record),
+        signer: AuthoritySignature {
+            suite: anchor_key.suite(),
+            public_key: anchor_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&published).expect("the transcript");
+    published.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
+    let before_history = fixture.history().len();
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&published).expect("the bytes")
+        ])
+        .expect("the foreign root stores");
+
+    // That anchor's Cancel naming the hold, with no cosign: the attack
+    // shape. The import leaves it out: no key vouches for it.
+    let mut row = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: 1,
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer {
+            hold,
+            answer: RecoveryHoldAnswerKind::Cancel,
+        }),
+        signer: AuthoritySignature {
+            suite: anchor_key.suite(),
+            public_key: anchor_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: Vec::new(),
+        ts: T0,
+    };
+    let transcript = authority_transcript(&row).expect("the transcript");
+    row.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
+    fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&row).expect("the bytes")
+        ])
+        .expect("the import answers");
+    assert_eq!(
+        fixture.history().len(),
+        before_history + 1,
+        "the root stores, and the foreign Cancel is left out"
+    );
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.state, RecoveryHoldState::Waiting);
+    assert!(view.answered_by.is_empty());
+
+    // The same anchor's Cancel beside one cosign by a key that is not the
+    // vault's recovery root key R: the structure vouches the shape (an
+    // anchor and one cosign), and the fold refuses it, since the cosign is
+    // no live recovery root key. Stored or left out, it never counts.
+    let stranger = SigningKey::from_bytes(&[STRANGER_KEY_SEED; 32]);
+    let stranger_key = key_of(&stranger);
+    let mut cosigned = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id: Some(fixture.vault_id),
+        seq: 1,
+        parent_hashes: fixture.heads(),
+        op: AuthorityOp::RecoveryHoldAnswer(RecoveryHoldAnswer {
+            hold,
+            answer: RecoveryHoldAnswerKind::Cancel,
+        }),
+        signer: AuthoritySignature {
+            suite: anchor_key.suite(),
+            public_key: anchor_key.clone(),
+            signature: vec![0; 64],
+        },
+        cosigns: vec![AuthoritySignature {
+            suite: stranger_key.suite(),
+            public_key: stranger_key.clone(),
+            signature: vec![0; 64],
+        }],
+        ts: T0,
+    };
+    let transcript = authority_transcript(&cosigned).expect("the transcript");
+    cosigned.cosigns[0].signature = stranger.sign(&transcript).to_bytes().to_vec();
+    cosigned.signer.signature = anchor.sign(&transcript).to_bytes().to_vec();
+    let cosigned_hash = authority_entry_hash(&cosigned).expect("a hash");
+    let _ = fixture
+        .vault
+        .import_signed_authority_history(&[
+            encode_authority_log_entry_body(&cosigned).expect("the bytes")
+        ]);
+    assert!(
+        !fixture
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .valid_entries
+            .contains(&cosigned_hash),
+        "the fold refuses a Cancel beside a key that is not R"
+    );
+    let view = fixture.hold_view(&hold);
+    assert_eq!(view.state, RecoveryHoldState::Waiting);
+    assert!(view.answered_by.is_empty());
+}
+
+#[test]
+#[ignore = "needs an adopted checkpoint image carrying the hold: adopt_authority_checkpoint needs an owner-pairing pin, certified root key bindings and attestations, which no integration-test path builds (no adopting test in tests/)"]
+fn a_kit_cancel_reaches_a_hold_only_an_adopted_checkpoint_carries() {
+    // Vault A holds a live attempt.
+    let fixture = fixture();
+    let lost = fixture.enrol_device_key(LOST_KEY_SEED);
+    let lost_key = key_of(&lost);
+    let new_key = SigningKey::from_bytes(&[NEW_KEY_SEED; 32]);
+    let (hold, _) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::Device(fixture.enrollment(&new_key)),
+                std::slice::from_ref(&lost_key),
+            )
+            .expect("the box recovery holds"),
+    );
+    assert_eq!(fixture.hold_view(&hold).state, RecoveryHoldState::Waiting);
+    // Not reachable from here: write A's checkpoint image, adopt it on a
+    // replica that stores no raw hold row, and run the kit cancel-all
+    // there. `Vault::adopt_authority_checkpoint` verifies the image
+    // against an owner-pairing pin and per-root certified key bindings
+    // plus attestations (`attest_authority_checkpoint`); building those
+    // needs the pairing-link and checkpoint-key stack, which no
+    // integration test reaches. The full test would then assert the
+    // replica's kit cancel-all writes a Cancel for the carried hold.
+}
+
+#[test]
+fn a_retry_after_a_cancelled_hold_keeps_its_seed_and_lands() {
+    let fixture = fixture();
+    let keeper = fixture.enrol_device_key(KEEPER_KEY_SEED);
+
+    let (first, _) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::ThisInstall,
+                &[],
+            )
+            .expect("the box recovery holds"),
+    );
+    let successor = fixture.hold_view(&first).successor_key;
+    release_owner_keys(&fixture.vault);
+    fixture.hold_signer(&keeper);
+    fixture
+        .vault
+        .answer_recovery_hold_as(&fixture.authority(), first, RecoveryHoldAnswerKind::Cancel)
+        .expect("another owner device cancels the hold");
+    assert_eq!(
+        fixture.hold_view(&first).state,
+        RecoveryHoldState::Cancelled
+    );
+
+    // The same box call again: a retry for the same successor. The slot
+    // key is still unenrolled (the cancel landed nothing), so no fresh
+    // key is minted.
+    let (retry, retry_lands_at) = held(
+        fixture
+            .recover_wait(
+                WAIT,
+                fixture.released_material(0),
+                RootSuccessor::ThisInstall,
+                &[],
+            )
+            .expect("the retry holds"),
+    );
+    assert_ne!(retry, first, "the retry is a new attempt");
+    assert_eq!(
+        fixture.hold_view(&retry).successor_key,
+        successor,
+        "the retry names the same successor"
+    );
+    fixture.at(retry_lands_at + 60);
+    let landings = fixture.land();
+    let landed = landings
+        .iter()
+        .find(|landing| landing.hold == retry)
+        .expect("the retry lands");
+    assert_eq!(landed.state, RecoveryHoldState::Landed);
+    assert!(
+        landed.enrollment.is_some(),
+        "the retry's landing enrolled its successor"
+    );
+    assert!(fixture.live(&successor), "the successor is enrolled");
+    assert_eq!(fixture.hold_view(&retry).state, RecoveryHoldState::Landed);
+    assert_eq!(
+        fixture.hold_view(&first).state,
+        RecoveryHoldState::Cancelled,
+        "the first hold stays cancelled"
+    );
 }
