@@ -1,7 +1,5 @@
 //! Principal identity and validated-action outcome types.
 
-use serde::{Deserialize, Serialize};
-
 use crate::claim::ScopedReadActorKey;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
@@ -54,14 +52,8 @@ pub struct GeneratedUiAgentCallback {
     pub selected_context: Vec<LensReadHandle>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensActingPrincipalKind {
-    HumanView,
-    AgentTask,
-    /// A system-class credential's own job: a host service acting as itself.
-    SystemJob,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::mediation::mediation_principal::LensActingPrincipalKind;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensPrincipalBinding {

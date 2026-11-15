@@ -5,21 +5,10 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::OutboundIntent;
 use crate::memory::channel_doors::ChannelSelectionRequest;
 
-/// A host-selected ambient send: the surface the delivery window degrades
-/// the interrupt to, and the full send that carries it there, with its own
-/// channel, verb, target and content. Its actor is the interrupt's actor.
-/// The engine never derives one from the interrupt's own target or from the
-/// surface's name.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct OutboundAmbientAlternative {
-    pub surface: String,
-    pub intent: OutboundIntent,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub counterparty_ref: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::outbound::ambient_alternative::OutboundAmbientAlternative;
 
 /// The host's sender-selection question a scheduled send answers: the
 /// selection request it asked and the counterparty class it passed

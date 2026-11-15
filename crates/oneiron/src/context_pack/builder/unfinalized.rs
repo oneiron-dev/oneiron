@@ -17,7 +17,7 @@ use super::super::empty_pack::{
     context_pack_empty_reason, dedupe_signals, empty_context, pack_signal_from_retrieval,
     serialized_context_pack_empty_reason,
 };
-use super::super::hydration::hydrate_entity;
+use super::super::hydration::{HydratedEntity, hydrate_entity};
 use super::super::psych_mirror::{
     PsychProfilePackSection, missing_psych_profile_pack_section, psych_profile_pack_section_in,
 };
@@ -236,6 +236,7 @@ impl<'a> ContextPackBuilder<'a> {
                 let mut kept = Vec::with_capacity(scored.len());
                 for entry in scored {
                     if disclosure_admits_candidate(
+                        self.vault,
                         &self.read,
                         &rtxn,
                         ctx,
@@ -253,6 +254,7 @@ impl<'a> ContextPackBuilder<'a> {
             for entry in pipeline_output.capabilities {
                 if clamp.is_some_and(|ctx| ctx.mode() != DisclosureMode::OwnerAlone)
                     && !disclosure_admits_candidate(
+                        self.vault,
                         &self.read,
                         &rtxn,
                         clamp.expect("checked"),
@@ -289,6 +291,7 @@ impl<'a> ContextPackBuilder<'a> {
                 deadline: pack_deadline,
             };
             let mut results = Vec::with_capacity(scored.len());
+            let mut served_bodies = Vec::new();
             for entry in scored.iter().copied() {
                 let mut options = result_options;
                 options.words_pinned = pipeline_output.words_bound.contains(&entry.id);
@@ -318,11 +321,22 @@ impl<'a> ContextPackBuilder<'a> {
                     }
                     Err(error) => return Err(error),
                 };
-                let Some(entity) = hydrated else {
+                let Some(HydratedEntity {
+                    entity,
+                    served_claim_body,
+                }) = hydrated
+                else {
                     continue;
                 };
+                if let Some(body) = served_claim_body {
+                    served_bodies.push((entity.id, body));
+                }
                 results.push(entity);
             }
+            // Every stage below reads a claim at the body it is served at: a
+            // pin's own words, not the live row the gate read (Sol R14 S2 on
+            // #1426).
+            claim_bodies.extend(served_bodies);
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117): under a
             // scope that selects base beside another world (`All`, or a
@@ -393,6 +407,7 @@ impl<'a> ContextPackBuilder<'a> {
                     neighbor_pipeline.neighbor_type_policy(&rtxn)?;
                 let world_scope = neighbor_pipeline.neighbor_world_scope(&rtxn)?;
                 match walk_edges(
+                    self.vault,
                     &self.read,
                     &rtxn,
                     &seed_ids,
@@ -449,6 +464,7 @@ impl<'a> ContextPackBuilder<'a> {
             if self.include_edges && self.edge_hop > 0 {
                 for entity in &mut results {
                     entity.edges = match load_entity_edges(
+                        self.vault,
                         &self.read,
                         &rtxn,
                         &entity.id,
@@ -469,6 +485,7 @@ impl<'a> ContextPackBuilder<'a> {
             }
 
             let mut neighbors = Vec::with_capacity(edge_walk.neighbor_ids.len());
+            let mut served_neighbor_bodies = Vec::new();
             for id in edge_walk.neighbor_ids {
                 let hydrated = match hydrate_entity(
                     self.vault,
@@ -488,10 +505,30 @@ impl<'a> ContextPackBuilder<'a> {
                     }
                     Err(error) => return Err(error),
                 };
-                let Some(entity) = hydrated else {
+                let Some(HydratedEntity {
+                    entity,
+                    served_claim_body,
+                }) = hydrated
+                else {
                     continue;
                 };
+                if let Some(body) = served_claim_body {
+                    served_neighbor_bodies.push((entity.id, body));
+                }
                 neighbors.push(entity);
+            }
+            // A neighbor was validated on its live row before the walk
+            // hydrated it. One served at another body (an Indexed pack) is
+            // validated on that body too, which the stages below then read.
+            for (id, body) in served_neighbor_bodies {
+                claim_bodies.insert(id, body);
+                validate_pack_entity_reference(
+                    &self.read,
+                    &rtxn,
+                    &id,
+                    &mut claim_bodies,
+                    &quarantine_index,
+                )?;
             }
 
             // ARCH-0004 / ARCH-0022 world partitioning (ONE-1117), once over
@@ -547,7 +584,7 @@ impl<'a> ContextPackBuilder<'a> {
             // OF-365 enforcement point 4 — final fail-closed sweep: the pack
             // build FAILS rather than leaks a non-admitted id.
             if let Some(ctx) = clamp {
-                validate_pack_disclosure(&self.read, &rtxn, ctx, &results, &neighbors)?;
+                validate_pack_disclosure(self.vault, &self.read, &rtxn, ctx, &results, &neighbors)?;
             }
             if let (Some(summary), Some(pipeline)) = (&l2_base, &l2_pipeline) {
                 let valid = match super::super::l2_base::revalidate_l2_base(
@@ -634,6 +671,7 @@ impl<'a> ContextPackBuilder<'a> {
             // Resolved in this snapshot, so no second reader opens while it is
             // held (FIX 7611), and over the rows the pack keeps (FIX 9761).
             let instruction_files = super::instruction_files::pack_instruction_files(
+                self.vault,
                 &self.read,
                 self.l2_summary_reader,
                 &rtxn,
