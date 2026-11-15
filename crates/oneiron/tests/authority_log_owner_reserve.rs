@@ -34,10 +34,12 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig};
 
-/// The test's memory floor, 1 MiB: the fixture's own log folds well under it
-/// (asserted), and a few dozen chained rows pass it, since a fold projects
+/// The test's memory floor, 4 MiB: the fixture's own log folds well under it
+/// (asserted), and about ninety chained rows pass it, since a fold projects
 /// 16 KiB a row and 640 bytes an ancestor pair (`authority/log_budget.rs`).
-const FLOOR_BYTES: u64 = 1024 * 1024;
+/// Its reserve then holds several of the owner's rows, each with the whole
+/// log among its ancestors.
+const FLOOR_BYTES: u64 = 4 * 1024 * 1024;
 
 /// The most flood rows a test signs before it gives up.
 const FLOOD_CAP: u64 = 400;
