@@ -8,6 +8,9 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use oneiron::store::{RetrievalBlendSignal, RetrievalBlendWeights};
+use oneiron::task_verb::sdk::RetrievalPolicyPinRequest;
+use oneiron::{Vault, VaultConfig};
 use oneiron_ruler::pack::{Slice, sha256_hex};
 use oneiron_ruler::proposal::proposal_id;
 use oneiron_ruler::ruler_paths::SHIPPED_RULER_PATHS;
@@ -42,7 +45,17 @@ const HELD_OUT_DIGEST: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const SEALED_DIGEST: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
 /// The five blend signals in pin order.
-const PIN_SIGNALS: [&str; 5] = ["recency", "salience", "confidence", "gravity", "relevance"];
+const PIN_ORDER: [RetrievalBlendSignal; 5] = [
+    RetrievalBlendSignal::Recency,
+    RetrievalBlendSignal::Salience,
+    RetrievalBlendSignal::Confidence,
+    RetrievalBlendSignal::Gravity,
+    RetrievalBlendSignal::Relevance,
+];
+
+/// Git config the compare's own `git diff` sees: rename detection on and
+/// quoted paths, so a diff that depends on either default is caught here.
+const GIT_CONFIG: [(&str, &str); 2] = [("diff.renames", "true"), ("core.quotePath", "true")];
 
 /// The candidate's pinned blend weights.
 fn candidate_weights() -> Value {
@@ -252,6 +265,78 @@ fn scorecard(args: &[&str]) -> std::process::Output {
         .expect("scorecard CLI fixture")
 }
 
+/// Run `oneiron-bench scorecard` with [`GIT_CONFIG`] set for every git it starts.
+fn scorecard_with_git_config(args: &[&str]) -> std::process::Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron-bench"));
+    command
+        .arg("scorecard")
+        .args(args)
+        .env("GIT_CONFIG_COUNT", GIT_CONFIG.len().to_string());
+    for (index, (key, value)) in GIT_CONFIG.iter().enumerate() {
+        command
+            .env(format!("GIT_CONFIG_KEY_{index}"), key)
+            .env(format!("GIT_CONFIG_VALUE_{index}"), value);
+    }
+    command.output().expect("scorecard CLI fixture")
+}
+
+/// The normalized shares a run evaluates for a fixture's pinned weights.
+fn evaluated_shares(weights: &Value) -> RetrievalBlendWeights {
+    let raw = |name: &str| weights[name].as_f64().expect("fixture weight") as f32;
+    RetrievalBlendWeights::new(
+        raw("recency"),
+        raw("salience"),
+        raw("confidence"),
+        raw("gravity"),
+        raw("relevance"),
+    )
+    .normalized()
+    .expect("fixture weights normalize")
+}
+
+/// Decode the stamp's pin calls with the verb's own request type, and check
+/// their shape: clear every pin, then pin `shares` in order.
+fn pin_requests(calls: &[Value], shares: RetrievalBlendWeights) -> Vec<RetrievalPolicyPinRequest> {
+    let requests: Vec<RetrievalPolicyPinRequest> = calls
+        .iter()
+        .map(|call| {
+            assert_eq!(call["verb"], json!("vault.retrieval.policy.pin"));
+            serde_json::from_value(call["input"].clone()).expect("pin input is the verb's request")
+        })
+        .collect();
+    assert_eq!(requests.len(), 2 * PIN_ORDER.len());
+    let (clears, pins) = requests.split_at(PIN_ORDER.len());
+    for (request, signal) in std::iter::zip(clears, PIN_ORDER) {
+        assert_eq!(request.signal, signal);
+        assert_eq!(request.value, None, "the first five calls clear every pin");
+    }
+    for (request, signal) in std::iter::zip(pins, PIN_ORDER) {
+        assert_eq!(request.signal, signal);
+        assert_eq!(request.value, Some(shares.weight(signal)));
+    }
+    requests
+}
+
+/// Commit everything in `repo` as the fixture author; return the commit.
+fn commit_all(repo: &Path, message: &str) -> String {
+    git(repo, &["add", "-A"]);
+    git(
+        repo,
+        &[
+            "-c",
+            "user.name=owen",
+            "-c",
+            "user.email=owen@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-m",
+            message,
+        ],
+    );
+    git_stdout(repo, &["rev-parse", "HEAD"])
+}
+
 /// True when no held_out record sits under `dir` (a missing dir counts as unwritten).
 fn nothing_written(dir: &Path) -> bool {
     let entries = match std::fs::read_dir(dir) {
@@ -304,8 +389,12 @@ struct Promotion {
 
 /// Promote a clear win through the CLI: campaign, cards, params, and the store dir.
 fn promote(dir: &Path) -> Promotion {
+    promote_with(dir, candidate_weights())
+}
+
+/// [`promote`] with the candidate's pinned weights given.
+fn promote_with(dir: &Path, weights: Value) -> Promotion {
     let campaign = write_campaign(dir, "campaign.json", standard_axes());
-    let weights = candidate_weights();
     let (params_path, cand_digest) = write_params(dir, "params.json", weights.clone());
     let inc_digest = learned_digest();
     let (incumbent, candidate) =
@@ -892,12 +981,7 @@ fn sealed_compare_withdraws_on_a_floor_loss_and_the_owner_can_still_stamp() {
     let stamp_body: Value = serde_json::from_slice(&stamped.stdout).expect("stamp prints JSON");
     assert_eq!(stamp_body["stamp"]["sealed_check"], json!("overridden"));
     let calls = stamp_body["pin_calls"].as_array().expect("pin calls");
-    assert_eq!(calls.len(), PIN_SIGNALS.len());
-    for (call, signal) in std::iter::zip(calls, PIN_SIGNALS) {
-        assert_eq!(call["verb"], json!("vault.retrieval.policy.pin"));
-        assert_eq!(call["input"]["signal"], json!(signal));
-        assert_eq!(call["input"]["value"], promotion.weights[signal]);
-    }
+    pin_requests(calls, evaluated_shares(&promotion.weights));
     let again = scorecard(&[
         "stamp",
         "--proposals",
@@ -1004,5 +1088,142 @@ fn sealed_compare_passes_within_tolerance_judges_no_cost_axis_and_runs_once() {
     let stamp_body: Value = serde_json::from_slice(&stamped.stdout).expect("stamp prints JSON");
     assert_eq!(stamp_body["stamp"]["sealed_check"], json!("passed"));
     let calls = stamp_body["pin_calls"].as_array().expect("pin calls");
-    assert_eq!(calls.len(), PIN_SIGNALS.len());
+    pin_requests(calls, evaluated_shares(&promotion.weights));
+}
+
+#[test]
+fn stamp_pins_the_normalized_shares_the_run_evaluated_over_earlier_pins() {
+    let dir = tempfile::tempdir().expect("stamp fixture dir");
+    let equal = json!({
+        "recency": 1.0,
+        "salience": 1.0,
+        "confidence": 1.0,
+        "gravity": 1.0,
+        "relevance": 1.0,
+    });
+    let promotion = promote_with(dir.path(), equal);
+    let proposals_arg = promotion
+        .proposals
+        .to_str()
+        .expect("proposals path")
+        .to_owned();
+    let stamped = scorecard(&[
+        "stamp",
+        "--proposals",
+        proposals_arg.as_str(),
+        "--proposal",
+        promotion.proposal_id.as_str(),
+        "--at",
+        "1700000001",
+    ]);
+    let stamped_stderr = String::from_utf8_lossy(&stamped.stderr);
+    assert!(stamped.status.success(), "stamp failed: {stamped_stderr}");
+    let stamp_body: Value = serde_json::from_slice(&stamped.stdout).expect("stamp prints JSON");
+    assert_eq!(stamp_body["stamp"]["sealed_check"], json!("not_run"));
+    let calls = stamp_body["pin_calls"].as_array().expect("pin calls");
+    // A vault an earlier stamp left pinned takes every call, in order.
+    let vault = Vault::open(dir.path().join("vault"), VaultConfig::device()).expect("vault opens");
+    vault
+        .put_retrieval_policy_pin(RetrievalBlendSignal::Relevance, Some(0.5))
+        .expect("earlier relevance pin");
+    vault
+        .put_retrieval_policy_pin(RetrievalBlendSignal::Recency, Some(0.3))
+        .expect("earlier recency pin");
+    for call in calls {
+        let request: RetrievalPolicyPinRequest =
+            serde_json::from_value(call["input"].clone()).expect("pin input is the verb's request");
+        vault
+            .put_retrieval_policy_pin(request.signal, request.value)
+            .unwrap_or_else(|error| panic!("pin call {request:?} refused: {error}"));
+    }
+    // The vault now serves the shares the run evaluated: five equal weights are 0.2 each.
+    let served = vault
+        .retrieval_blend_weight_table()
+        .expect("served weights")
+        .weights;
+    for signal in PIN_ORDER {
+        let share = served.weight(signal);
+        assert!((share - 0.2).abs() <= 1e-6, "{signal:?} serves {share}");
+    }
+    let requests = pin_requests(calls, evaluated_shares(&promotion.weights));
+    for request in &requests[PIN_ORDER.len()..] {
+        assert_eq!(request.value, Some(0.2));
+    }
+}
+
+#[test]
+fn compare_rejects_a_candidate_that_moves_a_ruler_file_or_adds_a_quoted_ruler_path() {
+    let dir = tempfile::tempdir().expect("rename fixture dir");
+    let repo = dir.path().join("repo");
+    let pipeline = repo
+        .join("crates")
+        .join("oneiron")
+        .join("src")
+        .join("pipeline");
+    let ruler_src = repo.join("crates").join("oneiron-ruler").join("src");
+    std::fs::create_dir_all(pipeline.join("builder")).expect("pipeline dir");
+    std::fs::create_dir_all(&ruler_src).expect("ruler dir");
+    git(&repo, &["init", "-q"]);
+    std::fs::write(
+        repo.join("crates")
+            .join("oneiron-ruler")
+            .join("RULER-PATHS.txt"),
+        SHIPPED_RULER_PATHS,
+    )
+    .expect("ruler paths");
+    std::fs::write(ruler_src.join("pack.rs"), "pub fn pack() {}\n").expect("ruler file");
+    let eval = "pub fn eval_spec() -> u32 {\n    7\n}\n";
+    std::fs::write(pipeline.join("builder_eval.rs"), eval).expect("eval file");
+    let builder = pipeline.join("builder").join("mod.rs");
+    std::fs::write(&builder, "#[path = \"../builder_eval.rs\"]\nmod eval;\n").expect("builder");
+    let commit_a = commit_all(&repo, "base");
+    // Move the listed eval file away; only the unlisted builder/mod.rs names it.
+    git(
+        &repo,
+        &[
+            "mv",
+            "crates/oneiron/src/pipeline/builder_eval.rs",
+            "crates/oneiron/src/pipeline/replay_eval.rs",
+        ],
+    );
+    std::fs::write(&builder, "#[path = \"../replay_eval.rs\"]\nmod eval;\n").expect("builder");
+    let commit_b = commit_all(&repo, "move");
+    // From the base again: add a file under the listed ruler dir whose name git quotes.
+    git(
+        &repo,
+        &["checkout", "-q", "-b", "quoted", commit_a.as_str()],
+    );
+    std::fs::write(ruler_src.join("\u{fc}ber.rs"), "pub fn ueber() {}\n").expect("quoted file");
+    let commit_c = commit_all(&repo, "quoted");
+    let campaign = write_campaign(dir.path(), "campaign.json", standard_axes());
+    let campaign_arg = campaign.to_str().expect("campaign path").to_owned();
+    let repo_arg = repo.to_str().expect("repo path").to_owned();
+    let (params_inc, params_cand) = ("c".repeat(64), "d".repeat(64));
+    let cases = [
+        (commit_b, "crates/oneiron/src/pipeline/builder_eval.rs"),
+        (commit_c, "crates/oneiron-ruler/src/\u{fc}ber.rs"),
+    ];
+    for (index, (candidate_commit, touched)) in cases.iter().enumerate() {
+        let (incumbent, candidate) =
+            clear_win_cards(&commit_a, candidate_commit, &params_inc, &params_cand);
+        let base = dir.path().join(format!("base-{index}.json"));
+        let cand = dir.path().join(format!("cand-{index}.json"));
+        write_card(&base, &incumbent);
+        write_card(&cand, &candidate);
+        let judged = scorecard_with_git_config(&[
+            "compare",
+            "--campaign",
+            campaign_arg.as_str(),
+            "--repo",
+            repo_arg.as_str(),
+            base.to_str().expect("base path"),
+            cand.to_str().expect("cand path"),
+        ]);
+        let stdout = String::from_utf8_lossy(&judged.stdout);
+        assert_eq!(judged.status.code(), Some(1), "case {index}: {stdout}");
+        let summary: Value = serde_json::from_slice(&judged.stdout).expect("compare prints JSON");
+        assert_eq!(summary["verdict"], json!("reject"));
+        assert_eq!(summary["decided_by"], json!("ruler_paths"));
+        assert_eq!(summary["ruler_paths"]["touched"], json!([touched]));
+    }
 }

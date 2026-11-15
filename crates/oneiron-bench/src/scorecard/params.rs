@@ -105,9 +105,8 @@ pub(crate) fn resolve(params: Option<&str>) -> Result<ResolvedParams, ScorecardF
             )));
         }
         Some(blend @ serde_json::Value::Object(_)) => {
-            let pinned: PinnedWeights = serde_json::from_value(blend.clone())
-                .map_err(|error| ScorecardFailure::Input(format!("bad blend_weights: {error}")))?;
-            (pinned_source(&pinned)?, blend.clone())
+            let weights = pinned_weights(blend).map_err(ScorecardFailure::Input)?;
+            (BlendWeightsSource::Pinned(weights), blend.clone())
         }
         Some(_) => {
             return Err(ScorecardFailure::Input(
@@ -126,26 +125,26 @@ pub(crate) fn resolve(params: Option<&str>) -> Result<ResolvedParams, ScorecardF
     })
 }
 
-/// The pinned weights as the eval source, after the finite and range checks.
-fn pinned_source(pinned: &PinnedWeights) -> Result<BlendWeightsSource, ScorecardFailure> {
+/// The pinned object form of `blend_weights` as raw f32 weights, after the
+/// finite and range checks. A run normalizes them (`with_blend_weights`); the
+/// stamp pins the same normalized shares, so both read the object through here.
+pub(crate) fn pinned_weights(blend: &serde_json::Value) -> Result<RetrievalBlendWeights, String> {
+    let pinned: PinnedWeights = serde_json::from_value(blend.clone())
+        .map_err(|error| format!("bad blend_weights: {error}"))?;
     let mut narrow = [0.0f32; 5];
     for (slot, (name, value)) in narrow.iter_mut().zip(pinned.all()) {
         if !value.is_finite() || value < 0.0 {
-            return Err(ScorecardFailure::Input(format!(
-                "blend weight {name} must be finite and >= 0.0"
-            )));
+            return Err(format!("blend weight {name} must be finite and >= 0.0"));
         }
         let cast = value as f32;
         if !cast.is_finite() {
-            return Err(ScorecardFailure::Input(format!(
-                "blend weight {name} does not fit an f32"
-            )));
+            return Err(format!("blend weight {name} does not fit an f32"));
         }
         *slot = cast;
     }
-    Ok(BlendWeightsSource::Pinned(RetrievalBlendWeights::new(
+    Ok(RetrievalBlendWeights::new(
         narrow[0], narrow[1], narrow[2], narrow[3], narrow[4],
-    )))
+    ))
 }
 
 /// The params digest: sha256 over the canonical bytes of the resolved file.

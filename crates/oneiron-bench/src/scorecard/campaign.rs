@@ -146,6 +146,10 @@ pub(crate) fn load_card(path: &str) -> Result<(Scorecard, String), ScorecardFail
 }
 
 /// Diff two engine commits against the ruler paths read at the base commit.
+///
+/// The diff lists both sides of a rename (`--no-renames`: a ruler file moved
+/// away still counts) and raw NUL-separated paths (`-z`: a quoted path would
+/// slip past a listed directory).
 pub(crate) fn ruler_paths_touched(
     repo: Option<&str>,
     base_commit: &str,
@@ -169,6 +173,8 @@ pub(crate) fn ruler_paths_touched(
         .arg(dir)
         .arg("diff")
         .arg("--name-only")
+        .arg("--no-renames")
+        .arg("-z")
         .arg(base_commit)
         .arg(candidate_commit)
         .output()
@@ -179,7 +185,7 @@ pub(crate) fn ruler_paths_touched(
         return Err(ScorecardFailure::Input(format!("git diff failed: {short}")));
     }
     let stdout = String::from_utf8_lossy(&diff.stdout);
-    let changed: Vec<&str> = stdout.lines().filter(|line| !line.is_empty()).collect();
+    let changed: Vec<&str> = stdout.split('\0').filter(|path| !path.is_empty()).collect();
     let pinned = format!("{base_commit}:{RULER_PATHS_FILE}");
     let show = std::process::Command::new("git")
         .arg("-C")
