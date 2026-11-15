@@ -54,11 +54,53 @@ pub(super) fn changes_roster(op: &AuthorityOp) -> bool {
     )
 }
 
-/// Whether this install's sequence floor refuses a row of `op` that reaches
-/// it past the floor: every op but a roster change, which no floor refuses,
-/// and a restriction, which lands restriction only.
+/// Whether a sequence floor refuses a row of `op` past it: every op but a
+/// roster change, which no floor refuses, a restriction, which lands
+/// restriction only, and a row that only takes away (`only_takes_away`).
 pub(super) fn floor_refuses(op: &AuthorityOp) -> bool {
-    !changes_roster(op) && !lands_restriction_only(op)
+    !changes_roster(op) && !lands_restriction_only(op) && !only_takes_away(op)
+}
+
+/// A row that only takes away: a slip or grant revocation, a consume, an
+/// actor revocation, a cancel or an import mark of owner work, a custody
+/// revocation, an agent Grant's revocation, a membership change that removes
+/// a member or an owner, or a federation's disconnect or dissolve. Counting
+/// one removes authority, standing or effect and adds none, so no floor
+/// refuses it (Engine RULING SEQ-FLOOR-SHAPE = A, 15 Nov 16:37; FIX
+/// [SEQUENCE-FLOOR-DELIVERY-ORDER]): a fork never keeps a revocation from an
+/// install. Its signer's own order still binds it (`fold_entry_state`,
+/// `state.seqs`), and it still sets its signer's floors (`rows_floor`).
+pub(super) fn only_takes_away(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::SlipRevoke { .. }
+        | AuthorityOp::SlipGrantRevoke { .. }
+        | AuthorityOp::SlipConsume { .. }
+        | AuthorityOp::RemovalArchiveConsume { .. }
+        | AuthorityOp::RevokeActor { .. }
+        | AuthorityOp::OwnerWorkCancel(_)
+        | AuthorityOp::ExportSupplementImported(_) => true,
+        AuthorityOp::MembershipExecution(execution) => matches!(
+            execution.cause,
+            MembershipExecutionCause::RemoveMember
+                | MembershipExecutionCause::Leave
+                | MembershipExecutionCause::RemoveOwner
+        ),
+        AuthorityOp::OwnerWorkRequest(request) => matches!(
+            request.work,
+            OwnerWorkBody::Custody {
+                change: CustodyChange::Revoke,
+                ..
+            }
+        ),
+        AuthorityOp::AgentGrantAct(record) => {
+            matches!(record.change, AgentGrantChange::Revoke { .. })
+        }
+        AuthorityOp::FederationLifecycle(action) => matches!(
+            action.kind,
+            FederationLifecycleKind::Disconnect | FederationLifecycleKind::Dissolve
+        ),
+        _ => false,
+    }
 }
 
 /// A device-key op the host-rooted redesign retired (identity canon,
