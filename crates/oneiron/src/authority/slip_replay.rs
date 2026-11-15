@@ -356,6 +356,13 @@ impl SideKey for NonceKey {
     }
 }
 
+/// The signed timestamp and digest text a [`NonceKey`] reads from the bytes after its table
+/// prefix, or `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_nonce_key_for_test(bytes: &[u8]) -> Option<(u64, String)> {
+    NonceKey::decode_key(bytes).map(|key| (key.timestamp, key.digest_hex))
+}
+
 /// Admitted request nonce, kept until the proof clock is a day past its signed time (empty
 /// marker). Key: u64hex16 ":" hex64.
 const REPLAY_NONCE: SideTable<NonceKey, (), Raw> =

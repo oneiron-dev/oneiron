@@ -84,6 +84,13 @@ impl SideKey for LeaseKey {
     }
 }
 
+/// The vault and client ids a [`LeaseKey`] reads from the bytes after its table prefix, or
+/// `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_lease_key_for_test(bytes: &[u8]) -> Option<(u64, u64)> {
+    LeaseKey::decode_key(bytes).map(|key| (key.vault_id, key.client_id))
+}
+
 /// The bytes after the `ls:` table prefix that scope a scan to one vault:
 /// `{vault_id:016x}:`.
 fn lease_scan_prefix(vault_id: u64) -> Vec<u8> {

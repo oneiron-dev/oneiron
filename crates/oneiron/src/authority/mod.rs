@@ -330,6 +330,8 @@ pub use host_action::{HostActionAuthority, HostActionIdentity};
 #[cfg(oneiron_test_support)]
 pub(crate) use host_re_root::re_root_authority_as_host_for_test;
 pub use host_re_root::{HostReRoot, RetiredSlip};
+#[cfg(oneiron_test_support)]
+pub(crate) use ingest_observation::decode_ingest_check_key_for_test;
 pub use ingest_observation::*;
 pub use invocation_slip::InvocationSlipBinding;
 pub use leave_notice_continuity::LeaveNoticeContinuity;
@@ -402,6 +404,8 @@ pub use slip_renewal::{
     OwnerDeviceRenewalProof, RENEWAL_GRANT_AND_DEVICE, RENEWAL_K04, RENEWAL_LIFETIME,
     RENEWAL_PROOF_NOT_FRESH,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use slip_replay::decode_nonce_key_for_test;
 pub use slip_replay::{ProofClockAhead, ProofClockRecovery, holder_proof, holder_proof_challenge};
 pub(crate) use slip_replay::{SpentNonces, refuse_moved_proof_freshness};
 pub use slip_state::{FoldedSlip, SlipAuthorityState};

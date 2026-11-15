@@ -73,6 +73,13 @@ impl SideKey for IngestCheckKey {
     }
 }
 
+/// The peer id and window start an [`IngestCheckKey`] reads from the bytes after its table
+/// prefix, or `None` where it refuses them (`test_doors::side_key_hex_case`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn decode_ingest_check_key_for_test(bytes: &[u8]) -> Option<(String, u64)> {
+    IngestCheckKey::decode_key(bytes).map(|key| (key.peer_id, key.start))
+}
+
 /// One raised check's window start, admitted count, and threshold: 24 raw bytes, three
 /// big-endian `u64`s.
 struct IngestCheckValue {
