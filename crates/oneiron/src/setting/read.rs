@@ -9,9 +9,11 @@ use super::{
     SettingScope, SettingSource, SettingSpec, SettingValue,
 };
 use crate::Vault;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::federation::SubstrateRead;
+use crate::side_table::{self, Named, SideTable, SideTableDbs};
 use crate::store::Store;
 
 /// The rows of keys kept live through a restore.
@@ -44,8 +46,11 @@ pub(super) struct StoredRow {
 }
 
 impl StoredRow {
+    /// Whether the row is the owner's: set by the owner, or by the engine, which writes the
+    /// owner's answer or its own path's choice. A holder or a subject asks before it replaces
+    /// either, and a holder's value stays inside either.
     pub(super) const fn by_owner(&self) -> bool {
-        matches!(self.setter, Setter::Owner)
+        matches!(self.setter, Setter::Owner | Setter::Engine { .. })
     }
 }
 
@@ -60,7 +65,7 @@ pub(super) struct Loaded {
 /// and the item-less ones. A row that does not decode is kept, valueless and counted as the
 /// owner's, so it decides as unreadable wherever it would have decided.
 pub(super) fn load_in_txn(
-    store: &Store,
+    dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
     chain: &[SettingScope],
@@ -81,7 +86,7 @@ pub(super) fn load_in_txn(
                     mode,
                     scope: scope.clone(),
                 };
-                let Some(bytes) = table.get_bytes(store, txn, &key.encode())? else {
+                let Some(bytes) = table.get_bytes(dbs, txn, &key.encode())? else {
                     continue;
                 };
                 let row = rmp_serde::from_slice::<StoredRow>(&bytes).ok();
@@ -117,12 +122,14 @@ pub(super) enum Walked<V> {
     Unreadable(SettingScope),
 }
 
-/// The walk over loaded rows, with values decoded by `decode`.
+/// The walk over loaded rows, with values decoded by `decode`; `default` is the catalogue
+/// default, a holder's cap where the owner set no row.
 pub(super) fn walk<V: Clone>(
     loaded: &[Loaded],
     chain: &[SettingScope],
     decode: impl Fn(&EncodedValue) -> Option<V>,
     tighter: Option<&dyn Fn(&V, &V) -> bool>,
+    default: &V,
 ) -> Walked<V> {
     let found: Vec<FoundRow<V>> = loaded
         .iter()
@@ -140,7 +147,7 @@ pub(super) fn walk<V: Clone>(
             .position(|row| std::ptr::eq(row, decided))
             .unwrap_or_default()
     };
-    match decide(&found, tighter) {
+    match decide(&found, tighter, Some(default)) {
         Decided::Default => Walked::Default,
         Decided::Unreadable(at) => Walked::Unreadable(chain[at].clone()),
         Decided::Pin(row) | Decided::Row(row) => {
@@ -178,13 +185,31 @@ impl<T: SettingValue> Setting<T> {
         known: &[SettingScope],
         item: Option<&str>,
     ) -> Result<Resolved<T>> {
+        self.read_in_dbs_txn(&vault.store, txn, known, item)
+    }
+
+    /// [`Self::read_in_txn`] below the vault: the same walk over the setting tables of `dbs`
+    /// (a store, or any other holder of its side databases), for a reader that holds no
+    /// [`Vault`].
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::read_in_txn`].
+    pub(crate) fn read_in_dbs_txn(
+        &self,
+        dbs: &impl SideTableDbs,
+        txn: &heed::RoTxn<'_>,
+        known: &[SettingScope],
+        item: Option<&str>,
+    ) -> Result<Resolved<T>> {
         self.spec.check_item(item)?;
         let chain = SettingScope::chain(known, self.spec.scopes)?;
-        let loaded = load_in_txn(&vault.store, txn, self.spec, &chain, item)?;
+        let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
         let tighter = self.kind.tighter_typed();
         let tighter_ref = tighter.as_ref().map(|f| f as &dyn Fn(&T, &T) -> bool);
+        let default = self.kind.default_typed();
         Ok(
-            match walk(&loaded, &chain, Kind::<T>::decode, tighter_ref) {
+            match walk(&loaded, &chain, Kind::<T>::decode, tighter_ref, &default) {
                 Walked::Row {
                     value,
                     source,
@@ -195,7 +220,7 @@ impl<T: SettingValue> Setting<T> {
                     revision,
                 },
                 Walked::Default => Resolved {
-                    value: self.kind.default_typed(),
+                    value: default,
                     source: SettingSource::Default,
                     revision: 0,
                 },
@@ -264,26 +289,33 @@ pub(super) fn view_in_txn(
 
 /// The value in force for `spec` over `chain`, encoded, with the row that decided it.
 pub(super) fn in_force_in_txn(
-    store: &Store,
+    dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     spec: &SettingSpec,
     chain: &[SettingScope],
     item: Option<&str>,
 ) -> Result<(EncodedValue, SettingSource, u64)> {
-    let loaded = load_in_txn(store, txn, spec, chain, item)?;
+    let loaded = load_in_txn(dbs, txn, spec, chain, item)?;
     let tighter = |a: &EncodedValue, b: &EncodedValue| spec.kind.is_tighter(a, b).unwrap_or(false);
     let tighter_ref = spec
         .kind
         .has_direction()
         .then_some(&tighter as &dyn Fn(&EncodedValue, &EncodedValue) -> bool);
+    let default = spec.kind.default_value()?;
     Ok(
-        match walk(&loaded, chain, |value| Some(value.clone()), tighter_ref) {
+        match walk(
+            &loaded,
+            chain,
+            |value| Some(value.clone()),
+            tighter_ref,
+            &default,
+        ) {
             Walked::Row {
                 value,
                 source,
                 revision,
             } => (value, source, revision),
-            Walked::Default => (spec.kind.default_value()?, SettingSource::Default, 0),
+            Walked::Default => (default, SettingSource::Default, 0),
             Walked::Unreadable(scope) => (
                 spec.kind.strictest_value()?.ok_or(Error::CorruptedIndex(
                     "a setting row does not decode and its key names no strictest value",
@@ -334,7 +366,9 @@ pub(crate) enum SettingReader {
 
 /// Whether `reader` may read `spec`'s rows at `scope` (all its rows when `None`), in `txn`: the
 /// owner always; a member of the vault for a key read by members; a live holder of the key's
-/// `engine.controls` class; the agent or person a row's scope names, for that row.
+/// `engine.controls` class; for a dials key, a live whole-vault Steward grant naming any
+/// `engine.controls` class; an agent whose live owner Grant lists the key's read line
+/// ([`super::get_line`]), vault-wide; the agent or person a row's scope names, for that row.
 pub(crate) fn reader_reads_key_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -354,7 +388,36 @@ pub(crate) fn reader_reads_key_in_txn(
     {
         return Ok(true);
     }
-    Ok(scope.is_some_and(|scope| names_subject(scope, actor)))
+    if spec.read_by == ReadBy::Dials
+        && vault.substrate_read_granted_in_txn(txn, actor, SubstrateRead::Dials)?
+    {
+        return Ok(true);
+    }
+    if scope.is_some_and(|scope| names_subject(scope, actor)) {
+        return Ok(true);
+    }
+    Ok(key_line_grant_in_txn(vault, txn, actor, &super::get_line(spec.name))?.is_some())
+}
+
+/// The live owner Grant through which `agent` holds the per-key line `line`
+/// ([`super::set_line`], [`super::get_line`]), vault-wide: the rule of the vault-wide review
+/// policy doors (FIX 8268), which takes any verb. The shipped principal rule for an agent, then
+/// the first live Grant in id order that alone stands for the agent and lists `line` exactly,
+/// stands under this vault's own rule and carries no repo bounds. Grants are never unioned, and
+/// a Grant over every verb lists no line.
+///
+/// # Errors
+///
+/// A store, fold or clock failure; never a refusal.
+pub(super) fn key_line_grant_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    agent: EntityId,
+    line: &str,
+) -> Result<Option<EntityId>> {
+    Ok(vault
+        .admit_queue_review_policy_in_txn(txn, agent, EdgeActorClass::Agent, line)?
+        .ok())
 }
 
 /// Whether `scope` is `actor`'s own: an agent's or a person's row about them.
@@ -426,7 +489,8 @@ impl Vault {
         };
         if !reader_reads_key_in_txn(self, &txn, reader, spec, own)? {
             return Err(Error::InvalidConfig(format!(
-                "reading `{key}` needs the owner, a holder of its class, or its subject"
+                "reading `{key}` needs the owner, a holder of its class, its Grant line, or its \
+                 subject"
             )));
         }
         view_in_txn(&self.store, &txn, spec, at, item)
