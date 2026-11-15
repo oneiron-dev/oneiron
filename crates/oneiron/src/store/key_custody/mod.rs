@@ -84,6 +84,8 @@ pub use self::files::custody_container_path;
 // The one portable directory flush, for the training outbox too (FIX 6880).
 pub use self::platform::sync_dir;
 pub(crate) use self::publication_policy::TargetRecipients;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::publication_policy::custody_policy_digest_for_test;
 pub(crate) use self::publish::{CUSTODY_COMPLETION_NEEDS_ANCHOR, Publication, PublicationState};
 pub(crate) use self::recipients::RecipientRetirement;
 pub(crate) use self::recovery::{

@@ -19,6 +19,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::store::Store;
@@ -36,7 +38,6 @@ use super::publish::custody_empty;
 const POLICY: &str = "policy";
 /// The lock a pass holds from its policy read to its pass's end.
 const POLICY_LOCK: &str = "policy.lock";
-const POLICY_CONTEXT: &[u8] = b"oneiron/custody-publication-policy/v1";
 
 /// Who each member's head is wrapped to and which pads it leaves out (KS-5,
 /// FIX 7191): a hosted member's, and every other member's.
@@ -76,14 +77,17 @@ impl TargetRecipients {
     }
 }
 
+/// The policy digest: the custody log journals it in a `PublicationPolicy`
+/// frame, the `policy` record keeps it with the position it is proven
+/// through, and a head is sealed only while it is the policy in force, so
+/// it keeps its bytes (K, PLAN-UC-04 stage 6.3).
 fn policy_digest(
     sets: &[&BTreeSet<[u8; 16]>],
     roots: [Option<[u8; 32]>; 2],
     pads: [&BTreeMap<EntityId, PadRecipients>; 2],
     carried: Option<[u8; 32]>,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(POLICY_CONTEXT);
+    let mut hasher = LegacyDigest::new(purposes::key_custody::PUBLICATION_POLICY);
     // Each group's recovery root by identity, not presence alone (FIX
     // 7995): a changed root moves the policy, so every head is sealed to the
     // new kit and acknowledged again. A root also decides whether a
@@ -91,20 +95,19 @@ fn policy_digest(
     for root in roots {
         match root {
             Some(id) => {
-                hasher.update(&[1]);
-                hasher.update(&id);
+                hasher.raw(&[1]).raw(&id);
             }
             None => {
-                hasher.update(&[0]);
+                hasher.raw(&[0]);
             }
         }
     }
     let credentials = sets.iter().skip(2).any(|set| !set.is_empty());
     let hashed = if credentials { sets.len() } else { 2 };
     for worlds in sets.iter().take(hashed).copied() {
-        hasher.update(&(worlds.len() as u64).to_be_bytes());
+        hasher.len_u64_be(worlds.len());
         for world in worlds {
-            hasher.update(world);
+            hasher.raw(world);
         }
     }
     // Each group's world pad recipients (FIX 6706): each world, then each
@@ -113,16 +116,14 @@ fn policy_digest(
     // again at a new position. Hashed once a group names a world, so the
     // policy of a vault with none stays the digest it is.
     if pads.iter().any(|group| !group.is_empty()) {
-        hasher.update(b"pad-recipients");
+        hasher.raw(b"pad-recipients");
         for group in pads {
-            hasher.update(&(group.len() as u64).to_be_bytes());
+            hasher.len_u64_be(group.len());
             for (world, admitted) in group {
-                hasher.update(world.as_bytes());
-                hasher.update(&(admitted.len() as u64).to_be_bytes());
+                hasher.raw(world.as_bytes()).len_u64_be(admitted.len());
                 for (recipient, public) in admitted {
                     for part in [recipient.envelope_recipient(), public.to_bytes()] {
-                        hasher.update(&(part.len() as u64).to_be_bytes());
-                        hasher.update(&part);
+                        hasher.len_u64_be(part.len()).raw(&part);
                     }
                 }
             }
@@ -132,10 +133,23 @@ fn policy_digest(
     // of them alone seals every head again. Hashed only while one is
     // carried, so a vault with none keeps the digest it has.
     if let Some(carried) = carried {
-        hasher.update(b"carried-world-pads");
-        hasher.update(&carried);
+        hasher.raw(b"carried-world-pads").raw(&carried);
     }
-    *hasher.finalize().as_bytes()
+    hasher.finish()
+}
+
+/// The policy digest of these parts, as `TargetRecipients::policy` packs
+/// them: the four world sets (each group's pads kept local, then each
+/// group's eligible credentials), each group's recovery root id, each
+/// group's admitted pad recipients by world, and the carried set's digest.
+#[cfg(oneiron_test_support)]
+pub(crate) fn custody_policy_digest_for_test(
+    sets: &[&BTreeSet<[u8; 16]>],
+    roots: [Option<[u8; 32]>; 2],
+    pads: [&BTreeMap<EntityId, PadRecipients>; 2],
+    carried: Option<[u8; 32]>,
+) -> [u8; 32] {
+    policy_digest(sets, roots, pads, carried)
 }
 
 /// The policy a pass read, and the log position through which it is proven
