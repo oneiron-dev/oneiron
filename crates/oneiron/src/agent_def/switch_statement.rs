@@ -12,10 +12,13 @@
 //! device lands once its act has; a forged or replayed row that goes beyond the owner's last
 //! statement confers nothing anywhere.
 //!
-//! A statement is appended when the owner's edit widens the stored definition, and when it
-//! changes switches the owner stated before: his own turn-off replaces the statement, so a
-//! replay of the old "on" row waits. A turn-off by a writer below the owner takes no act, so a
-//! replay of the owner's last stated row after it still lands (FIX row filed with R2d).
+//! A statement is appended when the owner's edit widens the stored definition, when it changes
+//! switches the owner stated before (his own turn-off replaces the statement, so a replay of
+//! the old "on" row waits), and when no statement covers switches that would widen a definition
+//! anywhere (his first edit of a running definition, or his save again after a statement this
+//! install could not carry). A turn-off by a writer below the owner takes no act, so a replay
+//! of the owner's last stated row after it still lands (FIX row filed with R2d). An owner-grade
+//! generic batch states the switches it puts as the owner's door does.
 
 use crate::Vault;
 use crate::authority::{ActSurface, AgentSwitches, GrantActBy, GrantActChange, GrantFamily};
@@ -24,12 +27,9 @@ use crate::entity_id::EntityId;
 use crate::error::ArtifactError;
 use crate::error::{Error, RecordError, Result};
 
-#[cfg(feature = "sync")]
 use super::codec::decode_agent_definition;
 use super::types::AgentDefinition;
-#[cfg(feature = "sync")]
-use super::widening::switches_widen;
-use super::widening::{agent_definition_put_widens_in_txn, agent_switches};
+use super::widening::{agent_definition_put_widens_in_txn, agent_switches, switches_widen};
 
 /// The refusal of a replicated row that widens an agent definition beyond the switches its
 /// owner last stated: it waits for the owner's statement, a dependency, not a verdict on the
@@ -77,7 +77,9 @@ impl AgentSwitchesReach {
 impl Vault {
     /// The switches the vault's owner last stated for agent definition `id`, read in `txn`:
     /// the one counted statement on its line, when the person who made it is a live owner of
-    /// the vault now. `None` when no statement stands.
+    /// the vault now, a shared vault's by a counted Owner giving
+    /// ([`crate::policy_model::is_counted_vault_owner_in_txn`]). `None` when no statement
+    /// stands.
     ///
     /// # Errors
     ///
@@ -91,7 +93,7 @@ impl Vault {
         let Some((giver, switches)) = fold.stated_agent_switches(id) else {
             return Ok(None);
         };
-        if !crate::policy_model::is_live_vault_owner_in_txn(self, txn, &giver)? {
+        if !crate::policy_model::is_counted_vault_owner_in_txn(self, txn, &giver)? {
             return Ok(None);
         }
         Ok(Some(switches.clone()))
@@ -126,10 +128,31 @@ impl Vault {
         )
     }
 
+    /// Whether the owner's put of `body` with `switches` at agent definition `id` needs his
+    /// statement, read in `txn`: when a statement stands, whenever the switches differ from it;
+    /// when none stands, when the put widens the stored definition or the switches would widen
+    /// a definition anywhere. A missing statement is never taken for one that covers the
+    /// switches already (R2d review finding 3): a save again of switches stated on this install
+    /// alone states them.
+    fn switch_statement_needed_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        id: &EntityId,
+        switches: &AgentSwitches,
+        body: &[u8],
+    ) -> Result<bool> {
+        Ok(match self.owner_stated_agent_switches_in_txn(txn, *id)? {
+            Some(stated) => stated != *switches,
+            None => {
+                switches_widen(None, switches)
+                    || agent_definition_put_widens_in_txn(&self.store, txn, id, body)?
+            }
+        })
+    }
+
     /// The owner `owner`'s statement of `def`'s switches at agent definition `id`, in the
-    /// owner's door's transaction `txn`, before it writes `body` (`def` encoded): appended when
-    /// the put widens the stored definition, or when its switches differ from a statement the
-    /// owner made before. Every other edit states nothing.
+    /// owner's door's transaction `txn`, before it writes `body` (`def` encoded), when it is
+    /// needed ([`Self::switch_statement_needed_in_txn`]). Every other edit states nothing.
     ///
     /// The row's authority here is the owner's door, so the act only carries his switches to
     /// his other installs. An act this install cannot carry or count (no live install key,
@@ -151,9 +174,7 @@ impl Vault {
         body: &[u8],
     ) -> Result<AgentSwitchesReach> {
         let switches = agent_switches(def);
-        let stated = self.owner_stated_agent_switches_in_txn(txn, *id)?;
-        let widens = agent_definition_put_widens_in_txn(&self.store, txn, id, body)?;
-        if !widens && stated.as_ref().is_none_or(|stated| *stated == switches) {
+        if !self.switch_statement_needed_in_txn(txn, id, &switches, body)? {
             return Ok(AgentSwitchesReach::EveryInstall);
         }
         // In a savepoint: an act the fold refused after it was put leaves nothing behind.
@@ -188,5 +209,50 @@ impl Vault {
             }
             Err(error) => Err(error),
         }
+    }
+
+    /// An owner-grade generic batch's statements, in its writer `txn` before its puts apply
+    /// (R2d review finding 4): the vault's recorded owner states the switches of each agent
+    /// definition put of `puts` as the owner's update door does, so the row reaches his other
+    /// installs. A shared vault with several owners has no one person the batch speaks for:
+    /// a put there that needs a statement lands on this install alone, as one this install
+    /// cannot carry does, and is logged.
+    ///
+    /// # Errors
+    ///
+    /// A body that does not decode; a store, owner census or authority-fold failure.
+    pub(crate) fn state_owner_batch_switches_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        puts: &[(EntityId, Vec<u8>)],
+    ) -> Result<()> {
+        if puts.is_empty() {
+            return Ok(());
+        }
+        let owner = crate::policy_model::sole_recorded_owner_in_txn(self, txn)?;
+        for (id, body) in puts {
+            let def = decode_agent_definition(body)?;
+            let reach = match owner {
+                Some(owner) => self.state_agent_switches_in_txn(txn, owner, id, &def, body)?,
+                None if self.switch_statement_needed_in_txn(
+                    txn,
+                    id,
+                    &agent_switches(&def),
+                    body,
+                )? =>
+                {
+                    AgentSwitchesReach::ThisInstallOnly
+                }
+                None => AgentSwitchesReach::EveryInstall,
+            };
+            if reach == AgentSwitchesReach::ThisInstallOnly {
+                tracing::warn!(
+                    agent = %id.to_hex(),
+                    "an owner batch's agent definition edit lands on this install alone; its \
+                     other installs hold the widening until the owner states it"
+                );
+            }
+        }
+        Ok(())
     }
 }

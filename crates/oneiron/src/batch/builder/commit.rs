@@ -40,21 +40,6 @@ impl BatchBuilder<'_> {
         self.commit_inner(None, None, |_| Ok(()), |_| Ok(()), None)
     }
 
-    /// [`Self::commit`] for a writer its host bound to `reader` (OF-063, FIX
-    /// 1223, 6068). Each row a put would take must be one `reader` reads,
-    /// judged against its original in the writer before any op stages; one
-    /// it does not read refuses as missing. Each CLAIM's typed record refs
-    /// must resolve under `reader` once the batch's own rows are staged; one
-    /// that does not is the claim gate's hard deny, receipted once. `guard`
-    /// runs first in the same writer snapshot (a generic batch's carry check).
-    pub(crate) fn commit_read_by(
-        self,
-        reader: &ScopedRead<'_>,
-        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
-    ) -> Result<()> {
-        self.commit_inner(None, Some(reader), guard, |_| Ok(()), None)
-    }
-
     /// [`Self::commit`] for a writer below owner grade. A put that turns an
     /// agent definition back on, moves its approval up, makes it active again
     /// or brings a deleted one back on is the owner's
@@ -84,7 +69,7 @@ impl BatchBuilder<'_> {
     }
 
     /// [`Self::commit_below_owner_with_guard`] for a writer its host bound
-    /// to `reader`, held to it as [`Self::commit_read_by`] holds a writer.
+    /// to `reader`, held to it as [`Self::commit_owner`] holds an owner's.
     pub(crate) fn commit_below_owner_read_by(
         self,
         reader: &ScopedRead<'_>,
@@ -114,7 +99,7 @@ impl BatchBuilder<'_> {
     ) -> Result<()> {
         match (lane, commit) {
             (CoreWriteLane::Read(reader), CoreBatchCommit::Owner) => {
-                self.commit_read_by(reader, guard)
+                self.commit_owner(Some(reader), guard)
             }
             (CoreWriteLane::Read(reader), CoreBatchCommit::BelowOwner) => {
                 self.commit_below_owner_read_by(reader, guard)
@@ -136,27 +121,48 @@ impl BatchBuilder<'_> {
                     Err(Error::EntityNotFound)
                 };
                 match commit {
-                    CoreBatchCommit::Owner => self.commit_with_target_guard(guard),
+                    CoreBatchCommit::Owner => self.commit_owner(None, guard),
                     CoreBatchCommit::BelowOwner => self.commit_below_owner_with_guard(guard),
                 }
             }
-            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => {
-                self.commit_with_target_guard(guard)
-            }
+            (CoreWriteLane::Unbound, CoreBatchCommit::Owner) => self.commit_owner(None, guard),
             (CoreWriteLane::Unbound, CoreBatchCommit::BelowOwner) => {
                 self.commit_below_owner_with_guard(guard)
             }
         }
     }
 
-    fn commit_below_owner_inner(
+    /// The owner grade's terminal behind the generic batch door: as
+    /// [`Self::commit_with_target_guard`], and in its writer, before its puts apply, the
+    /// vault's owner states the switches of each agent definition it puts, as his update door
+    /// does (pass 28 R2d; R2d review finding 4), so the row reaches his other installs.
+    ///
+    /// For a writer its host bound to `reader` (OF-063, FIX 1223, 6068), each row a put would
+    /// take must be one `reader` reads, judged against its original in the writer before any
+    /// op stages; one it does not read refuses as missing. Each CLAIM's typed record refs must
+    /// resolve under `reader` once the batch's own rows are staged; one that does not is the
+    /// claim gate's hard deny, receipted once. `guard` runs first in the same writer snapshot
+    /// (a generic batch's carry check).
+    fn commit_owner(
         self,
         reader: Option<&ScopedRead<'_>>,
         guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<()> {
         let vault = self.vault;
-        let agent_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
-            .ops
+        let agent_puts = self.agent_definition_puts();
+        self.commit_inner_with_before_apply(
+            None,
+            reader,
+            |txn| guard(txn).map(|()| true),
+            |wtxn| vault.state_owner_batch_switches_in_txn(wtxn, &agent_puts),
+            |_| Ok(()),
+            None,
+        )
+    }
+
+    /// Each agent definition this batch puts, by id, with its body.
+    fn agent_definition_puts(&self) -> Vec<(crate::entity_id::EntityId, Vec<u8>)> {
+        self.ops
             .iter()
             .filter_map(|op| match op {
                 BatchOp::Put {
@@ -169,7 +175,16 @@ impl BatchBuilder<'_> {
                 }
                 _ => None,
             })
-            .collect();
+            .collect()
+    }
+
+    fn commit_below_owner_inner(
+        self,
+        reader: Option<&ScopedRead<'_>>,
+        guard: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
+    ) -> Result<()> {
+        let vault = self.vault;
+        let agent_puts = self.agent_definition_puts();
         let identity_puts: Vec<(crate::entity_id::EntityId, Vec<u8>)> = self
             .ops
             .iter()

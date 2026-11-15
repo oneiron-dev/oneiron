@@ -1247,7 +1247,9 @@ impl Vault {
     }
 
     /// What every agent-authored create answers to before its slice is read:
-    /// `id` holds no row, and the request asserts no lineage.
+    /// `id` holds no row and was never an agent's, and the request asserts no
+    /// lineage. A deleted agent's id is not new: a put there would bring the
+    /// deleted definition back, which is the owner's (R2d review finding 1).
     fn ensure_new_authored_definition_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -1257,6 +1259,12 @@ impl Vault {
         if self.store.port_entity_record(txn, id)?.is_some() {
             return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
                 "agents.put creates a new definition; use the update door for an existing row",
+            )));
+        }
+        if super::id_pin::is_agent_id_in_txn(&self.store, txn, id)? {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDefBody(
+                "agents.put creates a new definition; a deleted agent's id is not new, and only \
+                 the vault owner brings a deleted definition back",
             )));
         }
         if requested.forked_from.is_some() || requested.logical_id.is_some() {
