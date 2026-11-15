@@ -889,7 +889,7 @@ impl Command {
     fn password_session(&mut self, auth: &[u8]) {
         // authorizationSize, then TPMS_AUTH_COMMAND: the session handle, an
         // empty nonce, its attributes and the password.
-        self.u32(9 + u32::try_from(auth.len()).unwrap_or(u32::MAX));
+        self.u32(9u32.saturating_add(u32::try_from(auth.len()).unwrap_or(u32::MAX)));
         self.u32(TPM_RS_PW);
         self.u16(0);
         self.bytes.push(SESSION_CONTINUE);
@@ -1163,7 +1163,9 @@ mod tests {
         };
         let slot = file(SEALED_TAG);
         let key = file(AUTH_BOUND_TAG);
-        let areas = Ok((&[0xaa][..], &[0xbb, 0xcc][..]));
+        let public: &[u8] = &[0xaa];
+        let private: &[u8] = &[0xbb, 0xcc];
+        let areas = Ok((public, private));
         assert_eq!(sealed_areas(&SLOT, &slot), areas);
         assert_eq!(sealed_areas(&DEVICE_PIN_KEY, &key), areas);
         assert_eq!(
