@@ -283,6 +283,28 @@ fn sign_and_share(fixture: &Fixture, op: AuthorityOp) -> AuthorityLogEntry {
     entry
 }
 
+/// Signs `op` on home and stores it there alone.
+fn sign_on_home(fixture: &Fixture, op: AuthorityOp) -> AuthorityLogEntry {
+    let entry = sign_next_host_op(&fixture.home, &fixture.issuer, op).expect("sign tail");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&entry)).expect("store tail on home");
+    entry
+}
+
+/// Asserts that `result`, a store and then a fold on the adopting vault,
+/// asked for the history. A batch of grants alone that only the history
+/// folds is kept as pending evidence, and its store asks for the history
+/// itself; any other batch is stored, and its fold asks.
+fn asks_history<T: std::fmt::Debug>(result: oneiron::error::Result<T>) {
+    let err = result.expect_err("adopting needs history");
+    assert!(
+        matches!(
+            err,
+            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+        ),
+        "history required, got {err:?}"
+    );
+}
+
 #[test]
 fn key_rotation_past_an_adopted_image_folds_as_rejected() {
     let fixture = fixture();
@@ -578,23 +600,16 @@ fn binding_a_covered_bound_key_again_folds_as_rejected() {
 #[test]
 fn binding_an_actor_a_covered_row_bound_still_needs_history() {
     let (fixture, _, unbound_key, actor) = binding_fixture();
-    let tail = sign_and_share(&fixture, agent_binding(&unbound_key, actor));
+    let tail = sign_on_home(&fixture, agent_binding(&unbound_key, actor));
     let hash = authority_entry_hash(&tail).expect("tail hash");
     let home_fold = fixture.home.authority_fold().expect("home folds tail");
     assert!(
         home_fold.valid_entries.contains(&hash),
         "home accepts a second key's binding of the same actor"
     );
-    let err = fixture
-        .adopting
-        .authority_fold()
-        .expect_err("adopting needs history");
-    assert!(
-        matches!(
-            err,
-            Error::Record(RecordError::AuthorityHistoryRequired { .. })
-        ),
-        "history required, got {err:?}"
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
+            .and_then(|()| fixture.adopting.authority_fold()),
     );
 }
 
@@ -605,9 +620,9 @@ fn slip_burn_below_a_rejected_tail_row_still_needs_history() {
         nonce: [0xD4; 16],
         ..covered
     };
-    let rejected = sign_and_share(&fixture, AuthorityOp::FederationConfirm(reused));
+    let rejected = sign_on_home(&fixture, AuthorityOp::FederationConfirm(reused));
     let rejected_hash = authority_entry_hash(&rejected).expect("rejected hash");
-    let burn = sign_and_share(
+    let burn = sign_on_home(
         &fixture,
         AuthorityOp::SlipConsume {
             slip_id: BURNED_SLIP,
@@ -626,15 +641,10 @@ fn slip_burn_below_a_rejected_tail_row_still_needs_history() {
         home_fold.slips.consumed.contains(&BURNED_SLIP),
         "home proves the burn past the rejected confirm"
     );
-    let err = fixture
-        .adopting
-        .authority_fold()
-        .expect_err("adopting needs history");
-    assert!(
-        matches!(
-            err,
-            Error::Record(RecordError::AuthorityHistoryRequired { .. })
-        ),
-        "history required, got {err:?}"
+    // One batch: a burn is no grant, so the adopter stores both rows and its
+    // fold asks for the history.
+    asks_history(
+        put_signed_entries(&fixture.adopting, &[rejected, burn])
+            .and_then(|()| fixture.adopting.authority_fold()),
     );
 }
