@@ -129,6 +129,7 @@ fn event_type_config(key: &str, host: EntityId, calendar: EntityId) -> EventType
                 .collect(),
             preferred_hours: Vec::new(),
         }],
+        flex_with_ordinary: false,
         flex_windows: Vec::new(),
     }
 }

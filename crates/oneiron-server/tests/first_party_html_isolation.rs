@@ -127,6 +127,7 @@ fn seeded_booking_vault() -> (tempfile::TempDir, Arc<Vault>, EntityId) {
                     .collect(),
                 preferred_hours: Vec::new(),
             }],
+            flex_with_ordinary: false,
             flex_windows: Vec::new(),
         },
     };

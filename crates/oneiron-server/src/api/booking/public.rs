@@ -158,6 +158,13 @@ pub(crate) async fn render_public_booking_page(
     if current != publication {
         return Err(public_booking_not_found());
     }
+    // The first view shows as many slots as the owner's resolved conversion
+    // policy chooses (`max_visible_slots`, shipped 5); no holder is named on
+    // the public page.
+    let policy = server
+        .vault
+        .booking_conversion_policy(None)
+        .map_err(booking_error)?;
     let model = BookingPageModel::new(
         publication.owner_display,
         publication.event_types,
@@ -166,6 +173,7 @@ pub(crate) async fn render_public_booking_page(
         publication.theme,
         publication.landing,
         request.visitor_tz,
+        &policy,
     )
     .map_err(|defect| {
         tracing::error!(?defect, "public booking model invariant failed");

@@ -141,8 +141,16 @@ pub struct EventTypeConfig {
     pub routing: RoutingMode,
     pub hosts: Vec<HostAvailabilityConfig>,
     /// Extra host-local windows offered only when ordinary availability is
-    /// empty. Interpreted in each host's own zone, exactly like working hours.
+    /// empty, unless [`Self::flex_with_ordinary`] is set. Interpreted in each
+    /// host's own zone, exactly like working hours.
     pub flex_windows: Vec<WeeklyWallWindow>,
+    /// Offer the flex windows beside ordinary availability (`true`), or only
+    /// when ordinary availability is empty (`false`, the shipped choice).
+    /// `false` is the tighter: extended hours reach the public only as a
+    /// fallback. Skipped when false, so a configuration without the choice
+    /// encodes, and hashes, as it always has.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub flex_with_ordinary: bool,
 }
 
 impl EventTypeConfig {
@@ -177,6 +185,10 @@ impl EventTypeConfig {
             .or_else(|| self.flex_windows.iter().find_map(WeeklyWallWindow::defect))
         {
             return Some(defect);
+        }
+        // A flag with no effect would read as a choice the solver honours.
+        if self.flex_with_ordinary && self.flex_windows.is_empty() {
+            return Some("booking.event_type flex_with_ordinary needs flex windows");
         }
         let mut hosts: Vec<&EntityId> = self.hosts.iter().map(|host| &host.host_ref).collect();
         hosts.sort_unstable();
@@ -582,6 +594,7 @@ mod tests {
                 }],
                 preferred_hours: Vec::new(),
             }],
+            flex_with_ordinary: false,
             flex_windows: Vec::new(),
         }
     }

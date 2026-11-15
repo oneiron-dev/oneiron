@@ -14,8 +14,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::booking::{
-    BookingError, BookingLandingContent, BookingSlotPreview, BookingVerb, DisclosureRung,
-    OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview, project_at_rung,
+    BookingConversionPolicy, BookingError, BookingLandingContent, BookingSlotPreview, BookingVerb,
+    DisclosureRung, OpaqueLifecycleToken, RungProjection, SurfaceClass, booking_slot_preview,
+    project_at_rung,
 };
 use crate::lens::{
     ButtonControl, CollectionAtom, GeneratedLens, GeneratedUiActionDeclaration,
@@ -47,6 +48,11 @@ pub struct BookingPageModel {
 }
 
 impl BookingPageModel {
+    /// The preview shows the first `policy.max_visible_slots` ranked slots:
+    /// the page's resolved conversion policy, which owner rows set.
+    // Seven page parts and the policy that sizes the first view; each is an
+    // independent input the host resolved.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         owner_display: String,
         event_types: Vec<EventTypeCard>,
@@ -55,9 +61,10 @@ impl BookingPageModel {
         theme: ThemeTokens,
         landing: BookingLandingContent,
         visitor_tz: String,
+        policy: &BookingConversionPolicy,
     ) -> core::result::Result<Self, BookingPageModelError> {
         let preview = match &slots {
-            RungProjection::Slots(mask) => booking_slot_preview(mask),
+            RungProjection::Slots(mask) => booking_slot_preview(mask, policy.max_visible_slots),
             _ => return Err(BookingPageModelError::NonSlotsProjection),
         };
         let model = Self {
@@ -89,7 +96,13 @@ pub fn validate_booking_page_model(
         .landing
         .validate()
         .map_err(|_| BookingPageModelError::InvalidLanding)?;
-    if model.preview != booking_slot_preview(mask) {
+    // The preview is the mask's ranked prefix at the length it shows, with
+    // that prefix's recommendation and remainder; the length is the policy's
+    // choice, which the model does not carry. A non-empty mask shows one or
+    // more (a policy count is never zero).
+    let shown = model.preview.visible.len();
+    if model.preview != booking_slot_preview(mask, shown) || (shown == 0 && !mask.slots.is_empty())
+    {
         return Err(BookingPageModelError::InvalidPreview);
     }
     if crate::calendar::tz::utc_to_wall(mask.window_start_utc, &model.visitor_tz).is_err() {
@@ -361,6 +374,7 @@ mod tests {
             ThemeTokens(json!({"unknown": {"nested": [null, 7, "opaque"]}})),
             BookingLandingContent::default(),
             "UTC".to_owned(),
+            &BookingConversionPolicy::default(),
         )
         .expect("model")
     }
@@ -399,7 +413,8 @@ mod tests {
                 model.constraint_field.clone(),
                 model.theme.clone(),
                 model.landing.clone(),
-                model.visitor_tz.clone()
+                model.visitor_tz.clone(),
+                &BookingConversionPolicy::default(),
             )
             .is_err()
         );
@@ -407,7 +422,10 @@ mod tests {
         let RungProjection::Slots(projected) = &model.slots else {
             panic!("slots");
         };
-        model.preview = booking_slot_preview(projected);
+        model.preview = booking_slot_preview(
+            projected,
+            BookingConversionPolicy::default().max_visible_slots,
+        );
         let RungProjection::Slots(mask) = &model.slots else {
             panic!("slots");
         };

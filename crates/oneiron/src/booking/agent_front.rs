@@ -26,8 +26,9 @@ use super::constraint::{
 /// a button, never text, model output, a voice line, or a deflect.
 pub const BOOKING_SLOT_BUTTON_ACTION: &str = "booking.select_slot";
 
-/// Most slot buttons a single reply renders.
-const MAX_RENDERED_SLOTS: usize = 3;
+/// Most slot buttons a single reply renders when the page's front sets no
+/// count of its own ([`ConstraintFrontConfig::max_offered_slots`]).
+pub const DEFAULT_MAX_OFFERED_SLOTS: u16 = 3;
 
 /// Every card this front assembles is identified by `booking-<session_ref>`
 /// when that fits a lens id.
@@ -93,6 +94,25 @@ pub struct ConstraintFrontConfig {
     pub off_topic_line: String,
     pub max_turns: u16,
     pub max_model_calls: u16,
+    /// Most slot buttons one reply renders, the oracle's top-ranked ones
+    /// (shipped [`DEFAULT_MAX_OFFERED_SLOTS`]; no safety side). Skipped when
+    /// it is the shipped count, so a publication without the choice encodes,
+    /// and hashes, as it always has.
+    #[serde(
+        default = "default_max_offered_slots",
+        skip_serializing_if = "is_default_max_offered_slots"
+    )]
+    pub max_offered_slots: u16,
+}
+
+fn default_max_offered_slots() -> u16 {
+    DEFAULT_MAX_OFFERED_SLOTS
+}
+
+// serde's skip_serializing_if hands the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_max_offered_slots(count: &u16) -> bool {
+    *count == DEFAULT_MAX_OFFERED_SLOTS
 }
 
 impl ConstraintFrontConfig {
@@ -111,12 +131,13 @@ impl ConstraintFrontConfig {
         ConstraintSessionCaps {
             max_turns: self.max_turns,
             max_model_calls: self.max_model_calls,
+            max_offered_slots: self.max_offered_slots,
         }
     }
 
     /// Every line is nonblank and fits a lens text, and each dial admits at
-    /// least one turn and one parse pass, so a turn never discovers a bad
-    /// publication after it spent a model call.
+    /// least one turn, one parse pass and one offered slot, so a turn never
+    /// discovers a bad publication after it spent a model call.
     pub fn validate(&self) -> Result<(), BookingError> {
         let copy = self.copy();
         copy.validate()?;
@@ -135,6 +156,11 @@ impl ConstraintFrontConfig {
         if self.max_turns == 0 || self.max_model_calls == 0 {
             return Err(BookingError::InvalidConfig(
                 "constraint front caps must admit one turn and one parse pass".to_owned(),
+            ));
+        }
+        if self.max_offered_slots == 0 {
+            return Err(BookingError::InvalidConfig(
+                "constraint front must offer at least one slot".to_owned(),
             ));
         }
         Ok(())
@@ -264,7 +290,7 @@ pub async fn run_constraint_turn(
         ));
     }
 
-    let rendered = top_ranked_slots(&solve_result.slots);
+    let rendered = top_ranked_slots(&solve_result.slots, caps.max_offered_slots);
     let card = slots_card(&request.session_ref, copy, &rendered)?;
     Ok(ConstraintFrontOutcome::Slots(ConstraintSlotReply {
         solve_result,
@@ -288,10 +314,12 @@ pub fn constraint_deflect(
 }
 
 /// The oracle owns both the times and their order. When it returns more than
-/// [`MAX_RENDERED_SLOTS`], keep the top-ranked three and preserve the oracle's
-/// relative order among them. Nothing is invented, rewritten, or rounded.
-fn top_ranked_slots(slots: &[RankedSlot]) -> Vec<&RankedSlot> {
-    if slots.len() <= MAX_RENDERED_SLOTS {
+/// `max_offered` (the page's [`ConstraintFrontConfig::max_offered_slots`]),
+/// keep the top-ranked `max_offered` and preserve the oracle's relative order
+/// among them. Nothing is invented, rewritten, or rounded.
+fn top_ranked_slots(slots: &[RankedSlot], max_offered: u16) -> Vec<&RankedSlot> {
+    let max_offered = usize::from(max_offered);
+    if slots.len() <= max_offered {
         return slots.iter().collect();
     }
     let mut by_rank: Vec<usize> = (0..slots.len()).collect();
@@ -301,7 +329,7 @@ fn top_ranked_slots(slots: &[RankedSlot]) -> Vec<&RankedSlot> {
             .total_cmp(&slots[*left].rank)
             .then(left.cmp(right))
     });
-    by_rank.truncate(MAX_RENDERED_SLOTS);
+    by_rank.truncate(max_offered);
     by_rank.sort_unstable();
     by_rank.into_iter().map(|index| &slots[index]).collect()
 }

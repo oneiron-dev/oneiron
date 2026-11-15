@@ -52,6 +52,7 @@ fn synthetic_config() -> EventTypeConfig {
             preferred_hours: Vec::new(),
         }],
         // The generous flex pool the preset declares.
+        flex_with_ordinary: false,
         flex_windows: vec![WeeklyWallWindow {
             weekday: 5,
             start_minute: 10 * 60,

@@ -13,6 +13,10 @@ use super::{CompanionProposal, ProposalId};
 const COMPANION_PRESET_SCHEMA_VERSION: u8 = 1;
 /// Bound on a preset id.
 const MAX_PRESET_ID_BYTES: usize = 64;
+/// How many curated choices one proposal offers when the preset row names no
+/// count of its own. A shortlist, not a grid: the companion asks friends to
+/// tap, and a wall of buttons is a poll.
+pub const DEFAULT_PROPOSAL_MAX_CHOICES: u16 = 5;
 #[doc(hidden)]
 pub use oneiron_records::booking::companion_preset::preset::{
     CompanionConfirmationMode, ProposalCarrier,
@@ -30,6 +34,25 @@ pub struct CompanionPresetRow {
     pub generous_flex: bool,
     pub email_otp_enabled: bool,
     pub group_intersection: bool,
+    /// Most curated choices one proposal offers (shipped
+    /// [`DEFAULT_PROPOSAL_MAX_CHOICES`]; no safety side). Skipped when it is
+    /// the shipped count, so a row without the choice encodes as it always
+    /// has.
+    #[serde(
+        default = "default_proposal_max_choices",
+        skip_serializing_if = "is_default_proposal_max_choices"
+    )]
+    pub max_choices: u16,
+}
+
+fn default_proposal_max_choices() -> u16 {
+    DEFAULT_PROPOSAL_MAX_CHOICES
+}
+
+// serde's skip_serializing_if hands the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_proposal_max_choices(count: &u16) -> bool {
+    *count == DEFAULT_PROPOSAL_MAX_CHOICES
 }
 /// The pack-data envelope, in the manifest idiom the seeded-roster loader
 /// established: a pinned version and a `deny_unknown_fields` body.
@@ -51,6 +74,8 @@ struct CompanionPresetSeed {
     generous_flex: bool,
     email_otp_enabled: bool,
     group_intersection: bool,
+    #[serde(default = "default_proposal_max_choices")]
+    max_choices: u16,
 }
 /// Parses a companion preset manifest and binds it to the configuration the
 /// consumer supplies.
@@ -68,7 +93,9 @@ struct CompanionPresetSeed {
 ///   flex pool with no flex windows is a flag with no effect;
 /// - `personal_hours` — a statement about which availability profile the
 ///   consumer built its configuration from. It is carried as data because this
-///   module cannot tell a personal profile from a business one by inspection.
+///   module cannot tell a personal profile from a business one by inspection;
+/// - `max_choices` — a proposal with no choice cannot be tapped, so `0` is
+///   refused. Absent, it is [`DEFAULT_PROPOSAL_MAX_CHOICES`].
 pub fn load_companion_preset(
     json: &[u8],
     synthetic_event_type_config: EventTypeConfig,
@@ -101,6 +128,11 @@ pub fn load_companion_preset(
                 .to_owned(),
         ));
     }
+    if seed.max_choices == 0 {
+        return Err(BookingError::InvalidConfig(
+            "companion preset max_choices must offer at least one choice".to_owned(),
+        ));
+    }
     Ok(CompanionPresetRow {
         id: seed.id,
         carrier: seed.carrier,
@@ -110,6 +142,7 @@ pub fn load_companion_preset(
         generous_flex: seed.generous_flex,
         email_otp_enabled: seed.email_otp_enabled,
         group_intersection: seed.group_intersection,
+        max_choices: seed.max_choices,
     })
 }
 fn validate_preset_id(value: &str) -> Result<(), BookingError> {

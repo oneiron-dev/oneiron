@@ -48,6 +48,8 @@ pub struct SlotMask {
 pub struct ConstraintSessionCaps {
     pub max_turns: u16,
     pub max_model_calls: u16,
+    /// Most slot buttons one reply renders.
+    pub max_offered_slots: u16,
 }
 
 /// Per-session counters. Admission is checked BEFORE an LLM request is built or
