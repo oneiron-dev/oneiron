@@ -128,6 +128,9 @@ mod slip_renewal;
 // error envelope whose `code` is the engine's raw string rather than this
 // crate's closed `ErrorCode`.
 mod facade;
+// The integration tests' door to `ai.ask_image`'s status table (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::facade::host_doors::ask_image_refusal_status;
 pub(crate) use facade::is_slim_lifecycle_observation;
 pub(crate) mod legal_hold_schema;
 // FIX 2222: who a host credential acts as at every door, through one resolver.

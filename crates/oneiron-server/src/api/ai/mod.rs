@@ -33,6 +33,9 @@ mod waves;
 // The facade's `ai.*` media doors prepare and admit each call as this wire
 // does, under one typed refusal (OF-410, FIX 779).
 pub(crate) use media::{MediaCallParts, MediaCallRefusal, VoiceRefusal, prepare_media_call};
+// The integration tests' door to the media routes' failure status (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) use media::failure_status_for_test;
 // Every `ai.options` door lists through one projection (FIX 2942).
 pub(crate) use options::{
     CallerOptions, caller_options, granted_operations, line_options, run_options,

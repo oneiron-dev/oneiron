@@ -540,6 +540,13 @@ pub(super) fn failure(error: &LlmError) -> Response {
         .into_response()
 }
 
+/// The status [`failure`] answers `error` with: the integration tests' door
+/// (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn failure_status_for_test(error: &LlmError) -> StatusCode {
+    failure(error).status()
+}
+
 /// The replay key a call's `Idempotency-Key` header names (FIX 2962),
 /// inside its credential's own partition, for `request`. No header, or one
 /// that is not visible text, is no key: the call goes out as any call does.
