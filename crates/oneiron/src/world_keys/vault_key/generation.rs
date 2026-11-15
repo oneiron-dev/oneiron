@@ -52,7 +52,9 @@ pub struct DataKeyGenerationOutcome {
 }
 
 /// Everything the act needs from outside a txn (keystore, Argon2): minted before the write.
-pub struct DataKeyGenerationDraft {
+/// From its minting to the act's finish, inference-snapshot admission stays
+/// shut, so no snapshot sealed under the old key commits after the act.
+pub struct DataKeyGenerationDraft<'v> {
     /// The next data key.
     next: VaultDataKey,
     /// The commitment of the key the act replaces.
@@ -65,9 +67,12 @@ pub struct DataKeyGenerationDraft {
     /// Each presented escrow's recipient fingerprint, by wrap id: the act
     /// rewraps an escrow only to the recipient it was sealed to.
     escrow_fingerprints: BTreeMap<String, [u8; 32]>,
+    /// Snapshot admission shut until the new key is held (or the act is
+    /// dropped unfinished).
+    snapshot_pause: crate::store::snapshot_lifecycle::SnapshotAdmissionPause<'v>,
 }
 
-impl DataKeyGenerationDraft {
+impl DataKeyGenerationDraft<'_> {
     /// The next data key.
     pub fn next_key(&self) -> &VaultDataKey {
         &self.next
@@ -128,7 +133,7 @@ impl Vault {
     pub fn prepare_data_key_generation(
         &self,
         ways: &DataKeyGenerationWays<'_>,
-    ) -> Result<DataKeyGenerationDraft> {
+    ) -> Result<DataKeyGenerationDraft<'_>> {
         self.unlock_vault_key()?;
         let held = self
             .held_vault_key()
@@ -196,6 +201,7 @@ impl Vault {
             device_kind,
             envelopes,
             escrow_fingerprints,
+            snapshot_pause: self.store.inference_snapshots.pause_for_key_handoff(),
         })
     }
 
@@ -214,7 +220,7 @@ impl Vault {
         txn: &mut heed::RwTxn<'_>,
         authority: &ActAuthority,
         cause: DataKeyGenerationCause,
-        draft: &DataKeyGenerationDraft,
+        draft: &DataKeyGenerationDraft<'_>,
         ways: &DataKeyGenerationWays<'_>,
         transition: &WrapTransition<'_>,
     ) -> Result<DataKeyGenerationOutcome> {
@@ -351,8 +357,8 @@ impl Vault {
         )?;
         transition.stage(|| self.staged_wraps_in_txn(txn, None))?;
         // No inference snapshot admitted under the old key commits after
-        // this write, as an erase moves the admission inside its own write.
-        self.store.inference_snapshots.erased();
+        // this write: the draft's pause ended every earlier admission and
+        // grants none until the new key is held.
         tracing::info!(
             ?cause,
             generation,
@@ -371,10 +377,17 @@ impl Vault {
     /// mirror rewrite pends.
     pub(crate) fn finish_data_key_generation(
         &self,
-        draft: DataKeyGenerationDraft,
+        draft: DataKeyGenerationDraft<'_>,
         transition: WrapTransition<'_>,
     ) -> bool {
-        self.hold_vault_key(draft.next);
+        let DataKeyGenerationDraft {
+            next,
+            snapshot_pause,
+            ..
+        } = draft;
+        self.hold_vault_key(next);
+        // Admission opens again only now, so the next one reads the new key.
+        drop(snapshot_pause);
         super::recovery_preset::finish_or_pending(transition)
     }
 
