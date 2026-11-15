@@ -53,6 +53,7 @@
 mod authorship;
 mod claim;
 mod confirmation_state;
+mod deposit;
 mod door;
 mod emergency;
 mod feed_move;
@@ -76,6 +77,15 @@ pub use self::claim::{
 };
 pub(in crate::booking) use self::claim::{
     confirmed_booking_starts, confirmed_booking_starts_listed, confirmed_start_for_reminder,
+};
+pub use self::deposit::{
+    BOOKING_DEPOSIT_SETTLE_ATTEMPT_KIND, BookingDepositSettlementDrain, BookingDepositStatus,
+    DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease, DepositCheckoutStart, DepositProviderEvent,
+    DepositProviderEventKind, DepositProviderEventOutcome, DepositProviderFailure,
+    DepositSettleMove, DepositSettleRequest, DepositSettleStep, DepositSettlementPort,
+    DepositState, begin_deposit_checkout, booking_deposit_for_event, booking_deposit_for_payment,
+    booking_deposit_for_session_hold, record_deposit_provider_event,
+    run_booking_deposit_settlement, settle_booking_deposit,
 };
 pub use self::door::{
     BookingLifecycleConsumerInput, BookingLifecycleTurn, BookingOracleRequest,
@@ -299,8 +309,9 @@ struct LifecycleTokenRow {
 /// The `booking.token.v1:` prefix carries several row shapes under one flat,
 /// domain-separated digest keyspace (bearer/revision tokens here, checkout
 /// leases as [`CHECKOUT_LEASE`], emergency picks as
-/// `emergency::EMERGENCY_PICK`) — two (here, three) typed tables, one
-/// declaration; the caller always knows which shape a given digest names.
+/// `emergency::EMERGENCY_PICK`, deposits and their booking and provider-event
+/// rows in `deposit`) — several typed tables, one declaration; the caller
+/// always knows which shape a given digest names.
 /// Key: hash32 (the token digest).
 const TOKEN: SideTable<
     [u8; 32],
@@ -308,13 +319,18 @@ const TOKEN: SideTable<
     VersionedNamed<{ types::LIFECYCLE_ROW_VERSION }>,
 > = SideTable::new(&side_table::BOOKING_TOKEN);
 
-/// A server-issued checkout lease, bound to one session.
+/// A server-issued checkout lease, bound to one session and, for a deposit,
+/// to the provider payment the hold waits on (BK-DEPOSITS).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CheckoutLeaseRow {
     #[serde(with = "digest_serde")]
     session_hash: [u8; 32],
     expires_at: u64,
+    /// The key of the deposit this lease's hold waits on. Absent on a lease
+    /// minted with no payment, and on every lease written before deposits.
+    #[serde(default, with = "opt_digest_serde")]
+    deposit_key: Option<[u8; 32]>,
 }
 
 /// Same declaration as [`TOKEN`]; see its doc comment. Key: hash32 (the lease

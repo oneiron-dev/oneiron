@@ -1,0 +1,568 @@
+//! BK-DEPOSITS PR 2: one deposit's payment from checkout to settlement
+//! (Engine ruling, Sun 15 Nov 01:10): the checkout lease binds the session
+//! and the provider payment and extends the hold to the checkout window; the
+//! confirm waits for the provider's authorization and makes the capture due;
+//! an unconfirmed deposit is voided when its window ends; a refused card
+//! keeps the hold for a retry; a visitor's cancel refunds by the terms.
+//!
+//! The provider is a recording fake of the settlement port. The deposit
+//! doors are new, so PR 1 cannot build this file: its red is the missing
+//! item. The assert-red half is `booking_deposit_confirm_gate.rs`.
+
+#[path = "booking_deposit_support/fixture.rs"]
+mod fixture;
+
+use fixture::{Fixture, MONDAY, NOW, event_type, slot_of};
+use oneiron::booking::lifecycle::{
+    BookingDepositSettlementDrain, DEPOSIT_CHECKOUT_WINDOW_SECS, DepositCheckoutLease,
+    DepositCheckoutStart, DepositProviderEvent, DepositProviderEventKind,
+    DepositProviderEventOutcome, DepositProviderFailure, DepositSettleMove, DepositSettleRequest,
+    DepositSettleStep, DepositSettlementPort, DepositState, begin_deposit_checkout,
+    booking_deposit_for_event, booking_deposit_for_payment, booking_deposit_for_session_hold,
+    record_deposit_provider_event, run_booking_deposit_settlement, settle_booking_deposit,
+};
+use oneiron::booking::{
+    BookingError, ConfirmReceipt, DepositRefundRule, DepositTerms, EventTypeKey, HoldLeaseSpec,
+    SessionKey,
+};
+
+/// A provider that does every move and records each call.
+#[derive(Default)]
+struct RecordingProvider {
+    calls: Vec<(String, DepositSettleMove, String)>,
+    fail_next: Option<DepositProviderFailure>,
+}
+
+impl DepositSettlementPort for RecordingProvider {
+    fn settle(&mut self, request: &DepositSettleRequest<'_>) -> Result<(), DepositProviderFailure> {
+        if let Some(failure) = self.fail_next.take() {
+            return Err(failure);
+        }
+        self.calls.push((
+            request.payment_id.to_owned(),
+            request.movement,
+            request.idempotency_key.to_owned(),
+        ));
+        Ok(())
+    }
+}
+
+fn yen_terms() -> DepositTerms {
+    DepositTerms {
+        amount_minor: 5_000,
+        currency: "jpy".to_owned(),
+        refund: DepositRefundRule::default(),
+    }
+}
+
+fn checkout(
+    fixture: &Fixture,
+    session: SessionKey,
+    payment_id: &str,
+    now: u64,
+) -> Result<DepositCheckoutLease, BookingError> {
+    begin_deposit_checkout(
+        &fixture.vault,
+        &DepositCheckoutStart {
+            page_ref: fixture.page,
+            event_type: event_type(),
+            session_key: session,
+            terms: fixture.config.deposit.clone().expect("a deposit fixture"),
+            payment_id: payment_id.to_owned(),
+        },
+        now,
+    )
+}
+
+fn provider_event(
+    fixture: &Fixture,
+    event_id: &str,
+    payment_id: &str,
+    kind: DepositProviderEventKind,
+    now: u64,
+) -> DepositProviderEventOutcome {
+    record_deposit_provider_event(
+        &fixture.vault,
+        &DepositProviderEvent {
+            event_id: event_id.to_owned(),
+            payment_id: payment_id.to_owned(),
+            kind,
+        },
+        now,
+    )
+    .expect("record the provider event")
+}
+
+fn authorized(fixture: &Fixture) -> DepositProviderEventKind {
+    let terms = fixture.config.deposit.clone().expect("a deposit fixture");
+    DepositProviderEventKind::Authorized {
+        amount_minor: terms.amount_minor,
+        currency: terms.currency,
+    }
+}
+
+fn lease_spec(lease: &DepositCheckoutLease) -> HoldLeaseSpec {
+    HoldLeaseSpec::CheckoutExtension {
+        server_issued_lease: lease.lease.clone(),
+    }
+}
+
+fn state_of(fixture: &Fixture, payment_id: &str) -> DepositState {
+    booking_deposit_for_payment(&fixture.vault, payment_id)
+        .expect("read the deposit")
+        .expect("the deposit exists")
+        .state
+}
+
+fn drain(
+    fixture: &Fixture,
+    provider: &mut RecordingProvider,
+    now: u64,
+) -> BookingDepositSettlementDrain {
+    run_booking_deposit_settlement(&fixture.vault, "deposit-settle-worker", provider, 16, now)
+        .expect("drain the settle rows")
+}
+
+/// Checkout, hold on the lease, the provider's authorization, confirm, for
+/// the slot that starts at `hour` UTC on the fixture Monday.
+fn paid_booking(
+    fixture: &Fixture,
+    session: SessionKey,
+    payment_id: &str,
+    hour: u64,
+) -> ConfirmReceipt {
+    let slot = fixture
+        .offered_slots()
+        .into_iter()
+        .find(|slot| slot.start_utc == MONDAY + hour * 3_600)
+        .expect("the fixture offers the slot");
+    let lease = checkout(fixture, session, payment_id, NOW).expect("checkout");
+    let hold = fixture
+        .hold(session, slot_of(&slot), lease_spec(&lease), NOW)
+        .expect("hold on the checkout lease");
+    let event = format!("evt-auth-{payment_id}");
+    assert_eq!(
+        provider_event(fixture, &event, payment_id, authorized(fixture), NOW + 30),
+        DepositProviderEventOutcome::Applied(DepositState::Authorized)
+    );
+    fixture
+        .confirm(&hold, session, NOW + 40)
+        .expect("confirm on the authorized deposit")
+}
+
+#[test]
+fn deposit_hold_reaches_the_checkout_window_and_confirm_waits_for_authorization() {
+    let fixture = Fixture::open(Some(yen_terms()));
+    let slots = fixture.offered_slots();
+    let session = SessionKey::derive(b"deposit-happy");
+
+    let lease = checkout(&fixture, session, "pi_test_happy", NOW).expect("checkout");
+    assert_eq!(lease.expires_at, NOW + DEPOSIT_CHECKOUT_WINDOW_SECS);
+    let hold = fixture
+        .hold(session, slot_of(&slots[0]), lease_spec(&lease), NOW)
+        .expect("hold on the checkout lease");
+    assert_eq!(
+        hold.expires_at,
+        NOW + DEPOSIT_CHECKOUT_WINDOW_SECS,
+        "the payment's lease extends the hold to the checkout window"
+    );
+
+    let early = fixture.confirm(&hold, session, NOW + 20);
+    assert!(
+        matches!(&early, Err(BookingError::InvalidConstraint(reason)) if reason.contains("deposit")),
+        "confirm before the provider's authorization is refused; got {early:?}"
+    );
+
+    assert_eq!(
+        provider_event(
+            &fixture,
+            "evt_1",
+            "pi_test_happy",
+            authorized(&fixture),
+            NOW + 30
+        ),
+        DepositProviderEventOutcome::Applied(DepositState::Authorized)
+    );
+    assert_eq!(
+        provider_event(
+            &fixture,
+            "evt_1",
+            "pi_test_happy",
+            authorized(&fixture),
+            NOW + 31
+        ),
+        DepositProviderEventOutcome::Replayed,
+        "a redelivered provider event applies once"
+    );
+
+    let booked = fixture
+        .confirm(&hold, session, NOW + 40)
+        .expect("confirm on the authorized deposit");
+    let status = booking_deposit_for_event(&fixture.vault, &booked.calendar.event_ref)
+        .expect("read")
+        .expect("the booking names its deposit");
+    assert_eq!(
+        status.state,
+        DepositState::CaptureDue {
+            amount_minor: 5_000
+        }
+    );
+    assert_eq!(status.event_ref, Some(booked.calendar.event_ref));
+
+    // The server's capture right after the confirm.
+    let mut provider = RecordingProvider::default();
+    assert_eq!(
+        settle_booking_deposit(
+            &fixture.vault,
+            &booked.calendar.event_ref,
+            &mut provider,
+            NOW + 41
+        )
+        .expect("settle"),
+        DepositSettleStep::Moved(DepositSettleMove::Capture {
+            amount_minor: 5_000
+        })
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_test_happy"),
+        DepositState::Captured {
+            amount_minor: 5_000
+        }
+    );
+
+    // The queued rows (the window's end and the capture) find nothing owed.
+    let pass = drain(
+        &fixture,
+        &mut provider,
+        NOW + DEPOSIT_CHECKOUT_WINDOW_SECS + 1,
+    );
+    assert_eq!(pass.captured, 0);
+    assert_eq!(pass.voided, 0);
+    assert_eq!(pass.settled_nothing, 2);
+    assert_eq!(
+        provider.calls.len(),
+        1,
+        "the deposit is captured exactly once"
+    );
+    let (payment, movement, key) = &provider.calls[0];
+    assert_eq!(payment, "pi_test_happy");
+    assert_eq!(
+        *movement,
+        DepositSettleMove::Capture {
+            amount_minor: 5_000
+        }
+    );
+    assert!(
+        key.contains("capture"),
+        "the provider call carries its idempotency key: {key}"
+    );
+}
+
+#[test]
+fn an_unconfirmed_deposit_is_voided_when_its_window_ends() {
+    let fixture = Fixture::open(Some(yen_terms()));
+    let slots = fixture.offered_slots();
+    let session = SessionKey::derive(b"deposit-abandoned");
+    let lease = checkout(&fixture, session, "pi_test_abandoned", NOW).expect("checkout");
+    fixture
+        .hold(session, slot_of(&slots[1]), lease_spec(&lease), NOW)
+        .expect("hold");
+    provider_event(
+        &fixture,
+        "evt_a1",
+        "pi_test_abandoned",
+        authorized(&fixture),
+        NOW + 30,
+    );
+
+    let mut provider = RecordingProvider::default();
+    let early = drain(&fixture, &mut provider, NOW + 60);
+    assert_eq!(
+        early.waiting, 1,
+        "inside its window the deposit waits for its end"
+    );
+    assert!(provider.calls.is_empty());
+
+    let late = drain(&fixture, &mut provider, lease.expires_at);
+    assert_eq!(
+        late.voided, 1,
+        "the window's end voids the unconfirmed authorization"
+    );
+    assert_eq!(provider.calls.len(), 1);
+    assert_eq!(provider.calls[0].1, DepositSettleMove::Void);
+    assert_eq!(
+        state_of(&fixture, "pi_test_abandoned"),
+        DepositState::Voided
+    );
+
+    assert!(
+        checkout(&fixture, session, "pi_test_abandoned", lease.expires_at + 1).is_err(),
+        "a voided payment opens no new checkout"
+    );
+}
+
+#[test]
+fn a_refused_card_keeps_the_hold_for_a_retry() {
+    let fixture = Fixture::open(Some(yen_terms()));
+    let slots = fixture.offered_slots();
+    let session = SessionKey::derive(b"deposit-retry");
+    let lease = checkout(&fixture, session, "pi_test_retry", NOW).expect("checkout");
+    let hold = fixture
+        .hold(session, slot_of(&slots[2]), lease_spec(&lease), NOW)
+        .expect("hold");
+
+    assert_eq!(
+        provider_event(
+            &fixture,
+            "evt_r1",
+            "pi_test_retry",
+            DepositProviderEventKind::AuthorizationFailed {
+                reason: "card_declined".to_owned()
+            },
+            NOW + 30,
+        ),
+        DepositProviderEventOutcome::Applied(DepositState::AuthorizationFailed)
+    );
+    let waiting = booking_deposit_for_session_hold(&fixture.vault, &session, NOW + 60)
+        .expect("read")
+        .expect("the live hold still waits on its deposit");
+    assert_eq!(waiting.state, DepositState::AuthorizationFailed);
+    assert_eq!(waiting.failure.as_deref(), Some("card_declined"));
+    assert!(fixture.confirm(&hold, session, NOW + 61).is_err());
+
+    assert_eq!(
+        provider_event(
+            &fixture,
+            "evt_r2",
+            "pi_test_retry",
+            authorized(&fixture),
+            NOW + 90
+        ),
+        DepositProviderEventOutcome::Applied(DepositState::Authorized),
+        "a second card on the same payment authorizes it"
+    );
+    fixture
+        .confirm(&hold, session, NOW + 100)
+        .expect("the retried payment confirms the same hold");
+}
+
+#[test]
+fn a_visitor_cancel_refunds_by_the_terms() {
+    let terms = DepositTerms {
+        amount_minor: 4_000,
+        currency: "usd".to_owned(),
+        refund: DepositRefundRule {
+            full_refund_notice_secs: 2 * 3_600,
+            late_cancel_refund_percent: 25,
+        },
+    };
+    let fixture = Fixture::open(Some(terms));
+    let mut provider = RecordingProvider::default();
+
+    // 12:00 start, cancelled at 08:01: four hours ahead, a full refund.
+    let early = paid_booking(
+        &fixture,
+        SessionKey::derive(b"refund-early"),
+        "pi_early",
+        12,
+    );
+    settle_booking_deposit(
+        &fixture.vault,
+        &early.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    fixture
+        .cancel(&early.cancel_token, NOW + 60)
+        .expect("cancel");
+    assert_eq!(
+        state_of(&fixture, "pi_early"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        }
+    );
+
+    // 09:00 start, cancelled at 08:01: under two hours ahead, 25 percent.
+    let late = paid_booking(&fixture, SessionKey::derive(b"refund-late"), "pi_late", 9);
+    settle_booking_deposit(
+        &fixture.vault,
+        &late.calendar.event_ref,
+        &mut provider,
+        NOW + 50,
+    )
+    .expect("capture");
+    fixture
+        .cancel(&late.cancel_token, NOW + 60)
+        .expect("cancel");
+    assert_eq!(
+        state_of(&fixture, "pi_late"),
+        DepositState::RefundDue {
+            amount_minor: 1_000
+        }
+    );
+
+    // 13:00 start, cancelled before its capture ran: the authorization is
+    // released, nothing is captured.
+    let uncaptured = paid_booking(
+        &fixture,
+        SessionKey::derive(b"refund-uncaptured"),
+        "pi_uncaptured",
+        13,
+    );
+    fixture
+        .cancel(&uncaptured.cancel_token, NOW + 60)
+        .expect("cancel");
+    assert_eq!(state_of(&fixture, "pi_uncaptured"), DepositState::VoidDue);
+
+    let pass = drain(&fixture, &mut provider, NOW + 70);
+    assert_eq!(pass.refunded, 2);
+    assert_eq!(pass.voided, 1);
+    assert_eq!(
+        pass.captured, 0,
+        "the cancelled booking's capture never runs"
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_early"),
+        DepositState::Refunded {
+            amount_minor: 4_000
+        }
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_late"),
+        DepositState::Refunded {
+            amount_minor: 1_000
+        }
+    );
+    assert_eq!(state_of(&fixture, "pi_uncaptured"), DepositState::Voided);
+    let moves_of = |payment: &str| -> Vec<DepositSettleMove> {
+        provider
+            .calls
+            .iter()
+            .filter(|(id, _, _)| id == payment)
+            .map(|(_, movement, _)| *movement)
+            .collect()
+    };
+    assert_eq!(
+        moves_of("pi_early"),
+        vec![
+            DepositSettleMove::Capture {
+                amount_minor: 4_000
+            },
+            DepositSettleMove::Refund {
+                amount_minor: 4_000
+            }
+        ]
+    );
+    assert_eq!(
+        moves_of("pi_late"),
+        vec![
+            DepositSettleMove::Capture {
+                amount_minor: 4_000
+            },
+            DepositSettleMove::Refund {
+                amount_minor: 1_000
+            }
+        ]
+    );
+    assert_eq!(moves_of("pi_uncaptured"), vec![DepositSettleMove::Void]);
+}
+
+#[test]
+fn a_lease_or_event_of_another_checkout_changes_nothing() {
+    let fixture = Fixture::open(Some(yen_terms()));
+    let slots = fixture.offered_slots();
+    let session = SessionKey::derive(b"deposit-owner");
+    let lease = checkout(&fixture, session, "pi_test_bound", NOW).expect("checkout");
+
+    // The payment is this session's: another session cannot reopen it.
+    assert!(
+        checkout(
+            &fixture,
+            SessionKey::derive(b"deposit-thief"),
+            "pi_test_bound",
+            NOW + 5
+        )
+        .is_err(),
+        "a payment of another session opens no checkout"
+    );
+    // Terms other than the configured deposit open no checkout.
+    let cheaper = begin_deposit_checkout(
+        &fixture.vault,
+        &DepositCheckoutStart {
+            page_ref: fixture.page,
+            event_type: event_type(),
+            session_key: session,
+            terms: DepositTerms {
+                amount_minor: 1,
+                ..yen_terms()
+            },
+            payment_id: "pi_test_cheap".to_owned(),
+        },
+        NOW,
+    );
+    assert!(
+        cheaper.is_err(),
+        "checkout terms must be the configured deposit"
+    );
+
+    // The lease extends no hold of another event type.
+    let other_type = fixture.hold_type(
+        session,
+        EventTypeKey("other-type".to_owned()),
+        slot_of(&slots[3]),
+        lease_spec(&lease),
+        NOW,
+    );
+    assert!(
+        matches!(&other_type, Err(BookingError::InvalidConstraint(reason)) if reason.contains("another event type")),
+        "a deposit lease is bound to its event type; got {other_type:?}"
+    );
+
+    // An authorization for another amount does not authorize the deposit.
+    assert_eq!(
+        provider_event(
+            &fixture,
+            "evt_b1",
+            "pi_test_bound",
+            DepositProviderEventKind::Authorized {
+                amount_minor: 4_999,
+                currency: "jpy".to_owned()
+            },
+            NOW + 30,
+        ),
+        DepositProviderEventOutcome::TermsMismatch
+    );
+    assert_eq!(
+        state_of(&fixture, "pi_test_bound"),
+        DepositState::AwaitingAuthorization
+    );
+    let hold = fixture
+        .hold(session, slot_of(&slots[3]), lease_spec(&lease), NOW + 35)
+        .expect("hold");
+    assert!(fixture.confirm(&hold, session, NOW + 40).is_err());
+
+    // A provider event about a payment no deposit has writes nothing.
+    assert_eq!(
+        provider_event(
+            &fixture,
+            "evt_x",
+            "pi_someone_else",
+            authorized(&fixture),
+            NOW + 45
+        ),
+        DepositProviderEventOutcome::UnknownPayment
+    );
+
+    // A transient provider failure runs again later and settles then.
+    let mut provider = RecordingProvider {
+        fail_next: Some(DepositProviderFailure::Transient("timeout".to_owned())),
+        ..RecordingProvider::default()
+    };
+    let first = drain(&fixture, &mut provider, lease.expires_at);
+    assert_eq!(first.retrying, 1);
+    assert_eq!(state_of(&fixture, "pi_test_bound"), DepositState::VoidDue);
+    let second = drain(&fixture, &mut provider, lease.expires_at + 301);
+    assert_eq!(second.voided, 1);
+    assert_eq!(state_of(&fixture, "pi_test_bound"), DepositState::Voided);
+}
