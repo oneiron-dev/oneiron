@@ -123,7 +123,7 @@ pub(crate) fn rebuild_schedule_due_in_txn(store: &Store, txn: &mut heed::RwTxn<'
     let mut stale = Vec::new();
     for entry in DUE.iter_raw_from(store, txn, &[])? {
         let (key, _) = entry?;
-        stale.push(key.to_vec());
+        stale.push(key);
     }
     for key in stale {
         DUE.delete(store, txn, &key)?;
