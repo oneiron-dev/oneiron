@@ -43,6 +43,8 @@ pub use oneiron_setting_contract::{
 pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
 pub use self::change::SettingChange;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::change::change_in_txn;
 pub(crate) use self::change::{
     erase_setting_change_actor_in_txn, erase_setting_content_actor_in_txn,
     erase_setting_entity_in_txn, erase_setting_row_actor_in_txn, settings_after_in_txn,

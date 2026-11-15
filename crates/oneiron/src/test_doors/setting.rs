@@ -183,3 +183,17 @@ pub fn learned_rate_seed(vault: &Vault, known: &[SettingScope]) -> Result<Option
     let txn = vault.store.env.read_txn()?;
     super::setting_keys::TEST_LEARNED_RATE.seed_in_txn(&vault.store, &txn, known)
 }
+
+/// The setting change of sequence `sequence`, as the change stream stores it.
+///
+/// # Errors
+///
+/// A change row that does not decode; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_change(
+    vault: &Vault,
+    sequence: u64,
+) -> Result<Option<crate::setting::SettingChange>> {
+    let txn = vault.store.env.read_txn()?;
+    crate::setting::change_in_txn(&vault.store, &txn, sequence)
+}

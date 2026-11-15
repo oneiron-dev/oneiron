@@ -65,6 +65,24 @@ pub(super) fn record_change_in_txn(
     Ok(change)
 }
 
+/// The change of sequence `sequence`, while it stands: the record of the act that wrote the row a
+/// read's `revision` names, for a reader that cites the row it read.
+///
+/// # Errors
+///
+/// A change row that does not decode; storage errors.
+#[cfg_attr(
+    not(all(oneiron_test_support, feature = "test-support")),
+    allow(dead_code)
+)]
+pub(crate) fn change_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    sequence: u64,
+) -> Result<Option<SettingChange>> {
+    CHANGES.get(store, txn, &sequence)
+}
+
 /// The last change sequence handed out, or `None` before the first.
 pub(crate) fn settings_head_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Option<u64>> {
     Ok(CHANGE_NEXT

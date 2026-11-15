@@ -7,7 +7,7 @@
 //! - a fit with no runs is passed over; one outside the key's range is clamped into it;
 //! - a learned key's seed carries a weight in runs and a pin none; a value outside the range, a
 //!   weight on a pin, a clear or a key that is not learned are refused; the weight is part of
-//!   the row;
+//!   row and of its change;
 //! - the seed a fit starts from is the narrowest seed on the chain, with its weight, never a pin;
 //! - every learned key in the catalogue sits only where a fit's cell is keyed, has no item, and
 //!   its default lies in its range.
@@ -23,7 +23,7 @@ use oneiron::memory::Memory;
 use oneiron::setting::{FitCell, LEARNED_SCOPES, SettingScope, catalogue};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::setting::{learned_rate_seed, put_setting_fit};
+use oneiron::test_doors::setting::{learned_rate_seed, put_setting_fit, setting_change};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -329,6 +329,18 @@ fn a_learned_seed_carries_a_weight_and_a_pin_none() {
 
     let first = seed(&me, vault_scope(), 0.2, 10.0);
     assert_eq!(first["status"], json!("applied"), "{first}");
+    let weight_of = |outcome: &Value| {
+        let sequence = outcome["sequence"].as_u64().expect("a change was written");
+        setting_change(&fx.vault, sequence)
+            .expect("the change reads")
+            .expect("the change stands")
+            .weight_runs
+    };
+    assert_eq!(
+        weight_of(&first),
+        Some(10.0),
+        "the change records the weight"
+    );
     let rows = entry(&me, KEY)["rows"].clone();
     assert_eq!(
         rows[0]["weight_runs"],
@@ -342,12 +354,14 @@ fn a_learned_seed_carries_a_weight_and_a_pin_none() {
         reweighed["sequence"].is_u64(),
         "a new weight is a change of the row: {reweighed}"
     );
+    assert_eq!(weight_of(&reweighed), Some(20.0));
     let pinned = pin(&me, vault_scope(), 0.5);
     assert_eq!(
         pinned["status"],
         json!("applied"),
         "a pin takes no weight: {pinned}"
     );
+    assert_eq!(weight_of(&pinned), None, "a pin's change records none");
 }
 
 #[test]
