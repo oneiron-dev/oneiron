@@ -52,6 +52,11 @@ async fn mcp_legacy_catalog_is_unknown_tool_on_both_endpoints() {
                     json!("`oneiron.ask` is not an SDK verb; the verb is `ask`"),
                     "{name} on {path}: {body}"
                 );
+                // The correction names its schema in snake_case, as REST
+                // does (UC02-REST-ENGINE-SCOPE = A).
+                let data = &body["error"]["data"];
+                assert!(data["schema_ref"].is_string(), "{name} on {path}: {body}");
+                assert!(data.get("schemaRef").is_none(), "{name} on {path}: {body}");
             } else {
                 assert_mcp_structured_error(&body, "unknown_tool");
             }
