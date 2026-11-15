@@ -37,10 +37,32 @@ impl Vault {
         revoked_key: AuthorityKey,
     ) -> Result<AuthorityEntryHash> {
         let op = AuthorityOp::RevokeDevice { revoked_key };
-        let (key, sign) = match signer {
-            EntrySigner::Host(issuer) => return self.append_hashed_slip_op_in_txn(txn, issuer, op),
-            EntrySigner::Key(key, sign) => (key, sign),
-        };
+        match signer {
+            EntrySigner::Host(issuer) => self.append_hashed_slip_op_in_txn(txn, issuer, op),
+            EntrySigner::Key(key, sign) => {
+                self.append_key_signed_op_in_txn(txn, (key, sign), op, REVOKE_NOT_COUNTED)
+            }
+        }
+    }
+
+    /// One authority entry of `op`, signed by `key`, a live roster key held
+    /// behind `sign`, in the caller's write transaction: it joins a frontier
+    /// wider than one entry names, names the main-log heads, takes the
+    /// signer's next sequence, and answers the entry's hash only once the
+    /// fold counts it, else the refusal `not_counted`. The writer behind
+    /// [`Self::append_revoke_device_in_txn`] and the kit change's binding
+    /// carry ([`Self::carry_recovery_authority_approvals_in_txn`]).
+    ///
+    /// # Errors
+    /// The log's: a signer that is not a live roster key of this vault, or
+    /// an entry the fold does not count.
+    pub(crate) fn append_key_signed_op_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (key, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        op: AuthorityOp,
+        not_counted: &'static str,
+    ) -> Result<AuthorityEntryHash> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let joiner = FrontierSigner::Callback(key, sign);
@@ -81,7 +103,7 @@ impl Vault {
             .valid_entries
             .contains(&hash)
         {
-            return Err(authority_refused(REVOKE_NOT_COUNTED));
+            return Err(authority_refused(not_counted));
         }
         Ok(hash)
     }
