@@ -28,33 +28,6 @@ pub struct OrgAdminConfigured {
     pub configured: bool,
 }
 
-/// The owner's amend of a stored setup: the whole new policy for its org.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct OrgAdminAmendRequest {
-    pub policy: OrgAdminPolicy,
-}
-
-/// The amend as it landed: what it changed, and whether that widens the
-/// setup.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct OrgAdminAmended {
-    pub org_ref: EntityId,
-    /// Whether the stored setup changed: an amend equal to it writes nothing.
-    pub amended: bool,
-    /// The Admins the amend seated.
-    pub added_admins: BTreeSet<EntityId>,
-    /// The Admins the amend unseated.
-    pub removed_admins: BTreeSet<EntityId>,
-    /// The named powers the amend added.
-    pub added_powers: BTreeSet<OrgAdminPower>,
-    /// The named powers the amend dropped.
-    pub dropped_powers: BTreeSet<OrgAdminPower>,
-    /// Whether the amend widens the setup (it seats an Admin or adds a
-    /// power): a loosening, which the owner confirm sheet asks for.
-    pub widens: bool,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OrgAdminPowersRequest {
@@ -152,6 +125,33 @@ pub fn configure_org_admin_as_owner(
         org_ref: input.policy.org_ref(),
         configured: true,
     })
+}
+
+/// The owner's amend of a stored setup: the whole new policy for its org.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OrgAdminAmendRequest {
+    pub policy: OrgAdminPolicy,
+}
+
+/// The amend as it landed: what it changed, and whether that widens the
+/// setup.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OrgAdminAmended {
+    pub org_ref: EntityId,
+    /// Whether the stored setup changed: an amend equal to it writes nothing.
+    pub amended: bool,
+    /// The Admins the amend seated.
+    pub added_admins: BTreeSet<EntityId>,
+    /// The Admins the amend unseated.
+    pub removed_admins: BTreeSet<EntityId>,
+    /// The named powers the amend added.
+    pub added_powers: BTreeSet<crate::federation::OrgAdminPower>,
+    /// The named powers the amend dropped.
+    pub dropped_powers: BTreeSet<crate::federation::OrgAdminPower>,
+    /// Whether the amend widens the setup (it seats an Admin or adds a
+    /// power): a loosening, which the owner confirm sheet asks for.
+    pub widens: bool,
 }
 
 /// `vault.org_admin.amend`: the owner replaces a stored setup's Admins and
