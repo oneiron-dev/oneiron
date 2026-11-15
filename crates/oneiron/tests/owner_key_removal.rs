@@ -45,6 +45,7 @@ use oneiron::{EntityId, Error, HostingPrivacyPosture, TimeRange, Vault, VaultCon
 use oneiron_authority::authority::{
     OWNER_KEY_ENROLLMENT_SEEN, OWNER_KEY_POSSESSION_KIND, OwnerKeyEnroll,
     RECOVERY_AUTHORITY_POSSESSION_KIND, owner_key_enrollment_target,
+    recovery_authority_enrollment_challenge,
 };
 
 /// The seed of the second machine's machine key.
@@ -924,8 +925,10 @@ impl RemovalVault {
     /// `holder`, carried by `carrier`, with `attestation_kind` at
     /// `timestamp`: `predecessor_signing_key` signs at `sequence` on
     /// `parents`, the carrier's install key cosigns, and the new key proves
-    /// possession for the holder. Answers the row and its entry without
-    /// storing it.
+    /// possession for the holder under the challenge of `attestation_kind`
+    /// (the recovery kind has a possession domain of its own, so only the
+    /// key's holder enrols one key both ways). Answers the row and its entry
+    /// without storing it.
     fn sibling_enrolment_row(
         &self,
         parents: Vec<AuthorityEntryHash>,
@@ -944,11 +947,15 @@ impl RemovalVault {
         let public_key = new_signing_key.verifying_key().to_bytes();
         let target =
             owner_key_enrollment_target(&vault_id, &public_key).expect("the enrolment target");
-        let authority = ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall);
-        let challenge = self
-            .vault
-            .owner_key_enrollment_challenge_as(&authority, holder, &public_key)
-            .expect("the key's challenge");
+        let challenge = if attestation_kind == RECOVERY_AUTHORITY_POSSESSION_KIND {
+            recovery_authority_enrollment_challenge(&vault_id, holder, &public_key, owner)
+                .expect("the recovery kind's challenge")
+        } else {
+            let authority = ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall);
+            self.vault
+                .owner_key_enrollment_challenge_as(&authority, holder, &public_key)
+                .expect("the key's challenge")
+        };
         let proof = new_signing_key.sign(&challenge).to_bytes().to_vec();
         let operation = AuthorityOp::OwnerKeyEnroll(OwnerKeyEnroll {
             act: OwnerAct::by_owner(
