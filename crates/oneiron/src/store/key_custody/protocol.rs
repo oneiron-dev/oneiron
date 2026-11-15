@@ -75,6 +75,15 @@ pub trait CustodyTarget: CustodySource {
     /// target whose held head a newer pass published answers
     /// [`TargetPublication::Covered`] ([`CustodyBatch::covered_by`]).
     fn publish(&self, batch: &CustodyBatch) -> Result<TargetPublication>;
+
+    /// The pending answer the target gives every batch without reading it,
+    /// for a member this build has no adapter for (FIX 5847): such a member
+    /// never makes its group owe a head, so no pass seals one only it is
+    /// owed, and the pass records this answer for it. `None` for a target
+    /// that takes batches.
+    fn pending_without_batch(&self) -> Option<TargetPending> {
+        None
+    }
 }
 
 /// One pass's frozen publication: the head sealed at the local position,

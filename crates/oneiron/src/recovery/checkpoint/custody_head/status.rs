@@ -301,6 +301,17 @@ impl DeclaredTarget {
     pub fn new(spec: TargetSpec) -> Self {
         Self(spec)
     }
+
+    /// Its answer to every batch: no adapter in this build.
+    fn no_adapter(&self) -> TargetPending {
+        TargetPending {
+            code: PendingCode::NoAdapter,
+            detail: format!(
+                "no {} adapter in this build: its custody stays pending until KS-C4",
+                self.0.kind().name()
+            ),
+        }
+    }
 }
 
 impl CustodySource for DeclaredTarget {
@@ -319,12 +330,10 @@ impl CustodyTarget for DeclaredTarget {
     }
 
     fn publish(&self, _: &CustodyBatch) -> crate::Result<TargetPublication> {
-        Ok(TargetPublication::Pending(TargetPending {
-            code: PendingCode::NoAdapter,
-            detail: format!(
-                "no {} adapter in this build: its custody stays pending until KS-C4",
-                self.0.kind().name()
-            ),
-        }))
+        Ok(TargetPublication::Pending(self.no_adapter()))
+    }
+
+    fn pending_without_batch(&self) -> Option<TargetPending> {
+        Some(self.no_adapter())
     }
 }
