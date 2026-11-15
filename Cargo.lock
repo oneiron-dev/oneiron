@@ -8821,6 +8821,7 @@ dependencies = [
  "jieba-rs",
  "lindera",
  "oneiron-contracts",
+ "regex",
  "rmpv",
  "rust-stemmers",
  "serde",
