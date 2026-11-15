@@ -48759,6 +48759,7 @@
      "kind": "src",
      "notable": [
       "AutoCheckDecisions",
+      "AutoCheckWorldHold",
       "BoundedAutoChecker"
      ],
      "path": "src/llm/autocheck.rs",
@@ -48767,7 +48768,8 @@
       "crate-vis": 5,
       "fn": 5,
       "re-export": 1,
-      "struct": 2
+      "struct": 2,
+      "trait": 1
      }
     },
     {
@@ -49103,7 +49105,7 @@
      "purpose": "Decision ladder slots: which rung's provider can take a call, and the ladder a posture leaves",
      "surface": {
       "crate-vis": 3,
-      "fn": 5
+      "fn": 6
      }
     },
     {
@@ -99395,6 +99397,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/auto_check_kept_world.rs",
+     "purpose": "Census L5-32, the LLM gate (DEC-0005:592; Engine RULING L5-32-LLM-GATE-KEPT-WORLD = A, 13 Nov 20:24 JST)…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -105080,7 +105090,7 @@
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7598,
-   "test_files": 1332
+   "test_files": 1333
   },
   "oneiron-agent-runtime": {
    "files": [
