@@ -17,6 +17,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::ContentHasher;
 use serde::{Deserialize, Serialize};
 
 use super::cohort::cohorts_in_txn;
@@ -137,7 +138,7 @@ pub struct EvalRepairSeedLegs {
 fn seed_key(source: &EvalRepairTaskSource) -> Result<[u8; 32]> {
     let seat = source.seat.token()?;
     let ordinal = source.outcome_ordinal.to_string();
-    let mut hasher = blake3::Hasher::new();
+    let mut hasher = ContentHasher::new();
     hasher.update(SEED_DOMAIN);
     for part in [
         seat.as_str(),
@@ -149,7 +150,7 @@ fn seed_key(source: &EvalRepairTaskSource) -> Result<[u8; 32]> {
         hasher.update(&(part.len() as u64).to_be_bytes());
         hasher.update(part.as_bytes());
     }
-    Ok(*hasher.finalize().as_bytes())
+    Ok(hasher.finish().into_bytes())
 }
 
 fn bounded_arm(arm: &EvalArmPin) -> Result<()> {
