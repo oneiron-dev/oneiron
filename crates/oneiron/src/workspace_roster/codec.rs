@@ -309,7 +309,7 @@ pub(super) fn decode_preset_row(bytes: &[u8]) -> Result<PresetRow> {
 }
 
 pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from("schema_version"),
             Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -335,11 +335,13 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
             optional_ref(row.companion_facet_ref),
         ),
         (Value::from("identity_ref"), optional_ref(row.identity_ref)),
-        (
-            Value::from("one_vault_told"),
-            row.one_vault_told.map_or(Value::Nil, Value::from),
-        ),
-    ])
+    ];
+    // Written only when set, so a member who was not told keeps the row
+    // shape stored before one-vault mode.
+    if let Some(told) = row.one_vault_told {
+        entries.push((Value::from("one_vault_told"), Value::from(told)));
+    }
+    Value::Map(entries)
 }
 
 pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> {
@@ -354,14 +356,15 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_actor_ref: optional_entity(&entries, "companion_actor_ref")?,
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
         identity_ref: optional_entity(&entries, "identity_ref")?,
-        one_vault_told: match required(&entries, "one_vault_told")? {
-            Value::Nil => None,
-            value => Some(
+        // Absent on a member who was not told, and on every row stored
+        // before one-vault mode.
+        one_vault_told: optional_key(&entries, "one_vault_told")
+            .map(|value| {
                 value
                     .as_u64()
-                    .ok_or_else(|| invalid("roster member one_vault_told must be a u64"))?,
-            ),
-        },
+                    .ok_or_else(|| invalid("roster member one_vault_told must be a u64"))
+            })
+            .transpose()?,
     })
 }
 
@@ -834,6 +837,14 @@ pub(super) fn required<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&
         .iter()
         .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
         .ok_or_else(|| invalid("workspace roster body is missing a required key"))
+}
+
+/// The value of `key` when the body holds it: a key added within a schema
+/// version, which a row stored before it lacks.
+pub(super) fn optional_key<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
 }
 
 pub(super) fn required_str(entries: &[(Value, Value)], key: &str) -> Result<String> {
