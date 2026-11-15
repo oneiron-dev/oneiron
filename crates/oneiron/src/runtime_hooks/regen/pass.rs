@@ -116,6 +116,7 @@ impl Vault {
             (Some(HookAuthor::Agent { agent }), _) => Some(HookPut::Agent {
                 agent: WriteActor::new(agent, EdgeActorClass::Agent),
                 owner: None,
+                admit: None,
             }),
             (Some(_), Some(owner)) => Some(HookPut::Owner(owner)),
             _ => None,

@@ -69,6 +69,19 @@ fn hook_regen_agent_refused(verb: &str, why: &str) -> MemoryError {
     )
 }
 
+/// The rows `binding` stands on among `bindings`; an unknown binding is
+/// unavailable.
+fn bound_rows(
+    bindings: Vec<(EntityId, PackHookBinding)>,
+    binding: EntityId,
+) -> MemoryResult<[EntityId; 3]> {
+    bindings
+        .into_iter()
+        .find(|(id, _)| *id == binding)
+        .map(|(id, row)| binding_rows(id, &row))
+        .ok_or_else(binding_unavailable)
+}
+
 /// An adoption the record refuses (no candidate pending, not the candidate
 /// named, or a stamp it lacks) is a state to read again, not a bad request.
 fn adopt_refusal(error: crate::Error) -> MemoryError {
@@ -174,13 +187,12 @@ impl Memory<'_> {
     /// Lists the rows `binding` stands on, and refuses it unless this
     /// credential reads each of them.
     fn hook_regen_binding(&self, binding: EntityId) -> MemoryResult<()> {
-        let rows = self
-            .vault
-            .pack_hook_bindings()?
-            .into_iter()
-            .find(|(id, _)| *id == binding)
-            .map(|(id, row)| binding_rows(id, &row))
-            .ok_or_else(binding_unavailable)?;
+        self.hook_regen_readable(bound_rows(self.vault.pack_hook_bindings()?, binding)?)
+    }
+
+    /// Refuses a binding standing on `rows` unless this credential reads
+    /// each of them.
+    fn hook_regen_readable(&self, rows: [EntityId; 3]) -> MemoryResult<()> {
         self.produced_from(rows);
         if !self.hook_regen_reads(rows)? {
             return Err(binding_unavailable());
@@ -207,9 +219,14 @@ impl Memory<'_> {
         &self,
         owner: Option<&AuthenticatedOwner>,
     ) -> MemoryResult<Vec<EntityId>> {
-        match owner {
-            Some(owner) => self.hook_regen_owner(owner)?,
+        let due = match owner {
+            Some(owner) => {
+                self.hook_regen_owner(owner)?;
+                self.vault.hooks_due_for_regen()?
+            }
             None => {
+                // The admission and the list share one snapshot: a grant,
+                // setting or credential that lapses after it lists nothing.
                 let txn = self
                     .vault
                     .store
@@ -217,9 +234,9 @@ impl Memory<'_> {
                     .read_txn()
                     .map_err(crate::Error::from)?;
                 self.admit_hook_regen_agent_in_txn(&txn, "vault.hooks.regen.due")?;
+                self.vault.hooks_due_for_regen_in_txn(&txn)?
             }
-        }
-        let due = self.vault.hooks_due_for_regen()?;
+        };
         let mut listed = Vec::with_capacity(due.len());
         for (id, row) in self.vault.pack_hook_bindings()? {
             if !due.contains(&id) {
@@ -254,23 +271,35 @@ impl Memory<'_> {
         owner: Option<&AuthenticatedOwner>,
         input: HookRegenBindingRequest,
     ) -> MemoryResult<Option<HookRegenView>> {
-        match owner {
-            Some(owner) => self.hook_regen_owner(owner)?,
-            None => {
-                let txn = self
-                    .vault
-                    .store
-                    .env
-                    .read_txn()
-                    .map_err(crate::Error::from)?;
-                self.admit_hook_regen_agent_in_txn(&txn, "vault.hooks.regen.get")?;
+        let record = match owner {
+            Some(owner) => {
+                self.hook_regen_owner(owner)?;
+                self.hook_regen_binding(input.binding)?;
+                self.vault.hook_regen_record(input.binding)?
             }
-        }
-        self.hook_regen_binding(input.binding)?;
-        Ok(self
-            .vault
-            .hook_regen_record(input.binding)?
-            .map(HookRegenView::from))
+            None => {
+                // The admission and the record share one snapshot: a grant,
+                // setting or credential that lapses after it reads nothing.
+                let (rows, record) = {
+                    let txn = self
+                        .vault
+                        .store
+                        .env
+                        .read_txn()
+                        .map_err(crate::Error::from)?;
+                    self.admit_hook_regen_agent_in_txn(&txn, "vault.hooks.regen.get")?;
+                    let rows =
+                        bound_rows(self.vault.pack_hook_bindings_in_txn(&txn)?, input.binding)?;
+                    (
+                        rows,
+                        self.vault.hook_regen_record_in_txn(&txn, input.binding)?,
+                    )
+                };
+                self.hook_regen_readable(rows)?;
+                record
+            }
+        };
+        Ok(record.map(HookRegenView::from))
     }
 
     /// `vault.hooks.regen.adopt`: the owner enacts the candidate pending on
@@ -346,9 +375,29 @@ impl Memory<'_> {
                     ));
                 }
                 let agent = self.write_actor();
-                self.vault
-                    .adopt_hook_regen_as_granted_agent(&agent, input.binding, &input.candidate_hash)
-                    .map_err(adopt_refusal)?
+                // The admission runs again in the adopt's writer, so a grant,
+                // setting or credential that lapsed since the check above
+                // installs nothing. Its refusal is kept as it was written,
+                // and answered in place of the error that aborted the writer.
+                let refusal = std::cell::Cell::new(None);
+                let adopted = self.vault.adopt_hook_regen_as_granted_agent(
+                    &agent,
+                    input.binding,
+                    &input.candidate_hash,
+                    &|txn| {
+                        self.admit_hook_regen_agent_in_txn(txn, "vault.hooks.regen.adopt")
+                            .map_err(|error| {
+                                refusal.set(Some(error));
+                                crate::Error::InvalidConfig(
+                                    "the granted agent's admission no longer holds".to_owned(),
+                                )
+                            })
+                    },
+                );
+                if let Some(error) = refusal.into_inner() {
+                    return Err(error);
+                }
+                adopted.map_err(adopt_refusal)?
             }
         });
         self.produced_from_put(&put);

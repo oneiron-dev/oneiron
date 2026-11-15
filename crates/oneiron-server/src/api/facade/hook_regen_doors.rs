@@ -67,9 +67,9 @@ async fn as_granted_agent<T: Send + 'static>(
     credential_listing(server, auth, caller, verb, move |_, _, memory| act(&memory)).await
 }
 
-/// Whether this call reads through the agent arm: an agent credential that
-/// is not owner-grade, as the preflight admitted it.
-fn agent_reads(auth: &CoreAuth) -> bool {
+/// Whether this call takes the agent arm of due, get and adopt: an agent
+/// credential that is not owner-grade, as the preflight admitted it.
+fn is_agent_credential(auth: &CoreAuth) -> bool {
     auth.actor_class() == Some("agent") && !auth.is_owner_grade()
 }
 
@@ -78,7 +78,7 @@ pub(crate) async fn vault_hooks_regen_due(
     auth: &CoreAuth,
     _input: EmptyRequest,
 ) -> Listed<Vec<EntityId>> {
-    if agent_reads(auth) {
+    if is_agent_credential(auth) {
         return as_granted_agent(server, auth, DUE_VERB, |memory| {
             memory.hooks_regen_due_as_reader(None)
         })
@@ -95,7 +95,7 @@ pub(crate) async fn vault_hooks_regen_get(
     auth: &CoreAuth,
     input: HookRegenBindingRequest,
 ) -> Listed<Option<HookRegenView>> {
-    if agent_reads(auth) {
+    if is_agent_credential(auth) {
         return as_granted_agent(server, auth, GET_VERB, move |memory| {
             memory.hooks_regen_record_as_reader(None, input)
         })
@@ -112,7 +112,7 @@ pub(crate) async fn vault_hooks_regen_adopt(
     auth: &CoreAuth,
     input: HookRegenAdoptRequest,
 ) -> Listed<PackPutReceipt> {
-    if agent_reads(auth) {
+    if is_agent_credential(auth) {
         return as_granted_agent(server, auth, ADOPT_VERB, move |memory| {
             memory.hooks_regen_adopt_as_reader(None, input)
         })
