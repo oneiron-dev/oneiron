@@ -190,10 +190,10 @@ pub fn read_learning_as_owner(
 /// [`read_learning_as_owner`] for an agent or person holding a live Steward
 /// grant that names `read` (untangle 6.6c), checked at this read, as far as
 /// that grant reaches. A grant narrowed to some projects reads a cell of one
-/// of them whose reading rests inside them: the cell's own runs, a cell
-/// inside them it borrowed, or the pack's shipped prior. A cell of another
-/// project or of the whole vault, and a reading that rests on the vault's
-/// cell or on another prior, are refused without saying what they hold.
+/// of them whose reading rests on nothing outside it: its own runs over the
+/// pack's shipped prior, at the window and weight the catalog ships. A cell
+/// of another project or of the whole vault, and any other reading, are
+/// refused without saying what they hold.
 ///
 /// # Errors
 ///
@@ -218,17 +218,28 @@ pub fn read_learning_as_reader(
         return Err(crate::federation::outside_reach(VERB));
     }
     let view = read_learning(vault, input)?;
-    let rests_inside = view.view.own
-        || match &view.view.borrowed_from {
-            Some(source) => {
-                reach.holds_row_in(source.project.as_deref().map(entity_id).transpose()?)
-            }
-            None => view.view.estimate.prior.origin == crate::learning::PriorOrigin::Shipped,
-        };
-    if !rests_inside {
+    if !rests_on_its_own_cell(&view) {
         return Err(crate::federation::outside_reach(VERB));
     }
     Ok(view)
+}
+
+/// Whether `view` shows only its own cell's runs over the pack's shipped
+/// prior, at the window and shipped weight the catalog ships. A reading that
+/// borrowed another cell, starts from any other prior (an owner's seed, a
+/// stored or captured prior), or shows a window or weight a vault row set,
+/// carries what lies outside the cell's project.
+fn rests_on_its_own_cell(view: &LearningCellView) -> bool {
+    let estimate = &view.view.estimate;
+    let shipped_weight = view.cell.predicate != MeasuredLearningPredicate::Setting
+        || estimate.prior.weight_runs.to_bits()
+            == crate::learning_setting::LEARNING_SHIPPED_PRIOR_RUNS
+                .seed
+                .to_bits();
+    view.view.borrowed_from.is_none()
+        && estimate.prior.origin == crate::learning::PriorOrigin::Shipped
+        && shipped_weight
+        && estimate.window == super::project::catalog_window()
 }
 
 /// `vault.learning.read` on a bound handle: the embedded owner reads under

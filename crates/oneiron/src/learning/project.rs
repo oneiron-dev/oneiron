@@ -155,13 +155,22 @@ pub(crate) fn validate_learning_claim_structure(body: &ClaimBody) -> Result<()> 
     Ok(())
 }
 
-/// The window in force: the catalog half-life, in seconds.
+/// The window in force: the vault's half-life, in seconds.
 pub(crate) fn window_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Window> {
     let days =
         learning_setting::setting_value_in_txn(&vault.store, txn, &LEARNING_WINDOW_HALF_LIFE_DAYS)?;
+    Ok(window_of_days(days))
+}
+
+/// The window the catalog ships, before any row tunes it.
+pub(crate) fn catalog_window() -> Window {
+    window_of_days(LEARNING_WINDOW_HALF_LIFE_DAYS.seed)
+}
+
+fn window_of_days(days: f64) -> Window {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let half_life = (days * DAY_SECS).round().max(1.0) as u64;
-    Ok(Window { half_life })
+    Window { half_life }
 }
 
 /// Folds a cell's evidence into its estimate without writing anything.

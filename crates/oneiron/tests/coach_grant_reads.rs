@@ -154,7 +154,12 @@ fn a_grant_narrowed_to_one_project_reads_no_vault_wide_rows() {
     let agent = define_agent(&vault).expect("an agent");
     let (own_project, other_project) = (EntityId::now(), EntityId::now());
     let other_cell = json!({
-        "cell": { "subject": agent.to_hex(), "predicate": "learning.reliability" },
+        "cell": {
+            "subject": agent.to_hex(),
+            "predicate": "learning.edit_cost",
+            "executor": "coach-grant-reads",
+            "consent_scope": "coach-grant-reads",
+        },
         "project_ref": other_project.to_hex(),
     });
     let learning = || {
