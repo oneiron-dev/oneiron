@@ -115,40 +115,8 @@ pub(super) struct TurnProgramStep {
     pub(super) at: u64,
 }
 
-/// The issuing binding, committed before the effect runs.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum StepIssue {
-    /// A model step: its logical occurrence in the run and its request.
-    Model {
-        occurrence: u64,
-        request_hash: [u8; 32],
-    },
-    /// A verb write: its place in its step and the call it makes.
-    Write {
-        step_start: u64,
-        ordinal: u64,
-        receipt: EntityId,
-        call_digest: [u8; 32],
-    },
-    /// An outbound send: its frozen intent.
-    Outbound { intent: [u8; 32], call_seq: u64 },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub(super) enum StepState {
-    /// Bound and not ended.
-    Issued,
-    /// Ended, with its exact result's digest and, for a send, the body the
-    /// transport returned as the side-row wall admitted it. The digest is
-    /// over the bytes returned; the body is absent when the wall refused it
-    /// or the program's actor is erased.
-    Settled {
-        result_digest: [u8; 32],
-        result: Option<Vec<u8>>,
-    },
-    /// Its end is unknown: never taken for settled, never sent again.
-    Uncertain { why: String },
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::dreamer_runner::program::run::{StepIssue, StepState};
 
 /// How one entry into a program's code run stands.
 pub(crate) enum TurnProgramEntered {

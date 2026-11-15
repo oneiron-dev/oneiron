@@ -41,15 +41,8 @@ const EXPORT_FORMAT_OFF_RECORD_TALK: &str = "off_record_talk";
 /// The `format` of the whole-vault JSON bundle a raw `Vault` door writes.
 const EXPORT_FORMAT_JSON: &str = "json";
 
-/// What an export copied (FIX 6427).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ExportAuditScope {
-    /// The whole vault: the archive, the OKF bundle or the JSON bundle.
-    WholeVault,
-    /// An off-record room's talk, as its Owner's membership shows it.
-    OffRecordRoom,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::export_audit::ExportAuditScope;
 
 /// One copy that left the vault, written by the call that made it, so every
 /// owner can see that the vault left, whose copy it was and in what shape.

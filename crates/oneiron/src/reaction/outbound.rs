@@ -8,19 +8,11 @@ use crate::attempt_queue::{AttemptQueue, EnqueueAttempt};
 use crate::error::{Error, Result};
 use crate::outbound::{OutboundDeliverySemanticsKind, outbound_capability_manifest};
 use crate::{EntityId, Vault};
-use serde::{Deserialize, Serialize};
 
 pub const REACTION_OUTBOUND_ATTEMPT_KIND: &str = "reaction.outbound.v1";
 
-/// What the connector lane receives. Provider message addresses are resolved
-/// by the adapter, never invented in the engine.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReactionOutboundAttempt {
-    pub reaction: EntityId,
-    pub connector: String,
-    pub room_external_id: String,
-    pub remove: bool,
-}
+#[doc(hidden)]
+pub use oneiron_records::reaction::outbound::ReactionOutboundAttempt;
 
 /// Whether `connector` can target a message with a reaction.
 #[must_use]

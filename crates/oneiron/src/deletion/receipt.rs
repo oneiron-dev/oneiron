@@ -21,20 +21,8 @@ pub(crate) use capture::{
     is_corrupt_claim_repair_event,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct RedactionScope {
-    pub entity_ids: Vec<String>,
-    pub revision_ids: Vec<String>,
-}
-
-impl RedactionScope {
-    pub(crate) fn entity(entity_id: &EntityId) -> Self {
-        Self {
-            entity_ids: vec![entity_id.to_hex()],
-            revision_ids: Vec::new(),
-        }
-    }
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::deletion::receipt::RedactionScope;
 
 /// The pinned REDACTION_AUDIT body shape (`rmp_serde::to_vec_named`, field
 /// order = the pinned `RECEIPT_BODY_KEYS` order). `Deserialize` exists for
