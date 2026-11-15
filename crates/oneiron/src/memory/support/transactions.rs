@@ -102,10 +102,18 @@ impl Memory<'_> {
     }
 
     /// The source a claim door writes: the bound origin's, else the caller's.
+    /// A credential handed on to another key states nothing for the person
+    /// it names: its declared `user_stated` writes Generated
+    /// (HANDED-ON-SLIP-PERSON Q1 = A).
     pub(in crate::memory) fn claim_source(&self, declared: &str) -> MemoryResult<ClaimSource> {
         match &self.host_origin {
             Some(origin) => Ok(origin.source()),
-            None => super::claims::parse_claim_source(declared),
+            None => match super::claims::parse_claim_source(declared)? {
+                ClaimSource::UserStated if self.presents_handed_on_credential() => {
+                    Ok(ClaimSource::Generated)
+                }
+                source => Ok(source),
+            },
         }
     }
 
