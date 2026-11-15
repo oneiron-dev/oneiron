@@ -2,10 +2,10 @@
 
 use std::collections::BTreeSet;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 use crate::entity_id::EntityId;
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::lens::validate::validate_lens_token;
 use crate::lens::wire_ids::{
     LensAtomId, LensBackingRefId, LensHandleName, LensHandleRole, LensRenderId, LensResultSetRowId,
@@ -13,12 +13,10 @@ use crate::lens::wire_ids::{
 
 use super::{GeneratedUiValidatedAction, LensPrincipalBinding};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LensBackingTargetKind {
-    Entity,
-    Claim,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::mediation::mediation_backing::{
+    LensBackingTargetKind, LensReadReach,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LensBackingTarget {
@@ -181,29 +179,10 @@ impl LensHostBackingRef {
     }
 }
 
-/// Client-authored atom selection. It names *what was pointed at* and nothing else:
-/// no entity id, body text, screenshot, write token, authority, or query string is
-/// expressible here. The engine looks the node up in the exact render it emitted and
-/// takes the target from its own backing table.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensAtomSelectionRequest {
-    pub card_id: LensRenderId,
-    pub atom_id: LensAtomId,
-    pub handle: LensHandleName,
-}
-
-/// A client names only scalar offsets into the host-bound entity document.
-/// Neither a document id nor a cursor/version may be supplied by the client.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LensSpanSelectionRequest {
-    pub card_id: LensRenderId,
-    pub atom_id: LensAtomId,
-    pub handle: LensHandleName,
-    pub start: usize,
-    pub end: usize,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::mediation::mediation_backing::{
+    LensAtomSelectionRequest, LensSpanSelectionRequest,
+};
 
 /// A half-open Unicode-scalar span and its engine-minted Loro cursor pair.
 /// Cursor bytes and the causal frontier identify the source, not the selected text;
@@ -253,34 +232,6 @@ impl LensSpanCursor {
             start_cursor: start_cursor.to_vec(),
             end_cursor: end_cursor.to_vec(),
             quote_hash: blake3::hash(anchor.quote().as_bytes()).to_hex().to_string(),
-        }
-    }
-}
-
-/// The read reach a selection may carry: [`LensHandleRole`] minus
-/// [`LensHandleRole::ActionTarget`]. An action-target binding is reach for the action
-/// backchannel, so it can never be laundered into a selection handle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum LensReadReach {
-    ClaimSet,
-    EntitySet,
-    Timeline,
-    QueryResult,
-}
-
-impl TryFrom<LensHandleRole> for LensReadReach {
-    type Error = Error;
-
-    fn try_from(role: LensHandleRole) -> Result<Self> {
-        match role {
-            LensHandleRole::ClaimSet => Ok(Self::ClaimSet),
-            LensHandleRole::EntitySet => Ok(Self::EntitySet),
-            LensHandleRole::Timeline => Ok(Self::Timeline),
-            LensHandleRole::QueryResult => Ok(Self::QueryResult),
-            LensHandleRole::ActionTarget => Err(Error::InvalidConfig(
-                "lens action-target bindings are not selectable read reach".to_string(),
-            )),
         }
     }
 }

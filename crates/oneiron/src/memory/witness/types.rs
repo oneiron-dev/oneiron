@@ -2,23 +2,31 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::gate::{WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_SYSTEM, WITNESS_AUTHOR_USER};
+use crate::gate::{
+    WITNESS_AUTHOR_COMPANION, WITNESS_AUTHOR_COUNTERPARTY, WITNESS_AUTHOR_SYSTEM,
+    WITNESS_AUTHOR_USER,
+};
 
 /// Who authored one witnessed message (facade vocabulary; the MESSAGE body
 /// `author` key stores the snake_case string).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WitnessAuthor {
-    /// The vault owner.
+    /// The conversation's first-party human: the vault owner, or for mail the
+    /// mailbox person whose sent mail it is.
     User,
     /// The companion persona.
     Companion,
     /// System/tooling rows; these get NO `AuthoredBy` edge (design §2.1).
     System,
+    /// Imported speech from somebody else (received mail): foreign speaker
+    /// data, never the importer's words and never the engine's voice. It gets
+    /// no automatic writer `AuthoredBy` edge.
+    Counterparty,
 }
 
 impl WitnessAuthor {
-    /// Stable string form (`user`/`companion`/`system`).
+    /// Stable string form (`user`/`companion`/`system`/`counterparty`).
     ///
     /// The strings are the gate's own author vocabulary (ONE-1686): the
     /// witness ceiling door matches on them, so there is exactly one place
@@ -29,6 +37,7 @@ impl WitnessAuthor {
             Self::User => WITNESS_AUTHOR_USER,
             Self::Companion => WITNESS_AUTHOR_COMPANION,
             Self::System => WITNESS_AUTHOR_SYSTEM,
+            Self::Counterparty => WITNESS_AUTHOR_COUNTERPARTY,
         }
     }
 
@@ -39,8 +48,18 @@ impl WitnessAuthor {
             WITNESS_AUTHOR_USER => Some(Self::User),
             WITNESS_AUTHOR_COMPANION => Some(Self::Companion),
             WITNESS_AUTHOR_SYSTEM => Some(Self::System),
+            WITNESS_AUTHOR_COUNTERPARTY => Some(Self::Counterparty),
             _ => None,
         }
+    }
+
+    /// Whether a native row of this bucket names its writer by an
+    /// `AuthoredBy` edge. `user` and `companion` rows do; a `system` row
+    /// carries no author, and a `counterparty` row's speaker is somebody
+    /// else, never its writer.
+    #[must_use]
+    pub(crate) const fn names_writer(self) -> bool {
+        matches!(self, Self::User | Self::Companion)
     }
 }
 
@@ -50,7 +69,8 @@ impl WitnessAuthor {
 pub struct WitnessMessage {
     /// Caller-supplied deterministic 32-hex entity id; `None` ⇒ generated.
     pub id: Option<String>,
-    /// Author bucket; `System` rows get no `AuthoredBy` edge.
+    /// Author bucket; `System` and `Counterparty` rows get no writer
+    /// `AuthoredBy` edge.
     pub author: WitnessAuthor,
     /// Message type string (closed set app-side, opaque here).
     pub message_type: String,

@@ -38,7 +38,8 @@ use crate::error::{Error, Result, SecretError};
 use crate::store::VaultWriterLease;
 use crate::world_keys::refused;
 
-const RECORD_VERSION: u32 = 1;
+#[doc(hidden)]
+use oneiron_records::world_keys::page_seal::creation::RECORD_VERSION;
 
 /// The creation record's content: public facts only.
 #[derive(Serialize, Deserialize)]
