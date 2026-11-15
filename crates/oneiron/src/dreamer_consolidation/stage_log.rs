@@ -40,10 +40,12 @@ pub(crate) struct PartitionStages {
     call_ms: u64,
     /// The own prefix's end to the end of the window's side-by-side phase
     /// (its last prefix or rung job): the wait at the window's prefix
-    /// barrier. 0 outside a window.
+    /// barrier. 0 outside a window, and for a window slot whose finish
+    /// starts at its own prefix's end (FIX 21927).
     prefix_ready_ms: u64,
     /// The window's last prefix to this slot's finish start: the wait
-    /// behind the earlier slots' serial finishes. 0 outside a window.
+    /// behind the earlier slots' serial finishes. 0 outside a window, and
+    /// for a slot whose finish starts at its own prefix's end.
     finish_start_ms: u64,
     /// The finish less the stages below: reply checks, people bind and
     /// mint, candidate build, and a re-run prefix when an earlier finish
@@ -53,7 +55,9 @@ pub(crate) struct PartitionStages {
     /// stands: a finish that re-runs the prefix does not move it).
     prefix_ended: Option<Instant>,
     /// When the window's side-by-side phase (its last prefix or rung job)
-    /// ended.
+    /// ended; for a slot whose finish starts at its own prefix's end, that
+    /// end (FIX 21927). Its model run then closes at its finish's end, so
+    /// its wait for its settle's turn stays out of `extract_ms`.
     window_prefixes_ended: Option<Instant>,
     /// When this slot's finish started.
     finish_started: Option<Instant>,

@@ -100,7 +100,7 @@ impl AppleKeychain {
             deprecated,
             reason = "PasswordOptions has no add-only call; its query is the item"
         )]
-        let mut attributes = item.query.clone();
+        let mut attributes = item.query;
         // SAFETY: `kSecValueData` is an immutable CFString the Security framework
         // exports for the life of the process; the get rule retains it.
         let value_key = unsafe { CFString::wrap_under_get_rule(kSecValueData) };
@@ -125,7 +125,7 @@ impl AppleKeychain {
             deprecated,
             reason = "PasswordOptions has no update call; its query is the item"
         )]
-        let query = lookup.query.clone();
+        let query = lookup.query;
         let query = CFDictionary::from_CFType_pairs(&query);
         // SAFETY: `kSecValueData` is an immutable CFString the Security framework
         // exports for the life of the process; the get rule retains it.

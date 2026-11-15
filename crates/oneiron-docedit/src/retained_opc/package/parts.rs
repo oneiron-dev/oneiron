@@ -5,13 +5,12 @@
 //! override. `changed_parts` is the write set an export would actually carry,
 //! for a caller's independent comparison with the parts its operation was
 //! allowed to touch.
+use super::zip32::deflate;
 use super::{Added, Editability, Entry, Error, Limits, Package, Result, as_u32, check_limits};
 use crate::ooxml::{CONTENT_TYPES, PACKAGE_RELATIONSHIPS, XmlTree, escape_text};
 use crate::resource::{Dimension, Resources, bytes_of, wide};
 use crate::retained_opc::xml;
-use flate2::{Compression, write::DeflateEncoder};
 use std::collections::BTreeSet;
-use std::io::Write;
 
 const TYPES: &str = "[Content_Types].xml";
 const RELS_TYPE: &str = "application/vnd.openxmlformats-package.relationships+xml";
@@ -45,13 +44,7 @@ impl Added {
                 .saturating_add(64),
             0,
         )?;
-        let mut encoder = DeflateEncoder::new(Vec::new(), Compression::default());
-        encoder
-            .write_all(&data)
-            .map_err(|_| Error::Edit("compression failed"))?;
-        let deflated = encoder
-            .finish()
-            .map_err(|_| Error::Edit("compression failed"))?;
+        let deflated = deflate(&data)?;
         Ok(Self {
             name: name.to_owned(),
             data,

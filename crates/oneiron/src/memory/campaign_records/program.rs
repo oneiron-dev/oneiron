@@ -147,20 +147,8 @@ pub struct UpdateCampaignProgramRequest {
     pub audience: Option<CampaignProgramAudienceSpec>,
 }
 
-/// A program's lifecycle on the wire. Draft and Paused are the FIX 12542
-/// lifecycle states; neither is ever presented as Active.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CampaignProgramLifecycle {
-    /// Authored but not launched: editable, automatic_intake=false.
-    Draft,
-    /// Enrolls from its audience.
-    Active,
-    /// Held by a campaign pause: editable, automatic_intake=false.
-    Paused,
-    /// Retired: readable, enrolls no one, never re-opened.
-    Archived,
-}
+#[doc(hidden)]
+pub use oneiron_records::memory::campaign_records::program::CampaignProgramLifecycle;
 
 /// A stored program's definition on the wire.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
