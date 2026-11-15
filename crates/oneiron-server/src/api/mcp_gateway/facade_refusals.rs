@@ -160,3 +160,11 @@ fn refusal_kind(code: &str) -> Option<&'static str> {
         _ => return None,
     })
 }
+
+/// The JSON-RPC number and stable kind the gateway answers a facade refusal
+/// whose code is `code` with: the integration tests' door (UC-11).
+#[cfg(oneiron_test_support)]
+pub(crate) fn mcp_refusal_for_test(code: &str) -> (i64, &'static str) {
+    let refusal = mcp_facade_error(oneiron::MemoryError::new(code, "a pinned refusal", &[]));
+    (refusal.code, refusal.kind)
+}
