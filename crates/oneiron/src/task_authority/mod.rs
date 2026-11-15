@@ -507,13 +507,19 @@ impl TaskAuthorityFacts {
 /// This door earns the bypass by BUILDING the body it writes: nothing
 /// a caller supplied reaches storage unvalidated. It refuses a fact whose
 /// actor may not make it ([`TaskAuthorityFacts::admits`]), which the fold
-/// would not count on any device.
+/// would not count on any device. An Owner or Cancelled fact counts from
+/// any proved actor, so the door reads no fact before it writes one: a task
+/// whose facts fail the read (a forked owner, a suppressed fact) still takes
+/// its cancel, and the vault owner's force still stops its branches.
 pub(crate) fn put_task_authority_fact_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
     fact: TaskAuthorityFact,
 ) -> Result<EntityId> {
-    if !vault
+    if !matches!(
+        fact.kind,
+        TaskAuthorityFactKind::Owner | TaskAuthorityFactKind::Cancelled
+    ) && !vault
         .task_authority_facts_in(&*wtxn, fact.task_ref)?
         .admits(&fact)
     {
