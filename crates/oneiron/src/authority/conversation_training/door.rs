@@ -10,10 +10,10 @@
 //! install carries it under its own live machine profile, in any role the
 //! one carrier rule admits ([`super::super::owner_act_signer_admits`]).
 //! Letting their messages back in widens their own row: where the vault
-//! holds an owner key, an install that is not the owner's machine and holds
-//! no owner key cannot prove it, and the door refuses it, storing nothing
-//! (ruling CARRIER-PERSON-OPT-BACK-IN = A). Leaving them out lands from any
-//! install.
+//! asks for an owner key, an install that is not the owner's machine and
+//! holds no owner key cannot prove it, and the door refuses it, storing
+//! nothing (ruling CARRIER-PERSON-OPT-BACK-IN = A). Leaving them out lands
+//! from any install.
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
@@ -73,8 +73,9 @@ impl Vault {
     /// allow opt-outs") while the vault does not let people opt out, and when
     /// this install cannot carry the choice or its fold does not count it;
     /// [`crate::error::RecordError::OwnerKeyRequired`] when they let their
-    /// messages back in where the vault holds an owner key and this install
-    /// neither is the owner's machine nor holds one (nothing is stored);
+    /// messages back in where the vault asks for an owner key and this
+    /// install neither is the owner's machine nor holds one (nothing is
+    /// stored);
     /// [`Error::ConcurrentWrite`] when `seen` is not the current revision;
     /// [`Error::InvalidConfig`] when the choice would name more parents than
     /// one entry may.

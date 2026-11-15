@@ -21,6 +21,16 @@
 //!
 //! The doors ([`Vault::record_policy_setting_op_in_txn`]) sign the act in
 //! the setting's own write, best effort ([`super::carried_act`]).
+//!
+//! One setting is the fold's own to read: web sign-in
+//! ([`PolicySetting::WebSignIn`], the owner's ruling AUTH-5). No install
+//! keeps a row of it. Its act is the switch back when its value is the one
+//! over the owner keys its parents hold
+//! ([`super::owner_proof::web_sign_in_switch`]): it then counts only with an
+//! owner key's proof and is kept under that value. An act of the setting
+//! with any other value asks for an owner key again and is kept as a clear,
+//! so no value a carrier picked stays in the register to speak for keys
+//! enrolled later.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -91,12 +101,21 @@ pub(super) fn apply_policy_setting(
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
+    let web_sign_in = set.setting == PolicySetting::WebSignIn;
+    let switches_back = web_sign_in
+        && set.value.is_some()
+        && set.value == super::owner_proof::web_sign_in_switch(state);
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
-        choice: set.value.as_ref(),
+        choice: if web_sign_in && !switches_back {
+            None
+        } else {
+            set.value.as_ref()
+        },
         context: POLICY_SETTING_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        owner_key_only: switches_back,
     };
     let landing = owner_choice_landing(
         state,

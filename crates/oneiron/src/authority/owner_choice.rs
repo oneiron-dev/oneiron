@@ -23,11 +23,13 @@
 //! this install does not count at full strength (its carrier raced its
 //! removal, it landed restriction only, or it is disputed) counts as not
 //! made: the choice it replaced stays in force. A carrier that is not the
-//! owner's machine needs an owner key's proof where such a carrier must
-//! prove its acts ([`super::owner_proof`], row CARRIER-OWNER-PROOF); with
-//! none its choice waits, in no frontier, until the owner carries it again
-//! from an owner device. Choices are main-log entries, so every machine the
-//! owner admits folds them, and the fold reads the log alone.
+//! owner's machine needs an owner key's proof where the vault asks for an
+//! owner key ([`super::owner_proof`], row CARRIER-OWNER-PROOF); with none
+//! its choice waits, in no frontier, until the owner carries it again from
+//! an owner device. A choice that only an owner key may make (the switch
+//! back to web sign-in) waits so through every carrier. Choices are
+//! main-log entries, so every machine the owner admits folds them, and the
+//! fold reads the log alone.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -67,8 +69,9 @@ pub(super) struct OwnerChoiceState<P> {
     frontiers: BTreeMap<EntityId, ChoiceFrontier<P>>,
     refused: BTreeSet<AuthorityEntryHash>,
     /// Each target's admitted choices that a carrier that is not the owner's
-    /// machine delivered with no owner key's proof, where such a carrier
-    /// needs one ([`super::owner_proof::not_mine_carriers_need_proof`]):
+    /// machine delivered with no owner key's proof, where the vault asks for
+    /// one ([`super::owner_proof::owner_key_required`]), and each choice only
+    /// an owner key may make that came with none:
     /// valid, in no frontier, so they supersede nothing and no `seen` covers
     /// them. The owner confirms one by carrying the choice again from an
     /// owner device. Each is true once the owner chose for its target since:
@@ -168,6 +171,12 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     /// goes through the gate as every act does (ruling
     /// CARRIER-PERSON-OPT-BACK-IN = A, AUTH-4 PERSON-PROOF-RUNG = A).
     pub(super) persons_own_narrowing: bool,
+    /// The choice lowers what the vault asks of every later act (the switch
+    /// back to web sign-in, the owner's ruling AUTH-5), so it counts only
+    /// with an owner key's proof on the entry: no carrier's word lands it,
+    /// the owner's own machine's included, and a vault that asks for no
+    /// owner key takes none either.
+    pub(super) owner_key_only: bool,
 }
 
 /// What a valid choice does to its register ([`OwnerChoiceState::land`]).
@@ -214,8 +223,9 @@ pub(super) enum OwnerChoiceLanding<P> {
 /// ([`super::owner_proof::owner_proof_key`]). A proof never lifts a refusal.
 /// An admitted choice from a carrier that is not the owner's machine (its
 /// signing key is not its trusted mine key, pin-free) waits with no proof
-/// where such a carrier needs one, unless it is a person's own narrowing of
-/// their own row.
+/// where the vault asks for an owner key, unless it is a person's own
+/// narrowing of their own row. A choice only an owner key may make waits
+/// with no proof, whoever carries it.
 pub(super) fn owner_choice_landing<P: Clone>(
     state: &FoldState,
     register: &OwnerChoiceState<P>,
@@ -260,9 +270,10 @@ pub(super) fn owner_choice_landing<P: Clone>(
         return Ok(OwnerChoiceLanding::Refused(hash));
     }
     if proof.is_none()
-        && !carrier_is_mine
-        && !op.persons_own_narrowing
-        && super::owner_proof::not_mine_carriers_need_proof(state)
+        && (op.owner_key_only
+            || (!carrier_is_mine
+                && !op.persons_own_narrowing
+                && super::owner_proof::owner_key_required(state)))
     {
         return Ok(OwnerChoiceLanding::Waiting {
             target: op.act.target,
@@ -300,6 +311,24 @@ impl<P> OwnerChoiceState<P> {
     /// need not carry (FIX 4624).
     pub(super) fn is_empty(&self) -> bool {
         self.frontiers.is_empty() && self.refused.is_empty() && self.waiting.is_empty()
+    }
+
+    /// Whether `target` has a live choice and every live choice of it is
+    /// `value`: the register as every replica holds it, with no pin and no
+    /// install's counting, for a judge that must read the same on each
+    /// (the web sign-in switch, [`super::owner_proof::owner_key_required`]).
+    /// Two live choices that did not see each other agree or it is false.
+    pub(super) fn every_live_choice_is(&self, target: EntityId, value: &P) -> bool
+    where
+        P: PartialEq,
+    {
+        self.frontiers.get(&target).is_some_and(|frontier| {
+            !frontier.live.is_empty()
+                && frontier
+                    .live
+                    .values()
+                    .all(|choice| choice.settings.choice.as_ref() == Some(value))
+        })
     }
 
     /// The waiting choices that still ask the owner: the ones the owner has
