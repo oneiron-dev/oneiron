@@ -51,6 +51,18 @@ impl SideKey for TaskFollowUpKey {
     }
 }
 
+/// One [`TaskFollowUpKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn task_follow_up_key_pin_for_test(
+    task_ref: EntityId,
+    stage: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&TaskFollowUpKey {
+        task_ref,
+        stage: stage.to_owned(),
+    })
+}
+
 pub(super) const TASK_FOLLOW_UP_MARKERS: SideTable<TaskFollowUpKey, [u8; 1], side_table::Raw> =
     SideTable::new(&side_table::TASK_FOLLOW_UP_MARKER);
 

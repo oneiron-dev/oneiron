@@ -52,6 +52,18 @@ impl SideKey for TaskAttemptKey {
     }
 }
 
+/// One [`TaskAttemptKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn task_attempt_key_pin_for_test(
+    task_digest: [u8; 32],
+    attempt: [u8; 16],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&TaskAttemptKey {
+        task_digest,
+        attempt,
+    })
+}
+
 /// The index's name for `task`, and the prefix of its rows: the one
 /// derivation archive, forget, erase and every restore share.
 fn task_digest(task: &str) -> [u8; 32] {

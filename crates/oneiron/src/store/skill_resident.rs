@@ -239,6 +239,15 @@ impl SideKey for LoadedSkillKey {
     }
 }
 
+/// One [`LoadedSkillKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn loaded_skill_key_pin_for_test(
+    receipt: &str,
+    skill: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&LoadedSkillKey::new(receipt, &skill))
+}
+
 pub(crate) fn bind_skill_in_txn(
     vault: &crate::Vault,
     txn: &mut heed::RwTxn<'_>,

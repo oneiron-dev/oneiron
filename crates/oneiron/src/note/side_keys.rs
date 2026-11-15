@@ -21,6 +21,15 @@ impl SideKey for HexPair {
     }
 }
 
+/// One [`HexPair`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hex_pair_pin_for_test(
+    a: crate::EntityId,
+    b: crate::EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HexPair(HexId(a), HexId(b)))
+}
+
 /// Three colon-joined 32-hex entity ids.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) struct HexTriple(pub(super) HexId, pub(super) HexId, pub(super) HexId);
@@ -45,6 +54,16 @@ impl SideKey for HexTriple {
             HexId::decode_key(c)?,
         ))
     }
+}
+
+/// One [`HexTriple`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hex_triple_pin_for_test(
+    a: crate::EntityId,
+    b: crate::EntityId,
+    c: crate::EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HexTriple(HexId(a), HexId(b), HexId(c)))
 }
 
 /// Two colon-joined 32-hex entity ids then a 64-hex hash: the NOTE reverse
@@ -79,4 +98,14 @@ impl SideKey for HexHexHash {
             String::from_utf8(hash.to_vec()).ok()?,
         ))
     }
+}
+
+/// One [`HexHexHash`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hex_hex_hash_pin_for_test(
+    a: crate::EntityId,
+    b: crate::EntityId,
+    hash: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HexHexHash(HexId(a), HexId(b), hash.to_owned()))
 }

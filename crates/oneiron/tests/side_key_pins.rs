@@ -1,7 +1,8 @@
-//! UC-06 K-proofs of PRs 2, 3 and 4: the side-table keys those PRs derive spell the same bytes
-//! and read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a
-//! vault already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
-//! question, step and document keys, PR 4 seventeen keys of the library's modules `a` to `g`.
+//! UC-06 K-proofs of PRs 2 to 5: the side-table keys those PRs derive spell the same bytes and
+//! read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a vault
+//! already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
+//! question, step and document keys, PR 4 seventeen keys of the library's modules `a` to `g`,
+//! PR 5 seventeen keys of its modules `n` to `v`.
 //!
 //! Each test builds one table: for every fixture key, the bytes it spells, and the verdict
 //! (refused, or the bytes of the key read back) on those bytes and on malformed copies of them
@@ -9,9 +10,9 @@
 //! case, a `+` in the first, last and hex-tail places, the separator swapped, a byte that is not
 //! UTF-8), plus some raw inputs per key (a reserved id, a missing or doubled separator, an empty
 //! key). A table's sha256 is the one a model of the hand-written decoders gives
-//! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py`, `pin_table_model_pr3.py`
-//! and `pin_table_model_pr4.py`), and each run prints the table so a base run and a head run can
-//! be compared line by line. A decoder that panics reads as `panic`.
+//! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py` to
+//! `pin_table_model_pr5.py`), and each run prints the table so a base run and a head run can be
+//! compared line by line. A decoder that panics reads as `panic`.
 //!
 //! `ProjectRevisionHash` is public; the other keys are crate-private and are reached through
 //! `test_doors::side_key_pins`. Needs the doors:
@@ -25,13 +26,17 @@ use oneiron::EntityId;
 use oneiron::artifact_hosting::ArtifactPointerChannel;
 use oneiron::dreamer_tournament::DreamerTournamentBranchVerdict;
 use oneiron::test_doors::side_key_pins::{
-    Pin, artifact_pointer_row_key, ask_history_key, block_key, branch_gap_key,
-    budget_reservation_key, connector_index_key, critique_artifact_key, document_slot,
+    Pin, artifact_pointer_row_key, ask_history_key, attempt_call_key, band_key, block_key,
+    branch_gap_key, budget_reservation_key, channel_identity_lifecycle_receipt_id,
+    connector_index_key, critique_artifact_key, dispatch_observation_key, doc_key, document_slot,
     document_update_key_of_generation, document_update_key_of_sequence, epoch_scope, fact_key,
-    hash_index_key, history_key, lfs_ref_key, listing_pin, member_intent_key, member_key,
-    milestone_candidate_key, pending_tombstone_key, proposal_key, provenance_ref_key,
-    receive_pack_intent_key, receive_pack_progress_key, repo_revision_key, roster_member_key,
-    rule_key, step_index_claim_key, step_index_key, text_index_key, tournament_evidence_key,
+    hash_index_key, hex_hex_hash, hex_pair, hex_triple, history_key, lease_key, lfs_ref_key,
+    listing_pin, loaded_skill_key, marker_key, member_intent_key, member_key,
+    milestone_candidate_key, note_fork_key, op_key, pending_tombstone_key, proposal_key,
+    provenance_ref_key, receive_pack_intent_key, receive_pack_progress_key, repo_revision_key,
+    retrieval_run_id, roster_member_key, rule_key, step_index_claim_key, step_index_key,
+    task_attempt_key, task_follow_up_key, text_index_key, tournament_evidence_key,
+    vad_annotation_meta_key,
 };
 use oneiron_verb_wire::workspace_roster::ProjectRevisionHash;
 use sha2::{Digest, Sha256};
@@ -46,6 +51,8 @@ const QUESTION_STEP_DOCUMENT_TABLE_SHA256: &str =
 /// `then_some` argument sliced the bytes before the length check), and the derived one refuses it.
 const LIB_KEYS_A_TO_G_TABLE_SHA256: &str =
     "55a7fb7dc2498bacb49def7594181e8a0d1ef603291e13aec5d0b427c92c1955";
+const LIB_KEYS_N_TO_V_TABLE_SHA256: &str =
+    "eeb0defe7c051bb21832b7fa5c2d38bc23788bf4430fb84f16dbc5593bd6eb5d";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";
@@ -853,4 +860,311 @@ fn lib_keys_a_to_g_spell_and_read_as_the_hand_impls() {
     );
 
     assert_table("lib-keys-a-to-g", &table, LIB_KEYS_A_TO_G_TABLE_SHA256);
+}
+
+#[test]
+fn lib_keys_n_to_v_spell_and_read_as_the_hand_impls() {
+    let hash = pattern_hash();
+    let hash_hex = hex(&hash);
+    let a = *id_a().as_bytes();
+    let b = *id_b().as_bytes();
+    let hex_a = ID_A.as_bytes();
+    let hex_b = ID_B.as_bytes();
+    let nil_hex = [b'0'; 32];
+    let zeros_16 = [b'0'; 16];
+    let mut repo_hash = [0_u8; 64];
+    repo_hash.copy_from_slice(hash_hex.as_bytes());
+    let empty: (&str, Vec<u8>) = ("empty", Vec::new());
+    let mut table = String::new();
+
+    pin(
+        &mut table,
+        "HexPair",
+        vec![
+            ("ids", hex_pair(id_a(), id_b())),
+            ("nul_colon", hex_pair(id(ID_NUL), id(ID_COLON))),
+        ],
+        &[
+            ("nil_first", joined(&[&nil_hex, b":", hex_b])),
+            ("nil_second", joined(&[hex_a, b":", &nil_hex])),
+            ("no_sep", joined(&[hex_a, hex_b])),
+            ("wrong_sep", joined(&[hex_a, b";", hex_b])),
+            ("first_only", hex_a.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "HexTriple",
+        vec![
+            ("ids", hex_triple(id_a(), id_b(), id_a())),
+            ("nul_colon", hex_triple(id(ID_NUL), id(ID_COLON), id_b())),
+        ],
+        &[
+            ("nil_last", joined(&[hex_a, b":", hex_b, b":", &nil_hex])),
+            ("no_second_sep", joined(&[hex_a, b":", hex_b, hex_a])),
+            ("pair_only", joined(&[hex_a, b":", hex_b])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "HexHexHash",
+        vec![
+            ("hash", hex_hex_hash(id_a(), id_b(), &hash_hex)),
+            ("zero_hash", hex_hex_hash(id_b(), id_a(), &"0".repeat(64))),
+            (
+                "text_hash",
+                hex_hex_hash(id(ID_NUL), id(ID_COLON), "not-a-hash"),
+            ),
+        ],
+        &[
+            (
+                "upper_hash",
+                joined(&[
+                    hex_a,
+                    b":",
+                    hex_b,
+                    b":",
+                    hash_hex.to_ascii_uppercase().as_bytes(),
+                ]),
+            ),
+            (
+                "short_hash",
+                joined(&[hex_a, b":", hex_b, b":", &hash_hex.as_bytes()[..63]]),
+            ),
+            (
+                "not_hex_hash",
+                joined(&[hex_a, b":", hex_b, b":", &[b'g'; 64]]),
+            ),
+            (
+                "nil_first",
+                joined(&[&nil_hex, b":", hex_b, b":", hash_hex.as_bytes()]),
+            ),
+            ("pair_only", joined(&[hex_a, b":", hex_b])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "AttemptCallKey",
+        vec![
+            ("zero", attempt_call_key(a, 0)),
+            ("max", attempt_call_key([0; 16], u64::MAX)),
+            (
+                "colons",
+                attempt_call_key([b':'; 16], 0x3a3a_3a3a_3a3a_3a3a),
+            ),
+        ],
+        &[
+            ("short_seq", joined(&[&a, &[0; 7]])),
+            ("attempt_only", a.to_vec()),
+            ("short_attempt", a[..15].to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "DispatchObservationKey",
+        vec![
+            ("zero", dispatch_observation_key(a, 0)),
+            ("max", dispatch_observation_key([0; 16], u32::MAX)),
+            ("colons", dispatch_observation_key([b':'; 16], 0x3a3a_3a3a)),
+        ],
+        &[
+            ("short_count", joined(&[&a, &[0; 3]])),
+            ("call_key_shape", joined(&[&a, &[0; 8]])),
+            ("attempt_only", a.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "DocKey",
+        vec![
+            ("ids", doc_key(id_a(), id_b())),
+            ("nul_colon", doc_key(id(ID_NUL), id(ID_COLON))),
+        ],
+        &[
+            ("nil_head", joined(&[hex_a, b":", &nil_hex])),
+            ("no_sep", joined(&[hex_a, hex_b])),
+            ("note_only", hex_a.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "OpKey",
+        vec![
+            ("hash", op_key(repo_hash, 0)),
+            ("max", op_key([0; 64], u64::MAX)),
+            ("colons", op_key([b':'; 64], 0x3a3a_3a3a_3a3a_3a3a)),
+        ],
+        &[
+            ("wrong_sep", joined(&[&repo_hash, b";", &[0; 8]])),
+            ("no_sep", joined(&[&repo_hash, &[0; 9]])),
+            ("short_seq", joined(&[&repo_hash, b":", &[0; 7]])),
+            ("hash_only", repo_hash.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "ChannelIdentityLifecycleReceiptId",
+        vec![
+            ("id", channel_identity_lifecycle_receipt_id(a)),
+            ("zero", channel_identity_lifecycle_receipt_id([0; 16])),
+            ("colons", channel_identity_lifecycle_receipt_id([b':'; 16])),
+        ],
+        &[("two_ids", joined(&[&a, &b])), empty.clone()],
+    );
+    pin(
+        &mut table,
+        "RetrievalRunId",
+        vec![
+            ("id", retrieval_run_id(a)),
+            ("zero", retrieval_run_id([0; 16])),
+            ("colons", retrieval_run_id([b':'; 16])),
+        ],
+        &[("two_ids", joined(&[&a, &b])), empty.clone()],
+    );
+    pin(
+        &mut table,
+        "LoadedSkillKey",
+        vec![
+            ("receipt", loaded_skill_key("receipt-1", id_a())),
+            ("empty_receipt", loaded_skill_key("", id_b())),
+            ("separators", loaded_skill_key("a:b\0c", id(ID_COLON))),
+        ],
+        &[
+            ("nil_skill", joined(&[&u64_be(1), b"r", &[0; 16]])),
+            ("length_over", joined(&[&u64_be(2), b"r", &a])),
+            ("length_under", joined(&[&u64_be(0), b"r", &a])),
+            ("length_max", joined(&[&u64_be(u64::MAX), &a])),
+            ("no_skill", joined(&[&u64_be(1), b"r"])),
+            ("short_length", vec![0; 7]),
+            ("bad_utf8_receipt", joined(&[&u64_be(1), &[0xff], &a])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "VadAnnotationMetaKey",
+        vec![
+            ("zero_type", vad_annotation_meta_key(0, id_a())),
+            ("max_type", vad_annotation_meta_key(u8::MAX, id_b())),
+            ("colons", vad_annotation_meta_key(b':', id(ID_COLON))),
+        ],
+        &[
+            ("nil_id", joined(&[&[1], &[0; 16]])),
+            ("type_only", vec![1]),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "LeaseKey",
+        vec![
+            ("zero", lease_key(0, 0)),
+            ("max", lease_key(u64::MAX, 1)),
+            (
+                "pattern",
+                lease_key(0x0123_4567_89ab_cdef, 0xfedc_ba98_7654_3210),
+            ),
+        ],
+        &[
+            ("no_sep", joined(&[&zeros_16, &zeros_16])),
+            ("wrong_sep", joined(&[&zeros_16, b";", &zeros_16])),
+            (
+                "multibyte_at_split",
+                joined(&[&zeros_16[..15], "\u{e9}".as_bytes(), &zeros_16]),
+            ),
+            (
+                "signed_client",
+                joined(&[&zeros_16, b":+", &zeros_16[..15]]),
+            ),
+            ("vault_only", zeros_16.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "NoteForkKey",
+        vec![
+            ("ids", note_fork_key(id_a(), id_b())),
+            ("nul_colon", note_fork_key(id(ID_NUL), id(ID_COLON))),
+        ],
+        &[
+            ("nil_fork", joined(&[hex_a, b":", &nil_hex])),
+            ("no_sep", joined(&[hex_a, hex_b])),
+            ("note_only", hex_a.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "BandKey",
+        vec![
+            ("class", band_key(id_a(), "code-review")),
+            ("empty_class", band_key(id_b(), "")),
+            ("separators", band_key(id(ID_COLON), "a:b\0c")),
+            ("multibyte", band_key(id_a(), "\u{e9}")),
+        ],
+        &[
+            ("nil_owner", joined(&[&[0; 16], &u16_be(1), b"c"])),
+            ("length_over", joined(&[&a, &u16_be(2), b"c"])),
+            ("length_under", joined(&[&a, &u16_be(0), b"c"])),
+            ("short_length", joined(&[&a, &[0]])),
+            ("owner_only", a.to_vec()),
+            ("bad_utf8_class", joined(&[&a, &u16_be(1), &[0xff]])),
+            empty.clone(),
+        ],
+    );
+    let band_a = joined(&[&a, &u16_be(1), b"c"]);
+    pin(
+        &mut table,
+        "MarkerKey",
+        vec![
+            ("marker", marker_key(id_a(), "code-review", id_b())),
+            ("empty_class", marker_key(id_b(), "", id_a())),
+            ("colon_class", marker_key(id(ID_COLON), "a:b", id(ID_COLON))),
+        ],
+        &[
+            ("nil_word", joined(&[&band_a, b":", &[0; 16]])),
+            ("nil_owner", joined(&[&[0; 16], &u16_be(1), b"c:", &b])),
+            ("wrong_sep", joined(&[&band_a, b";", &b])),
+            ("length_over", joined(&[&a, &u16_be(2), b"c:", &b])),
+            ("no_word", joined(&[&band_a, b":"])),
+            ("band_only", band_a.clone()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "TaskFollowUpKey",
+        vec![
+            ("stage", task_follow_up_key(id_a(), "review")),
+            ("empty_stage", task_follow_up_key(id_b(), "")),
+            ("nul_stage", task_follow_up_key(id(ID_COLON), "a\0b")),
+        ],
+        &[
+            ("nil_task", joined(&[&[0; 16], b"\0s"])),
+            ("wrong_sep", joined(&[&a, b"\x01s"])),
+            ("task_only", a.to_vec()),
+            ("bad_utf8_stage", joined(&[&a, b"\0", &[0xff]])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "TaskAttemptKey",
+        vec![
+            ("pattern", task_attempt_key(hash, [1; 16])),
+            ("zero", task_attempt_key([0; 32], [0; 16])),
+            ("colons", task_attempt_key([b':'; 32], [b':'; 16])),
+        ],
+        &[("digest_only", hash.to_vec()), empty],
+    );
+
+    assert_table("lib-keys-n-to-v", &table, LIB_KEYS_N_TO_V_TABLE_SHA256);
 }

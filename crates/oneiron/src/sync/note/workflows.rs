@@ -57,6 +57,15 @@ impl SideKey for NoteForkKey {
     }
 }
 
+/// One [`NoteForkKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn note_fork_key_pin_for_test(
+    note: crate::EntityId,
+    fork: crate::EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&NoteForkKey(HexId(note), HexId(fork)))
+}
+
 /// A review bundle as a window carries it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct BundleCarrier {

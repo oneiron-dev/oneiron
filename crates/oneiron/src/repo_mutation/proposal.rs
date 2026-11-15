@@ -101,6 +101,15 @@ impl SideKey for OpKey {
     }
 }
 
+/// One [`OpKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn op_key_pin_for_test(
+    repo_key_hash: [u8; 64],
+    seq: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&OpKey { repo_key_hash, seq })
+}
+
 fn op_key(repo: &RepoRef, seq: u64) -> OpKey {
     let mut repo_key_hash = [0_u8; 64];
     repo_key_hash.copy_from_slice(repo_mutation_repo_key_hash(repo).as_bytes());

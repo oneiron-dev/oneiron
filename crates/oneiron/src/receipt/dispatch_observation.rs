@@ -40,6 +40,18 @@ impl SideKey for DispatchObservationKey {
     }
 }
 
+/// One [`DispatchObservationKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn dispatch_observation_key_pin_for_test(
+    attempt_id: AttemptId,
+    attempt_count: u32,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&DispatchObservationKey {
+        attempt_id,
+        attempt_count,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DispatchObservation {

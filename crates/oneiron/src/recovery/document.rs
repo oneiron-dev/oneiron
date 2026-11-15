@@ -73,6 +73,15 @@ impl SideKey for DocKey {
     }
 }
 
+/// One [`DocKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn doc_key_pin_for_test(
+    note: EntityId,
+    head: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&DocKey(note, head))
+}
+
 /// A format-independent current document snapshot, without retired text or op history.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

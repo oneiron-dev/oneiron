@@ -36,6 +36,18 @@ impl SideKey for BandKey {
             .map(|class| Self { owner, class })
     }
 }
+
+/// One [`BandKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn band_key_pin_for_test(
+    owner: EntityId,
+    class: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&BandKey {
+        owner,
+        class: class.to_owned(),
+    })
+}
 struct MarkerKey {
     band: BandKey,
     word: EntityId,
@@ -54,6 +66,22 @@ impl SideKey for MarkerKey {
             word: EntityId::from_bytes(bytes.get(end + 1..)?.try_into().ok()?).ok()?,
         })
     }
+}
+
+/// One [`MarkerKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn marker_key_pin_for_test(
+    owner: EntityId,
+    class: &str,
+    word: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&MarkerKey {
+        band: BandKey {
+            owner,
+            class: class.to_owned(),
+        },
+        word,
+    })
 }
 #[derive(Default, Serialize, Deserialize)]
 struct BandState {

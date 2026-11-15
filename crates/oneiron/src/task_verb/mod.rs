@@ -565,3 +565,9 @@ pub struct TaskUpdateRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<crate::task_verb::AttemptHandle>,
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    ask_band::{band_key_pin_for_test, marker_key_pin_for_test},
+    follow_up::task_follow_up_key_pin_for_test,
+};

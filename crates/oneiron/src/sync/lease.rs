@@ -81,6 +81,18 @@ impl SideKey for LeaseKey {
     }
 }
 
+/// One [`LeaseKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn lease_key_pin_for_test(
+    vault_id: u64,
+    client_id: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&LeaseKey {
+        vault_id,
+        client_id,
+    })
+}
+
 /// The vault and client ids a [`LeaseKey`] reads from the bytes after its table prefix, or
 /// `None` where it refuses them (`test_doors::side_key_hex_case`).
 #[cfg(oneiron_test_support)]

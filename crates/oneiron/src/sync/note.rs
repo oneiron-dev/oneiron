@@ -193,3 +193,6 @@ impl State {
         Ok(())
     }
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use workflows::note_fork_key_pin_for_test;

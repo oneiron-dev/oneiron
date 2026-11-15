@@ -114,3 +114,6 @@ use crate::connector_key::ScopedCapabilityProvenance;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 #[cfg(test)]
 use rmpv::Value;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::store::attempt_call_key_pin_for_test;

@@ -473,3 +473,8 @@ mod shared_membership_tests;
 #[cfg(test)]
 mod adapter_tests;
 pub(crate) mod tables;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use side_keys::{
+    hex_hex_hash_pin_for_test, hex_pair_pin_for_test, hex_triple_pin_for_test,
+};

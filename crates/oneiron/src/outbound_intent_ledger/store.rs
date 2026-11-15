@@ -73,6 +73,18 @@ impl SideKey for AttemptCallKey {
     }
 }
 
+/// One [`AttemptCallKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn attempt_call_key_pin_for_test(
+    attempt_id: AttemptId,
+    call_seq: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&AttemptCallKey {
+        attempt_id,
+        call_seq,
+    })
+}
+
 /// Reads and fully decodes one ledger row, checking that the row found under `id` actually
 /// carries that id (the typed table has no key to check against inside the value codec, so the
 /// check happens here). A decode failure surfaces as [`IntentLedgerError::InvalidRecord`], same

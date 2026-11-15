@@ -374,3 +374,6 @@ pub(crate) use privacy_kit::{
     KitPiecePair, KitPieceStore, join_kept_piece, recovery_root_pending_piece_install,
     recovery_root_piece_install, vault_key_piece_install,
 };
+
+#[cfg(oneiron_test_support)]
+pub(crate) use document::doc_key_pin_for_test;
