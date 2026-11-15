@@ -168,6 +168,13 @@ impl AuthorityView {
     pub(crate) fn scope_commitment_mismatches(&self) -> &BTreeSet<[u8; 32]> {
         &self.scope_commitment_mismatches
     }
+
+    /// Whether `other` holds the same decision image as this view: one
+    /// shared fold, or an equal one (SELECTOR-RELEASE-POINT = B). The held
+    /// pacts are part of the fold, so they need no second compare.
+    pub(crate) fn same_image(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.fold, &other.fold) || self.fold == other.fold
+    }
 }
 
 impl std::ops::Deref for AuthorityView {

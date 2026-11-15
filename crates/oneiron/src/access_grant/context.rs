@@ -206,6 +206,16 @@ impl<'v> AccessContext<'v> {
 }
 
 impl AccessContextSnapshot {
+    /// Whether `other` resolves the same reach as this snapshot: the same
+    /// principal, relationship memberships and live grants, whatever second
+    /// each was observed at (SELECTOR-RELEASE-POINT = B). A grant revoked or
+    /// expired since is no longer loaded, so the reach differs.
+    pub(crate) fn same_reach(&self, other: &Self) -> bool {
+        self.principal == other.principal
+            && self.relationships == other.relationships
+            && self.grants == other.grants
+    }
+
     pub(crate) fn allows_at_snapshot(
         &self,
         entity_type: u8,

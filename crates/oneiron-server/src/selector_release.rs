@@ -5,8 +5,10 @@
 //! not rollback. Queued work follows the current Grant decision". Bytes still
 //! in this server's queue are not synced copies.
 //!
-//! - The basis is the grant's stored bytes and the authority fold, read where
-//!   the answer is made, before it is filtered.
+//! - The basis ([`oneiron::sync::SelectorReleaseBasis`]) is the grant's live
+//!   bytes while it confers read, the authority fold and the reach its member
+//!   reads relationship labels with, read where the answer is made, before it
+//!   is filtered.
 //! - A socket keeps each queued answer's basis under a token the server mints
 //!   (a client may reuse a request id) and tags each frame of the answer
 //!   with it. The tag is never a peer wire tag: the socket's release strips
@@ -21,8 +23,8 @@
 use std::collections::HashMap;
 
 use base64::Engine;
-use oneiron::authority::AuthorityFold;
-use oneiron::{EntityId, Vault};
+use oneiron::Vault;
+pub(crate) use oneiron::sync::SelectorReleaseBasis;
 
 /// First byte of a queued selector answer on a socket's own direct queue: no
 /// wire tag uses it, and the routed app marker is 255.
@@ -33,45 +35,22 @@ const HEADER: usize = 10;
 /// (`livequery/residence.rs` `bound_selector`).
 const MAX_ENCODED_SELECTOR: usize = 8192;
 
-/// What a selector answer was made under.
-pub(crate) struct SelectorReleaseBasis {
-    grant_id: EntityId,
-    /// The grant's stored bytes and the authority fold; `None` when either
-    /// could not be read, which no release passes.
-    made_under: Option<(Option<Vec<u8>>, AuthorityFold)>,
-}
-
-impl SelectorReleaseBasis {
-    /// The basis of an answer under the grant `grant_id`, read now.
-    pub(crate) fn take(vault: &Vault, grant_id: EntityId) -> Self {
-        Self {
-            grant_id,
-            made_under: read(vault, &grant_id),
-        }
+/// The basis of a residence call whose params name an encoded selector at
+/// their top. `None` when they name none, or one that does not decode, which
+/// the call itself refuses with no rows.
+pub(crate) fn residence_basis(
+    vault: &Vault,
+    params: &serde_json::Value,
+) -> Option<SelectorReleaseBasis> {
+    let encoded = params.get("selector")?.as_str()?;
+    if encoded.len() > MAX_ENCODED_SELECTOR {
+        return None;
     }
-
-    /// The basis of a residence call whose params name an encoded selector
-    /// at their top. `None` when they name none, or one that does not
-    /// decode, which the call itself refuses with no rows.
-    pub(crate) fn of_residence_params(vault: &Vault, params: &serde_json::Value) -> Option<Self> {
-        let encoded = params.get("selector")?.as_str()?;
-        if encoded.len() > MAX_ENCODED_SELECTOR {
-            return None;
-        }
-        let bytes = base64::engine::general_purpose::STANDARD
-            .decode(encoded)
-            .ok()?;
-        let selector = oneiron::sync::decode_sync_selector(&bytes).ok()?;
-        Some(Self::take(vault, selector.grant_id))
-    }
-
-    fn stands(&self, vault: &Vault) -> bool {
-        self.made_under.is_some() && read(vault, &self.grant_id) == self.made_under
-    }
-}
-
-fn read(vault: &Vault, grant_id: &EntityId) -> Option<(Option<Vec<u8>>, AuthorityFold)> {
-    Some((vault.get_raw(grant_id).ok()?, vault.authority_fold().ok()?))
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(encoded)
+        .ok()?;
+    let selector = oneiron::sync::decode_sync_selector(&bytes).ok()?;
+    Some(SelectorReleaseBasis::take(vault, selector.grant_id))
 }
 
 /// A socket's queued selector answers, by token. They go with the socket.
@@ -109,7 +88,7 @@ impl SelectorAnswers {
         // A test commits its change here, in the gap between the answer's
         // queue and its release.
         #[cfg(oneiron_test_support)]
-        crate::test_doors::selector_release::run(&basis.grant_id);
+        crate::test_doors::selector_release::run(basis.grant_id());
         self.queued.insert(token, Judged::Waiting(Box::new(basis)));
         let count = frames.len();
         frames

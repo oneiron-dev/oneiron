@@ -449,7 +449,7 @@ pub(super) fn run(
     // An answer under a selector leaves only while the grant and the
     // authority it is made under stand (SELECTOR-RELEASE-POINT = B): read
     // before the call binds the selector.
-    let basis = SelectorReleaseBasis::of_residence_params(&server.vault, &request.params);
+    let basis = crate::selector_release::residence_basis(&server.vault, &request.params);
     // A forwarded search's verified caller, whom its receipt names (FIX 3550),
     // and whether it sits off the carrying device (FIX 11991).
     let mut attribution = None;
