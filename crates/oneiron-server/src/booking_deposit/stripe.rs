@@ -155,9 +155,15 @@ impl std::fmt::Display for StripeCallError {
 }
 
 impl StripeCallError {
+    /// The settle answer for this failure. A setup failure (the key withheld,
+    /// missing or not a test key, or a live key refused) made no Stripe call,
+    /// and it heals when the owner or the host fixes the key: the move stays
+    /// owed and is asked again hourly, never failing for good (Muse Spark
+    /// blind review of #8231, 16 Nov).
     fn into_failure(self) -> DepositProviderFailure {
         match self {
-            Self::Transport(_) | Self::Unavailable { .. } | Self::Setup(_) => {
+            Self::Setup(_) => DepositProviderFailure::Pending(self.to_string()),
+            Self::Transport(_) | Self::Unavailable { .. } => {
                 DepositProviderFailure::Transient(self.to_string())
             }
             Self::Refused { .. } | Self::Malformed(_) => {
@@ -491,7 +497,8 @@ impl DepositSettlementPort for StripeClient<'_> {
                 Ok(intent) if done.contains(&intent.status.as_str()) => Ok(intent.amount_received),
                 // The read that would say whether the move stands done failed
                 // for now: the row runs again, never failing for good on an
-                // outage (Muse review of the money fixes, 15 Nov).
+                // outage (Muse review of the money fixes, 15 Nov); a setup
+                // failure waits hourly for the key.
                 Err(
                     read @ (StripeCallError::Transport(_)
                     | StripeCallError::Unavailable { .. }

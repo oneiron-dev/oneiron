@@ -5,10 +5,11 @@
 //! (`oneiron::booking::lifecycle`'s deposit doors) records what Stripe was
 //! asked and answered; this module asks it:
 //!
-//! - [`checkout`]: the public `POST /public/booking/{page}/deposit/checkout`
-//!   creates the deposit's PaymentIntent with manual capture for the
-//!   published terms and answers the checkout lease the hold presents, with
-//!   the client secret Stripe.js authorizes the card under.
+//! - [`checkout`]: a hold of a deposit event type opens the deposit's
+//!   checkout inside the hold door (no route of its own): it creates the
+//!   PaymentIntent with manual capture for the published terms and answers
+//!   the checkout lease the hold presents, with the client secret Stripe.js
+//!   authorizes the card under.
 //! - [`webhook`]: the keyless, signed `POST /v1/hooks/stripe/booking-deposit`
 //!   carries Stripe's word that the card was authorized, refused, or the
 //!   payment cancelled.
