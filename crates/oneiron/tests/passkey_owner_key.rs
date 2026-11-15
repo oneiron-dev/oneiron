@@ -41,7 +41,8 @@
 //! key only a passkey vouched for. Only an owner key's proof by a key the
 //! limits do not reach turns it on, and turning it off brings the limits
 //! back, also for each key a limited key vouched for or rotated to while it
-//! was on. It reads at each row's parents: a row on a sibling branch of the
+//! was on, and for each device whose enrolment rested on a limited key's
+//! cosign. It reads at each row's parents: a row on a sibling branch of the
 //! choice keeps the limits, and an off beside an on that did not see it
 //! reads off. A vault whose only owner key is a passkey asks for no proof
 //! (Engine ruling CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A), so its web
@@ -1459,6 +1460,65 @@ fn a_successor_a_limited_key_rotated_to_under_full_owner_is_limited_once_it_is_o
         )
         .unwrap_or(false),
         "the successor keeps the limits of the key it succeeded"
+    );
+    assert!(
+        hosted.live_owner_key(&ed_key(&owner_device())),
+        "the owner's device key stands"
+    );
+}
+
+/// Sol xhigh review of PR 1c, finding 1: the successor rule reads whose
+/// consent the entry rests on, not its primary alone. An agent primary,
+/// which holds no consent, enrols an owner device with the passkey-vouched
+/// key's cosign while the choice is on; once it is off, that device revokes
+/// no other owner key until a non-passkey key confirms it.
+#[test]
+fn a_device_enrolled_on_a_limited_keys_cosign_under_full_owner_is_limited_once_it_is_off() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    let counted = append_signed_rows(
+        &hosted.vault,
+        vec![
+            SignedRow {
+                op: AuthorityOp::EnrollDevice {
+                    device: software_device(&agent(), ROLE_AGENT),
+                },
+                signer: ed_key(&owner_device()),
+                cosigners: Vec::new(),
+            },
+            SignedRow {
+                op: AuthorityOp::EnrollDevice {
+                    device: software_device(&successor(), ROLE_OWNER),
+                },
+                signer: ed_key(&agent()),
+                cosigners: vec![ed_key(&host_held())],
+            },
+        ],
+        signs_as,
+    )
+    .unwrap_or_default();
+    assert_eq!(
+        counted,
+        vec![true, true],
+        "guard: with the choice on, the agent enrols the device on the passkey-vouched key's cosign"
+    );
+    assert!(
+        full_owner_proved_by(&hosted, false, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice off"
+    );
+    assert!(
+        !revoke_owner_key_signed_by(
+            &hosted.vault,
+            ed_key(&successor()),
+            ed_key(&owner_device()),
+            |transcript| successor().sign(transcript).to_bytes().to_vec(),
+        )
+        .unwrap_or(false),
+        "the device keeps the limits of the key whose cosign enrolled it"
     );
     assert!(
         hosted.live_owner_key(&ed_key(&owner_device())),
