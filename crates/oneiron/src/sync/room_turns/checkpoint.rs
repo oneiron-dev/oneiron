@@ -75,9 +75,10 @@ pub(in crate::sync) fn entry_joined(key: &str, joined: &[u8]) -> Placement {
 
 /// Whether the turn manifest `value` under `key` is the turn its key names,
 /// its parts joined through `part` (UC-10 PR 1): `Some(true)` when the
-/// joined row is a turn of that id, `Some(false)` when the parts join to
-/// another turn or to no turn row. `None` for a value that is no manifest,
-/// and for one whose parts do not all join.
+/// joined row is a turn of that id, `Some(false)` when it is another turn.
+/// `None` for a value that is no manifest, for one whose parts do not all
+/// join, and for joined bytes that read as no turn row: they prove no
+/// other row.
 pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
     key: &str,
     value: &[u8],
@@ -85,7 +86,7 @@ pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
 ) -> Option<bool> {
     let parts = crate::sync::room_parts::manifest(value)?;
     let joined = join_parts_from(&parts, part)?;
-    Some(decode_held(&joined).is_ok_and(|turn| turn.turn_id == key))
+    decode_held(&joined).ok().map(|turn| turn.turn_id == key)
 }
 
 /// Where `turn`, stored under `key` as `value`, goes: with its TURN, held

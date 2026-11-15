@@ -59,8 +59,9 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
 /// Whether the side row manifest `value` under `key` is the row its key
 /// names, its parts joined through `part` (UC-10 PR 1), as the merge reads
 /// a joined row: `Some(true)` when the joined row rides under its own key,
-/// `Some(false)` when the parts join to another row or to none. `None` for
-/// a value that is no manifest, and for one whose parts do not all join.
+/// `Some(false)` when it is another row. `None` for a value that is no
+/// manifest, for one whose parts do not all join, and for joined bytes
+/// that read as no side row: they prove no other row.
 pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
     key: &str,
     value: &[u8],
@@ -71,5 +72,7 @@ pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
     } else {
         join_parts_from(&crate::sync::room_parts::generic_manifest(value)?, part)?
     };
-    Some(decode_held(&joined).is_ok_and(|row| carrier_key(&row, &joined) == key))
+    decode_held(&joined)
+        .ok()
+        .map(|row| carrier_key(&row, &joined) == key)
 }

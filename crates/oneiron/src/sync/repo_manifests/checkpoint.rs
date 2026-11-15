@@ -42,9 +42,9 @@ pub(in crate::sync) fn key_class(key: &str) -> KeyClass {
 /// Whether the repo head `value` under `key` is the manifest its key names,
 /// its parts joined through `part` (UC-10 PR 1): `Some(true)` when the
 /// joined manifest names the key's portable id and the head's CODE entity,
-/// `Some(false)` when the parts join to another manifest or to none.
-/// `None` for a value that is no head under a portable id, and for a head
-/// whose parts do not all join: it proves no binding.
+/// `Some(false)` when it is another manifest. `None` for a value that is no
+/// head under a portable id, for a head whose parts do not all join, and
+/// for joined bytes that read as no manifest: it proves no binding.
 pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
     key: &str,
     value: &[u8],
@@ -53,16 +53,16 @@ pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
     let portable = RepoPortableId::from_hex(key)?;
     let head = decode(value).ok()?;
     let joined = join_parts_from(&head.body, part)?;
-    Some(
-        RepoManifest::decode(&joined)
-            .is_some_and(|manifest| manifest.portable == portable && manifest.code == head.code),
-    )
+    RepoManifest::decode(&joined)
+        .map(|manifest| manifest.portable == portable && manifest.code == head.code)
 }
 
 /// The CODE entity of the repo head `value` under `key` when its parts do
-/// not all join through `part` but it names one `part` holds: its holder
-/// would still take that part, so the capture keeps the window whole (FIX
-/// 10278). `None` for a head that joins, or names no held part.
+/// not join through `part` to a manifest but it names one `part` holds: its
+/// holder would still take that part, so the capture keeps the window whole
+/// (FIX 10278), as it does when every part is held and the joined bytes
+/// read as no manifest. `None` for a head that joins to a manifest, or
+/// names no held part.
 pub(in crate::sync) fn unjoined_holder<B: AsRef<[u8]>>(
     key: &str,
     value: &[u8],
@@ -70,7 +70,10 @@ pub(in crate::sync) fn unjoined_holder<B: AsRef<[u8]>>(
 ) -> Option<OwnerRef> {
     RepoPortableId::from_hex(key)?;
     let head = decode(value).ok()?;
-    if join_parts_from(&head.body, &part).is_some() {
+    if join_parts_from(&head.body, &part)
+        .and_then(|joined| RepoManifest::decode(&joined))
+        .is_some()
+    {
         return None;
     }
     head.body

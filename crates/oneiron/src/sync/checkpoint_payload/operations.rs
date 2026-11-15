@@ -232,9 +232,14 @@ fn prepare(
         Capture::Unclassified(why) => {
             let refusal = classifier.refusal.unwrap_or((None, unsupported(why)));
             // A parted row's refusal names the holder its key names; one whose
-            // parts join to another row names none (UC-10 PR 1).
-            if classifier.parted_refusal && refusal.0.is_some() && unbound_parted_row(&doc) {
-                return Err((None, SyncUnclassified::Undecodable));
+            // parts join to another row names none, and neither does one whose
+            // history the binding cannot read whole (UC-10 PR 1).
+            if classifier.parted_refusal && refusal.0.is_some() {
+                match parted_rows_bound(&doc) {
+                    Some(true) => {}
+                    Some(false) => return Err((None, SyncUnclassified::Undecodable)),
+                    None => return Err((None, refusal.1)),
+                }
             }
             return Err(refusal);
         }
@@ -276,13 +281,18 @@ fn prepare(
     })
 }
 
-/// Whether `doc`'s history holds a parted row whose parts join to a row its
-/// key does not name (UC-10 PR 1): a second pass, which places nothing,
-/// notes every parted map value the first one stopped short of.
-fn unbound_parted_row(doc: &LoroDoc) -> bool {
+/// Whether every parted row in `doc`'s history is bound to its key (UC-10
+/// PR 1): a second pass, which places nothing, notes every parted map value
+/// the first one stopped short of. `Some(false)` when a row's parts join to
+/// a row its key does not name; `None` when that pass stops short too (a
+/// root outside the window's maps), as it then holds only part of the
+/// history and proves no binding.
+fn parted_rows_bound(doc: &LoroDoc) -> Option<bool> {
     let mut collector = PartedCollector::default();
-    doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut collector);
-    collector.rows.mismatch().is_some()
+    match doc.export_root_map_checkpoint(&WINDOW_ROOTS, &mut collector) {
+        Capture::Classified(_) => Some(collector.rows.mismatch().is_none()),
+        Capture::Unclassified(_) => None,
+    }
 }
 
 fn not_proved() -> Refusal {

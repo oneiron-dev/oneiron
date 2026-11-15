@@ -12,8 +12,9 @@
 //! all holds is joined and read as its map reads a joined row. A joined
 //! row that is not the row its key names is a proven mismatch: the
 //! checkpoint keeps the window whole with no owner hint, and the discard
-//! projection defers the window. A manifest whose parts are not all held
-//! proves nothing and keeps its placement.
+//! projection defers the window. A manifest whose parts are not all held,
+//! or join to bytes that read as no row of its map, proves nothing and
+//! keeps its placement.
 
 use std::collections::BTreeMap;
 
@@ -106,8 +107,8 @@ impl<B: AsRef<[u8]>> PartedRows<B> {
 
     /// Why a checkpoint capture keeps the group's window whole on its
     /// parted rows: a proven mismatch names no owner; a repo head whose
-    /// parts do not all join, but one of which the group holds, names its
-    /// CODE entity, as before (FIX 10278).
+    /// parts do not join to a manifest, but one of which the group holds,
+    /// names its CODE entity, as before (FIX 10278).
     pub(super) fn capture_refusal(&self) -> Option<(Option<OwnerRef>, SyncUnclassified)> {
         if self.mismatch().is_some() {
             return Some((None, SyncUnclassified::Undecodable));
@@ -124,7 +125,8 @@ impl<B: AsRef<[u8]>> PartedRows<B> {
 
 /// Whether the value `value` under `key` of the parted map `root` is the
 /// row its key names, its parts joined from `values`: `None` for a value
-/// that is no manifest, and for one whose parts do not all join.
+/// that is no manifest, for one whose parts do not all join, and for
+/// joined bytes that read as no row of the map.
 fn bound<B: AsRef<[u8]>>(
     root: &str,
     key: &str,
