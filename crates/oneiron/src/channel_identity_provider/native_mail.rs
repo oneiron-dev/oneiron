@@ -168,18 +168,6 @@ impl<H: NativeMailHost> NativeMailAdapter<H> {
         // before freezing the intent. This adapter cannot authorize a second
         // delivery path or normalize only the Gate's counterparty copy.
         let result = vault.dispatch_outbound_intent_recorded(request, sink)?;
-        if result.outcome == OutboundDispatchOutcome::DeliveredToChannel
-            && let Some(actor) = identity.facts.binding.actor_ref()
-        {
-            record_native_sent_passport(
-                vault,
-                identity_ref,
-                actor,
-                identity.facts.binding.facet_ref(),
-                self.send_message_id(&send_key)?,
-                result.receipt.occurred_at,
-            )?;
-        }
         Ok(result)
     }
 
