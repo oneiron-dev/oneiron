@@ -85,15 +85,16 @@ fn save_self_agent(
     definition.instructions =
         Some("Summarize for owen. Keep what yuki needs. Keep example.com verbatim.".to_owned());
     definition.compaction_model = None;
-    definition.memory_profile = Some(MemoryProfile {
-        window_token_budget,
-        budget_split: None,
-        compaction_backend: ModelTierRef("self".to_owned()),
-        compaction: CompactionOwnership::Engine,
-        hot_steps: Some(hot_steps),
-        output_decay: None,
-        verbatim_pins: vec!["example.com".to_owned()],
-    });
+    // `MemoryProfile` is `#[non_exhaustive]`: built through its constructor.
+    definition.memory_profile = Some(
+        MemoryProfile::new(
+            window_token_budget,
+            ModelTierRef("self".to_owned()),
+            CompactionOwnership::Engine,
+        )
+        .with_hot_steps(hot_steps)
+        .with_verbatim_pins(vec!["example.com".to_owned()]),
+    );
     debug_assert!(
         definition
             .memory_profile
@@ -676,6 +677,12 @@ async fn a_compaction_call_refused_after_it_went_out_keeps_its_receipt() {
     );
     let verdict = settled_verdict(&results)
         .unwrap_or_else(|| panic!("no refused compaction pass was collected: {results:#?}"));
+    // A refusal at prepare records `self_unavailable` and no execution on both
+    // trees; only a refusal after the send makes a missing `self_writer` main's.
+    assert!(
+        verdict["compaction"].get("self_unavailable").is_none(),
+        "the refused pass never went out, so this is not the 400 receipt: {verdict:#}"
+    );
     let writer = verdict
         .get("compaction")
         .and_then(|value| value.get("self_writer"))
