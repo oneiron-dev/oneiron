@@ -13,6 +13,8 @@ use oneiron::dreamer_promotion::{DreamerRunContext, promote_consolidated_claims}
 use oneiron::dreamer_runner::EnqueueDreamerAttempt;
 use oneiron::inbox::{InboxBulkVerb, InboxReviewDial, UnifiedInboxGroup};
 use oneiron::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
+use oneiron::store::GateDecisionId;
 use oneiron::write_envelope::ClaimCandidate;
 use oneiron::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, DreamerRunnerStore,
@@ -234,14 +236,46 @@ impl Fixture {
             .find(|row| row.claim_id == *new.as_bytes())
             .expect("the replacement has a tray row");
         assert_eq!(row.dreamer_run_id.as_deref(), Some(RUN_ID));
-        self.vault
-            .set_inbox_review_dial(InboxReviewDial::ReviewEverything)
-            .expect("show every member");
+        self.set_review_dial_as_owner(InboxReviewDial::ReviewEverything);
         assert!(
             self.inbox_claim_ids().contains(&new.to_hex()),
             "the run's group lists the replacement"
         );
         (head, new)
+    }
+
+    /// The owner sets the inbox review dial: the Setting key `inbox.review_dial`,
+    /// which only the vault's owner sets (SETTING-PLAIN PLAIN-2 deleted the
+    /// dial's table and its setter).
+    fn set_review_dial_as_owner(&self, dial: InboxReviewDial) {
+        let owner = self
+            .vault
+            .ensure_embedded_owner_actor()
+            .expect("the embedded owner");
+        let owner_proof = self
+            .vault
+            .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+            .expect("the owner's proof");
+        let outcome = self
+            .vault
+            .set_setting(
+                SettingCaller::Owner(&owner_proof),
+                SetSetting {
+                    key: "inbox.review_dial".to_owned(),
+                    item: None,
+                    scope: SettingScope::Vault,
+                    mode: SettingMode::Value,
+                    value: Some(serde_json::to_value(dial).expect("the dial as JSON")),
+                    expected_revision: None,
+                    why: None,
+                    check_in_ref: None,
+                },
+            )
+            .expect("show every member");
+        assert!(
+            matches!(outcome, SetSettingOutcome::Applied { .. }),
+            "the owner's dial applies: {outcome:?}"
+        );
     }
 
     fn inbox_claim_ids(&self) -> Vec<String> {

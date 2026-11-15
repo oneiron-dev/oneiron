@@ -529,11 +529,15 @@ mod plugin_fixture {
     use oneiron::dreamer_runner::{DreamerRunnerStore, EnqueueDreamerAttemptOutcome};
     use oneiron::edge::EdgeActorClass;
     use oneiron::inbox::{InboxBulkVerb, InboxExceptionClass, InboxQuery, InboxReviewDial};
+    use oneiron::setting::{
+        SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
+    };
     use oneiron::skill::{SkillLifecycle, SkillRecord};
     use oneiron::skill_hub::{
         HubFile, HubIndexEntry, HubPackage, HubPin, HubRef, SkillCapabilitySurface,
         SkillHubAdapter, SkillHubKind,
     };
+    use oneiron::store::GateDecisionId;
     use oneiron::write_envelope::{WriteActor, WriteProvenance};
     use oneiron::{EntityId, TimeRange, Vault};
     use rmpv::Value;
@@ -1230,12 +1234,44 @@ mod plugin_fixture {
             render_plugin_proposal_section(&self.proposal_rows()).expect("PROPOSALS renders")
         }
 
+        /// The owner sets the inbox review dial: the Setting key
+        /// `inbox.review_dial`, which only the vault's owner sets (SETTING-PLAIN
+        /// PLAIN-2 deleted the dial's table and its setter).
+        fn set_review_dial_as_owner(&self, dial: InboxReviewDial) {
+            let owner = self
+                .vault
+                .ensure_embedded_owner_actor()
+                .expect("the embedded owner");
+            let owner_proof = self
+                .vault
+                .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
+                .expect("the owner's proof");
+            let outcome = self
+                .vault
+                .set_setting(
+                    SettingCaller::Owner(&owner_proof),
+                    SetSetting {
+                        key: "inbox.review_dial".to_owned(),
+                        item: None,
+                        scope: SettingScope::Vault,
+                        mode: SettingMode::Value,
+                        value: Some(serde_json::to_value(dial).expect("the dial as JSON")),
+                        expected_revision: None,
+                        why: None,
+                        check_in_ref: None,
+                    },
+                )
+                .expect("persist the review dial");
+            assert!(
+                matches!(outcome, SetSettingOutcome::Applied { .. }),
+                "the owner's dial applies: {outcome:?}"
+            );
+        }
+
         /// Owner-visible Inbox members classified as a plugin install, with
         /// the group key the bulk verbs act on.
         pub(crate) fn plugin_install_inbox_members(&self, dial: InboxReviewDial) -> Vec<String> {
-            self.vault
-                .set_inbox_review_dial(dial)
-                .expect("persist the review dial");
+            self.set_review_dial_as_owner(dial);
             self.vault
                 .inbox_groups(InboxQuery::at(6_000, 32))
                 .expect("project inbox groups")
