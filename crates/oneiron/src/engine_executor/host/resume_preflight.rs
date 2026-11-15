@@ -161,6 +161,10 @@ impl std::fmt::Display for ResumePreflightReport {
     }
 }
 
+/// The report rides `EngineExecutorError::ResumeDivergence` as a boxed error, which
+/// `oneiron-records` holds without naming this type (L8-23).
+impl std::error::Error for ResumePreflightReport {}
+
 /// Ascending seqs collapsed into `a-b` ranges (or `a`), joined by `", "` (L8-23).
 fn collapse_ranges(seqs: impl IntoIterator<Item = u64>) -> String {
     let mut parts: Vec<String> = Vec::new();

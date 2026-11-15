@@ -989,7 +989,9 @@ fn report_output(vault: &Vault, run: EntityId) -> Option<ResumePreflightReport> 
 /// The held report a held entry's error carries.
 fn held_report(error: &EngineExecutorError) -> Option<ResumePreflightReport> {
     match error {
-        EngineExecutorError::ResumeDivergence(report) => Some(report.as_ref().clone()),
+        EngineExecutorError::ResumeDivergence(report) => {
+            report.downcast_ref::<ResumePreflightReport>().cloned()
+        }
         _ => None,
     }
 }

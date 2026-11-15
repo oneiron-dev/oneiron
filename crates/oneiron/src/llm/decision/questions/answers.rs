@@ -27,8 +27,8 @@ use crate::receipt::{
 };
 use crate::{EntityId, Error, Result, Vault};
 
-/// The cursor's wire version.
-const CURSOR_VERSION: u8 = 1;
+#[doc(hidden)]
+use oneiron_records::llm::decision::questions::answers::CURSOR_VERSION;
 
 /// Which part of the log a page reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

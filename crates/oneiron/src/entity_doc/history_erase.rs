@@ -8,6 +8,7 @@ use heed::{RoTxn, RwTxn};
 use serde::{Deserialize, Serialize};
 
 use super::{DocAuthorization, PurgeReceipt};
+use crate::check_in::CheckInDecision;
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::federation::PendingAuthorityAct;
@@ -110,6 +111,47 @@ impl Vault {
         entity: &EntityId,
         through: Option<&[u8]>,
     ) -> MemoryResult<TextHistoryErase> {
+        self.start_text_history_erase_with_check_in(owner, entity, through, None)
+            .map(|(erase, _)| erase)
+    }
+
+    /// [`Self::start_text_history_erase`], judged by check-in (2k2;
+    /// P25-SHAPE Q1 and Q4 = A; the door names the act class `erase`), with
+    /// the decision it runs on: the Owner on their own proof, and with
+    /// `check_in_ref` an asker's approved check-in for this erase
+    /// ([`crate::check_in::text_history_erase_effect_digest`]), which the
+    /// Owner applies on their own proof. As the record erase confirm does
+    /// (2j), it is spent in a writer of its own, on the Owner's live proof,
+    /// before the erase or its act: a refusal after it leaves the approval
+    /// spent. A waiting erase's `erase` act records the decision.
+    ///
+    /// # Errors
+    /// As [`Self::start_text_history_erase`]; a `check_in_ref` that names no
+    /// approved, unspent check-in for this erase.
+    pub fn start_text_history_erase_with_check_in(
+        &self,
+        owner: &AuthenticatedOwner,
+        entity: &EntityId,
+        through: Option<&[u8]>,
+        check_in_ref: Option<EntityId>,
+    ) -> MemoryResult<(TextHistoryErase, CheckInDecision)> {
+        let act_class = crate::check_in::ActClass::Erase;
+        let decision = match check_in_ref {
+            Some(id) => {
+                let applied = crate::check_in::AppliedCheckIn {
+                    id,
+                    verb: "vault.notes.history_purge",
+                    effect_digest: crate::check_in::text_history_erase_effect_digest(
+                        entity, through,
+                    ),
+                };
+                self.with_write_txn_grouped(|txn| {
+                    owner.revalidate_in_txn(self, txn)?;
+                    crate::check_in::owner_act_decision_in_txn(self, txn, act_class, Some(&applied))
+                })?
+            }
+            None => crate::check_in::owner_own_proof_decision(act_class),
+        };
         let vault_id = {
             let txn = self.store.env.read_txn().map_err(Error::from)?;
             owner.revalidate_in_txn(self, &txn)?;
@@ -118,7 +160,7 @@ impl Vault {
         let Some(vault_id) = vault_id else {
             return self
                 .erase_text_history_as(owner, entity, through)
-                .map(TextHistoryErase::Erased);
+                .map(|receipt| (TextHistoryErase::Erased(receipt), decision));
         };
         // The other Owners object to an exact range, not to "the head then".
         let note = super::pins::entity_type(self, entity)? == Some(ENTITY_TYPE_NOTE);
@@ -133,8 +175,14 @@ impl Vault {
             through,
         })
         .map_err(|_| Error::InvariantViolation("history erase act payload"))?;
-        let act = self.start_authority_act(owner, vault_id, ERASE_ACT, payload)?;
-        Ok(TextHistoryErase::Waiting(act))
+        let act = self.start_authority_act_recorded(
+            owner,
+            vault_id,
+            ERASE_ACT,
+            payload,
+            decision.clone(),
+        )?;
+        Ok((TextHistoryErase::Waiting(act), decision))
     }
 
     /// Runs the history erase a completed `erase` act names, once: the act
