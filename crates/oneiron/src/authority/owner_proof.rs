@@ -14,8 +14,10 @@
 //!   (`Owned(Yours)`) stands only when proven, whoever carries it. Unproven,
 //!   it is HELD: kept so the owner's device can ask, standing for nothing.
 //! - Item 2: an act a carrier that is not the owner's machine delivers waits
-//!   for the proof on every self-host vault, and on a hosted vault once an
-//!   owner device key is enrolled there (CARRIER-HOSTED-WEB-ACTS = C).
+//!   for the proof wherever the vault holds a key that can give it: a
+//!   self-host vault's live owner root, and on a hosted vault an enrolled
+//!   owner device key (CARRIER-HOSTED-WEB-ACTS = C). A vault with no such
+//!   key keeps today's acts: nothing there could ever answer the wait.
 //!
 //! The judge reads the act's parent state only, so every replica judges the
 //! same rows the same way. Mine is read in the roster view of that state
@@ -69,15 +71,17 @@ fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
 }
 
 /// Whether an act a not-mine carrier delivers needs the proof in `state`
-/// (item 2): on every self-host vault, and on a hosted vault as soon as its
-/// roster holds an owner key outside the host's custody. A hosted vault with
-/// none keeps today's acts (CARRIER-HOSTED-WEB-ACTS = C).
+/// (item 2): as soon as its roster holds a key that proves for the owner
+/// ([`proves_for_the_owner`]). A self-host vault's live owner root is one; a
+/// hosted vault has one once an owner device key is enrolled there. A vault
+/// with none keeps today's acts (CARRIER-HOSTED-WEB-ACTS = C, and the
+/// amendment to CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B): no key there could
+/// ever prove the act, so a wait would have no end.
 pub(super) fn not_mine_carriers_need_proof(state: &FoldState) -> bool {
-    !state.hosted
-        || state
-            .roster
-            .keys()
-            .any(|key| proves_for_the_owner(state, key))
+    state
+        .roster
+        .keys()
+        .any(|key| proves_for_the_owner(state, key))
 }
 
 /// Whether a carried machine answer needs the proof (items 1 and 2), judged
