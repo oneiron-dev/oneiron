@@ -25,7 +25,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-code-check](codemap/oneiron-code-check.md) | A type check of code-mode programs, run beside them as feedback | 10 | 1 | 0 |
 | [oneiron-code-source](codemap/oneiron-code-source.md) | Host-side preparation of a code-mode program in the oneiron engine: TypeScript stripped by Oxc in process… | 2 | 0 | 0 |
 | [oneiron-consent-state](codemap/oneiron-consent-state.md) | Consent state below core (core split slice 2): the consent grant, marker, bypass, effect and tool-scope… | 29 | 0 | 0 |
-| [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 34 | 1 | 0 |
+| [oneiron-container](codemap/oneiron-container.md) | Container sessions with an engine-owned Linux Landlock/seccomp fence | 35 | 3 | 0 |
 | [oneiron-contracts](codemap/oneiron-contracts.md) | Shared value vocabulary of the oneiron engine: the lowest engine crate, with no dependency on any… | 67 | 3 | 3 |
 | [oneiron-crypto](codemap/oneiron-crypto.md) | The oneiron crypto contract: one versioned format for sealed envelopes and signature records, a suite table… | 25 | 8 | 0 |
 | [oneiron-delivery-vocabulary](codemap/oneiron-delivery-vocabulary.md) | Delivery-window vocabulary of the oneiron engine: the quiet-hours and channel claim keys, decisions and… | 4 | 0 | 0 |
@@ -494,6 +494,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 |---|---|---|---|---|
 | `cli_env` | file | 1 | s | The container CLI's environment beyond `PATH`: the `HOME` and `XDG_RUNTIME_DIR` its host binds once for the… |
 | `egress` | file | 1 | s | Host-owned transport |
+| `guest_pids` | file | 1 | s | Physical guest pids limits and pressure observations (FIX 8013) |
 | `host_net_floor` | file | 1 | s | The host's floor for a guest's network work (FIX 5978, FIX 5979, FIX 6301) |
 | `image_release` | file+dir | 5 | m | Signed guest-image releases (FIX 8253, OS-IMAGE phase 1c): the release manifest, ONE signature-verifier… |
 | `launcher` | file+dir | 7 | m | Unprivileged in-container launcher and syscall-argument broker |

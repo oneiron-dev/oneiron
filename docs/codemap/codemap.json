@@ -111221,6 +111221,23 @@
      "bucket": "s",
      "kind": "src",
      "notable": [
+      "GuestPressure",
+      "HostPidSpace"
+     ],
+     "path": "src/guest_pids.rs",
+     "purpose": "Physical guest pids limits and pressure observations (FIX 8013)",
+     "surface": {
+      "const": 1,
+      "crate-vis": 3,
+      "enum": 1,
+      "fn": 5,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [
       "HostNetFloor",
       "HostNetPermit",
       "UnmeteredFloor"
@@ -111359,6 +111376,7 @@
      "path": "src/launcher.rs",
      "purpose": "Unprivileged in-container launcher and syscall-argument broker",
      "surface": {
+      "crate-vis": 1,
       "fn": 1
      }
     },
@@ -111441,9 +111459,9 @@
      "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
      "surface": {
       "enum": 2,
-      "fn": 12,
+      "fn": 15,
       "mod": 1,
-      "re-export": 9,
+      "re-export": 10,
       "struct": 8,
       "type": 1
      }
@@ -111510,7 +111528,7 @@
      "path": "src/supervisor.rs",
      "purpose": "Host custody of the seccomp listener and all network transports",
      "surface": {
-      "crate-vis": 6,
+      "crate-vis": 9,
       "fn": 1,
       "re-export": 1,
       "struct": 1
@@ -111636,6 +111654,22 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fence_launcher_stdin_hold.rs",
+     "purpose": "The fence launcher's stdin hold (FIX 8013): a launcher started with `ONEIRON_FENCE_HOLD_UNTIL_STDIN_CLOSES`…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/guest_pids_limit.rs",
+     "purpose": "The pids limit a container launch passes: physical, not the manifest count",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -111658,6 +111692,13 @@
      "largest_src_bucket": "s",
      "layout": "file",
      "purpose": "Host-owned transport"
+    },
+    "guest_pids": {
+     "files": 1,
+     "impl_vault": false,
+     "largest_src_bucket": "s",
+     "layout": "file",
+     "purpose": "Physical guest pids limits and pressure observations (FIX 8013)"
     },
     "host_net_floor": {
      "files": 1,
@@ -111732,8 +111773,8 @@
    },
    "over_bar": 0,
    "purpose": "Container sessions with an engine-owned Linux Landlock/seccomp fence",
-   "source_files": 34,
-   "test_files": 1
+   "source_files": 35,
+   "test_files": 3
   },
   "oneiron-contracts": {
    "files": [
