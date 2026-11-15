@@ -21,6 +21,13 @@
 //! ([`Vault::meeting_follow_up_text`]), so a retracted or re-decided draft
 //! stops a send that has not gone yet.
 //!
+//! A draft's words come from rows the owner may keep from a destination: the
+//! meeting's TURNs, and whatever else the producer's prompt carried. Its
+//! birth names each of them as a prompt input (FIX 8192), so the worlds those
+//! rows lie in follow the draft wherever it is read or listed, the owner's
+//! run review included: a destination that may not see the transcript does
+//! not see the draft.
+//!
 //! `calendar.follow_up` stays out of `CALENDAR_CLAIM_PREDICATES`, as
 //! `commitment.wake_proposal` stays out of the commitment family: a draft is a
 //! proposal to send, not a fact about an EVENT. A `calendar.follow_up` claim
@@ -41,6 +48,9 @@ use crate::entity_id::derived_domains::MEETING_FOLLOW_UP;
 use crate::error::{ClaimError, Error, Result};
 use crate::human_task::HumanTaskError;
 use crate::memory::{Memory, OutboundDraftInput, OutboundIntentReceipt};
+use crate::provenance::birth::RowBirth;
+use crate::provenance::birth::prompted::prompt_input_held_in_txn;
+use crate::provenance::made_by::MadeByClass;
 use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_SESSION, ENTITY_TYPE_TURN};
 use crate::store::dreamer_attempt_kind::DREAMER_RUNNER_ATTEMPT_KIND;
 use crate::store::outbound_trigger::OutboundIntentSource;
@@ -75,6 +85,9 @@ const KEY_SCHEMA_VERSION: &str = "schema_version";
 const KEY_SESSION_REF: &str = "session_ref";
 const KEY_TEXT: &str = "text";
 const KEY_TURN_REFS: &str = "turn_refs";
+
+/// The process a draft's birth names: [`write_meeting_follow_up_draft`].
+const MEETING_FOLLOW_UP_WRITE_PROCESS: &str = "calendar.follow_up.write_draft";
 
 const PROVENANCE_KEY_SURFACE: &str = "surface";
 const PROVENANCE_KEY_RUN: &str = "run";
@@ -124,9 +137,15 @@ pub fn meeting_follow_up_claim_id(draft: &MeetingFollowUpDraft) -> EntityId {
 /// and returns its claim id. Nothing is sent: the draft waits in its
 /// SESSION's inbox run for the owner.
 ///
+/// `prompt` names the other rows the producer's prompt carried (the meeting's
+/// other TURNs, the rows a recipient's name was read from). The draft's birth
+/// names them and its cited TURNs as prompt inputs (FIX 8192), so the worlds
+/// they lie in follow the draft's words; a row this vault never held names
+/// nothing and is left out.
+///
 /// Read before write: the same draft written again is success with no
 /// write, even after the owner decided it; a different draft under the same
-/// id is refused.
+/// id is refused. The replay keeps the birth the first write stamped.
 ///
 /// # Errors
 ///
@@ -140,6 +159,7 @@ pub fn write_meeting_follow_up_draft(
     author: WriteActor,
     attempt_id: AttemptId,
     draft: &MeetingFollowUpDraft,
+    prompt: &[EntityId],
 ) -> Result<EntityId> {
     validate_text(&draft.text)?;
     if draft.turn_refs.is_empty() {
@@ -187,6 +207,7 @@ pub fn write_meeting_follow_up_draft(
             return match_landed_draft(&landed, draft, &value, &run_id).map(|()| claim_id);
         }
         require_transcript_evidence(vault, &*wtxn, draft)?;
+        let birth = draft_birth_in_txn(vault, &*wtxn, author, draft, prompt, now)?;
         // The ONE write door: a raw claim write would omit the pending
         // consent row, and with it the owner's inbox approval.
         vault.sign_retained_machine_claim_in_txn(&*wtxn, &claim_id, &candidate, &mut envelope)?;
@@ -202,6 +223,7 @@ pub fn write_meeting_follow_up_draft(
                 },
                 now,
             )
+            .made_by(&claim_id, birth)
             .apply_recording_gate_decisions(wtxn)?;
         vault
             .get_claim_in_txn(&*wtxn, &claim_id)?
@@ -240,6 +262,35 @@ fn require_transcript_evidence(
         }
     }
     Ok(())
+}
+
+/// The draft's birth: `author` wrote it through this door at `at`, from a
+/// prompt that carried the cited TURNs first and then `prompt`, each named
+/// once as a prompt input. A row this vault never held is left out, as
+/// `Memory::prompted_birth` leaves it out; the cited TURNs are held, so the
+/// birth is never empty.
+fn draft_birth_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    author: WriteActor,
+    draft: &MeetingFollowUpDraft,
+    prompt: &[EntityId],
+    at: u64,
+) -> Result<Option<RowBirth>> {
+    let mut rows = draft.turn_refs.clone();
+    for row in prompt {
+        if prompt_input_held_in_txn(&vault.store, txn, row)? {
+            rows.push(*row);
+        }
+    }
+    Ok(RowBirth::prompted(
+        author,
+        MadeByClass::of_source(ClaimSource::Imported),
+        MEETING_FOLLOW_UP_WRITE_PROCESS,
+        &rows,
+        &[],
+        at,
+    ))
 }
 
 /// Replay comparison. Approval and lifecycle are not compared: a decided
