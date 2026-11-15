@@ -490,7 +490,16 @@ impl RecordingJsHost<'_, '_> {
         // run, the answer is read whole below, however large, so no chain
         // judges only a large answer's card and no name binds its real
         // body before that chain has seen it.
-        let outer_hooks_live = hooked.is_none() && self.admitted_outer_hooks_live;
+        // Round-2 red pin only: the round-1 fresh glob lookup, ignoring
+        // the outer chain's carried state.
+        let _ = self.admitted_outer_hooks_live;
+        let outer_hooks_live = hooked.is_none()
+            && match self.storage {
+                Some(ExecutorStorage::Canonical(vault)) => {
+                    vault.verb_hooks_may_run(SelfEffect::SkillsCall.as_str())
+                }
+                _ => false,
+            };
         let whole_for_hooks = outer_hooks_live
             || hooked
                 .as_ref()
