@@ -24,7 +24,7 @@ use crate::critic::{
 use crate::entity_id::EntityId;
 use crate::error::{CodeError, Error, Result};
 use crate::git_wire::lock_repository;
-use crate::secret_snapshot::SnapshotWithhold;
+use crate::secret_snapshot::{SnapshotWithhold, withheld_base_refusal};
 use crate::side_table::{self, Raw, SideKey, SideTable};
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
@@ -444,7 +444,8 @@ impl Vault {
 /// review holds the bytes it approves and reads the file they replace from
 /// its snapshot, so a write the policy would withhold, a write to a file the
 /// snapshot withholds, and a message that holds a secret are refused before
-/// the proposal or its snapshot is stored.
+/// the proposal or its snapshot is stored. The refusal of a write to a
+/// withheld file names the remediation route (FIX 2229).
 fn admit_custody(
     custody: &SnapshotCustody,
     pre_action: &StoredRepoSnapshot,
@@ -460,7 +461,7 @@ fn admit_custody(
         .iter()
         .any(|entry| entry.path == path && entry.kind == StoredRepoSnapshotEntryKind::Withheld)
     {
-        return Err(SnapshotWithhold::Excluded.refusal());
+        return Err(withheld_base_refusal());
     }
     match crate::batch::secret_scan::scan_file_content("", message.as_bytes()) {
         Some(reason) => Err(SnapshotWithhold::Quarantined(reason).refusal()),

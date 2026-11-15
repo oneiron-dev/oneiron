@@ -122,6 +122,14 @@ pub(crate) enum SnapshotWithhold {
 /// a file the snapshot it would change already withholds.
 pub(crate) const REASON_WITHHELD_PATH: &str = "gate.secret_scan.withheld_path";
 
+/// The route the refusal of a write to a file the snapshot withholds names
+/// (FIX 2229; Engine RULING FIX-2229-WITHHELD-WRITE = A): the owner's
+/// `vault.code.secrets.propose` remediation, the one reviewed write that
+/// changes or removes such a file (owner ruling SECRETS-IN-REPOS = A). It
+/// keeps only the BLAKE3 of the bytes it replaces (FIX 10974); an ordinary
+/// review would read those bytes from a snapshot that does not hold them.
+pub(crate) const REASON_REMEDIATION_ROUTE: &str = "gate.secret_scan.remediation_route";
+
 impl SnapshotWithhold {
     /// The refusal of a proposed write the policy would withhold: a review
     /// holds the bytes it approves, so none may hold these.
@@ -135,6 +143,20 @@ impl SnapshotWithhold {
             reason_codes: vec!["gate.secret_scan.detected", reason],
         })
     }
+}
+
+/// The refusal of an ordinary write to a file the snapshot it would change
+/// withholds: [`SnapshotWithhold::Excluded`]'s refusal, naming the
+/// remediation route ([`REASON_REMEDIATION_ROUTE`]).
+pub(crate) fn withheld_base_refusal() -> Error {
+    Error::Gate(GateError::GateWriteRejected {
+        outcome: "deny",
+        reason_codes: vec![
+            "gate.secret_scan.detected",
+            REASON_WITHHELD_PATH,
+            REASON_REMEDIATION_ROUTE,
+        ],
+    })
 }
 
 /// The repository root that anchors absolute custody declarations. Only local
