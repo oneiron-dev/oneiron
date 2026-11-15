@@ -304,6 +304,12 @@ name = "facade_live_run_status"
 path = "tests/facade_live_run_status.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
 
+# The self-browser door refusals root their server on a `MemoryKeystore` too.
+[[test]]
+name = "self_browser_doors"
+path = "tests/self_browser_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # L9-12's broker rerank leg registers its sentinel key in a test vault and
 # answers from the paid-leg TLS fake provider.
 [[test]]
