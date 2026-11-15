@@ -22,7 +22,8 @@ use serde::{Deserialize, Serialize};
 /// Largest page one call returns. A larger ask is served in pages of this
 /// size, each with the cursor of the next.
 pub const MAX_REACTION_SIGNAL_PAGE: usize = 1000;
-const CURSOR_BYTES: usize = 25;
+#[doc(hidden)]
+use oneiron_records::reaction::signal::CURSOR_BYTES;
 
 /// An explicit signal-read deadline expired; no partial feed was returned.
 #[derive(Debug, thiserror::Error)]

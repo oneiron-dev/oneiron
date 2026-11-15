@@ -109,7 +109,7 @@ impl GeneratedUiCard {
 
     /// Lowers the card for `surface` in one pass (ARCH-0048 G3): every atom
     /// the surface does not draw becomes its `fallbackText`, and a degraded
-    /// element can neither host a control action nor drive a bound property.
+    /// element can neither host an action nor drive a bound property.
     /// A result set the surface cannot draw lowers too (FIX 9892), with its
     /// backing refs, and the controls its action bar allowlists lower beside
     /// it, their declarations and backing refs gone: what it could not offer
@@ -130,7 +130,7 @@ impl GeneratedUiCard {
                 .map(|child| child.id.clone())
                 .collect::<Vec<_>>();
             let stripped = stripped_controls.contains(node.id.as_str());
-            let supported = !stripped && surface.supports_atom(&node.atom);
+            let supported = !stripped && surface.supports_atom(&node.atom, &self.state);
             let backed = supported || !(stripped || matches!(node.atom, LensAtom::ResultSet(_)));
             nodes.push(GeneratedUiNode {
                 id: node.id.clone(),
@@ -159,9 +159,11 @@ impl GeneratedUiCard {
             }
         }
 
+        // An element the surface still draws keeps its action's declaration; a
+        // lowered one became text, which carries no action.
         let offered = nodes
             .iter()
-            .filter(|node| matches!(node.atom, LensAtom::SelfUi(_)))
+            .filter(|node| node.atom.action().is_some())
             .map(|node| node.id.as_str().to_owned())
             .collect::<HashSet<_>>();
         let actions = self
@@ -193,7 +195,7 @@ impl GeneratedUiCard {
         let mut stack = vec![self.tree.root()];
         while let Some(node) = stack.pop() {
             if let Some(result_set) = node.atom.result_set_payload()
-                && !surface.supports_atom(&node.atom)
+                && !surface.supports_atom(&node.atom, &self.state)
             {
                 lowered_actions.extend(result_set.action_bar.iter().map(|id| id.as_str()));
             }
