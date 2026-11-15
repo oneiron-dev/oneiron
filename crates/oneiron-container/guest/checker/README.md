@@ -189,3 +189,8 @@ toolchain = { rust = "1.100.0" }
 
 The host child reaches what the host reaches; its receipts say
 `network = "host"` and are never reused.
+
+Host checks share the one scratch, so helpers take turns on it: each
+claims a host-wide lock beside the scratch (`/tmp/queue-check.lock`)
+before it cleans up and holds it until its run is done. Isolated guests
+each have a scratch of their own and never wait.

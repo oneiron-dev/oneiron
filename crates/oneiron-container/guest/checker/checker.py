@@ -37,6 +37,13 @@ import sys
 import threading
 import zlib
 
+try:
+    # The host-wide scratch lock below; missing off Unix, where host
+    # checks run unlocked as before.
+    import fcntl
+except ImportError:
+    fcntl = None
+
 # The image's dependency store, preseeded from the baseline lockfile; copied
 # into a command's scratch CARGO_HOME before it runs (README.md).
 PRESEEDED_CARGO_HOME = "/opt/queue-check/cargo-home"
@@ -263,6 +270,24 @@ def watch_input():
     os._exit(3)
 
 
+def claim_scratch(scratch):
+    """This scratch's host-wide lock, held while the helper owns it.
+
+    Host checks share one scratch, so a second helper's cleanup would
+    remove the first one's tree while its commands run; the lock holds
+    the host backend to one check at a time. A guest's scratch is its
+    own, so its lock is never contended. It releases with the process,
+    so a killed helper never wedges the next check. The lock file
+    itself stays: removing it would split the lock.
+    """
+    lock_path = scratch + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    handle = open(lock_path, "a+b")
+    if fcntl is not None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    return handle
+
+
 def main():
     first = read_frame()
     if first is None or first[0] != FRAME_HEADER:
@@ -271,6 +296,7 @@ def main():
     if header.get("version") != 1:
         return 2
     scratch = os.path.abspath(header["scratch"])
+    held = claim_scratch(scratch)
     shutil.rmtree(scratch, ignore_errors=True)
     source = os.path.join(scratch, "src")
     os.makedirs(source)
@@ -311,6 +337,7 @@ def main():
     after = observe(source, paths)
     write_frame(FRAME_INPUTS, json.dumps({"before": before, "after": after}).encode())
     write_frame(FRAME_DONE, json.dumps({"red": red}).encode())
+    held.close()
     return 0
 
 
