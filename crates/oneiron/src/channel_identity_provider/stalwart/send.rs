@@ -330,9 +330,10 @@ impl StalwartClient {
     /// What the server's own record holds of the send to `to` whose draft
     /// carries `message_id` in `mailbox`: `Email/query` by the Message-ID
     /// header, then `EmailSubmission/query` by that email, then
-    /// `EmailSubmission/get` of its submissions. The sent lookup and the
-    /// read-back both answer from this one read, each in its own vocabulary,
-    /// so they never disagree on one record (FIX 22347). Each read is bounded
+    /// `EmailSubmission/get` of its submissions. The sent lookup, the
+    /// read-back and the submit dedupe all answer from this one read, each in
+    /// its own vocabulary, so they never disagree on one record (FIX 22347,
+    /// FIX 23507). Each read is bounded
     /// by [`SENT_LOOKUP_TIMEOUT`] (FIX 22349): a read that does not answer in
     /// time is a failed read, so a stalled server holds a pass for one bound
     /// per read, not the client's whole request bound.
@@ -513,27 +514,26 @@ impl StalwartClient {
             Ok(prepared) => prepared,
             Err(_) => return OutboundExecutionOutcome::failed("native_mail_draft_failed"),
         };
-        let previous = match self.call(
-            "EmailSubmission/query",
-            json!({
-                "accountId": &mailbox.account_id, "filter": {"emailIds": [&email_id]}, "limit": 1
-            }),
-        ) {
-            Ok(reply) => reply,
+        // A submission id alone proves no send: the draft's cancelled
+        // submission, or another envelope's, must not stand in for this
+        // send's. Only a submission that proves the send skips the new one;
+        // a draft with only cancelled or other-envelope submissions submits
+        // again, and an ambiguous Message-ID fails before any submit, as a
+        // failed read does (FIX 23507).
+        match self.submission_record(mailbox, message_id, &message.to) {
+            Ok(SubmissionRecord::Submitted { submission_id }) => {
+                return submitted(&submission_id);
+            }
+            Ok(
+                SubmissionRecord::NoDraft
+                | SubmissionRecord::Unsubmitted
+                | SubmissionRecord::Unproven,
+            ) => {}
+            Ok(SubmissionRecord::Ambiguous) => {
+                return OutboundExecutionOutcome::failed("native_mail_draft_failed");
+            }
             Err(_) => {
                 return OutboundExecutionOutcome::failed("native_mail_submission_lookup_failed");
-            }
-        };
-        match array(&previous, "ids") {
-            Ok(ids) if !ids.is_empty() => {
-                if let Some(id) = ids[0].as_str() {
-                    return submitted(id);
-                }
-                return OutboundExecutionOutcome::failed("native_mail_submission_lookup_invalid");
-            }
-            Ok(_) => {}
-            Err(_) => {
-                return OutboundExecutionOutcome::failed("native_mail_submission_lookup_invalid");
             }
         }
         let reply = match self.raw_call("EmailSubmission/set", json!({
