@@ -25,11 +25,19 @@
 //! A row lands from any home, proven or not (Engine RULING
 //! SYNC-HOME-UNANSWERED = B, 14 Nov: never gate the owner on his own vault):
 //! it confers nothing beyond the live signed slip of the machine's own fold
-//! that binds it, whose scope is the slip's own. A withdrawal replays only
-//! from a home that proved itself a machine of the vault: it carries no
-//! signature, its replay withdraws the grant for good, and every later
-//! pairing of the owner names the same grant. A revoke the owner signs
-//! still reaches the machine at once, through its authority log.
+//! that binds it, whose scope is the slip's own. The row carries no
+//! signature, so from a home that has not proved itself it lands only for a
+//! slip whose holder this machine names as an owner (its signed mint names
+//! the holder as the owner who approved the pairing, FIX 11713, or this
+//! machine's live-owner census names him), and only where no other row is
+//! stored at its id (Engine RULING 15 Nov 23:59, SECREAD-A N1/N2):
+//! such a home can neither recast a guest's or a member's grant as an
+//! own-device grant, which would carry that slip past its grant's bounds,
+//! nor rewrite a row this machine holds. A withdrawal replays only from a
+//! home that proved itself a machine of the vault: it carries no signature,
+//! its replay withdraws the grant for good, and every later pairing of the
+//! owner names the same grant. A revoke the owner signs still reaches the
+//! machine at once, through its authority log.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -68,8 +76,10 @@ pub struct OwnDeviceGrantAdmission {
     /// already.
     pub withdrawn: BTreeSet<EntityId>,
     /// The grants refused: not asked for, not a person's own-device grant
-    /// for a holder whose live slip names it, refused by the ladder, or a
-    /// withdrawal served by a home that proved no machine of this vault.
+    /// for a holder whose live slip names it, refused by the ladder, or,
+    /// from a home that proved no machine of this vault, a withdrawal, a row
+    /// for a holder this machine does not name as an owner, or a row that
+    /// differs from the one stored here.
     pub refused: BTreeSet<EntityId>,
 }
 
@@ -120,8 +130,38 @@ fn named_own_device_grants_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<BTreeMap<EntityId, BTreeSet<String>>> {
+    slip_named_grants_in_txn(vault, txn, false)
+}
+
+/// [`named_own_device_grants_in_txn`] narrowed to the slips whose holder this
+/// machine names as an owner: the slip's signed mint names its holder as the
+/// member who approved its pairing (`minting_member`, FIX 11713), or this
+/// machine's live-owner census names the holder (the pairing's own test,
+/// for a link the host made with no approver, as the offline root link
+/// pairs the embedded owner). Only an owner's link records its approver,
+/// revalidated as a live owner when the link is made, and a pairing names a
+/// grant only for a holder who is a live owner when it mints, so that grant
+/// is the holder's own-device grant. A guest's slip and a member's invitee
+/// slip name no approving member, and a slip an owner paired for someone
+/// else names the owner, not its holder.
+fn owner_named_grants_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<BTreeMap<EntityId, BTreeSet<String>>> {
+    slip_named_grants_in_txn(vault, txn, true)
+}
+
+/// The grants the live person slips of this vault's fold name, with the
+/// holders whose slip names each; with `owner_named_only`, only the slips
+/// whose holder [`owner_named_grants_in_txn`] names as an owner.
+fn slip_named_grants_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    owner_named_only: bool,
+) -> Result<BTreeMap<EntityId, BTreeSet<String>>> {
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let mut named: BTreeMap<EntityId, BTreeSet<String>> = BTreeMap::new();
+    let mut census: BTreeMap<EntityId, bool> = BTreeMap::new();
     for (slip_id, mint) in &fold.slips.mints {
         let claims = &mint.action.claims;
         let Some(grant_ref) = claims.grant_ref.as_deref() else {
@@ -137,6 +177,24 @@ fn named_own_device_grants_in_txn(
             || !fold.slip_is_live(slip_id)
         {
             continue;
+        }
+        if owner_named_only {
+            let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
+                continue;
+            };
+            let owner = mint.action.minting_member == Some(holder)
+                || match census.get(&holder).copied() {
+                    Some(owner) => owner,
+                    None => {
+                        let owner =
+                            crate::policy_model::holds_live_ownership_in_txn(vault, txn, &holder)?;
+                        census.insert(holder, owner);
+                        owner
+                    }
+                };
+            if !owner {
+                continue;
+            }
         }
         let Ok(grant) = EntityId::from_hex(grant_ref) else {
             continue;
@@ -242,7 +300,14 @@ pub fn own_device_grant_states(
 /// nothing beyond the live signed slip of this machine's own fold that binds
 /// it, so it lands whichever home served it: a home that has not proved
 /// itself yet never keeps the owner from his device (Engine RULING
-/// SYNC-HOME-UNANSWERED = B). A replayed withdrawal erases the grant for
+/// SYNC-HOME-UNANSWERED = B). From such a home a row lands only for a holder
+/// whose live slip here names him as an owner
+/// ([`owner_named_grants_in_txn`]), and only where nothing, or the same
+/// row, is stored at its id (Engine RULING 15 Nov 23:59): an unsigned row
+/// cannot turn a guest's or a member's grant into an own-device grant, which
+/// would admit that slip past the guest's Ask bounds or the member's current
+/// scope, and cannot rewrite a row held here, which could stop the owner's
+/// own grant conferring. A replayed withdrawal erases the grant for
 /// good, and every later pairing of the owner names the same grant, so a
 /// withdrawal replays only while `home`, the machine the answering
 /// connection proved, still stands here as a machine of this vault on the
@@ -261,6 +326,14 @@ pub fn admit_own_device_grants(
 ) -> Result<OwnDeviceGrantAdmission> {
     let mut admission = OwnDeviceGrantAdmission::default();
     let home_proven = matches!(vault.peer_machine_stands(home), PeerMachine::Proven { .. });
+    // From a home that proved nothing, only the holders this machine names
+    // as owners.
+    let owner_named = if home_proven {
+        None
+    } else {
+        let txn = vault.store.env.read_txn()?;
+        Some(owner_named_grants_in_txn(vault, &txn)?)
+    };
     for (id, state) in served {
         let Some(holders) = asked.get(&id) else {
             admission.refused.insert(id);
@@ -268,7 +341,17 @@ pub fn admit_own_device_grants(
         };
         match state {
             OwnDeviceGrantState::Live(row) => {
-                if land_grant_row(vault, id, holders, &row)? {
+                let landed = match &owner_named {
+                    None => land_grant_row(vault, id, holders, &row, false)?,
+                    Some(owner_named) => {
+                        let holders: BTreeSet<String> = owner_named
+                            .get(&id)
+                            .map(|owners| holders.intersection(owners).cloned().collect())
+                            .unwrap_or_default();
+                        land_grant_row(vault, id, &holders, &row, true)?
+                    }
+                };
+                if landed {
                     admission.landed.insert(id);
                 } else {
                     admission.refused.insert(id);
@@ -287,13 +370,16 @@ pub fn admit_own_device_grants(
 }
 
 /// Lands `row` as grant `id` through the entity-ingest ladder when it is a
-/// person's own-device grant held by one of `holders`. Whether the row
-/// stands here now.
+/// person's own-device grant held by one of `holders`. With
+/// `keep_stored_row`, for a home that proved nothing, a row stored at `id`
+/// is never rewritten: only the same bytes stand, and anything else is
+/// refused with nothing written. Whether the row stands here now.
 fn land_grant_row(
     vault: &Vault,
     id: EntityId,
     holders: &BTreeSet<String>,
     row: &[u8],
+    keep_stored_row: bool,
 ) -> Result<bool> {
     let Some(header) = EntityMetadataHeader::parse(row) else {
         return Ok(false);
@@ -324,6 +410,14 @@ fn land_grant_row(
     let key = id.to_hex();
     let _import = crate::sync::manager::import_scope();
     let steps = vault.with_write_txn_grouped(|wtxn| {
+        if keep_stored_row
+            && vault
+                .store
+                .port_entity_raw(wtxn, &id)?
+                .is_some_and(|stored| stored.as_slice() != row)
+        {
+            return Ok(Vec::new());
+        }
         ingest_rows_in_savepoint(&ingest, wtxn, &[(key.as_str(), Some(row))])
     })?;
     Ok(matches!(
