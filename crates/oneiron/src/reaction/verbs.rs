@@ -13,7 +13,6 @@ use crate::{EntityId, Vault, WriteActor};
 
 /// One reaction change on a MESSAGE or a DAG TURN.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct MessageReactionRequest {
     /// The MESSAGE or TURN reacted to.
     pub message: String,
