@@ -20,6 +20,9 @@
 //! machine a counted enrolment names for it, and says whether one marks it
 //! the recovery root's. A removal that ends such a key says that it ends the
 //! recovery root's key, in its question and in its receipt.
+//!
+//! Both doors mark the rows they wrote for the vault's loaded windows, so the
+//! host and every replica see the keys ended without a window reload.
 
 #![cfg(oneiron_test_support)]
 
@@ -35,8 +38,8 @@ use oneiron::authority::{
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
     MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRemoval, MachineRole,
     OwnerAct, OwnerActKind, OwnerKeyChangeKind, OwnerKeyEnrollment, OwnerKeyRemoval, ROLE_OWNER,
-    authority_entry_hash, authority_transcript, decode_authority_log_entry_body,
-    machine_profile_proof_transcript,
+    authority_entry_hash, authority_log_entity_id_from_hash, authority_transcript,
+    decode_authority_log_entry_body, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::error::RecordError;
@@ -2039,4 +2042,114 @@ fn a_removal_that_ends_only_device_keys_does_not_say_it_ends_the_recovery_roots(
             )
         }
     }
+}
+
+impl RemovalVault {
+    /// Every pending-mirror marker this vault holds: a window, then the row
+    /// the window is owed.
+    fn pending_mirror_markers(&self) -> Vec<String> {
+        let mut markers = Vec::new();
+        let mut after: Option<String> = None;
+        loop {
+            after = self
+                .vault
+                .sync_state_prefix_page("lm:w:", after.as_deref(), 256, |key, _| {
+                    markers.push(key.to_owned());
+                    Ok(())
+                })
+                .expect("a page of the pending-mirror markers");
+            if after.is_none() {
+                break;
+            }
+        }
+        markers
+    }
+
+    /// Asserts that a pending-mirror marker names the authority row of
+    /// `entry`.
+    fn assert_marked_for_the_live_mirror(&self, entry: &AuthorityEntryHash, row: &str) {
+        let id = authority_log_entity_id_from_hash(entry)
+            .expect("the row's id")
+            .to_hex();
+        let markers = self.pending_mirror_markers();
+        assert!(
+            markers
+                .iter()
+                .any(|marker| marker.ends_with(&format!(":{id}"))),
+            "a removal's rows are marked for the live mirror: {row} {id} carries a marker for its window: {markers:?}"
+        );
+    }
+}
+
+/// Every row a removal door wrote carries a pending-mirror marker for its
+/// window once the write committed, as the recovery root's door's rows do, so
+/// the host and every replica see the keys ended without a window reload.
+#[test]
+fn a_removals_rows_are_marked_for_the_live_mirror() {
+    // The key door: the revocation's row.
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (_, second_key) =
+        removal_vault.enrol_second_machine_and_key(&SigningKey::from_bytes(&[73; 32]));
+    let removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            second_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the owner removes the second key");
+    let ended = match removal {
+        OwnerKeyRemoval::Removed { ended, .. } => ended,
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            panic!("this install's key remains, so the key door asks nothing: {remaining:?}")
+        }
+    };
+    removal_vault.assert_marked_for_the_live_mirror(&ended.entry, "the key door's revocation");
+
+    // The machine door: the removal's own row, and the revocation of the
+    // machine's key.
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let (machine_b, second_key) =
+        removal_vault.enrol_second_machine_and_key(&SigningKey::from_bytes(&[73; 32]));
+    let removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the owner removes the second machine");
+    let receipt = match removal {
+        MachineRemoval::Written(receipt) => receipt,
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!("this install's key remains, so the machine door asks nothing: {remaining:?}")
+        }
+    };
+    assert_eq!(
+        receipt.ended_keys,
+        vec![second_key],
+        "the removal ends the machine's key"
+    );
+    let removed = receipt
+        .landing
+        .machine()
+        .and_then(|machine| machine.roster.as_ref())
+        .expect("the removal stands on the roster's chain")
+        .entry;
+    removal_vault.assert_marked_for_the_live_mirror(&removed, "the machine door's removal");
+    let revocation = removal_vault
+        .vault
+        .owner_key_changes(&removal_vault.owner)
+        .expect("the owner reads the key changes")
+        .into_iter()
+        .find(|change| {
+            change.change == OwnerKeyChangeKind::Removed && change.public_key == second_key
+        })
+        .expect("the changes list shows the key's removal")
+        .entry;
+    removal_vault.assert_marked_for_the_live_mirror(&revocation, "the machine door's revocation");
 }
