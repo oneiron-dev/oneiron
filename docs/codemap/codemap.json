@@ -15214,17 +15214,15 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
-     "notable": [
-      "CheckInDecision"
-     ],
+     "notable": [],
      "path": "src/check_in/effect.rs",
      "purpose": "A door's own check-in for a person's act (ARCH-0082 #composing; ROLES-CHECKIN P2.4b, piece 2i; Engine ruling…",
      "surface": {
-      "crate-vis": 5,
-      "fn": 2,
-      "struct": 1
+      "crate-vis": 8,
+      "fn": 12,
+      "re-export": 1
      }
     },
     {
@@ -15234,8 +15232,8 @@
      "path": "src/check_in/mod.rs",
      "purpose": "Check-in: one mechanism for every act that may need an ask (ONEIRON-ARCH-0082; owner ruling ROLES-CHECKIN =…",
      "surface": {
-      "crate-vis": 11,
-      "re-export": 9
+      "crate-vis": 13,
+      "re-export": 11
      }
     },
     {
@@ -28399,7 +28397,7 @@
      "purpose": "The owner's one \"Lift the hold and erase?\" confirm, bound to what it showed (OF-470, FIX 1462), and the…",
      "surface": {
       "crate-vis": 2,
-      "fn": 4,
+      "fn": 5,
       "struct": 2
      }
     },
@@ -39070,7 +39068,7 @@
      "surface": {
       "crate-vis": 1,
       "enum": 1,
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -40937,6 +40935,7 @@
       "DetachRemainder",
       "DetachRemainderReason",
       "DetachReport",
+      "OwnerRemoval",
       "RemovalExportCopy",
       "RemovalExportDelivery",
       "RemoveOwnerPlan",
@@ -40956,9 +40955,9 @@
       "const": 3,
       "crate-vis": 8,
       "enum": 3,
-      "fn": 7,
+      "fn": 9,
       "re-export": 6,
-      "struct": 13
+      "struct": 14
      }
     },
     {
@@ -40971,7 +40970,7 @@
      "purpose": "Add a co-owner while retaining every existing Owner",
      "surface": {
       "crate-vis": 1,
-      "fn": 1,
+      "fn": 2,
       "struct": 1
      }
     },
@@ -94495,12 +94494,15 @@
     {
      "bucket": "s",
      "kind": "src",
-     "notable": [],
+     "notable": [
+      "NoteHistoryPurgeReceiptsRequest"
+     ],
      "path": "src/verbs/note_history.rs",
      "purpose": "Typed owner actions over NOTE history",
      "surface": {
       "fn": 3,
-      "re-export": 1
+      "re-export": 1,
+      "struct": 1
      }
     },
     {
@@ -95205,7 +95207,7 @@
      "kind": "src",
      "notable": [],
      "path": "src/verbs/step_up.rs",
-     "purpose": "The vault owner's reset of a person's step-up passkeys (`vault.step_up.passkeys.reset`, FIX 17553)",
+     "purpose": "The vault owner's reset of a person's step-up passkeys (`vault.step_up.passkeys.reset`, FIX 17553) and…",
      "surface": {
       "fn": 2
      }
@@ -98778,7 +98780,7 @@
      "surface": {
       "crate-vis": 5,
       "enum": 3,
-      "fn": 4
+      "fn": 5
      }
     },
     {
@@ -99456,6 +99458,16 @@
      }
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in/owner_apply_fixture.rs",
+     "purpose": "The Owner doors' apply-shape check-in tests' shared fixture (P2.5 2k2: `check_in_erase_effects.rs`…",
+     "surface": {
+      "crate-vis": 5
+     }
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -99469,6 +99481,14 @@
      "notable": [],
      "path": "tests/check_in_answer_settlements.rs",
      "purpose": "ROLES-CHECKIN P2.3c, piece 2l (ARCH-0082 #ladder and \"When nobody answers\"; Engine ruling P23-SHAPE Q7, Q8…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_custody_drain_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k3b (ARCH-0082 #act-table \"Key recovery (C)\" and #owner-own-acts; Engine ruling…",
      "surface": {}
     },
     {
@@ -99491,8 +99511,32 @@
      "bucket": "s",
      "kind": "test",
      "notable": [],
+     "path": "tests/check_in_erase_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k2a (ARCH-0082 #act-table \"Erase (C)\" and #owner-own-acts; Engine ruling P25-SHAPE…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
      "path": "tests/check_in_fanout_modes.rs",
      "purpose": "ROLES-CHECKIN PR 1 (ARCH-0082 #build): fan-out admission is the first caller of check-in, and the rename…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_history_erase_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k2b (ARCH-0082 #act-table \"Erase (C)\" and #owner-own-acts; Engine ruling P25-SHAPE…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_key_recovery_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, row 2k3a (ARCH-0082 #act-table \"Key recovery (C)\" and #owner-own-acts; Engine ruling…",
      "surface": {}
     },
     {
@@ -99509,6 +99553,14 @@
      "notable": [],
      "path": "tests/check_in_membership_effects.rs",
      "purpose": "ROLES-CHECKIN P2.4b, piece 2i (ARCH-0082 #composing and #role-defaults; Engine ruling P24-SHAPE Q3, Q4, Q5…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/check_in_ownership_effects.rs",
+     "purpose": "ROLES-CHECKIN P2.5, piece 2k1 (ARCH-0082 #role-defaults and #catastrophe-floor; Engine ruling P25-SHAPE Q1…",
      "surface": {}
     },
     {
@@ -104831,7 +104883,7 @@
    "over_bar": 270,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7592,
-   "test_files": 1309
+   "test_files": 1315
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -168978,12 +169030,24 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "CheckInDecision"
+     ],
+     "path": "src/check_in/effect.rs",
+     "purpose": "Moved from `crates/oneiron/src/check_in/effect.rs` (P2.5 2k3 main merge: the step-up reset receipts, wire…",
+     "surface": {
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/check_in/mod.rs",
      "purpose": "—",
      "surface": {
-      "mod": 1,
-      "re-export": 1
+      "mod": 2,
+      "re-export": 2
      }
     },
     {
@@ -181635,7 +181699,7 @@
      "purpose": "—"
     },
     "check_in": {
-     "files": 2,
+     "files": 3,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -182309,7 +182373,7 @@
    },
    "over_bar": 0,
    "purpose": "The wire types of the engine's public verbs below `oneiron` (lib split, stage A): every request, response…",
-   "source_files": 968,
+   "source_files": 969,
    "test_files": 0
   },
   "oneiron-vm-outbox": {
