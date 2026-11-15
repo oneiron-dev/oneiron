@@ -139,8 +139,14 @@ impl Memory<'_> {
             {
                 return Ok(None);
             }
-            let Some(view) =
-                self.entity_view_of_in_txn(&lane, txn, row, crate::vault::ReadMode::Live)?
+            // A MESSAGE is no repo file, so its view takes no known-value pass.
+            let Some(view) = self.entity_view_of_in_txn(
+                &lane,
+                txn,
+                crate::memory::repo_secret_reads::KnownPass::NotTaken,
+                row,
+                crate::vault::ReadMode::Live,
+            )?
             else {
                 return Ok(None);
             };
