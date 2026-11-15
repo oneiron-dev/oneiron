@@ -71,7 +71,7 @@ pub(crate) enum ArchivedSideGroup {
     AgentDef,
     /// Consolidation strength policy.
     DreamerConsolidation,
-    /// Projector, sieve, wake and recipe policies.
+    /// Projector, sieve and wake policies.
     DreamerWake,
     /// Digest schedules, owner settings and change records.
     WeaveDigest,
@@ -158,8 +158,7 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         }
         name if name == side_table::DREAMER_PROJECTOR_POLICY.name
             || name == side_table::DREAMER_SIEVE_POLICY.name
-            || name == side_table::DREAMER_WAKE_POLICY.name
-            || name == side_table::DREAMER_WAKE_RECIPE_POLICY.name =>
+            || name == side_table::DREAMER_WAKE_POLICY.name =>
         {
             Some(Group::DreamerWake)
         }
