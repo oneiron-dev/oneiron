@@ -445,7 +445,8 @@ impl Vault {
         let revoked_at = crate::ports::recorded_at_in_txn(&self.store, txn)?;
         for action in live_pact_disconnects(&*self.authority_view_readonly_in_txn(txn)?, grant_ref)?
         {
-            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
+            // SEEDED FAULT GF5: the grant's live pact is not disconnected.
+            let _ = action;
         }
         // The grant's scope opening key of every epoch retires with it, as a
         // disconnect's does, so no signed commitment of its pacts tests a

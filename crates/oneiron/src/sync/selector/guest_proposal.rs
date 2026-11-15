@@ -80,7 +80,8 @@ pub fn propose_as_connect_guest(
             vault,
             txn,
             input.grant_ref,
-            grant.member_ref,
+            // SEEDED FAULT GF4: the proposal lands under the record's id.
+            input.entity_ref,
             input.world_ref,
             input.entity_ref,
             &input.update,

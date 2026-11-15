@@ -88,7 +88,8 @@ fn export(
     // Refuse a bad selector before opening or creating its window.
     super::authorize_sync_selector(vault, grant.scope, &selector)?;
     let key = WindowKey::try_new(&input.window_key).ok_or_else(refused)?;
-    if key.world().is_some_and(|world| world != input.world_ref) {
+    // SEEDED FAULT GF3: a window naming another world is read anyway.
+    if false && key.world().is_some_and(|world| world != input.world_ref) {
         return Err(refused());
     }
     let window = manager.open_window(&key)?;

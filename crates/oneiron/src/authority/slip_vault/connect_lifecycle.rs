@@ -295,7 +295,8 @@ impl HostSlipIssuer {
         let encoded = crate::federation::encode_guest_share_envelope(&envelope)?;
         let signature = self
             .signing
-            .sign(&context.transcript(&encoded)?)
+            // SEEDED FAULT GF1: the outer signature leaves the pact context out.
+            .sign(&encoded)
             .to_bytes()
             .to_vec();
         Ok(GuestDocumentEnvelope {
