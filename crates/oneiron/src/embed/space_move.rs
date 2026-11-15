@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 use super::EgressPredicate;
 use super::media::{MediaEgressGate, MediaEmbeddingInput, PendingMedia};
 use super::space::{
-    EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, SetupDoor, drop_space_rows_in_txn,
+    EmbeddingSpace, InputKind, KindSlotBindings, SetupActor, SetupDoor, drop_candidate_rows_in_txn,
     embedding_space_in_txn, kind_slot_bindings_in_txn, search_media_space_in_txn,
     set_kind_slot_in_txn, slot_setup_id, space_setup_id,
 };
@@ -732,7 +732,13 @@ impl Vault {
     ) -> Result<BTreeSet<EntityId>> {
         let moving = open_move_in_txn(&self.store, wtxn, candidate)?;
         EMBEDDING_MOVE.delete(&self.store, wtxn, &moving.candidate)?;
-        drop_space_rows_in_txn(&self.store, wtxn, candidate, &moving.kinds)?;
+        drop_candidate_rows_in_txn(
+            &self.store,
+            self.privacy_posture(),
+            wtxn,
+            candidate,
+            &moving.kinds,
+        )?;
         super::binding_move::move_ended_in_txn(self, wtxn, &moving)?;
         let owned = BTreeSet::from([space_setup_id(candidate)?]);
         self.publish_embedding_setup_as_in_txn(wtxn, &owned)
@@ -1261,7 +1267,13 @@ impl Vault {
             // An embedder binding filling on it waits again with its candidate, which the next
             // pass declares again (O3b PR B); so it joins before the candidate's rows go.
             super::binding_move::move_ended_in_txn(self, &mut wtxn, &moving)?;
-            drop_space_rows_in_txn(&self.store, &mut wtxn, &moving.candidate, &moving.kinds)?;
+            drop_candidate_rows_in_txn(
+                &self.store,
+                self.privacy_posture(),
+                &mut wtxn,
+                &moving.candidate,
+                &moving.kinds,
+            )?;
             self.note_space_move_in_txn(&mut wtxn, &moving)?;
             expired.push(moving.candidate);
         }
@@ -1341,7 +1353,13 @@ impl Vault {
         }
         EMBEDDING_MOVE.put(&self.store, &mut wtxn, &moving.candidate, &moving)?;
         if matches!(moving.state, SpaceMoveState::Kept { .. }) {
-            drop_space_rows_in_txn(&self.store, &mut wtxn, candidate, &moving.kinds)?;
+            drop_candidate_rows_in_txn(
+                &self.store,
+                self.privacy_posture(),
+                &mut wtxn,
+                candidate,
+                &moving.kinds,
+            )?;
         }
         if concluded {
             self.note_space_move_in_txn(&mut wtxn, &moving)?;
