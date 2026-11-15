@@ -71,23 +71,27 @@ pub(super) fn serial_fold_past_op(op: &AuthorityOp) -> bool {
 /// only serially, every covered row in its causal past (FIX 11760,
 /// [`super::serial_fold_past`]). It moves only its key's roster bit, which
 /// every merge ORs in, and makes no restrictive fact, so its tail need not
-/// fold whole: a later row its key signs folds rejected there, as in the
-/// whole fold. A covered approval on its key expires on this install's own
-/// first sight of it, the receipt the adoption kept
+/// fold whole: a row above it that its key signs folds rejected there, and
+/// a row beside it folds on its own parents' states, as in the whole fold.
+/// A covered approval on its key expires on this install's own first sight
+/// of it, its first-seen receipt: the one the adoption kept for a row this
+/// install never stored before
 /// (FOLDPAST-COVERED-APPROVAL-CLOCK; [`super::fold_adopted_checkpoint_tail`]).
 pub(super) fn serial_roster_revoke_op(op: &AuthorityOp) -> bool {
     matches!(op, AuthorityOp::RevokeDevice { .. })
 }
 
-/// Whether the whole fold rejects the tail row `entry` on the image's
-/// states whatever the covered rows hold, so the tail folds it past the
-/// image as rejected, with no state (FIX 11760, [`super::serial_fold_past`]):
+/// Whether the tail row `entry` is of a kind the tail folds past the image
+/// only as rejected, with no state (FIX 11760, [`super::serial_fold_past`]):
 /// a key rotation or a non-agent enrollment (a retired device-key op, which
 /// stands only in a re-root's pre-handoff line), an agent enrollment or a
 /// binding [`crate::authority::fold_resume::admits_past`] leaves to the
 /// history, or a federation confirm whose id or nonce a covered confirm
-/// spent. A row of these kinds the tail folds to a state still needs the
-/// whole history ([`settle_tail`]).
+/// spent. The kind alone does not make the whole fold reject the row: it
+/// may accept such an enrollment or binding. A serial row's parents' states
+/// are the whole fold's own, so the tail rejects it exactly where the whole
+/// fold does, and one the tail folds to a state still needs the whole
+/// history ([`settle_tail`]).
 pub(super) fn folds_rejected_op(image: &AuthorityCheckpointV2, entry: &AuthorityLogEntry) -> bool {
     match &entry.op {
         AuthorityOp::RotateKey { .. } => true,
@@ -213,9 +217,8 @@ pub(super) fn settle_tail(
         return Ok(None);
     }
     states.retain(|hash, _| judged.contains_key(hash));
-    // A row the whole fold rejects on the image's states folds past it only
-    // as rejected (FIX 11760): one the tail folds to a state is judged by
-    // the whole history.
+    // A row of a kind that folds past the image only as rejected (FIX
+    // 11760): one the tail folds to a state is judged by the whole history.
     if judged
         .iter()
         .any(|(hash, entry)| states.contains_key(hash) && folds_rejected_op(image, entry))
