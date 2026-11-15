@@ -26,7 +26,7 @@ use crate::git_wire::GitWire;
 use crate::memory::checkout_doors::refusal as checkout_refusal;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
 use crate::store::attempt_result::AttemptResultRef;
-use crate::task_verb::linear_store::task_revision_in_txn;
+use crate::store::linear_task_revision::revision as task_revision_in_txn;
 
 /// `self.code.checks.start`: records the native check the run is about to run
 /// in its own live checkout. The engine captures the input versions; the agent

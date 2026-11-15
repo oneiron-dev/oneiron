@@ -20,6 +20,7 @@ pub(crate) mod tables;
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::{Fingerprint, Purpose, purposes};
 use serde::{Deserialize, Serialize};
 
 use crate::EntityId;
@@ -176,9 +177,9 @@ impl CheckInputVersions {
     ) -> crate::Result<Self> {
         Ok(Self {
             tree,
-            command_digest: part_digest(COMMAND_DIGEST_TAG, command)?,
-            toolchain_digest: part_digest(TOOLCHAIN_DIGEST_TAG, toolchain)?,
-            environment_digest: part_digest(ENVIRONMENT_DIGEST_TAG, environment)?,
+            command_digest: part_digest(purposes::check_record::COMMAND, command)?,
+            toolchain_digest: part_digest(purposes::check_record::TOOLCHAIN, toolchain)?,
+            environment_digest: part_digest(purposes::check_record::ENVIRONMENT, environment)?,
             request_revision,
         })
     }
@@ -205,14 +206,9 @@ impl CheckFinish {
     }
 }
 
-/// The digest tags: one domain per part, as `QueueCheckInputs::digest` separates its own.
-const COMMAND_DIGEST_TAG: &str = "oneiron:check-record-command:v1";
-const TOOLCHAIN_DIGEST_TAG: &str = "oneiron:check-record-toolchain:v1";
-const ENVIRONMENT_DIGEST_TAG: &str = "oneiron:check-record-environment:v1";
-
-/// The one domain-separated canonical hash of one inputs part.
-fn part_digest(tag: &str, value: &impl Serialize) -> crate::Result<String> {
-    let bytes = rmp_serde::to_vec_named(&(tag, value))
-        .map_err(|_| invalid("check record digest encoding failed"))?;
-    Ok(blake3::hash(&bytes).to_hex().to_string())
+/// The fingerprint of one inputs part under its purpose, as 64 hex digits.
+fn part_digest<T: Serialize + ?Sized>(purpose: Purpose, value: &T) -> crate::Result<String> {
+    Fingerprint::of_record(purpose, value)
+        .map(|fingerprint| fingerprint.to_hex())
+        .map_err(|_| invalid("check record digest encoding failed"))
 }

@@ -297,9 +297,20 @@ suite.todo(test, "LEARNING-07", "waits on public trainer/seat-evaluator adapter,
 // OF-577/512. Existing GET /v1/owner/coach/training-offers lists pending offers;
 // POST /answer {offer,digest,answer,training?} settles the EXACT shown snapshot;
 // POST /undo {offer} undoes a stock switch. These are real public owner routes.
-// Missing: typed trigger/completion and evidence readback for one Coach offer
-// pass, plus pinned candidate/pilot setup. The nightly host wiring exists; do
-// not drive its private queue, wait overnight, or insert a finished offer body.
+// vault.coach.training_offers.run {window?:{from,until}} runs one Coach offer
+// pass now (owner, or a holder of engine.controls.maintenance_cadence) and
+// answers {state:"ran", attempt, caller, window, end:{end:"drafted"|"no_offer"|
+// "missing", prerequisite?}, offers: offer ids}; .result reads the offers. The
+// window dates the receipts each seat is priced on (from < until <= the vault's
+// now, at most 90 days; none = the last 30 days); date receipts through
+// POST /v1/usage/events occurred_at. The pass shares the nightly pass's day
+// budget. A stock option's month is on projected counts: the incumbent's prompt
+// and answer tokens, each scaled by the two models' tokenizers' counts of a
+// fixed passage of that shape, measured at the pass; a model whose tokenizer
+// no counter reaches is priced on the incumbent's counts and marked an
+// estimate. Missing: the training-offer skill in oneiron-hub at a pinned ref
+// (the pass loads it by name from the default hub). Do not drive the private
+// queue, wait overnight, or insert a finished offer body.
 // Exercise receipt-backed incumbent cost vs stock switch, train and self-train
 // on the same projected workload with each tokenizer. Saving is AVOIDABLE cost;
 // include pilot/migration/re-embed in one-off cost and disclose unknowns as null,
@@ -323,7 +334,7 @@ type Learning08 = {
   answer: "decline" | "postpone" | "approve";
   changed_seats: string[];
 };
-suite.todo(test, "LEARNING-08", "waits on typed Coach offer-pass trigger/completion and per-seat candidate/pilot evidence setup/readback");
+suite.todo(test, "LEARNING-08", "waits on the training-offer skill in oneiron-hub");
 
 // LEARNING-09 — RSI budget holds rather than kills should work. OF-496.
 // Existing research.reserve_work {root,purpose,units,attempt?} -> reservation ID,
@@ -355,4 +366,7 @@ type Learning09 = {
   resume: { attempt: Ref; same_candidate: Ref; preserved_outputs: Ref[] };
 };
 // Root: vault.research.create_root enqueues the run-bearing root vault.research.bind accepts.
-suite.todo(test, "LEARNING-09", "waits on vault.research.advance with exposure reservation, then one same-attempt/candidate/partial-output journey through both holds over a vault.research.create_root root");
+// Pass: vault.research.advance {root} runs the host pass for a campaign bound with an
+// execution spec and answers each continuation's pending/running/state/held_line; a
+// confirmation reserves one exposure per sealed serving on the exploration line first.
+suite.todo(test, "LEARNING-09", "waits on its arming PR: one same-attempt/candidate/partial-output journey through both holds, driven by vault.research.advance over a vault.research.create_root root");

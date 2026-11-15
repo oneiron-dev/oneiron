@@ -45,7 +45,7 @@ pub fn check_record_worktree_path(vault: &Vault, checkout: &str, epoch: u64) -> 
 /// The TASK's request revision: what `start` and `finish` capture.
 pub fn check_record_task_revision(vault: &Vault, task: EntityId) -> Result<u64> {
     let txn = vault.store.env.read_txn()?;
-    crate::task_verb::linear_store::task_revision_in_txn(&vault.store, &txn, task)
+    crate::store::linear_task_revision::revision(&vault.store, &txn, task)
 }
 
 /// Revises the TASK's typed body through the vault's typed write path, so
