@@ -245,6 +245,33 @@ fn serving_class_differs(folded: &FoldedMachine, request: &MachineEnrolmentReque
     })
 }
 
+/// Why the chain of the anchor this install pins refuses to let the roster
+/// enrol an install it holds no head of: it removed the install, it is
+/// conflicted, or it names other keys. `None` with no pin, no such chain, or
+/// one that agrees: the door then enrols. Only the pinned anchor vetoes here;
+/// another anchor's chain says nothing on this install.
+fn pinned_bootstrap_veto(
+    fold: &AuthorityFold,
+    folded: &FoldedMachine,
+    request: &MachineEnrolmentRequest,
+) -> Option<&'static str> {
+    let chain = fold
+        .pinned_root
+        .as_ref()
+        .and_then(|pin| folded.anchored.get(&pin.anchor_key))?;
+    if chain.removed {
+        Some(SERVING_PROFILE_REMOVED)
+    } else if chain.conflicted {
+        Some(SERVING_PROFILE_CONFLICTED)
+    } else if chain.profile.machine_key != request.machine_key
+        || chain.profile.encryption_key != request.encryption_key
+    {
+        Some(SERVING_PROFILE_KEY_MISMATCH)
+    } else {
+        None
+    }
+}
+
 /// Why a profile under this install's id that does not stand is never
 /// enrolled over: the first of removed, conflicted, other keys and not live.
 fn serving_profile_refusal(
@@ -448,7 +475,22 @@ impl Vault {
         let request = self.machine_enrolment_request(vault_id, encryption_key)?;
         let mut txn = self.store.env.write_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
-        if let Some(folded) = fold.machine(request.machine) {
+        // "On the roster yet?" is the roster's question (Fable design pass
+        // 29, 3.4; Engine 06:15, FIX
+        // SERVING-PROFILE-ANCHOR-MARKED-INSTALL-NO-BOOTSTRAP): an install the
+        // roster holds no head of is enrolled, whatever an anchor's chain
+        // says of it, unless the chain of the anchor it pins refuses it.
+        let held = fold
+            .machine(request.machine)
+            .filter(|folded| folded.roster.is_some());
+        if let Some(reason) = fold
+            .machine(request.machine)
+            .filter(|_| held.is_none())
+            .and_then(|folded| pinned_bootstrap_veto(&fold, folded, &request))
+        {
+            return Err(authority_refused(reason));
+        }
+        if let Some(folded) = held {
             return if serving_profile_stands(&fold, folded, &request) {
                 let issuer_is_root = super::slip_vault::require_host(&fold, issuer).is_ok();
                 if serving_class_differs(folded, &request) {
