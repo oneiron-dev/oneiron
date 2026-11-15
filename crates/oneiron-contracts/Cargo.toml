@@ -25,14 +25,15 @@ rand_core = { workspace = true }
 rand = "0.8"
 rand_distr = "0.4"
 loro = { workspace = true, optional = true }
+# The one reader for untyped MessagePack rows (`msgpack`, PLAN-UC-08) and its typed-row pair.
+rmp-serde = { workspace = true }
+rmpv = { workspace = true }
 schemars = "=0.8.22"
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]
-# The moved retrieval-quality tests pin the msgpack wire form.
-rmp-serde = { workspace = true }
 uuid = { workspace = true }
 
 [features]
