@@ -196,6 +196,30 @@ impl AuthorityFold {
         roster_has_live_owner(&self.roster, key) && !(hosted && self.in_host_custody(key))
     }
 
+    /// A choice door's answer about `act`, the choice it appended in its
+    /// writing transaction and this fold has folded: the owner-key refusal
+    /// when the act waits for the owner's proof
+    /// ([`crate::error::RecordError::OwnerKeyRequired`]). The fold judged the
+    /// very entry, so the door and the fold cannot disagree; the door's error
+    /// drops the transaction, so nothing of a refused choice is stored
+    /// (ruling CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B). It waits only where
+    /// the vault holds an owner key and this install neither is the owner's
+    /// machine nor holds one.
+    ///
+    /// # Errors
+    /// That refusal.
+    pub(crate) fn refuse_waiting_choice(
+        &self,
+        act: &AuthorityEntryHash,
+    ) -> crate::error::Result<()> {
+        if self.waiting_owner_choices.contains(act) {
+            return Err(crate::error::Error::Record(
+                crate::error::RecordError::OwnerKeyRequired,
+            ));
+        }
+        Ok(())
+    }
+
     /// The owner choices that wait for the owner's proof and still ask (row
     /// CARRIER-OWNER-PROOF), by entry, of every kind the shared landing gate
     /// serves: each is a stored, valid entry in no frontier. The owner
