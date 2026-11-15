@@ -120,6 +120,20 @@ fn origin(head: &storage::Head, doc: &EntityDoc) -> Option<CanonicalDocumentOrig
 struct Versions {
     frontiers: Vec<Frontiers>,
     vvs: Vec<VersionVector>,
+    /// Each version's index by its version vector's entries (FIX 275): a
+    /// lookup is one map read, never a scan of every version found so far.
+    by_vv: BTreeMap<Vec<(u64, i32)>, usize>,
+}
+
+/// The entries of `vv` that version vector equality compares: every peer
+/// with a positive counter, in peer order.
+fn vv_entries(vv: &VersionVector) -> Vec<(u64, i32)> {
+    let mut entries: Vec<(u64, i32)> = vv
+        .iter()
+        .filter_map(|(&peer, &counter)| (counter > 0).then_some((peer, counter)))
+        .collect();
+    entries.sort_unstable();
+    entries
 }
 
 impl Versions {
@@ -130,12 +144,15 @@ impl Versions {
         if !vv.includes_vv(&doc.doc.shallow_since_vv().to_vv()) {
             return None;
         }
-        if let Some(known) = self.vvs.iter().position(|known| known == &vv) {
+        let entries = vv_entries(&vv);
+        if let Some(&known) = self.by_vv.get(&entries) {
             return Some(known);
         }
         self.frontiers.push(frontier.clone());
         self.vvs.push(vv);
-        Some(self.vvs.len() - 1)
+        let index = self.vvs.len() - 1;
+        self.by_vv.insert(entries, index);
+        Some(index)
     }
 
     fn require(&mut self, doc: &EntityDoc, frontier: &[u8]) -> Result<usize> {
