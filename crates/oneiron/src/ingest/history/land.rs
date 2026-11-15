@@ -28,6 +28,7 @@ use serde::Serialize;
 use serde_json::{Map, Value};
 
 use super::ledger::{self, LedgerRow, content_hash};
+use super::sharing;
 use super::{
     HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
     HistoryThreadKind,
@@ -46,6 +47,7 @@ use crate::memory::{
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONVERSATION;
 use crate::side_table::SideTableDbs;
+use crate::source_audience::{self, SourceAudienceBirth};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 
 /// The most messages one TURN holds; a longer run of one side (an agent's long
@@ -349,12 +351,16 @@ impl Vault {
     /// Dreamer treats what it extracts from it as `Imported` evidence, which
     /// never auto-approves. A message whose text the ledger already holds is
     /// skipped; with other text it lands as a revision beside what landed
-    /// before.
+    /// before. A conversation the source shared reads to the members the
+    /// owner mapped and to the importer: its rows are bound under its
+    /// container's source policy, whose readers each import sets again
+    /// (ARCH-0027 #import-audience).
     ///
     /// # Errors
     ///
-    /// A failure of the vault itself. A turn the write door or a gate refuses
-    /// is counted in the report instead, and the import goes on.
+    /// A failure of the vault itself, and a source's sharing that maps a
+    /// member to no live PERSON. A turn the write door or a gate refuses is
+    /// counted in the report instead, and the import goes on.
     pub fn import_history(
         &self,
         owner: &AuthenticatedOwner,
@@ -363,12 +369,33 @@ impl Vault {
         imported_at: u64,
     ) -> MemoryResult<HistoryImportReport> {
         let mut report = HistoryImportReport::new(conversation);
+        let memory = self.memory(owner.revalidate(self)?, EdgeActorClass::Human);
+        // The container's readers, as this export names them, are set before
+        // any of its rows lands.
+        let sharing = conversation
+            .sharing
+            .as_ref()
+            .map(|sharing| {
+                memory.with_verified_actor_write_txn(|wtxn| {
+                    let actor = owner.revalidate_in_txn(self, wtxn)?;
+                    sharing::container_policy_in_txn(
+                        self,
+                        wtxn,
+                        source,
+                        sharing,
+                        actor,
+                        imported_at,
+                    )
+                })
+            })
+            .transpose()?;
         let import = Import {
             vault: self,
-            memory: self.memory(owner.revalidate(self)?, EdgeActorClass::Human),
+            memory,
             owner,
             source,
             conversation,
+            sharing,
             conversation_id: derive(
                 derived_domains::HISTORY_CONVERSATION,
                 &[source.source_id(), &conversation.native_id],
@@ -409,6 +436,9 @@ struct Import<'v> {
     owner: &'v AuthenticatedOwner,
     source: HistorySource,
     conversation: &'v HistoryConversation,
+    /// The source policy of the conversation's sharing container; `None`
+    /// for a conversation the source did not share.
+    sharing: Option<EntityId>,
     conversation_id: EntityId,
     conversation_body: Vec<u8>,
     fallback_ms: u64,
@@ -479,19 +509,46 @@ impl Import<'_> {
                 return Ok(());
             }
             self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            let stamped = source_audience::body_names_obligation(&body);
             let mut out = Vec::new();
             rmpv::encode::write_value(&mut out, &Msgpack::Map(fields))
                 .map_err(|_| crate::error::Error::InvalidConfig("conversation body".into()))?;
-            self.vault
-                .batch_in()
-                .put(
+            let batch = self.vault.batch_in();
+            if !stamped {
+                batch
+                    .put(
+                        &id,
+                        ENTITY_TYPE_CONVERSATION,
+                        occurred,
+                        self.imported_at,
+                        &out,
+                    )
+                    .apply(wtxn)?;
+                return Ok(());
+            }
+            // A conversation a source landing stamped is put again only under
+            // this import's proof, and bound again where it was born, in the
+            // same write (fix list row 16256). An import that shares nothing
+            // leaves it alone.
+            let (Some(policy), Some(thread)) = (
+                self.sharing,
+                source_audience::binding_in(self.vault, wtxn, &id)?,
+            ) else {
+                return Ok(());
+            };
+            let birth = SourceAudienceBirth::mint_in(self.vault, wtxn, &policy)?;
+            source_audience::mark_birth_in_txn(self.vault, wtxn, &birth, &id)?;
+            batch
+                .put_source_bound(
                     &id,
                     ENTITY_TYPE_CONVERSATION,
                     occurred,
                     self.imported_at,
                     &out,
+                    &birth,
                 )
                 .apply(wtxn)?;
+            source_audience::bind_record_in_txn(self.vault, wtxn, &id, &thread)?;
             Ok(())
         });
         match settled {
@@ -561,7 +618,7 @@ impl Import<'_> {
         let (source, conversation) = (self.source, self.conversation);
         let mut skipped = 0;
         let mut pending = Vec::new();
-        let (turn_id, mut next_order, count) = {
+        let (turn_id, mut next_order, count, birth) = {
             let txn = self
                 .vault
                 .store
@@ -577,7 +634,14 @@ impl Import<'_> {
             }
             let count = u32::try_from(pending.len()).unwrap_or(u32::MAX);
             let (turn_id, next_order) = self.turn_with_room(&txn, run, count)?;
-            (turn_id, next_order, count)
+            // The landing's proof under the container's source policy: every
+            // row the turn lands carries the source-audience obligation (fix
+            // list row 16256).
+            let birth = self
+                .sharing
+                .map(|policy| SourceAudienceBirth::mint_in(self.vault, &txn, &policy))
+                .transpose()?;
+            (turn_id, next_order, count, birth)
         };
         #[cfg(test)]
         if let Some(between) = BETWEEN_READ_AND_WRITE.with_borrow_mut(Option::take) {
@@ -644,12 +708,12 @@ impl Import<'_> {
             imported_at: self.imported_at,
             conversation_body: self.conversation_body.clone(),
             message_occurred: occurred,
-            source_audience: None,
+            source_audience: birth,
             attribution: SourceAttribution::Unbound,
         };
         let moved = Cell::new(false);
         let landed = self.memory.witness_imported(&turn, &stamp, |wtxn| {
-            self.owner.revalidate_in_txn(self.vault, wtxn)?;
+            let actor = self.owner.revalidate_in_txn(self.vault, wtxn)?;
             // The rows this turn was built on, read again where they are
             // written: another import may have landed a message since.
             for (message, previous) in &pending {
@@ -673,6 +737,24 @@ impl Import<'_> {
             }
             for (native_id, row) in &rows {
                 ledger::put(&self.vault.store, wtxn, source, native_id, row)?;
+            }
+            // Every row the turn stamped is bound in its own write, under the
+            // conversation's thread of its container's policy.
+            if let Some(policy) = &self.sharing {
+                let thread = sharing::conversation_thread_in_txn(
+                    self.vault,
+                    wtxn,
+                    policy,
+                    &conversation.native_id,
+                    actor,
+                    self.imported_at,
+                )?;
+                let records = [self.conversation_id, turn_id]
+                    .into_iter()
+                    .chain(rows.iter().map(|(_, row)| row.message));
+                for record in records {
+                    source_audience::bind_record_in_txn(self.vault, wtxn, &record, &thread)?;
+                }
             }
             Ok(())
         });

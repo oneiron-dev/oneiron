@@ -22,29 +22,14 @@ pub const LINEAR_SYNC_OPERATION_DOMAIN: &[u8] = b"oneiron:linear-sync-op:v1";
 /// Stable adapter id in the registry shape.
 pub const LINEAR_SYNC_ADAPTER_ID: &str = "linear";
 
-/// Bidirectional field: issue title.
-pub const LINEAR_FIELD_TITLE: &str = "title";
-
-/// Bidirectional field: issue description / TASK body.
-pub const LINEAR_FIELD_DESCRIPTION: &str = "description";
-
-/// Bidirectional field: issue priority.
-pub const LINEAR_FIELD_PRIORITY: &str = "priority";
-
-/// Bidirectional field: assignee reference.
-pub const LINEAR_FIELD_ASSIGNEE_REF: &str = "assignee_ref";
-
-/// Bidirectional field: workflow status.
-pub const LINEAR_FIELD_STATUS: &str = "status";
-
-/// Every bidirectional field, in stable (sorted) order.
-pub const LINEAR_MIRRORED_FIELDS: [&str; 5] = [
-    LINEAR_FIELD_ASSIGNEE_REF,
-    LINEAR_FIELD_DESCRIPTION,
-    LINEAR_FIELD_PRIORITY,
-    LINEAR_FIELD_STATUS,
-    LINEAR_FIELD_TITLE,
-];
+#[doc(hidden)]
+pub(super) use oneiron_records::linear_sync::model::ERR_LINK_REVISION_OVERFLOW;
+#[doc(hidden)]
+pub use oneiron_records::linear_sync::model::{
+    LINEAR_FIELD_ASSIGNEE_REF, LINEAR_FIELD_DESCRIPTION, LINEAR_FIELD_PRIORITY,
+    LINEAR_FIELD_STATUS, LINEAR_FIELD_TITLE, LINEAR_MIRRORED_FIELDS, LinearMirrorReceipt,
+    LinearMirrorStatus, LinearSyncDirection, LinearWriteActor,
+};
 
 /// Engine-authoritative facts that never take an inbound value: the mirror
 /// projects them outward and refuses to read them back.
@@ -61,56 +46,6 @@ pub(super) const ERR_UNLINKED_ISSUE: &str = "linear_sync: issue change has no du
 
 pub(super) const ERR_BLANK_EVENT_ID: &str =
     "linear_sync: issue change carries a blank tracker event id";
-
-pub(super) const ERR_LINK_REVISION_OVERFLOW: &str = "linear_sync link revision";
-
-/// Which way one mirror operation moved.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinearSyncDirection {
-    /// Engine → tracker.
-    TaskToIssue,
-    /// Tracker → engine.
-    IssueToTask,
-}
-
-impl LinearSyncDirection {
-    /// Stable wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::TaskToIssue => "task_to_issue",
-            Self::IssueToTask => "issue_to_task",
-        }
-    }
-}
-
-/// Outcome of one mirror operation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LinearMirrorStatus {
-    /// A new issue was created and linked to the TASK.
-    Linked,
-    /// Field values were written to the other side.
-    Applied,
-    /// Nothing to do: unchanged, already applied, or our own echo.
-    Noop,
-    /// Same-field concurrent edit: every conflicting field was left untouched
-    /// on BOTH sides and pinned in the link. The same change's non-conflicting
-    /// issue-owned fields, if any, still applied — the refusal is per field.
-    Conflict,
-}
-
-impl LinearMirrorStatus {
-    /// Stable wire token.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Linked => "linked",
-            Self::Applied => "applied",
-            Self::Noop => "noop",
-            Self::Conflict => "conflict",
-        }
-    }
-}
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::linear_sync::model::{LinearFieldConflict, LinearIssueRef};
@@ -608,16 +543,6 @@ pub trait LinearEgress {
     }
 }
 
-/// Writer provenance stamped only by the verified TASK facade after its
-/// write. Raw/replayed generic puts never receive this mark.
-#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct LinearWriteActor {
-    #[serde(with = "super::storage_codec::entity_ref")]
-    pub actor_ref: EntityId,
-    pub actor_class: u8,
-}
-
 /// Engine-side storage the mirror reads and writes.
 pub trait LinearTaskStore {
     /// Current mirror state of one TASK.
@@ -680,25 +605,6 @@ pub trait LinearTaskStore {
         expected_link_revision: Option<u64>,
         link: &TaskIssueLink,
     ) -> LinearSyncResult<()>;
-}
-
-/// The durable record of one mirror operation.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct LinearMirrorReceipt {
-    /// What happened.
-    pub status: LinearMirrorStatus,
-    /// Which way the operation moved.
-    pub direction: LinearSyncDirection,
-    /// Stable operation id; the idempotency handle on both sides.
-    pub operation_id: [u8; 32],
-    /// The mirrored TASK.
-    pub task_ref: EntityId,
-    /// The mirrored issue.
-    pub issue: LinearIssueRef,
-    /// Fields left untouched because both sides moved them.
-    pub conflicts: Vec<LinearFieldConflict>,
-    /// Wall-clock stamp of the operation.
-    pub mirrored_at: u64,
 }
 
 /// Typed adapter registration in the OF-201 registry shape.

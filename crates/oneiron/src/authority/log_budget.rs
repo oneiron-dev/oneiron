@@ -321,14 +321,14 @@ thread_local! {
     static DOOR_VIEW_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 thread_local! {
     static DOOR_OPEN_FOR_TEST: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 /// Runs `body` with this thread's authority doors open, so a test can build
 /// a log no door stores, such as one with a rival genesis.
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) fn with_authority_doors_open_for_test<T>(body: impl FnOnce() -> T) -> T {
     DOOR_OPEN_FOR_TEST.with(|open| open.set(true));
     let result = body();
@@ -453,7 +453,7 @@ pub(crate) fn authority_door(
     txn: &heed::RoTxn<'_>,
     entry: &AuthorityLogEntry,
 ) -> crate::error::Result<AuthorityDoor> {
-    #[cfg(test)]
+    #[cfg(any(test, oneiron_test_support))]
     if DOOR_OPEN_FOR_TEST.with(std::cell::Cell::get) {
         return Ok(AuthorityDoor::Lands);
     }

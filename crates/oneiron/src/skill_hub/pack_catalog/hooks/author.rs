@@ -8,36 +8,8 @@ use super::*;
 /// The foreign-actor kind a hub pack's publisher is (ARCH-0072).
 pub const FOREIGN_SKILL_PUBLISHER: &str = "skill_publisher";
 
-/// Who a hook runs as (ARCH-0080 §6, §7, §9): the owner who bound it, a
-/// resident agent that wrote it into the `local` pack, or a hub pack's
-/// publisher as a foreign actor. The foreign fields name ARCH-0072's
-/// foreign-actor admission: the actor's kind, its identity record, the hub
-/// it offers from and the one Grant that admits it, plus the vault-resident
-/// actor its outcomes stamp. Hub trust never chains to it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum HookAuthor {
-    Owner,
-    /// A resident agent's own hook: its outcomes run as the agent, and it
-    /// reads at the agent's ceiling unless the owner grants it otherwise.
-    Agent {
-        #[serde(with = "crate::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        agent: EntityId,
-    },
-    ForeignActor {
-        actor_kind: String,
-        identity: String,
-        #[serde(with = "crate::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        hub: EntityId,
-        /// The digest of the publisher's standing Grant.
-        grant: String,
-        #[serde(with = "crate::serialize::entity_ref")]
-        #[schemars(with = "String")]
-        actor: EntityId,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::skill_hub::pack_catalog::hooks::author::HookAuthor;
 
 /// The vault-resident actor a hub's publisher runs hooks as.
 fn foreign_publisher_actor(hub: EntityId, identity: &str) -> Result<EntityId> {

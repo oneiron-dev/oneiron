@@ -39,7 +39,7 @@ impl SyncConnection {
         events: mpsc::UnboundedSender<SyncEvent>,
     ) -> Infallible {
         if self.config.client_config.federation_peer.is_some() {
-            return std::future::pending().await;
+            match std::future::pending::<Infallible>().await {}
         }
         let vault = Arc::clone(self.manager.vault());
         let mut wakes = vault.subscribe_proactivity_changes();
@@ -65,7 +65,7 @@ impl SyncConnection {
                 }
             }
             if wakes.changed().await.is_err() {
-                return std::future::pending().await;
+                match std::future::pending::<Infallible>().await {}
             }
         }
     }
