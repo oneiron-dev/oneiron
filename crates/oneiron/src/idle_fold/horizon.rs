@@ -148,7 +148,8 @@ pub fn run_due_idle_calls(vault: &Vault, now_ms: u64) -> Result<usize> {
                 generation,
             };
             match DUE.get_lenient(&vault.store, &txn, &row(&key))? {
-                Some(call) if call.due_ms <= now_ms => due.push((key, call)),
+                // RED SEAM: no idle pass.
+                Some(call) if call.due_ms <= now_ms && now_ms == 0 => due.push((key, call)),
                 Some(_) => {}
                 None => undecodable.push(key),
             }
