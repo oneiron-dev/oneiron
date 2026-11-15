@@ -59,7 +59,10 @@ impl Vault {
     /// Completes the reconciliation TASK of queue conflict `conflict` in the
     /// write that supersedes its sources, once its green successor closed
     /// it (ARCH-0050:110; FIX QUEUE-RECONCILIATION-TASK-COMPLETION). Its
-    /// result is `resolution`, the claim that closed the conflict.
+    /// result is `resolution`, the claim that closed the conflict (one of
+    /// them when several closed it together; see
+    /// `QueueConflictResolver::resolution`). With no closing claim read, it
+    /// completes with no result.
     ///
     /// The write is the engine's own, through the internal TASK body door,
     /// as a watch TASK's tick settles it: no run is leased on a
@@ -109,8 +112,10 @@ impl Vault {
             )
             .apply(txn)?;
         // As every settlement does: a review the owner accepted before the
-        // TASK settled anchors it, and the routing folds count it. Its
-        // queued Dreamer realization finds it settled and is owed nothing.
+        // TASK settled anchors it, and the routing folds count it. The
+        // Dreamer lane realizes only Standard TASKs, so its queued attempt
+        // is owed nothing. Like a watch tick, it sends no peer-result
+        // signal: no run delegated this TASK (the Dreamer holds it).
         super::settlement_anchor::anchor_kept_review_in_txn(self, txn, task, None)?;
         crate::edit_distance::routing::refold_task_outcomes_in_txn(self, txn, task);
         Ok(Some(task))

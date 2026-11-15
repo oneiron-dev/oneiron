@@ -159,8 +159,13 @@ pub struct QueueConflictLink {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct QueueConflictResolver {
     /// The resolution claim that closed the typed conflict: the green
-    /// batch's own queue claim, else the first claim that superseded it.
-    /// `None` when no claim's supersession reads.
+    /// batch's own queue claim, else the first, in claim-id order, of the
+    /// claims that superseded it. When several claims closed it together
+    /// (per-file typed claims, or greens that each covered some of its
+    /// paths), this one may cover only part of its paths; every closer
+    /// keeps its own `Supersedes` edge. It may come from an earlier batch
+    /// than `task` and `work`, which name the run whose green completed the
+    /// coverage. `None` when no claim's supersession reads.
     pub resolution: Option<EntityId>,
     /// The TASK the resolving run realized; `None` for an owner or trusted
     /// batch, which no run submitted.
