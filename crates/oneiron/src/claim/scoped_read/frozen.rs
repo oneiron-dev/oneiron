@@ -50,6 +50,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
+use super::actor_key::KeyClassOrigin;
 use super::*;
 use crate::claim::world_access::WorldAuthoritySet;
 use oneiron_authority::federation::{Scope, ScopeAxis, ScopeId};
@@ -142,8 +143,9 @@ fn earlier_end(first: Option<u64>, second: Option<u64>) -> Option<u64> {
 /// that key and this basis (`ScopedReadActorKey::within_native_basis`): it
 /// never regains an owner standing the live key lacked, nor reads a row
 /// either gate refused (Sol R1/R2 on #8061), and it reads as the actor
-/// class the live key was proved as
-/// (`ScopedReadActorKey::within_saved_actor_class`).
+/// class the live key was proved as: a key built from the principal's row
+/// takes that class, and a caller's key of another class reads nothing
+/// (`ScopedReadActorKey::within_saved_actor_class`, Sol F1 on #8134).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NativeReadBasis {
@@ -586,11 +588,14 @@ impl FrozenReadLane {
         matches!(error, Error::InvalidConfig(message) if message.as_str() == GUEST_LANE_NOT_SAVED)
     }
 
-    /// `key`, the principal's own live key, narrowed by this frozen lane in
-    /// `txn`: held to the saved key's grant basis and actor class, the frozen
-    /// Scope, records caveat, worlds and room facets, each only narrowing. A
-    /// key whose proof names another class than the saved one reads nothing
-    /// (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS). A lane whose
+    /// `key`, a caller's own key for the lane's principal, narrowed by this
+    /// frozen lane in `txn`: held to the saved key's grant basis and actor
+    /// class, the frozen Scope, records caveat, worlds and room facets, each
+    /// only narrowing. A key of another class than the saved one has no meet
+    /// with the lane and reads nothing, whether a proof or the caller named
+    /// its class (FIX SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS; Sol F1 on
+    /// #8134). A rebuild over a key built from the principal's row narrows
+    /// it with `Self::narrow_row_key_in_txn` instead. A lane whose
     /// credential no longer holds in `txn` (`SavedCredential`) reads
     /// nothing, and the rebuilt key
     /// carries that credential, so each later read judges it again in its
@@ -609,6 +614,37 @@ impl FrozenReadLane {
         vault: &crate::Vault,
         txn: &heed::RoTxn<'_>,
         key: ScopedReadActorKey,
+    ) -> Result<ScopedReadActorKey> {
+        self.narrow_key_in_txn(vault, txn, key, KeyClassOrigin::Caller)
+    }
+
+    /// `key`, built from the principal's row for this rebuild (its class
+    /// the row type's, or the class a saved declaration stored for its
+    /// actor), narrowed by this frozen lane in `txn` as
+    /// [`Self::narrow_in_txn`] narrows a caller's key, except that a key
+    /// with no proof reads as the class the lane was saved under: its own
+    /// class is the row's, not one any live key was proved as (FIX
+    /// SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
+    ///
+    /// # Errors
+    /// As [`Self::narrow_in_txn`].
+    pub(crate) fn narrow_row_key_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        key: ScopedReadActorKey,
+    ) -> Result<ScopedReadActorKey> {
+        self.narrow_key_in_txn(vault, txn, key, KeyClassOrigin::PrincipalRow)
+    }
+
+    /// [`Self::narrow_in_txn`] or [`Self::narrow_row_key_in_txn`], by
+    /// where `key` took its class from.
+    fn narrow_key_in_txn(
+        &self,
+        vault: &crate::Vault,
+        txn: &heed::RoTxn<'_>,
+        key: ScopedReadActorKey,
+        origin: KeyClassOrigin,
     ) -> Result<ScopedReadActorKey> {
         if self.is_principal() {
             return rebuild_without_basis_in(vault, txn, key);
@@ -647,7 +683,7 @@ impl FrozenReadLane {
         // SAVED-LANE-REBUILD-SUBSTITUTES-ACTOR-CLASS).
         if let Some(basis) = &self.native_basis {
             key = key
-                .within_saved_actor_class(basis.actor_class.as_deref())
+                .within_saved_actor_class(basis.actor_class.as_deref(), origin)
                 .ok_or(Error::InvariantViolation("frozen read lane actor"))?
                 .within_native_basis(basis.clone());
         }
@@ -698,6 +734,20 @@ impl FrozenReadLane {
     ) -> Result<ScopedReadActorKey> {
         let txn = vault.store.env.read_txn()?;
         self.narrow_in_txn(vault, &txn, key)
+    }
+
+    /// [`Self::narrow_row_key_in_txn`] in its own snapshot.
+    ///
+    /// # Errors
+    /// As [`Self::narrow_row_key_in_txn`], and a store failure opening the
+    /// snapshot.
+    pub(crate) fn narrow_row_key(
+        &self,
+        vault: &crate::Vault,
+        key: ScopedReadActorKey,
+    ) -> Result<ScopedReadActorKey> {
+        let txn = vault.store.env.read_txn()?;
+        self.narrow_row_key_in_txn(vault, &txn, key)
     }
 }
 

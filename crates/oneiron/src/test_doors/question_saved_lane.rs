@@ -50,10 +50,11 @@ pub fn saved_source_reader(
 }
 
 /// The asker's own key, as `graph_ask::asker_reader_in_txn` builds it for a
-/// live PERSON, narrowed by `read_lane` (`saved_reader::saved_reader`).
+/// live PERSON, narrowed by `read_lane` as a key built from the asker's row
+/// (`saved_reader::saved_reader`).
 ///
 /// # Errors
-/// As `FrozenReadLane::narrow`.
+/// As `FrozenReadLane::narrow_row_key`.
 pub fn asker_reader(
     vault: &Vault,
     asker: EntityId,
@@ -62,7 +63,7 @@ pub fn asker_reader(
     let key = ScopedReadActorKey::with_actor_class(asker.to_hex(), "human")
         .ok_or(Error::InvariantViolation("canonical ask principal"))?
         .exempt_while_owner(asker);
-    read_lane.narrow(vault, key)
+    read_lane.narrow_row_key(vault, key)
 }
 
 /// `asker`'s standing question from `definition`, stored in a writer of its

@@ -11,17 +11,22 @@
 //! principal's row type, a PERSON's being human: no row bound the rebuilt
 //! key, its frozen Scope stood as read authority, and the saved lane read
 //! the claim. The lane's grant basis now keeps the class, and each rebuild
-//! reads under it: the saved question's asker reader, its source reader
-//! (the refresh, artifact and wake reads), the owner's own key, and a key
-//! rebuilt and frozen again. A current credential that proves another
-//! class has no meet with the lane and reads nothing, even where the lane's
-//! own row admits the claim.
+//! from the principal's row reads under it: the saved question's asker
+//! reader, its source reader (the refresh, artifact and wake reads), and a
+//! key rebuilt and frozen again. A caller's own key of another class has no
+//! meet with the lane and reads nothing, even where the lane's own row
+//! admits the claim: a current credential that proves another class, the
+//! owner's own human-class key, and a key with no proof that names the
+//! agent class over a human-class lane (Sol F1 on #8134).
 //!
 //! Red at 4fe9a03288f (#8118's head 25e1b9d9f61 plus the shared
-//! source-reader helper, which moves no behaviour): each of the five reads
-//! the claim. Guards: a human-class credential's saved lane still reads the
-//! claim no row binds its class from, and an agent-class lane still reads a
-//! claim its own row admits.
+//! source-reader helper, which moves no behaviour): each of the first five
+//! reads the claim. Red at 382d40476b6 (the first fix, under which every
+//! key with no proof took the lane's class, a caller's own key among them):
+//! the owner's own key over the agent-class lane, and the agent-class key
+//! over the human-class lane, each read the claim. Guards: a human-class
+//! credential's saved lane still reads the claim no row binds its class
+//! from, and an agent-class lane still reads a claim its own row admits.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_actor_class`.
 #![cfg(oneiron_test_support)]
@@ -360,8 +365,8 @@ fn source_reads(fixture: &Fixture, frozen: &FrozenReadLane, row: EntityId) -> (b
     }
 }
 
-/// What `frozen`, rebuilt over the owner's own in-process key, reads of
-/// `row`.
+/// What `frozen`, met with the owner's own in-process key of the human
+/// class, reads of `row`.
 fn owner_key_reads(fixture: &Fixture, frozen: &FrozenReadLane, row: EntityId) -> (bool, String) {
     let key = fixture
         .vault
@@ -403,7 +408,7 @@ fn an_agent_class_saved_lane_over_the_owners_key_reads_no_claim_its_receipt_boun
     let (read, seen) = owner_key_reads(&fixture, &frozen, fixture.claim);
     assert!(
         !read,
-        "actor=the owner's agent-class credential; expected its saved lane, rebuilt over the owner's own key, to read as the agent class and refuse the claim its receipt-bound row refused; seen {seen}"
+        "actor=the owner's agent-class credential; expected its saved lane, met with the owner's own human-class key, to read nothing, not the claim as human; seen {seen}"
     );
 }
 
@@ -448,6 +453,44 @@ fn an_agent_class_saved_lane_over_a_human_class_credential_reads_nothing() {
     );
 }
 
+/// The owner's own key, of the human class, has no meet with an agent-class
+/// lane either: met with it, the lane reads nothing, not even the claim its
+/// own row admits (Sol F1 on #8134).
+#[test]
+fn an_agent_class_saved_lane_over_the_owners_own_human_class_key_reads_nothing() {
+    let fixture = fixture(AgentReadRow::AdmitsBaseWorld);
+    let frozen = agent_saved_lane(&fixture, true);
+    let (read, seen) = owner_key_reads(&fixture, &frozen, fixture.claim);
+    assert!(
+        !read,
+        "actor=the owner's agent-class credential; expected its saved lane, met with the owner's own human-class key, to read nothing, not the claim as the agent class; seen {seen}"
+    );
+}
+
+/// A key with no proof that names the agent class keeps it over a
+/// human-class lane: met with that lane, it reads nothing, not the claim
+/// its own receipt-bound row refused as human (Sol F1 on #8134).
+#[test]
+fn a_human_class_saved_lane_over_an_agent_class_key_reads_no_claim_its_row_refused() {
+    let fixture = fixture(AgentReadRow::HeldToReceipt);
+    let frozen = saved_lane(&fixture, attenuated_device_key(&fixture));
+    let current = ScopedReadActorKey::with_actor_class(fixture.owner.to_hex(), "agent")
+        .expect("the owner's agent-class key");
+    let (live, seen) = reads(&held_lane(&fixture, current.clone()), fixture.claim);
+    assert!(
+        !live,
+        "precondition: a key that names the agent class refuses the claim its receipt-bound row holds to a receipt; seen {seen}"
+    );
+    let (read, seen) = match frozen.narrow(&fixture.vault, current) {
+        Ok(key) => reads(&held_lane(&fixture, key), fixture.claim),
+        Err(error) => (false, format!("rebuild={error:?}")),
+    };
+    assert!(
+        !read,
+        "actor=the owner's device under an attenuated human-class credential; expected its saved lane, met with a key that names the agent class, to read nothing, not the claim as human; seen {seen}"
+    );
+}
+
 /// Guard: a human-class credential's saved lane keeps its class, which the
 /// agent-class row does not bind, and reads the claim through every rebuild.
 #[test]
@@ -475,7 +518,8 @@ fn a_human_class_saved_lane_still_reads_the_claim_no_row_binds_its_class_from() 
     }
 }
 
-/// Guard: an agent-class lane keeps reading what its own row admits.
+/// Guard: an agent-class lane keeps reading what its own row admits
+/// through each rebuild from the principal's row.
 #[test]
 fn an_agent_class_saved_lane_still_reads_a_claim_its_row_admits() {
     let fixture = fixture(AgentReadRow::AdmitsBaseWorld);
@@ -483,10 +527,6 @@ fn an_agent_class_saved_lane_still_reads_a_claim_its_row_admits() {
     for (reader, (read, seen)) in [
         ("asker", asker_reads(&fixture, &frozen, fixture.claim)),
         ("source", source_reads(&fixture, &frozen, fixture.claim)),
-        (
-            "owner's key",
-            owner_key_reads(&fixture, &frozen, fixture.claim),
-        ),
     ] {
         assert!(
             read,
