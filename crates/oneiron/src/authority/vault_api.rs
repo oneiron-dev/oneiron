@@ -9,7 +9,7 @@ use crate::Vault;
 use crate::batch::BatchOp;
 use crate::batch::ENTITY_METADATA_HEADER_LEN;
 use crate::batch::EntityMetadataHeader;
-use crate::batch::apply_ops;
+use crate::batch::apply_ops_beside_authority_rows;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
@@ -47,6 +47,10 @@ struct PreparedAuthorityLogRows {
     ids: Vec<EntityId>,
     ops: Vec<BatchOp>,
     pending: Option<super::history_admission::PendingAuthorityHistory>,
+    /// Every row the batch carries: each row's store door reads the fold
+    /// beside them, as the batch's preflight did (owner-reserve delta
+    /// review F2).
+    batch: BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 }
 
 impl PreparedAuthorityLogRows {
@@ -57,11 +61,16 @@ impl PreparedAuthorityLogRows {
         vault: &Vault,
         wtxn: &mut heed::RwTxn<'_>,
     ) -> Result<super::history_admission::AuthorityPut> {
-        let Self { ids, ops, pending } = self;
+        let Self {
+            ids,
+            ops,
+            pending,
+            batch,
+        } = self;
         if ops.is_empty() {
             return Ok(super::history_admission::AuthorityPut::Stored(ids));
         }
-        apply_ops(
+        apply_ops_beside_authority_rows(
             &vault.store,
             &vault.config,
             &vault.analyzer,
@@ -72,6 +81,7 @@ impl PreparedAuthorityLogRows {
                 .load(std::sync::atomic::Ordering::Acquire),
             false,
             true,
+            &|| Ok(batch.clone()),
         )?;
         if let Some(pending) = pending {
             return Ok(super::history_admission::AuthorityPut::Pending(pending));
@@ -264,6 +274,7 @@ impl Vault {
                 ids,
                 ops,
                 pending: None,
+                batch,
             });
         }
         // A batch of granting rows, each of whose fold past an adopted image
@@ -293,7 +304,12 @@ impl Vault {
             .into_iter()
             .filter_map(|index| ops[index].take())
             .collect();
-        Ok(PreparedAuthorityLogRows { ids, ops, pending })
+        Ok(PreparedAuthorityLogRows {
+            ids,
+            ops,
+            pending,
+            batch,
+        })
     }
 
     /// Reads and decodes one AUTHORITY_LOG entry by entity id.

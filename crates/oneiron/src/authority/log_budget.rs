@@ -34,8 +34,9 @@
 //! the rows it covers as stored rows. A stored row with a missing ancestor is
 //! charged at its worst case from its arrival, so the later arrival of that
 //! ancestor, the owner's or another's, never moves the projection by the
-//! ancestor's own ancestry. An owner key the fold shows revoked or retired
-//! does no owner's work: its rows wait at the reserve as a machine's do.
+//! ancestor's own ancestry. Only a key the fold holds as a live owner does
+//! the owner's work: a revoked or retired owner key, or one no roster holds,
+//! has its rows wait at the reserve as a machine's do.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -737,15 +738,19 @@ pub(crate) enum DoorFold<'a> {
     /// The fold the door's preflight already holds: the replicated doors'
     /// fold for [`super::door_refuses_retired_standing`].
     Held(&'a AuthorityFold),
-    /// A door that holds none, the local append's put: the snapshot's own
-    /// fold under the vault's posture, read only when the reserve asks.
-    Snapshot(HostingPrivacyPosture),
+    /// A door that holds none, a local put: the snapshot's own fold under
+    /// the vault's posture, read only when the reserve asks, beside the
+    /// authority rows the put's batch carries when it names them. A local
+    /// append or import stages its rows one by one, so a fold that needs
+    /// history a later row of the batch supplies answers beside them, as
+    /// the batch's preflight did (owner-reserve delta review F2).
+    Snapshot(HostingPrivacyPosture, Option<super::RowsBeside<'a>>),
 }
 
 impl DoorFold<'_> {
     /// `body` on the fold. A snapshot's fold is read first, with `arriving`
-    /// folded in where it needs history they supply
-    /// ([`super::preflight_authority_rows_in_txn`]).
+    /// folded in where it needs history they supply, then the rows beside
+    /// ([`super::preflight_authority_rows_beside_in_txn`]).
     fn read<T>(
         &self,
         store: &Store,
@@ -755,10 +760,17 @@ impl DoorFold<'_> {
     ) -> crate::error::Result<T> {
         match self {
             Self::Held(fold) => Ok(body(fold)),
-            Self::Snapshot(posture) => {
-                let view = super::history_admission::preflight_authority_rows_in_txn(
-                    store, *posture, txn, arriving,
-                )?;
+            Self::Snapshot(posture, beside) => {
+                let view = match beside {
+                    Some(beside) => {
+                        super::history_admission::preflight_authority_rows_beside_in_txn(
+                            store, *posture, txn, arriving, *beside,
+                        )?
+                    }
+                    None => super::history_admission::preflight_authority_rows_in_txn(
+                        store, *posture, txn, arriving,
+                    )?,
+                };
                 Ok(body(&view))
             }
         }
@@ -778,8 +790,8 @@ impl DoorFold<'_> {
 /// rest wait (rule 5: never refused). Once the stored log's projected peak
 /// passes the owner's reserve under the memory floor
 /// ([`FOLD_MEMORY_OWNER_RESERVE_DIVISOR`]), every row but the owner's work
-/// waits and the owner's work lands ([`owner_work`]): an owner key `fold`
-/// shows revoked or retired does none. The door reads the stored log's
+/// waits and the owner's work lands ([`owner_work`]): a key `fold` does not
+/// hold as a live owner does none. The door reads the stored log's
 /// structure as the fold's bounds do.
 pub(crate) fn authority_door(
     store: &Store,
@@ -853,8 +865,9 @@ pub(crate) fn authority_door(
 /// Whether `entry` is the owner's work, which lands past the owner's reserve
 /// under the memory floor ([`FOLD_MEMORY_OWNER_RESERVE_DIVISOR`]): a row a
 /// slip issuer signs or cosigns, a row an anchor this install takes as its
-/// own signs (its root records and machine marks), each while `fold` shows
-/// that key neither revoked nor retired ([`signs_for_the_owner`]), or the
+/// own signs (its root records and machine marks), while `fold` holds the
+/// issuer as a live owner and shows the anchor neither revoked nor retired
+/// ([`signs_for_the_owner`]), or the
 /// owner's will this install carries ([`carries_own_will`]). Another
 /// install's key passes none of them at this door, and neither does a
 /// stranger's anchor. A result this install signs answers a request or a
@@ -898,34 +911,41 @@ fn names_an_owner_key(structure: &AuthorityStructure, entry: &AuthorityLogEntry)
     signed_by(entry, &structure.issuers) || structure.is_own_anchor(entry.signer_key())
 }
 
-/// Whether one of those keys signs `entry` for the owner under `fold`: one
-/// that `fold` shows neither revoked on its roster nor retired by a handoff
-/// (OWNER-RESERVE-REVOKED-OWNER-KEY = A; OPUS-SECREAD-A #8360 N1). The
-/// structure's issuers never shrink ([`super::log_structure`]), so an owner
-/// key the owner revoked stays one there; and a revoked set read from the
-/// signed rows alone would let a stolen key revoke the owner's own. Only the
-/// fold tells.
+/// Whether one of those keys signs `entry` for the owner under `fold`: a
+/// slip issuer `fold` holds as a live owner on its roster, or this install's
+/// own anchor, neither retired by a handoff nor, for the anchor, revoked on
+/// the roster (OWNER-RESERVE-REVOKED-OWNER-KEY = A; OPUS-SECREAD-A #8360 N1).
+/// The structure's issuers never shrink ([`super::log_structure`]), so an
+/// owner key the owner revoked stays one there, and so does a key a revoked
+/// one enrolled in a row the fold refused: such a key is on no roster, so it
+/// signs or cosigns nothing for the owner (owner-reserve delta review F1).
+/// A revoked set read from the signed rows alone would let a stolen key
+/// revoke the owner's own. Only the fold tells.
 fn signs_for_the_owner(
     structure: &AuthorityStructure,
     fold: &AuthorityFold,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    let stands = |key: &AuthorityKey| {
-        !fold.retired_keys.contains(key)
-            && !fold.roster.get(key).is_some_and(|device| device.revoked)
-    };
     std::iter::once(&entry.signer)
         .chain(&entry.cosigns)
         .any(|signature| {
-            structure.issuers.contains(&signature.public_key) && stands(&signature.public_key)
+            let key = &signature.public_key;
+            structure.issuers.contains(key)
+                && !fold.retired_keys.contains(key)
+                && roster_has_live_owner(&fold.roster, key)
         })
-        || (structure.is_own_anchor(entry.signer_key()) && stands(entry.signer_key()))
+        || (structure.is_own_anchor(entry.signer_key())
+            && !fold.retired_keys.contains(entry.signer_key())
+            && !fold
+                .roster
+                .get(entry.signer_key())
+                .is_some_and(|device| device.revoked))
 }
 
 /// Whether the stored row `hash`, a request or a directive this install's
 /// pickup answers, is the owner's work at this door: a slip issuer signed or
-/// cosigned it, or an anchor this install takes as its own signed it, while
-/// `fold` shows that key neither revoked nor retired, or this install carries
+/// cosigned it, or an anchor this install takes as its own signed it, as
+/// [`signs_for_the_owner`] reads `fold`, or this install carries
 /// it ([`carries_own_will`]). A row no raw body of is stored, such as one an
 /// adopted checkpoint image covers, is not.
 fn asks_the_owners_work(
@@ -968,7 +988,7 @@ pub(crate) fn asks_the_owners_work_in_txn(
         store,
         txn,
         &view.structure,
-        &DoorFold::Snapshot(store.privacy_posture),
+        &DoorFold::Snapshot(store.privacy_posture, None),
         &[],
         request,
     )

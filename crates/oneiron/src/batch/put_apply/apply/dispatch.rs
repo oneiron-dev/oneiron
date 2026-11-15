@@ -221,7 +221,7 @@ pub(super) fn dispatch_put_type(
         // past their shared bound wait (rule 5), a replica retrying each drain.
         let door_fold = match &judged {
             Some(fold) => crate::authority::DoorFold::Held(fold),
-            None => crate::authority::DoorFold::Snapshot(fixed.posture),
+            None => crate::authority::DoorFold::Snapshot(fixed.posture, fixed.authority_beside),
         };
         match crate::authority::authority_door(store, wtxn, &entry, door_fold)? {
             crate::authority::AuthorityDoor::Lands => {}
