@@ -96,8 +96,8 @@ fn retire_refused_retry(vault: &Vault, state: &mut State) -> MessageStreamResult
 /// names a room's Retry's. Its new TURN joins that sitting while it is open,
 /// or the one its actor has open on that machine now; with no such sitting,
 /// `memory` is returned as it is. A DAG room's Retry records the reply's
-/// own sitting even once it has ended ([RETRY-SITTING-ROTATION-SPLIT],
-/// FIX-LIST line 26273). Every other stream keeps its handle.
+/// own sitting even once it has ended (FIX RETRY-SITTING-ROTATION-SPLIT).
+/// Every other stream keeps its handle.
 fn bind_retry_sitting<'v>(
     vault: &'v Vault,
     seed: &storage::Seed,
