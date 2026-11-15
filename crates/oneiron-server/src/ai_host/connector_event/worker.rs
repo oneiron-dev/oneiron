@@ -14,13 +14,21 @@
 //! named in the result, a history read that fails is logged, and the reply
 //! goes on either way; the context is read whole, and past its `[limits]`
 //! row it asks.
+//!
+//! A self agent's thread compacts as its chat does (OWN-VOICE-EPOCHS = C):
+//! the call reads the thread's log, the agent's own standing summaries and
+//! then the turns none covers, and once it answered, past the agent's
+//! threshold, the earlier turns compact in the agent's own voice under the
+//! thread's own epochs, off the reply's path.
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use oneiron::agent_def::AgentDefinition;
 use oneiron::agent_dispatch::{AgentDispatchTarget, AgentDispatcher};
+use oneiron::claim::CallerLocality;
+use oneiron::compaction::{ChatLog, ConversationCompactionUnavailable};
 use oneiron::context_board::{TurnWake, turn_wake_line};
-use oneiron::ingest::ConnectorWitness;
+use oneiron::ingest::{ConnectorLogLine, ConnectorWitness, connector_reply_message_id};
 use oneiron::limit_ask::EngineLimit;
 use oneiron::memory::TranscriptMessage;
 use oneiron::outbound::{
@@ -35,6 +43,7 @@ use oneiron::{
 };
 
 use super::super::CHAT_ROLE;
+use crate::ai_host::{ChatBreakpointCall, ChatSelfMode};
 use crate::models::RoleCall;
 use crate::server::SyncServer;
 
@@ -142,16 +151,30 @@ fn answer(
                     super::super::unix_seconds_now(),
                 )
             });
+            // A self agent reads its thread as its chat reads its own log
+            // (OWN-VOICE-EPOCHS = C); a log that does not read falls back to
+            // the whole history.
+            let self_log = server.ai.chat_self_mode(vault, agent).and_then(|mode| {
+                match vault.connector_conversation_log(agent, &origin, REPLY_REF, mode.hot_turns()) {
+                    Ok(Some(log)) => Some((mode, log)),
+                    Ok(None) => None,
+                    Err(error) => {
+                        tracing::warn!(%error, "connector reply log did not read; the reply reads the whole history");
+                        None
+                    }
+                }
+            });
             // The whole conversation so far, as the agent's lane admits it;
             // one the vault cannot read answers from the message alone.
-            let mut context: Vec<LlmMessage> = match vault
-                .connector_conversation_history(agent, &origin, REPLY_REF)
-            {
-                Ok(history) => history.iter().map(history_message).collect(),
-                Err(error) => {
-                    tracing::warn!(%error, "connector reply history did not read; the reply goes on");
-                    Vec::new()
-                }
+            let mut context: Vec<LlmMessage> = match &self_log {
+                Some((_, log)) => log.lines.iter().map(log_message).collect(),
+                None => match vault.connector_conversation_history(agent, &origin, REPLY_REF) {
+                    Ok(history) => history.iter().map(history_message).collect(),
+                    Err(error) => {
+                        tracing::warn!(%error, "connector reply history did not read; the reply goes on");
+                        Vec::new()
+                    }
+                },
             };
             // The budget messages the wake's charge fired are the engine's
             // own words, not the inbound's: they lead the turn (FIX 3761).
@@ -172,7 +195,7 @@ fn answer(
                 LlmMessageRole::User,
                 turn_wake_line(vault.now_recorded_ms(), TurnWake::Channel),
             ));
-            let answer = generate(
+            let (answer, admitted) = generate(
                 server,
                 runtime,
                 agent,
@@ -181,6 +204,9 @@ fn answer(
                 reply_run_id(agent, event_id),
                 result,
             )?;
+            if let Some((mode, log)) = self_log {
+                enter_thread_breakpoint(server, agent, &origin, mode, log.log, &admitted);
+            }
             let answer = answer.trim();
             if answer.is_empty() {
                 return Ok(());
@@ -265,6 +291,8 @@ fn answer(
 /// agent's instructions, then `context` (the conversation's history and the
 /// message). What the call's rungs spent on the line, failed rungs
 /// included, is kept in `result.actual_units` whether or not it answered.
+/// Returns the answer's text and the call as it was admitted, which the
+/// thread's breakpoint holds as the answer's own.
 fn generate(
     server: &Arc<SyncServer>,
     runtime: &tokio::runtime::Handle,
@@ -273,7 +301,7 @@ fn generate(
     context: Vec<LlmMessage>,
     run_id: String,
     result: &mut ConnectorReplyJobResult,
-) -> oneiron::Result<String> {
+) -> oneiron::Result<(String, RoleCall)> {
     let vault = server.vault();
     let models = server.ai.models();
     let seat = models
@@ -334,6 +362,10 @@ fn generate(
     let RoleCall { request, ladder } = models
         .admit_role(vault, CHAT_ROLE, request)
         .map_err(|refusal| Error::InvalidConfig(format!("connector reply refused: {refusal}")))?;
+    let admitted = RoleCall {
+        request: request.clone(),
+        ladder: Arc::clone(&ladder),
+    };
     // The agent pays, as a chat turn does: one line per reply on its live
     // budget policy rows, which a rerun's call shares. Each rung the call
     // reaches is admitted on its own permit and settles itself.
@@ -351,7 +383,7 @@ fn generate(
     let (response, _served) = answered.map_err(|error| {
         Error::InvalidConfig(format!("connector reply model call failed: {error}"))
     })?;
-    Ok(response
+    let text = response
         .message
         .content
         .iter()
@@ -359,7 +391,52 @@ fn generate(
             ContentPart::Text { text, .. } => Some(text.as_str()),
             _ => None,
         })
-        .collect())
+        .collect();
+    Ok((text, admitted))
+}
+
+/// Enters a self agent's breakpoint for its thread once its reply's call
+/// answered (OWN-VOICE-EPOCHS = C): past the agent's threshold, the
+/// thread's earlier turns compact in its own voice under the thread's own
+/// epochs, on chat's flight path and claim, off the reply's path. The reply's
+/// request carries the event's briefing and engine lines that are no
+/// witnessed row, so no live fork is captured (FIX 9463) and the flight
+/// writes on the cheap writer as the agent. The agent pays, as for its
+/// reply. A flight that does not run leaves the log raw; the reply goes on.
+fn enter_thread_breakpoint(
+    server: &Arc<SyncServer>,
+    agent: EntityId,
+    origin: &SurfaceConnectorPayload,
+    mode: ChatSelfMode,
+    log: ChatLog,
+    admitted: &RoleCall,
+) {
+    let message = match connector_reply_message_id(origin, agent, REPLY_REF) {
+        Ok(message) => message,
+        Err(error) => {
+            tracing::warn!(%error, "a connector reply's own compaction has no reply id; its thread's log stays raw");
+            return;
+        }
+    };
+    let call = ChatBreakpointCall {
+        vault: Arc::clone(server.vault()),
+        mode,
+        log,
+        // A provider's event reaches the agent from off this device.
+        locality: CallerLocality::OffDevice,
+        payer: WriteActor::new(agent, EdgeActorClass::Agent),
+        funding: None,
+        budget_units: server.ai.chat.turn_budget_units,
+        message,
+        sources: None,
+    };
+    match server.ai.enter_chat_breakpoint(call, admitted, None) {
+        Ok(()) | Err(ConversationCompactionUnavailable::Quiet) => {}
+        Err(why) => tracing::info!(
+            reason = why.as_str(),
+            "a connector reply's own compaction is unavailable; its thread's log stays raw"
+        ),
+    }
 }
 
 /// The run one agent's reply to one event is metered under.
@@ -436,6 +513,19 @@ fn owe(result: &mut ConnectorReplyJobResult, owed: String) {
         Some(earlier) => format!("{earlier}; {owed}"),
         None => owed,
     });
+}
+
+/// One line of a self agent's thread log: its own summary of the turns it
+/// covers, as its chat reads one, or one retained message as
+/// [`history_message`] frames it.
+fn log_message(line: &ConnectorLogLine) -> LlmMessage {
+    match line {
+        ConnectorLogLine::Summary { epoch, text } => message(
+            LlmMessageRole::System,
+            serde_json::json!({"compacted_turns": {"epoch": epoch, "summary": text}}).to_string(),
+        ),
+        ConnectorLogLine::Message(retained) => history_message(retained),
+    }
 }
 
 /// One message of the conversation's history: the agent's own replies as
