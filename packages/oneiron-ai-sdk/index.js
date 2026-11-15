@@ -18,7 +18,7 @@ export function memoryTools(memory) {
           type: "object", additionalProperties: false,
           properties: {
             id: { type: "string" },
-            author: { type: "string", enum: ["user", "companion", "system"] },
+            author: { type: "string", enum: ["user", "companion", "system", "counterparty"] },
             messageType: { type: "string" }, content: { type: "string" },
             metadata: { type: "object", additionalProperties: true },
             isVisible: { type: "boolean" }, order: { type: "integer", minimum: 0 },

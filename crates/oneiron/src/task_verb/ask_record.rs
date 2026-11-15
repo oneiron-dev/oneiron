@@ -36,7 +36,7 @@ pub(super) use link_proof::{
     mint_key as mint_link_key, sign_forward_result, sign_settlement as sign_link_settlement,
     verify_forward_result, verify_settlement as verify_link_settlement,
 };
-pub(super) use word_admission::{admit_link_word, admit_word};
+pub(super) use word_admission::{admit_link_word, admit_word, check_word};
 
 /// Node-local origin id this device mints ask intents under. Key: `()`.
 const ASK_ORIGIN: SideTable<(), EntityId, side_table::Raw> =
@@ -45,12 +45,8 @@ const ASK_ORIGIN: SideTable<(), EntityId, side_table::Raw> =
 const GROUP: &str = "tasks.ask_group";
 const ANSWER: &str = "tasks.ask_answer";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct AskMember {
-    pub task: String,
-    pub actor: String,
-}
+#[doc(hidden)]
+pub(super) use oneiron_records::task_verb::ask_record::{AskMember, invalid};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -139,10 +135,6 @@ struct AskAnswerFact {
     /// its lineage is unknown.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     lineage_unread: bool,
-}
-
-pub(super) fn invalid() -> Error {
-    Error::Record(RecordError::InvalidTaskBody("tasks.ask.fact"))
 }
 
 pub(super) fn entity(reference: &str) -> Result<EntityId> {

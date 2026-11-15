@@ -70,8 +70,8 @@ const ARTIFACT_ADMISSIONS: SideTable<
     crate::side_table::LegacyJson,
 > = SideTable::new(&side_table::ARTIFACT_PUBLISH_ADMISSION);
 
-const ARTIFACT_CHANNEL_PUBLISHED: u8 = 0;
-const ARTIFACT_CHANNEL_PREVIEW: u8 = 1;
+#[doc(hidden)]
+use oneiron_verb_wire::artifact_hosting::{ARTIFACT_CHANNEL_PREVIEW, ARTIFACT_CHANNEL_PUBLISHED};
 
 /// One channel pointer, keyed by `channel(1) ++ artifact_len(u16 be) ++ artifact`
 /// exactly as `artifact_pointer_key` used to spell it.
@@ -421,16 +421,8 @@ pub fn parse_codebase_fork_hash_hex(value: &str) -> Result<CodebaseForkHash> {
     Ok(out)
 }
 
-#[must_use]
-pub fn artifact_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        out.push(HEX[(byte >> 4) as usize] as char);
-        out.push(HEX[(byte & 0x0f) as usize] as char);
-    }
-    out
-}
+#[doc(hidden)]
+pub use oneiron_records::artifact_hosting::artifact_hex;
 
 mod access;
 pub use self::access::{ArtifactLinkCapability, ArtifactServeTier};

@@ -1,0 +1,203 @@
+//! Moved from `crates/oneiron/src/verbs/federation.rs` (lib split W3: wire types below the lib).
+//! `oneiron` re-exports each item at its old path.
+
+pub use crate::authority::federation_status::FederationPactInactiveReason;
+pub use crate::authority::federation_status::FederationPactStatusRow;
+pub use crate::authority::federation_status::FederationStatus;
+pub use crate::authority::slip_vault::connect_lifecycle::ConnectWindow;
+pub use crate::connect_delivery::ConnectDelivery;
+pub use crate::connect_delivery::ConnectExportRequest;
+pub use crate::connect_delivery::ConnectRejoinStatus;
+pub use crate::connect_delivery::ConnectRejoined;
+use oneiron_authority::federation::Scope;
+use oneiron_authority::federation::pact_scope::FederationDirectionScope;
+use oneiron_authority::federation::pact_scope::FederationPactScope;
+use serde::Deserialize;
+use serde::Serialize;
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectIdentity {
+    pub vault: String,
+    pub host_key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MintConnectGrant {
+    pub peer_vault: String,
+    pub authority_scope: Scope,
+    #[serde(default)]
+    pub expires_at: Option<u64>,
+    /// Detach-on-member-leave setting (FIX 12555): the decimal shared logical
+    /// vault id whose genuine member leave releases this grant here. `None`
+    /// keeps generic shared Connect behavior. The person stored is the minting
+    /// owner, never an input.
+    #[serde(default)]
+    pub detach_on_member_leave: Option<String>,
+}
+
+/// The detach-on-member-leave binding actually persisted on a Connect grant
+/// (FIX 12555): the decimal shared vault id and the canonical person hex of
+/// the owner who chose it.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectDetachBinding {
+    pub shared_vault: String,
+    pub person: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectGrant {
+    pub grant: String,
+    pub guest_actor: String,
+    pub resolved_scope: Scope,
+    pub expires_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detach_on_member_leave: Option<ConnectDetachBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OfferConnect {
+    pub peer_vault: String,
+    pub grant: String,
+    pub outbound: FederationDirectionScope,
+    pub inbound: FederationDirectionScope,
+}
+
+/// A host-signed Connect half; the two hosts sign identical disclosed terms.
+/// It prints its key redacted.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Offer {
+    pub pact: String,
+    pub nonce: String,
+    pub from: String,
+    pub to: String,
+    pub scope: FederationPactScope,
+    pub signer: String,
+    pub signature: String,
+    /// The pact epoch's scope opening key, 64 hex (FIX 7907, 7958): what
+    /// the scope commitment is keyed by, outside the signed transcript and
+    /// logged nowhere; each host's custody holds it until the pact ends.
+    pub key: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptConnect {
+    pub offer: Offer,
+    pub grant: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectAccepted {
+    pub pact: String,
+    pub status: String,
+    pub peer_key: String,
+    pub counter: Offer,
+}
+
+/// A unilateral narrow never restores an axis excluded by the current overlay.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NarrowConnect {
+    pub pact: String,
+    pub epoch: u64,
+    pub outbound: FederationDirectionScope,
+}
+
+/// Fresh reciprocal consent, including the full directional disclosure.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RescopeConnect {
+    pub pact: String,
+    pub epoch: u64,
+    pub outbound: FederationDirectionScope,
+    pub inbound: FederationDirectionScope,
+}
+
+/// A host-signed re-scope half. It prints its key redacted.
+#[derive(Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RescopeOffer {
+    pub pact: String,
+    pub epoch: u64,
+    pub nonce: String,
+    pub from: String,
+    pub to: String,
+    pub scope: FederationPactScope,
+    pub signer: String,
+    pub signature: String,
+    /// The new epoch's scope opening key, 64 hex (FIX 7907, 7958).
+    pub key: String,
+}
+
+impl std::fmt::Debug for Offer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Offer")
+            .field("pact", &self.pact)
+            .field("nonce", &self.nonce)
+            .field("from", &self.from)
+            .field("to", &self.to)
+            .field("scope", &self.scope)
+            .field("signer", &self.signer)
+            .field("signature", &self.signature)
+            .field("key", &"..")
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for RescopeOffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RescopeOffer")
+            .field("pact", &self.pact)
+            .field("epoch", &self.epoch)
+            .field("nonce", &self.nonce)
+            .field("from", &self.from)
+            .field("to", &self.to)
+            .field("scope", &self.scope)
+            .field("signer", &self.signer)
+            .field("signature", &self.signature)
+            .field("key", &"..")
+            .finish()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AcceptRescopeConnect {
+    pub offer: RescopeOffer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ConnectPactRequest {
+    pub pact: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectPactReceipt {
+    pub pact: String,
+    pub status: oneiron_authority::authority::FederationPactStatus,
+    pub epoch: u64,
+    pub scope: FederationPactScope,
+    pub effective_scope: FederationDirectionScope,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectRescoped {
+    pub receipt: ConnectPactReceipt,
+    pub counter: RescopeOffer,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ConnectDisconnected {
+    pub receipt: ConnectPactReceipt,
+    /// Both directions at this host stop; a retained peer copy is not erased.
+    pub outbound_access: bool,
+    pub inbound_access: bool,
+    pub sync_stopped: bool,
+    pub copied_bytes_recallable: bool,
+    #[schemars(with = "String")]
+    pub recipient_copy_state: crate::receipt::guest_revoke::GuestCopyState,
+}
