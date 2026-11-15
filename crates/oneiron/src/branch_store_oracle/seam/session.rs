@@ -474,31 +474,25 @@ impl<'vault> SessionVault<'vault> {
     /// store would prove a row survives close without proving the sealed
     /// crossing is what put it there.
     pub(in crate::branch_store_oracle) fn append_floor_egress_decision(&self) -> Result<()> {
-        let record = crate::store::GateDecisionRecord {
-            version: 0,
-            decision_id: crate::store::GateDecisionId::now(),
-            created_at: 10,
-            outcome: "allow".to_owned(),
-            reason_codes: vec!["gate.policy_model.allow".to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "agent".to_owned(),
-            actor_ref: Some("agent-alpha".to_owned()),
-            content_kind: "outbound_content".to_owned(),
-            policy_manifest_version: "test-policy".to_owned(),
-            // No grant_ref and no claim_id, so this crossing writes
-            // EXACTLY two `vault_meta` rows: the decision and its
-            // append-time retention-context sidecar (ONE-1642; claim-free,
-            // so vault scoped). The census delta below names those rows
-            // rather than an unexplained bump.
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: vec![0xA5],
-            read_frontier_hash: [0xB6; 32],
-            context: crate::store::GateDecisionContext::default(),
-            redacted_at: None,
-        };
+        // No grant_ref and no claim (`about`), so this crossing writes
+        // EXACTLY two `vault_meta` rows: the decision and its
+        // append-time retention-context sidecar (ONE-1642; claim-free,
+        // so vault scoped). The census delta below names those rows
+        // rather than an unexplained bump.
+        let mut receipt = crate::store::GateReceipt::new(
+            crate::store::gate_reason::GateReceiptOutcome::Allow,
+            "outbound_content",
+            "gate.policy_model.allow",
+            crate::store::ReceiptActor::Verbatim {
+                class: "agent".to_owned(),
+                actor_ref: Some("agent-alpha".to_owned()),
+            },
+            vec![0xA5],
+            crate::store::PolicyBasis::versioned([0xB6; 32], "test-policy"),
+        );
+        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(10));
         self.vault.with_write_txn(|wtxn| {
+            let record = self.vault.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
             crate::off_record::FloorWrites::new(&self.vault.store)
                 .append_egress_gate_decision(wtxn, &record)
         })

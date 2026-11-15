@@ -34,6 +34,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::store::GateDecisionId;
+use crate::store::gate_reason::GateReceiptOutcome;
 use oneiron_authority::federation::{Scope, ScopeAxis};
 
 /// The command a registry row's one-tap revoke names for a support grant:
@@ -204,7 +205,7 @@ impl Vault {
             &mut txn,
             SupportReceipt {
                 reason: SUPPORT_GRANT_REASON_MINTED,
-                outcome: "approved",
+                outcome: GateReceiptOutcome::Approved,
                 actor: approver,
                 actor_class: OWNER_ACTOR_CLASS.to_owned(),
                 slip_id: grant.slip_id,
@@ -299,7 +300,7 @@ impl Vault {
             &mut txn,
             SupportReceipt {
                 reason: SUPPORT_GRANT_REASON_REVOKED,
-                outcome: "revoked",
+                outcome: GateReceiptOutcome::Revoked,
                 actor: approver,
                 actor_class: OWNER_ACTOR_CLASS.to_owned(),
                 slip_id,
