@@ -35,8 +35,14 @@
 //! `.configure`, in the order of tests/e2e/secrets.test.ts SECRETS-07: a
 //! pattern must name a row that exists). This host serves no safeguard model,
 //! so a message no pattern decides is refused, not routed (:30).
+//!
+//! The notice goes out on `email`, which a seeded vault refuses until its
+//! built-in pack is installed Active with its connection checked (OF-519).
+//! The pack is not what these tests cover, so the vault drops its seed
+//! marker through a test door, as tests/booking_feed_move_held.rs does; the
+//! file therefore builds only under `--cfg oneiron_test_support`.
 
-#![cfg(unix)]
+#![cfg(all(unix, oneiron_test_support))]
 
 #[path = "support/engine_stack.rs"]
 mod engine_stack;
@@ -209,6 +215,10 @@ impl Host {
         let vault =
             Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open fresh vault"));
         vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
+        // Without this the sender's deliver answers 400 "the channel's
+        // built-in pack is not installed" before any gate or sink runs.
+        oneiron::test_doors::builtin_pack_seed::remove_builtin_pack_seed_marker(&vault)
+            .expect("remove the built-in pack seed marker");
         let server = Arc::new(
             SyncServer::new(
                 Arc::clone(&vault),
@@ -504,8 +514,8 @@ impl Host {
 /// Asserts the stored sender's deliver call took up the one staged notice:
 /// a receipt of the fact alone, for `person`'s naming of `contact`, under
 /// `authorization`. The served sink of a bare test vault holds no mail
-/// connection, so the dispatch's outcome may be a failure; what the receipt
-/// carries is the promise. A refused dispatch must quote nothing either.
+/// connection and the sender holds no send grant, so the dispatch's outcome
+/// may be held or failed; what the receipt carries is the promise. A refused dispatch must quote nothing either.
 fn assert_sender_takes_the_fact(
     reply: Reply,
     person: &Principal,
