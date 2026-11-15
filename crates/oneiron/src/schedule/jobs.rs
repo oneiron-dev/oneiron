@@ -15,9 +15,22 @@ static JOBS: &[&JobSpec] = &[
     &crate::test_doors::schedule::TEST_ENGINE,
     #[cfg(oneiron_test_support)]
     &crate::test_doors::schedule::TEST_LAPSE,
+    #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_CADENCE,
+    #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_ITEMS,
+    #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_OPEN,
+    #[cfg(oneiron_test_support)]
+    &crate::test_doors::schedule::TEST_ANSWER,
 ];
 
 /// The job kind whose code is `code`.
 pub(crate) fn job_named(code: &str) -> Option<&'static JobSpec> {
     JOBS.iter().copied().find(|job| job.code == code)
+}
+
+/// Every job kind.
+pub(crate) fn jobs() -> impl Iterator<Item = &'static JobSpec> {
+    JOBS.iter().copied()
 }

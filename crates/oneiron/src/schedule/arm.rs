@@ -2,12 +2,13 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{ArmBy, EngineZones, JobSpec, Trigger, job_named};
+use super::{ArmBy, EngineZones, JobSpec, Trigger, When, job_named, jobs, retry_after};
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::setting::{SettingChange, SettingScope};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 
@@ -38,6 +39,10 @@ pub(super) struct ScheduleRow {
     pub(super) requested_at: Option<u64>,
     /// Where an unfinished run goes on from.
     pub(super) cursor: Option<Vec<u8>>,
+    /// The run in flight, or the one that goes on from a run that did not run to its end,
+    /// answers a "run now". It stays until a run of the work ends done.
+    #[serde(default)]
+    pub(super) answering: bool,
 }
 
 /// The agent behind an arming.
@@ -53,6 +58,30 @@ impl ScheduleRow {
     pub(super) fn due_at(&self) -> u64 {
         self.requested_at.map_or(self.next_due_at, |requested| {
             requested.min(self.next_due_at)
+        })
+    }
+
+    /// A new arming with `trigger` at `now`: due at its first occurrence, with no failure, cursor
+    /// or request; its last finish is kept.
+    fn armed(
+        trigger: Trigger,
+        armed_by: Option<ArmedBy>,
+        prior: Option<&Self>,
+        now: u64,
+    ) -> Result<Self> {
+        let next_due_at = trigger
+            .first_due(now, &EngineZones)
+            .ok_or_else(|| refused("the trigger has no occurrence ahead"))?;
+        Ok(Self {
+            trigger,
+            armed_by,
+            next_due_at,
+            finished_at: prior.map_or(0, |prior| prior.finished_at),
+            started_at: None,
+            failures: 0,
+            requested_at: None,
+            cursor: None,
+            answering: false,
         })
     }
 }
@@ -195,19 +224,7 @@ impl Vault {
                 Some(caller) => self.arm_power_in_txn(txn, spec, caller, prior.as_ref())?,
             };
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            let next_due_at = trigger
-                .first_due(now, &EngineZones)
-                .ok_or_else(|| refused("the trigger has no occurrence ahead"))?;
-            let row = ScheduleRow {
-                trigger,
-                armed_by,
-                next_due_at,
-                finished_at: prior.as_ref().map_or(0, |prior| prior.finished_at),
-                started_at: None,
-                failures: 0,
-                requested_at: None,
-                cursor: None,
-            };
+            let row = ScheduleRow::armed(trigger, armed_by, prior.as_ref(), now)?;
             store_row_in_txn(&self.store, txn, &key, prior.as_ref(), Some(&row))?;
             Ok(ScheduleView::of(spec.code, subject, &row))
         })
@@ -394,6 +411,171 @@ impl Vault {
         }
         Ok(views)
     }
+}
+
+/// The engine arms `spec` about `subject` with `trigger` inside the caller's write: the door a
+/// deadline's own write calls, and the arming of a cadence key's job. A row that already holds
+/// `trigger` is left as it is, so arming again never moves a due time; a new trigger is due at
+/// its first occurrence, with no failure, cursor or request.
+///
+/// # Errors
+///
+/// `InvalidConfig` for a trigger that can never fire, a zone the engine does not know, or one
+/// with no occurrence ahead; storage errors.
+pub(crate) fn arm_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    spec: &'static JobSpec,
+    subject: Option<EntityId>,
+    trigger: Trigger,
+) -> Result<()> {
+    if let Some(why) = trigger.refusal(&EngineZones) {
+        return Err(refused(why));
+    }
+    let key = row_key(spec.code, subject);
+    let prior = ROWS.get(&vault.store, txn, &key)?;
+    if prior.as_ref().is_some_and(|prior| prior.trigger == trigger) {
+        return Ok(());
+    }
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    let row = ScheduleRow::armed(trigger, None, prior.as_ref(), now)?;
+    store_row_in_txn(&vault.store, txn, &key, prior.as_ref(), Some(&row))
+}
+
+/// The trigger in force for `spec`'s cadence key, at the vault, or `None` for a job that has no
+/// cadence key.
+fn cadence_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, spec: &JobSpec) -> Result<Option<Trigger>> {
+    match spec.when {
+        When::Setting(key) => Ok(Some(
+            key.read_in_txn(vault, txn, &[SettingScope::Vault], None)?
+                .value,
+        )),
+        When::PerArming => Ok(None),
+    }
+}
+
+/// Arms every job whose cadence is a Setting key from the key's value in force, in one write.
+/// The host's pass calls it on its handle's first pass; a job already armed with that trigger
+/// keeps its due time.
+///
+/// # Errors
+///
+/// As [`arm_in_txn`]; storage errors.
+pub(crate) fn arm_setting_jobs(vault: &Vault) -> Result<()> {
+    vault.with_write_txn_grouped(|txn| {
+        for spec in jobs() {
+            if let Some(trigger) = cadence_in_txn(vault, txn, spec)? {
+                arm_in_txn(vault, txn, spec, None, trigger)?;
+            }
+        }
+        Ok(())
+    })
+}
+
+/// The `on_change` of every cadence key: in the write that changes the key, its job is armed
+/// again from the value now in force. A trigger that cannot be armed refuses the change.
+///
+/// # Errors
+///
+/// As [`arm_in_txn`]; storage errors.
+pub(crate) fn rearm_on_change(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    for spec in jobs() {
+        if matches!(spec.when, When::Setting(key) if key.spec.name == change.key)
+            && let Some(trigger) = cadence_in_txn(vault, txn, spec)?
+        {
+            arm_in_txn(vault, txn, spec, None, trigger)?;
+        }
+    }
+    Ok(())
+}
+
+/// "Run now" from the engine: every armed job of a kind `which` takes is due from now until a
+/// run starts, and that run answers the request. The host's pass asks for its handle's
+/// `at_open` jobs, and the owner's "run housekeeping now" for every cadence job; the caller has
+/// proved its own power. Answers how many it asked for.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn request_runs(vault: &Vault, which: fn(&JobSpec) -> bool) -> Result<usize> {
+    vault.with_write_txn_grouped(|txn| {
+        let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+        let mut asked = Vec::new();
+        for row in ROWS.iter_from(&vault.store, txn, &[])? {
+            let (key, row) = row?;
+            let taken = parse_row_key(&key)
+                .and_then(|(job, _)| job_named(&job))
+                .is_some_and(which);
+            if taken {
+                asked.push((key, row));
+            }
+        }
+        for (key, prior) in &asked {
+            let row = ScheduleRow {
+                requested_at: Some(prior.requested_at.map_or(now, |earlier| earlier.min(now))),
+                ..prior.clone()
+            };
+            store_row_in_txn(&vault.store, txn, key, Some(prior), Some(&row))?;
+        }
+        Ok(asked.len())
+    })
+}
+
+/// Pulls the due time of `job` about `subject` forward to `at` inside the caller's write: work
+/// a door made due before the job's next occurrence. A job that is backing off, or has a run in
+/// flight, keeps its due time; one not armed, or already due by `at`, is left as it is.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn due_by_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+    at: u64,
+) -> Result<()> {
+    let key = row_key(job, subject);
+    let Some(prior) = ROWS.get(store, txn, &key)? else {
+        return Ok(());
+    };
+    if prior.failures > 0 || prior.started_at.is_some() || prior.next_due_at <= at {
+        return Ok(());
+    }
+    let row = ScheduleRow {
+        next_due_at: at,
+        ..prior.clone()
+    };
+    store_row_in_txn(store, txn, &key, Some(&prior), Some(&row))
+}
+
+/// When `job` about `subject` is next due, or `None` when it is not armed: a requested run's
+/// time or its next due time, and for a run that never finished, the retry after it.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn due_at_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    job: &str,
+    subject: Option<EntityId>,
+) -> Result<Option<u64>> {
+    let Some(row) = ROWS.get(store, txn, &row_key(job, subject))? else {
+        return Ok(None);
+    };
+    Ok(Some(match (row.started_at, job_named(job)) {
+        (Some(started), Some(spec)) => started.saturating_add(retry_after(
+            row.failures.saturating_add(1),
+            spec.retry_first_secs,
+            spec.retry_cap(&row.trigger),
+        )),
+        _ => row.due_at(),
+    }))
 }
 
 /// The rows an erase of `id` takes: every job about it, and every job it armed.

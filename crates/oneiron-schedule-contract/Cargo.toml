@@ -11,5 +11,7 @@ repository.workspace = true
 doctest = false
 
 [dependencies]
+oneiron-contracts = { version = "0.1.0", path = "../oneiron-contracts" }
+oneiron-setting-contract = { version = "0.1.0", path = "../oneiron-setting-contract" }
 schemars = "=0.8.22"
 serde = { workspace = true }

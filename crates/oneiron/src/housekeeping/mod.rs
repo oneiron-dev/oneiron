@@ -121,7 +121,7 @@ impl Vault {
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         advance_due_check_ins(self, &deadline);
-        run_due_schedules(self, &deadline);
+        run_due_schedules(self, &deadline, access);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::Due, budget, access)
@@ -152,7 +152,7 @@ impl Vault {
         release_ticks_and_prune_hook_feeds(self, &deadline);
         evict_ended_inquiry_answers(self, &deadline);
         advance_due_check_ins(self, &deadline);
-        run_due_schedules(self, &deadline);
+        run_due_schedules(self, &deadline, access);
         #[cfg(feature = "sync")]
         admit_carried_turn_program_wakes(self, &deadline);
         self.housekeeping_pass(Selection::All, budget, access)
@@ -519,13 +519,15 @@ fn evict_ended_inquiry_answers(vault: &Vault, deadline: &Deadline) {
 }
 
 /// Runs the armed schedules due by now (DESIGN 15-setting-primitive, stage 0.2), beside the
-/// sweeps of this pass until they move onto it. A failure to read or write the schedule is logged
-/// and waits for the next pass; a job's own failure is retried by its own backoff.
-fn run_due_schedules(vault: &Vault, deadline: &Deadline) {
+/// sweeps of this pass until they move onto it, lending them the host's model `access`. A failure
+/// to read or write the schedule is logged and waits for the next pass; a job's own failure is
+/// retried by its own backoff.
+fn run_due_schedules(vault: &Vault, deadline: &Deadline, access: &AccessSnapshot) {
     if deadline.stopped() {
         return;
     }
-    if let Err(error) = vault.run_due_until(deadline) {
+    let pass = crate::schedule::JobPass { deadline, access };
+    if let Err(error) = vault.run_due_until(&pass) {
         tracing::warn!(%error, "housekeeping: due schedules wait for the next pass");
     }
 }

@@ -8854,6 +8854,8 @@ version = "0.1.0"
 name = "oneiron-schedule-contract"
 version = "0.1.0"
 dependencies = [
+ "oneiron-contracts",
+ "oneiron-setting-contract",
  "schemars 0.8.22",
  "serde",
 ]

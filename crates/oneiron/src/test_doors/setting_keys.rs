@@ -37,6 +37,13 @@ fn empty_banner() -> String {
     String::new()
 }
 
+fn daily() -> crate::schedule::Trigger {
+    crate::schedule::Trigger::Every {
+        secs: 24 * 60 * 60,
+        first_at: None,
+    }
+}
+
 fn channel(item: &str) -> bool {
     matches!(item, "mail" | "chat")
 }
@@ -89,5 +96,10 @@ crate::setting::setting_keys! {
     pub TEST_HOOKED: u64 = "test.hooked" {
         kind: Kind::new(zero),
         on_change: Some(count_change),
+    };
+    /// The cadence of the test job `test.cadence` (DESIGN 15-setting-primitive, stage 5a-1).
+    pub TEST_JOB_CADENCE: crate::schedule::Trigger = "test.job_cadence" {
+        kind: Kind::new(daily),
+        on_change: Some(crate::schedule::rearm_on_change),
     };
 }
