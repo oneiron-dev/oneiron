@@ -333,7 +333,7 @@
             "hint": "Try removing filters or widening the world, type, or time scope",
             "reason": "filter_matched_none",
             "retrievalQuality": {
-              "confidenceAdjustment": -0.35,
+              "confidence_adjustment": -0.35,
               "quality": "passthrough"
             },
             "totalInScope": 0
