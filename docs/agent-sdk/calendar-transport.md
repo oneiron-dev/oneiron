@@ -27,8 +27,10 @@ and strictly advance its sequence. Retries coalesce through the existing ledger.
 
 ## Host iMIP sender
 
-`calendar.imip.configure` accepts `{endpoint, secret_ref}` and returns the saved
-configuration. `calendar.imip.get` takes `{}` and returns it or `null`.
+The transport is the setting `calendar.imip_transport`, whose value is
+`{endpoint, secret_ref}` or `null`. The owner installs it with
+`vault.settings.set` (`{"key": "calendar.imip_transport", "scope": {"kind": "vault"},
+"value": {...}}`; a null value clears it) and reads it with `vault.settings.get`.
 Credentials are stored through the existing secret custody doors. Give the
 credential a read binding for effector `calendar.imip`.
 

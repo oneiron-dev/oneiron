@@ -125,10 +125,4 @@ crate::side_table::side_tables! {
     EDIT_DISTANCE_GRADUATION_THRESHOLD: VaultMeta b"graduation_threshold:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical]
         => crate::consent_graduation::erase_ramp_actor_in_txn;
-    /// Publisher share dial: explicit owner-set enabled/disabled token. Key: ().
-    EDIT_DISTANCE_PUBLISHER_ENABLED: VaultMeta b"settings:publisher:v1:enabled" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Install-profile default for the publisher share dial. Key: ().
-    EDIT_DISTANCE_PUBLISHER_INSTALL_DEFAULT: VaultMeta b"settings:publisher:v1:install_default" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
 }

@@ -1,4 +1,5 @@
-//! Owner-installed calendar seats and host iMIP submission, with custody names only.
+//! Owner-installed calendar seats, and the host read of the iMIP submission transport, with
+//! custody names only.
 use serde::{Deserialize, Serialize};
 
 use super::{CalendarConnectorSeatState, CalendarSyncOutcome};
@@ -9,8 +10,6 @@ use crate::{EdgeActorClass, Vault};
 
 const SEATS: SideTable<String, CalendarConnectorRegistration, Named> =
     SideTable::new(&side_table::CALENDAR_CONNECTOR_SEAT);
-const IMIP: SideTable<(), CalendarImipTransportConfig, Named> =
-    SideTable::new(&side_table::CALENDAR_IMIP_TRANSPORT);
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::calendar::connectors::door::{
@@ -215,46 +214,16 @@ pub fn observe_sync(
     })
 }
 
-pub fn configure_imip(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: &CalendarImipTransportConfig,
-) -> MemoryResult<CalendarImipTransportConfig> {
-    validate_endpoint(&input.endpoint)?;
-    if input.secret_ref.is_empty()
-        || input.secret_ref.len() > 256
-        || input.secret_ref.chars().any(char::is_control)
-    {
-        return Err(MemoryError::bad_request(
-            "secret_ref must be a bounded custody name",
-        ));
-    }
-    memory.with_verified_actor_write_txn(|txn| {
-        check_owner(memory, owner, txn)?;
-        IMIP.put(&memory.vault().store, txn, &(), input)?;
-        Ok(input.clone())
-    })
-}
-
-pub fn get_imip(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-) -> MemoryResult<Option<CalendarImipTransportConfig>> {
-    let txn = memory
-        .vault()
-        .store
-        .env
-        .read_txn()
-        .map_err(crate::Error::from)?;
-    check_owner(memory, owner, &txn)?;
-    Ok(IMIP.get(&memory.vault().store, &txn, &())?)
-}
-
 /// Host-side read for the existing connector-send executor, never a public
 /// configuration or authority fallback. The executor has already admitted the effect.
+/// The owner installs the transport with `vault.settings.set` on
+/// `calendar.imip_transport`; a row that does not read reads as none.
 pub fn imip_transport(vault: &Vault) -> crate::Result<Option<CalendarImipTransportConfig>> {
     let txn = vault.store.env.read_txn()?;
-    IMIP.get(&vault.store, &txn, &())
+    Ok(crate::calendar::setting_keys::IMIP_TRANSPORT
+        .read_in_txn(vault, &txn, &[], None)?
+        .value
+        .0)
 }
 
 /// The installed seat's standing authority at each provider call. A stopped
