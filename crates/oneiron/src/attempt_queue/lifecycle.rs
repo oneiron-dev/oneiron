@@ -242,6 +242,9 @@ pub(crate) enum RunEvent {
         pause: AttemptPause,
         by_hold_actor: bool,
     },
+    /// A run's lease holder takes a person's pause at its step boundary:
+    /// the Pause signal on its own running row (`run_tree::signal`).
+    PauseAtBoundary,
     /// A resume intervention; every hold's release resumes through it.
     Resume,
     /// A cancel intervention.
@@ -343,6 +346,22 @@ impl RunLifecycle {
                 S::Leased | S::Landing | S::Completed | S::Failed | S::Cancelled | S::Abandoned => {
                     RunStep::Refuse
                 }
+            },
+            // A person's pause, not an engine hold: a resume releases it,
+            // and no hold's release does (FIX 9579).
+            RunEvent::PauseAtBoundary => match row.state {
+                S::Leased => RunStep::Move {
+                    to: S::Paused,
+                    pause: Some(AttemptPause::Person),
+                },
+                S::Queued
+                | S::Paused
+                | S::Scheduled
+                | S::Landing
+                | S::Completed
+                | S::Failed
+                | S::Cancelled
+                | S::Abandoned => RunStep::Refuse,
             },
             RunEvent::Resume => match row.state {
                 // Restoring a still-deferred row as Queued would render it as

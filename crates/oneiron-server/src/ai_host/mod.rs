@@ -49,6 +49,7 @@ pub(crate) use dreamer::DreamerControl;
 mod dreamer_thing;
 mod eval_authoring;
 pub(crate) use eval_authoring::execute as execute_eval_authoring;
+pub(crate) use training_offer::run_now as run_training_offer_pass;
 mod eval_measurement;
 pub(crate) mod failure_signals;
 mod feedback_report_delivery;
@@ -143,6 +144,9 @@ pub struct AiHandle {
     raw_budget_units: u64,
     /// Each paid recall's line for its rerank calls (`[models.recall]`).
     rerank_budget_units: u64,
+    /// What a rerank call is priced at a pair beside its words
+    /// (`[models.recall] rerank_pair_template_units`).
+    rerank_pair_template_units: u64,
     turns: TurnTracker,
     /// When the last turn landed, in seconds: the inbound silence the
     /// Dreamer's wake policy waits out before an idle recipe.

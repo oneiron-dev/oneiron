@@ -15,7 +15,7 @@
 //! again finds the call it held. Once a resume settles a held call, the row
 //! keeps that outcome, without the reply, until a settler lists it
 //! ([`crate::Vault::pending_connector_calls`]), answers the wait the ref names and
-//! acknowledges it ([`crate::Vault::ack_connector_call_delivery`]).
+//! acknowledges it ([`crate::Vault::ack_connector_call_delivery_keeping_caller`]).
 //! [`crate::Vault::connector_tool_schema`] reads a tool's approved schema through
 //! the same resolution a call takes.
 //!
