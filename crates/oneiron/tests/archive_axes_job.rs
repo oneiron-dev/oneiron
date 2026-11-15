@@ -11,7 +11,10 @@
 //! non-controller cannot queue, and a re-proposal of an unbunched archive is
 //! refused when it is asked. The recipe reads a file-plane ASSET sample's body,
 //! never its manifest, and a sample's marked key masked (#7966 and #7967 review
-//! round 1); a proposal serves only while its caller reads every sample.
+//! round 1); a proposal serves only while its caller reads every sample. A
+//! sample pinned at an older file-plane revision reads as the file its
+//! revisions keep, whatever body the ASSET holds now, and an installed pin
+//! serves only while its caller reads every sample (#7966 review round 2).
 //! Run with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test archive_axes_job`.
 #![cfg(oneiron_test_support)]
 
@@ -24,7 +27,7 @@ use oneiron::autoreason_campaign::archive::{
     ArchiveAxesBrief, ArchiveAxesHost, ArchiveAxesMethod, ArchiveAxesProposal, ArchiveAxesReply,
     ArchiveDescriptor, ArchiveOutputRef, ArchiveQualityMetric, CampaignArchiveInstall,
     CampaignArchiveProposalRequest, CampaignArchiveProposalState, CampaignArchiveProposeAxes,
-    CampaignArchiveView,
+    CampaignArchiveRequest, CampaignArchiveView,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
@@ -38,7 +41,8 @@ use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::write_root_goal;
 use oneiron::test_doors::derive_verbs::define_agent;
 use oneiron::verbs::{
-    research_archive_install, research_archive_proposal, research_archive_propose_axes,
+    research_archive_best, research_archive_get, research_archive_install,
+    research_archive_proposal, research_archive_propose_axes,
 };
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -585,6 +589,35 @@ fn a_reproposal_of_an_unbunched_archive_is_refused_when_asked() {
     assert!(refused.contains("immutable"), "{refused}");
 }
 
+/// `line` repeated past the inline body cap (8 MiB), so a put files it.
+fn over_inline(line: &str) -> String {
+    line.repeat(8 * 1024 * 1024 / line.len() + 2)
+}
+
+/// Puts ASSET `id` with `body` at the fixture's time.
+fn put_asset(f: &Fixture, id: &EntityId, body: &str) {
+    f.vault
+        .put_entity(
+            id,
+            ENTITY_TYPE_ASSET,
+            TimeRange { start: T0, end: T0 },
+            T0,
+            body.as_bytes(),
+        )
+        .expect("the asset put");
+}
+
+/// Primes the body instance pool. It starts dry and fills once a put first
+/// wants an instance: the first large put stays in its row, the next is
+/// filed.
+fn prime_file_plane(f: &Fixture) {
+    put_asset(
+        f,
+        &EntityId::now(),
+        &over_inline("a priming line for the body instance pool "),
+    );
+}
+
 /// A sample over 8 MiB is kept on the file plane, its revision stored as a
 /// manifest: the recipe reads the body file, never the manifest (#7966 and
 /// #7967 review round 1).
@@ -593,30 +626,10 @@ fn a_file_plane_asset_sample_reads_as_its_body() {
     let f = fixture();
     let root = bound_root(&f, "axes-file-plane", "axes-file-plane");
     let task = task(&f, "answer the customer's request");
-    let over_inline = |line: &str| line.repeat(8 * 1024 * 1024 / line.len() + 2);
-    // The body instance pool starts dry and fills once a put first wants an
-    // instance: the first large put stays in its row, the next is filed.
-    let prime = over_inline("a priming line for the body instance pool ");
-    f.vault
-        .put_entity(
-            &EntityId::now(),
-            ENTITY_TYPE_ASSET,
-            TimeRange { start: T0, end: T0 },
-            T0,
-            prime.as_bytes(),
-        )
-        .expect("the priming asset");
+    prime_file_plane(&f);
     let body = over_inline("a formal short file plane body line ");
     let asset = EntityId::now();
-    f.vault
-        .put_entity(
-            &asset,
-            ENTITY_TYPE_ASSET,
-            TimeRange { start: T0, end: T0 },
-            T0,
-            body.as_bytes(),
-        )
-        .expect("the large asset");
+    put_asset(&f, &asset, &body);
     let revision = f
         .vault
         .pin_entity_revision(&asset)
@@ -733,5 +746,110 @@ fn a_proposal_serves_only_while_its_caller_reads_every_sample() {
         CampaignArchiveProposalRequest { request },
     )
     .expect_err("the answer is withheld once a sample no longer reads");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+}
+
+/// A sample pinned at an older revision of a file-plane ASSET, filed before
+/// the ASSET took `next_body`: the recipe reads the body file that revision's
+/// row names, which its revisions keep, never its manifest (#7966 review
+/// round 2).
+fn an_older_file_plane_revision_reads_as_its_kept_file(intent_key: &str, next_body: &str) {
+    let f = fixture();
+    let root = bound_root(&f, intent_key, intent_key);
+    let task = task(&f, "answer the customer's request");
+    prime_file_plane(&f);
+    let body = over_inline("a formal short file plane body line ");
+    let asset = EntityId::now();
+    put_asset(&f, &asset, &body);
+    let revision = f
+        .vault
+        .pin_entity_revision(&asset)
+        .expect("the filed revision");
+    put_asset(&f, &asset, next_body);
+    let campaign = Campaign {
+        root,
+        task,
+        samples: vec![
+            ArchiveOutputRef {
+                entity: asset,
+                revision: revision.to_hex(),
+            },
+            artifact(&f, &format!("{intent_key}-b.txt"), "a formal, long answer"),
+            artifact(&f, &format!("{intent_key}-c.txt"), "a casual, short answer"),
+            artifact(&f, &format!("{intent_key}-d.txt"), "a casual, long answer"),
+        ],
+    };
+    propose(&owner_memory(&f), first_request(&f, &campaign)).expect("the owner queues the request");
+    let host = ScriptedHost::new(Some(TWO_AXES), None);
+    let state = run_job(&f, &host);
+    assert!(
+        matches!(state, CampaignArchiveProposalState::Proposed { .. }),
+        "the Coach proposed: {state:?}"
+    );
+    let briefs = host.briefs.borrow();
+    assert_eq!(briefs.len(), 1, "the recipe ran once");
+    let text = &briefs[0]
+        .samples
+        .iter()
+        .find(|sample| sample.output.entity == asset)
+        .expect("the asset sample is in the brief")
+        .text;
+    assert!(
+        !text.contains("oneiron.asset-file.v1"),
+        "the recipe never reads a manifest: {text:?}"
+    );
+    assert_eq!(
+        text.as_str(),
+        &body[..4096],
+        "the recipe reads the older revision's body file, clipped"
+    );
+}
+
+#[test]
+fn an_older_file_plane_revision_under_an_inline_body_reads_as_its_kept_file() {
+    an_older_file_plane_revision_reads_as_its_kept_file(
+        "axes-older-inline",
+        "a short inline body the asset holds now",
+    );
+}
+
+#[test]
+fn an_older_file_plane_revision_under_another_file_reads_as_its_kept_file() {
+    an_older_file_plane_revision_reads_as_its_kept_file(
+        "axes-older-filed",
+        &over_inline("another filed body line the asset holds now "),
+    );
+}
+
+/// An installed pin's axes are drawn from its samples' words too: once a
+/// sample no longer reads for the caller, neither the pin nor its view
+/// serves (#7966 review round 2).
+#[test]
+fn an_installed_pin_serves_only_while_its_caller_reads_every_sample() {
+    let f = fixture();
+    let campaign = campaign(&f, "axes-installed-withdrawn");
+    propose(&owner_memory(&f), first_request(&f, &campaign)).expect("the owner queues the request");
+    let CampaignArchiveProposalState::Proposed { proposal, .. } =
+        run_job(&f, &ScriptedHost::new(Some(TWO_AXES), None))
+    else {
+        panic!("the Coach proposed");
+    };
+    install(&f, &campaign, proposal).expect("installed");
+    let request = CampaignArchiveRequest {
+        root: campaign.root,
+    };
+    research_archive_get(&owner_memory(&f), request.clone()).expect("the pin serves");
+    research_archive_best(&owner_memory(&f), request.clone()).expect("its view serves");
+    assert!(
+        f.vault
+            .delete_entity(&campaign.samples[0].entity)
+            .expect("the owner deletes a sample"),
+        "the sample existed"
+    );
+    let refused = research_archive_get(&owner_memory(&f), request.clone())
+        .expect_err("the pin is withheld once a sample no longer reads");
+    assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
+    let refused =
+        research_archive_best(&owner_memory(&f), request).expect_err("its view is withheld too");
     assert_eq!(refused.code, MEMORY_CODE_NOT_FOUND, "{refused:?}");
 }
