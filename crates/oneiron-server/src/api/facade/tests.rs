@@ -259,34 +259,34 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
             "until": u64::MAX, "decide": "first",
         })
     };
-    let (status, _) = post(&server, &format!("Bearer {SECRET}"), "tasks.ask", json!({})).await;
+    let (status, _) = post(&server, &format!("Bearer {SECRET}"), "ask", json!({})).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     for answer_first in [false, true] {
         let spec = ask_spec(format!("order-{answer_first}"));
-        let (status, receipt) = post(&server, &owner_token, "tasks.ask", spec.clone()).await;
+        let (status, receipt) = post(&server, &owner_token, "ask", spec.clone()).await;
         assert_eq!(status, StatusCode::OK, "{receipt}");
         let handle = receipt["handle"].clone();
-        let (_, retry) = post(&server, &owner_token, "tasks.ask", spec).await;
+        let (_, retry) = post(&server, &owner_token, "ask", spec).await;
         assert_eq!(retry["handle"], handle);
         assert_eq!(retry["idempotent_replay"], true);
         let wait = json!({"handle":handle,"step_key":"caller-step"});
         let (status, _) = post(
             &server,
             &token(owner, "core:read"),
-            "tasks.wait",
+            "wait",
             wait.clone(),
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         if !answer_first {
-            let (status, pending) = post(&server, &owner_token, "tasks.wait", wait.clone()).await;
+            let (status, pending) = post(&server, &owner_token, "wait", wait.clone()).await;
             assert_eq!(status, StatusCode::OK, "{pending}");
             assert!(pending.get("Pending").is_some());
             // Only that logical step waited: the caller can issue another ask now.
             let (status, other) = post(
                 &server,
                 &owner_token,
-                "tasks.ask",
+                "ask",
                 ask_spec("kept-working".into()),
             )
             .await;
@@ -311,16 +311,16 @@ async fn generated_agent_sdk_http_keeps_first_answer_and_durable_step_wait_seman
         assert_eq!(second_answer["actor_ref"], second.to_hex());
         assert_eq!(second_answer["result_ref"], second.to_hex());
         assert_ne!(second_answer["task_ref"], first["task_ref"]);
-        let (_, ready) = post(&server, &owner_token, "tasks.wait", wait.clone()).await;
+        let (_, ready) = post(&server, &owner_token, "wait", wait.clone()).await;
         assert_eq!(ready["Ready"]["decision"]["first"], first);
-        let (_, replayed) = post(&server, &owner_token, "tasks.wait", wait).await;
+        let (_, replayed) = post(&server, &owner_token, "wait", wait).await;
         assert_eq!(replayed["Ready"], ready["Ready"]);
     }
     for i in 0..12 {
         let (status, body) = post(
             &server,
             &owner_token,
-            "tasks.ask",
+            "ask",
             ask_spec(format!("burst-{i}")),
         )
         .await;

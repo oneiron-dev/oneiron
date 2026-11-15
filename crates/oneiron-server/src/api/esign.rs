@@ -489,6 +489,9 @@ mod tests {
             oneiron::Vault::open(dir.path(), oneiron::VaultConfig::device())
                 .expect("open signing fixture vault"),
         );
+        // The dispatch below needs the install's keystore (as `oneiron serve`
+        // installs at open); without it the send refuses KeystoreUnavailable.
+        crate::test_credentials::install_fixture_keystore(&vault, b"");
         let owner = vault
             .ensure_embedded_owner_actor()
             .expect("create embedded owner actor");
