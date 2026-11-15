@@ -8,7 +8,10 @@
 //! owner and an agent that reads the conversation do. A chat compaction and
 //! a code run's file through the same door, so both are checked. An answer
 //! above the inline bound lives in a response artifact, which reads by the
-//! same rule. On main every one of these steps read for the outsider.
+//! same rule, and so does the ASSET holding that artifact's bytes. On main
+//! every one of these steps read for the outsider. A selector window carries
+//! a step only beside its sources, as it carries an epoch summary (Sol's
+//! review of #8489: a CLAIM-band window carried the step's inline answer).
 //!
 //! Fixture: an owned vault with its embedded owner, one PERSON (owen), and
 //! three agents with auto ceilings and `core:read` grants: the compactor
@@ -30,7 +33,7 @@ use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow,
     policy_manifests_as_owner, put_policy_manifest_as_owner,
 };
-use oneiron::registry::{ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_PERSON};
+use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_PERSON};
 use oneiron::test_doors::compaction_step_read::file_compaction_step;
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::ProjectRecord;
@@ -370,4 +373,205 @@ fn a_compaction_response_artifact_reads_only_beside_its_sources() -> TestResult 
         "the owner reads the step's response artifact"
     );
     Ok(())
+}
+
+#[test]
+fn a_compaction_response_content_reads_only_beside_its_sources() -> TestResult {
+    let fixture = open_fixture()?;
+    fixture.assert_message_readers()?;
+    let before: BTreeSet<EntityId> = fixture
+        .vault
+        .entities_by_type(ENTITY_TYPE_ASSET)?
+        .into_iter()
+        .collect();
+    let long = format!("{ANSWER} {}", "And the rest of the window. ".repeat(700));
+    fixture.file_step(CHAT_RUN, &long)?;
+    let assets: Vec<EntityId> = fixture
+        .vault
+        .entities_by_type(ENTITY_TYPE_ASSET)?
+        .into_iter()
+        .filter(|asset| !before.contains(asset))
+        .collect();
+    let [content] = assets.as_slice() else {
+        return Err(format!("one content ASSET holds the response's bytes: {assets:?}").into());
+    };
+    let content = *content;
+    assert!(
+        reads(&fixture.agent(fixture.cleo), content)?,
+        "cleo reads the response's content"
+    );
+    assert!(
+        reads(&fixture.owner(), content)?,
+        "the owner reads the response's content"
+    );
+    assert!(
+        !reads(&fixture.agent(fixture.bram), content)?,
+        "bram does not read the ASSET holding the compactor's answer"
+    );
+    Ok(())
+}
+
+/// A selector window carries a filed compaction step only beside every
+/// record its call read, as it carries an epoch summary
+/// (`sync/selector/epoch_egress.rs`). Fixture: a device vault whose member
+/// holds a live Member federation grant reading every record; the owner
+/// speaks one MESSAGE, and a step of the scribe agent is filed from it with
+/// its answer inline.
+// `put_selector_test_federation_grant` exists only under `test-hooks`.
+#[cfg(all(feature = "sync", feature = "test-hooks"))]
+mod selector_egress {
+    use std::collections::BTreeSet;
+
+    use oneiron::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+        SelectorRange, selector_range_of,
+    };
+    use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+    use oneiron::registry::ENTITY_TYPE_CLAIM;
+    use oneiron::sync::schema::create_window_doc;
+    use oneiron::sync::window::reverse_rematerialize;
+    use oneiron::sync::{
+        SyncSelector, SyncSelectorWorld, WindowKey, authorize_sync_selector, filtered_window_doc,
+        put_selector_test_federation_grant,
+    };
+    use oneiron::test_doors::compaction_step_read::file_compaction_step;
+    use oneiron::test_doors::label_writers::{embedded_owner, open_member_vault};
+    use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
+    use oneiron::{
+        ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
+        EdgeActorClass, EntityId, TimeRange, VaultConfig,
+    };
+    use oneiron_authority::federation::scope_codec::read_preset;
+    use serde_json::{Value, json};
+
+    use super::{ANSWER, CHAT_RUN, TestResult};
+
+    /// The shared vault the federation grant names.
+    const SHARED_VAULT_ID: u64 = 7;
+
+    #[test]
+    fn a_compaction_step_leaves_a_selector_window_only_beside_its_sources() -> TestResult {
+        let directory = tempfile::tempdir()?;
+        let member = EntityId::now();
+        let vault = open_member_vault(directory.path(), VaultConfig::device(), &[member.to_hex()])?;
+        let now = vault.now_recorded_at();
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        let (owner, proof) = embedded_owner(&vault)?;
+        let scribe = EntityId::now();
+        let definition: AgentDefinitionSpec = serde_json::from_value(json!({
+            "agent_id": "scribe",
+            "display_name": "scribe",
+            "desc": "scribe",
+            "version": "1",
+            "ceiling": "auto",
+        }))?;
+        oneiron::verbs::create_agent_definition_as(
+            &vault,
+            &proof,
+            AgentDefinitionCreateRequest {
+                agent_def_ref: scribe,
+                definition,
+            },
+        )?;
+        let scope = FederationGrantScope::vault(SHARED_VAULT_ID);
+        let grant_id = EntityId::now();
+        let mut grant = FederationGrant::new(
+            scope,
+            member,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        );
+        grant.authority_scope = read_preset();
+        put_selector_test_federation_grant(&vault, &grant_id, &grant, now)?;
+
+        let message = EntityId::now();
+        vault
+            .memory(owner, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: EntityId::now().to_hex(),
+                turn_ref: Some(EntityId::now().to_hex()),
+                thread_audience: None,
+                messages: vec![WitnessMessage {
+                    id: Some(message.to_hex()),
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: "the vendor contract renews on the ninth; I will not renew it"
+                        .to_owned(),
+                    parts: None,
+                    metadata: Some(Value::Object(serde_json::Map::new())),
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: now,
+                assertions: Default::default(),
+            })?;
+        let stated = EntityId::now();
+        let mut body = ClaimBody::new(
+            "profile.name",
+            ClaimSubject::Entity(member),
+            rmpv::Value::from("a profile fact"),
+            1.0,
+            ClaimApprovalStatus::Auto,
+            ClaimLifecycleStatus::Active,
+        )?;
+        body.source = Some(ClaimSource::UserStated);
+        vault.put_claim(&stated, &body, at, now)?;
+        let step = file_compaction_step(
+            &vault,
+            CHAT_RUN,
+            EntityId::now(),
+            scribe,
+            vec![message],
+            ANSWER,
+        )?;
+
+        let key = WindowKey::from_timestamp(now);
+        let source = create_window_doc("selector", &key);
+        reverse_rematerialize(&vault, &source, &key)?;
+        for id in [message, stated, step] {
+            assert!(
+                source.get_map("entities").get(&id.to_hex()).is_some(),
+                "FIXTURE: the packed window holds {}",
+                id.to_hex()
+            );
+        }
+        let carried = |bands: Vec<SelectorRange>| -> TestResult<BTreeSet<EntityId>> {
+            let selector =
+                SyncSelector::new(grant_id, member, SyncSelectorWorld::All, vec![], bands);
+            authorize_sync_selector(&vault, scope, &selector)?;
+            let selected = filtered_window_doc(&vault, &source, &key, scope, &selector)?;
+            let mut carried = BTreeSet::new();
+            selected.get_map("entities").for_each(|key, _| {
+                if let Ok(id) = EntityId::from_hex(key) {
+                    carried.insert(id);
+                }
+            });
+            Ok(carried)
+        };
+
+        let every_band = carried(Vec::new())?;
+        assert!(
+            every_band.contains(&message),
+            "FIXTURE: a window of every band carries the owner's MESSAGE"
+        );
+        assert!(
+            every_band.contains(&step),
+            "a window that carries the step's source carries the step"
+        );
+        let claim_band = selector_range_of(ENTITY_TYPE_CLAIM).ok_or("CLAIM selector range")?;
+        let claims_only = carried(vec![claim_band])?;
+        assert!(
+            claims_only.contains(&stated) && !claims_only.contains(&message),
+            "FIXTURE: a CLAIM-band window carries a stated CLAIM and not the MESSAGE"
+        );
+        assert!(
+            !claims_only.contains(&step),
+            "LEAK: a CLAIM-band window carries the step's answer without its MESSAGE"
+        );
+        Ok(())
+    }
 }
