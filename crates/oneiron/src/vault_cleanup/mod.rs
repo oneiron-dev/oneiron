@@ -149,7 +149,7 @@ pub use self::cleanup_types::{
     FIELD_CLEANUP_DECISION, FIELD_CLEANUP_PHASE, FIELD_CLEANUP_POSTURE, FIELD_CLEANUP_PROPOSAL,
     FIELD_CLEANUP_REJECTED_COUNT, FIELD_CLEANUP_REJECTED_IDS, FIELD_CLEANUP_SKIPPED_COUNT,
     FIELD_CLEANUP_SKIPPED_IDS, FIELD_CLEANUP_TOMBSTONE_REASON, VAULT_CLEANUP_ACTOR,
-    VAULT_CLEANUP_POSTURE_KEY, VAULT_CLEANUP_RECEIPT_PREFIX,
+    VAULT_CLEANUP_RECEIPT_PREFIX,
 };
 pub use self::codec_receipts::{cleanup_digests, is_vault_cleanup_receipt};
 pub use self::proposals_archive::{
@@ -171,7 +171,7 @@ pub use self::run_snapshot::{
 };
 pub use self::tripwire::{
     MACHINE_MINTED_CLAIM_SOURCES, claim_source_is_machine_minted, cleanup_posture,
-    run_vault_cleanup, scan_cleanup_candidates, set_cleanup_posture, zero_live_members,
+    run_vault_cleanup, scan_cleanup_candidates, zero_live_members,
 };
 
 pub(crate) use self::attempt_delete_receipts::{
@@ -233,6 +233,7 @@ use uuid::Uuid;
 mod retention_tests;
 
 mod attempt_retention;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 pub(crate) use attempt_retention::{
     attempt_is_archived, forget_archived_attempt_in_txn, refresh_archived_attempt_in_rows,

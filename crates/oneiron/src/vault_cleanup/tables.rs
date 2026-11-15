@@ -21,9 +21,6 @@ crate::side_table::side_tables! {
     /// person cleanup arm. Key: id16 (PERSON id).
     VAULT_CLEANUP_EXTRACTION_PERSON: VaultMeta b"vault_cleanup.extraction_person.v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Owner-set cleanup posture: propose-first (default) vs auto-with-digest. Key: ().
-    VAULT_CLEANUP_POSTURE: VaultMeta b"vault_cleanup.posture.v1" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Open vault-cleanup archive proposal awaiting owner accept/reject. Key: id16.
     VAULT_CLEANUP_PROPOSAL: VaultMeta b"vault_cleanup.proposal.v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
@@ -35,8 +32,4 @@ crate::side_table::side_tables! {
     /// touched. Key: BLAKE3 derive_key of the task reference (32) then id16 (AttemptId).
     VAULT_CLEANUP_TASK_ATTEMPT_ARCHIVE: VaultMeta b"vault_cleanup.task_attempt_archive.v1/" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Owner-adjustable retention period for completed TASK queue records before archival
-    /// eligibility. Key: ().
-    VAULT_CLEANUP_TASK_RETENTION_DAYS: VaultMeta b"vault_cleanup.task_retention_days.v1" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
 }

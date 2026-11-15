@@ -60,7 +60,9 @@ chip, ranking policy or proof of foreign-remapped role coverage.
 
 ## Retention and erasure
 
-`ClipboardRetention` has three arms:
+`ClipboardRetention` is the setting key `clipboard.retention`: the owner sets
+it through `vault.settings.set` (the macOS app's clipboard settings do so),
+and every change leaves a row in the setting change feed. It has three arms:
 
 - `max_text_bytes: None` disables the size arm.
 - `low_disk: true` enables low-disk cleanup initially.

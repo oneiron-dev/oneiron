@@ -3,25 +3,12 @@
 use super::*;
 
 impl Vault {
-    /// The owner's disclosure-mode knob; `auto` when never set.
+    /// The owner's disclosure-mode knob; `auto` when never set. It is the
+    /// catalogue key `disclosure.offer_mode`, which the owner sets through
+    /// `vault.settings.set`.
     pub fn disclosure_offer_mode(&self) -> Result<DisclosureOfferMode> {
         let txn = self.store.env.read_txn()?;
-        Ok(DISCLOSURE_OFFER_MODE
-            .get(&self.store, &txn, &())?
-            .unwrap_or_default())
-    }
-
-    /// Sets the disclosure-mode knob. Only the authenticated owner turns it.
-    pub fn set_disclosure_offer_mode(
-        &self,
-        owner: &AuthenticatedOwner,
-        mode: DisclosureOfferMode,
-    ) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
-            DISCLOSURE_OFFER_MODE.put(&self.store, txn, &(), &mode)?;
-            Ok(())
-        })
+        Ok(OFFER_MODE.read_in_txn(self, &txn, &[], None)?.value)
     }
 
     /// Trusted-set pre-clearance, the honest form of "always yes": the

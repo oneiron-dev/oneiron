@@ -13,12 +13,9 @@ use super::proposal_review::{
     Decided, decide_cleanup_proposal_in_txn, decide_cleanup_proposal_sourced_in_txn,
 };
 use super::proposals_archive::{accept_cleanup_proposal_in_txn, reject_cleanup_proposal_in_txn};
-use super::retention::set_task_retention_days_in_txn;
 use super::run_revert::revert_cleanup_run_in_txn;
-use super::tripwire::set_cleanup_posture_in_txn;
 use super::{
-    CleanupAcceptOutcome, CleanupDecideRequest, CleanupDecideView, CleanupPosture,
-    CleanupRunRevertAnswer,
+    CleanupAcceptOutcome, CleanupDecideRequest, CleanupDecideView, CleanupRunRevertAnswer,
 };
 use crate::Vault;
 use crate::consent::AuthenticatedOwner;
@@ -107,39 +104,6 @@ impl Vault {
             decide_cleanup_proposal_sourced_in_txn(self, txn, input)
         });
         Decided::answer_sourced(decided, &input.proposal)
-    }
-
-    /// [`set_cleanup_posture`](super::set_cleanup_posture), as `owner`. The
-    /// automatic posture stays refused while its rollout blockers are open.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::accept_cleanup_proposal_as`].
-    pub fn set_cleanup_posture_as(
-        &self,
-        owner: &AuthenticatedOwner,
-        posture: CleanupPosture,
-    ) -> Result<()> {
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            set_cleanup_posture_in_txn(self, txn, posture)
-        })
-    }
-
-    /// [`Self::set_task_retention_days`], as `owner`.
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::accept_cleanup_proposal_as`].
-    pub fn set_task_retention_days_as(
-        &self,
-        owner: &AuthenticatedOwner,
-        days: Option<u32>,
-    ) -> Result<()> {
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            set_task_retention_days_in_txn(self, txn, days)
-        })
     }
 
     /// [`Self::restore_archived`], as `owner`. The owner keeps the record at

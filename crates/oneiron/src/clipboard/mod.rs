@@ -7,7 +7,7 @@ mod erase;
 mod intake;
 mod purpose;
 mod retention;
-pub(crate) mod tables;
+pub(crate) mod setting_keys;
 mod world;
 
 pub use erase::{ClipboardErase, ClipboardEraseReport};

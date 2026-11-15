@@ -563,7 +563,6 @@ UnprocessedItem
 UnredactedFeedback
 UnsupportedCapability
 UnsupportedOutboundCapability
-VAULT_CLEANUP_POSTURE_KEY
 VAULT_WRITER_LEASE_HELD
 VAULT_WRITER_LOCK_FILE
 Vad
@@ -690,7 +689,6 @@ schedule_approved_commitment_wake
 screen_turn_inputs
 send_feedback
 send_override_for_send
-set_cleanup_posture
 set_provider_confidence_index_raw
 supersede_commitment_with_close
 unsupported_outbound_connector

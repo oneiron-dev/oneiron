@@ -4,20 +4,21 @@ use crate::Vault;
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::DeleteReason;
 use crate::error::Result;
-use crate::side_table::{self, Named, SideTable};
+
+use super::setting_keys::RETENTION;
 
 /// Low-disk cleanup targets this many free bytes. The host supplies a real
 /// filesystem observation. Selected text bytes are not filesystem-free bytes.
 pub const CLIPBOARD_LOW_DISK_FREE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 const DAY_SECONDS: u64 = 86_400;
-const SETTINGS: SideTable<(), ClipboardRetention, Named> =
-    SideTable::new(&side_table::CLIPBOARD_RETENTION);
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::clipboard::retention::{ClipboardCleanupReport, ClipboardRetention};
 
 impl Vault {
-    /// The owner's current Clipboard cleanup settings; no clipboard text is read.
+    /// The owner's current Clipboard cleanup settings (the catalogue key
+    /// `clipboard.retention`, which the owner sets through
+    /// `vault.settings.set`); no clipboard text is read.
     pub fn clipboard_retention_as_owner(
         &self,
         owner: &AuthenticatedOwner,
@@ -27,25 +28,11 @@ impl Vault {
         self.clipboard_retention_in_txn(&txn)
     }
 
-    /// Changes the owner's standing cleanup policy. `None` disables the size
-    /// or age arm; zero is an actual selected size/age, not another spelling
-    /// of disabled. This changes no world privacy or private-copy policy.
-    pub fn set_clipboard_retention_as_owner(
-        &self,
-        owner: &AuthenticatedOwner,
-        settings: &ClipboardRetention,
-    ) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            SETTINGS.put(&self.store, txn, &(), settings)
-        })
-    }
-
     pub(super) fn clipboard_retention_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<ClipboardRetention> {
-        Ok(SETTINGS.get(&self.store, txn, &())?.unwrap_or_default())
+        Ok(RETENTION.read_in_txn(self, txn, &[], None)?.value)
     }
 
     /// Applies the owner's enabled cleanup arms to ordinary clips, oldest

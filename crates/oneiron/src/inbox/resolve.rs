@@ -16,7 +16,6 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, GateError, Result};
 use crate::inbox::compilation_target::CompilationTarget;
 use crate::registry::ENTITY_TYPE_CLAIM;
-use crate::side_table::{self, Raw, SideTable};
 use crate::store::gate_receipt::gate_decision_receipt;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionRecord};
 use crate::temporal::TimeRange;
@@ -31,26 +30,14 @@ use super::model::{
     InboxBundleResolution, InboxGroupReopen, InboxReviewDial,
 };
 use super::projection::explicit_inbox_group;
-
-/// The owner-set inbox review dial: a singleton row.
-const REVIEW_DIAL: SideTable<(), InboxReviewDial, Raw> =
-    SideTable::new(&side_table::INBOX_REVIEW_DIAL);
+use super::setting_keys::REVIEW_DIAL;
 
 impl Vault {
-    /// Reads the persisted inbox review dial (default: exceptions-only).
+    /// The inbox review dial (default: exceptions-only): the catalogue key
+    /// `inbox.review_dial`, which the owner sets through `vault.settings.set`.
     pub fn inbox_review_dial(&self) -> Result<InboxReviewDial> {
         let rtxn = self.store.env.read_txn()?;
-        Ok(REVIEW_DIAL
-            .get(&self.store, &rtxn, &())?
-            .unwrap_or_default())
-    }
-
-    /// Persists the inbox review dial position.
-    pub fn set_inbox_review_dial(&self, dial: InboxReviewDial) -> Result<()> {
-        self.with_write_txn_grouped(|wtxn| {
-            REVIEW_DIAL.put(&self.store, wtxn, &(), &dial)?;
-            Ok(())
-        })
+        Ok(REVIEW_DIAL.read_in_txn(self, &rtxn, &[], None)?.value)
     }
 
     /// Applies one bulk verb to a group at the current time, covering every

@@ -1,10 +1,7 @@
 //! Public inbox DTOs, surfacing-dial/exception-class/bulk-verb enums, and inbox constants.
 
+use oneiron_setting_contract::SettingValue;
 use serde::{Deserialize, Serialize};
-
-use crate::side_table::codec::CodecError;
-use crate::side_table::codec::RawValue;
-use oneiron_base::error::Error;
 
 /// Sub-clusters by entity/theme are emitted only when a run surfaces at
 /// least this many members ("when the run emits many items").
@@ -44,7 +41,9 @@ pub const VERB_CLASS_UPDATE: &str = "update";
 pub const VERB_CLASS_CONFLICT: &str = "conflict";
 
 /// OF-234 settings dial over inbox surfacing.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum InboxReviewDial {
     /// Everything rides auto except manifest-critical rows, which the dial
@@ -81,17 +80,8 @@ impl InboxReviewDial {
     }
 }
 
-impl RawValue for InboxReviewDial {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.as_str().as_bytes().to_vec())
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        let token =
-            std::str::from_utf8(bytes).map_err(|_| Error::CorruptedIndex("inbox review dial"))?;
-        Self::parse(token).ok_or_else(|| Error::CorruptedIndex("inbox review dial").into())
-    }
-}
+/// The engine's catalogue key `inbox.review_dial` holds the dial.
+impl SettingValue for InboxReviewDial {}
 
 /// Why a row surfaces in the exception queue.
 #[derive(

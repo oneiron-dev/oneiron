@@ -21,8 +21,4 @@ crate::side_table::side_tables! {
     /// Parked authority-widening request. Key: hex64.
     CONSENT_WIDEN_PROPOSAL: VaultMeta b"consent.widen.v1:" LegacyJson
         [restore: live] [family: unclassified] [tier: canonical];
-    /// OF-365: the owner's disclosure-mode knob (always_ask / auto / always_yes; absent means
-    /// auto). Value: the mode's ASCII name. Key: ().
-    DISCLOSURE_OFFER_MODE: VaultMeta b"settings:disclosure:v1:offer_mode" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
 }

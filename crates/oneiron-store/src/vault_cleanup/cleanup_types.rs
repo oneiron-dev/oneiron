@@ -1,5 +1,6 @@
 //! Pinned cleanup vocabulary: wire strings, enums, and proposal/digest/report structs.
 
+use oneiron_setting_contract::SettingValue;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_id::AttemptId;
@@ -8,13 +9,6 @@ use oneiron_contracts::entity_id::EntityId;
 // ---------------------------------------------------------------------------
 // Pinned vocabulary
 // ---------------------------------------------------------------------------
-
-/// `vault_meta` key holding the cleanup posture flag.
-///
-/// Absent means [`CleanupPosture::ProposeFirst`] — the safe default is the
-/// ABSENCE of a decision, so a vault that never heard of this feature cannot
-/// be auto-archiving.
-pub const VAULT_CLEANUP_POSTURE_KEY: &[u8] = b"vault_cleanup.posture.v1";
 
 /// Receipt-id prefix that discriminates this projector's rows inside the
 /// shared `Gate` family.
@@ -195,6 +189,10 @@ impl CleanupPosture {
         }
     }
 }
+
+/// The engine's catalogue key `cleanup.posture` holds the posture; the automatic one is refused
+/// while its rollout blockers are open, in the write that would change it.
+impl SettingValue for CleanupPosture {}
 
 /// What a cleanup decision did, as recorded on its digest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

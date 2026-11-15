@@ -24,6 +24,7 @@ use super::adapters::disclosure_grant_from_disclosure_scope;
 use super::doors::approve_once_authorization_in_txn;
 use super::effect::{ApproveOnceAuthorization, EffectDigest};
 use super::grant::CONSENT_CONTENT_KIND;
+use super::setting_keys::OFFER_MODE;
 use super::support::normalized_ref;
 use super::widen::WidenProposal;
 use crate::authority::VerifiedSlip;
@@ -33,7 +34,7 @@ use crate::disclosure::{DisclosureScope, DisclosureScopeStatus, encode_disclosur
 use crate::entity_id::EntityId;
 use crate::error::{ErrorKind, GateError};
 use crate::ports::EntityStoreRead;
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::setting::SettingValue;
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
 use crate::{EdgeActorClass, Error, Result, Vault, WriteActor};
 use oneiron_authority::federation::Scope;
@@ -69,10 +70,6 @@ pub const CONTACT_DISCLOSURE_REASON_PRECLEARED: &str = "gate.consent.contact_dis
 /// Gate reason code: one covered non-public disclosure reached a cleared
 /// contact (a quiet bound-use receipt, never an authorization).
 pub const CONTACT_DISCLOSURE_REASON_USED: &str = "gate.consent.contact_disclosure.used";
-
-/// The owner's disclosure-mode knob: a singleton row, default auto.
-const DISCLOSURE_OFFER_MODE: SideTable<(), DisclosureOfferMode, Raw> =
-    SideTable::new(&side_table::DISCLOSURE_OFFER_MODE);
 
 const ONCE_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.contact_disclosure_once.v1";
 const CLEARANCE_DIGEST_DOMAIN: &[u8] = b"oneiron.consent.contact_clearance.v1";
@@ -295,7 +292,18 @@ impl ContactClearanceAct {
 /// The disclosure-mode knob (ILDF2 consent channel; default auto). No mode
 /// moves the confirm surface: a new clearance still lands only on the
 /// owner's authenticated confirm or the owner's own pre-clearance.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    Default,
+    PartialEq,
+    Eq,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
 pub enum DisclosureOfferMode {
     /// The companion never offers on its own; the owner starts every new
     /// clearance.
@@ -330,18 +338,9 @@ impl DisclosureOfferMode {
     }
 }
 
-impl RawValue for DisclosureOfferMode {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        Ok(self.as_str().as_bytes().to_vec())
-    }
-
-    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        std::str::from_utf8(raw)
-            .ok()
-            .and_then(Self::parse)
-            .ok_or_else(|| invalid_offer().into())
-    }
-}
+/// The catalogue key `disclosure.offer_mode` holds the knob
+/// ([`super::setting_keys::OFFER_MODE`]).
+impl SettingValue for DisclosureOfferMode {}
 
 /// The owner's contact-clearance act as the Gate receipt family records it:
 /// the offer and ask it answered, the contact, the clearance digest before
@@ -483,10 +482,7 @@ impl Vault {
             let header =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("entity header"))?;
             crate::provenance::validate_actor_class(header.entity_type, actor.actor_class())?;
-            if DISCLOSURE_OFFER_MODE
-                .get(&self.store, &*txn, &())?
-                .unwrap_or_default()
-                == DisclosureOfferMode::AlwaysAsk
+            if OFFER_MODE.read_in_txn(self, txn, &[], None)?.value == DisclosureOfferMode::AlwaysAsk
             {
                 return Err(Error::Gate(GateError::InvalidConsentBound(
                     "disclosure mode is always ask: only the owner starts a clearance",

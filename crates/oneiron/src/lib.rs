@@ -664,10 +664,9 @@ pub use crate::vault::{
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,
     CleanupImpactPreview, CleanupKind, CleanupPosture, CleanupProposal, CleanupRunReport,
-    MACHINE_MINTED_CLAIM_SOURCES, VAULT_CLEANUP_POSTURE_KEY, accept_cleanup_proposal,
-    cleanup_digests, cleanup_posture, cleanup_proposal, cleanup_proposals,
-    is_vault_cleanup_receipt, reject_cleanup_proposal, run_vault_cleanup, scan_cleanup_candidates,
-    set_cleanup_posture, zero_live_members,
+    MACHINE_MINTED_CLAIM_SOURCES, accept_cleanup_proposal, cleanup_digests, cleanup_posture,
+    cleanup_proposal, cleanup_proposals, is_vault_cleanup_receipt, reject_cleanup_proposal,
+    run_vault_cleanup, scan_cleanup_candidates, zero_live_members,
 };
 pub use crate::web_fetch::{
     FirecrawlRenderer, HeadlessDocument, HeadlessRenderer, NativeHeadlessRenderer,

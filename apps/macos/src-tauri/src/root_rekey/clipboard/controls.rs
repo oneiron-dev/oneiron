@@ -3,6 +3,7 @@ use oneiron::EntityId;
 use oneiron::clipboard::{
     ClipboardEntry, ClipboardErase, ClipboardEraseReport, ClipboardRetention,
 };
+use oneiron::setting::{SetSetting, SettingCaller, SettingMode, SettingScope};
 use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 
@@ -75,7 +76,26 @@ pub(crate) fn set_clipboard_settings(
     settings: ClipboardSettings,
 ) -> Result<ClipboardSettings, String> {
     with_owner(&app, |vault, owner| {
-        vault.set_clipboard_retention_as_owner(owner, &settings.retention)?;
+        // The retention arms are the setting key `clipboard.retention`; the
+        // owner's change lands at once through the Setting door.
+        let retention = serde_json::to_value(&settings.retention).map_err(|error| {
+            oneiron::Error::InvalidConfig(format!(
+                "the clipboard retention does not encode: {error}"
+            ))
+        })?;
+        vault.set_setting(
+            SettingCaller::Owner(owner),
+            SetSetting {
+                key: "clipboard.retention".to_owned(),
+                item: None,
+                scope: SettingScope::Vault,
+                mode: SettingMode::Value,
+                value: Some(retention),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+            },
+        )?;
         store_capture_settings(settings.capture);
         Ok(settings)
     })

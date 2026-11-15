@@ -2433,9 +2433,10 @@ contact offer.
   `consent.revoke_contact_disclosure`. The row stays, revoked, and admits nothing.
 - `POST /v1/owner/disclosure/preclear` with `{"set_name": "...", "contacts": [...], "scope": {...}}`
   clears a named trusted set in advance, 1 to 256 contacts, one receipt each.
-- `GET` and `PUT /v1/owner/disclosure/mode` read and set the mode: `always_ask` (the companion
-  never offers), `auto` (the default) or `always_yes` (pre-clear trusted sets; offers stay
-  allowed). No mode clears anyone by itself.
+- The disclosure mode is the setting key `disclosure.offer_mode`, read with `vault.settings.get`
+  and set with `vault.settings.set`: `always_ask` (the companion never offers), `auto` (the
+  default) or `always_yes` (pre-clear trusted sets; offers stay allowed). No mode clears anyone
+  by itself.
 - `POST /v1/owner/disclosure/attendee` with
   `{"ask_ref": "<hex>", "roster_revision": 4, "choice": "<contact hex>" | "unknown"}` answers a
   "who is this?" ask once. It names the speaker for that roster revision only. It clears nothing

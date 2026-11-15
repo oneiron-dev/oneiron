@@ -5,6 +5,7 @@ use super::person_provenance;
 use super::rollout;
 use super::run_snapshot::{self, CleanupRunSnapshot, CleanupSnapshotEntry};
 use super::scan;
+use super::setting_keys::POSTURE;
 use super::{
     CleanupCandidate, CleanupDecision, CleanupDigest, CleanupKind, CleanupPosture, CleanupProposal,
     CleanupRunReport, fresh_row_id, live_slots, put_digest_in_txn, put_proposal_in_txn,
@@ -19,14 +20,10 @@ use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::registry::{
     ENTITY_TYPE_NOTE, ENTITY_TYPE_PERSON, ENTITY_TYPE_SUMMARY, ENTITY_TYPE_TASK,
 };
-use crate::side_table::{self, Raw, SideTable};
+use crate::setting::{EncodedValue, SettingChange};
 use crate::store::attempt_id::AttemptId;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use oneiron_contracts::claim::ClaimSource;
-
-/// Owner-set cleanup posture: propose-first (default) vs auto-with-digest.
-/// Key: `()`.
-const POSTURE: SideTable<(), Vec<u8>, Raw> = SideTable::new(&side_table::VAULT_CLEANUP_POSTURE);
 
 // ---------------------------------------------------------------------------
 // The tripwire
@@ -238,11 +235,12 @@ pub fn scan_cleanup_candidates(vault: &Vault) -> Result<Vec<CleanupCandidate>> {
 // Posture flag
 // ---------------------------------------------------------------------------
 
-/// The vault's current cleanup posture.
+/// The vault's current cleanup posture: the catalogue key `cleanup.posture`,
+/// which the owner sets through `vault.settings.set`.
 ///
-/// An absent or unreadable flag reads as [`CleanupPosture::ProposeFirst`]:
-/// the auto posture is a decision, and a decision nobody can read was never
-/// made.
+/// An absent or unreadable row reads as [`CleanupPosture::ProposeFirst`]
+/// (the key's default and strictest value): the auto posture is a decision,
+/// and a decision nobody can read was never made.
 ///
 /// # Errors
 ///
@@ -259,41 +257,33 @@ pub(super) fn cleanup_posture_in_txn(
     if !rollout::auto_enabled(vault, rtxn)? {
         return Ok(CleanupPosture::ProposeFirst);
     }
-    let Some(raw) = POSTURE.get(&vault.store, rtxn, &())? else {
-        return Ok(CleanupPosture::ProposeFirst);
-    };
-    Ok(std::str::from_utf8(&raw)
-        .ok()
-        .and_then(CleanupPosture::parse)
-        .unwrap_or(CleanupPosture::ProposeFirst))
+    Ok(POSTURE.read_in_txn(vault, rtxn, &[], None)?.value)
 }
 
-/// Sets the cleanup posture. OWNER ACTION ONLY — the teeth-closing tickets
-/// flip this flag; the cron never writes it.
+/// The `cleanup.posture` key's hook, in the write of each change: the
+/// automatic posture is refused while its rollout blockers are open, so the
+/// change and its row never land. OWNER ACTION ONLY: the cron never writes
+/// the key.
 ///
 /// # Errors
 ///
-/// Storage errors.
-pub fn set_cleanup_posture(vault: &Vault, posture: CleanupPosture) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| set_cleanup_posture_in_txn(vault, wtxn, posture))
-}
-
-pub(super) fn set_cleanup_posture_in_txn(
+/// `InvariantViolation` for the automatic posture while a blocker is open;
+/// storage errors.
+pub(super) fn refuse_auto_posture_while_blocked(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    posture: CleanupPosture,
+    change: &SettingChange,
 ) -> Result<()> {
-    if posture == CleanupPosture::AutoWithDigest && !rollout::auto_enabled(vault, wtxn)? {
+    let automatic = change
+        .value
+        .as_ref()
+        .and_then(EncodedValue::decode::<CleanupPosture>)
+        == Some(CleanupPosture::AutoWithDigest);
+    if automatic && !rollout::auto_enabled(vault, wtxn)? {
         return Err(Error::InvariantViolation(
             "automatic cleanup rollout blockers are open",
         ));
     }
-    POSTURE.put(
-        &vault.store,
-        wtxn,
-        &(),
-        &posture.as_str().as_bytes().to_vec(),
-    )?;
     Ok(())
 }
 

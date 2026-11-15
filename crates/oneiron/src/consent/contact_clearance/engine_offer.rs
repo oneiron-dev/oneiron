@@ -69,11 +69,7 @@ impl Vault {
         scope: Scope,
         owner_ref: &str,
     ) -> Result<Option<WidenProposal>> {
-        if DISCLOSURE_OFFER_MODE
-            .get(&self.store, &*txn, &())?
-            .unwrap_or_default()
-            == DisclosureOfferMode::AlwaysAsk
-        {
+        if OFFER_MODE.read_in_txn(self, txn, &[], None)?.value == DisclosureOfferMode::AlwaysAsk {
             return Ok(None);
         }
         require_active_contact_in_txn(self, &*txn, &contact)?;

@@ -207,5 +207,6 @@ use self::support::SUBJECT_KIND_AUDIENCE;
 
 pub mod bundle_projection;
 
+pub(crate) mod setting_keys;
 pub mod settlement_fact;
 pub(crate) mod tables;
