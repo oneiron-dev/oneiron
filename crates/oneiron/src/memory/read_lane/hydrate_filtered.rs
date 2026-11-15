@@ -63,6 +63,10 @@ impl Memory<'_> {
                 Ok::<_, MemoryError>(projections)
             },
         )?;
+        // The snapshot closes with the projection: each served ASSET is
+        // read in its own snapshot after it, and a thread holds one read
+        // transaction.
+        drop(snapshot);
         let mut shown = Vec::with_capacity(value.len());
         let mut shown_targets = Vec::with_capacity(value.len());
         let mut withheld = Vec::new();

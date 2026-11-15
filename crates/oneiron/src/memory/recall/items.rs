@@ -16,7 +16,7 @@ impl Memory<'_> {
         // What the lane admits from is what the item is projected from: a
         // room's view, or base.
         let content = lane.store_read();
-        let _bodies = lane.prepare_point_read::<MemoryError>()?;
+        let bodies = lane.prepare_point_read::<MemoryError>()?;
         let snapshot = self.lane_snapshot()?;
         let known = snapshot.known();
         let reads = [PointRead::id(*id).at(mode)];
@@ -118,6 +118,12 @@ impl Memory<'_> {
             let view = self.entity_view_of_in_txn(lane, txn, known, row, mode)?;
             Ok(Some((entity_type, body, view, turn, stale, handle)))
         })?;
+        // The snapshot and its body pins close with the projection: the
+        // item's edges, a TURN's masked words, its conversation and each
+        // message it quotes are read after, each in its own snapshot, and
+        // a thread holds one read transaction.
+        drop(snapshot);
+        drop(bodies);
         receipt.restrict_with(&read);
         let Some((entity_type, Some(body), Some(view), turn, stale, handle)) = admitted else {
             return Ok(None);
