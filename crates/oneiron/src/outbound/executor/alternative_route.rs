@@ -316,8 +316,8 @@ fn send_live_alternative<S: OutboundExecutionSink>(
         }
         None => {}
     }
-    match outcome {
-        OutboundDispatchOutcome::DeliveredToChannel | OutboundDispatchOutcome::Deferred => {
+    match SendSettlement::of(&parked) {
+        SendSettlement::Went { .. } => {
             // Settled on what the alternative's row says in the settling
             // writer: an accepted remote task may have failed since.
             let receipt = parked.receipt;
@@ -359,13 +359,11 @@ fn send_live_alternative<S: OutboundExecutionSink>(
                 }
             }
         }
-        OutboundDispatchOutcome::Held | OutboundDispatchOutcome::Degraded => {
+        SendSettlement::Held { .. } => {
             settle_held_connector_task(vault, queue, attempt, task.task_ref, task, parked, now)?;
             Ok(RoutedAttempt::Settled)
         }
-        OutboundDispatchOutcome::Failed | OutboundDispatchOutcome::Ambiguous
-            if !matches!(parked.resolution, Some(IntentResolution::Stopped { .. })) =>
-        {
+        SendSettlement::Failed { stopped: false } => {
             let receipt_id = parked.receipt.receipt_id.clone();
             settle_failed_connector_task(
                 vault,
@@ -379,29 +377,21 @@ fn send_live_alternative<S: OutboundExecutionSink>(
             )?;
             Ok(RoutedAttempt::Settled)
         }
-        OutboundDispatchOutcome::Suppressed | OutboundDispatchOutcome::LetGo => {
-            if parked.receipt.fields.get("suppression").map(String::as_str) == Some("dedupe") {
-                // The common door recorded the semantic dedupe: the TASK
-                // settles as the interrupt's would.
-                settle_suppressed_send(vault, attempt, task.task_ref, now)?;
-                return Ok(RoutedAttempt::Settled);
-            }
-            // The Gate refuses the alternative now: it stops, so the next
-            // attempt routes by the stop instead of asking again.
-            let stop =
-                if parked.gate_reason_codes.iter().any(|code| {
-                    code == crate::gate::GateReasonCode::DenyConnectorKeySuspended.as_str()
-                }) {
-                    IntentEscalationReason::ConnectorRevoked
-                } else {
-                    IntentEscalationReason::BindingInvalid
-                };
+        // The common door recorded the semantic dedupe: the TASK settles as
+        // the interrupt's would.
+        SendSettlement::Deduplicated => {
+            settle_suppressed_send(vault, attempt, task.task_ref, now)?;
+            Ok(RoutedAttempt::Settled)
+        }
+        // The Gate refuses the alternative now: it stops, so the next attempt
+        // routes by the stop instead of asking again.
+        SendSettlement::Refused { stop } => {
             stop_alternative(vault, task, alternative, stop, now)?;
             let reason = format!("ambient_alternative_{}", outcome.as_str());
             retry_connector_task_attempt(vault, queue, attempt, task.task_ref, now, &reason, None)?;
             Ok(RoutedAttempt::Settled)
         }
-        _ => {
+        SendSettlement::Failed { stopped: true } => {
             // A stopped alternative: the next attempt routes by what its row
             // now says.
             let reason = format!("ambient_alternative_{}", outcome.as_str());

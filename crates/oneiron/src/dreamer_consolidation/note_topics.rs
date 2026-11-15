@@ -39,7 +39,9 @@ use crate::scope_summary::{ScopeSummaryRequest, ScopeSummaryTarget};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Result, Vault, WriteActor};
 
-const TOPIC_DOMAIN: &[u8] = b"oneiron:note-topic-key:v1";
+#[doc(hidden)]
+use oneiron_records::dreamer_consolidation::note_topics::TOPIC_DOMAIN;
+
 /// One row per reviewed NOTE, keyed by the membership its review record
 /// keeps, then the NOTE (FIX 7457).
 const TOPIC_INDEX: SideTable<([u8; 32], (EntityId, EntityId), EntityId), (), Named> =
