@@ -6,6 +6,7 @@
 
 pub mod advisory_rate_window;
 pub mod agent_definition_scans;
+pub mod agent_pair_grant_orphan;
 pub mod approval_target_round_trip;
 pub mod archive_import;
 pub mod authority_stored_damage;
