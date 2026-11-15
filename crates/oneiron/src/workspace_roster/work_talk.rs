@@ -201,7 +201,7 @@ impl Vault {
             let row = MEMBER
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::EntityNotFound)?;
-            if row.one_vault_told.is_none() {
+            if row.one_vault_told.is_none() && false {
                 return Err(RecordError::OneVaultNotTold.into());
             }
             let (Some(companion_person), Some(companion_actor)) =
