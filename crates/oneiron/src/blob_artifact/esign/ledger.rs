@@ -1,5 +1,5 @@
 //! Claims are the document state machine. The audit copy survives document deletion.
-use super::field_admission::InspectedPages;
+use super::field_admission::{InspectedPages, inspect_draft_pages};
 use super::model::*;
 use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_FACET;
@@ -373,7 +373,9 @@ fn is_live_owner(vault: &Vault, txn: &heed::RoTxn<'_>, actor: &str) -> Result<bo
 
 /// [`Vault::create_esign_document`]'s draft under `txn`, its document already
 /// validated: the overlay is new, a project's membership holds, each item's
-/// PDF is at its pinned version, and the draft lands, stamped to its project.
+/// PDF is at its pinned version, and the draft lands, stamped to its
+/// project. Its fields are laid out on `inspected`, each item's pages as
+/// they were inspected before this writer.
 pub(super) fn create_document_in(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -381,6 +383,7 @@ pub(super) fn create_document_in(
     body: &EsignDocument,
     actor: EsignAuditActor,
     now: u64,
+    inspected: &InspectedPages,
 ) -> Result<()> {
     if !events_in(vault, txn, document)?.is_empty() {
         return Err(invalid("document already exists"));
@@ -413,7 +416,7 @@ pub(super) fn create_document_in(
             return Err(invalid("signing item is not a PDF"));
         }
     }
-    append(
+    append_inspected(
         vault,
         txn,
         document,
@@ -422,6 +425,7 @@ pub(super) fn create_document_in(
         },
         actor,
         now,
+        inspected,
     )?;
     if let Some(project) = body.project {
         vault
@@ -438,7 +442,9 @@ impl Vault {
     /// A document for a project needs the project live and, under
     /// [`PROJECT_MEMBERS_ONLY`], `actor` among its members or a live vault
     /// owner. The overlay artifact and every event of its trail are then
-    /// scoped to that project's audience.
+    /// scoped to that project's audience. A field that names a page its
+    /// item's PDF does not have is refused; each item's pages are inspected
+    /// before the writer, as for a field save.
     pub fn create_esign_document(
         &self,
         document: EntityId,
@@ -447,7 +453,10 @@ impl Vault {
         now: u64,
     ) -> Result<()> {
         validate_document(body, now)?;
-        self.with_write_txn_grouped(|txn| create_document_in(self, txn, document, body, actor, now))
+        let inspected = inspect_draft_pages(self, body, now);
+        self.with_write_txn_grouped(|txn| {
+            create_document_in(self, txn, document, body, actor, now, &inspected)
+        })
     }
     pub fn esign_document(&self, document: EntityId) -> Result<EsignState> {
         let txn = self.store.env.read_txn()?;
