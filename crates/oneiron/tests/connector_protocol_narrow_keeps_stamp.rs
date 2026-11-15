@@ -9,7 +9,9 @@
 //! attestation is then refused, and a probe re-qualification retires every
 //! per-grant key the owner gave an agent. So the first case fails at the
 //! carried stamp. The second case is the widening guard and holds on main
-//! too.
+//! too. The third case revises the protocol twice onto the slate the key
+//! already holds (review round 2 of #7778): at the reviewed head 55f54d7279f9
+//! neither revision asked the owner, and the key halted silently.
 //!
 //! Public crate surface only: register, stamp, attest, consent, revise, and
 //! read back each slate, key, grant, consent view and decision ask. No
@@ -342,5 +344,51 @@ fn a_widening_protocol_revision_still_needs_the_owners_tap() {
     assert!(
         narrow_asks(vault).is_empty(),
         "a widening asks on its own path"
+    );
+}
+
+#[test]
+fn a_protocol_revision_that_keeps_its_slate_asks_the_owner_once_per_revision() {
+    let fixture = fixture();
+    let vault = &fixture.vault;
+    let pending = vault
+        .revise_connector_protocol(&fixture.catalog, "B", fixture.first_slate, NOW + 2)
+        .expect("revise to protocol revision B on the slate the key holds");
+    assert_eq!(pending.status, ConnectorKeyStatus::Pending, "the key halts");
+    assert!(!pending.consent_required, "a kept slate re-asks no row");
+
+    let asks = narrow_asks(vault);
+    assert_eq!(
+        asks.len(),
+        1,
+        "the owner is asked about revision B: {asks:?}"
+    );
+    let text = &asks[0].question.text;
+    for named in [
+        SERVER,
+        "from A to B",
+        "did not change",
+        QUALIFY_DOOR,
+        ATTEST_DOOR,
+        SWITCH_OFF_DOOR,
+    ] {
+        assert!(text.contains(named), "the question names {named:?}: {text}");
+    }
+    assert!(!text.contains("Narrowed:"), "nothing narrowed: {text}");
+
+    let active = vault
+        .attest_connector_key(&owner(&fixture), &fixture.catalog, "B", NOW + 3)
+        .expect("the owner attests revision B on the stamp the slate holds");
+    assert_eq!(active.status, ConnectorKeyStatus::Active);
+
+    vault
+        .revise_connector_protocol(&fixture.catalog, "C", fixture.first_slate, NOW + 4)
+        .expect("revise to protocol revision C on the same slate");
+    let asks = narrow_asks(vault);
+    assert_eq!(asks.len(), 2, "each revision asks once: {asks:?}");
+    assert!(
+        asks.iter()
+            .any(|ask| ask.question.text.contains("from B to C")),
+        "the owner is asked about revision C: {asks:?}",
     );
 }
