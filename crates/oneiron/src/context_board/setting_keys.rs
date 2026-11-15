@@ -18,31 +18,31 @@ use crate::error::Result;
 use crate::setting::{Kind, Setting, lower_is_tighter};
 
 // Every fixed cap below fits a u32 many times over; the casts only change the type.
-fn tasks_rows_shown() -> u32 {
+fn default_tasks_rows_shown() -> u32 {
     TasksSection::RENDER_ROW_CAP as u32
 }
 
-fn tasks_fits_shown() -> u32 {
+fn default_tasks_fits_shown() -> u32 {
     TASK_FITS_CAP as u32
 }
 
-fn fold_attention_rows() -> u32 {
+fn default_fold_attention_rows() -> u32 {
     FOLD_ATTENTION_ROWS_MAX as u32
 }
 
-fn unprocessed_max_items() -> u32 {
+fn default_unprocessed_max_items() -> u32 {
     UNPROCESSED_LIMIT as u32
 }
 
-fn room_invite_shown() -> u32 {
+fn default_room_invite_shown() -> u32 {
     ROOM_INVITE_CAP as u32
 }
 
-fn readers_rows_shown() -> u32 {
+fn default_readers_rows_shown() -> u32 {
     ROWS_SHOWN
 }
 
-fn readers_reason_bytes() -> u32 {
+fn default_readers_reason_bytes() -> u32 {
     REASON_SHOWN_BYTES as u32
 }
 
@@ -56,20 +56,20 @@ crate::setting::setting_keys! {
     /// 100). 0 renders the footer alone. A request with an explicit TASKS token budget fits its
     /// rows to that budget instead, as before.
     pub(crate) TASKS_ROWS_SHOWN: u32 = "context_board.tasks.rows_shown" {
-        kind: Kind::new(tasks_rows_shown)
+        kind: Kind::new(default_tasks_rows_shown)
             .strictest(none_shown)
             .tighter(lower_is_tighter::<u32>),
     };
     /// Persons a TASKS row's `fits:` hint names, best fit first (default 3). 0 names none.
     pub(crate) TASKS_FITS_SHOWN: u32 = "context_board.tasks.fits_shown" {
-        kind: Kind::new(tasks_fits_shown)
+        kind: Kind::new(default_tasks_fits_shown)
             .strictest(none_shown)
             .tighter(lower_is_tighter::<u32>),
     };
     /// Attention rows a folded section's line names beside each count before `+N` counts the
     /// rest (default 3). 0 shows the counts alone.
     pub(crate) FOLD_ATTENTION_ROWS: u32 = "context_board.fold.attention_rows" {
-        kind: Kind::new(fold_attention_rows)
+        kind: Kind::new(default_fold_attention_rows)
             .strictest(none_shown)
             .tighter(lower_is_tighter::<u32>),
     };
@@ -77,28 +77,28 @@ crate::setting::setting_keys! {
     /// (default 128); priority is exact within the collected set. A larger value walks further
     /// on each board read. 0 lists none.
     pub(crate) UNPROCESSED_MAX_ITEMS: u32 = "context_board.unprocessed.max_items" {
-        kind: Kind::new(unprocessed_max_items)
+        kind: Kind::new(default_unprocessed_max_items)
             .strictest(none_shown)
             .tighter(lower_is_tighter::<u32>),
     };
     /// Persons the ROOM `invite?:` hint names before `+N` counts the rest (default 5). A layout
     /// share may name more, never fewer. 0 shows the count alone.
     pub(crate) ROOM_INVITE_SHOWN: u32 = "context_board.room.invite_shown" {
-        kind: Kind::new(room_invite_shown)
+        kind: Kind::new(default_room_invite_shown)
             .strictest(none_shown)
             .tighter(lower_is_tighter::<u32>),
     };
     /// Newest logged reads, and newest review asks, each the READERS block shows (default 4 of
     /// each). Its Grant rows and counts show whatever this is. 0 shows no read or ask row.
     pub(crate) READERS_ROWS_SHOWN: u32 = "context_board.readers.rows_shown" {
-        kind: Kind::new(readers_rows_shown)
+        kind: Kind::new(default_readers_rows_shown)
             .strictest(none_shown)
             .tighter(lower_is_tighter::<u32>),
     };
     /// Bytes of a read's or ask's stated reason a READERS row quotes (default 160), cut back to a
     /// character boundary. 0 quotes an empty reason.
     pub(crate) READERS_REASON_BYTES: u32 = "context_board.readers.reason_bytes" {
-        kind: Kind::new(readers_reason_bytes)
+        kind: Kind::new(default_readers_reason_bytes)
             .strictest(none_shown)
             .tighter(lower_is_tighter::<u32>),
     };
