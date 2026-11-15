@@ -1355,7 +1355,7 @@ fn coach_plan_applies_repair_seed_decision() -> TestResult {
 }
 
 #[test]
-fn coach_reproposes_a_candidate_failed_seed() -> TestResult {
+fn coach_second_pair_leaves_a_candidate_failed_seed() -> TestResult {
     let fixture = fixture()?;
     let source = text_capture(&fixture)?;
     let manifest = manifest()?;
@@ -1367,7 +1367,7 @@ fn coach_reproposes_a_candidate_failed_seed() -> TestResult {
     fixture
         .vault
         .put_model_registry_row(&registry_row(&model)?)?;
-    let (parent, old_hex) = put_skill(&fixture, "fixture.old", "1", "the old skill", None)?;
+    let (parent, _) = put_skill(&fixture, "fixture.old", "1", "the old skill", None)?;
     let (_, first_hex) = put_skill(
         &fixture,
         "fixture.old",
@@ -1429,6 +1429,8 @@ fn coach_reproposes_a_candidate_failed_seed() -> TestResult {
         settled.state
     );
 
+    // A second pair finds the refused seed standing: no candidate is chosen
+    // by the sealed task's result.
     let now = fixture.vault.now_recorded_at();
     let inventory = eval_authoring_inventory(&fixture.vault, now)?;
     let report = fixture.vault.run_coach_eval_authoring(
@@ -1438,42 +1440,9 @@ fn coach_reproposes_a_candidate_failed_seed() -> TestResult {
         (skill, SKILL_REVISION.to_owned()),
         now,
     )?;
-    assert_eq!(report.repair_seeds_proposed, 1, "{report:?}");
-    let again = fixture
-        .vault
-        .eval_repair_seed(&source)?
-        .expect("the re-proposed seed");
-    assert_eq!(again.state, EvalRepairSeedState::Pending);
-    assert_eq!(again.family, proposed.family);
-    assert_eq!(
-        again.old,
-        EvalArmPin {
-            model: model.as_str().to_owned(),
-            revision: "r1".to_owned(),
-            skill_digest: Some(old_hex),
-        }
-    );
-    assert_eq!(
-        again.candidate,
-        EvalArmPin {
-            model: model.as_str().to_owned(),
-            revision: "r1".to_owned(),
-            skill_digest: Some(second_hex),
-        }
-    );
-
-    let now = fixture.vault.now_recorded_at();
-    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
-    let report = fixture.vault.run_coach_eval_authoring(
-        &nightly,
-        seed_plan(&inventory, &first),
-        &inventory,
-        (skill, SKILL_REVISION.to_owned()),
-        now,
-    )?;
     assert_eq!(report.repair_seeds_proposed, 0, "{report:?}");
-    assert_eq!(report.repair_seeds_reused, 1);
-    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(again));
+    assert_eq!(report.repair_seeds_reused, 1, "{report:?}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(settled));
     Ok(())
 }
 
@@ -1622,11 +1591,11 @@ fn seed_label_refuses_an_answer_that_is_a_seed_identifier() -> TestResult {
 }
 
 #[test]
-fn a_reproposed_seed_takes_a_fresh_label() -> TestResult {
+fn a_candidate_failed_seed_stands_against_another_candidate() -> TestResult {
     let fixture = fixture()?;
     let source = adjudicated_capture(&fixture, clean_state())?;
     propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
-    // The audit's answer is a digest neither first arm holds.
+    // The audit's answer is a digest neither arm holds.
     let answer = "5f2c8e0d4b7a9163";
     let labelled = label_seed(
         &fixture,
@@ -1653,9 +1622,8 @@ fn a_reproposed_seed_takes_a_fresh_label() -> TestResult {
         settled.state
     );
 
-    // Re-proposed with a candidate whose digest is that answer: the kept
-    // label was checked against the first candidate only, so the fresh seed
-    // awaits a fresh label, and that answer is now a seed identifier.
+    // Proposed again with the same old arm and another candidate: the
+    // refused seed stands, label and all.
     let again = fixture
         .vault
         .memory(fixture.owner, EdgeActorClass::Human)
@@ -1669,17 +1637,8 @@ fn a_reproposed_seed_takes_a_fresh_label() -> TestResult {
         )?
         .seed
         .expect("the owner reads their own capture");
-    assert_eq!(again.candidate.skill_digest.as_deref(), Some(answer));
-    assert_eq!(again.state, EvalRepairSeedState::AwaitingLabel);
-    assert_eq!(again.adjudication, None);
-    let refusal = label_seed(
-        &fixture,
-        &source,
-        &audit(EvalLabelKind::AdjudicatedAudit, answer),
-    )
-    .expect_err("the answer is the new candidate's digest");
-    assert!(refusal.contains("identifiers"), "{refusal}");
-    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(again));
+    assert_eq!(again, settled);
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(settled));
     Ok(())
 }
 
