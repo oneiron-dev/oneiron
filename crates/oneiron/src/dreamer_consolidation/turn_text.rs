@@ -174,6 +174,12 @@ impl TurnText {
         self.text.as_deref()
     }
 
+    /// Where each projected MESSAGE sits in [`Self::text`]: its id, the byte
+    /// offset its words start at and their length, in text order.
+    pub(super) fn message_places(&self) -> &[(EntityId, usize, usize)] {
+        &self.layout
+    }
+
     /// Every MESSAGE row this text was read from: the TURN's exact live
     /// MESSAGE child set, each row read by the reader that projected it,
     /// sorted by id. None for inline text.

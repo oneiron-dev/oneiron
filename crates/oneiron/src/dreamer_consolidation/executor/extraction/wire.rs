@@ -10,7 +10,9 @@
 //! candidates may also name a subject by its 32-hex id and cite a source by
 //! its id with a byte range or a claim id (FIX 7577). Its sources bind
 //! through the call's map as a label does, and its subject id is the
-//! resident's own; a model's reply never reads these shapes.
+//! resident's own; a model's reply never reads these shapes. A covered
+//! slice's relation reply (L2-03) is authored by the engine too, from the
+//! saved tags, and cites in the same range shape.
 
 use super::ParsedCandidate;
 use super::quote_binding::{QuoteBinding, bind_quote};
@@ -168,7 +170,7 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
         ));
     }
     let reply = extraction_reply(response).map_err(|error| error.to_string())?;
-    let authored = authored_fallback(response);
+    let authored = authored_reply(response);
     for (index, candidate) in reply.candidates.iter().enumerate() {
         if let Some(field) = contract_fault(candidate, authored) {
             return Err(format!(
@@ -179,13 +181,17 @@ pub(in crate::dreamer_consolidation) fn check_extraction_reply(
     Ok(())
 }
 
-/// Whether `response` is a deterministic fallback's reply, whose candidates
-/// were authored before its call (FIX 7577).
-pub(super) fn authored_fallback(response: &LlmResponse) -> bool {
-    matches!(
-        &response.finish_reason,
-        FinishReason::Other { name } if name.starts_with("fallback:")
-    )
+/// Whether `response` is a reply the engine authored rather than a model's:
+/// a deterministic fallback's, whose candidates were authored before its
+/// call (FIX 7577), or a covered slice's relation reply (`authored:`, L2-03).
+/// Only the fallback is a provider failure's reply.
+pub(super) fn authored_reply(response: &LlmResponse) -> bool {
+    match &response.finish_reason {
+        FinishReason::Other { name } => {
+            name.starts_with("fallback:") || name.starts_with("authored:")
+        }
+        _ => false,
+    }
 }
 
 /// The first contract field `candidate` gets wrong, if any. An `authored`

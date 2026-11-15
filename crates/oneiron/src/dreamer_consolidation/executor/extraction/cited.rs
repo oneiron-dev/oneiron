@@ -5,7 +5,7 @@
 //! its source holds nowhere or more than once, or a label its call did not
 //! show) takes the same refusal, as an out-of-source byte range did.
 
-use super::wire::{CallPins, ReplyContext, read_candidate};
+use super::wire::{CallPins, ReplyContext, authored_reply, read_candidate};
 use super::{check_extraction_reply, extraction_reply, resolve_proposal};
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::branch::BranchAxes;
@@ -13,6 +13,7 @@ use crate::dreamer_consolidation::call_labels::CallLabelMap;
 use crate::dreamer_consolidation::evidence::EvidenceLocator;
 use crate::dreamer_consolidation::extracted_people::{MintNamespace, bind_people};
 use crate::dreamer_consolidation::resources::{BranchResources, OwnedPins};
+use crate::entity_id::EntityId;
 use oneiron_model::llm::LlmResponse;
 use oneiron_model::llm::{FinishReason, Scope};
 
@@ -79,9 +80,11 @@ impl CitationCheck {
         };
         for (index, item) in reply.candidates.iter().enumerate() {
             // The candidate's subject, value and admitted sources, apart
-            // from whether each of its quotes bound.
-            // A fallback returned above: this reply is a model's.
-            let Ok((parsed, unbound)) = read_candidate(item, ctx, scope, false) else {
+            // from whether each of its quotes bound. A fallback returned
+            // above: this reply is a model's, or the engine's relation reply
+            // (L2-03), which cites in the authored shape.
+            let Ok((parsed, unbound)) = read_candidate(item, ctx, scope, authored_reply(response))
+            else {
                 continue;
             };
             if call
@@ -113,6 +116,21 @@ impl CitationCheck {
             }
         }
         Ok(())
+    }
+
+    /// The text verification cites TURN `turn` against, when it has one.
+    pub(in crate::dreamer_consolidation) fn cited_text(&self, turn: &EntityId) -> Option<&str> {
+        self.pins.cited_text(turn)
+    }
+
+    /// The byte offset MESSAGE `message`'s words start at in TURN `turn`'s
+    /// cited text, when that text projects it.
+    pub(in crate::dreamer_consolidation) fn message_offset(
+        &self,
+        turn: &EntityId,
+        message: &EntityId,
+    ) -> Option<usize> {
+        self.pins.message_offset(turn, message)
     }
 
     /// Why verification refuses `locator`'s TURN byte range, by the function

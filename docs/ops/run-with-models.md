@@ -3323,6 +3323,19 @@ predicate must be one a claim write takes, two or more dotted lowercase
 segments outside the reserved `edge.*`, `skill.*` and `actor.*` namespaces,
 or the server refuses to start.
 
+When the Dreamer consolidates a slice whose every turn holds a current tag
+set from the configured tagger with relations, it extracts that slice from
+the relations instead of calling the extraction model. Each relation whose
+label the table maps files one candidate claim: the head span's linked
+entity as its subject, the table's predicate, the tail span's words as its
+value, and the turn as its evidence. Its corrections and conflicts are
+decided as a model's candidates are. Such a slice files only the relations
+its table maps, even where the extraction model would have filed more. A
+slice with a turn the tagger has not tagged, or tagged without relations,
+keeps the extraction model. The table is read when it is used, so changing
+it needs no new tagging pass, and an empty table, the default, leaves every
+slice to the extraction model.
+
 `device = "cuda"` opens only in a server built with candle's CUDA kernels,
 and a named device never falls back to the CPU: a build without them refuses
 at startup (`oneironer engine candle/cuda does not run on this machine`).
