@@ -557,6 +557,30 @@ fn mcp_row_position_inside(
             .is_none())
 }
 
+/// The static wrong-root refusal for a `tools/call` name, decided before any
+/// caller resolves (#1564, FIX 298): the name alone settles it, so resolving
+/// first could only lend the refusal an actor-bound effect — a live paired
+/// credential learned into the registry, a call receipt, a wire count under
+/// the caller — that it must not have. `None` for a name this endpoint
+/// registers, for the unbound code
+/// tool (whose own refusal answers it below), and for a name with no one
+/// canonical verb it could mean. A surface that does not register answers
+/// below too, as it does today.
+pub(super) fn mcp_pre_resolution_wrong_root(
+    server: &SyncServer,
+    mode: McpSurfaceMode,
+    name: &str,
+) -> Option<McpGatewayError> {
+    if name == crate::mcp::MCP_EXECUTE_CODE_TOOL {
+        return None;
+    }
+    let surface = server.mcp_surface(mode).ok()?;
+    if surface.resolve(name).is_some() {
+        return None;
+    }
+    oneiron::task_verb::sdk::wrong_root(name).map(super::mcp_facade_error)
+}
+
 /// Resolves one `tools/call` name against THIS endpoint's registration.
 ///
 /// The registered surface is the WHOLE callable surface (ONE-1704 M1). There is
