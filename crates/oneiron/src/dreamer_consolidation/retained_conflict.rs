@@ -14,6 +14,7 @@
 //! their words, rides beside the citations, so that binding compares against
 //! the words the round read (FIX 5755).
 
+use oneiron_contracts::msgpack::{Entries, MsgpackError};
 use rmpv::Value;
 
 use super::evidence::{VerifiedCandidate, VerifiedEvidenceSet};
@@ -161,14 +162,15 @@ fn encode(member: &VerifiedCandidate, attempt: AttemptId) -> Result<Value> {
 }
 
 fn field<'v>(entry: &'v Value, key: &str) -> Result<&'v Value> {
-    match entry {
-        Value::Map(rows) => rows
-            .iter()
-            .find(|(name, _)| name.as_str() == Some(key))
-            .map(|(_, value)| value)
-            .ok_or_else(|| invalid_consolidation("a retained alternative lacks a field")),
-        _ => Err(invalid_consolidation("a retained alternative is not a map")),
-    }
+    Entries::of(entry)
+        .map_err(|_| invalid_consolidation("a retained alternative is not a map"))?
+        .require(key)
+        .map_err(|error| {
+            invalid_consolidation(match error {
+                MsgpackError::DuplicateKey(_) => "a retained alternative repeats a field",
+                _ => "a retained alternative lacks a field",
+            })
+        })
 }
 
 /// [`field`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.

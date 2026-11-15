@@ -2,6 +2,7 @@
 //! The closed-map entry is `pinned_map`.
 //! `replay` owns the replay hash width; this module forwards no definitions.
 
+use oneiron_contracts::msgpack::{Entries, MsgpackError};
 use rmpv::Value;
 use sha2::{Digest, Sha256};
 
@@ -49,35 +50,35 @@ pub(super) fn pinned_map<'a, const N: usize>(
     keys: &[&str; N],
     context: &'static str,
 ) -> Result<[Option<&'a Value>; N]> {
-    let entries = expect_map(value, context)?;
-    let mut out = [None; N];
-    for (key, value) in entries {
-        let key = str_value(key)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(invalid_code_run_replay("map key is not pinned"));
-        };
-        if out[index].replace(value).is_some() {
-            return Err(invalid_code_run_replay("duplicate map key"));
-        }
-    }
-    Ok(out)
+    let entries = Entries::new(expect_map(value, context)?);
+    entries.exact_keys(&[], keys).map_err(|error| {
+        invalid_code_run_replay(match error {
+            MsgpackError::NonTextKey => "value must be a string",
+            MsgpackError::DuplicateKey(_) => "duplicate map key",
+            _ => "map key is not pinned",
+        })
+    })?;
+    Ok(std::array::from_fn(|index| {
+        entries.get(keys[index]).ok().flatten()
+    }))
 }
 
 pub(super) fn expect_map<'a>(
     value: &'a Value,
     _context: &'static str,
 ) -> Result<&'a [(Value, Value)]> {
-    let Value::Map(entries) = value else {
-        return Err(invalid_code_run_replay("value must be a MessagePack map"));
-    };
-    Ok(entries)
+    Entries::of(value)
+        .map(Entries::as_slice)
+        .map_err(|_| invalid_code_run_replay("value must be a MessagePack map"))
 }
 
 pub(super) fn map_get<'a>(entries: &'a [(Value, Value)], needle: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(key, value)| (key.as_str() == Some(needle)).then_some(value))
-        .ok_or(invalid_code_run_replay("missing dispatch outcome key"))
+    Entries::new(entries).require(needle).map_err(|error| {
+        invalid_code_run_replay(match error {
+            MsgpackError::DuplicateKey(_) => "duplicate dispatch outcome key",
+            _ => "missing dispatch outcome key",
+        })
+    })
 }
 
 /// [`map_get`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.

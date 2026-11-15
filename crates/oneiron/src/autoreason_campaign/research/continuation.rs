@@ -49,6 +49,7 @@ use crate::scan_check::{EngineScan, ScanCount};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::skill_optimize::{EvalRelease, SufficiencyInput};
 use crate::{AttemptId, AttemptQueue, EntityId, Error, Result, Vault};
+use oneiron_contracts::msgpack::Entries;
 
 mod pass;
 
@@ -760,12 +761,9 @@ fn run_answer_text(vault: &Vault, record: &AttemptRecord) -> Result<Option<Strin
         .map(|body| String::from_utf8_lossy(&body).into_owned()))
 }
 
+/// A repeated key reads as absent.
 fn field<'a>(value: &'a rmpv::Value, key: &str) -> Option<&'a rmpv::Value> {
-    value
-        .as_map()?
-        .iter()
-        .find(|(name, _)| name.as_str() == Some(key))
-        .map(|(_, value)| value)
+    Entries::of(value).ok()?.get(key).ok().flatten()
 }
 
 /// [`field`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.

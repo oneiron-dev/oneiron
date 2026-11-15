@@ -1,5 +1,6 @@
 //! Claim-body structural validation and map-extraction helpers.
 
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 use crate::claim::{ClaimBody, ClaimSubject};
@@ -100,24 +101,20 @@ pub(crate) fn validate_delivery_window_claim_structure(body: &ClaimBody) -> Resu
 }
 
 pub(super) fn value_map(value: &Value) -> Result<&[(Value, Value)]> {
-    match value {
-        Value::Map(entries) => {
-            for (key, _) in entries {
-                if key.as_str().is_none() {
-                    return Err(invalid_claim("delivery_window value keys must be strings"));
-                }
-            }
-            Ok(entries)
-        }
-        _ => Err(invalid_claim("delivery_window value must be a map")),
+    let entries = Entries::of(value)
+        .map_err(|_| invalid_claim("delivery_window value must be a map"))?
+        .as_slice();
+    if entries.iter().any(|(key, _)| key.as_str().is_none()) {
+        return Err(invalid_claim("delivery_window value keys must be strings"));
     }
+    Ok(entries)
 }
 
 fn validate_keys_for_predicate(entries: &[(Value, Value)], allowed: &[&str]) -> Result<()> {
     for (key, _) in entries {
         let key = key
             .as_str()
-            .expect("delivery_window value_map validates string keys");
+            .ok_or_else(|| invalid_claim("delivery_window value keys must be strings"))?;
         if !allowed.contains(&key) {
             return Err(invalid_claim(
                 "delivery_window value has key outside predicate variant",
@@ -144,16 +141,9 @@ pub(super) fn optional_value<'a>(
     entries: &'a [(Value, Value)],
     key: &str,
 ) -> Result<Option<&'a Value>> {
-    let mut found = None;
-    for (entry_key, value) in entries {
-        if entry_key.as_str() == Some(key) {
-            if found.is_some() {
-                return Err(invalid_claim("delivery_window value has duplicate key"));
-            }
-            found = Some(value);
-        }
-    }
-    Ok(found)
+    Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid_claim("delivery_window value has duplicate key"))
 }
 
 pub(super) fn required_str<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {

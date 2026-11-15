@@ -13,6 +13,7 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
 use crate::write_envelope::task_body::TaskRole;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 const KEY_THREAD_ID: &str = "thread_id";
@@ -468,14 +469,9 @@ pub(super) fn decode_brief_thread_task(value: &Value) -> Result<(EntityId, Entit
     ))
 }
 
+/// A repeated key reads as absent.
 fn map_get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
-    let Value::Map(entries) = value else {
-        return None;
-    };
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key.as_str() == Some(key))
-        .map(|(_, entry_value)| entry_value)
+    Entries::of(value).ok()?.get(key).ok().flatten()
 }
 
 /// [`map_get`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.

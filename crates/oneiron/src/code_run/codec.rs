@@ -8,7 +8,8 @@ use rmpv::Value;
 
 use crate::attempt_queue::AttemptId;
 use crate::claim::CallerLocality;
-use crate::{EdgeActorClass, EntityId, Error, Result};
+use crate::{EdgeActorClass, EntityId, Result};
+use oneiron_contracts::msgpack::{self, MsgpackError};
 
 use super::live_run::{CodeRunLiveRunBinding, LiveRunCredential};
 use super::payload::self_effect_from_str;
@@ -741,21 +742,17 @@ fn validate_abi_layout_check(check: &CodeRunAbiLayoutCheck) -> Result<()> {
 }
 
 fn decode_value(bytes: &[u8]) -> Result<Value> {
-    let mut cursor = bytes;
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid_code_run_replay("record is not valid MessagePack"))?;
-    if !cursor.is_empty() {
-        return Err(invalid_code_run_replay(
-            "trailing bytes after code-run replay record",
-        ));
-    }
-    Ok(value)
+    msgpack::decode(bytes).map_err(|error| {
+        invalid_code_run_replay(match error {
+            MsgpackError::Trailing => "trailing bytes after code-run replay record",
+            _ => "record is not valid MessagePack",
+        })
+    })
 }
 
-fn encode_value(value: &Value, context: &'static str) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value).map_err(|_| Error::InvariantViolation(context))?;
-    Ok(out)
+/// The context named a write error, which writing into a Vec cannot raise; kept for the callers.
+fn encode_value(value: &Value, _context: &'static str) -> Result<Vec<u8>> {
+    Ok(msgpack::encode(value))
 }
 
 pub(crate) fn encode_code_run_replay_value(

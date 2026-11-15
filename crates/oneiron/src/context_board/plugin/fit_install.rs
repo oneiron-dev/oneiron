@@ -34,6 +34,7 @@ use crate::write_envelope::{
     ClaimCandidate, WRITE_ENVELOPE_EVIDENCE_CANDIDATE_KEY, WriteActor, WriteEnvelope,
     WriteProvenance,
 };
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 
 mod install_writer;
@@ -261,11 +262,9 @@ fn bounded_analysis(mut analysis: String) -> String {
 }
 
 /// The value stored under `key` in a MessagePack map.
+/// A repeated key reads as absent.
 fn map_entry<'v>(entries: &'v [(Value, Value)], key: &str) -> Option<&'v Value> {
-    entries
-        .iter()
-        .find(|(k, _)| k.as_str() == Some(key))
-        .map(|(_, value)| value)
+    Entries::new(entries).get(key).ok().flatten()
 }
 
 /// [`map_entry`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.

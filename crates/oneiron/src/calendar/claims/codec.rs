@@ -1,5 +1,6 @@
 //! Calendar claim validation dispatch plus MessagePack encode/decode and field helpers.
 
+use oneiron_contracts::msgpack::{Entries, MsgpackError};
 use rmpv::Value;
 
 use super::predicates::{
@@ -417,10 +418,9 @@ pub(crate) fn decode_event_outcome_value(value: &Value) -> Result<EventOutcomeCl
 }
 
 fn value_map(value: &Value) -> Result<&[(Value, Value)]> {
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(invalid_claim("calendar claim value must be a map")),
-    }
+    Entries::of(value)
+        .map(Entries::as_slice)
+        .map_err(|_| invalid_claim("calendar claim value must be a map"))
 }
 
 fn as_str<'a>(value: &'a Value, reason: &'static str) -> Result<&'a str> {
@@ -428,26 +428,18 @@ fn as_str<'a>(value: &'a Value, reason: &'static str) -> Result<&'a str> {
 }
 
 fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    let mut matches = entries
-        .iter()
-        .filter_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value));
-    let value = matches
-        .next()
-        .ok_or_else(|| invalid_claim("calendar value missing required key"))?;
-    if matches.next().is_some() {
-        return Err(invalid_claim("calendar value contains duplicate key"));
-    }
-    Ok(value)
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid_claim(match error {
+            MsgpackError::DuplicateKey(_) => "calendar value contains duplicate key",
+            _ => "calendar value missing required key",
+        })
+    })
 }
 
 fn optional_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
-    if entries
-        .iter()
-        .any(|(candidate, _)| candidate.as_str() == Some(key))
-    {
-        return required_value(entries, key).map(Some);
-    }
-    Ok(None)
+    Entries::new(entries)
+        .get(key)
+        .map_err(|_| invalid_claim("calendar value contains duplicate key"))
 }
 
 fn required_string<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
@@ -510,6 +502,8 @@ fn required_entity_ref(entries: &[(Value, Value)], key: &str) -> Result<EntityId
     Ok(id)
 }
 
+// Not Entries::exact_keys: a too-long or unknown key set refuses before a repeated key,
+// with its own message.
 /// Rejects extra keys, missing required keys, and non-string keys.
 ///
 /// `allowed` is the full key set; `required` is the subset that must be present.

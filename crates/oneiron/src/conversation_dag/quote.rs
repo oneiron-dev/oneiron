@@ -17,6 +17,7 @@ use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault, WriteActor};
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::msgpack::Entries;
 use rmpv::Value;
 use std::collections::BTreeMap;
 
@@ -735,11 +736,9 @@ pub(super) fn message_fields(body: &[u8]) -> Result<Vec<(Value, Value)>> {
     }
 }
 
+/// A repeated key reads as absent.
 pub(super) fn field<'a>(fields: &'a [(Value, Value)], name: &str) -> Option<&'a Value> {
-    fields
-        .iter()
-        .find(|(key, _)| key.as_str() == Some(name))
-        .map(|(_, value)| value)
+    Entries::new(fields).get(name).ok().flatten()
 }
 
 /// [`field`] for the repeated-key test door (`test_doors::repeated_key_lib_rows`). Not API.
