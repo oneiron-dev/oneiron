@@ -33,7 +33,6 @@ use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, PendingGateConsentRecord};
 
 pub(super) use crate::store::gate_receipt::{
@@ -669,6 +668,8 @@ pub(crate) use crate::store::gate_receipt::gate_decision_receipt;
 pub(super) use crate::store::gate_receipt::select_gate_system_notice_for_receipt;
 
 fn pending_tray_query(vault: &Vault, query: PendingTrayQuery) -> Result<Vec<PendingTrayAsk>> {
+    use crate::store::gate_reason::GateReceiptOutcome;
+
     if query.limit == 0 {
         return Ok(Vec::new());
     }
