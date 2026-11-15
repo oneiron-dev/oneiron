@@ -310,16 +310,9 @@ impl PublishedPage {
         vault
             .put_claim(&id(0x72), &body, at, 1)
             .expect("event type claim");
-        let owner = id(0x77);
-        vault
-            .put_entity(
-                &owner,
-                oneiron::registry::ENTITY_TYPE_PERSON,
-                at,
-                1,
-                b"page owner",
-            )
-            .expect("owner");
+        // The vault has no authority root yet, so the one actor whose owner
+        // write it admits is its own live embedded owner.
+        let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
         publish(&vault, owner, page, &config);
         DreamerRunnerStore::new(&vault)
             .elect_home_node(&[DreamerHomeNodeCandidate::always_on_local(HOME_NODE)], 1)
