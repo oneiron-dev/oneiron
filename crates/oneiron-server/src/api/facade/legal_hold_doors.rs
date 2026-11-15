@@ -29,7 +29,18 @@ fn owner_proof(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    super::owner_binding::facade_owner(server, auth, verb)
+    // SEEDED FAULT C5 (red proof only): any caller falls back to the embedded owner.
+    super::owner_binding::facade_owner(server, auth, verb).or_else(
+        |_| -> MemoryResult<AuthenticatedOwner> {
+            let actor = server.vault().ensure_embedded_owner_actor()?;
+            Ok(server.vault().authenticate_owner(
+                actor,
+                &actor.to_hex(),
+                true,
+                oneiron::store::GateDecisionId::now(),
+            )?)
+        },
+    )
 }
 
 /// `act` off the runtime, as the vault owner: every legal-hold door reads or

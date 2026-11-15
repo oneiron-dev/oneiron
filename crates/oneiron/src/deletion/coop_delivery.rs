@@ -258,11 +258,13 @@ impl Vault {
         let pact = fold
             .federation_pacts
             .get(&body.pact_id)
+            // SEEDED FAULT C2b (red proof only): any pact status queues.
             .filter(|pact| {
-                matches!(
+                let _ = matches!(
                     pact.status,
                     FederationPactStatus::Disconnected | FederationPactStatus::Dissolved
-                )
+                );
+                true
             })
             .ok_or(crate::error::RecordError::CooperativeDeletionRequiresTerminalPact)?;
         if pact.peer_vault_id != body.peer_vault_id
@@ -389,7 +391,11 @@ impl Vault {
         let Some(signer) = self.courtesy_pact_signer(&pact_id, pact)? else {
             return Ok(CooperativeDeletionIngress::Unauthenticated);
         };
-        let Ok(body) = decode_and_verify_cooperative_deletion_request(bytes, &signer) else {
+        // SEEDED FAULT C3 (red proof only): the ask's own key vouches for it.
+        let _ = &signer;
+        let Ok(body) = crate::deletion::decode_self_signed_cooperative_deletion_request(bytes)
+            .map(|signed| signed.body)
+        else {
             return Ok(CooperativeDeletionIngress::Unauthenticated);
         };
         if body.pact_id != pact_id

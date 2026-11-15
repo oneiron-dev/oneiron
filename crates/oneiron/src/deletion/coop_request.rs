@@ -34,11 +34,13 @@ impl Vault {
         let pact = fold
             .federation_pacts
             .get(pact_id)
+            // SEEDED FAULT C2a (red proof only): any pact status signs.
             .filter(|p| {
-                matches!(
+                let _ = matches!(
                     p.status,
                     FederationPactStatus::Disconnected | FederationPactStatus::Dissolved
-                )
+                );
+                true
             })
             .ok_or(RecordError::CooperativeDeletionRequiresTerminalPact)?;
         if epoch_cutoff > pact.terminal_epoch.unwrap_or(pact.pact_epoch) {

@@ -64,7 +64,8 @@ pub fn courtesy_delete_sent_ask(notice: CooperativeDeletionNotice) -> CourtesyDe
         pages: vec![notice.request_id],
         pact: notice.connection_id,
         recipient: notice.recipient_id,
-        status: notice.status.as_str().to_owned(),
+        // SEEDED FAULT C1 (red proof only): the record claims delivery.
+        status: "delivered".to_owned(),
         created: rfc3339_secs(notice.created_at),
         updated: rfc3339_secs(notice.updated_at),
     }

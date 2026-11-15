@@ -205,7 +205,8 @@ impl Vault {
                 }
                 self.local_hard_delete_marker_exists_in_txn(&txn, &record)?
             };
-            let state = if removed {
+            // SEEDED FAULT C4 (red proof only): every named record reads removed.
+            let state = if removed || !failed {
                 CooperativeDeleteRecordState::Removed
             } else {
                 let hard = SafeDeleteReason::UserHardDelete;
