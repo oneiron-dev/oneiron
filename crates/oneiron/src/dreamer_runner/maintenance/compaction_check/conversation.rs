@@ -26,7 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     COMPACTION_CHECK_FACET, CompactionCheckModel, CompactionCheckVerdict, NO_DIAGNOSTIC, Settled,
-    ask_judge, emit_finding, judge_call, judge_locality, support, unix_now,
+    ask_judge, emit_finding, judge_call, judge_locality, support,
 };
 use crate::attempt_queue::AttemptId;
 use crate::compaction::{
@@ -40,8 +40,10 @@ use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, Error, Result, Vault};
 use oneiron_model::llm::{ContentPart, LlmRequest, LlmResponse};
 
-/// The payload key a conversation's declaration rides under.
-const CONVERSATION_DECLARATION_KEY: &str = "conversation_declaration";
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::compaction_check::conversation::{
+    CONVERSATION_DECLARATION_KEY, hex32,
+};
 
 /// Why a check waits: a turn of its span is away from this replica.
 const SPAN_NOT_RESIDENT: &str = "a turn of the checked span is not resident here";
@@ -174,7 +176,7 @@ pub(crate) fn declare_conversation_check_in_txn(
         txn,
         declaration.input()?,
         declaration.landing_key(),
-        unix_now(),
+        crate::unix_seconds_now(),
     )?;
     Ok(())
 }
@@ -514,16 +516,4 @@ fn record(
         settled.verdict,
         now,
     )
-}
-
-/// A 64-character lowercase hex digest's bytes.
-fn hex32(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut out = [0_u8; 32];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(out)
 }

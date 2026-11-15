@@ -32,9 +32,7 @@ pub(crate) async fn vault_shape_apply(
     input: ShapeApplyRequest,
 ) -> MaybeListed<ShapeApplyReceipt> {
     const VERB: &str = "vault.shape.apply";
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let server = Arc::clone(server);
     // A hosted operator's root gets the typed refusal, never a fallback
     // caller (FIX 4371).

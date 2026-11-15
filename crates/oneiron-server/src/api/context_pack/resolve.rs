@@ -66,11 +66,12 @@ pub(crate) async fn core_context_pack(
 }
 
 /// The members of a context pack request that its route reads and the
-/// native `memory.context_pack` contract does not carry: its room, session,
-/// reaction signals, affect, assembly policy, time window, projection,
-/// interlocutors and reader.
+/// native `memory.context_pack` contract does not carry: its room and its
+/// home, session, reaction signals, affect, assembly policy, time window,
+/// projection, interlocutors and reader.
 const CONTEXT_PACK_ROUTE_CONTROLS: &[&str] = &[
     "conversation_id",
+    "conversation_home",
     "session_id",
     "signals_since",
     "signals_after",
@@ -227,6 +228,7 @@ pub(crate) async fn execute_context_pack(
         room_id,
         room,
         interlocutors,
+        home,
         media,
         skill_reliability,
         candidate_limit,
@@ -376,7 +378,8 @@ pub(crate) async fn execute_context_pack(
     )?;
     // OF-365 ILD-2: one DisclosureContext value feeds builder, board, and
     // response, so the response can never describe a different clamp than
-    // the one applied (design §11 rule 6).
+    // the one applied (design §11 rule 6). It carries the pack's home
+    // (DEC-0006 #home-clearance).
     // ARCH-0052 D5 rule 1 (ROOM-PACK-STRETCH-TIER-A = A): a pack bound to
     // its room's stretch, whose every interlocutor is seated there, reads the
     // stretch's own rows past Tier A; the clamp still judges them.
@@ -385,6 +388,7 @@ pub(crate) async fn execute_context_pack(
         interlocutors.as_ref(),
         room.as_ref().map(|room| room.reader.is_some()),
         &once,
+        home,
     )?
     .map(|ctx| match stretch.as_ref() {
         Some(stretch)
@@ -629,13 +633,16 @@ fn read_reaction_signals(
     // of one person's messages; a delegated, room-scoped or
     // interlocutor-scoped read is filtered by the same scoped read and
     // disclosure clamp as the pack, and so is a read that names its own
-    // filter, which the pack's reader carries (FIX 3977). Paging follows the
-    // filter, so a cursor never names a signal this caller was not shown.
+    // filter, which the pack's reader carries (FIX 3977), and so is a read a
+    // clamp narrows, such as an owner session homed in another vault
+    // (DEC-0006 `#home-clearance`). Paging follows the filter, so a cursor
+    // never names a signal this caller was not shown.
     let scoped = auth.verified_slip().is_some()
         || !auth.is_owner_grade()
         || req.conversation_id.is_some()
         || req.interlocutors.is_some()
-        || req.filter.is_some();
+        || req.filter.is_some()
+        || disclosure.is_some();
     let mut kept = Vec::new();
     for signal in signals {
         checkpoint()?;

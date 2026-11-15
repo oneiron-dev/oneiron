@@ -550,17 +550,11 @@ fn secret_b64_into(raw: &[u8], out: &mut [u8; 32]) -> bool {
 }
 
 pub(crate) fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 fn unhex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return None;
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
-        .collect()
+    oneiron_hex::decode_vec_any_case(text)
 }
 
 pub(crate) fn b64(bytes: &[u8]) -> String {
