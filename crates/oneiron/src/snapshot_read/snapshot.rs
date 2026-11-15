@@ -233,16 +233,16 @@ impl ChangesSinceOpen {
     }
 }
 
-/// The request's shape checks, run before the caller is resolved.
+/// The request's shape checks, run before the caller is resolved. The bound is
+/// `snapshot_read.open.max_kinds` in force, [`SNAPSHOT_MAX_KINDS`] by default.
 ///
 /// # Errors
 ///
-/// No kind, more than [`SNAPSHOT_MAX_KINDS`], a kind named twice, or a zero
-/// lifetime.
-pub fn validate_snapshot_open(input: &SnapshotOpenRequest) -> MemoryResult<()> {
-    if input.kinds.is_empty() || input.kinds.len() > SNAPSHOT_MAX_KINDS {
+/// No kind, more than `max_kinds`, a kind named twice, or a zero lifetime.
+pub fn validate_snapshot_open(input: &SnapshotOpenRequest, max_kinds: usize) -> MemoryResult<()> {
+    if input.kinds.is_empty() || input.kinds.len() > max_kinds {
         return Err(MemoryError::bad_request(format!(
-            "a snapshot pages 1 to {SNAPSHOT_MAX_KINDS} kinds"
+            "a snapshot pages 1 to {max_kinds} kinds"
         )));
     }
     let mut types: Vec<u8> = input.kinds.iter().map(|kind| kind.entity_type()).collect();
@@ -270,10 +270,20 @@ pub fn snapshot_open(
     memory: &Memory<'_>,
     input: &SnapshotOpenRequest,
 ) -> MemoryResult<SnapshotHandle> {
-    validate_snapshot_open(input)?;
+    let vault = memory.vault();
+    let max_kinds = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        usize::try_from(
+            super::setting_keys::SNAPSHOT_MAX_KINDS_SETTING
+                .read_in_txn(vault, &txn, &[], None)?
+                .value
+                .max(1),
+        )
+        .unwrap_or(usize::MAX)
+    };
+    validate_snapshot_open(input, max_kinds)?;
     // The caller must hold a read lane at all; each page opens its own.
     memory.read_lane(ClaimReadStatus::Recorded)?;
-    let vault = memory.vault();
     let bounds = vault.snapshot_read_settings()?;
     let now = vault.store.authorization_now()?;
     let lifetime = input

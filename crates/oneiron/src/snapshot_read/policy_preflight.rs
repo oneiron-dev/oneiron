@@ -115,20 +115,24 @@ pub struct PolicyPreflight {
     pub refs: Vec<PolicyPreflightRef>,
 }
 
-/// Refuses a request with no refs or more than [`POLICY_PREFLIGHT_MAX_REFS`].
+/// Refuses a request with no refs or more than `snapshot_read.preflight.max_refs` in force,
+/// [`POLICY_PREFLIGHT_MAX_REFS`] by default.
 ///
 /// # Errors
 ///
 /// `BAD_REQUEST` for either.
-pub fn validate_policy_preflight(input: &PolicyPreflightRequest) -> MemoryResult<()> {
+pub fn validate_policy_preflight(
+    input: &PolicyPreflightRequest,
+    max_refs: usize,
+) -> MemoryResult<()> {
     if input.refs.is_empty() {
         return Err(MemoryError::bad_request(
             "a preflight names at least one ref",
         ));
     }
-    if input.refs.len() > POLICY_PREFLIGHT_MAX_REFS {
+    if input.refs.len() > max_refs {
         return Err(MemoryError::bad_request(format!(
-            "at most {POLICY_PREFLIGHT_MAX_REFS} refs per preflight"
+            "at most {max_refs} refs per preflight"
         )));
     }
     Ok(())
@@ -146,10 +150,20 @@ pub fn policy_preflight(
     memory: &Memory<'_>,
     input: &PolicyPreflightRequest,
 ) -> MemoryResult<ScopedReadResult<PolicyPreflight>> {
-    validate_policy_preflight(input)?;
+    let vault = memory.vault();
+    let max_refs = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        usize::try_from(
+            super::setting_keys::POLICY_PREFLIGHT_MAX_REFS_SETTING
+                .read_in_txn(vault, &txn, &[], None)?
+                .value
+                .max(1),
+        )
+        .unwrap_or(usize::MAX)
+    };
+    validate_policy_preflight(input, max_refs)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     let points: Vec<PointRead<'_>> = input.refs.iter().copied().map(PointRead::id).collect();
-    let vault = memory.vault();
     let capability = input.act.derive_capability();
     // The actor a derivation commit of this caller's is stamped with.
     let actor = memory.write_actor();

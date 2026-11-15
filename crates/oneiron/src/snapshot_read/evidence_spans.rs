@@ -69,16 +69,19 @@ pub struct EvidenceSpans {
     pub masked: bool,
 }
 
-/// The request's shape checks, run before the caller is resolved.
+/// The request's shape checks, run before the caller is resolved. The bound is
+/// `snapshot_read.evidence.max_ranges` in force, [`EVIDENCE_SPANS_MAX_RANGES`] by default.
 ///
 /// # Errors
 ///
-/// More than [`EVIDENCE_SPANS_MAX_RANGES`] ranges, an empty range, or a
-/// version of another row.
-pub fn validate_evidence_spans(input: &EvidenceSpansRequest) -> MemoryResult<()> {
-    if input.ranges.len() > EVIDENCE_SPANS_MAX_RANGES {
+/// More than `max_ranges` ranges, an empty range, or a version of another row.
+pub fn validate_evidence_spans(
+    input: &EvidenceSpansRequest,
+    max_ranges: usize,
+) -> MemoryResult<()> {
+    if input.ranges.len() > max_ranges {
         return Err(MemoryError::bad_request(format!(
-            "at most {EVIDENCE_SPANS_MAX_RANGES} evidence ranges per request"
+            "at most {max_ranges} evidence ranges per request"
         )));
     }
     if input.ranges.iter().any(|range| range.start >= range.end) {
@@ -123,7 +126,18 @@ pub fn evidence_spans(
     memory: &Memory<'_>,
     input: &EvidenceSpansRequest,
 ) -> MemoryResult<ScopedReadResult<EvidenceSpans>> {
-    validate_evidence_spans(input)?;
+    let vault = memory.vault();
+    let max_ranges = {
+        let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+        usize::try_from(
+            super::setting_keys::EVIDENCE_SPANS_MAX_RANGES_SETTING
+                .read_in_txn(vault, &txn, &[], None)?
+                .value
+                .max(1),
+        )
+        .unwrap_or(usize::MAX)
+    };
+    validate_evidence_spans(input, max_ranges)?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
     read.read_projected(
         &[PointRead::id(input.source)],
