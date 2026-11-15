@@ -16,7 +16,9 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::store::gate_reason::GateReceiptOutcome;
-use crate::store::{GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor, Store};
+use crate::store::{
+    GateDecisionId, GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor, Store,
+};
 use crate::temporal::TimeRange;
 use crate::vault::Vault;
 use crate::write_envelope::{WriteActor, WriteEnvelope, WriteProvenance};
