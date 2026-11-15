@@ -42,7 +42,7 @@ impl AuthenticatedOwner {
     /// Every slip a transport bound to this proof: the owner's credential,
     /// the person's own and the request's. A proof the host authenticated
     /// itself carries none.
-    fn carried_slips(&self) -> impl Iterator<Item = &VerifiedSlip> {
+    pub(crate) fn carried_slips(&self) -> impl Iterator<Item = &VerifiedSlip> {
         [
             self.credential.as_deref(),
             self.person_credential.as_deref(),
