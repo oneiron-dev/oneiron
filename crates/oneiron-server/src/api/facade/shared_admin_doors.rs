@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError};
 use oneiron::task_verb::sdk::{
-    self, FederationDelegateRequest, FederationMemberGrant, OrgAdminConfigureRequest,
-    OrgAdminConfigured, OrgAdminPowers, OrgAdminPowersRequest,
+    self, FederationDelegateRequest, FederationMemberGrant, OrgAdminAmendRequest, OrgAdminAmended,
+    OrgAdminConfigureRequest, OrgAdminConfigured, OrgAdminPowers, OrgAdminPowersRequest,
 };
 
 use super::host_doors::support::{Listed, MaybeListed, credential_listing, refused};
@@ -23,6 +23,24 @@ pub(crate) async fn vault_org_admin_configure(
         auth,
         "vault.org_admin.configure",
         move |server, owner| sdk::configure_org_admin_as_owner(server.vault(), owner, input),
+        |_| Vec::new(),
+    )
+    .await
+}
+
+/// The owner's amend of a stored setup (RULING ORG-ADMIN-SETUP-AMEND = A):
+/// the Admins change, the powers keep or drop; the amend revalidates the
+/// owner's proof in its writer.
+pub(crate) async fn vault_org_admin_amend(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: OrgAdminAmendRequest,
+) -> Listed<OrgAdminAmended> {
+    as_owner_naming(
+        server,
+        auth,
+        "vault.org_admin.amend",
+        move |server, owner| sdk::amend_org_admin_as_owner(server.vault(), owner, input),
         |_| Vec::new(),
     )
     .await

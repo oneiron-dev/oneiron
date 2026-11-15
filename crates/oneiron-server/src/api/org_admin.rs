@@ -25,7 +25,12 @@ fn policy_error(error: OrgAdminError) -> ApiError {
         OrgAdminError::AlreadyConfigured => {
             ApiError::invalid_state(Some("organization already configured"))
         }
-        OrgAdminError::Denied => ApiError::forbidden_scope("org:named-power"),
+        OrgAdminError::NotConfigured => {
+            ApiError::invalid_state(Some("organization not configured"))
+        }
+        OrgAdminError::Denied | OrgAdminError::PowerOutsideSetup => {
+            ApiError::forbidden_scope("org:named-power")
+        }
         OrgAdminError::Engine(error) => {
             super::core_engine_error("organization administration failed", error)
         }

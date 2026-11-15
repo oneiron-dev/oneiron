@@ -5,13 +5,22 @@ use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
-/// Immutable per-organization setup, keyed by the org's hex32 entity id.
+/// Per-organization setup, keyed by the org's hex32 entity id. The owner's
+/// setup stores it once; only the owner's amend changes it.
 const ORG_ADMIN_POLICY: SideTable<HexId, OrgAdminPolicy, LegacyJson> =
     SideTable::new(&side_table::ORG_ADMIN_POLICY);
 
 pub use crate::batch::shared_vault_write::OrgAdminPower;
 
-/// Immutable setup policy. Contains actor references, never member key material.
+/// Whether the owner's amend may add a named power the stored setup lacks.
+/// Canon vault:18 (ARCH-0043:227): "Company Admins widen only named powers
+/// set at org setup. No one can grant missing powers." RULING
+/// ORG-ADMIN-SETUP-AMEND = A (Engine, 16 Nov 02:10): an amend replaces the
+/// Admins and keeps or drops powers; whether it may also add one is this one
+/// condition, which the lead's reading of vault:18 decides.
+const AMEND_MAY_ADD_POWERS: bool = false;
+
+/// Setup policy. Contains actor references, never member key material.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OrgAdminPolicy {
@@ -54,7 +63,7 @@ impl OrgAdminPolicy {
         }
         self.powers.iter().copied().collect()
     }
-    /// Checks a requested named power against the frozen policy.
+    /// Checks a requested named power against the stored policy.
     pub fn authorize(&self, admin: EntityId, power: OrgAdminPower) -> Result<(), OrgAdminError> {
         if self.admin_refs.contains(&ScopeId(admin)) && self.powers.contains(&power) {
             Ok(())
@@ -65,7 +74,8 @@ impl OrgAdminPolicy {
 }
 
 impl Vault {
-    /// Stores an immutable organization setup. Host callers must hold the owner credential.
+    /// Stores an organization's setup, once ([`Self::amend_org_admin_as_owner`]
+    /// changes it). Host callers must hold the owner credential.
     /// No member private key or decryption authority is accepted by this door.
     pub fn configure_org_admin(&self, policy: &OrgAdminPolicy) -> Result<(), OrgAdminError> {
         let mut txn = self.store.env.write_txn()?;
@@ -104,6 +114,50 @@ impl Vault {
         ORG_ADMIN_POLICY.put(&self.store, txn, &key, policy)?;
         Ok(())
     }
+
+    /// The owner amends the stored setup of `policy`'s organization (RULING
+    /// ORG-ADMIN-SETUP-AMEND = A, Engine 16 Nov 02:10): its Admins become
+    /// `policy`'s, and so do its powers, which may keep or drop the stored
+    /// ones but add none ([`AMEND_MAY_ADD_POWERS`]). The owner's own
+    /// credential is revalidated in the writer, as at setup. An organization
+    /// with no stored setup is refused: the setup door stores the first one.
+    /// Returns whether the stored setup changed.
+    pub fn amend_org_admin_as_owner(
+        &self,
+        owner: &crate::consent::AuthenticatedOwner,
+        policy: &OrgAdminPolicy,
+    ) -> Result<bool, OrgAdminError> {
+        let mut txn = self.store.env.write_txn()?;
+        owner.owner_authored_write_in_txn(self, &txn)?;
+        let amended = self.amend_org_admin_in_txn(&mut txn, policy)?;
+        txn.commit().map_err(crate::Error::from)?;
+        Ok(amended)
+    }
+
+    fn amend_org_admin_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        policy: &OrgAdminPolicy,
+    ) -> Result<bool, OrgAdminError> {
+        OrgAdminPolicy::new(
+            policy.org_ref.0,
+            policy.admin_refs.iter().map(|id| id.0).collect(),
+            policy.powers.clone(),
+        )?;
+        let key = HexId(policy.org_ref.0);
+        let stored = ORG_ADMIN_POLICY
+            .get(&self.store, txn, &key)?
+            .ok_or(OrgAdminError::NotConfigured)?;
+        if !AMEND_MAY_ADD_POWERS && !policy.powers.is_subset(&stored.powers) {
+            return Err(OrgAdminError::PowerOutsideSetup);
+        }
+        if stored == *policy {
+            return Ok(false);
+        }
+        ORG_ADMIN_POLICY.put(&self.store, txn, &key, policy)?;
+        Ok(true)
+    }
+
     /// Reads the fixed power set; absence refuses, rather than granting a default.
     pub fn org_admin_policy(&self, org_ref: EntityId) -> Result<OrgAdminPolicy, OrgAdminError> {
         let txn = self.store.env.read_txn().map_err(crate::Error::from)?;

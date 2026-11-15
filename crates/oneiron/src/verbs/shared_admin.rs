@@ -25,6 +25,20 @@ pub struct OrgAdminConfigured {
     pub configured: bool,
 }
 
+/// The owner's amend of a stored setup: the whole new policy for its org.
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct OrgAdminAmendRequest {
+    pub policy: OrgAdminPolicy,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct OrgAdminAmended {
+    pub org_ref: EntityId,
+    /// Whether the stored setup changed: an amend equal to it writes nothing.
+    pub amended: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct OrgAdminPowersRequest {
@@ -96,6 +110,16 @@ fn org_error(error: OrgAdminError) -> MemoryError {
             "organization administration is already configured",
             &["Organization administration is fixed at setup."],
         ),
+        OrgAdminError::NotConfigured => MemoryError::new(
+            MEMORY_CODE_INVALID_STATE,
+            "organization administration is not configured",
+            &["Store the organization's setup first (vault.org_admin.configure)."],
+        ),
+        OrgAdminError::PowerOutsideSetup => MemoryError::new(
+            MEMORY_CODE_FORBIDDEN,
+            "an amend cannot add a named power the organization's setup lacks",
+            &["An amend keeps or drops the setup's powers; it adds none."],
+        ),
         OrgAdminError::Denied => MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             "organization administration power denied",
@@ -116,6 +140,22 @@ pub fn configure_org_admin_as_owner(
     Ok(OrgAdminConfigured {
         org_ref: input.policy.org_ref(),
         configured: true,
+    })
+}
+
+/// `vault.org_admin.amend`: the owner replaces a stored setup's Admins and
+/// keeps or drops its powers (RULING ORG-ADMIN-SETUP-AMEND = A).
+pub fn amend_org_admin_as_owner(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    input: OrgAdminAmendRequest,
+) -> MemoryResult<OrgAdminAmended> {
+    let amended = vault
+        .amend_org_admin_as_owner(owner, &input.policy)
+        .map_err(org_error)?;
+    Ok(OrgAdminAmended {
+        org_ref: input.policy.org_ref(),
+        amended,
     })
 }
 
