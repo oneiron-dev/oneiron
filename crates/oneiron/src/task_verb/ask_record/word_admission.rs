@@ -142,7 +142,11 @@ fn admit_word_with_source(
     // The owner proof's credential chains, kept with the word (FIX 10693): a
     // consult consent case refuses a word from its opener's own lineage. A
     // chain that does not read leaves the word as it is, its lineage unknown.
-    let lineage = owner.map(|owner| owner.credential_lineage_in_txn(vault, &*txn));
+    // A person-tier proof's chains are not kept: that check judges the
+    // owner-proof words it was built for.
+    let lineage = owner
+        .filter(|owner| !owner.is_person_tier())
+        .map(|owner| owner.credential_lineage_in_txn(vault, &*txn));
     let lineage_unread = matches!(lineage, Some(Err(_)));
     let credential_lineage = lineage.and_then(Result::ok).unwrap_or_default();
     let mut fact = AskAnswerFact {
