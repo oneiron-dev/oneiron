@@ -40,7 +40,7 @@ use super::{TURNS, audience, hosting, offers};
 use crate::error::{ClaimError, Error, RecordError, Result};
 use crate::memory::WitnessTurn;
 use crate::registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_PERSON};
-use crate::side_table::{self, LegacyJson, SideKey, SideTable};
+use crate::side_table::{self, FixedSideKey, LegacyJson, SideKey, SideTable};
 use crate::store::Store;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EdgeActorClass, EntityId, Vault, WriteActor};
@@ -113,7 +113,7 @@ const fn subject_kind(subject: &JoinSubject) -> u8 {
 
 /// One fact's key: room, thread (all zero for the room itself), subject kind
 /// and id, or no one's digest (FIX 4228), cause kind and id.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct FactKey {
     pub(super) room: EntityId,
     pub(super) branch: [u8; 16],
@@ -121,33 +121,8 @@ pub(super) struct FactKey {
     pub(super) cause: (u8, [u8; 16]),
 }
 
-const KEY_LEN: usize = 66;
-
-impl SideKey for FactKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.room.as_bytes());
-        out.extend_from_slice(&self.branch);
-        out.push(self.subject.kind());
-        out.extend_from_slice(&self.subject.key_id());
-        out.push(self.cause.0);
-        out.extend_from_slice(&self.cause.1);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        if bytes.len() != KEY_LEN {
-            return None;
-        }
-        let id = |range: std::ops::Range<usize>| -> Option<[u8; 16]> {
-            bytes.get(range)?.try_into().ok()
-        };
-        Some(Self {
-            room: EntityId::from_bytes(id(0..16)?).ok()?,
-            branch: id(16..32)?,
-            subject: FactSubject::decode(bytes[32], id(33..49)?)?,
-            cause: (bytes[49], id(50..66)?),
-        })
-    }
-}
+/// 66 bytes: room 16, thread 16, subject 17, cause 17.
+const KEY_LEN: usize = <FactKey as FixedSideKey>::WIDTH;
 
 /// One [`FactKey`] for `test_doors::side_key_pins`; `subject` is a kind byte and id that
 /// [`FactSubject::decode`] reads.

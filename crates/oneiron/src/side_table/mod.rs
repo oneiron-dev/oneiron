@@ -34,7 +34,7 @@ pub(crate) use codec::{
 };
 pub(crate) use decls::*;
 pub(crate) use erased::{Erased, ErasedForm};
-pub(crate) use key::{FixedSideKey, HexId, SideKey};
+pub(crate) use key::{FixedSideKey, HexId, NulFreeText, SideKey};
 pub(crate) use row_classes::{RestoreClass, StorageTier};
 
 /// Where a side table's rows live: the two side databases of a write target.

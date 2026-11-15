@@ -55,6 +55,8 @@ pub(super) fn received_update_hash(
     *hasher.finalize().as_bytes()
 }
 
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 pub(super) struct ProvenanceRefKey {
     pub(super) provenance: EntityId,
     pub(super) ref_name_hash: [u8; 32],
@@ -67,26 +69,6 @@ impl ProvenanceRefKey {
             provenance,
             ref_name_hash: *blake3::hash(ref_name.as_bytes()).as_bytes(),
         }
-    }
-}
-
-impl SideKey for ProvenanceRefKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.provenance.as_bytes());
-        out.push(b':');
-        out.extend_from_slice(&self.ref_name_hash);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (id, rest) = bytes.split_at_checked(16)?;
-        let (&separator, hash) = rest.split_first()?;
-        if separator != b':' {
-            return None;
-        }
-        Some(Self {
-            provenance: EntityId::from_bytes(id.try_into().ok()?).ok()?,
-            ref_name_hash: hash.try_into().ok()?,
-        })
     }
 }
 

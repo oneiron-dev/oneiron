@@ -1,8 +1,6 @@
 //! Object plane: Vault adapter methods, shared expectation gate, key builders, record codec.
 
-use super::{
-    LfsAdmission, LfsAssetClass, LfsOid, LfsPathPolicy, LfsPointerIntent, VAULT_LFS_OID_LEN,
-};
+use super::{LfsAdmission, LfsAssetClass, LfsOid, LfsPathPolicy, LfsPointerIntent};
 use crate::Vault;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
@@ -39,39 +37,13 @@ pub(super) const REFS: SideTable<LfsRefKey, [u8; 8], Raw> =
     SideTable::new(&side_table::ORIGIN_LFS_REF);
 
 /// `origin:lfs:ref:v1:` key shape: repo id, then a NUL-framed ref name, then the OID.
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 pub(super) struct LfsRefKey {
     pub(super) repo_id: EntityId,
+    #[side_key(rest)]
     ref_name: String,
     pub(super) oid: LfsOid,
-}
-
-impl SideKey for LfsRefKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.repo_id.encode_into(out);
-        out.push(0);
-        out.extend_from_slice(self.ref_name.as_bytes());
-        out.push(0);
-        self.oid.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (repo_bytes, rest) = bytes.split_at_checked(ENTITY_ID_LEN)?;
-        let (&separator, rest) = rest.split_first()?;
-        if separator != 0 {
-            return None;
-        }
-        let oid_start = rest.len().checked_sub(VAULT_LFS_OID_LEN)?;
-        let (name_and_sep, oid_bytes) = rest.split_at(oid_start);
-        let (&separator, name_bytes) = name_and_sep.split_last()?;
-        if separator != 0 {
-            return None;
-        }
-        Some(Self {
-            repo_id: EntityId::from_bytes(repo_bytes.try_into().ok()?).ok()?,
-            ref_name: String::from_utf8(name_bytes.to_vec()).ok()?,
-            oid: LfsOid::decode_key(oid_bytes)?,
-        })
-    }
 }
 
 /// One [`LfsRefKey`] for `test_doors::side_key_pins`.

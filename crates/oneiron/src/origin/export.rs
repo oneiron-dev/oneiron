@@ -27,30 +27,12 @@ pub struct EngineCommitExport {
 const ENGINE_EXPORTS: SideTable<RepoRevisionKey, String, Raw> =
     SideTable::new(&side_table::ORIGIN_ENGINE_EXPORT);
 
+#[derive(SideKey)]
+#[side_key(sep = b':')]
 struct RepoRevisionKey {
+    #[side_key(rest)]
     repo_hex: String,
     revision: EntityId,
-}
-
-impl SideKey for RepoRevisionKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.repo_hex.as_bytes());
-        out.push(b':');
-        self.revision.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let id_start = bytes.len().checked_sub(16)?;
-        let (rest, id) = bytes.split_at(id_start);
-        let (&separator, repo_hex) = rest.split_last()?;
-        if separator != b':' {
-            return None;
-        }
-        Some(Self {
-            repo_hex: String::from_utf8(repo_hex.to_vec()).ok()?,
-            revision: EntityId::from_bytes(id.try_into().ok()?).ok()?,
-        })
-    }
 }
 
 /// One [`RepoRevisionKey`] for `test_doors::side_key_pins`.

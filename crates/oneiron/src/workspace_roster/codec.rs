@@ -4,6 +4,7 @@ use super::records::PresetRow;
 use super::*;
 use crate::error::{GateError, RecordError};
 use crate::ports::EntityStoreRead;
+use crate::side_table::NulFreeText;
 
 // ---------------------------------------------------------------------------
 // Roster reads
@@ -145,32 +146,15 @@ pub(super) fn write_journal(
     })
 }
 
-/// `workspace_ref` then a NUL separator then the raw member-person id — the
-/// same shape [`super::records::RosterMemberKey`] uses, differing only in how
-/// the tail id is spelled (raw bytes here, hex there).
+/// `workspace_ref` then a NUL separator ([`ROSTER_KEY_SEPARATOR`]) then the raw
+/// member-person id — the same shape [`super::records::RosterMemberKey`] uses,
+/// differing only in how the tail id is spelled (raw bytes here, hex there).
+#[derive(SideKey)]
+#[side_key(sep = b'\0')]
 pub(super) struct MemberIntentKey {
+    #[side_key(rest, with = NulFreeText)]
     pub(super) workspace_ref: String,
     pub(super) person_ref: EntityId,
-}
-
-impl SideKey for MemberIntentKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.workspace_ref.as_bytes());
-        out.push(ROSTER_KEY_SEPARATOR);
-        out.extend_from_slice(self.person_ref.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let separator = bytes
-            .iter()
-            .position(|&byte| byte == ROSTER_KEY_SEPARATOR)?;
-        let workspace_ref = String::from_utf8(bytes[..separator].to_vec()).ok()?;
-        let person_ref = EntityId::decode_key(&bytes[separator + 1..])?;
-        Some(Self {
-            workspace_ref,
-            person_ref,
-        })
-    }
 }
 
 /// One [`MemberIntentKey`] for `test_doors::side_key_pins`.

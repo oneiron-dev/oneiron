@@ -47,26 +47,11 @@ const PRUNE_BATCH: usize = 4096;
 type IntentRows<'txn> =
     Box<dyn Iterator<Item = Result<(ReceivePackIntentKey, ReceivePackIntent)>> + 'txn>;
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, SideKey)]
 pub(super) struct ReceivePackIntentKey {
+    #[side_key(rest)]
     repo_identity_hex: String,
     operation_id: EntityId,
-}
-
-impl SideKey for ReceivePackIntentKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.repo_identity_hex.as_bytes());
-        self.operation_id.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let id_start = bytes.len().checked_sub(16)?;
-        let (text_bytes, id_bytes) = bytes.split_at(id_start);
-        Some(Self {
-            repo_identity_hex: String::from_utf8(text_bytes.to_vec()).ok()?,
-            operation_id: EntityId::from_bytes(id_bytes.try_into().ok()?).ok()?,
-        })
-    }
 }
 
 /// A push's per-ref progress, one row per batch of [`ORIGIN_REF_UPDATE_BATCH`]
@@ -76,24 +61,11 @@ impl SideKey for ReceivePackIntentKey {
 const PROGRESS: SideTable<ReceivePackProgressKey, ReceivePackBatchProgress, Named> =
     SideTable::new(&side_table::ORIGIN_RECEIVE_PACK_PROGRESS);
 
+#[derive(SideKey)]
 struct ReceivePackProgressKey {
+    #[side_key(rest)]
     intent: ReceivePackIntentKey,
     batch: u64,
-}
-
-impl SideKey for ReceivePackProgressKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        self.intent.encode_into(out);
-        self.batch.encode_into(out);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (intent, batch) = bytes.split_at(bytes.len().checked_sub(8)?);
-        Some(Self {
-            intent: ReceivePackIntentKey::decode_key(intent)?,
-            batch: u64::decode_key(batch)?,
-        })
-    }
 }
 
 /// One [`ReceivePackIntentKey`] for `test_doors::side_key_pins`.
