@@ -4,7 +4,6 @@
 //! Compiled only under `--cfg oneiron_test_support`; never API.
 
 use crate::recovery::checkpoint::CheckpointKey;
-use crate::store::key_custody::head::{CustodyOpener, open_head};
 
 /// The published custody head under `folder` (`<folder>/oneiron-custody/*/
 /// head`), as `Vault::publish_custody` wrote it.
@@ -33,15 +32,5 @@ pub fn open_custody_head_with_checkpoint_key(
     head: &[u8],
     key: &CheckpointKey,
 ) -> crate::error::Result<Vec<String>> {
-    let opener = CustodyOpener {
-        root: None,
-        data_keys: key.custody_wraps(),
-        machine: None,
-    };
-    let opened = open_head(head, &opener)?;
-    Ok(opened
-        .unopened
-        .iter()
-        .map(|scope| format!("{scope:?}"))
-        .collect())
+    crate::store::Store::custody_head_unopened_scopes(head, key.custody_wraps())
 }
