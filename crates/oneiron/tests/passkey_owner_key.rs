@@ -27,9 +27,11 @@
 //! hold yet (Astra stack review finding 1), nor answers a machine as the
 //! owner's or removes one by a roster-signed profile (OPUS-SECREAD-A N1),
 //! nor unbinds or rebinds another owner key's actor (Astra delta review
-//! finding 1). A device key's enrolment of a key confirms it, so a passkey's
-//! vouch for the same key on a sibling branch limits nothing once the fold
-//! merges the two (Astra delta review finding 2).
+//! finding 1), nor binds itself to any actor, whose row would then be an
+//! actor's for good (Astra delta 2 review finding 1). A device key's
+//! enrolment of a key confirms it, so a passkey's vouch for the same key on
+//! a sibling branch limits nothing once the fold merges the two (Astra
+//! delta review finding 2).
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
@@ -525,6 +527,65 @@ fn a_key_only_a_passkey_vouched_for_unbinds_no_other_owner_key() {
     assert!(
         !rebound.first().copied().unwrap_or(false),
         "the limited key rebinds no other owner key to another actor"
+    );
+}
+
+/// The host-held key's binding of itself to `actor_ref`, signed by itself.
+fn host_key_binds_itself_to(actor_ref: oneiron::EntityId) -> SignedRow {
+    SignedRow {
+        op: AuthorityOp::BindActor {
+            authority_key: ed_key(&host_held()),
+            actor_ref,
+            actor_class: "human".to_owned(),
+            epoch: 1,
+        },
+        signer: ed_key(&host_held()),
+        cosigners: Vec::new(),
+    }
+}
+
+/// Astra delta 2 review finding 1: an accepted binding makes its actor row
+/// an actor's on every branch for good, and a machine whose row is an
+/// actor's loses its standing on each of its chains. So a key only the
+/// passkey vouched for binds itself to no actor (here the row of a machine
+/// the owner may answer for on another branch). Once a device key confirms
+/// the key, the same binding counts.
+#[test]
+fn a_key_only_a_passkey_vouched_for_binds_itself_to_no_actor() {
+    let machine_row = oneiron::EntityId::now();
+    let limited = HostedVault::open();
+    passkey_vouched_host_key(&limited);
+    let bound = append_signed_rows(
+        &limited.vault,
+        vec![host_key_binds_itself_to(machine_row)],
+        signs_as,
+    )
+    .unwrap_or_default();
+    assert!(
+        !bound.first().copied().unwrap_or(false),
+        "the limited key's binding of itself to a machine's row counts for nothing"
+    );
+
+    let confirmed = HostedVault::open();
+    let machine = passkey_vouched_host_key(&confirmed);
+    confirmed
+        .vault
+        .confirm_owner_key_as(
+            &confirmed.owner(),
+            keyed_enrollment(&confirmed, machine, &host_held()),
+            ed_key(&owner_device()),
+            |transcript| Ok(owner_device().sign(transcript).to_bytes().to_vec()),
+        )
+        .expect("the owner's device key confirms the passkey-vouched key");
+    assert_eq!(
+        append_signed_rows(
+            &confirmed.vault,
+            vec![host_key_binds_itself_to(machine_row)],
+            signs_as,
+        )
+        .expect("the binding is stored"),
+        vec![true],
+        "guard: once confirmed, the same binding counts"
     );
 }
 
