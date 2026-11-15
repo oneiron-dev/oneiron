@@ -464,6 +464,26 @@ pub(crate) async fn vault_workflows_status(
     .await
 }
 
+/// `vault.workflows.cancel` (L1-03): the owner asks one run of a saved
+/// workflow to stop, on the owner proof that dispatches and reads it. It
+/// mints nothing; the answer lists the run's rows as `vault.workflows.status`
+/// does.
+pub(crate) async fn vault_workflows_cancel(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    input: WorkflowRunRequest,
+) -> MaybeListed<WorkflowRunView> {
+    const VERB: &str = "vault.workflows.cancel";
+    as_person_naming(
+        server,
+        VERB,
+        owner_proof(auth, server, VERB),
+        move |server, owner| sdk::cancel_workflow_run_as(server.vault(), &owner, input),
+        workflow_run_rows,
+    )
+    .await
+}
+
 pub(crate) async fn vault_workspace_establish(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

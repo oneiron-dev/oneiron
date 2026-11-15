@@ -45,13 +45,26 @@ impl AgentDispatcher<'_> {
         if wrapper.state != AttemptState::Paused {
             return Ok(WorkflowProgress::Stopped(root));
         }
-        let active = queue.retry_tip_in_txn(&txn, record.active)?;
+        let mut active = queue.retry_tip_in_txn(&txn, record.active)?;
         let payload = decode_dreamer_attempt_payload(&active.payload)?;
         if payload.parent_attempt != Some(root) || active.run_id != record.intent.run_id {
             return Err(invalid("workflow step has foreign run-tree lineage"));
         }
         let dispatched = super::decode_agent_dispatch_input(&payload.input)?;
         record.active = active.id;
+        // L1-03: a run its owner asked to stop puts the request to its active
+        // step again, so a retry minted since is stopped as well: a waiting
+        // step is cancelled, a held one asked once to land.
+        let cancel = record.cancel_request.clone();
+        let mut stopped = false;
+        if let Some(request) = &cancel
+            && self.stop_workflow_step_in(&mut txn, &active, request, now)?
+        {
+            stopped = true;
+            active = queue
+                .get_in_write_txn(&txn, active.id)?
+                .ok_or_else(|| invalid("workflow step is missing"))?;
+        }
         if matches!(
             active.state,
             AttemptState::Queued
@@ -60,21 +73,34 @@ impl AgentDispatcher<'_> {
                 | AttemptState::Leased
                 | AttemptState::Landing
         ) {
+            if stopped {
+                // The landing request stands; the run waits on its answer.
+                RECORD.put(self.vault, &mut txn, &root, &record)?;
+                txn.commit()?;
+                self.vault.store.notify_attempt_observers();
+            }
             return Ok(WorkflowProgress::Waiting(active.id));
         }
         if active.state != AttemptState::Completed {
-            let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
-            crate::ports::JobQueue::port_job_fail(
-                self.vault,
-                &mut txn,
-                FailAttempt {
-                    id: root,
-                    lease_owner: "workflow-pump".to_owned(),
-                    attempt_count: lease.attempt_count,
-                    reason: "workflow_step_stopped".to_owned(),
-                    now,
-                },
-            )?;
+            match &cancel {
+                // L1-03: the step stopped because the run was asked to stop,
+                // so the run ends Cancelled, not Failed.
+                Some(request) => self.end_workflow_cancelled_in(&mut txn, root, request, now)?,
+                None => {
+                    let lease = self.claim_workflow_wrapper(&mut txn, root, now)?;
+                    crate::ports::JobQueue::port_job_fail(
+                        self.vault,
+                        &mut txn,
+                        FailAttempt {
+                            id: root,
+                            lease_owner: "workflow-pump".to_owned(),
+                            attempt_count: lease.attempt_count,
+                            reason: "workflow_step_stopped".to_owned(),
+                            now,
+                        },
+                    )?;
+                }
+            }
             // OF-532: the stopped leaf and the workflow settle their leases;
             // the leaves already settled keep their saved results.
             self.settle_child_in_txn(&mut txn, &active.id, now)?;
@@ -83,6 +109,10 @@ impl AgentDispatcher<'_> {
             RECORD.put(self.vault, &mut txn, &root, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
+            if cancel.is_some() {
+                // FIX 11482: a cancelled row's job notice committed here.
+                self.vault.store.notify_notification_updates();
+            }
             // FIX 4391: a bound run's TASK settles after this commit, in a
             // writer of its own; nothing it does changes this answer.
             if record.intent.task.is_some() {
@@ -146,6 +176,12 @@ impl AgentDispatcher<'_> {
             )?;
             self.settle_child_in_txn(&mut txn, &root, now)?;
             WorkflowProgress::Completed
+        } else if let Some(request) = &cancel {
+            // L1-03: a run asked to stop releases no further step. Its
+            // completed steps keep their results, and the run ends Cancelled.
+            self.end_workflow_cancelled_in(&mut txn, root, request, now)?;
+            self.settle_child_in_txn(&mut txn, &root, now)?;
+            WorkflowProgress::Stopped(root)
         } else {
             // FIX 9567: the successor's admission runs in a savepoint, so a
             // successor whose agent was disabled since rolls back its own
@@ -197,6 +233,10 @@ impl AgentDispatcher<'_> {
         RECORD.put(self.vault, &mut txn, &root, &record)?;
         txn.commit()?;
         self.vault.store.notify_attempt_observers();
+        if cancel.is_some() && progress == WorkflowProgress::Stopped(root) {
+            // FIX 11482: a cancelled row's job notice committed here.
+            self.vault.store.notify_notification_updates();
+        }
         if matches!(
             progress,
             WorkflowProgress::Completed | WorkflowProgress::Stopped(_)

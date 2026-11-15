@@ -188,6 +188,24 @@ pub(super) struct WorkflowRecord {
     /// when the release lands.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub release_refusal: Option<String>,
+    /// The stop the owner asked for (L1-03, `vault.workflows.cancel`), kept
+    /// from the first request on. The pump then releases no further step and
+    /// ends the run `Cancelled` once its active step has settled; a step
+    /// that completed keeps its result.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cancel_request: Option<WorkflowCancelRequest>,
+}
+
+/// Who asked a run to stop, and when (L1-03). Every stop the engine makes
+/// for the request names that actor: the step it cancels, the landing it
+/// asks for and the run's own end.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorkflowCancelRequest {
+    /// The asking actor, as hex.
+    pub by: String,
+    /// The recorded clock at the first request.
+    pub at: u64,
 }
 
 /// A frozen step's dispatch input, as a release reads it.
@@ -403,6 +421,7 @@ impl super::AgentDispatcher<'_> {
             launch: None,
             task_settled: None,
             release_refusal: None,
+            cancel_request: None,
         };
         RECORD.admit(self.vault, txn, &unplaced, &mut record)?;
         Ok(record.intent)

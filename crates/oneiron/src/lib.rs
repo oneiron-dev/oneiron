@@ -331,6 +331,8 @@ pub mod genui;
 pub mod guest_error;
 pub mod host_net_floor;
 pub mod lens;
+/// MCP task handles over the records the engine keeps (ARCH-0028 `#mcp-tasks`).
+pub mod mcp_task;
 pub mod memory;
 pub use oneiron_base::panic_report;
 pub mod settings;

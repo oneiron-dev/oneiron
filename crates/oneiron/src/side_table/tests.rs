@@ -492,6 +492,7 @@ fn pre_move_fixture_coverage_is_explicit() {
         "MANAGED_CANARY_MARKER",
         "MANAGED_DEK_MAC",
         "MANAGED_LEASE_SCOPE",
+        "MCP_TASK",
         "MODEL_OFFER_COOLDOWN",
         "NOTE_PIN_REQUEST_CITING",
         "NOTE_PIN_REQUEST_CLAIM",

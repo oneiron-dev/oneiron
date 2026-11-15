@@ -315,6 +315,7 @@ impl AgentDispatcher<'_> {
             launch: Some(launch.statement),
             task_settled: None,
             release_refusal: None,
+            cancel_request: None,
         };
         record.active = self.enqueue_prepared_workflow_step(txn, &record, first, 0, input.now)?;
         RECORD.admit(self.vault, txn, &root.id, &mut record)?;

@@ -120,6 +120,7 @@ pub mod widen_doors;
 mod widen_record;
 mod work_room;
 mod workflow;
+mod workflow_cancel;
 mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
