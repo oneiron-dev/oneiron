@@ -24,8 +24,9 @@
 //! its [`OverlayInventory`] with its home's, never a secret; a key travels
 //! only sealed to the receiver's session-ephemeral key
 //! ([`export_key`], [`open_received_key`]), its receiver recorded as a
-//! holder first, and an erased subject travels as its refs alone. A seal is
-//! never stored, so a key destroyed at every holder is gone.
+//! holder first, and an erased subject travels as its refs alone, none for
+//! one erased with no key known (census L5-22 PR 1b). A seal is never
+//! stored, so a key destroyed at every holder is gone.
 #![cfg_attr(
     not(feature = "sync"),
     allow(
@@ -61,6 +62,11 @@ use crate::store::key_custody::{
 /// ref (census L5-22 1a-iii).
 const KEY_READY: SideTable<[u8; 32], (), Raw> =
     SideTable::new(&side_table::AUTHORITY_OVERLAY_KEY_READY);
+
+/// Each subject erased here, and when its erasure first stood (census L5-22
+/// PR 1b): it stands for good, held keys or none.
+const ERASED_SUBJECT: SideTable<EntityId, u64, Raw> =
+    SideTable::new(&side_table::AUTHORITY_ERASED_SUBJECT);
 
 const RECIPIENT: &[u8] = b"oneiron/authority-overlay/v1";
 const AEAD: SuiteId = SuiteId::AES256GCM_V1;
@@ -150,8 +156,9 @@ impl SealedOverlay {
 /// rows never committed.
 ///
 /// # Errors
-/// An archived vault; a subject whose key is retired or staged to retire
-/// (an erased subject is named by no new entry); custody and crypto faults.
+/// An archived vault; a subject erased here, or whose key is retired or
+/// staged to retire (an erased subject is named by no new entry); custody
+/// and crypto faults.
 pub(crate) fn seal(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -161,6 +168,9 @@ pub(crate) fn seal(
 ) -> Result<SealedOverlay> {
     if store.core.gate_custody_archived() {
         return Err(Error::Store(StoreError::ArchivedVault));
+    }
+    if ERASED_SUBJECT.contains(store, txn, subject)? {
+        return Err(CustodyKind::ErasableKey.corrupt());
     }
     store.core.key_custody.pin_in_txn(store, txn)?;
     let custody = store.core.key_custody.bind_in_txn(store, txn)?;
@@ -282,9 +292,10 @@ fn subject_keys_in_txn(
     Ok(items)
 }
 
-/// Whether `subject` is erased here: a key of it is retired, or a
-/// retirement of one is staged. An erased subject's rows never open again,
-/// under any key or ref.
+/// Whether `subject` is erased here: its erasure stands (census L5-22 PR
+/// 1b; it stands whether or not any key of it was known here), a key of it
+/// is retired, or a retirement of one is staged. An erased subject's rows
+/// never open again, under any key or ref.
 fn subject_erased_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -292,6 +303,9 @@ fn subject_erased_in_txn(
     subject: &EntityId,
     known: &BTreeSet<ErasableItem>,
 ) -> Result<bool> {
+    if ERASED_SUBJECT.contains(store, txn, subject)? {
+        return Ok(true);
+    }
     for item in known {
         if custody.erasable_state(item)? == EntryState::Retired
             || retirement_in_txn(store, txn, &item.subject(custody)?)?.is_some()
@@ -350,8 +364,13 @@ pub(crate) fn install_key_in_txn(
 /// those `heads` name and the delivered `refs`, held here or not. Their ref
 /// rows and ready marks go in `txn`, so no snapshot from its commit on opens
 /// a row of `subject`; custody's finisher destroys each key after the
-/// commit (`Store::finish_erasable_retirements`). The fold side of the event
-/// is the caller's (`crate::authority::retire_authority_overlay_subject_in_txn`).
+/// commit (`Store::finish_erasable_retirements`). The subject's erasure
+/// stands from `txn` on, keeping the time it first stood (census L5-22 PR
+/// 1b): a subject of which this install knew no key is erased all the
+/// same, its erasure travels to the vault's other machines
+/// ([`overlay_inventory`]), and a key of it that arrives later is refused.
+/// The fold side of the event is the caller's
+/// (`crate::authority::erase_authority_overlay_subject_in_txn`).
 ///
 /// # Errors
 /// An archived vault; custody faults.
@@ -372,7 +391,24 @@ pub(crate) fn retire_subject_keys_in_txn(
         delete_erasable_ref_in_txn(store, txn, &item)?;
         KEY_READY.delete(store, txn, &item.key_ref)?;
     }
+    if !ERASED_SUBJECT.contains(store, txn, subject)? {
+        let at = crate::ports::recorded_at_in_txn(store, txn)?;
+        ERASED_SUBJECT.put(store, txn, subject, &at)?;
+    }
     Ok(())
+}
+
+/// When `subject`'s erasure first stood here, read in `txn` (census L5-22
+/// PR 1b); `None` while it is not erased here.
+///
+/// # Errors
+/// Storage faults.
+pub(crate) fn subject_erased_at_in_txn(
+    store: &Store,
+    txn: &RoTxn<'_>,
+    subject: &EntityId,
+) -> Result<Option<u64>> {
+    ERASED_SUBJECT.get(store, txn, subject)
 }
 
 /// One subject erased here, as the carrier names it: every ref of its keys
@@ -390,8 +426,10 @@ pub struct ErasedSubject {
 /// This install's overlay custody, as the carrier between the vault's
 /// machines compares it (census L5-22 1a-iii commit 7): each key held here
 /// live and ready, of a subject not erased here, by subject and ref; and
-/// each subject erased here (a key of it retired, or a retirement of one
-/// staged, held here or not). Never a secret.
+/// each subject erased here (its erasure standing, a key of it retired, or
+/// a retirement of one staged, held here or not), with the refs of its keys
+/// this install knows, none for a subject erased with no key known here
+/// (census L5-22 PR 1b). Never a secret.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct OverlayInventory {
     pub(crate) ready: BTreeSet<(EntityId, [u8; 32])>,
@@ -400,7 +438,8 @@ pub(crate) struct OverlayInventory {
 
 /// This install's [`OverlayInventory`], read in one snapshot: custody's
 /// overlay keys by directory and the staged retirements of any, a key with
-/// no directory here among them. An install with no custody holds none.
+/// no directory here among them, and the subjects whose erasure stands
+/// here. An install with no custody holds none.
 ///
 /// # Errors
 /// Storage and custody faults.
@@ -431,10 +470,18 @@ pub(crate) fn overlay_inventory(store: &Store) -> Result<OverlayInventory> {
             by_subject.entry(subject).or_default().insert(item);
         }
     }
+    let tombstoned: BTreeSet<EntityId> = ERASED_SUBJECT
+        .scan(store, &txn)?
+        .into_iter()
+        .map(|(subject, _)| subject)
+        .collect();
     let mut inventory = OverlayInventory::default();
+    for subject in &tombstoned {
+        by_subject.entry(*subject).or_default();
+    }
     for (subject, items) in by_subject {
         let mut erased = ErasedSubject::default();
-        let mut is_erased = false;
+        let mut is_erased = tombstoned.contains(&subject);
         let mut ready = Vec::new();
         for item in items {
             erased.refs.insert(item.key_ref);
@@ -676,7 +723,7 @@ pub(crate) fn deliver_authority_overlay_custody_for_test(
     let (live, retired) = held_overlay_custody_for_test(source, subject)?;
     if !retired.is_empty() {
         destination.with_write_txn_grouped(|txn| {
-            crate::authority::retire_authority_overlay_subject_in_txn(
+            crate::authority::erase_authority_overlay_subject_in_txn(
                 &destination.store,
                 txn,
                 subject,
@@ -700,16 +747,16 @@ pub(crate) fn deliver_authority_overlay_custody_for_test(
     Ok(())
 }
 
-/// Retires `subject` on `vault` through the production seam, then runs
-/// custody's finisher after the commit (census L5-22 1a-iii): an owner's
-/// erase of the subject, whose door is the census's PR 1b.
+/// Erases `subject` on `vault` through the production seam, then runs
+/// custody's finisher after the commit (census L5-22 1a-iii): the erase
+/// core of the owner's door (PR 1b), with no owner proof or check-in.
 #[cfg(test)]
 pub(crate) fn retire_authority_overlay_subject_for_test(
     vault: &crate::Vault,
     subject: &EntityId,
 ) -> Result<()> {
     vault.with_write_txn_grouped(|txn| {
-        crate::authority::retire_authority_overlay_subject_in_txn(&vault.store, txn, subject, &[])
+        crate::authority::erase_authority_overlay_subject_in_txn(&vault.store, txn, subject, &[])
     })?;
     vault.store.finish_erasable_retirements()?;
     Ok(())

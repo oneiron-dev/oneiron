@@ -49,6 +49,7 @@ mod ancestry_evaluator;
 mod anchor_fold;
 mod anchor_marks;
 mod ask_forward_holder;
+mod attribution_erase;
 mod backup_signer_delegation;
 mod carried_act;
 mod causal_write;
@@ -238,9 +239,10 @@ pub(crate) use overlay_rows::{
 // Census L5-22 1a-iii: the key events the vault's custody carrier
 // (`crate::sync::authority_overlay_custody`) delivers.
 #[cfg_attr(not(feature = "sync"), allow(unused_imports))]
-pub(crate) use overlay_rows::{
-    install_authority_overlay_key_in_txn, retire_authority_overlay_subject_in_txn,
-};
+pub(crate) use overlay_rows::install_authority_overlay_key_in_txn;
+// Census L5-22 PR 1b: one subject's attribution erase, the owner's door and
+// the carrier's alike.
+pub(crate) use overlay_rows::erase_authority_overlay_subject_in_txn;
 // The export secret work body and its sealed result (FIX 4624(b)).
 pub use export_secret_work::{
     ExportSecretSupplement, HolderExportRequest, HolderExportState, HolderExportUnassigned,

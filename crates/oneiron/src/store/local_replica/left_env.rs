@@ -61,6 +61,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHORITY_OVERLAY,
     &side_table::AUTHORITY_OVERLAY_KEY_READY,
     &side_table::AUTHORITY_OVERLAY_OPENNESS_EPOCH,
+    // The erased subjects and rows (census L5-22 PR 1b): an erase stands
+    // after a leave, and a kept sealed row still reads as erased.
+    &side_table::AUTHORITY_ERASED_SUBJECT,
+    &side_table::AUTHORITY_ERASED_ROW,
     &side_table::AUTHLOG_FIRST_SEEN_SIDECAR,
     &side_table::AUTHLOG_INGEST_CHECK,
     &side_table::AUTHLOG_INGEST_COUNT,

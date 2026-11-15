@@ -23,12 +23,13 @@
 //! on that one's first round after the home has it. Every install and
 //! retirement is the authority's key event
 //! (`crate::authority::install_authority_overlay_key_in_txn`,
-//! `crate::authority::retire_authority_overlay_subject_in_txn`), so a row
+//! `crate::authority::erase_authority_overlay_subject_in_txn`), so a row
 //! opens or closes from that writer's commit on. Retirements go before keys,
-//! and an erased subject refuses a key on every install. A page's inputs
-//! (its peer's session key and erased subjects) are checked before its first
-//! write, and a machine's new offer closes the session its home held for the
-//! machine's last page. Seals are never stored. A holder's debt clears only
+//! and an erased subject refuses a key on every install. A subject erased
+//! with no key known travels with no ref, and its erasure stands wherever
+//! it arrives (census L5-22 PR 1b). A page's peer session key is checked
+//! before its first write, and a machine's new offer closes the session its
+//! home held for the machine's last page. Seals are never stored. A holder's debt clears only
 //! when its inventory names the key destroyed there.
 //!
 //! Nothing here does network I/O or judges who the peer is: the residence
@@ -296,23 +297,12 @@ fn live_target(
     })
 }
 
-/// Refuses `erased`, a peer's erased subjects, when one names no ref: an
-/// install learns of an erase only through a key of the subject, so its own
-/// inventory names at least one, and a subject named with none is a
-/// malformed page.
-fn check_erased(erased: &BTreeMap<EntityId, ErasedSubject>) -> Result<()> {
-    if erased.values().any(|erased| erased.refs.is_empty()) {
-        return Err(refused("an erased subject names no key"));
-    }
-    Ok(())
-}
-
-/// Retires here each subject of `erased`, which `peer` named erased, that
-/// this install does not already name erased under every one of those refs:
-/// the authority's key event, one grouped writer per subject, then custody's
-/// finisher after the commits. Then clears `peer`'s debts for each key it
-/// names destroyed. The caller has refused a subject named with no ref
-/// ([`check_erased`]).
+/// Erases here each subject of `erased`, which `peer` named erased, that
+/// this install does not already name erased under every one of those refs
+/// (a subject named with no ref, erased where no key of it was known, is
+/// erased here unless its erasure already stands): the authority's key
+/// event, one grouped writer per subject, then custody's finisher after the
+/// commits. Then clears `peer`'s debts for each key it names destroyed.
 fn retire_erased(
     vault: &Vault,
     local: &OverlayInventory,
@@ -330,7 +320,7 @@ fn retire_erased(
         }
         let refs: Vec<[u8; 32]> = theirs.refs.iter().copied().collect();
         vault.with_write_txn_grouped(|txn| {
-            crate::authority::retire_authority_overlay_subject_in_txn(
+            crate::authority::erase_authority_overlay_subject_in_txn(
                 &vault.store,
                 txn,
                 subject,
@@ -477,8 +467,8 @@ pub fn offer_overlay_page(
 /// The home's half of one page: `machine`, a machine of the owner's its
 /// socket proved, offered `offer` to `home`, this install's machine. First
 /// closes the session it held for the machine's last page, and refuses a
-/// session key that does not import or an erased subject named with no ref,
-/// before any write. Then retires the machine's erased subjects, and
+/// session key that does not import, before any write. Then erases the
+/// machine's erased subjects here, and
 /// answers: the home's erased subjects in the page, its keys the machine
 /// lacks (sealed to the machine's session), the machine's keys it wants,
 /// and a session for them, which it holds in memory until [`receive_keys`].
@@ -487,8 +477,7 @@ pub fn offer_overlay_page(
 ///
 /// # Errors
 /// A vault with no authority genesis; a session key that does not import;
-/// an erased subject named with no ref; the random source failed; storage,
-/// custody and key-event faults.
+/// the random source failed; storage, custody and key-event faults.
 pub(crate) fn answer_offer(
     vault: &Vault,
     home: &EntityId,
@@ -499,7 +488,6 @@ pub(crate) fn answer_offer(
     let binding = session_binding(&vault_id, machine, home);
     sessions().retain(|entry| entry.binding.binding != binding);
     let target = live_target(&vault_id, home, machine, &offer.session)?;
-    check_erased(&offer.erased)?;
     let mut local = overlay_inventory(&vault.store)?;
     if offer.after.is_none()
         && offer.digest == digest(&local)
@@ -589,8 +577,8 @@ pub(crate) fn receive_keys(
 }
 
 /// The machine's half of the home's answer to `offer`: refuses a session
-/// key that does not import or an erased subject named with no ref, before
-/// any write; retires the home's erased subjects, installs the home's keys
+/// key that does not import, before any write; erases the home's erased
+/// subjects here, installs the home's keys
 /// (sealed to `session`), and seals each key the home wants, of those this
 /// page offered and of a subject the answer does not name erased, to the
 /// home's session. Returns the keys to send the home; none when it wants
@@ -598,8 +586,7 @@ pub(crate) fn receive_keys(
 ///
 /// # Errors
 /// A vault with no authority genesis; a session key that does not import;
-/// an erased subject named with no ref; storage, custody and key-event
-/// faults.
+/// storage, custody and key-event faults.
 pub fn apply_overlay_answer(
     vault: &Vault,
     machine: &EntityId,
@@ -617,7 +604,6 @@ pub fn apply_overlay_answer(
         .as_ref()
         .map(|theirs| live_target(&vault_id, machine, home, theirs))
         .transpose()?;
-    check_erased(&answer.erased)?;
     let local = overlay_inventory(&vault.store)?;
     retire_erased(vault, &local, home, &answer.erased)?;
     install_keys(vault, machine, home, session, answer.keys);

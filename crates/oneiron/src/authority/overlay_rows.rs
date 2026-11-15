@@ -27,6 +27,11 @@ use crate::store::authority_overlay_custody::{self as custody, SealedOverlay};
 const AUTHORITY_OVERLAY: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
     SideTable::new(&side_table::AUTHORITY_OVERLAY);
 
+/// Each sealed row whose overlay an erase deleted here, or dropped where it
+/// arrived (census L5-22 PR 1b).
+const AUTHORITY_ERASED_ROW: SideTable<AuthorityEntryHash, (), Raw> =
+    SideTable::new(&side_table::AUTHORITY_ERASED_ROW);
+
 /// The most bytes one sealed `AUTHORITY_OVERLAY` row holds (census L5-22
 /// 1a-ii). A row travels whole beside its body: inline on a tail or range
 /// page, or on its body's offset-0 part (`AUTHORITY_ENTRY_PART_MAX`, 2 MiB),
@@ -262,7 +267,13 @@ pub(crate) fn stage_carried_overlays_in_txn<'b>(
         if row.len() > AUTHORITY_OVERLAY_ROW_MAX {
             return Err(overlay_row_too_large());
         }
-        SealedOverlay::from_bytes(row)?;
+        let sealed = SealedOverlay::from_bytes(row)?;
+        // An erased subject's overlay never lands again: its row reads as
+        // erased (census L5-22 PR 1b).
+        if custody::subject_erased_at_in_txn(store, w, &sealed.subject)?.is_some() {
+            AUTHORITY_ERASED_ROW.put(store, w, &hash, &())?;
+            continue;
+        }
         if !AUTHORITY_OVERLAY.contains(store, w, &hash)? {
             AUTHORITY_OVERLAY.put(store, w, &hash, row)?;
         }
@@ -273,7 +284,6 @@ pub(crate) fn stage_carried_overlays_in_txn<'b>(
 /// Each sealed row of `subject` this vault holds an overlay row for: its
 /// entry hash and its overlay row. No index by subject: a key event reads
 /// every overlay row's head, and key events are rare.
-#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 fn subject_overlays_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -293,7 +303,6 @@ fn subject_overlays_in_txn(
 /// may change, each row as a put of it would touch them; with `index`, each
 /// such row's agent-grant member posting is staged too. Both hooks are keyed
 /// upserts and sets: running them again for a row changes nothing.
-#[cfg_attr(not(feature = "sync"), allow(dead_code))]
 fn open_row_hooks_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -358,34 +367,43 @@ pub(crate) fn install_authority_overlay_key_in_txn(
         .refresh_project_frontiers(store, txn, store.privacy_posture, &touched)
 }
 
-/// Retires `subject` in `txn` (census L5-22 1a-iii; RULING 11:52, "an erased
-/// row stays a pass-through for good"): every overlay key of it this
-/// install knows, and the delivered `refs` of keys retired elsewhere, held
-/// here or not, are staged to retire and lose their ready marks
-/// (`store::authority_overlay_custody`), and the openness epoch and the
-/// authority generation move, so from the commit on no row of `subject`
-/// opens and nothing it made counts. The projects its open rows touched are
-/// gathered before they close and refresh once after. A later install of
-/// any key of `subject` is refused. The caller commits, then runs custody's
-/// finisher (`Store::finish_erasable_retirements`). Agent-grant member
-/// postings stay: their reader counts only rows the fold holds valid.
+/// Erases `subject`'s authority attribution here in `txn` (census L5-22
+/// 1a-iii and PR 1b; RULING 11:52, "an erased row stays a pass-through for
+/// good"; DEC-0005 #vault:8, "Erasure destroys the relevant overlay keys and
+/// plaintext caches without rewriting the signed scaffold"): every overlay
+/// key of it this install knows, and the delivered `refs` of keys retired
+/// elsewhere, held here or not, are staged to retire and lose their ready
+/// marks, and its erasure stands (`store::authority_overlay_custody`), so a
+/// later install of any key of `subject` is refused and no new row names
+/// it; each overlay row of it held here is deleted, its row marked erased;
+/// and the openness epoch and the authority generation move, so from the
+/// commit on no row of `subject` opens and nothing it made counts. No
+/// AUTHORITY_LOG byte changes. The projects its open rows touched are
+/// gathered before they close and refresh once after. The caller commits,
+/// then runs custody's finisher (`Store::finish_erasable_retirements`).
+/// Agent-grant member postings stay: their reader counts only rows the fold
+/// holds valid. Returns how many overlay rows it deleted.
 ///
 /// # Errors
 /// As `store::authority_overlay_custody::retire_subject_keys_in_txn`;
 /// storage faults.
-#[cfg_attr(not(feature = "sync"), allow(dead_code))]
-pub(crate) fn retire_authority_overlay_subject_in_txn(
+pub(crate) fn erase_authority_overlay_subject_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
     subject: &EntityId,
     refs: &[[u8; 32]],
-) -> Result<()> {
+) -> Result<u64> {
     let rows = subject_overlays_in_txn(store, txn, subject)?;
     let touched = open_row_hooks_in_txn(store, txn, &rows, false)?;
-    let heads: Vec<SealedOverlay> = rows.into_iter().map(|(_, sealed)| sealed).collect();
+    let heads: Vec<SealedOverlay> = rows.iter().map(|(_, sealed)| sealed.clone()).collect();
     custody::retire_subject_keys_in_txn(store, txn, subject, &heads, refs)?;
+    for (hash, _) in &rows {
+        AUTHORITY_OVERLAY.delete(store, txn, hash)?;
+        AUTHORITY_ERASED_ROW.put(store, txn, hash, &())?;
+    }
     note_authority_overlay_openness_change_in_txn(store, txn)?;
     store
         .project_writes
-        .refresh_project_frontiers(store, txn, store.privacy_posture, &touched)
+        .refresh_project_frontiers(store, txn, store.privacy_posture, &touched)?;
+    Ok(u64::try_from(rows.len()).unwrap_or(u64::MAX))
 }
