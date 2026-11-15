@@ -225,12 +225,6 @@ impl FoldedMachine {
             .is_some_and(MachineRevision::says_yours)
     }
 
-    /// Some single chain admits it. Pin-free: it authorizes nothing.
-    #[must_use]
-    pub fn is_admitted(&self) -> bool {
-        self.chains().any(|(_, chain)| chain.says_yours())
-    }
-
     /// The key a residence result from this machine must be signed by: its
     /// live, answered roster head's, mine or not (FIX 8888). Every install
     /// shares this reading, so an anchor's chain, a pinned one among them,

@@ -21,6 +21,10 @@
 //! The residence directive doors read the result judge's key too, so no
 //! directive is issued to, or run on, a machine whose result never stands.
 //!
+//! The pick judge widens too: a machine the roster links live in any role,
+//! one the owner never answered "yours" among them, now stands as a
+//! one-machine pick (T6; the v29 and fold schema 40 notes name it).
+//!
 //! Each test serves a self-host vault that pins no root, so this install
 //! stands under the roster's chain alone; T5 alone pins the owner's root.
 //! Each test's main assertion is the head's verdict: it fails on the base
@@ -772,7 +776,7 @@ fn a_one_machine_read_pick_of_only_a_strangers_yours_machine_is_invalid() {
 /// the gate passes, and the carrier rule then refuses the row as valid,
 /// without effect (`refused_world_edits`, `world_strength.rs:333`). Head
 /// (`machine_standing.rs:337-339`, reading `roster_names_key` at
-/// `machine_profile/mod.rs:439-444`): the roster
+/// `machine_profile/mod.rs:445-450`): the roster
 /// names only M's key, so the row is `SignerNotInAncestry` at the gate.
 ///
 /// Observed through `AuthorityFold::valid_entries` (`.contains` at
@@ -973,4 +977,82 @@ fn the_residence_directive_door_refuses_a_machine_only_the_pin_calls_yours() {
             "the door refused it for another reason: {error}"
         ),
     }
+}
+
+/// T6 (site 3, the widening): a one-machine read pick of a machine the
+/// roster links live but the owner never answered stands.
+///
+/// The edit is carried by M, the owner's roster-live machine, signed by M's
+/// held install key, and reads `OneMachine(C)`, where C is this install:
+/// its roster head is live and `Unanswered` (the self-host fixture profiles
+/// it so), and no other chain holds it. The signer gate passes on both
+/// trees (the roster names M's key), so only the read-pick judge differs.
+///
+/// Base (`world_strength.rs:321` calling `Standing::is_admitted` at
+/// `machine_standing.rs:277-279`, which reads `FoldedMachine::is_admitted`,
+/// some chain saying yours): no chain says yours of C, so the edit is
+/// `InvalidEntry`. Head (`world_strength.rs:321-325` calling `is_linked` at
+/// `machine_standing.rs:280-283`): C's roster head is live, so the edit is
+/// valid and takes effect; whether C is "yours" is the writer's check
+/// under its own pin.
+///
+/// Observed through `AuthorityFold::valid_entries` (`.contains` at
+/// `authority/valid_entries.rs:39`) and the `worlds` map
+/// (`authority/fold_state.rs:95`), whose `FoldedWorld.live`
+/// (`authority/world_privacy.rs:93`) holds the edit where it took effect.
+#[test]
+fn a_one_machine_read_pick_of_a_live_unanswered_roster_machine_stands() {
+    let served = ServedVault::self_host();
+    let request = served.joining_machine();
+    served
+        .enrol(&request)
+        .expect("the owner's enrolment of M lands");
+    let machine = request.machine;
+    let node = signing(JOINING_SEED);
+    let fold = served.vault.authority_fold().expect("authority fold");
+    let m_entry = fold
+        .machine(machine)
+        .and_then(|folded| folded.roster.as_ref())
+        .expect("guard: M has a roster chain")
+        .entry;
+    assert!(
+        fold.valid_entries.contains(&m_entry),
+        "guard: M's enrolment answer is in valid_entries"
+    );
+    let target = served.carrier;
+    let folded = fold
+        .machine(target)
+        .expect("guard: this install is a machine of the vault");
+    let head = folded
+        .roster
+        .as_ref()
+        .expect("guard: this install has a roster chain");
+    assert!(
+        head.is_live() && head.profile.role == MachineRole::Unanswered && !head.says_yours(),
+        "guard: this install's roster head is live, unanswered and not yours"
+    );
+    assert!(
+        folded.anchored.is_empty(),
+        "guard: no anchor's chain holds this install"
+    );
+
+    let world = EntityId::from_bytes([0xB6; 16]).expect("an id");
+    let settings = WorldPrivacy {
+        read: ReadLocation::OneMachine(target),
+        sealed: SealedCopies::CloudAndMyMachines,
+        models: ModelOrder::Inherit,
+    };
+    let edit = store_world_edit(&served, vec![m_entry], machine, &node, world, settings);
+
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&edit),
+        "a one-machine read pick of a live, unanswered roster machine was refused"
+    );
+    assert!(
+        fold.worlds
+            .get(&world)
+            .is_some_and(|folded| folded.live.contains_key(&edit)),
+        "the pick of a live, unanswered roster machine took no effect on the world"
+    );
 }

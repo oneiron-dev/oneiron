@@ -154,8 +154,8 @@ impl AuthorityFold {
 /// the request it names is a parent of its entry or beneath one (CALLS "FIX
 /// 5464 request binding", [`super::fold_engine::named_beneath`]), whatever
 /// that row is; a hash concurrent with the record, unseen or its own is
-/// invalid. Its signer is a machine's install key, never a roster key. Some
-/// chain of the publisher must name that key, live or not, as for an owner
+/// invalid. Its signer is a machine's install key, never a roster key. The
+/// publisher's roster chain must name that key, live or not, as for an owner
 /// act's carrier; whether the record counts is [`counts`].
 pub(super) fn apply_world_key_wraps(
     state: &mut FoldState,
