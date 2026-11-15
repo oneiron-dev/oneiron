@@ -13,7 +13,9 @@ use super::vocabulary::AgentHealthCard;
 use crate::EntityId;
 use crate::agent_dispatch::{AgentDispatcher, SpendScope};
 use crate::federation::{SubstrateRead, admit_substrate_read};
-use crate::memory::{MEMORY_CODE_BAD_REQUEST, Memory, MemoryError, MemoryResult};
+use crate::memory::{
+    MEMORY_CODE_BAD_REQUEST, MEMORY_CODE_INTERNAL, Memory, MemoryError, MemoryResult,
+};
 use crate::receipt::CallReceipt;
 
 /// The most rows one read answers.
@@ -83,14 +85,24 @@ pub fn agent_health_cards(
 /// # Errors
 ///
 /// A caller who is neither the owner nor a Steward `read` holder; an agent
-/// ref that is not an entity id; a store failure.
+/// ref that is not an entity id; a call receipt that did not read, so the
+/// agent's list would be incomplete; a store failure.
 pub fn agent_health_calls(
     memory: &Memory<'_>,
     input: &AgentHealthCallsRequest,
 ) -> MemoryResult<Vec<AgentCallReceipt>> {
     admit_substrate_read(memory, "vault.agent_health.calls", SubstrateRead::Evidence)?;
     let agent = entity_ref("agent_ref", &input.agent_ref)?;
-    let (mut calls, _) = agent_calls(memory.vault(), input.since).map_err(MemoryError::from)?;
+    let (mut calls, unread) = agent_calls(memory.vault(), input.since).map_err(MemoryError::from)?;
+    if unread.for_actor(agent).is_some() {
+        // A receipt that did not read may be this agent's: the list would
+        // be incomplete, so no list is answered.
+        return Err(MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            "a call receipt did not read, so the agent's receipts would be incomplete",
+            &["Retry; if the failure persists, inspect vault store health."],
+        ));
+    }
     let mut receipts: Vec<AgentCallReceipt> = calls
         .remove(&agent)
         .unwrap_or_default()
