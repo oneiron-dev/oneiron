@@ -69,8 +69,7 @@ fn signature_slot(key: AuthorityKey) -> AuthoritySignature {
 }
 
 /// `signer` signs `op` on `parent_hashes`, with one cosign by each of
-/// `cosigners`. Every key is in the entry before any of them signs, so all
-/// of them sign the same transcript.
+/// `cosigners`, at the advisory time 1 ([`signed_at`]).
 fn signed(
     vault_id: Option<AuthorityVaultId>,
     seq: u64,
@@ -78,6 +77,21 @@ fn signed(
     op: AuthorityOp,
     signer: &SigningKey,
     cosigners: &[&SigningKey],
+) -> AuthorityLogEntry {
+    signed_at(vault_id, seq, parent_hashes, op, signer, cosigners, 1)
+}
+
+/// `signer` signs `op` on `parent_hashes` at the advisory time `ts`, with
+/// one cosign by each of `cosigners`. Every key is in the entry before any
+/// of them signs, so all of them sign the same transcript.
+fn signed_at(
+    vault_id: Option<AuthorityVaultId>,
+    seq: u64,
+    parent_hashes: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+    signer: &SigningKey,
+    cosigners: &[&SigningKey],
+    ts: u64,
 ) -> AuthorityLogEntry {
     let mut cosigners = cosigners.to_vec();
     cosigners.sort_by_key(|cosigner| key_of(cosigner));
@@ -92,7 +106,7 @@ fn signed(
             .iter()
             .map(|cosigner| signature_slot(key_of(cosigner)))
             .collect(),
-        ts: 1,
+        ts,
     };
     let transcript = authority_transcript(&row).expect("the transcript");
     row.signer.signature = signer.sign(&transcript).to_bytes().to_vec();
@@ -325,21 +339,33 @@ fn node_carries_the_members_opt_out(answer: &mut HostedNodeAnswer) -> [u8; 32] {
 }
 
 /// The hosted node carries the member's opt back in on the newest row, with
-/// `proof`, signed by its own install key. Returns the entry.
+/// `proof`, signed by its own install key at the advisory time 1. Returns the
+/// entry.
 fn carry_opt_back_in(
     answer: &mut HostedNodeAnswer,
     seen: [u8; 32],
     proof: Option<PersonChoiceProof>,
 ) -> AuthorityEntryHash {
+    carry_opt_back_in_at(answer, seen, proof, 1)
+}
+
+/// [`carry_opt_back_in`] at the advisory time `ts`, the act's time.
+fn carry_opt_back_in_at(
+    answer: &mut HostedNodeAnswer,
+    seen: [u8; 32],
+    proof: Option<PersonChoiceProof>,
+    ts: u64,
+) -> AuthorityEntryHash {
     let newest = hash(answer.rows.last().expect("a row"));
     let (machine, node) = (answer.machine, answer.node.clone());
-    let back_in = signed(
+    let back_in = signed_at(
         Some(answer.vault_id()),
         2,
         vec![newest],
         members_own_choice(machine, false, seen, proof),
         &node,
         &[],
+        ts,
     );
     let entry = hash(&back_in);
     answer.rows.push(back_in);
@@ -575,6 +601,31 @@ fn a_person_proof_on_a_revoked_slip_is_invalid() {
     assert_stays_out(&answer.fold(), entry);
 }
 
+/// Astra review F1 (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF; Engine
+/// 23:40): the slip must be live at the act's time, as the person's door
+/// judges it at the time it writes. A proof by the key of a slip whose
+/// lifetime ended before the act proves no new choice, so the opt back in is
+/// invalid and the member stays left out.
+#[test]
+fn a_person_proof_on_an_expired_slip_is_invalid() {
+    let mut answer = HostedNodeAnswer::new();
+    let vault_id = answer.vault_id();
+    let slip_key = signing(MEMBER_SLIP_SEED);
+    let slip = [0x51; 32];
+    let claims = member_slip_claims(
+        vault_id,
+        member(),
+        slip_key.verifying_key().to_bytes(),
+        slip,
+    );
+    let expired = claims.expires_at;
+    mint_slip(&mut answer, claims, 2);
+    let seen = node_carries_the_members_opt_out(&mut answer);
+    let proof = person_proof(&vault_id, member(), false, seen, slip, &slip_key);
+    let entry = carry_opt_back_in_at(&mut answer, seen, Some(proof), expired);
+    assert_stays_out(&answer.fold(), entry);
+}
+
 /// Ruling CARRIER-PERSON-OPT-BACK-IN = A, row
 /// PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF: a share-view slip of the member's
 /// is a slip for one share, not their own human slip, so its key proves no
@@ -647,6 +698,42 @@ fn an_opt_out_still_lands_with_no_person_proof() {
         fold.waiting_owner_choices(),
         &BTreeSet::new(),
         "a person's own opt-out never waits for the vault owner's proof"
+    );
+}
+
+/// Review fix (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): a person's own
+/// opt-out lands with no proof, so the fold never judges a proof on it. One
+/// that does not hold (another key's signature over a slip no row minted)
+/// still lets the opt-out land, never as an invalid entry.
+#[test]
+fn an_opt_out_with_a_person_proof_that_does_not_hold_still_lands() {
+    let answer = HostedNodeAnswer::new();
+    let (vault_id, node) = (answer.vault_id(), answer.machine);
+    let proof = person_proof(
+        &vault_id,
+        member(),
+        true,
+        [0; 32],
+        [0x5A; 32],
+        &signing(FORGER_SEED),
+    );
+    let (fold, entry) = answer.node_carries(members_own_choice(node, true, [0; 32], Some(proof)));
+    assert!(
+        !fold
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidEntry(entry)),
+        "a proof on an opt-out never makes it invalid: {:?}",
+        fold.issues
+    );
+    assert!(
+        leaves_out(&fold, member()),
+        "the member's own opt-out lands: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::new(),
+        "a person's own opt-out never waits"
     );
 }
 
@@ -872,4 +959,29 @@ fn the_owners_door_refuses_a_person_proof() {
             .leave_out,
         "the owner stays left out"
     );
+}
+
+/// Review fix (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): the member's
+/// door drops a proof sent with their opt-out unjudged, so one that does not
+/// hold never refuses the opt-out.
+#[test]
+fn a_members_door_takes_an_opt_out_with_a_proof_that_does_not_hold() {
+    let served = ServedVault::hosted();
+    served.let_people_opt_out();
+    served.owner_key_held_on_another_install();
+    let (_, proof, _, _) = served.member_with_slip();
+    let out = served
+        .vault
+        .set_conversation_training(
+            &proof,
+            ActSurface::ThisInstall,
+            true,
+            None,
+            Some(PersonChoiceProof {
+                slip: [0xA0; 32],
+                signature: [0xA1; 64],
+            }),
+        )
+        .expect("the opt-out lands beside a proof that does not hold");
+    assert!(out.leave_out, "the member is left out");
 }
