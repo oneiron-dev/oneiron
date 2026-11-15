@@ -138,6 +138,13 @@ impl BookingPagePublication {
             {
                 return Err("public booking configuration hash must be a BLAKE3 digest");
             }
+            if let Some(defect) = event
+                .deposit
+                .as_ref()
+                .and_then(crate::booking::DepositTerms::defect)
+            {
+                return Err(defect);
+            }
             if event.key.0.trim().is_empty()
                 || event.title.trim().is_empty()
                 || event.duration_min == 0
@@ -391,6 +398,12 @@ fn load_public_booking_page_listed_in_txn(
         if u32::from(config.duration_min) != card.duration_min
             || value.event_config_hashes.get(&card.key.0) != Some(&booking_config_hash(&config)?)
         {
+            return Ok(None);
+        }
+        // The deposit a visitor reads on the card is the one confirm will
+        // ask (BK-DEPOSITS): a card whose terms drifted from its
+        // configuration is a stale page, as a drifted duration is.
+        if config.deposit != card.deposit {
             return Ok(None);
         }
     }

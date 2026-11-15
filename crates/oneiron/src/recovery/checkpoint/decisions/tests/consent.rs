@@ -221,6 +221,7 @@ fn event_type(buffer: u16) -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: entity(0x86),
@@ -281,6 +282,7 @@ pub(super) fn booking_publications() -> Result<Case> {
         event_types: vec![EventTypeCard {
             key: key.clone(),
             title: "Intro".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: String::new(),
         }],

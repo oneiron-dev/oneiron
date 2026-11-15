@@ -21,6 +21,7 @@ use std::io::Cursor;
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::booking::deposit::DepositTerms;
 use crate::booking::{BookingError, EventTypeKey};
 use crate::claim::{ClaimBody, ClaimSubject, claim_surfaceable};
 use crate::entity_id::EntityId;
@@ -165,6 +166,12 @@ pub struct EventTypeConfig {
     /// Extra host-local windows offered only when ordinary availability is
     /// empty. Interpreted in each host's own zone, exactly like working hours.
     pub flex_windows: Vec<WeeklyWallWindow>,
+    /// The deposit this event type asks before a booking is confirmed
+    /// (BK-DEPOSITS): the owner's amount, currency and refund rule. Absent:
+    /// no deposit, and the configuration encodes, and hashes, as it always
+    /// has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit: Option<DepositTerms>,
 }
 
 impl EventTypeConfig {
@@ -205,7 +212,7 @@ impl EventTypeConfig {
         if hosts.windows(2).any(|pair| pair[0] == pair[1]) {
             return Some("booking.event_type host_ref must be unique");
         }
-        None
+        self.deposit.as_ref().and_then(DepositTerms::defect)
     }
 
     /// Solver-facing validation.
@@ -605,6 +612,7 @@ mod tests {
             booking_window_secs: 14 * 24 * 3_600,
             daily_cap: None,
             weekly_cap: None,
+            deposit: None,
             routing: RoutingMode::Either,
             hosts: vec![HostAvailabilityConfig {
                 host_ref: id(HOST),

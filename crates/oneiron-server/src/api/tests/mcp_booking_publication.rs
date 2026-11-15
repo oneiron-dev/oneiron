@@ -23,6 +23,7 @@ fn config(host: oneiron::EntityId) -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: host,
@@ -54,6 +55,7 @@ fn publication(config: &EventTypeConfig, owner_display: &str) -> serde_json::Val
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro".to_owned()),
             title: "Intro".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "A first call".to_owned(),
         }],

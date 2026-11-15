@@ -143,6 +143,7 @@ fn page(vault: &Vault, page_seed: u8, host_seed: u8) {
         booking_window_secs: 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(host_seed),

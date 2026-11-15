@@ -276,6 +276,7 @@ pub(super) fn fixture_config() -> EventTypeConfig {
         booking_window_secs: 7 * 86_400,
         daily_cap: None,
         weekly_cap: None,
+        deposit: None,
         routing: RoutingMode::Either,
         hosts: vec![HostAvailabilityConfig {
             host_ref: id(0x73),
@@ -312,6 +313,7 @@ pub(super) fn publication_input(
         event_types: vec![EventTypeCard {
             key: EventTypeKey("intro".to_owned()),
             title: "Fixture event".to_owned(),
+            deposit: None,
             duration_min: 30,
             description: "Fixture description".to_owned(),
         }],

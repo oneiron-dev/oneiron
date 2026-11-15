@@ -34,6 +34,12 @@ pub const PUBLIC_BOOKING_ROUTE_PREFIX: &str = "/public/booking";
 pub struct EventTypeCard {
     pub key: EventTypeKey,
     pub title: String,
+    /// The deposit this event type asks before a booking is confirmed, as
+    /// its configuration states it (BK-DEPOSITS), so the visitor reads the
+    /// amount and the refund rule before checkout. Absent: no deposit, and
+    /// the card encodes as it always has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deposit: Option<crate::booking::DepositTerms>,
     pub duration_min: u32,
     pub description: String,
 }
@@ -397,6 +403,7 @@ mod tests {
             vec![EventTypeCard {
                 key: request.event_type,
                 title: "Introduction".to_owned(),
+                deposit: None,
                 duration_min: 10,
                 description: "Fixture description".to_owned(),
             }],

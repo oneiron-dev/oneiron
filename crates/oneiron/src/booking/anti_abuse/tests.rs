@@ -46,6 +46,7 @@ fn install_page_and_config(vault: &Vault, page: EntityId, event_type: &EventType
             booking_window_secs: 86_400,
             daily_cap: None,
             weekly_cap: None,
+            deposit: None,
             routing: RoutingMode::Either,
             hosts: vec![HostAvailabilityConfig {
                 host_ref: id(0x55),

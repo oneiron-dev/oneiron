@@ -13,6 +13,7 @@ pub mod companion_preset;
 pub mod config;
 pub mod constraint;
 pub mod conversion;
+pub mod deposit;
 pub mod disclosure_rung;
 pub mod emergency_reschedule;
 pub mod invite_grant;
@@ -60,6 +61,10 @@ pub use conversion::{
     booking_snippet_links, booking_snippet_selection_from_url, booking_suggested_slot,
     booking_zoned_time, parse_booking_slot_link, repeat_no_show_offer,
     resolve_booking_conversion_rows,
+};
+pub use deposit::{
+    DEFAULT_DEPOSIT_FULL_REFUND_NOTICE_SECS, DepositRefundRule, DepositTerms,
+    MAX_DEPOSIT_AMOUNT_MINOR,
 };
 pub use disclosure_rung::{
     BusyBlockRow, CalendarDisclosureDefault, DisclosureRung, EventDetailsRow, EventRow,
