@@ -8,7 +8,9 @@
 
 use super::AgentDispatcher;
 use super::widen_record::invalid;
-use super::workflow_record::{RECORD, WorkflowCancelRequest, WorkflowDispatchStatus};
+use super::workflow_record::{
+    RECORD, WorkflowCancelRequest, WorkflowDispatchStatus, WorkflowStepAsk,
+};
 use crate::attempt_queue::{
     AttemptCancelReceiptKind, AttemptId, AttemptInterventionEffect, AttemptInterventionKind,
     AttemptQueue, AttemptRecord, AttemptState, CancelRequestOutcome, CancelStanding,
@@ -47,16 +49,15 @@ impl AgentDispatcher<'_> {
             return self.workflow_status(root);
         }
         let mut wrote = false;
-        let request = match record.cancel_request.clone() {
+        let mut request = match record.cancel_request.clone() {
             Some(request) => request,
             None => {
-                let request = WorkflowCancelRequest {
+                wrote = true;
+                WorkflowCancelRequest {
                     by: actor.to_hex(),
                     at: now,
-                };
-                record.cancel_request = Some(request.clone());
-                wrote = true;
-                request
+                    asked: None,
+                }
             }
         };
         let active = queue.retry_tip_in_txn(&txn, record.active)?;
@@ -68,9 +69,10 @@ impl AgentDispatcher<'_> {
             active.state,
             AttemptState::Queued | AttemptState::Scheduled | AttemptState::Paused
         );
-        let stopped = self.stop_workflow_step_in(&mut txn, &active, &request, now)?;
+        let stopped = self.stop_workflow_step_in(&mut txn, &active, &mut request, now)?;
         if wrote || stopped {
             record.active = active.id;
+            record.cancel_request = Some(request);
             RECORD.put(self.vault, &mut txn, &root, &record)?;
             txn.commit()?;
             self.vault.store.notify_attempt_observers();
@@ -93,13 +95,14 @@ impl AgentDispatcher<'_> {
 
     /// Puts the run's cancel `request` to its active step `step`, in `txn`:
     /// a step that waits to run is cancelled in the requester's name; a step
-    /// a worker holds is asked to land, once for this requester; a landing
-    /// or settled step is left as it is. Whether anything was written.
+    /// a worker holds is asked to land, once for this request, and `request`
+    /// keeps that ask; a landing or settled step is left as it is. Whether
+    /// anything was written: the caller then stores `request` on the run.
     pub(super) fn stop_workflow_step_in(
         &self,
         txn: &mut heed::RwTxn<'_>,
         step: &AttemptRecord,
-        request: &WorkflowCancelRequest,
+        request: &mut WorkflowCancelRequest,
         now: u64,
     ) -> Result<bool> {
         let queue = AttemptQueue::new(self.vault);
@@ -117,7 +120,7 @@ impl AgentDispatcher<'_> {
                 )?;
                 Ok(outcome.effect == AttemptInterventionEffect::Cancelled)
             }
-            AttemptState::Leased if !asked_by(step, &request.by) => {
+            AttemptState::Leased if !asked_by_request(step, request) => {
                 let outcome = queue.request_cancel_in_txn(
                     txn,
                     RequestAttemptCancel {
@@ -129,7 +132,25 @@ impl AgentDispatcher<'_> {
                         now,
                     },
                 )?;
-                Ok(matches!(outcome, CancelRequestOutcome::Requested { .. }))
+                let CancelRequestOutcome::Requested { record, .. } = outcome else {
+                    return Ok(false);
+                };
+                // The receipt this ask just wrote: the request matches the
+                // step's later end against it alone.
+                let sequence = record
+                    .cancel_receipts()
+                    .last()
+                    .filter(|receipt| {
+                        receipt.kind == AttemptCancelReceiptKind::SoftRequested
+                            && receipt.actor == request.by
+                    })
+                    .map(|receipt| receipt.sequence)
+                    .ok_or_else(|| invalid("a landing ask wrote no soft-request receipt"))?;
+                request.asked = Some(WorkflowStepAsk {
+                    step: step.id,
+                    sequence,
+                });
+                Ok(true)
             }
             _ => Ok(false),
         }
@@ -159,15 +180,23 @@ impl AgentDispatcher<'_> {
 }
 
 /// Whether the run's cancel `request` stopped its settled step `step`: the
-/// step was cancelled, or the requester asked it to land. A step that failed
-/// or was abandoned before the request was not stopped by it.
+/// step was cancelled, or this request asked it to land. A step that failed
+/// or was abandoned before the request was not stopped by it, even when the
+/// same actor had asked it to land before, outside the request.
 pub(super) fn stopped_by_request(step: &AttemptRecord, request: &WorkflowCancelRequest) -> bool {
-    step.state == AttemptState::Cancelled || asked_by(step, &request.by)
+    step.state == AttemptState::Cancelled || asked_by_request(step, request)
 }
 
-/// Whether `by` already asked the step `step` to land.
-fn asked_by(step: &AttemptRecord, by: &str) -> bool {
-    step.cancel_receipts().iter().any(|receipt| {
-        receipt.kind == AttemptCancelReceiptKind::SoftRequested && receipt.actor == by
+/// Whether `request` asked the step `step` to land: the ask it keeps names
+/// this step, and the step holds that soft-request receipt in the
+/// requester's name.
+fn asked_by_request(step: &AttemptRecord, request: &WorkflowCancelRequest) -> bool {
+    request.asked.as_ref().is_some_and(|ask| {
+        ask.step == step.id
+            && step.cancel_receipts().iter().any(|receipt| {
+                receipt.sequence == ask.sequence
+                    && receipt.kind == AttemptCancelReceiptKind::SoftRequested
+                    && receipt.actor == request.by
+            })
     })
 }
