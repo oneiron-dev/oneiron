@@ -660,7 +660,8 @@ impl Vault {
 
     /// Every ask put for question `question`, at any version, open, answered or withdrawn,
     /// oldest first, in the caller's snapshot: how a saved question's person-changed pairs
-    /// find the rows each ask was put over (FIX PERSON-CHANGED-PAIRS-SKIP-SAVED-LANE).
+    /// find the ask each record is bound to, and the rows it was put over (FIX
+    /// PERSON-CHANGED-PAIRS-SKIP-SAVED-LANE).
     pub(crate) fn question_decision_asks_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
