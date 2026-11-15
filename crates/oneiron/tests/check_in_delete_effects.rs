@@ -32,7 +32,12 @@
 //!   entry answers `CHECK_IN_PENDING`, its reason code naming its own
 //!   check-in, and deletes nothing. Once one is approved, the item that names
 //!   it deletes that record and spends it; the same check-in named on another
-//!   record's item, or by `vault.delete`, deletes nothing.
+//!   record's item, or by a hard `vault.delete` of the same record, deletes
+//!   nothing: the check-in saves `vault.archive.delete.confirm` as its verb.
+//! - A confirm of a NOTE the cleanup has not archived is refused as a stale
+//!   preview before its check-in is judged, with no `expected` named too: a
+//!   Steward's opens no check-in and deletes nothing, though its
+//!   `vault.delete` of the same live NOTE waits (second review of #8089, F1).
 //!
 //! Row 2k5e: `vault.archive.attempt.delete.confirm`, a vault control-plane
 //! act only the Owner, an Admin or a Deputy reaches, never waits:
@@ -60,6 +65,9 @@
 //! `reason_codes`. On 2k5d (7a59dbb2eae) it does not build: an attempt
 //! archive delete's receipt has no `check_in`, and the test doors no
 //! `archive_attempt_as_cleanup`.
+//! On the S2 top before the F1 fix (e44488765187) it builds, and
+//! `a_stewards_confirm_of_a_live_note_is_refused_before_its_check_in` fails:
+//! that confirm opens a check-in and answers `CHECK_IN_PENDING`.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test check_in_delete_effects`.
@@ -257,19 +265,26 @@ impl Org {
         note: &str,
         check_in_ref: Option<&str>,
     ) -> MemoryResult<DeleteReceipt> {
+        self.delete_with_reason(person, note, SafeDeleteReason::UserDelete, check_in_ref)
+    }
+
+    /// [`Self::delete`] for `reason`.
+    fn delete_with_reason(
+        &self,
+        person: EntityId,
+        note: &str,
+        reason: SafeDeleteReason,
+        check_in_ref: Option<&str>,
+    ) -> MemoryResult<DeleteReceipt> {
         let memory = self.vault.memory(person, EdgeActorClass::Human);
         if person == self.owner {
-            return memory.safe_delete_with_check_in(
-                note,
-                SafeDeleteReason::UserDelete,
-                check_in_ref,
-            );
+            return memory.safe_delete_with_check_in(note, reason, check_in_ref);
         }
         let credential = self.credential(person);
         memory
             .with_transport_invocation()
             .with_read_proof(&credential)
-            .safe_delete_with_check_in(note, SafeDeleteReason::UserDelete, check_in_ref)
+            .safe_delete_with_check_in(note, reason, check_in_ref)
     }
 
     /// A NOTE the Member writes about the subject, archived as the vault
@@ -371,6 +386,15 @@ impl Org {
             .expect("stored")
             .consumed_at
             .is_some()
+    }
+
+    /// The verb check-in `id` waits on.
+    fn check_in_verb(&self, id: &str) -> String {
+        self.vault
+            .pending_check_in(&EntityId::from_hex(id).expect("a check-in id"))
+            .expect("read the check-in")
+            .expect("stored")
+            .verb
     }
 }
 
@@ -666,9 +690,20 @@ fn each_archived_note_a_steward_confirms_waits_on_its_own_check_in() {
     assert!(!org.purged(&first), "an unanswered check-in runs nothing");
 
     org.owner_approves(&first_ask);
+    assert_eq!(
+        org.check_in_verb(&first_ask),
+        "vault.archive.delete.confirm",
+        "the archive confirm's check-in saves its own verb"
+    );
     assert!(
-        org.delete(org.steward, &first, Some(&first_ask)).is_err(),
-        "vault.delete does not spend an archive confirm's check-in"
+        org.delete_with_reason(
+            org.steward,
+            &first,
+            SafeDeleteReason::UserHardDelete,
+            Some(&first_ask)
+        )
+        .is_err(),
+        "a hard vault.delete, the archive confirm's own reason, does not spend its check-in"
     );
     assert!(
         !org.spent(&first_ask),
@@ -702,6 +737,37 @@ fn each_archived_note_a_steward_confirms_waits_on_its_own_check_in() {
         archive_pending_id(&again, &second),
         second_ask,
         "the other record still waits on its own check-in"
+    );
+}
+
+#[test]
+fn a_stewards_confirm_of_a_live_note_is_refused_before_its_check_in() {
+    let org = Org::new();
+    let note = org.member_note();
+    for _ in 0..2 {
+        let batch = org.confirm(org.steward, &[(&note, None)]);
+        let refused = archive_refusal(&batch, &note);
+        assert_eq!(
+            refused.code, MEMORY_CODE_BAD_REQUEST,
+            "a NOTE the cleanup has not archived is no target of this door: {refused:?}"
+        );
+        assert!(
+            refused
+                .message
+                .contains("archive preview no longer matches"),
+            "it is refused as a stale preview: {refused:?}"
+        );
+        assert!(
+            refused.reason_codes.is_empty(),
+            "the refusal names no check-in: {refused:?}"
+        );
+    }
+    assert!(!org.deleted(&note), "the live NOTE stands");
+    let ask = pending_id(org.delete(org.steward, &note, None));
+    assert_eq!(
+        org.check_in_verb(&ask),
+        "vault.delete",
+        "the Steward's vault.delete of the same live NOTE still waits on its own check-in"
     );
 }
 
