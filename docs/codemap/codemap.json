@@ -102057,6 +102057,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/query_time_phrase_never_filters.rs",
+     "purpose": "A time phrase in the query re-anchors the temporal channel and never filters on occurred time (canon…",
+     "surface": {}
+    },
+    {
      "bucket": "L",
      "kind": "test",
      "notable": [],
@@ -105004,7 +105012,7 @@
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7596,
-   "test_files": 1325
+   "test_files": 1326
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -107518,7 +107526,7 @@
      "path": "src/beam/llm_judge.rs",
      "purpose": "The production model-scored BEAM door: pin validation, three votes, no reward feedback",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 9
      }
     },
     {
@@ -107596,7 +107604,7 @@
      "path": "src/beam/model_scaffold/paired.rs",
      "purpose": "Paired no-memory rows (ARCH-0042 scour:G12, ZERO-RETRIEVAL = A)",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -107746,6 +107754,14 @@
      "surface": {
       "crate-vis": 2
      }
+    },
+    {
+     "bucket": "m",
+     "kind": "src",
+     "notable": [],
+     "path": "src/beam/tests_replicate_pass.rs",
+     "purpose": "ARCH-0042 `beam:D9`: the `beam-replicate@3e12035` column comes from its own judge pass, which shows the…",
+     "surface": {}
     },
     {
      "bucket": "m",
@@ -109038,7 +109054,7 @@
    ],
    "modules": {
     "beam": {
-     "files": 43,
+     "files": 44,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -109145,7 +109161,7 @@
    },
    "over_bar": 2,
    "purpose": "oneiron-bench — benchmark harness drivers",
-   "source_files": 161,
+   "source_files": 162,
    "test_files": 20
   },
   "oneiron-broker": {
@@ -131745,7 +131761,7 @@
      "path": "src/ai_host/code_fix.rs",
      "purpose": "The host Coach's code fixes (DEC-0005 FIX6, OF-380)",
      "surface": {
-      "crate-vis": 14
+      "crate-vis": 13
      }
     },
     {
