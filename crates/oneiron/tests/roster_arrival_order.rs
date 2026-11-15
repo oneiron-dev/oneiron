@@ -170,6 +170,7 @@ fn hash_of(entry: &AuthorityLogEntry) -> AuthorityEntryHash {
 /// that sync delivers in that order arrive. Returns each put's outcome and
 /// the install's fold.
 struct Install {
+    vault: Vault,
     _dir: tempfile::TempDir,
     puts: Vec<String>,
     fold: AuthorityFold,
@@ -187,6 +188,7 @@ fn install_receiving(rows: &[&AuthorityLogEntry]) -> Install {
         .collect();
     let fold = vault.authority_fold().expect("the install folds its log");
     Install {
+        vault,
         _dir: dir,
         puts,
         fold,
@@ -696,6 +698,148 @@ fn a_mark_below_a_vouched_binding_folds_as_on_the_in_order_install() {
         applied(&late.fold),
         all,
         "install J applies the same rows as install I; puts {:?}, issues {:?}",
+        late.puts,
+        late.fold.issues
+    );
+}
+
+fn confirmation(
+    vault_id: AuthorityVaultId,
+    parent: &AuthorityLogEntry,
+    signer: &SigningKey,
+    seq: u64,
+    id: u8,
+    nonce: u8,
+) -> AuthorityLogEntry {
+    signed(
+        Some(vault_id),
+        seq,
+        Some(parent),
+        AuthorityOp::FederationConfirm(AuthorityConfirmAction {
+            kind: AuthorityConfirmKind::Accept,
+            confirm_id: [id; 32],
+            peer_vault_id: [77; 32],
+            epoch: 1,
+            nonce: [nonce; 16],
+        }),
+        signer,
+    )
+}
+
+/// Two confirmations reuse one nonce (Astra review round 3, F1): the owner
+/// confirms P (sequence 1) and C (2) on genesis, P at the lower hash, so P
+/// wins the collision; on C it enrols agent U (3), and beside them all agent
+/// W (4). Install I receives every row in order: C loses, so U's enrolment
+/// on it falls with it and U is not live. Install J receives W's enrolment
+/// first, so P and C reach it past the owner's floor; install K receives
+/// U's enrolment before its missing parent C and while the owner's mark was
+/// 0, so it vouches for C in flight. Neither may hold U live when install I
+/// does not: a floor that refuses P must not let C win.
+#[test]
+fn a_confirmation_cleared_past_its_floored_rival_enrols_no_key_the_in_order_install_lacks() {
+    let owner = SigningKey::from_bytes(&[211; 32]);
+    let rival_agent = SigningKey::from_bytes(&[212; 32]);
+    let later_agent = SigningKey::from_bytes(&[213; 32]);
+    let (genesis, vault_id) = genesis(&owner, 214);
+    let cleared = confirmation(vault_id, &genesis, &owner, 2, 34, 119);
+    let winner = (1..=u8::MAX)
+        .filter(|id| *id != 34)
+        .map(|id| confirmation(vault_id, &genesis, &owner, 1, id, 119))
+        .find(|entry| hash_of(entry) < hash_of(&cleared))
+        .expect("a confirmation hashes below the rival");
+    let enrol_rival = enrolment(vault_id, &cleared, &owner, 3, &rival_agent);
+    let enrol_later = enrolment(vault_id, &genesis, &owner, 4, &later_agent);
+
+    let in_order = install_receiving(&[&genesis, &winner, &cleared, &enrol_rival, &enrol_later]);
+    let past_floor = install_receiving(&[&genesis, &enrol_later, &winner, &cleared, &enrol_rival]);
+    let in_flight = install_receiving(&[&genesis, &enrol_rival, &enrol_later, &winner, &cleared]);
+
+    assert!(
+        !is_live(&in_order.fold, &key_of(&rival_agent))
+            && is_live(&in_order.fold, &key_of(&later_agent)),
+        "install I: the lower-hash confirmation wins and U falls with its rival; puts {:?}, \
+         issues {:?}",
+        in_order.puts,
+        in_order.fold.issues
+    );
+    for (name, install) in [
+        ("J (both confirmations past the floor)", &past_floor),
+        ("K (U's enrolment in flight)", &in_flight),
+    ] {
+        assert!(
+            !is_live(&install.fold, &key_of(&rival_agent)),
+            "install {name} holds U live, which install I does not; puts {:?}, issues {:?}",
+            install.puts,
+            install.fold.issues
+        );
+    }
+}
+
+/// A row a revocation vouches for past the floor (Astra review round 3,
+/// F3): the owner enrols agent U (sequence 1), binds U to an actor on it
+/// (2), revokes U on the binding (3) and enrols agent W beside them (4).
+/// Install J receives W's enrolment first; the revocation vouches for the
+/// binding there, so J folds as install I. J must then build the checkpoint
+/// image that I builds.
+#[test]
+fn a_binding_a_revocation_vouches_for_leaves_the_checkpoint_image_buildable() {
+    let owner = SigningKey::from_bytes(&[201; 32]);
+    let revoked_agent = SigningKey::from_bytes(&[202; 32]);
+    let later_agent = SigningKey::from_bytes(&[203; 32]);
+    let (genesis, vault_id) = genesis(&owner, 204);
+    let enrol_revoked = enrolment(vault_id, &genesis, &owner, 1, &revoked_agent);
+    let binding = signed(
+        Some(vault_id),
+        2,
+        Some(&enrol_revoked),
+        AuthorityOp::BindActor {
+            authority_key: key_of(&revoked_agent),
+            actor_ref: EntityId::now(),
+            actor_class: "agent".to_owned(),
+            epoch: 1,
+        },
+        &owner,
+    );
+    let revocation = signed(
+        Some(vault_id),
+        3,
+        Some(&binding),
+        AuthorityOp::RevokeDevice {
+            revoked_key: key_of(&revoked_agent),
+        },
+        &owner,
+    );
+    let enrol_later = enrolment(vault_id, &enrol_revoked, &owner, 4, &later_agent);
+
+    let in_order = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &binding,
+        &revocation,
+        &enrol_later,
+    ]);
+    let late = install_receiving(&[
+        &genesis,
+        &enrol_revoked,
+        &enrol_later,
+        &binding,
+        &revocation,
+    ]);
+    let image = |install: &Install| match install.vault.build_authority_checkpoint_v2() {
+        Ok(_) => "built".to_owned(),
+        Err(error) => format!("refused: {:?}", error.kind()),
+    };
+
+    assert_eq!(
+        image(&in_order),
+        "built",
+        "install I builds its checkpoint image; issues {:?}",
+        in_order.fold.issues
+    );
+    assert_eq!(
+        image(&late),
+        "built",
+        "install J folds as install I and builds the same image; puts {:?}, issues {:?}",
         late.puts,
         late.fold.issues
     );
