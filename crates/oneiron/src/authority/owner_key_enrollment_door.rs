@@ -759,6 +759,48 @@ impl Vault {
         Ok((next, receipt, revoked))
     }
 
+    /// Revokes, in a kit activation's write transaction, every live owner
+    /// key of kind `RecoveryAuthority` that `actor` enrolled other than
+    /// `kept`, the activated kit's R (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A,
+    /// Engine 05:54): a new kit replaces the old one, so a box copy of the
+    /// old kit's R, and any recovery hold it signed, no longer act. Each
+    /// `RevokeDevice` is signed by `predecessor`, the key that signs the new
+    /// R's enrolment, through the one writer
+    /// ([`Self::append_revoke_device_in_txn`]). Another owner's R stays: the
+    /// filter is the enrolment's owner, as at the membership move.
+    ///
+    /// # Errors
+    /// The writer's: an entry the fold does not count.
+    pub(crate) fn revoke_earlier_recovery_authority_keys_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        actor: EntityId,
+        kept: &AuthorityKey,
+        predecessor: &ActivationPredecessor,
+    ) -> Result<()> {
+        let earlier: Vec<AuthorityKey> = self
+            .enrolled_owner_keys_in_txn(txn)?
+            .into_iter()
+            .filter(|key| {
+                key.live
+                    && key.owner == actor
+                    && key.kind == EnrolledOwnerKeyKind::RecoveryAuthority
+            })
+            .map(|key| AuthorityKey::Ed25519(key.public_key))
+            .filter(|key| key != kept)
+            .collect();
+        let predecessor_key = predecessor.predecessor_key();
+        let sign = |transcript: &[u8]| predecessor.sign(transcript);
+        for revoked_key in earlier {
+            let signer = match predecessor {
+                ActivationPredecessor::OwnerKey(_) => EntrySigner::Key(&predecessor_key, &sign),
+                ActivationPredecessor::HostRoot(issuer) => EntrySigner::Host(issuer),
+            };
+            self.append_revoke_device_in_txn(txn, signer, revoked_key)?;
+        }
+        Ok(())
+    }
+
     /// Binds `bind.key`, enrolled in this transaction, to `bind.owner` as
     /// `human`: the next entry after the enrollment, at the first epoch,
     /// signed by the enrollment's predecessor. The fold must count it and the

@@ -4,11 +4,14 @@
 //! or this vault's host root on a self-hosted vault, and hands R's seed out
 //! once. A second confirmation keeps one R row. With neither predecessor the
 //! activation is refused with the exact words and nothing is written. A
-//! device key enrols with kind `Device`.
+//! device key enrols with kind `Device`. A new kit's activation revokes the
+//! owner's earlier R, signed by the same predecessor, so the box's copy of
+//! the old R no longer acts (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A).
 //!
 //! Red on PR 2's base `1b0ef517a29e`: the file compiles there (only APIs that
 //! exist at that head) and fails at runtime, since the activation enrols no
-//! R and refuses no predecessor-less confirm.
+//! R and refuses no predecessor-less confirm. The two second-kit tests are
+//! red at `b020a643f8ec`, PR 2 before that ruling: the old R stays live.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test kit_activation_enrols_authority_key`.
 #![cfg(oneiron_test_support)]
@@ -18,19 +21,26 @@ use std::sync::Arc;
 
 use oneiron::authority::{
     ActAuthority, ActSurface, AuthorityKey, AuthorityOp, EnrolledOwnerKeyKind, HostSlipIssuer,
-    MachineRole, decode_authority_log_entry_body,
+    MachineRole, RootMaterial, RootSuccessor, decode_authority_log_entry_body,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::recovery::{CodeKeeping, KitIssue, PassphraseCost, PieceHome};
 use oneiron::store::GateDecisionId;
 use oneiron::test_support::{bind_host_owner, provision_engine_machines};
-use oneiron::world_keys::{ConfirmedWorldKit, IssuedWorldKit};
+use oneiron::world_keys::{ConfirmedWorldKit, IssuedWorldKit, RecoveryAuthoritySigner};
 use oneiron::{EntityId, ErrorKind, HostingPrivacyPosture, Vault, VaultConfig};
+use zeroize::Zeroizing;
 
 /// The exact refusal when this install holds no predecessor
 /// (WAYBACK-R4-NO-PREDECESSOR = A).
 const NO_PREDECESSOR: &str =
     "this device's owner key is not enrolled; enrol it, then confirm the kit; nothing was written";
+
+/// The root door's refusal of an R the roster no longer holds live while
+/// another root key lives.
+const ROOT_KEY_NOT_LIVE: &str = "the recovery root's authority key is not a live owner key on \
+                                 this vault's roster, and the roster still holds a live root \
+                                 key; nothing was written";
 
 fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
     vault
@@ -126,6 +136,62 @@ impl SelfHosted {
                 _ => None,
             })
             .expect("R's enrol row is stored")
+    }
+
+    /// The live R keys, kind `RecoveryAuthority`.
+    fn live_r(&self) -> Vec<AuthorityKey> {
+        self.vault
+            .enrolled_owner_keys()
+            .expect("the list")
+            .into_iter()
+            .filter(|key| key.kind == EnrolledOwnerKeyKind::RecoveryAuthority && key.live)
+            .map(|key| AuthorityKey::Ed25519(key.public_key))
+            .collect()
+    }
+
+    /// Whether `key` is on the roster and not revoked.
+    fn live(&self, key: &AuthorityKey) -> bool {
+        self.vault
+            .authority_fold()
+            .expect("the fold")
+            .roster
+            .get(key)
+            .is_some_and(|device| !device.revoked)
+    }
+
+    /// The signer of the `RevokeDevice` row of `key`.
+    fn revoke_signer(&self, key: &AuthorityKey) -> AuthorityKey {
+        self.vault
+            .export_signed_authority_history()
+            .expect("the history")
+            .iter()
+            .map(|bytes| decode_authority_log_entry_body(bytes).expect("a row"))
+            .find_map(|row| match &row.op {
+                AuthorityOp::RevokeDevice { revoked_key } if revoked_key == key => {
+                    Some(row.signer_key().clone())
+                }
+                _ => None,
+            })
+            .expect("the key's revoke row is stored")
+    }
+
+    /// The box's copy of `confirmed`'s R: the seed its activation handed out
+    /// once for the deposit, released as the box releases it.
+    fn released(&self, confirmed: &ConfirmedWorldKit) -> RootMaterial {
+        let vault_id = self
+            .vault
+            .authority_fold()
+            .expect("the fold")
+            .vault_id
+            .expect("a rooted vault");
+        RootMaterial::Released(
+            RecoveryAuthoritySigner::from_released_seed(
+                Zeroizing::new(*confirmed.activated.authority_seed.bytes()),
+                &vault_id,
+                confirmed.activated.root,
+            )
+            .expect("the released key"),
+        )
     }
 
     /// How many enrol rows the history holds for `public_key`.
@@ -306,4 +372,67 @@ fn a_device_keys_enrolled_kind_is_device() {
         .expect("the device key is listed");
     assert_eq!(listed.kind, EnrolledOwnerKeyKind::Device);
     assert!(listed.live);
+}
+
+#[test]
+fn a_new_kits_activation_revokes_the_earlier_r_under_this_installs_key() {
+    let fixture = self_hosted();
+    let device = fixture
+        .vault
+        .enrol_device_owner_signing_key(&fixture.authority(), &fixture.issuer)
+        .expect("the owner enrols this install's device key");
+    let device_key = AuthorityKey::Ed25519(device.public_key);
+    let first = fixture.confirm(&fixture.issue()).expect("kit A confirms");
+    let old_r = fixture.live_r();
+    assert_eq!(old_r.len(), 1, "kit A's R is live");
+    let old_r = old_r[0].clone();
+
+    fixture.confirm(&fixture.issue()).expect("kit B confirms");
+
+    let refused = fixture
+        .vault
+        .recover_owner_root(
+            &fixture.owner(),
+            ActSurface::ThisInstall,
+            fixture.released(&first),
+            RootSuccessor::ThisInstall,
+            &[],
+        )
+        .expect_err("the box's copy of kit A's R no longer acts");
+    assert_eq!(refused.kind(), ErrorKind::AuthorityRefused, "{refused}");
+    assert!(
+        refused.to_string().contains(ROOT_KEY_NOT_LIVE),
+        "the exact words: {refused}"
+    );
+    assert!(!fixture.live(&old_r), "kit A's R is revoked");
+    let live_r = fixture.live_r();
+    assert_eq!(live_r.len(), 1, "one live R: kit B's");
+    assert_ne!(live_r[0], old_r);
+    assert_eq!(
+        fixture.revoke_signer(&old_r),
+        device_key,
+        "the predecessor that signs kit B's R signs kit A's revocation"
+    );
+    assert!(fixture.live(&device_key), "the device key stays live");
+}
+
+#[test]
+fn on_a_self_hosted_vault_the_host_root_revokes_the_earlier_r() {
+    let fixture = self_hosted();
+    fixture.confirm(&fixture.issue()).expect("kit A confirms");
+    let old_r = fixture.live_r();
+    assert_eq!(old_r.len(), 1, "kit A's R is live");
+    let old_r = old_r[0].clone();
+
+    fixture.confirm(&fixture.issue()).expect("kit B confirms");
+
+    assert!(!fixture.live(&old_r), "kit A's R is revoked");
+    let live_r = fixture.live_r();
+    assert_eq!(live_r.len(), 1, "one live R: kit B's");
+    assert_ne!(live_r[0], old_r);
+    assert_eq!(
+        fixture.revoke_signer(&old_r),
+        fixture.issuer.public_key(),
+        "the host root, kit B's predecessor, signs kit A's revocation"
+    );
 }
