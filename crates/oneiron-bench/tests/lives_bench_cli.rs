@@ -309,6 +309,29 @@ fn the_screen_pick_is_seeded_and_reported() {
 }
 
 #[test]
+fn a_network_embedder_endpoint_is_refused_before_any_vault() {
+    let dir = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_oneiron-bench"))
+        .args(["load", "lives", "--server", "oneiron-server", "--embedder"])
+        .arg("endpoint=http://192.0.2.10:8080/v1,bge-m3,bge-m3@r1,1024")
+        .arg("--lives")
+        .arg(fixture())
+        .arg("--work")
+        .arg(dir.path().join("work"))
+        .arg("--out")
+        .arg(dir.path().join("report.json"))
+        .output()
+        .expect("the bench binary runs");
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("192.0.2.10") && stderr.contains("loopback"),
+        "stderr names the url and the loopback rule: {stderr}"
+    );
+    assert!(!dir.path().join("work").exists(), "no vault was made");
+}
+
+#[test]
 fn a_life_without_days_is_refused_by_name() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("lives-broken.jsonl");

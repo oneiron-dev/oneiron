@@ -157,12 +157,6 @@ impl Vault {
                 if let Some(name) = api_key_env {
                     args.extend(["--embedder-api-key-env", name.as_str()]);
                 }
-                // A model host on the network is the owner's own GPU box
-                // (ARCH-0042 #lives-bench: "the same model on our GPUs"),
-                // not a third party; a loopback one is on the device.
-                if !reqwest::Url::parse(url).is_ok_and(|url| loopback_url(&url)) {
-                    args.extend(["--embedder-locality", "owner-server"]);
-                }
             }
         }
         let env = env
