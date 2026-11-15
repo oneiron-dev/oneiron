@@ -30,6 +30,7 @@
 
 use std::time::Duration;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use super::message_wake::PendingMessage;
@@ -62,8 +63,10 @@ const RESIDENT_MESSAGE_CLASSES: SideTable<[u8; 32], MessageClassRecord, Named> =
     SideTable::new(&side_table::AGENT_DISPATCH_RESIDENT_MESSAGE_CLASS);
 
 /// When a message to a busy resident reaches it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+// Each name is the class's choice in `MESSAGE_CLASS`, and its mark on a landed line.
+#[register("message.class")]
 pub(super) enum MessageClass {
     /// It lands on the running wake, its line marked `interrupt` (Engine
     /// RULING 05:39 Fri 13 Nov). The run's model turn reads it at once: a
@@ -83,19 +86,8 @@ pub(super) enum MessageClass {
 impl MessageClass {
     const ALL: [Self; 4] = [Self::Interrupt, Self::Steer, Self::FollowUp, Self::Digest];
 
-    /// The class's name: its choice in [`MESSAGE_CLASS`], and its mark on a
-    /// landed line.
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::Interrupt => "interrupt",
-            Self::Steer => "steer",
-            Self::FollowUp => "follow_up",
-            Self::Digest => "digest",
-        }
-    }
-
     fn from_choice(choice: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|class| class.as_str() == choice)
+        <Self as Register>::named(choice)
     }
 
     /// Whether it lands on a running wake.
@@ -106,8 +98,9 @@ impl MessageClass {
 
 /// Who sent a message, as its envelope stamps it: the key the class
 /// question's bands learn under.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("sender.kind")]
 enum SenderKind {
     /// A person of this vault: a live owner, or a live member of a shared
     /// vault whose role writes. The one sender an unsure interrupt asks.
@@ -121,15 +114,6 @@ enum SenderKind {
 }
 
 impl SenderKind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Self::VaultPerson => "vault_person",
-            Self::Person => "person",
-            Self::Agent => "agent",
-            Self::Unknown => "unknown",
-        }
-    }
-
     /// The canon default, with no classifier: people first.
     const fn default_class(self) -> MessageClass {
         match self {

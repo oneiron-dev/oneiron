@@ -10,6 +10,7 @@
 //! `same_as`, `no_link` and `unresolved`, over the claims by their call-local
 //! labels, each value whole.
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -28,8 +29,9 @@ use crate::{EntityId, Result};
 const ENTRY_ROOM: usize = 160;
 
 /// What one link question decided about its pair.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("nightly.link.verdict")]
 pub(in crate::dreamer_consolidation) enum NightlyLinkVerdict {
     /// The two state the same thing: a proposed SameAs status claim is
     /// written, never an applied edge.
@@ -46,11 +48,7 @@ impl NightlyLinkVerdict {
 
     /// The verdict as its question offers it.
     const fn option(self) -> &'static str {
-        match self {
-            Self::SameAs => "same_as",
-            Self::NoLink => "no_link",
-            Self::Unresolved => "unresolved",
-        }
+        self.as_str()
     }
 
     /// The verdict `decision` gives: the option it answers. An abstention,
@@ -58,10 +56,9 @@ impl NightlyLinkVerdict {
     /// unresolved.
     pub(in crate::dreamer_consolidation) fn of(decision: &KeptDecision) -> Self {
         match decision.answer() {
-            Some(DecisionAnswer::Choice(option)) => Self::ALL
-                .into_iter()
-                .find(|verdict| verdict.option() == option.as_str())
-                .unwrap_or(Self::Unresolved),
+            Some(DecisionAnswer::Choice(option)) => {
+                <Self as Register>::named(option.as_str()).unwrap_or(Self::Unresolved)
+            }
             _ => Self::Unresolved,
         }
     }
