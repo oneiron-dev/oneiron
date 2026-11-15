@@ -357,7 +357,8 @@ pub(crate) fn merge_arming_row_in_txn(
 /// arming, its pinned SKILL and its TURN arrive, or while the TURN's ChildOf
 /// edge is deferred here, it is left in the window, and a held row keeps its
 /// hold. An `Admitted` row consumes the riding wake this machine recorded
-/// under its key, on any machine.
+/// under its key, on any machine; a row that names an occurrence's wake is
+/// refused.
 pub(crate) fn merge_wake_row_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -370,13 +371,7 @@ pub(crate) fn merge_wake_row_in_txn(
     let wake = match decode_wake(bytes)? {
         WakeRow::Owed(wake) => wake,
         WakeRow::Admitted { admission, .. } => {
-            return Ok(
-                if consume_decided_wake_in_txn(vault, txn, map_key, admission)? {
-                    RowMerge::Written
-                } else {
-                    RowMerge::Held
-                },
-            );
+            return consume_decided_wake_in_txn(vault, txn, map_key, admission);
         }
     };
     if home_here_in_txn(vault, txn)? != Some(true) {
@@ -425,25 +420,31 @@ pub(crate) fn merge_wake_row_in_txn(
 /// recorded). The decision's identity is kept here (`DECIDED`), with or
 /// without a wake to consume, so no later landing of the turn records the
 /// wake again (FIX 5266). Only a wake whose own authority rides and whose
-/// admission the row names goes. Answers whether a row changed.
+/// admission the row names goes. An occurrence's wake is admitted where it
+/// was recorded, so a row that names one is refused, and no decision is kept
+/// for it.
 fn consume_decided_wake_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     map_key: &str,
     admission: [u8; 32],
-) -> Result<bool> {
+) -> Result<RowMerge> {
     let Some(key) = wake_key_ids(map_key) else {
-        return Ok(false);
+        return Ok(RowMerge::Held);
     };
+    let owed = WAKE.get(vault, &*txn, &key)?;
+    if owed.as_ref().is_some_and(|wake| wake.occurrence.is_some()) {
+        return Ok(RowMerge::Refused("names an occurrence's wake"));
+    }
     let kept = if DECIDED.get(vault, &*txn, &key)? == Some(admission)
         || ADMISSION.contains(vault, &*txn, &admission)?
     {
-        false
+        RowMerge::Held
     } else {
         DECIDED.put(vault, txn, &key, &admission)?;
-        true
+        RowMerge::Written
     };
-    let Some(wake) = WAKE.get(vault, &*txn, &key)? else {
+    let Some(wake) = owed else {
         return Ok(kept);
     };
     if !wake.authority.rides_to_home() || wake.admission_id() != admission {
@@ -451,7 +452,7 @@ fn consume_decided_wake_in_txn(
     }
     WAKE.delete(vault, txn, &key)?;
     super::index::unindex_wake_in_txn(vault, txn, wake.authority.actor(), key)?;
-    Ok(true)
+    Ok(RowMerge::Written)
 }
 
 /// Drops, in the caller's writer, the riding wake this machine recorded
@@ -592,7 +593,8 @@ pub(crate) fn owed_wake_arming_row_in_txn(
 }
 
 /// The `Admitted` rows TURN `turn` owes the window from this machine's own
-/// decisions (FIX 5266): each riding wake of the turn this machine admitted,
+/// decisions (FIX 5266): each riding wake of the turn this machine admitted
+/// (never an occurrence's, which is admitted where it was recorded),
 /// whether or not a machine carried it as owed (the home admits its own
 /// turns' wakes, which no `Owed` row ever carried), and each decision it
 /// imported. A machine elected home later then holds every decision, and no
@@ -608,7 +610,7 @@ pub(crate) fn turn_decided_rows_in_txn(
         let Some(record) = ADMISSION.get(vault, txn, &admission)? else {
             continue;
         };
-        if !record.wake.authority.rides_to_home() {
+        if record.wake.occurrence.is_some() || !record.wake.authority.rides_to_home() {
             continue;
         }
         let (turn, registration) = record.wake.key();
@@ -651,6 +653,11 @@ pub(crate) fn admitted_row_in_txn(
     let Ok(WakeRow::Owed(wake)) = decode_wake(bytes) else {
         return Ok(None);
     };
+    // An occurrence's wake is admitted where it was recorded, never through
+    // a carried row.
+    if wake.occurrence.is_some() {
+        return Ok(None);
+    }
     let admission = wake.admission_id();
     if !ADMISSION.contains(vault, txn, &admission)? {
         return Ok(None);
