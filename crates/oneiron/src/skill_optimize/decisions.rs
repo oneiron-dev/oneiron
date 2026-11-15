@@ -214,7 +214,9 @@ fn score<S: HeldOutReplayNotes + ?Sized>(
     score_cut(scorer, kind, evidence, state, None)
 }
 
-/// [`score`] over a state cut to fit, its receipt naming the cut.
+/// [`score`] over a state cut to fit, its receipt naming the cut. A cut of the
+/// judgment's instructions refuses before anything is asked: a prefix scored as
+/// the whole is not the judgment. A cut of the reserve sample alone still scores.
 fn score_cut<S: HeldOutReplayNotes + ?Sized>(
     scorer: &S,
     kind: &str,
@@ -222,6 +224,14 @@ fn score_cut<S: HeldOutReplayNotes + ?Sized>(
     state: &Value,
     cut: Option<StateCut>,
 ) -> Result<f32> {
+    if cut
+        .as_ref()
+        .is_some_and(|cut| cut.text_cut_at_bytes.is_some())
+    {
+        return Err(invalid(
+            "skill judgment instructions were cut to fit the decision state bound; a prefix is not scored as the whole",
+        ));
+    }
     let decision = ask_cut(
         scorer,
         kind,
