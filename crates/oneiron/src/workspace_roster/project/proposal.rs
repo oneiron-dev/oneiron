@@ -624,12 +624,12 @@ impl Vault {
             card_id,
             principal.to_hex(),
             message.to_hex(),
-            ProjectGoalDraft {
+            crate::genui::ProjectGoalDraft {
                 goal: "Answer requests".into(),
                 why: "Reduce repeats".into(),
                 axes: vec!["accuracy".into()],
             },
-            ProjectProposalPicks {
+            crate::genui::ProjectProposalPicks {
                 leader_agent_def_ref: leader.to_hex(),
                 board_human_refs: vec![principal.to_hex()],
                 budget_share_bps: 0,
