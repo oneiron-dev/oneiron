@@ -670,10 +670,10 @@ pub(super) fn refund_on_visitor_cancel_in_writer(
 /// owed back. A booking the visitor already cancelled keeps the refund its
 /// own cancel decided, and a booking with no deposit is untouched.
 ///
-/// Calendar ingest calls this after it records the cancellation, outside any
-/// writer of its own, and again on every later sighting of the same explicit
-/// cancellation: the refund is its own commit, so a stop between the two
-/// commits is repaired by the next read of the feed. A deposit that already
+/// Calendar ingest calls this before it records the cancellation's status,
+/// outside any writer of its own, and again on every later sighting of the
+/// same explicit cancellation: the refund is its own commit, so a stop before
+/// it is repaired by the next read of the feed. A deposit that already
 /// owes or has made its refund, or was voided, is left as it stands, and an
 /// EVENT with no deposit costs one read.
 ///
