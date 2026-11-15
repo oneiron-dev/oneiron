@@ -79025,6 +79025,20 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [
+      "HeldEntry"
+     ],
+     "path": "src/store/directory_exchange.rs",
+     "purpose": "Descriptor-held entries for the atomic exchange in ARCH-0038's restore path",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 4,
+      "struct": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [],
      "path": "src/store/document_frame_tags.rs",
      "purpose": "Document frame tags shared by persisted document consumers and transport",
@@ -79145,7 +79159,7 @@
      "path": "src/store/gate_decision/checkpoint_custody.rs",
      "purpose": "What a checkpoint restore needs from exterior key custody, the side restore's custody fork (ARCH-0038…",
      "surface": {
-      "crate-vis": 35
+      "crate-vis": 37
      }
     },
     {
@@ -79197,6 +79211,22 @@
      "surface": {
       "crate-vis": 19
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/checkpoint_custody/tests_held_swap.rs",
+     "purpose": "The restore swap exchanges inside held parents (ARCH-0038, restore path)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/store/gate_decision/checkpoint_custody/tests_live_mark.rs",
+     "purpose": "Every write reads the archive mark (ARCH-0038, restore path)",
+     "surface": {}
     },
     {
      "bucket": "s",
@@ -79527,7 +79557,7 @@
      "path": "src/store/handle.rs",
      "purpose": "The vault handle shape: [`RawDatabases`], [`StoreCore`], [`StoreOwner`], [`Store`], [`SessionStoreView`]…",
      "surface": {
-      "crate-vis": 29,
+      "crate-vis": 32,
       "struct": 5
      }
     },
@@ -80377,7 +80407,7 @@
      "surface": {
       "crate-vis": 166,
       "mod": 69,
-      "re-export": 88
+      "re-export": 89
      }
     },
     {
@@ -104693,7 +104723,7 @@
      "purpose": "EMB-5 speculative retrieval over ASR partials (ONE-EMBED E7)"
     },
     "store": {
-     "files": 396,
+     "files": 399,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -104954,7 +104984,7 @@
    },
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7592,
+   "source_files": 7595,
    "test_files": 1324
   },
   "oneiron-agent-runtime": {
@@ -134593,7 +134623,7 @@
      "path": "src/api/esign/presentation.rs",
      "purpose": "Stateless field editor and capability-scoped ceremony presentation adapters",
      "surface": {
-      "crate-vis": 8
+      "crate-vis": 6
      }
     },
     {
@@ -136972,6 +137002,16 @@
      "purpose": "The open inbox's flood cap: the one refusal its keyless intake makes",
      "surface": {
       "crate-vis": 5
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
+     "path": "src/api/first_party_html.rs",
+     "purpose": "First-party HTML on the API's origin (ARCH-0050 #artifact-origin-open): the signing ceremony (`GET /sign`)…",
+     "surface": {
+      "crate-vis": 3
      }
     },
     {
@@ -149927,7 +149967,7 @@
      "path": "src/owner/backup/restore.rs",
      "purpose": "Restores of one vault's backups: over the stopped vault, where no vault is yet, and the activation of the…",
      "surface": {
-      "crate-vis": 11
+      "crate-vis": 12
      }
     },
     {
@@ -153027,6 +153067,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/first_party_html_isolation.rs",
+     "purpose": "First-party HTML on the API's origin is isolated from every other document there (ARCH-0050…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -153764,7 +153812,7 @@
      "purpose": "The server's background AI work, built from `[models]`: the Dreamer, the saved-workflow pump, and the seats…"
     },
     "api": {
-     "files": 786,
+     "files": 787,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -154319,8 +154367,8 @@
    },
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
-   "source_files": 1885,
-   "test_files": 260
+   "source_files": 1886,
+   "test_files": 261
   },
   "oneiron-skill-attribution": {
    "files": [
