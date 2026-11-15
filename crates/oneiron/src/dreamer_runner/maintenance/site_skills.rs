@@ -25,6 +25,9 @@
 
 mod distill;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use distill::site_skill_digest_for_test;
+
 use std::collections::BTreeMap;
 
 use distill::{DistillInputs, SiteSkillCandidate};

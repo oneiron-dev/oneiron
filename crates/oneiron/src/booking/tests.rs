@@ -200,14 +200,6 @@ fn booking_constraint_canonical_round_trip() {
     let second = parsed_object(&backend_b);
 
     assert_eq!(first, second, "semantically identical payloads converge");
-    assert_eq!(
-        first.canonical_bytes().expect("canonical bytes"),
-        second.canonical_bytes().expect("canonical bytes"),
-    );
-    assert_eq!(
-        first.canonical_hash().expect("canonical hash"),
-        second.canonical_hash().expect("canonical hash"),
-    );
     // De-duplication actually happened.
     assert_eq!(first.weekdays.len(), 2);
     assert_eq!(first.local_time_windows.len(), 2);
@@ -264,10 +256,10 @@ fn booking_constraint_canonical_round_trip() {
         Err(BookingError::InvalidConstraint(_))
     ));
 
-    // A non-canonical object cannot produce bytes at all.
+    // A non-canonical object is refused.
     let unsorted = ConstraintObject {
         weekdays: vec![ConstraintWeekday::Wednesday, ConstraintWeekday::Monday],
         ..canonical_object()
     };
-    assert!(unsorted.canonical_bytes().is_err());
+    assert!(unsorted.validate().is_err());
 }

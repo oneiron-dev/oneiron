@@ -55,6 +55,8 @@ pub mod browser_capture;
 mod browser_solved;
 mod claim_admission;
 mod claim_conflict;
+#[cfg(oneiron_test_support)]
+pub(crate) use claim_conflict::claim_conflict_packet_digest_for_test;
 mod claim_stale;
 pub mod clustering;
 pub mod commitment_doors;

@@ -1,9 +1,13 @@
 //! Browser workflow resolution and candidate counters read by the Coach.
 use crate::entity_id::EntityId;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The domain a candidate program's input fingerprint is hashed in (CUA E8,
-/// CALLS row "candidate dedup"), for the Coach's seen marker.
-pub const CANDIDATE_DOMAIN: &[u8] = b"oneiron:browser-program-induction:v1";
+/// CALLS row "candidate dedup"), for the Coach's seen marker: the tag of
+/// `purposes::browser_library::PROGRAM_CANDIDATE`.
+pub const CANDIDATE_DOMAIN: &[u8] = purposes::browser_library::PROGRAM_CANDIDATE
+    .tag()
+    .as_bytes();
 
 /// A program whose library runs failed, live or retired (CUA E8a): its
 /// own record's lifetime count, never a successor's.

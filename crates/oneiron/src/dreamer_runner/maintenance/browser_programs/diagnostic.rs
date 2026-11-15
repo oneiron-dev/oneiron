@@ -11,7 +11,7 @@ use crate::browser_library::{
     ScopedSolvedGroupKey, WorkflowFiling, filing_anchor_in, mark_program_seen_in_txn,
     program_seen_in, workflow_filing_id,
 };
-use crate::dreamer_runner::maintenance::browser_candidate::{CANDIDATE_DOMAIN, ProgramSeen};
+use crate::dreamer_runner::maintenance::browser_candidate::ProgramSeen;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::{EntityId, Result};
 
@@ -75,14 +75,11 @@ impl Pass<'_> {
             let mut value = serde_json::to_value(body).map_err(|_| super::super::invalid())?;
             let bytes = serde_json::to_vec(&value).map_err(|_| super::super::invalid())?;
             let version = INDUCTION_VERSION.to_be_bytes();
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(CANDIDATE_DOMAIN);
-            for part in [version.as_slice(), digest.as_slice(), bytes.as_slice()] {
-                let len = u64::try_from(part.len()).unwrap_or(u64::MAX);
-                hasher.update(&len.to_be_bytes());
-                hasher.update(part);
-            }
-            let fingerprint = *hasher.finalize().as_bytes();
+            let fingerprint = super::induction::digest(&[
+                version.as_slice(),
+                digest.as_slice(),
+                bytes.as_slice(),
+            ]);
             value["fingerprint"] = bytes_to_hex_lower(&fingerprint).into();
             if program_seen_in(self.vault, txn, &fingerprint)?.is_some() {
                 return Ok(Landing::Seen);
