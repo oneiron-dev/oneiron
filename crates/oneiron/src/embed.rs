@@ -20,6 +20,7 @@ mod repo_projection;
 #[cfg(feature = "sync")]
 mod routing;
 mod session_media;
+pub(crate) mod setting_keys;
 mod space;
 mod space_card;
 mod space_move;
