@@ -2,8 +2,8 @@
 //! ARCH-0052 #d5-proof-open.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, mpsc};
-use std::time::Duration;
+use std::sync::{Arc, Mutex, TryLockError, mpsc};
+use std::time::{Duration, Instant};
 
 use crate::consent::AuthenticatedOwner;
 use crate::error::Result;
@@ -79,10 +79,12 @@ fn with_on_record_session<T>(
 enum Act {
     FlipBack,
     Close,
+    /// The flip back, run inside a write on another vault.
+    FlipBackInsideAnotherVaultsWrite,
 }
 
 impl Act {
-    fn run(self, vault: &Vault, session_ref: &str) -> Result<()> {
+    fn run(self, vault: &Vault, other: &Vault, session_ref: &str) -> Result<()> {
         match self {
             Self::FlipBack => vault
                 .set_off_record_session_mode(session_ref, OffRecordMode::OffRecord)
@@ -90,6 +92,10 @@ impl Act {
             Self::Close => vault
                 .close_off_record_session(session_ref, vault.off_record_receipt_log(session_ref)?)
                 .map(|_| ()),
+            Self::FlipBackInsideAnotherVaultsWrite => other.with_write_txn(|_| {
+                vault.set_off_record_session_mode(session_ref, OffRecordMode::OffRecord)?;
+                Ok(())
+            }),
         }
     }
 }
@@ -105,6 +111,8 @@ fn race(act: Act) -> RaceOutcome {
     // A deadlock inside a scope also blocks its implicit joins while
     // unwinding. Keep the watchdog outside a detached driver instead.
     std::thread::spawn(move || {
+        let (_other_dir, other) = crate::test_util::open_test_vault_with(VaultConfig::default());
+        let other = &other;
         let outcome = with_on_record_session(|vault, session, proof| {
             let before = base_entity_count(vault);
             let (checked_tx, checked_rx) = mpsc::channel();
@@ -134,7 +142,7 @@ fn race(act: Act) -> RaceOutcome {
                     .expect("the witness reached its commit");
                 let (act_tx, act_rx) = mpsc::channel();
                 let acting = scope.spawn(move || {
-                    let act_ok = act.run(vault, session.session_ref()).is_ok();
+                    let act_ok = act.run(vault, other, session.session_ref()).is_ok();
                     let count_when_the_act_returned = base_entity_count(vault);
                     act_tx
                         .send((act_ok, count_when_the_act_returned))
@@ -186,6 +194,84 @@ fn a_close_on_record_returns_only_after_a_base_write_that_passed_its_route_check
         outcome.landed_when_the_act_returned,
         "the close returned before a base write that passed its route check committed"
     );
+}
+
+#[test]
+fn a_flip_back_inside_another_vaults_write_waits_for_a_base_write_that_passed_its_route_check() {
+    let outcome = race(Act::FlipBackInsideAnotherVaultsWrite);
+    assert!(outcome.witness.is_ok(), "witness: {:?}", outcome.witness);
+    assert!(
+        outcome.act_ok,
+        "the flip back inside another vault's write failed"
+    );
+    assert!(
+        outcome.landed_when_the_act_returned,
+        "the flip back inside another vault's write returned before a base write that passed its route check committed"
+    );
+}
+
+/// Returns once a flip outside the write holds the stretch's state lock, or
+/// has published its flip and let the lock go.
+fn wait_for_the_flip_outside_the_write(vault: &Vault, session_ref: &str) {
+    let entry = super::registry::live_session_entry(&vault.store, session_ref)
+        .expect("the stretch is live");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        match entry.state.try_lock() {
+            Err(TryLockError::WouldBlock) => return,
+            Ok(state) if state.record.mode == OffRecordMode::OffRecord => return,
+            Ok(_) => {}
+            Err(TryLockError::Poisoned(_)) => panic!("the stretch's state lock is poisoned"),
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the flip outside the write never took the stretch's state lock"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
+#[test]
+fn a_flip_back_inside_a_write_returns_while_another_flip_back_waits_for_that_writer() {
+    let (done_tx, done_rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let outcome = with_on_record_session(|vault, session, _proof| {
+            let (in_write_tx, in_write_rx) = mpsc::channel();
+            let (go_tx, go_rx) = mpsc::channel::<()>();
+            std::thread::scope(|scope| {
+                // This one holds the vault's writer, then flips the stretch
+                // back inside that write.
+                let inside = scope.spawn(move || {
+                    vault.with_write_txn(|_| {
+                        in_write_tx.send(()).expect("announce the open write");
+                        go_rx
+                            .recv_timeout(Duration::from_secs(60))
+                            .expect("release the write");
+                        session.flip_off_record()
+                    })
+                });
+                in_write_rx
+                    .recv_timeout(Duration::from_secs(30))
+                    .expect("the write opened");
+                // This one flips back outside any write, so it waits for the
+                // writer the first one holds.
+                let outside = scope.spawn(move || session.flip_off_record());
+                wait_for_the_flip_outside_the_write(vault, session.session_ref());
+                go_tx.send(()).expect("release the write");
+                let inside = inside
+                    .join()
+                    .expect("the flip inside a write must not panic");
+                let outside = outside.join().expect("the flip outside must not panic");
+                (inside, outside)
+            })
+        });
+        let _ = done_tx.send(outcome);
+    });
+    let (inside, outside) = done_rx
+        .recv_timeout(Duration::from_secs(120))
+        .expect("the two flips stood still: a deadlock");
+    inside.expect("the flip back inside a write returns");
+    outside.expect("the flip back outside a write returns");
 }
 
 #[test]

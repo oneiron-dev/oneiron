@@ -129,7 +129,7 @@ impl Vault {
             let rekeys = crate::channel_identity::AssignmentRekeys::begin(&self.store);
             let vad_scope = crate::batch::VadPostcommitScope::new(self, wtxn);
             let result = {
-                let _active_write_txn = crate::store::active_write_txn_guard();
+                let _active_write_txn = crate::store::active_write_txn_guard(self.store.env.id());
                 // A key this write's mask found raises its notice here.
                 match check_federation_imports_in_txn(self, wtxn)
                     .map_err(E::from)

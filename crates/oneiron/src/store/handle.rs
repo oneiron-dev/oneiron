@@ -65,14 +65,24 @@ pub struct RawDatabases {
 pub struct StoreEnv {
     env: Env,
     sealed: std::sync::atomic::AtomicBool,
+    id: u64,
 }
 
 impl StoreEnv {
     pub(in crate::store) fn new(env: Env) -> Self {
+        static NEXT_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         Self {
             env,
             sealed: std::sync::atomic::AtomicBool::new(false),
+            id: NEXT_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
         }
+    }
+
+    /// A number no other environment opened in this process shares. A write
+    /// names it as it raises the thread's write depth, so a door that waits
+    /// for this environment's writer knows whether the thread holds it.
+    pub(crate) fn id(&self) -> u64 {
+        self.id
     }
 
     /// A write transaction, refused on a sealed (archived) vault. The seal

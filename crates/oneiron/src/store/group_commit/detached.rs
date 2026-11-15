@@ -523,7 +523,7 @@ impl StoreCore {
             });
         };
         group.ran += 1;
-        let _active_write_txn = active_write_txn_guard();
+        let _active_write_txn = active_write_txn_guard(self.env.id());
         let mut child = match self.env.nested_write_txn(shared) {
             Ok(child) => child,
             Err(error) => {

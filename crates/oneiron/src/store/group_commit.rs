@@ -74,7 +74,7 @@ use crate::store::setting_seed::GROUP_COMMIT_WINDOW_MS;
 use crate::store::setting_seed::SettingSpec;
 
 use super::legal_hold::RefusalBatch;
-use super::{Store, StoreCore, active_write_txn_depth};
+use super::{Store, StoreCore, active_write_txn_depth, active_write_txn_holds};
 
 mod detached;
 
@@ -905,10 +905,12 @@ impl Store {
     /// last route check before that commits before they return, and one that
     /// checks after it is refused (ARCH-0052 #d5-proof-open). It takes the
     /// writer past the archive seal, as it writes nothing: a sealed vault's
-    /// close does not fail on it. A thread inside a write holds the writer
-    /// itself, so no other write is open, and it does not wait.
+    /// close does not fail on it. A thread inside a write on this store holds
+    /// its writer itself, so no other write is open on it, and it does not
+    /// wait; a write on another store does not stop the wait. The caller
+    /// holds no lock a base writer may take inside its write.
     pub(crate) fn wait_for_open_write_txn(&self) -> Result<(), Error> {
-        if active_write_txn_depth() > 0 {
+        if active_write_txn_holds(self.env.id()) {
             return Ok(());
         }
         self.env.past_seal_write_txn()?.abort();
