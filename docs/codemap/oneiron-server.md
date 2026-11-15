@@ -1643,7 +1643,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/models/media/jobs.rs` | src | m | 23 crate-vis | — | The `ai.video` jobs a restart keeps (FIX-LIST 465) |
 | `src/models/media/jobs/custody.rs` | src | s | 2 crate-vis | — | A media job's owners and its erased answer (KS-2B2, FIX 5683 part B2) |
 | `src/models/media/options.rs` | src | s | 7 fn · 3 crate-vis | — | Media seat queries and model option rows |
-| `src/models/media/replay.rs` | src | m | 1 fn · 13 crate-vis | — | A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465) |
+| `src/models/media/replay.rs` | src | m | 1 fn · 12 crate-vis | — | A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465) |
 | `src/models/media/run_line.rs` | src | m | 1 fn · 22 crate-vis | — | A program's media jobs on its run's line (FIX 780, FIX 6083) |
 | `src/models/media/run_replay.rs` | src | s | 8 crate-vis | — | One in-flight media run per replay key, without keeping another durable memo |
 | `src/models/media/scoped_job_door.rs` | src | s | 6 crate-vis | — | Doors for `tests/media_job_staged_spend.rs` ([MEDIA-JOB-SPEND-LOST-ON-PROCESS-DEATH], S7299-P1): a video job… |
@@ -1827,7 +1827,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/replay_judge/replays.rs` | src | m | 4 crate-vis | — | The serve judge's replay evidence: each reserved receipt's task and response, read whole from its attempt… |
 | `src/residence_machines.rs` | src | s | 2 crate-vis | — | The machines whose residence this host can act on (OF-534, FIX 531): the `vault.residence.*` rows name a… |
 | `src/runtime/artifact_backend.rs` | src | s | 2 crate-vis | — | Host-configured concurrency custody for artifact backend requests |
-| `src/runtime/clock.rs` | src | s | 1 struct · 1 enum · 5 fn · 1 crate-vis | ManualClockFile, RuntimeClock | Shared wall-clock time in Unix milliseconds, and `[runtime] clock`: the clock this server's vault reads |
+| `src/runtime/clock.rs` | src | s | 1 struct · 1 enum · 5 fn | ManualClockFile, RuntimeClock | `[runtime] clock`: the clock this server's vault reads |
 | `src/runtime/config.rs` | src | m | 1 struct · 8 fn · 4 crate-vis | RuntimeConfig | Resolved runtime config including the 163-line resolution impl |
 | `src/runtime/defaults.rs` | src | m | 5 struct · 11 fn · 6 crate-vis | RuntimeConfigOverride, RuntimeRoleDefaultOverrides, RuntimeRoleDefaults, RuntimeRoleTarget, RuntimeRoleTargetOverride | Per-role default targets, explicitness tracking, and the full override-merge cluster |
 | `src/runtime/gpu.rs` | src | m | 5 struct · 1 enum · 15 fn · 2 const | GpuDerivationLease, GpuHealth, GpuLease, GpuPodHours, GpuRegistry, GpuRegistryError | Per-region single-writer GPU registry, suitable for a Durable Object owner |

@@ -148666,7 +148666,7 @@
      "path": "src/models/media/replay.rs",
      "purpose": "A job's submit kept before it goes out, and keyed replays (FIX 2248, FIX 2962, FIX 465)",
      "surface": {
-      "crate-vis": 13,
+      "crate-vis": 12,
       "fn": 1
      }
     },
@@ -150583,9 +150583,8 @@
       "RuntimeClock"
      ],
      "path": "src/runtime/clock.rs",
-     "purpose": "Shared wall-clock time in Unix milliseconds, and `[runtime] clock`: the clock this server's vault reads",
+     "purpose": "`[runtime] clock`: the clock this server's vault reads",
      "surface": {
-      "crate-vis": 1,
       "enum": 1,
       "fn": 5,
       "struct": 1
