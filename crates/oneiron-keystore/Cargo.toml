@@ -15,6 +15,7 @@ doctest = false
 # from Linux (scripts/ci/check_keystore_apple_target.sh; no CI job runs it yet),
 # so nothing here may need a C toolchain or an SDK at build time.
 [dependencies]
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 thiserror = { workspace = true }
 zeroize = { version = "1.8", features = ["derive"] }
 
@@ -43,9 +44,10 @@ windows-future = "0.3"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_System_Console", "Win32_System_RemoteDesktop", "Win32_UI_WindowsAndMessaging"] }
 
 [features]
-# The process-memory adapter (slots and sealed bytes), the scripted presence
-# prompt and device PIN, and the manual presence clocks, for this crate's
-# tests and its dependents' tests.
+# The process-memory adapter (slots, sealed bytes and a counted auth-bound
+# secret), the scripted presence prompt and device PIN, the manual presence
+# clocks, and the TPM tier on a socket, for this crate's tests and its
+# dependents' tests.
 test-keystore = []
 
 [dev-dependencies]
@@ -59,6 +61,12 @@ required-features = ["test-keystore"]
 # The sealed-bytes home's tests compare the file tier with the memory tier.
 [[test]]
 name = "sealed_bytes"
+required-features = ["test-keystore"]
+
+# The TPM tier's device PIN key, against a scripted chip on a socket and the
+# memory tier's counter; a software TPM and this machine's chip when asked.
+[[test]]
+name = "linux_tpm_auth_bound"
 required-features = ["test-keystore"]
 
 [lints]

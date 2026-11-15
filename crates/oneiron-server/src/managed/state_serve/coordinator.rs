@@ -348,6 +348,9 @@ async fn serve_with_handles(
         managed.hypnos_socket.clone(),
         &credentials,
     )?);
+    // The recovery box's kit-only hold rides the ledger's socket and spawn
+    // identity; the recovery preset switch is its only caller.
+    sync_server.configure_recovery_box_hold(ledger.recovery_box_hold())?;
     // The native preview socket has only exact held-lease origins. No flag
     // means no registration caller or listener, preserving standalone hosts.
     let previews = managed

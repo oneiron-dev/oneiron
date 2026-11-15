@@ -15,6 +15,7 @@ pub mod board_child_done;
 pub mod board_task_wakes;
 pub mod builtin_pack_seed;
 pub mod callable_skill;
+pub mod campaign_member_index;
 pub mod campaign_opt_out_line;
 pub mod check_in;
 pub mod checkpoint_registry;

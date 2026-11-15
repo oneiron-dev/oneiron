@@ -56,6 +56,8 @@ mod peer;
 pub mod preview;
 /// Native supervisor registration for the same private preview lease.
 pub mod preview_route;
+/// The kit-only hold on this vault's recovery box, asked of the supervisor.
+pub mod recovery_box_hold;
 mod relay;
 /// The relay locker delete this engine executes (FIX 6826).
 mod relay_delete;
