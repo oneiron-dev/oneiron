@@ -37661,7 +37661,7 @@
      "surface": {
       "crate-vis": 17,
       "fn": 9,
-      "re-export": 14,
+      "re-export": 15,
       "struct": 3
      }
     },
@@ -37798,10 +37798,21 @@
      "bucket": "s",
      "kind": "src",
      "notable": [],
+     "path": "src/embed/refusal.rs",
+     "purpose": "The refusal an embed release answers, readable in every build: the idle publisher matches it with or without…",
+     "surface": {
+      "crate-vis": 2,
+      "fn": 1
+     }
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
+     "notable": [],
      "path": "src/embed/release.rs",
      "purpose": "Which pending rows may leave this device, judged row by row (FIX 9486): the release a host asks before it…",
      "surface": {
-      "fn": 2
+      "fn": 3
      }
     },
     {
@@ -103904,7 +103915,7 @@
      "purpose": "ARTL-4 (OF-368 D5/D6/D7): retained-output settle + receipts"
     },
     "embed": {
-     "files": 42,
+     "files": 43,
      "impl_vault": true,
      "largest_src_bucket": "L",
      "layout": "file+dir",
@@ -104984,7 +104995,7 @@
    },
    "over_bar": 271,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
-   "source_files": 7595,
+   "source_files": 7596,
    "test_files": 1324
   },
   "oneiron-agent-runtime": {
@@ -151082,6 +151093,14 @@
     },
     {
      "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/server/embedding/idle_release_tests.rs",
+     "purpose": "The idle publisher releases each send to an embedder off this device (census L5-32; DEC-0005…",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
      "kind": "src",
      "notable": [],
      "path": "src/server/hook_regen_pass.rs",
@@ -154267,7 +154286,7 @@
      "purpose": "The saved-query sweep (ARCH-0059 `eval`, decide-host 1193): every active Wake or Reactive saved query is…"
     },
     "server": {
-     "files": 97,
+     "files": 98,
      "impl_vault": false,
      "largest_src_bucket": "L",
      "layout": "dir",
@@ -154368,7 +154387,7 @@
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1886,
-   "test_files": 261
+   "test_files": 262
   },
   "oneiron-skill-attribution": {
    "files": [
