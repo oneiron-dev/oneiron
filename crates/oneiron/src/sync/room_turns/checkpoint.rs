@@ -18,7 +18,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::receipt::ERASED_CALL_IDENTITY;
 use crate::store::checkpoint_payload::rows::{NOT_SPELLED_BACK, OwnerRef, bad_part};
-use crate::sync::carrier_parts::is_part_key;
+use crate::sync::carrier_parts::{is_part_key, join_parts_from};
 use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified, ValueSplit};
 use crate::workspace_roster::RoomTurn;
 
@@ -71,6 +71,21 @@ pub(in crate::sync) fn entry_joined(key: &str, joined: &[u8]) -> Placement {
         Ok(turn) => placed(key, turn, joined),
         Err(_) => Placement::unclassified(None, SyncUnclassified::Undecodable),
     }
+}
+
+/// Whether the turn manifest `value` under `key` is the turn its key names,
+/// its parts joined through `part` (UC-10 PR 1): `Some(true)` when the
+/// joined row is a turn of that id, `Some(false)` when the parts join to
+/// another turn or to no turn row. `None` for a value that is no manifest,
+/// and for one whose parts do not all join.
+pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
+    key: &str,
+    value: &[u8],
+    part: impl FnMut(&str) -> Option<B>,
+) -> Option<bool> {
+    let parts = crate::sync::room_parts::manifest(value)?;
+    let joined = join_parts_from(&parts, part)?;
+    Some(decode_held(&joined).is_ok_and(|turn| turn.turn_id == key))
 }
 
 /// Where `turn`, stored under `key` as `value`, goes: with its TURN, held

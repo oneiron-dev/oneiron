@@ -8,9 +8,11 @@
     reason = "KS7-3b's Loro projection drives this; CHECKPOINT_PAYLOADS_ENABLED is false until KS7-6"
 )]
 
+use super::erased::decode_held;
 use super::{carrier_key, decode, named};
+use crate::room_codec::offer_parts::{self, OfferManifest};
 use crate::store::checkpoint_payload::rows::OwnerRef;
-use crate::sync::carrier_parts::is_part_key;
+use crate::sync::carrier_parts::{is_part_key, join_parts_from};
 use crate::sync::checkpoint_payload::{Holder, Placement, SyncUnclassified};
 use crate::workspace_roster::RoomSideRow;
 
@@ -52,4 +54,22 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
         rides.map(|id| OwnerRef::entity(&id)),
         SyncUnclassified::ActorSplit(SIDE_ROW_ACTORS),
     )
+}
+
+/// Whether the side row manifest `value` under `key` is the row its key
+/// names, its parts joined through `part` (UC-10 PR 1), as the merge reads
+/// a joined row: `Some(true)` when the joined row rides under its own key,
+/// `Some(false)` when the parts join to another row or to none. `None` for
+/// a value that is no manifest, and for one whose parts do not all join.
+pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
+    key: &str,
+    value: &[u8],
+    part: impl FnMut(&str) -> Option<B>,
+) -> Option<bool> {
+    let joined = if offer_parts::is_manifest(value) {
+        OfferManifest::parse(value)?.joined_from(part)?
+    } else {
+        join_parts_from(&crate::sync::room_parts::generic_manifest(value)?, part)?
+    };
+    Some(decode_held(&joined).is_ok_and(|row| carrier_key(&row, &joined) == key))
 }

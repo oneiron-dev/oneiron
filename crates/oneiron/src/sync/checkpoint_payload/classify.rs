@@ -68,6 +68,9 @@ pub(super) struct Classifier<'o> {
     pub(super) homes: Vec<Home>,
     pub(super) plans: Vec<Plan>,
     pub(super) refusal: Option<Refusal>,
+    /// The first refusal is a parted row's, under the holder its key names
+    /// (UC-10 PR 1): only the joined row shows whose row it is.
+    pub(super) parted_refusal: bool,
     /// A part was met before the manifests were noted.
     pub(super) needs_parts: bool,
     /// The room turn map's parted rows the first pass met (FIX 12153).
@@ -90,6 +93,7 @@ impl<'o> Classifier<'o> {
             homes: Vec::new(),
             plans: Vec::new(),
             refusal: None,
+            parted_refusal: false,
             needs_parts: false,
             turns: TurnInventory::default(),
             turn,
@@ -130,6 +134,19 @@ impl<'o> Classifier<'o> {
         None
     }
 
+    /// [`Self::refuse`] for a parted row's manifest or part, whose owner is
+    /// the holder its key names (UC-10 PR 1).
+    fn refuse_parted(
+        &mut self,
+        owner: Option<OwnerRef>,
+        reason: SyncUnclassified,
+    ) -> Option<Vec<OwnerId>> {
+        if self.refusal.is_none() {
+            self.parted_refusal = true;
+        }
+        self.refuse(owner, reason)
+    }
+
     /// A part's withheld digest key (FIX 10278): one copy under each holder
     /// a manifest names the part for, the same holders its value goes to,
     /// whole. Met before the manifests were noted, the capture runs again
@@ -147,7 +164,7 @@ impl<'o> Classifier<'o> {
         };
         let holders = match placed {
             Placement::Owned(holders) => holders,
-            Placement::Unclassified { owner, reason } => return self.refuse(owner, reason),
+            Placement::Unclassified { owner, reason } => return self.refuse_parted(owner, reason),
             _ => return self.refuse(None, SyncUnclassified::OrphanPart),
         };
         if holders.is_empty() {
@@ -288,6 +305,7 @@ impl Classify for Classifier<'_> {
             self.needs_parts = true;
             return None;
         }
+        let part = matches!(placed, Placement::Part);
         let placed = match placed {
             Placement::Part => match &self.parts {
                 Some(parts) => parts.place(root, key),
@@ -317,7 +335,10 @@ impl Classify for Classifier<'_> {
                 holders: owned,
                 joined: Some(reason),
                 ..
-            } => return self.refuse(owned.first().map(|holder| holder.owner), reason),
+            } => return self.refuse_parted(owned.first().map(|holder| holder.owner), reason),
+            Placement::Unclassified { owner, reason } if part => {
+                return self.refuse_parted(owner, reason);
+            }
             Placement::Unclassified { owner, reason } => return self.refuse(owner, reason),
             Placement::Part => return self.refuse(None, SyncUnclassified::OrphanPart),
         };

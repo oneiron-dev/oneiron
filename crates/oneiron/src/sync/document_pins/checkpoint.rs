@@ -16,6 +16,7 @@ use super::{Carried, carrier_key, decode_carried, decode_pin, key_ids};
 use crate::entity_doc::DocActor;
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::room_codec::document_pins::carried_pin_from;
 use crate::store::checkpoint_payload::rows::{OwnerRef, bad_part};
 use crate::sync::carrier_parts::is_part_key;
 use crate::sync::checkpoint_payload::{Holder, KeyClass, Placement, SyncUnclassified, ValueSplit};
@@ -64,6 +65,26 @@ pub(in crate::sync) fn entry(key: &str, value: &[u8]) -> Placement {
             None => undecodable(),
         },
         _ => undecodable(),
+    }
+}
+
+/// Whether the parted pin `value` under `key` is the pin its key names, its
+/// parts joined through `part` (UC-10 PR 1), as the pin codec reads a
+/// joined pin: `Some(true)` when the joined pin is filed under its own key,
+/// `Some(false)` when the parts join to another pin or to none. `None` for a
+/// value that is no parted pin, and for one whose parts do not all join.
+pub(in crate::sync) fn bound<B: AsRef<[u8]>>(
+    key: &str,
+    value: &[u8],
+    part: impl FnMut(&str) -> Option<B>,
+) -> Option<bool> {
+    if !matches!(decode_carried(value), Ok(Carried::Parted(_))) {
+        return None;
+    }
+    match carried_pin_from(key, value, part) {
+        Ok(Some(_)) => Some(true),
+        Ok(None) => None,
+        Err(_) => Some(false),
     }
 }
 
