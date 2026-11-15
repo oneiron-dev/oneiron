@@ -150,7 +150,7 @@ pub(crate) use self::kernel::{
     FIELD_TARGET_CLASS, MAX_RECEIPT_QUERY_SCAN, hex_lower, retain_newest_receipt,
 };
 pub(crate) use self::ledgers::durable_send_receipts_lenient;
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 pub(crate) use self::ledgers::persist_send_receipt;
 pub(crate) use self::ledgers::{
     SendReceiptOutcome, attempt_calling_principal_in_txn, delivered_send_receipt_for_task,
