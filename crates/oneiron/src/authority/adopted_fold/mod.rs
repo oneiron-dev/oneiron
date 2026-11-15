@@ -720,11 +720,17 @@ fn serial_withdrawal(
 }
 
 /// Whether every row `image` covers folded valid, with no issue, missing
-/// parent or unsettled handoff: its states are the whole fold's own.
+/// parent or unsettled handoff: its states are the whole fold's own. A fork
+/// record (`AuthorityFoldIssue::SequenceFork`) is no verdict: its row counts
+/// in full, so it leaves the image clean.
 fn clean_image(image: &AuthorityCheckpointV2) -> bool {
     let valid = &image.fold().valid_entries;
     !image.safety.unsettled
-        && image.safety.issues.is_empty()
+        && image
+            .safety
+            .issues
+            .iter()
+            .all(|issue| matches!(issue, AuthorityFoldIssue::SequenceFork(_)))
         && image.safety.missing_parents.is_empty()
         && image.covered.iter().all(|hash| valid.contains(hash))
 }
