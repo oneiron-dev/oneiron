@@ -148,10 +148,12 @@ pub(crate) fn park_open_conflict_json(
 /// prior heads, and the marker claim's predicate, subject, value and
 /// evidence envelope: the value and the envelope as lowercase hex of their
 /// encoded bytes. A test commits the same operands through another path and
-/// compares byte for byte. Member choice is native's; member order follows
-/// the operands, not native's selection rank, so paths that order members by
-/// pack position compare without reordering (order is conventional: native's
-/// own marker test sorts members before comparing them).
+/// compares byte for byte. Member choice is native's. Member order follows
+/// the operands, not native's selection rank: a path that orders members by
+/// pack position stores native's bytes only when its pack lists them in
+/// selection order, and this door re-sorts native's members so that a test
+/// compares the two under one order (native's own marker test sorts members
+/// before it compares them).
 /// Operands that form no conflict, or more than one, are refused.
 ///
 /// # Errors

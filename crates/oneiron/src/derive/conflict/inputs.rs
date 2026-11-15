@@ -11,10 +11,13 @@ use crate::ClaimCandidate;
 /// normalised `hints`. `CandidateAssemblyInput.confidence` lands as the
 /// fourth argument of `ClaimCandidate::new` and `lexical_hints` via
 /// `with_lexical_hints`, so the stamp rebuilds the candidate through those
-/// same two inputs and copies every other field (subject, predicate, value,
+/// same two inputs and copies the identity axes (subject, predicate, value,
 /// relationship, world, scope) back from the probe body the claim id reads.
-/// The rebuilt candidate differs only in confidence and hints, so its facts,
-/// and its claim id, are unchanged.
+/// Nothing else is carried over: a checked candidate is assembled from those
+/// axes alone and sets no confidence detail, salience, candidate evidence,
+/// validity, stamp or stale flag. The rebuilt candidate therefore differs
+/// only in confidence and hints, so its facts, and its claim id, are
+/// unchanged.
 ///
 /// # Errors
 ///

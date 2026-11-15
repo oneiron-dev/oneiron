@@ -41,7 +41,9 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::{ClaimSource, validate_predicate};
 use crate::entity_id::EntityId;
 use crate::error::Result;
-use crate::memory::{ExtractionCorrectionPair, ExtractionLayout, MemoryError, MemoryResult};
+use crate::memory::{
+    ExtractionCorrectionPair, ExtractionLayout, MEMORY_CODE_INTERNAL, MemoryError, MemoryResult,
+};
 use crate::verbs::{CandidateOperand, ExtractionPart, PackQuestion};
 use crate::write_envelope::ClaimCandidate;
 
@@ -501,12 +503,25 @@ pub(crate) fn select_routed_conflict(
             embeddings.insert(proposal.claim_id, vector);
         }
     }
+    // The threshold is the selection setting the projection pinned and the
+    // vectors are the engine's own embeddings of the checked candidates, so
+    // a nomination input the queue refuses is a fault of the store, never of
+    // the request: it answers as internal, not through the request mapping
+    // `InvalidConfig` falls to.
     let nominated = judge_queue(
         &proposals,
         &embeddings,
         bound.key_rules(),
         bound.cosine_threshold(),
-    )?;
+    )
+    .map_err(|error| match error {
+        crate::error::Error::InvalidConfig(reason) => MemoryError::new(
+            MEMORY_CODE_INTERNAL,
+            reason,
+            &["Retry; if the failure persists, inspect vault store health."],
+        ),
+        other => MemoryError::from(other),
+    })?;
     let (routed, exact) = route_observed_priors(&proposals, bound, context, nominated)?;
     let selected = &routed[select_conflict(&routed, set_members)?];
     let covered: BTreeSet<usize> = selected

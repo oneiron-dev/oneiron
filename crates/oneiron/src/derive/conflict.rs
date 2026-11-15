@@ -233,8 +233,9 @@ pub(super) fn stage_in_txn(
             return refuse(vault, txn, context, &[CONFLICT_DUPLICATE.to_owned()]);
         }
     }
-    // The derive verdict over the conflict's subject, as the Settle stager
-    // takes it.
+    // The derive verdict over the conflict's subject, as the artifact
+    // profile stager takes it: the marker is new, so the subject is the
+    // stored record the verdict judges.
     let allowance = match derive_verdict_in_txn(
         &vault.store,
         txn,
@@ -299,10 +300,12 @@ pub(super) fn stage_in_txn(
 }
 
 /// Refuses the item with `token` for a request refusal, or aborts the commit
-/// for anything else: only `BAD_REQUEST` and `FORBIDDEN` refuse. A storage
-/// failure reaches here as `INTERNAL_SERVER_ERROR` (the one `From<Error>`
-/// mapping), and aborts as one: there is no `From<MemoryError> for Error`,
-/// so the abort carries the message as the I/O error the mapping reads as
+/// for anything else: only `BAD_REQUEST` and `FORBIDDEN` refuse, and every
+/// other code aborts. A storage failure reaches here as
+/// `INTERNAL_SERVER_ERROR` through the `From<Error>` mapping, which the bound
+/// evidence verification and the set selection keep for every failure that
+/// is not the request's. There is no `From<MemoryError> for Error`, so the
+/// abort carries the message as the I/O error that mapping reads as
 /// internal. A receipt carries the token only: never an error message, an id
 /// the actor does not read, or words of a TURN.
 fn refuse_or_abort(
