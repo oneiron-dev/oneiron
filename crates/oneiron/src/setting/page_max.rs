@@ -40,7 +40,8 @@ impl SettingValue for PageMax {
 
 impl Vault {
     /// The page maximum in force for `key`, read in its own read transaction: the owner's row,
-    /// or the key's default (the list's maximum before it became a key) when no row stands.
+    /// a key holder's tighter row within it, or the key's default (the list's maximum before it
+    /// became a key) when no row stands.
     ///
     /// # Errors
     ///
