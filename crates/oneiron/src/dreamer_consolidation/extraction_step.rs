@@ -114,7 +114,8 @@ pub(crate) fn prepare_bound_step(
 /// Runs `prepared` as one durable extraction generation on the borrowed role.
 ///
 /// Failure rules load here, after the input snapshot closed. The request is
-/// the shipped `request_over` with no source rule over the prepared
+/// `request_over` in the loan's prompt, the host's words the native pass asks
+/// in, with no source rule over the prepared
 /// transcript, then the labels bound with no person-mint namespace, then the
 /// Extraction rules, then the final Extraction role authorization and
 /// reasoning binding. The call sends on the sourced backend bound to the
@@ -126,7 +127,7 @@ pub(crate) fn prepare_bound_step(
 ///
 /// # Errors
 ///
-/// The shipped prompt's unreadability, the role authorization or reasoning
+/// The role call's missing locality, the role authorization or reasoning
 /// binding refusals, the request hash's bad spelling, the tally lock or
 /// charge failures, and the shared receipt converter's own failures.
 pub(crate) async fn execute_bound_step(
@@ -137,6 +138,7 @@ pub(crate) async fn execute_bound_step(
     let rules = failure_rules::load(ctx.vault)?;
     let mut request = ConsolidationExecutor::request_over(
         &loan.call,
+        loan.prompt,
         None,
         prepared.transcript.clone(),
         &prepared.scope,
