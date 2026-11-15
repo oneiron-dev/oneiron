@@ -24,6 +24,7 @@
 mod followup;
 use oneiron_base::human_task_followup as model;
 mod open_asks;
+pub(crate) mod setting_keys;
 mod storage;
 mod wait;
 

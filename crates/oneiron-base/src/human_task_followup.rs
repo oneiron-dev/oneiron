@@ -21,14 +21,42 @@ pub const HUMAN_FOLLOWUP_STAGE_ESCALATION: &str = "human_escalation";
 /// channel can do, and follow-up is an ordinary send.
 pub const HUMAN_FOLLOWUP_VERB: &str = "send";
 
-/// Quiet interval before the first direct nudge.
+/// Quiet interval before the first direct nudge: the shipped default of the
+/// vault setting `human_task.followup.reminder_after_secs`.
 pub const REMINDER_AFTER_SECONDS: u64 = 24 * 60 * 60;
 
-/// Interval from the reminder to the open-loop digest entry.
-const DIGEST_AFTER_SECONDS: u64 = 3 * 24 * 60 * 60;
+/// Interval from the reminder to the open-loop digest entry: the shipped
+/// default of the vault setting `human_task.followup.digest_after_secs`.
+pub const DIGEST_AFTER_SECONDS: u64 = 3 * 24 * 60 * 60;
 
-/// Interval from the digest to escalation, and between escalations.
+/// Interval from the digest to escalation, and between escalations: the
+/// shipped default of the vault setting
+/// `human_task.followup.escalation_after_secs`.
 pub const ESCALATION_AFTER_SECONDS: u64 = 7 * 24 * 60 * 60;
+
+/// The follow-up ladder's three intervals, in seconds, as the vault's settings
+/// give them. [`Default`] is the shipped ladder: 24 h, then 3 days, then every
+/// 7 days.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FollowupTimings {
+    /// Quiet interval before the first direct nudge, for a TASK that names no
+    /// notice or deadline.
+    pub reminder_after_secs: u64,
+    /// Interval from the reminder to the open-loop digest entry.
+    pub digest_after_secs: u64,
+    /// Interval from the digest to escalation, and between escalations.
+    pub escalation_after_secs: u64,
+}
+
+impl Default for FollowupTimings {
+    fn default() -> Self {
+        Self {
+            reminder_after_secs: REMINDER_AFTER_SECONDS,
+            digest_after_secs: DIGEST_AFTER_SECONDS,
+            escalation_after_secs: ESCALATION_AFTER_SECONDS,
+        }
+    }
+}
 
 /// Bound on one wake-pass follow-up drive.
 pub const FOLLOWUP_WAKE_LIMIT: usize = 64;
@@ -103,27 +131,28 @@ impl HumanFollowupStage {
         }
     }
 
-    /// What running this stage's due work produces: the stage reached and the
-    /// outbound family it notifies through. `Completed` and a not-yet-due
-    /// `Tracking` produce nothing.
-    pub const fn advance(self) -> Option<(Self, &'static str, u64)> {
+    /// What running this stage's due work produces: the stage reached, the
+    /// outbound family it notifies through, and the interval of `timings`
+    /// until the next stage is due. `Completed` and a not-yet-due `Tracking`
+    /// produce nothing.
+    pub const fn advance(self, timings: &FollowupTimings) -> Option<(Self, &'static str, u64)> {
         match self {
             Self::Tracking => Some((
                 Self::ReminderDue,
                 HUMAN_FOLLOWUP_STAGE_REMINDER,
-                DIGEST_AFTER_SECONDS,
+                timings.digest_after_secs,
             )),
             Self::ReminderDue => Some((
                 Self::DigestDue,
                 HUMAN_FOLLOWUP_STAGE_DIGEST,
-                ESCALATION_AFTER_SECONDS,
+                timings.escalation_after_secs,
             )),
             // Escalation repeats: the Dreamer keeps surfacing an unresolved
             // human loop rather than silently giving up on it.
             Self::DigestDue | Self::EscalationDue => Some((
                 Self::EscalationDue,
                 HUMAN_FOLLOWUP_STAGE_ESCALATION,
-                ESCALATION_AFTER_SECONDS,
+                timings.escalation_after_secs,
             )),
             Self::Completed => None,
         }
