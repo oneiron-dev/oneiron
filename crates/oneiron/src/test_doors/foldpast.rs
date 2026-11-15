@@ -200,3 +200,12 @@ pub fn image_slip_issuers(
 ) -> std::collections::BTreeSet<crate::authority::AuthorityKey> {
     image.slip_issuers_for_test()
 }
+
+/// A host-family join of `world`'s side leaves: a side row of that world,
+/// which no main-log row may name as a parent.
+pub fn world_frontier_join_op(world: EntityId) -> AuthorityOp {
+    AuthorityOp::FrontierJoin(crate::authority::FrontierJoin {
+        family: crate::authority::FrontierJoinFamily::Host,
+        scope: crate::authority::FrontierJoinScope::World(world),
+    })
+}
