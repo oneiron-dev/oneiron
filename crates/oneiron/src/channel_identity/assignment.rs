@@ -331,21 +331,23 @@ fn retained_hold_in_txn(
 
 /// The local generic claim door's rule for the `channel_identity.*` family
 /// (Engine RULING L3-14-RETAINED-HOLD-FORGE = A, 14 Nov 05:22). Retracted
-/// heads are what [`retained_hold_in_txn`] reads, so a writer must not be
-/// able to make one: a claim of the family is born Active, about a live
-/// CHANNEL_IDENTITY row, and an Active correction head on a live identity
+/// heads are what [`retained_hold_in_txn`] reads, so a writer must neither
+/// make one nor change one. A claim of the family is about a live
+/// CHANNEL_IDENTITY row, and it is Active unless it rewrites the stored claim
+/// at its own id with the same predicate, subject and value: a retraction or
+/// supersession of a live identity's own head changes only its lifecycle,
+/// approval or valid time. An Active correction head on a live identity
 /// still re-keys its slot (OF-272).
 ///
-/// A put that rewrites the stored claim at the same id and keeps its
-/// predicate, subject and value makes no new head and is not a birth: a
-/// retraction or supersession of an identity's own head changes only its
-/// lifecycle, approval or valid time. A rewrite that changes the value is a
-/// new head in all but its id, so it meets the birth rules: a deleted
-/// identity's retained head, whose subject is a header-only shell, is never
-/// re-pointed at an address the identity never held (REVIEW-7665 P1). The
-/// owner's value redaction never makes such a rewrite: it drops keys of a
-/// map value, and every value of this family is a scalar
-/// ([`super::codec::validate_channel_identity_claim_structure`]).
+/// So a deleted identity's retained heads, whose subject is a header-only
+/// shell or gone, are out of every generic writer's reach: none re-points
+/// one at an address the identity never held (REVIEW-7665 P1), and none
+/// re-opens one to free the address it holds. No designed flow rewrites
+/// them: the generic retraction and supersession take only an Active head,
+/// and the owner's value redaction drops keys of a map value while every
+/// value of this family is a scalar
+/// ([`super::codec::validate_channel_identity_claim_structure`]), so it
+/// leaves such a row as it is and puts nothing.
 ///
 /// `admit_claim_put` asks this for local puts through the generic doors
 /// only. The replicated door and the engine's own writers (the reserved
@@ -356,13 +358,7 @@ pub(crate) fn guard_generic_claim_put_in_txn(
     id: &EntityId,
     body: &ClaimBody,
 ) -> Result<()> {
-    if !is_channel_identity_claim_predicate(&body.predicate)
-        || stored_claim_body(store, txn, id)?.is_some_and(|prior| {
-            prior.predicate == body.predicate
-                && prior.subject == body.subject
-                && prior.value == body.value
-        })
-    {
+    if !is_channel_identity_claim_predicate(&body.predicate) {
         return Ok(());
     }
     let ClaimSubject::Entity(subject) = body.subject else {
@@ -379,12 +375,18 @@ pub(crate) fn guard_generic_claim_put_in_txn(
             "a channel_identity claim must be about a live channel identity",
         ));
     }
-    if body.lifecycle != ClaimLifecycleStatus::Active {
-        return Err(Error::InvalidClaimBody(
-            "a channel_identity claim is born active",
-        ));
+    if body.lifecycle == ClaimLifecycleStatus::Active
+        || stored_claim_body(store, txn, id)?.is_some_and(|prior| {
+            prior.predicate == body.predicate
+                && prior.subject == body.subject
+                && prior.value == body.value
+        })
+    {
+        return Ok(());
     }
-    Ok(())
+    Err(Error::InvalidClaimBody(
+        "a channel_identity claim is born active, and a rewrite keeps its value",
+    ))
 }
 
 /// The one slot law for put, claim re-key and rebuild (OF-272). An occupying

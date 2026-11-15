@@ -63,8 +63,9 @@ pub(super) fn admit_claim_put(
             input.allow_reserved_predicate,
             input.replicated,
         )?;
-        // A local generic `channel_identity.*` claim is born Active about a
-        // live identity: no writer can forge a retained address hold.
+        // A local generic `channel_identity.*` claim is about a live
+        // identity, born Active, and a rewrite keeps its value: no writer can
+        // forge or free a retained address hold.
         if !input.allow_reserved_predicate && !input.replicated {
             crate::channel_identity::guard_generic_claim_put_in_txn(store, txn, &id, body)?;
         }

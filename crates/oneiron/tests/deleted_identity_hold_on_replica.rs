@@ -493,22 +493,29 @@ fn a_correction_head_on_a_live_identity_still_rekeys_its_slot() -> TestResult {
     Ok(())
 }
 
-/// REVIEW-7665 P1: a rewrite of a claim at its own id keeps its value or
-/// meets the birth rules. A soft-deleted identity's retained address head,
-/// rewritten through the generic door to name another address with its
-/// predicate, subject, Retracted lifecycle and Auto approval kept, would
-/// hold that address although no identity ever occupied it. The rewrite is
-/// refused, so the owner's own create there lands.
+/// A self-held identity at `address`, soft-deleted, and the id of its
+/// address head, which the delete closed `retracted` and kept.
+fn soft_deleted_identity_head(vault: &Vault, address: &str) -> TestResult<(EntityId, EntityId)> {
+    let id = EntityId::now();
+    vault.create_channel_identity(&id, &self_held(address))?;
+    let head = active_head(vault, id, PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE)?;
+    vault
+        .delete_entity_with_reason(&id, DeleteReason::UserDelete)
+        .map_err(|error| format!("fixture: the identity's delete: {error:?}"))?;
+    Ok((id, head))
+}
+
+/// REVIEW-7665 P1: a deleted identity's retained heads are out of the
+/// generic door's reach. Its retained address head, rewritten at its own id
+/// to name another address with its predicate, subject, Retracted lifecycle
+/// and Auto approval kept, would hold that address although no identity ever
+/// occupied it. The rewrite is refused, so the owner's own create there
+/// lands.
 #[test]
 fn a_retained_identity_head_cannot_be_rewritten_to_another_address() -> TestResult {
     let (address, victim) = ("retained@example.test", "rewrite-victim@example.test");
     let (_dir, vault) = open_vault()?;
-    let id = EntityId::now();
-    vault.create_channel_identity(&id, &self_held(address))?;
-    let head = active_head(&vault, id, PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE)?;
-    vault
-        .delete_entity_with_reason(&id, DeleteReason::UserDelete)
-        .map_err(|error| format!("fixture: the identity's delete: {error:?}"))?;
+    let (id, head) = soft_deleted_identity_head(&vault, address)?;
     let forged = put_generic_at(
         &vault,
         head,
@@ -528,6 +535,32 @@ fn a_retained_identity_head_cannot_be_rewritten_to_another_address() -> TestResu
         (Some(ErrorKind::InvalidClaimBody), None),
         "a retained head rewritten to {victim} must be refused (left), and the owner's \
          create at {victim} must land (right): {forged:?} / {create:?}",
+    );
+    Ok(())
+}
+
+/// The same reach, the other way: a retained address head rewritten at its
+/// own id as Active, its value kept, would stop holding the deleted address
+/// on every vault that holds no slot for it. The rewrite is refused.
+#[test]
+fn a_retained_identity_head_cannot_be_reopened() -> TestResult {
+    let address = "reopened@example.test";
+    let (_dir, vault) = open_vault()?;
+    let (id, head) = soft_deleted_identity_head(&vault, address)?;
+    let reopened = put_generic_at(
+        &vault,
+        head,
+        &generic_head(
+            id,
+            PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+            address,
+            ClaimLifecycleStatus::Active,
+        ),
+    );
+    assert_eq!(
+        reopened.as_ref().err().map(oneiron::Error::kind),
+        Some(ErrorKind::InvalidClaimBody),
+        "a retained head must not be re-opened: {reopened:?}",
     );
     Ok(())
 }
