@@ -37,8 +37,18 @@ pub(super) struct TrustedTimeProof {
     pub covers_to: u64,
 }
 
+/// The signer's CMS certificate bag and the ESS-bound signer's index
+/// in it. Stage 1 carries the bag, not a selected chain: which path it
+/// yields depends on the signer's validation time, and a covering
+/// document timestamp that fixes that time is only proven once every
+/// envelope has been read.
+pub(super) struct SignerBag {
+    pub certificates: Held<Vec<Vec<u8>>>,
+    pub signer: usize,
+}
+
 pub(super) struct CadesEvidence {
-    pub signer_chain: Option<Held<Vec<Vec<u8>>>>,
+    pub signer_bag: Option<SignerBag>,
     pub timestamp: TimestampResult,
 }
 
@@ -54,6 +64,11 @@ pub(super) struct EnvelopeEvidence {
     pub digest: Option<SignedRangeDigest>,
     pub revision: Option<RevisionBoundary>,
     pub checks: Vec<VerifyCheck>,
+    /// The signer's candidate bag from Stage 1 (see [`SignerBag`]);
+    /// `signer_chain` is the path Stage 2 selects from it at the
+    /// signer's validation time, and is where the signer's part of
+    /// `covered` comes from.
+    pub signer_bag: Option<SignerBag>,
     pub signer_chain: Option<Held<Vec<Vec<u8>>>>,
     pub time_proof: Option<TrustedTimeProof>,
     pub untrusted_time: Option<u64>,
@@ -109,7 +124,7 @@ pub(super) fn evaluate_envelope(
     };
     let mut checks = Checks::new(ctx.limits);
     let mut covered = Vec::new();
-    let (signer_chain, token) = match entry.handler {
+    let (signer_bag, token) = match entry.handler {
         SigHandler::DocTs => (
             None,
             verify_doc_ts(
@@ -133,7 +148,7 @@ pub(super) fn evaluate_envelope(
                 &mut covered,
                 &memory,
             )?;
-            (cades.signer_chain, cades.timestamp)
+            (cades.signer_bag, cades.timestamp)
         }
         SigHandler::UnsupportedAdbe => {
             checks.record(
@@ -219,7 +234,8 @@ pub(super) fn evaluate_envelope(
         digest,
         revision,
         checks: checks.list,
-        signer_chain,
+        signer_bag,
+        signer_chain: None,
         time_proof,
         untrusted_time,
         covered,

@@ -1,9 +1,11 @@
 //! Strict CMS ContentInfo/SignerInfo parsing with version gating.
 
+use std::collections::BTreeMap;
 use std::mem::size_of;
 
 use der::{Decode, Encode};
 
+use crate::api::SignatureAlgorithm;
 use crate::error::SealError;
 use crate::memory::{Held, LedgerHold, MemoryLedger, SealMemoryRefusal};
 use crate::native::held_bytes;
@@ -13,8 +15,48 @@ use super::der::{DerReader, Tlv};
 use super::oids::{OID_ATTR_SIGNING_CERT_V2, OID_CT_TST_INFO, OID_DATA, OID_SIGNED_DATA};
 use super::policy::{
     cert_signature_algorithm, ess_cert_id_v2, parse_attribute, sig_alg_permitted,
-    verify_signature_value,
+    verify_signature_value_for_cert,
 };
+
+/// Maximum issuer steps the issuer-link fallback follows from the leaf.
+/// 10 is pkix-path-builder's default maximum path depth
+/// (`DEFAULT_MAX_DEPTH`): a candidate longer than that cannot be the
+/// path the builder would have chosen with an anchor, and without an
+/// anchor it cannot pass trust however far it is followed.
+const MAX_FALLBACK_PATH_DEPTH: usize = 10;
+
+/// Maximum candidate signature verifications in one issuer-link walk.
+/// A genuine path takes at most [`MAX_FALLBACK_PATH_DEPTH`] steps and
+/// real bags carry a handful of same-subject issuers per step, so 256 is
+/// far above a genuine walk; without it a bag of same-subject
+/// certificates that sign nothing costs one public-key verification per
+/// pair of certificates.
+const MAX_FALLBACK_SIGNATURE_CHECKS: usize = 256;
+
+#[cfg(test)]
+std::thread_local! {
+    /// Candidate signature verifications this thread's issuer-link walks
+    /// have made since the last reset (tests only).
+    static SIGNATURE_CHECKS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_signature_check() {
+    SIGNATURE_CHECKS.with(|count| count.set(count.get().saturating_add(1)));
+}
+
+#[cfg(not(test))]
+fn note_signature_check() {}
+
+#[cfg(test)]
+fn reset_signature_checks() {
+    SIGNATURE_CHECKS.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn signature_checks() -> usize {
+    SIGNATURE_CHECKS.with(|count| count.get())
+}
 
 /// Why a CMS envelope or timestamp token was not validated: the token itself, or memory
 /// its copies and decodes were refused, which ends the operation as the
@@ -321,11 +363,14 @@ pub(crate) fn parse_cms(der: &[u8], memory: &MemoryLedger) -> Result<Held<Parsed
 /// A CMS certificate bag is a set, not a path: it may carry certificates
 /// that belong to no chain for this signer, and those are not copied.
 /// When an anchor can decide, the copy is pkix-chain's chosen path: its
-/// first path that validates at `at_unix`, or its topological path to an
-/// anchor when that path does not validate then. When no anchor-reachable
-/// path is chosen (for example a missing trust root, where the path check
-/// is NotRun), the copy is the candidate path that follows issuer links
-/// from `first` through the bag. Material outside the selected path must
+/// first path that validates at `at_unix`. Failing that, a candidate
+/// path that follows key-bound issuer links from `first` through the
+/// bag is copied (a name-only topological path to an anchor never
+/// outranks it, so a root key rollover's cross-certificate is kept), or
+/// the topological path when no key-bound candidate exists. When no
+/// anchor-reachable path is chosen (for example a missing trust root,
+/// where the path check is NotRun), the copy is that same issuer-link
+/// candidate. Material outside the selected path must
 /// not change a genuine result (EN 319 102-1 §5.1.3, §5.2.6.4 step 4).
 ///
 /// # Errors
@@ -370,6 +415,25 @@ pub(crate) fn selected_chain_copy(
     Ok(Held::new(chain, hold))
 }
 
+/// A copy of the whole certificate bag, held on `memory` before it is
+/// made (FIX 12260). Envelope evidence carries it when the time at
+/// which its path must be selected is not known yet: selection itself
+/// stays in [`selected_chain_copy`].
+///
+/// # Errors
+/// The ledger's refusal.
+pub(crate) fn bag_copy(
+    certificates: &[Vec<u8>],
+    memory: &MemoryLedger,
+) -> Result<Held<Vec<Vec<u8>>>, SealMemoryRefusal> {
+    let bytes = certificates.iter().fold(
+        certificates.len().saturating_mul(size_of::<Vec<u8>>()),
+        |sum, der| sum.saturating_add(der.len()),
+    );
+    let hold = memory.hold(bytes)?;
+    Ok(Held::new(certificates.to_vec(), hold))
+}
+
 /// The indices in `certificates` of the path [`selected_chain_copy`]
 /// copies, leaf (`first`) first.
 fn selected_indices(
@@ -398,60 +462,282 @@ fn selected_indices(
                 return Ok(indices);
             }
         }
+        // No anchor-validated path was chosen. A key-bound issuer-link
+        // candidate outranks the signature-unverified topological path
+        // below: `build_path` stops at the first issuer name matching
+        // an anchor subject, so under a root key rollover it truncates
+        // the path at a certificate the old root key signed and never
+        // reaches the cross-certificate the new root key signed. The
+        // topological path stays the last resort, as in pkix-chain's
+        // `build_with_aia`, so a candidate that cannot key-bind keeps
+        // the Fail/NotRun shape its validation produces downstream.
+        let candidate = issuer_link_indices(certificates, decoded, first, memory)?;
+        if candidate.key_bound {
+            return Ok(candidate.indices);
+        }
         if let Ok(path) = pkix_chain::pkix_path_builder::build_path(leaf, &pool, anchors) {
             if let Some(indices) = path_indices(certificates, &path, first) {
                 return Ok(indices);
             }
         }
+        return Ok(candidate.indices);
     }
-    // No anchor chose a path: follow issuer links from the leaf. A
-    // key-bound issuer (its key signed the certificate) always wins; a
-    // name match is the candidate only when no candidate key verifies,
-    // as with a signature suite this crate does not verify itself, and
-    // pkix-chain still judges the candidate when an anchor is present.
-    let mut selected = vec![first];
-    let mut current = first;
+    Ok(issuer_link_indices(certificates, decoded, first, memory)?.indices)
+}
+
+/// The issuer-link candidate path from a leaf, and whether every issuer
+/// step in it (and its self-signed end, when it has one) was bound by a
+/// verified signature rather than by name alone or cut short by a bound.
+struct IssuerLinkCandidate {
+    indices: Vec<usize>,
+    key_bound: bool,
+}
+
+/// A candidate issuer's signature algorithm, read from its certificate
+/// at most once per issuer-link walk.
+#[derive(Clone, Copy)]
+enum CachedAlgorithm {
+    Unknown,
+    Unsupported,
+    Supported(SignatureAlgorithm),
+}
+
+/// Follow issuer links from `first` through the bag: a key-bound issuer
+/// (its key signed the certificate) always wins; a name match is the
+/// candidate only when no candidate key verifies, as with a signature
+/// suite this crate does not verify itself, and pkix-chain still judges
+/// the candidate when an anchor is present.
+///
+/// The walk is bounded as the builder it stands in for is: candidates
+/// are indexed by subject once, each walked certificate's TBS encoding
+/// and each candidate's signature algorithm are made once and read from
+/// the decoded certificates `selected_chain_copy` already held, and the
+/// walk stops after [`MAX_FALLBACK_PATH_DEPTH`] issuer steps or
+/// [`MAX_FALLBACK_SIGNATURE_CHECKS`] signature verifications. What was
+/// walked is returned either way, so the partial candidate keeps its
+/// downstream Fail/NotRun classification.
+fn issuer_link_indices(
+    certificates: &[Vec<u8>],
+    decoded: &[Option<x509_cert::Certificate>],
+    first: usize,
+    memory: &MemoryLedger,
+) -> Result<IssuerLinkCandidate, SealMemoryRefusal> {
+    let by_subject = subject_index(decoded, memory)?;
+    let _algorithms_held =
+        memory.hold(decoded.len().saturating_mul(size_of::<CachedAlgorithm>()))?;
+    let mut algorithms = vec![CachedAlgorithm::Unknown; decoded.len()];
+    let mut checks = 0usize;
+    let mut indices = vec![first];
+    let mut key_bound = true;
     loop {
-        let Some(cert) = decoded.get(current).and_then(Option::as_ref) else {
+        let Some(&current) = indices.last() else {
             break;
         };
-        if cert_issued_by(cert, cert, &certificates[current], memory)? {
-            break; // self-signed: the end of its candidate path
+        let Some(cert) = decoded.get(current).and_then(Option::as_ref) else {
+            key_bound = false;
+            break;
+        };
+        // The TBS encoding of this certificate, made once for every
+        // candidate this step tries (FIX 12260 holds it first).
+        let Some(tbs) = tbs_der(cert, memory)? else {
+            key_bound = false;
+            break;
+        };
+        if cert.tbs_certificate.subject == cert.tbs_certificate.issuer {
+            if checks >= MAX_FALLBACK_SIGNATURE_CHECKS {
+                key_bound = false;
+                break;
+            }
+            checks += 1;
+            note_signature_check();
+            if signature_verifies(
+                cert,
+                tbs.as_slice(),
+                current,
+                certificates,
+                decoded,
+                &mut algorithms,
+            ) {
+                break; // self-signed: the end of its candidate path
+            }
         }
+        if indices.len() > MAX_FALLBACK_PATH_DEPTH {
+            key_bound = false;
+            break;
+        }
+        let Some(issuer_der) = name_der(&cert.tbs_certificate.issuer, memory)? else {
+            key_bound = false;
+            break;
+        };
+        let candidates: &[usize] = by_subject
+            .get(issuer_der.as_slice())
+            .map_or(&[], Vec::as_slice);
         let mut issuer = None;
-        for (idx, cand) in decoded.iter().enumerate() {
-            if selected.contains(&idx) {
+        let mut exhausted = false;
+        for &idx in candidates {
+            if indices.contains(&idx) {
                 continue;
             }
-            let Some(cand) = cand.as_ref() else {
-                continue;
-            };
-            if cert_issued_by(cert, cand, &certificates[idx], memory)? {
+            if checks >= MAX_FALLBACK_SIGNATURE_CHECKS {
+                exhausted = true;
+                break;
+            }
+            checks += 1;
+            note_signature_check();
+            if signature_verifies(
+                cert,
+                tbs.as_slice(),
+                idx,
+                certificates,
+                decoded,
+                &mut algorithms,
+            ) {
                 issuer = Some(idx);
                 break;
             }
         }
-        if issuer.is_none() {
-            for (idx, cand) in decoded.iter().enumerate() {
-                if selected.contains(&idx) {
-                    continue;
-                }
-                let Some(cand) = cand.as_ref() else {
-                    continue;
-                };
-                if cand.tbs_certificate.subject == cert.tbs_certificate.issuer {
-                    issuer = Some(idx);
-                    break;
-                }
-            }
-        }
-        let Some(idx) = issuer else {
+        if exhausted && issuer.is_none() {
+            key_bound = false;
             break;
+        }
+        let idx = match issuer {
+            Some(idx) => idx,
+            None => match candidates
+                .iter()
+                .copied()
+                .find(|idx| !indices.contains(idx))
+            {
+                Some(idx) => {
+                    // A name match only: no candidate key verified.
+                    key_bound = false;
+                    idx
+                }
+                None => break,
+            },
         };
-        selected.push(idx);
-        current = idx;
+        indices.push(idx);
     }
-    Ok(selected)
+    Ok(IssuerLinkCandidate { indices, key_bound })
+}
+
+/// The bag's decoded certificates by subject encoding: every certificate
+/// whose subject could issue a walked certificate, in bag order. The
+/// subjects, the index slots and the map are held on `memory` before
+/// they are made (FIX 12260), and the returned hold keeps them admitted
+/// for the walk. A subject that does not re-encode cannot be indexed
+/// and is simply no step's candidate.
+fn subject_index(
+    decoded: &[Option<x509_cert::Certificate>],
+    memory: &MemoryLedger,
+) -> Result<Held<BTreeMap<Vec<u8>, Vec<usize>>>, SealMemoryRefusal> {
+    let mut subject_bytes = 0usize;
+    for cert in decoded.iter().filter_map(Option::as_ref) {
+        if let Some(len) = cert
+            .tbs_certificate
+            .subject
+            .encoded_len()
+            .ok()
+            .and_then(|len| usize::try_from(len).ok())
+        {
+            subject_bytes = subject_bytes.saturating_add(len);
+        }
+    }
+    let bytes = subject_bytes
+        .saturating_add(decoded.len().saturating_mul(size_of::<usize>()))
+        .saturating_add(held_bytes::btree::<Vec<u8>, Vec<usize>>(decoded.len()));
+    let hold = memory.hold(bytes)?;
+    let mut by_subject = BTreeMap::new();
+    for (idx, cert) in decoded.iter().enumerate() {
+        let Some(cert) = cert.as_ref() else {
+            continue;
+        };
+        let Ok(subject) = cert.tbs_certificate.subject.to_der() else {
+            continue;
+        };
+        by_subject.entry(subject).or_default().push(idx);
+    }
+    Ok(Held::new(by_subject, hold))
+}
+
+/// `cert`'s TBS encoding, held on `memory` before it is made
+/// (FIX 12260); `None` when it does not encode.
+fn tbs_der(
+    cert: &x509_cert::Certificate,
+    memory: &MemoryLedger,
+) -> Result<Option<Held<Vec<u8>>>, SealMemoryRefusal> {
+    let Some(tbs_len) = cert
+        .tbs_certificate
+        .encoded_len()
+        .ok()
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(None);
+    };
+    let hold = memory.hold(tbs_len)?;
+    Ok(match cert.tbs_certificate.to_der() {
+        Ok(tbs) => Some(Held::new(tbs, hold)),
+        Err(_) => None,
+    })
+}
+
+/// `name`'s encoding, held on `memory` before it is made (FIX 12260);
+/// `None` when it does not encode.
+fn name_der(
+    name: &x509_cert::name::Name,
+    memory: &MemoryLedger,
+) -> Result<Option<Held<Vec<u8>>>, SealMemoryRefusal> {
+    let Some(name_len) = name
+        .encoded_len()
+        .ok()
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(None);
+    };
+    let hold = memory.hold(name_len)?;
+    Ok(match name.to_der() {
+        Ok(der) => Some(Held::new(der, hold)),
+        Err(_) => None,
+    })
+}
+
+/// Whether the decoded certificate at `issuer_idx` signed `cert`: its
+/// key's algorithm (made once per candidate and kept in `algorithms`)
+/// is the frozen suite for `cert`'s signature and that signature
+/// verifies over `tbs` under its already-decoded key. The caller has
+/// matched names through the subject index (or subject with issuer,
+/// for the self-signed end) and spends the signature-check budget.
+fn signature_verifies(
+    cert: &x509_cert::Certificate,
+    tbs: &[u8],
+    issuer_idx: usize,
+    certificates: &[Vec<u8>],
+    decoded: &[Option<x509_cert::Certificate>],
+    algorithms: &mut [CachedAlgorithm],
+) -> bool {
+    let Some(issuer) = decoded.get(issuer_idx).and_then(Option::as_ref) else {
+        return false;
+    };
+    let Some(issuer_der) = certificates.get(issuer_idx) else {
+        return false;
+    };
+    let Some(slot) = algorithms.get_mut(issuer_idx) else {
+        return false;
+    };
+    let algorithm = match *slot {
+        CachedAlgorithm::Unknown => {
+            let algorithm = cert_signature_algorithm(issuer_der)
+                .ok()
+                .map_or(CachedAlgorithm::Unsupported, CachedAlgorithm::Supported);
+            *slot = algorithm;
+            algorithm
+        }
+        cached => cached,
+    };
+    let CachedAlgorithm::Supported(alg) = algorithm else {
+        return false;
+    };
+    sig_alg_permitted(alg, cert.signature_algorithm.oid.as_bytes())
+        && verify_signature_value_for_cert(alg, issuer, tbs, cert.signature.raw_bytes()).is_ok()
 }
 
 /// `path` as indices into `certificates`, matched by DER encoding, when
@@ -474,40 +760,6 @@ fn path_indices(
         indices.push(idx);
     }
     (indices.first() == Some(&first)).then_some(indices)
-}
-
-/// Whether `issuer` issued `cert`: issuer-name match and `cert`'s
-/// signature verifies under `issuer`'s key with a permitted algorithm, as
-/// in the verifier's revocation binding. The TBS encoding made here is
-/// held on `memory` first (FIX 12260).
-fn cert_issued_by(
-    cert: &x509_cert::Certificate,
-    issuer: &x509_cert::Certificate,
-    issuer_der: &[u8],
-    memory: &MemoryLedger,
-) -> Result<bool, SealMemoryRefusal> {
-    if cert.tbs_certificate.issuer != issuer.tbs_certificate.subject {
-        return Ok(false);
-    }
-    let Ok(alg) = cert_signature_algorithm(issuer_der) else {
-        return Ok(false);
-    };
-    if !sig_alg_permitted(alg, cert.signature_algorithm.oid.as_bytes()) {
-        return Ok(false);
-    }
-    let Some(tbs_len) = cert
-        .tbs_certificate
-        .encoded_len()
-        .ok()
-        .and_then(|len| usize::try_from(len).ok())
-    else {
-        return Ok(false);
-    };
-    let _tbs_held = memory.hold(tbs_len)?;
-    let Ok(tbs) = cert.tbs_certificate.to_der() else {
-        return Ok(false);
-    };
-    Ok(verify_signature_value(alg, issuer_der, &tbs, cert.signature.raw_bytes()).is_ok())
 }
 
 /// Rebuild the RFC 5652 §5.4 signature input from parsed signed attributes:
@@ -545,4 +797,143 @@ pub(crate) fn signed_attrs_signature_input(
     }
     out.extend_from_slice(content);
     Ok(Held::new(out, hold))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used)]
+
+    use der::Decode;
+
+    use super::*;
+    use crate::memory::testing::operation_ledger;
+
+    /// 2026-07-30T08:00:00Z, the other fixtures' seal time.
+    const AT_UNIX: u64 = 1_785_398_400;
+
+    fn params_for(cn: &str, is_ca: rcgen::IsCa) -> rcgen::CertificateParams {
+        let mut params = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
+        params.distinguished_name = rcgen::DistinguishedName::new();
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, cn.to_string());
+        params.key_usages = if matches!(is_ca, rcgen::IsCa::Ca(_)) {
+            vec![
+                rcgen::KeyUsagePurpose::DigitalSignature,
+                rcgen::KeyUsagePurpose::KeyCertSign,
+                rcgen::KeyUsagePurpose::CrlSign,
+            ]
+        } else {
+            vec![rcgen::KeyUsagePurpose::DigitalSignature]
+        };
+        params.is_ca = is_ca;
+        params
+    }
+
+    fn ca_key(cn: &str) -> (rcgen::CertificateParams, rcgen::KeyPair) {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let params = params_for(cn, rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained));
+        (params, key_pair)
+    }
+
+    fn leaf_key(cn: &str) -> (rcgen::CertificateParams, rcgen::KeyPair) {
+        let key_pair = rcgen::KeyPair::generate().unwrap();
+        let params = params_for(cn, rcgen::IsCa::ExplicitNoCa);
+        (params, key_pair)
+    }
+
+    fn issued_by(
+        subject: &rcgen::CertificateParams,
+        subject_key: &rcgen::KeyPair,
+        issuer_params: &rcgen::CertificateParams,
+        issuer_key: &rcgen::KeyPair,
+    ) -> Vec<u8> {
+        let issuer = rcgen::Issuer::from_params(issuer_params, issuer_key);
+        subject
+            .signed_by(subject_key, &issuer)
+            .unwrap()
+            .der()
+            .to_vec()
+    }
+
+    #[test]
+    fn rollover_cross_certificate_is_not_truncated_by_anchor_name() {
+        // Root key rollover: the only anchor is the new root (key Kn).
+        // The intermediate was signed by the old root key Ko, and the
+        // bag carries the OldWithNew cross-certificate (subject
+        // CN=rollover-root, key Ko, signed by Kn). The topological
+        // builder stops at the intermediate, whose issuer name matches
+        // the anchor subject, so a name-bound selection truncates the
+        // path there and fails under Kn; the key-bound selection must
+        // walk on through the cross-certificate to the new root.
+        let (new_params, new_key) = ca_key("rollover-root");
+        let new_root = new_params.self_signed(&new_key).unwrap().der().to_vec();
+        let (old_params, old_key) = ca_key("rollover-root");
+        let old_with_new = issued_by(&old_params, &old_key, &new_params, &new_key);
+        let (inter_params, inter_key) = ca_key("rollover-intermediate");
+        let inter = issued_by(&inter_params, &inter_key, &old_params, &old_key);
+        let (leaf_params, leaf_key) = leaf_key("rollover-leaf");
+        let leaf = issued_by(&leaf_params, &leaf_key, &inter_params, &inter_key);
+
+        let anchor = x509_cert::Certificate::from_der(&new_root).unwrap();
+        let anchors = vec![pkix_chain::TrustAnchor::from_cert(anchor)];
+        // Bag order is a set's: the leaf is last and the path order is
+        // nowhere in it.
+        let bag = vec![
+            new_root.clone(),
+            old_with_new.clone(),
+            inter.clone(),
+            leaf.clone(),
+        ];
+        let memory = operation_ledger();
+        let chain = selected_chain_copy(&bag, 3, &anchors, AT_UNIX, &memory).unwrap();
+        assert_eq!(*chain, vec![leaf, inter, old_with_new, new_root]);
+        let decoded_chain: Vec<x509_cert::Certificate> = chain
+            .iter()
+            .map(|der| x509_cert::Certificate::from_der(der).unwrap())
+            .collect();
+        pkix_chain::verify_chain(
+            &decoded_chain,
+            &anchors,
+            &pkix_chain::ValidationPolicy::new(AT_UNIX),
+            &pkix_chain::DefaultVerifier,
+            &pkix_chain::NoRevocation,
+            &pkix_chain::NoAiaFetcher,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn same_subject_bag_signature_checks_are_bounded() {
+        // No anchors: the leaf's issuer key is not in the bag at all,
+        // and 48 further certificates share that issuer's subject
+        // (subject = issuer) with keys that signed nothing in the bag.
+        // An unbounded issuer-link walk tries every remaining
+        // certificate at every step it name-walks (over a thousand
+        // verifications and a 49-certificate candidate here); the
+        // bounded walk stops at the signature-check budget (256) and
+        // the path-depth bound (the leaf plus 10 issuer steps).
+        let (ext_params, ext_key) = ca_key("bag-issuer");
+        let (leaf_params, leaf_key) = leaf_key("bag-leaf");
+        let leaf = issued_by(&leaf_params, &leaf_key, &ext_params, &ext_key);
+        let mut bag = vec![leaf];
+        for _ in 0..48 {
+            let (params, key_pair) = ca_key("bag-issuer");
+            bag.push(issued_by(&params, &key_pair, &ext_params, &ext_key));
+        }
+        let memory = operation_ledger();
+        reset_signature_checks();
+        let chain = selected_chain_copy(&bag, 0, &[], AT_UNIX, &memory).unwrap();
+        let checks = signature_checks();
+        assert!(
+            checks <= 256,
+            "signature checks are budget-bound, got {checks}"
+        );
+        assert!(
+            chain.len() <= 11,
+            "candidate path is depth-bound, got {} certificates",
+            chain.len()
+        );
+        assert_eq!(&chain[0], &bag[0], "the leaf stays first");
+    }
 }

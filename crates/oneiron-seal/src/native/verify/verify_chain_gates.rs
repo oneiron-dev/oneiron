@@ -348,7 +348,7 @@ pub(crate) fn verify_document(
     memory
         .admit_len::<super::verify_evidence::EnvelopeEvidence>(sigs.len())
         .map_err(memory_refused)?;
-    let envelopes: Vec<_> = sigs
+    let mut envelopes: Vec<_> = sigs
         .iter()
         .enumerate()
         .map(|(index, entry)| {
@@ -365,6 +365,43 @@ pub(crate) fn verify_document(
         .collect::<Result<_, _>>()
         .map_err(memory_refused)?;
     let dss_end = dss_revision_end(&doc, bytes, limits).map_err(memory_refused)?;
+    // Every trusted time proof is now known, so each signer's validation
+    // time can be resolved and its certification path selected from its
+    // CMS bag at that time - the same time Stage 2 judges the path at.
+    // Selecting earlier, at the signature timestamp or the verify
+    // clock, would let a same-key reissue that is only valid at that
+    // later time replace the path that was valid when a covering
+    // document timestamp attested this signer. The selected path - and
+    // no other bag certificate - joins the envelope's covered set, so
+    // the global DSS binding below and each signer's material set in
+    // Stage 2 both derive from this selection.
+    for index in 0..envelopes.len() {
+        if envelopes[index].kind != crate::api::SignatureKind::Signature {
+            continue;
+        }
+        let at_unix = signer_validation_time(&envelopes[index], &envelopes, ctx.clock_ms / 1000).at;
+        let Some(bag) = envelopes[index].signer_bag.as_ref() else {
+            continue;
+        };
+        let chain = cms::selected_chain_copy(
+            bag.certificates.as_slice(),
+            bag.signer,
+            &anchors,
+            at_unix,
+            &memory,
+        )
+        .map_err(memory_refused)?;
+        EmbeddedCert::extend_admitted(
+            &mut envelopes[index].covered,
+            chain.iter().map(Vec::as_slice),
+            &memory,
+        )
+        .map_err(memory_refused)?;
+        envelopes[index].signer_chain = Some(chain);
+        // The bag has yielded its path; releasing it here returns its
+        // hold instead of carrying every bag to the end of Stage 3.
+        envelopes[index].signer_bag = None;
+    }
     let mut covered = Vec::new();
     for envelope in &envelopes {
         EmbeddedCert::extend_admitted(
@@ -411,7 +448,6 @@ pub(crate) fn verify_document(
     // Stage 2: resolve TWO independent obligations for each signer. The
     // earliest eligible proof fixes signer validation time; a possibly newer
     // document timestamp can separately attest the effective DSS.
-    let mut envelopes = envelopes;
     memory
         .admit_len::<Option<crate::api::PadesProfile>>(envelopes.len())
         .map_err(memory_refused)?;
