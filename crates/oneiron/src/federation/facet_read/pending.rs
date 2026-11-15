@@ -242,7 +242,7 @@ pub(crate) fn parked_facet_receipts(vault: &Vault) -> Result<Vec<ParkedFacetRece
 /// # Errors
 ///
 /// Storage errors.
-#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+#[cfg(all(oneiron_test_support, feature = "sync"))]
 pub(crate) fn plant_retired_facet_receipts(vault: &Vault, count: u32) -> Result<()> {
     let now = vault.store.clock.now_recorded_at();
     let mut wtxn = vault.store.env.write_txn()?;

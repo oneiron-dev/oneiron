@@ -9,7 +9,7 @@
 /// # Errors
 ///
 /// Storage errors, and the maintenance pass's own.
-#[cfg(feature = "test-support")]
+#[cfg(feature = "sync")]
 pub fn report_facet_receipts_after_planting(
     vault: &crate::Vault,
     count: u32,

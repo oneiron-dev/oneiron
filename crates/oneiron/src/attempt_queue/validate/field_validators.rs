@@ -1,6 +1,6 @@
 //! Length caps, error literals, and per-field validators plus lease/manifest mutators.
 
-use crate::attempt_queue::cancel::CancelStanding;
+use crate::attempt_queue::cancel::{CancelStanding, MAX_LANDING_RESERVE_PERCENT};
 use crate::attempt_queue::lifecycle::{RunLifecycle, RunStep};
 use crate::attempt_queue::telemetry::invalid_transition;
 use crate::attempt_queue::types::{AttemptRecord, CleanupAttemptLeases};
@@ -125,15 +125,26 @@ pub(in crate::attempt_queue) fn validate_cancel_standing(standing: CancelStandin
     }
 }
 
+/// The refusal of a landing reserve past an owner-set cap: the codec's
+/// [`ERR_RESERVE_PERCENT_RANGE`] names the default cap of 50.
+const ERR_RESERVE_PERCENT_PAST_OWNER_CAP: &str =
+    "landing reserve percent must be in 1..=attempt_queue.landing.max_reserve_percent";
+
 /// Refuses a landing reserve of 0 or past `max_reserve_percent`, the owner's
-/// `attempt_queue.landing.max_reserve_percent`.
+/// `attempt_queue.landing.max_reserve_percent`. At the default cap the
+/// refusal is the codec's own literal.
 pub(in crate::attempt_queue) fn validate_reserve_percent(
     reserve_percent: u64,
     max_reserve_percent: u64,
 ) -> Result<()> {
     if reserve_percent == 0 || reserve_percent > max_reserve_percent {
+        let reason = if max_reserve_percent == MAX_LANDING_RESERVE_PERCENT {
+            ERR_RESERVE_PERCENT_RANGE
+        } else {
+            ERR_RESERVE_PERCENT_PAST_OWNER_CAP
+        };
         return Err(Error::Artifact(ArtifactError::InvalidAttemptQueueRecord(
-            ERR_RESERVE_PERCENT_RANGE,
+            reason,
         )));
     }
     Ok(())

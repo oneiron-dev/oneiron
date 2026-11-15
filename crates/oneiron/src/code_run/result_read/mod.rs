@@ -19,7 +19,7 @@ mod outside;
 mod query;
 mod run_body;
 mod search;
-#[cfg(all(oneiron_test_support, feature = "test-support"))]
+#[cfg(oneiron_test_support)]
 mod search_test_door;
 mod shape;
 mod slice;
@@ -28,7 +28,7 @@ mod unplaced;
 pub(crate) use self::facets::DeliveredRanges;
 pub(crate) use self::outside::{read_result_in, result_cards_in};
 use self::run_body::{LiveCutoff, RunBody};
-#[cfg(all(oneiron_test_support, feature = "test-support"))]
+#[cfg(oneiron_test_support)]
 pub(crate) use self::search_test_door::search_text_for_test;
 pub(crate) use self::unplaced::unplaced_answer;
 

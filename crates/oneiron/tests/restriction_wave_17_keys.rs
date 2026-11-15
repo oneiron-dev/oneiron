@@ -135,6 +135,7 @@ fn enqueue(queue: &AttemptQueue<'_>, dedupe: &str, now: u64) -> AttemptRecord {
         .expect("enqueue")
     {
         EnqueueOutcome::Enqueued(record) | EnqueueOutcome::Existing(record) => record,
+        other => panic!("an enqueue answers the queued attempt, not {other:?}"),
     }
 }
 
@@ -148,6 +149,7 @@ fn claim(queue: &AttemptQueue<'_>, now: u64) -> AttemptRecord {
     {
         ClaimOutcome::Claimed(record) => record,
         ClaimOutcome::Empty => panic!("the queued attempt is claimed"),
+        other => panic!("a claim answers the queued attempt, not {other:?}"),
     }
 }
 

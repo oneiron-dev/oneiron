@@ -169,7 +169,7 @@ pub(crate) use self::replay_context::{
 pub use self::repo_calls::RepoRunCall;
 pub use self::repo_model::RepoModelGenerateInput;
 pub use self::result_read::ResultFacet;
-#[cfg(all(oneiron_test_support, feature = "test-support"))]
+#[cfg(oneiron_test_support)]
 pub(crate) use self::result_read::search_text_for_test;
 pub(crate) use self::result_read::{
     DeliveredRanges, Reply as ResultReply, ResultRead, cannot as result_cannot,

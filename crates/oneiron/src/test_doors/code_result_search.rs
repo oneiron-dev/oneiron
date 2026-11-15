@@ -9,7 +9,6 @@
 ///
 /// Storage errors, and the search's own refusal as an invariant: the door
 /// asks nothing a search denies or spills.
-#[cfg(feature = "test-support")]
 pub fn search_text(
     vault: &crate::Vault,
     text: &str,

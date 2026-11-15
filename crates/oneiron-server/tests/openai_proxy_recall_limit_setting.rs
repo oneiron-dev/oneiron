@@ -7,7 +7,9 @@
 //! injected memory block carried: with the key at 12, all twelve; at the
 //! default of 8, eight.
 //!
-//! `cargo test --locked -p oneiron-server --all-features --test openai_proxy_recall_limit_setting`.
+//! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
+//! -p oneiron-server --all-features --test openai_proxy_recall_limit_setting`
+//! (the cfg exports `oneiron_keystore::MemoryKeystore`).
 
 #[path = "support/fake_llm.rs"]
 mod fake_llm;

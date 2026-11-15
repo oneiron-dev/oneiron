@@ -18,7 +18,7 @@ use crate::store::ManifestDbs;
 use crate::{EntityId, Vault};
 
 mod pending;
-#[cfg(all(oneiron_test_support, feature = "test-support", feature = "sync"))]
+#[cfg(all(oneiron_test_support, feature = "sync"))]
 pub(crate) use pending::plant_retired_facet_receipts;
 pub(crate) use pending::unpark_stamp;
 #[cfg(feature = "sync")]
