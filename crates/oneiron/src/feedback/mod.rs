@@ -114,6 +114,8 @@ pub mod intake;
 mod preview_store;
 mod redaction;
 mod report;
+#[cfg(oneiron_test_support)]
+pub(crate) use report::report_request_digest_for_test;
 mod triage;
 
 pub use self::bundle::{

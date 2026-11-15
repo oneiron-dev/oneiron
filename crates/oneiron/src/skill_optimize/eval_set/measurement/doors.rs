@@ -14,12 +14,12 @@ use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::skill_optimize::eval_set::cohort::cohort_in_txn;
 use crate::skill_optimize::eval_set::{EvalCohort, EvalExposureKind, EvalSeat};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// One measurement, keyed by its request digest.
 const MEASUREMENTS: SideTable<[u8; 32], EvalMeasurement, Named> =
     SideTable::new(&side_table::SKILL_OPTIMIZE_EVAL_MEASUREMENT);
 /// The request digest's domain.
-const DIGEST_DOMAIN: &[u8] = b"skill_optimize:eval_measurement:v1\0";
 /// Longest pin, scorer, axis or slice a request names.
 const MAX_REF_BYTES: usize = 256;
 /// The legs a claim counts an exposure for, in order: the incumbent, the
@@ -63,13 +63,24 @@ pub(super) fn canary_failure_divergence_tolerance() -> f64 {
 }
 
 /// The digest that keys a request's row: its domain and its named encoding.
+/// A stored row's key, so it keeps its bytes (K, PLAN-UC-04 4.1).
 pub(super) fn request_digest(request: &EvalMeasurementRequest) -> Result<[u8; 32]> {
     let bytes = rmp_serde::to_vec_named(request)
         .map_err(|_| invalid("an eval measurement request does not encode"))?;
-    let mut hash = blake3::Hasher::new();
-    hash.update(DIGEST_DOMAIN);
-    hash.update(&bytes);
-    Ok(*hash.finalize().as_bytes())
+    Ok(
+        LegacyDigest::new(purposes::skill_optimize::EVAL_MEASUREMENT_REQUEST)
+            .raw(&bytes)
+            .finish(),
+    )
+}
+
+/// Seam for `test_doors::fingerprint_keep_request_digests` (PLAN-UC-04 4.1):
+/// the digest that keys a request's row.
+#[cfg(oneiron_test_support)]
+pub(crate) fn eval_measurement_request_digest_for_test(
+    request: &EvalMeasurementRequest,
+) -> Result<[u8; 32]> {
+    request_digest(request)
 }
 
 /// A digest as its row and its Coach job name it.
@@ -433,18 +444,25 @@ impl Vault {
 }
 
 /// The re-measure's digest domain (FIX 12175).
-const REMEASURE_DOMAIN: &[u8] = b"skill_optimize:eval_measurement:remeasure:v1\0";
-
 /// Where the request `digest` keys is measured again while its Partial
 /// `row` stands: one digest per Partial row, so each settled row opens a
-/// new one.
+/// new one. A stored row's key, so it keeps its bytes (K, PLAN-UC-04 4.1).
 fn remeasure_digest(digest: &[u8; 32], row: &EvalMeasurement) -> [u8; 32] {
-    let mut hash = blake3::Hasher::new();
-    hash.update(REMEASURE_DOMAIN);
-    hash.update(digest);
-    hash.update(&row.requested_at.to_be_bytes());
-    hash.update(&row.settled_at.unwrap_or_default().to_be_bytes());
-    *hash.finalize().as_bytes()
+    LegacyDigest::new(purposes::skill_optimize::EVAL_MEASUREMENT_REMEASURE)
+        .raw(digest)
+        .raw(&row.requested_at.to_be_bytes())
+        .raw(&row.settled_at.unwrap_or_default().to_be_bytes())
+        .finish()
+}
+
+/// Seam for `test_doors::fingerprint_keep_request_digests` (PLAN-UC-04 4.1):
+/// where the request `digest` keys is measured again while `row` stands.
+#[cfg(oneiron_test_support)]
+pub(crate) fn eval_measurement_remeasure_digest_for_test(
+    digest: &[u8; 32],
+    row: &EvalMeasurement,
+) -> [u8; 32] {
+    remeasure_digest(digest, row)
 }
 
 impl Vault {

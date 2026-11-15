@@ -50,6 +50,10 @@ pub mod doors;
 mod erase;
 pub(crate) use erase::{erase_eval_source_in_txn, forget_eval_case_source_rows, forget_source_row};
 mod measurement;
+#[cfg(oneiron_test_support)]
+pub(crate) use measurement::{
+    eval_measurement_remeasure_digest_for_test, eval_measurement_request_digest_for_test,
+};
 mod repair_task;
 mod replay_input;
 mod sufficiency;

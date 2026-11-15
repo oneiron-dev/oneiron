@@ -28,12 +28,12 @@ use crate::consent::{
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::GateError;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The data class a publisher's standing disclosure covers: the text a
 /// reporter wrote, never text loaded from the vault rows a report cites.
 const REPORT_TEXT_CLASS: &str = "feedback.report_text";
 /// The domain a report request's digest is taken under.
-const REQUEST_DIGEST_DOMAIN: &[u8] = b"oneiron.report.request_digest.v1\0";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::feedback::report::disclosure::ReportDisclosureBasis;
@@ -72,14 +72,22 @@ impl ReportTextSendBinding {
     }
 }
 
-/// The digest of a report's exact request, in its canonical encoding.
+/// The digest of a report's exact request, in its canonical encoding. An
+/// issue's disclosure basis stores it, so it keeps its bytes (K, PLAN-UC-04
+/// 4.1).
 fn request_digest(request: &ReportRequest) -> Result<[u8; 32]> {
     let bytes =
         rmp_serde::to_vec_named(request).map_err(|_| super::invalid("report request encoding"))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REQUEST_DIGEST_DOMAIN);
-    hasher.update(&bytes);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::feedback::REPORT_REQUEST)
+        .raw(&bytes)
+        .finish())
+}
+
+/// Seam for `test_doors::fingerprint_keep_request_digests` (PLAN-UC-04 4.1):
+/// the digest of a report's exact request.
+#[cfg(oneiron_test_support)]
+pub(crate) fn report_request_digest_for_test(request: &ReportRequest) -> Result<[u8; 32]> {
+    request_digest(request)
 }
 
 /// The standing disclosure bound for one publisher's report text in one

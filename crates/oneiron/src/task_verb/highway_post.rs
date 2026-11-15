@@ -33,6 +33,7 @@ use crate::task_authority::{
 };
 use crate::task_type::TaskTypeRef;
 use crate::write_envelope::WriteActor;
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 use super::brief::{QueueTaskBrief, StoredBrief, brief_digest, hex32};
 use super::consts::{
@@ -73,7 +74,6 @@ pub(crate) use self::settlement::settle_task_proposal_in_txn;
 pub(super) use self::settlement::{envelope_actor_class, proposer_of};
 
 /// Domain of a post's request digest.
-const POST_REQUEST_DOMAIN: &[u8] = b"oneiron.tasks.post.request.v1";
 /// Reason code of a proposal the addressed agent declined.
 const TAKE_DECLINED_REASON: &str = "gate.tasks.take.declined";
 /// Reason code of a proposal the addressed agent took.
@@ -221,7 +221,8 @@ fn stamp_copy_fields(
 /// every routed field and `parent_ref`, the parent it files under
 /// (DOOR-113), its due time (FIX 4749) and whether it is a watch (FIX
 /// 22121). A replay under the same key with any other request is refused,
-/// as an ask's is.
+/// as an ask's is. The TASK's provenance and the parked post's stamp keep
+/// it, so it keeps its bytes (K, PLAN-UC-04 4.1).
 fn request_digest(
     actor: EntityId,
     key: &str,
@@ -241,10 +242,21 @@ fn request_digest(
         post.watch,
     ))
     .map_err(|_| MemoryError::bad_request("task post does not encode"))?;
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(POST_REQUEST_DOMAIN);
-    hasher.update(&bytes);
-    Ok(*hasher.finalize().as_bytes())
+    Ok(LegacyDigest::new(purposes::task::POST_REQUEST)
+        .raw(&bytes)
+        .finish())
+}
+
+/// Seam for `test_doors::fingerprint_keep_request_digests` (PLAN-UC-04 4.1):
+/// the digest one post's request binds.
+#[cfg(oneiron_test_support)]
+pub(crate) fn post_request_digest_for_test(
+    actor: EntityId,
+    key: &str,
+    post: &TaskPost,
+    parent_ref: Option<EntityId>,
+) -> MemoryResult<[u8; 32]> {
+    request_digest(actor, key, post, parent_ref)
 }
 
 /// The brief's type stamp in the create spec's spelling (OF-541): the

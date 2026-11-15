@@ -60,7 +60,7 @@ macro_rules! areas {
     };
 }
 
-areas! { testing }
+areas! { connector, feedback, note, phone_line, skill_optimize, task, testing }
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 

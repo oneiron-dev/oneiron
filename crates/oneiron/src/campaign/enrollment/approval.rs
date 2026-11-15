@@ -29,6 +29,7 @@ use crate::attempt_queue::AttemptId;
 use crate::entity_id::EntityId;
 use crate::gate::CampaignLegFacts;
 use crate::side_table::{self, Named, SideTable};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// The retained request's row layout version.
 const RETAINED_VERSION: u8 = 1;
@@ -36,7 +37,6 @@ const RETAINED_VERSION: u8 = 1;
 /// and step; the body digest; the sender; the event row first asked under.
 const RETAINED_LEN: usize = 1 + 16 * 3 + 8 + 16 * 2 + 32 + 16 + 16;
 /// The domain of the retained request's digest.
-const REQUEST_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.retained_request.v1";
 /// The additional domain separation for an email body's frozen subject.
 const EMAIL_PAYLOAD_DOMAIN: &[u8] = b"oneiron.campaign.enrollment.email_payload.v1";
 
@@ -123,14 +123,14 @@ pub(super) fn leg_ask(
 }
 
 /// One prepared request's identity: its target, its sender, its channel,
-/// verb and idempotency.
+/// verb and idempotency. The retained table's key holds it, so it keeps its
+/// bytes (K, PLAN-UC-04 4.1).
 fn request_digest(
     facts: &CampaignLegFacts,
     step: &CampaignProgramStep,
     outbound: &CampaignProgramOutbound,
 ) -> [u8; 32] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(REQUEST_DOMAIN);
+    let mut hasher = LegacyDigest::new(purposes::task::CAMPAIGN_RETAINED_REQUEST);
     for id in [
         facts.query_ref,
         facts.campaign_ref,
@@ -139,18 +139,29 @@ fn request_digest(
         facts.step_ref,
         step.sender_ref,
     ] {
-        hasher.update(id.as_bytes());
+        hasher.raw(id.as_bytes());
     }
-    hasher.update(&facts.epoch.to_be_bytes());
-    hasher.update(&facts.consequence_id);
-    hasher.update(&facts.call_seq.to_be_bytes());
-    hasher.update(&facts.payload_digest);
+    hasher
+        .raw(&facts.epoch.to_be_bytes())
+        .raw(&facts.consequence_id)
+        .raw(&facts.call_seq.to_be_bytes())
+        .raw(&facts.payload_digest);
     for text in [step.channel.as_str(), outbound.verb.as_str()] {
-        hasher.update(&(text.len() as u64).to_be_bytes());
-        hasher.update(text.as_bytes());
+        hasher.len_u64_be(text.len()).raw(text.as_bytes());
     }
-    hasher.update(&[u8::from(outbound.idempotency_supported)]);
-    *hasher.finalize().as_bytes()
+    hasher.raw(&[u8::from(outbound.idempotency_supported)]);
+    hasher.finish()
+}
+
+/// Seam for `test_doors::fingerprint_keep_request_digests` (PLAN-UC-04 4.1):
+/// one prepared request's identity.
+#[cfg(oneiron_test_support)]
+pub(crate) fn retained_request_digest_for_test(
+    facts: &CampaignLegFacts,
+    step: &CampaignProgramStep,
+    outbound: &CampaignProgramOutbound,
+) -> [u8; 32] {
+    request_digest(facts, step, outbound)
 }
 
 /// What the retained table holds under one key.

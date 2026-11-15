@@ -65,6 +65,8 @@ mod highway;
 mod highway_accept;
 mod highway_block;
 mod highway_post;
+#[cfg(oneiron_test_support)]
+pub(crate) use highway_post::post_request_digest_for_test;
 mod highway_redo;
 mod highway_report;
 pub(crate) mod highway_runner;
