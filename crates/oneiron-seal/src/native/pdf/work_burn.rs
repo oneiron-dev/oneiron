@@ -296,7 +296,7 @@ pub(crate) fn burn_fields(
         op(&mut ops, "W", &[], limits)?;
         op(&mut ops, "n", &[], limits)?;
         op(&mut ops, "g", &[0.0], limits)?;
-        op(&mut ops, "w", &[1.0], limits)?;
+        op(&mut ops, "w", &[1.5], limits)?;
         for mark in marks(
             &field.geometry,
             PageGeometry {
