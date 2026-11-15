@@ -24,6 +24,7 @@ use oneiron::inquiry::{
     INQUIRY_PEER_PATH, INQUIRY_PUSH_PEER_PATH, InquiryPushTransport, InquiryTransport,
     InquiryTransportError,
 };
+use oneiron_base::unix_seconds_now;
 
 /// How long one exchange may take before the member host counts as
 /// unreachable. The member's vault answers at once (`pending` while the
@@ -77,7 +78,7 @@ impl<'a> HttpInquiryTransport<'a> {
     ) -> Result<reqwest::blocking::Response, InquiryTransportError> {
         let slip = CapabilitySlip::from_token(slip_token)
             .map_err(|_| refused("the route's slip does not decode"))?;
-        let binding = self.holder_proof(&slip, unix_now())?;
+        let binding = self.holder_proof(&slip, unix_seconds_now())?;
         let client = reqwest::blocking::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .timeout(EXCHANGE_TIMEOUT)
@@ -117,12 +118,6 @@ impl<'a> HttpInquiryTransport<'a> {
 
 fn refused(why: &str) -> InquiryTransportError {
     InquiryTransportError::Refused(why.to_owned())
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
 }
 
 /// The route `path` under `host`, an origin: HTTPS, or plain HTTP on

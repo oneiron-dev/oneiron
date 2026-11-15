@@ -8322,10 +8322,12 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-hex",
  "rand 0.8.8",
  "rand_core 0.6.4",
  "rand_distr 0.4.3",
  "rmp-serde",
+ "rmpv",
  "schemars 0.8.22",
  "serde",
  "serde_json",
@@ -8455,6 +8457,10 @@ dependencies = [
  "wasmtime",
  "wat",
 ]
+
+[[package]]
+name = "oneiron-hex"
+version = "0.1.0"
 
 [[package]]
 name = "oneiron-image"
@@ -8818,6 +8824,7 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "oneiron",
+ "oneiron-base",
  "oneiron-sdk-build",
  "rand_core 0.6.4",
  "reqwest 0.12.28",
@@ -8968,6 +8975,7 @@ dependencies = [
  "objc2-foundation",
  "oneiron",
  "oneiron-agent-runtime",
+ "oneiron-base",
  "oneiron-broker",
  "oneiron-browser",
  "oneiron-code-check",
@@ -9061,6 +9069,7 @@ dependencies = [
  "oneiron-contracts",
  "oneiron-crypto",
  "oneiron-docedit",
+ "oneiron-hex",
  "oneiron-model",
  "oneiron-skill-attribution",
  "oneiron-vault-contract",
