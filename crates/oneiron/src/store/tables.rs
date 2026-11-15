@@ -1108,10 +1108,15 @@ crate::side_table::side_tables! {
     /// BM25F field schema hash. Key: ().
     TEXT_BM25_FIELD_SCHEMA_HASH: VaultMeta b"text_bm25_field_schema_hash" Raw
         [restore: content] [family: structure] [tier: canonical];
-    /// The text-index rebuild an analyzer or field-schema change started at open: where the
-    /// background pass goes on from, and its counts (34 bytes). Absent when no rebuild runs.
-    /// Key: ().
+    /// The text-index rebuild an analyzer or field-schema change started at open: its counts
+    /// (17 bytes, version 2; an older engine's 34-byte version 1 also held a cursor). Absent
+    /// when no rebuild runs. Key: ().
     TEXT_INDEX_REBUILD: VaultMeta b"text_index_rebuild:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// The documents a text-index rebuild has yet to index again, newest content change last
+    /// in key order (the pass takes the highest keys first). Key: (`changed_at_ms` u64 BE,
+    /// id16); value empty. Absent when no rebuild runs.
+    TEXT_INDEX_REBUILD_ORDER: VaultMeta b"text_index_rebuild_order:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// Text-index schema version stamp. Key: ().
     TEXT_INDEX_SCHEMA_VERSION: VaultMeta b"text_index_schema_version" Raw

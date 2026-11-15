@@ -193,6 +193,15 @@ impl PipelineBuilder<'_> {
                 })?
         {
             diagnostics.succeeded.push(RetrievalSignal::Text);
+            // A text-index rebuild in this read's snapshot (FIX
+            // ANALYZER-BUMP-AUTO-REINDEX): the text arm scored only the
+            // documents indexed again so far; the other arms are whole.
+            if crate::vault::text_index_rebuild::text_index_rebuild_stands(&self.vault.store, rtxn)?
+            {
+                diagnostics
+                    .degradation
+                    .push(crate::retrieval_quality::RetrievalDegradation::Bm25Stale);
+            }
             text_exhausted = exhausted;
             text_channel_index = Some(acc.admit_channel(
                 RetrievalSignal::Text,

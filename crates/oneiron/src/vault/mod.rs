@@ -47,8 +47,8 @@ pub(crate) use self::actors_memory::is_named_agent_principal_body;
 #[cfg(test)]
 pub(crate) use self::database_digests::{mask_embed_job_stamps, mask_unrepeatable_stamps};
 pub use self::doctor_manifest::{
-    TextIndexStatus, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
-    VaultDoctorHnswReport, VaultDoctorReport,
+    TextIndexRebuildProgress, TextIndexStatus, VaultDoctorDbManifestReport,
+    VaultDoctorHnswRecordState, VaultDoctorHnswReport, VaultDoctorReport,
 };
 pub(crate) use self::doctor_manifest::{
     ensure_text_index_manifest_matches_wtxn, verify_text_index_manifest, write_text_index_manifest,

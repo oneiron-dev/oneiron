@@ -234,7 +234,7 @@ impl RetrievalIndex for Vault {
         query: &str,
         limit: usize,
     ) -> Result<Vec<ScoredEntity>> {
-        self.ensure_text_index_searchable()?;
+        self.ensure_text_index_trusted()?;
         let config = crate::config::Bm25RankProfile::default().to_bm25_config()?;
         let rows =
             crate::bm25::search_text(&self.store, txn, &self.analyzer, &config, query, limit)?;

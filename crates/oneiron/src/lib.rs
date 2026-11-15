@@ -659,9 +659,9 @@ pub use crate::memory::web_acquisition::{
 };
 pub use crate::vault::{
     ActorBound, HydratedShortId, IdScanPage, OpenOptions, RawEntityPut, ReaderTableShortfall,
-    RuntimeHandle, TextIndexStatus, VAULT_WRITER_LEASE_HELD, VAULT_WRITER_LOCK_FILE, Vault,
-    VaultDoctorDbManifestReport, VaultDoctorHnswRecordState, VaultDoctorHnswReport,
-    VaultDoctorReport, VaultStorageId, VaultWriterLease,
+    RuntimeHandle, TextIndexRebuildProgress, TextIndexStatus, VAULT_WRITER_LEASE_HELD,
+    VAULT_WRITER_LOCK_FILE, Vault, VaultDoctorDbManifestReport, VaultDoctorHnswRecordState,
+    VaultDoctorHnswReport, VaultDoctorReport, VaultStorageId, VaultWriterLease,
 };
 pub use crate::vault_cleanup::{
     ArchivedEntity, CleanupAcceptOutcome, CleanupCandidate, CleanupDecision, CleanupDigest,

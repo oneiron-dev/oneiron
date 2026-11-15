@@ -91,15 +91,19 @@ impl Vault {
 
     /// Current text-index status. `analyzer_manifest` reflects the analyzer
     /// this vault was opened with; `schema_version` and `total_docs` reflect
-    /// what was persisted by prior writes.
+    /// what was persisted by prior writes; `rebuild` is the rebuild in
+    /// flight, if one stands.
     pub fn text_index_status(&self) -> Result<TextIndexStatus> {
         let rtxn = self.store.env.read_txn()?;
         let total_docs = crate::store::text_index::read_total_docs(&self.store, &rtxn)?;
         let schema_version = read_text_schema_version(&self.store, &rtxn)?;
+        let rebuild =
+            super::text_index_rebuild::read_text_index_rebuild_progress(&self.store, &rtxn)?;
         Ok(TextIndexStatus {
             total_docs,
             schema_version,
             analyzer_manifest: self.analyzer.manifest(),
+            rebuild,
         })
     }
 
@@ -294,6 +298,14 @@ impl Vault {
                 &crate::retrieval_quality::RetrievalDiagnostics {
                     attempted: vec![RetrievalSignal::Text],
                     succeeded: vec![RetrievalSignal::Text],
+                    // A text-index rebuild in flight (FIX
+                    // ANALYZER-BUMP-AUTO-REINDEX): the hits come from the
+                    // documents indexed again so far.
+                    degradation: if self.text_index_rebuild_in_progress() {
+                        vec![crate::retrieval_quality::RetrievalDegradation::Bm25Stale]
+                    } else {
+                        Vec::new()
+                    },
                     ..Default::default()
                 },
             ),
@@ -322,7 +334,7 @@ impl Vault {
         admit: impl FnOnce(&heed::RoTxn<'_>) -> Result<()>,
     ) -> Result<TimedSearch> {
         let config = profile.to_bm25_config()?;
-        self.ensure_text_index_searchable()?;
+        self.ensure_text_index_trusted()?;
         self.measure_limit(
             crate::limit_ask::EngineLimit::RecallQueryBytes,
             query.len() as u64,

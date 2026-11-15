@@ -41,6 +41,19 @@ impl DepthAccumulator {
         }
     }
 
+    /// [`Self::complete`] for the text arm. A text-index rebuild in flight
+    /// leaves that arm partial (FIX ANALYZER-BUMP-AUTO-REINDEX), so the run
+    /// then says so; the vector and graph arms are whole.
+    pub(super) fn complete_text(&mut self, vault: &crate::Vault) {
+        self.complete(RetrievalSignal::Text);
+        let stale = crate::retrieval_quality::RetrievalDegradation::Bm25Stale;
+        if vault.text_index_rebuild_in_progress()
+            && !self.retrieval_diagnostics.degradation.contains(&stale)
+        {
+            self.retrieval_diagnostics.degradation.push(stale);
+        }
+    }
+
     pub(super) fn merge_revisioned(
         &mut self,
         hits: Vec<ScoredEntity>,

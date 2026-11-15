@@ -551,6 +551,7 @@ TaskAuthorityState
 TaskIssueLink
 TaskMirrorSnapshot
 TextIndexField
+TextIndexRebuildProgress
 TextIndexStatus
 ThreadMask
 ThreadPassport

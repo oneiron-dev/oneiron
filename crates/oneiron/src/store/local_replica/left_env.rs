@@ -151,9 +151,10 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::TEXT_ANALYZER_MANIFEST,
     &side_table::TEXT_BM25_FIELD_SCHEMA_HASH,
     &side_table::TEXT_INDEX_SCHEMA_VERSION,
-    // A text-index rebuild in flight: the kept documents its pass has not
-    // reached yet have no postings until it does.
+    // A text-index rebuild in flight and its list: the kept documents its
+    // pass has not reached yet have no postings until it does.
     &side_table::TEXT_INDEX_REBUILD,
+    &side_table::TEXT_INDEX_REBUILD_ORDER,
     &side_table::SHORT_ID_GRAMMAR_VERSION,
     &side_table::STRUCTURAL_KIND_REGISTRY,
     &side_table::PACK_BYTE_MAP_LOCAL_HEAD,
