@@ -31,6 +31,10 @@ pub mod temporal;
 pub mod wallet;
 pub mod write_envelope;
 
+/// The fingerprint door (PLAN-UC-04): `Purpose`, `Fingerprint`, `ContentHash`, the
+/// purpose registry and the K door for digests that keep their stored bytes.
+pub use oneiron_fingerprint as fingerprint;
+
 // `#[derive(Register)]` writes `::oneiron_contracts::register::Register`; this makes that path
 // resolve inside this crate too.
 extern crate self as oneiron_contracts;
