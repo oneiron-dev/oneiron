@@ -497,6 +497,52 @@ impl Memory<'_> {
         Ok(answer)
     }
 
+    /// Admits `word` on `handle`'s ask and completes the addressed member,
+    /// exactly as [`Self::tasks_answer`] does, but settles nothing: the ask
+    /// waits for a later cut. Test door only
+    /// (`test_doors::ask_answer_proof::admit_word_unsettled`): it pins that a
+    /// first-word cut of an ask that asks one party needs that party's proof
+    /// in the cutting transaction. No verb-hook session answers here, and no
+    /// peer-result signal is sent.
+    ///
+    /// # Errors
+    ///
+    /// The admission's, as `tasks_answer` answers it.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn admit_ask_word_unsettled(
+        &self,
+        handle: &super::TaskAskHandle,
+        word: &super::TaskAskWord,
+    ) -> MemoryResult<super::TaskAskAnswer> {
+        if !self.has_task_work_turn() {
+            return self
+                .task_work_memory()
+                .admit_ask_word_unsettled(handle, word);
+        }
+        self.require_answers_in_own_name()?;
+        let owner = self.answer_owner_proof();
+        self.with_verified_actor_write_txn(|txn| {
+            let group = self
+                .ask_group_named_in(txn, handle.group_ref)?
+                .ok_or_else(|| MemoryError::bad_request("unknown ask handle"))?;
+            let now = self.vault().store.clock.now_recorded_at();
+            let answer = super::ask_record::admit_word(
+                self.vault(),
+                txn,
+                handle.group_ref,
+                &group,
+                self.write_actor(),
+                word,
+                owner,
+                now,
+            )?;
+            if word.inform_for.is_none() && word.companion_for.is_none() {
+                complete_ask_member_in_txn(self.vault(), txn, &answer, word, now)?;
+            }
+            Ok(answer)
+        })
+    }
+
     /// The checks [`Self::tasks_answer`] meets before it records `word`, in
     /// one read transaction: nothing is recorded, no member completes and no
     /// ask settles. `Ok(false)` for an ask a verb hook's session holds, which
