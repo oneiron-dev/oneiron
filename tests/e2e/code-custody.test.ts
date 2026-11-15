@@ -98,7 +98,7 @@ async function codeCustody01Refused<V extends FacadeVerb>(
     if (!(error instanceof PublicHttpError)) throw error;
     expect(error.reply.status).toBe(403);
     expect(error.error?.code).toBe("FORBIDDEN");
-    const receiptRef = error.error?.receiptRef;
+    const receipt_ref = error.error?.receipt_ref;
     if (typeof receiptRef !== "string") throw new Error("Owner-only refusal omitted its call receipt");
     expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
     expect(error.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
@@ -257,7 +257,7 @@ async function codeCustody02Refused<V extends FacadeVerb>(
     if (!(error instanceof PublicHttpError)) throw error;
     expect(error.reply.status).toBe(status);
     expect(error.error?.code).toBe(code);
-    const receiptRef = error.error?.receiptRef;
+    const receipt_ref = error.error?.receipt_ref;
     if (typeof receiptRef !== "string") throw new Error("Refusal omitted the public call receipt");
     expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
     expect(error.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
@@ -723,7 +723,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const refusedBody = codeCustody06ErrorBody(refusedAppend);
     expect(refusedBody.code).toBe("FORBIDDEN");
     expect(refusedBody.message).toBe("request does not have the required scope");
-    const refusalReceipt = refusedBody.receiptRef;
+    const refusalReceipt = refusedBody.receipt_ref;
     if (typeof refusalReceipt !== "string" || !refusalReceipt.startsWith("call:"))
       throw new Error("Scope refusal wrote no call receipt");
     const refusalRecord = await codeCustody06ExpectedSuccess("scope refusal receipt vault.receipts.get", () =>
@@ -741,10 +741,10 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const refusedLfsBody = codeCustody06ErrorBody(refusedLfs);
     expect(refusedLfsBody.code).toBe("FORBIDDEN");
     expect(refusedLfsBody.message).toBe("request does not have the required scope");
-    expect("receiptRef" in refusedLfsBody).toBe(false);
+    expect("receipt_ref" in refusedLfsBody).toBe(false);
     const refusedDetails = refusedLfsBody.details as Record<string, unknown> | undefined;
     expect(refusedDetails?.code).toBe("FORBIDDEN");
-    expect(refusedDetails?.requiredScope).toBe("core:write");
+    expect(refusedDetails?.required_scope).toBe("core:write");
     // The full-scope (still live) agent passes the Write grant, so the refusal comes from the owner-only door.
     const refusedRegister = await full.client.raw("POST", "/v1/core/facade/vault.code.origin.register", {
       repo: "custody06-guest", default_branch: "main",
@@ -753,7 +753,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     const refusedRegisterBody = codeCustody06ErrorBody(refusedRegister);
     expect(refusedRegisterBody.code).toBe("FORBIDDEN");
     expect(refusedRegisterBody.message).toBe("vault.code.origin.register is the vault owner's");
-    const registerReceipt = refusedRegisterBody.receiptRef;
+    const registerReceipt = refusedRegisterBody.receipt_ref;
     if (typeof registerReceipt !== "string" || !registerReceipt.startsWith("call:"))
       throw new Error("Owner-door refusal wrote no call receipt");
     const registerRecord = await codeCustody06ExpectedSuccess("owner-door refusal receipt vault.receipts.get", () =>
@@ -775,7 +775,7 @@ suite.test(test, "CODE-CUSTODY-06", "Large blob fidelity and scoped deletion sho
     expect(deadPut.status).toBe(401);
     const deadPutBody = codeCustody06ErrorBody(deadPut);
     expect(deadPutBody.code).toBe("UNAUTHORIZED");
-    expect("receiptRef" in deadPutBody).toBe(false);
+    expect("receipt_ref" in deadPutBody).toBe(false);
     const deadSelf = await full.client.raw("POST", "/v1/core/facade/self.actor", {});
     expect(deadSelf.status).toBe(401);
     expect(codeCustody06ErrorBody(deadSelf).code).toBe("UNAUTHORIZED");

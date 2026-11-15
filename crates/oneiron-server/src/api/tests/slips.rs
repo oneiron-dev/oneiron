@@ -651,7 +651,7 @@ async fn narrowed_read_slips_can_read_static_capabilities_but_not_unscoped_recor
         .unwrap();
     let (status, listed) = route_json(server.clone(), request(&open_slip, &list_path)).await;
     assert_eq!(status, StatusCode::OK, "{listed}");
-    assert_eq!(listed["items"][0]["personalityCompact"], compact);
+    assert_eq!(listed["items"][0]["personality_compact"], compact);
 
     let mut no_read = slip.clone();
     no_read

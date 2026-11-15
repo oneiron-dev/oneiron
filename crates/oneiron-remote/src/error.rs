@@ -4,7 +4,7 @@
 //! There is exactly one error type on this surface and it is the ENGINE's:
 //! [`MemoryError`], the `{code, message, suggestions}` triple. Embedded
 //! failures are that value already and cross byte-for-byte. Remote failures
-//! are rebuilt from the server's `{error:{code,message,requestId,suggestions}}`
+//! are rebuilt from the server's `{error:{code,message,request_id,suggestions}}`
 //! envelope with the code string carried verbatim, so an engine code this SDK
 //! has never heard of still reaches user code spelled the way the engine
 //! spelled it.

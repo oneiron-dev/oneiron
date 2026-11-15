@@ -42,13 +42,13 @@ import type {
  */
 export interface LensFrameEventRequest {
   readonly event: Facade.GeneratedUiActionEvent
-  readonly idempotencyKey: string
+  readonly idempotency_key: string
   /**
    * Selections this handle made on the card, each the `selectionRef`
    * `vault.lenses.select` answered (FIX 3268): context for a model round
    * trip, never approval or action authority; any other action ignores it.
    */
-  readonly selectedContext?: readonly string[]
+  readonly selected_context?: readonly string[]
   /**
    * The stream profile this event's answer is framed in (FIX 11399): a
    * patch-profile caller takes the card's refinement beside a local
@@ -66,8 +66,8 @@ export interface LensFrameEventRequest {
  */
 export type LensFrameEventReply =
   | { readonly $state: Facade.GeneratedUiStateSnapshot; readonly refinement?: Facade.GeneratedUiSegment | null }
-  | { readonly outcome: unknown; readonly readReceipt: Facade.ScopedReadReceipt }
-  | { readonly queued: boolean; readonly callbackId: string }
+  | { readonly outcome: unknown; readonly read_receipt: Facade.ScopedReadReceipt }
+  | { readonly queued: boolean; readonly callback_id: string }
 
 /** What a lens-card close answers: whether the server held its frame. */
 export interface CloseLensFrameReply {

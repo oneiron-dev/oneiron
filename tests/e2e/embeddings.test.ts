@@ -51,7 +51,7 @@ interface OwnerStatus {
 }
 interface SearchPage {
   items: { id: string; score: number }[];
-  embedder?: { provider: string; modelId: string; dimensions: number } | { space: string };
+  embedder?: { provider: string; model_id: string; dimensions: number } | { space: string };
 }
 async function fixtures(): Promise<Scenarios> {
   return (await loadFixtures()).readJson<Scenarios>("embeddings-scenarios");
@@ -286,7 +286,7 @@ suite.test(test, "EMBEDDINGS-02", "Async embedding durability should work", asyn
   const semantic = async () => (await engine.client.request<SearchPage>("POST", "/api/search/semantic",
     { text: row.query, view: "standard", limit: 10, depth: "light" })).body;
   const recalled = await semantic();
-  expect(recalled.embedder).toEqual({ provider: "endpoint", modelId: data.space.modelId, dimensions: data.space.dimensions });
+  expect(recalled.embedder).toEqual({ provider: "endpoint", model_id: data.space.modelId, dimensions: data.space.dimensions });
   expect(recalled.items.filter(item => item.id === row.turn)).toHaveLength(1);
   await engine.restart();
   expect((await semantic()).items.filter(item => item.id === row.turn)).toHaveLength(1);

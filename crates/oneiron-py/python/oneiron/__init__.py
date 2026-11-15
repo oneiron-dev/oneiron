@@ -382,7 +382,7 @@ class Oneiron(_FacadeVerbs):
 
         The reply is the verb's shared wire JSON, not the projection the
         verb's own method returns (``vault.recall`` keeps
-        ``confidenceAdjustment``, for one).
+        ``confidence_adjustment``, for one).
         """
         refusal: dict[str, Any] = {
             "code": pending.code,
@@ -398,13 +398,13 @@ class Oneiron(_FacadeVerbs):
     def lens_frame_event(self, card_id: str, request: dict[str, Any]) -> dict[str, Any]:
         """Sends one event on a lens card the connected server rendered (OF-181).
 
-        ``request`` is the route's body, ``{"event": ..., "idempotencyKey":
+        ``request`` is the route's body, ``{"event": ..., "idempotency_key":
         ...}``, with the event as the rendered card names it; its keys keep
         the wire's camelCase (``cardId``, ``occurredAt``). A patch-profile
         caller also names ``"stream": "patch"`` (FIX 11399). The reply is
         the wire JSON: ``{"$state": ...}`` for a local action (beside the
         card's refinement for a patch-profile caller), or ``{"outcome":
-        ..., "readReceipt": ...}`` for a deterministic tool. A card the server
+        ..., "read_receipt": ...}`` for a deterministic tool. A card the server
         no longer holds raises ``NOT_FOUND``: render the lens again. An
         embedded handle raises ``BAD_REQUEST``: lens frames live on the
         served host that rendered the card, so render the lens through a

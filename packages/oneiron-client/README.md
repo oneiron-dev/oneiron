@@ -118,15 +118,15 @@ the signing transport makes a new holder proof automatically.
 A lens card that `vault.lenses.default` rendered takes its events at routes
 outside the facade (OF-181). `client.lensFrameEvent(cardId, request, init?)`
 is `POST /v1/core/lens-frames/{cardId}/events` with the
-`{ event, idempotencyKey }` body (`LensFrameEventRequest`), and
+`{ event, idempotency_key }` body (`LensFrameEventRequest`), and
 `client.closeLensFrame(cardId, init?)` is `DELETE
 /v1/core/lens-frames/{cardId}`. Both return the original `Response`;
-`LensFrameEventReply` (`{ $state }`, `{ outcome, readReceipt }`, or a model
-round trip's `202` `{ queued, callbackId }`) and
+`LensFrameEventReply` (`{ $state }`, `{ outcome, read_receipt }`, or a model
+round trip's `202` `{ queued, callback_id }`) and
 `CloseLensFrameReply` (`{ closed }`) type their 2xx bodies. Send them to the
 server that rendered the card, where its frame lives. The credential that sends
 an event authors the card's action, whoever rendered it; only the credential
-that rendered a card closes it. An optional `selectedContext` lists the
+that rendered a card closes it. An optional `selected_context` lists the
 `selectionRef`s this credential made on the card, context for a model round
 trip.
 

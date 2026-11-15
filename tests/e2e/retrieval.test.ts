@@ -682,7 +682,7 @@ function retrieval04L2Rows(pack: Retrieval04Pack): Retrieval04L2Row[] {
 }
 interface Retrieval04QueryPage {
   readonly items: { readonly id: string }[];
-  readonly meta: { readonly total: number; readonly countMode: string };
+  readonly meta: { readonly total: number; readonly count_mode: string };
   readonly narrowing: ReadReceipt;
 }
 interface Retrieval04HydrateBatch {
@@ -694,7 +694,7 @@ interface Retrieval04HydrateBatch {
   }[];
 }
 interface Retrieval04Refusal {
-  readonly error: { readonly code: string; readonly message: string; readonly receiptRef?: string };
+  readonly error: { readonly code: string; readonly message: string; readonly receipt_ref?: string };
   readonly narrowing?: ReadReceipt;
   readonly value?: unknown;
 }
@@ -879,12 +879,12 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(quality.narrowing.replan_hint).toContain("grant_scope");
     // This receipt can count the permitted claim removed by the quality filter, not the hidden world.
     const query = await reader.raw<Retrieval04QueryPage>("POST", "/v1/core/query", {
-      query: token, limit: 20, view: "full", countMode: "exact", filter: { include_stale: true },
+      query: token, limit: 20, view: "full", count_mode: "exact", filter: { include_stale: true },
     });
     expect(query.status).toBe(200);
     expect(query.body.items.map(row => row.id)).toEqual([readable.id]);
     expect(query.body.meta.total).toBe(1);
-    expect(query.body.meta.countMode).toBe("estimate");
+    expect(query.body.meta.count_mode).toBe("estimate");
     retrieval04Receipt(query.body.narrowing);
     retrieval04Absent(query.body, forbidden);
     const batch = await reader.raw<Retrieval04HydrateBatch>("POST", "/v1/core/batch/shortId/hydrate", {
@@ -980,13 +980,13 @@ suite.test(test, "RETRIEVAL-04", "A world-limited reader stays clamped across re
     expect(refused.status).toBe(403);
     expect(refused.body.error.code).toBe("FORBIDDEN");
     expect(refused.body.narrowing).toBeUndefined();
-    expect(refused.body.error.receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
-    expect(refused.headers.get("x-oneiron-receipt-ref")).toBe(refused.body.error.receiptRef!);
+    expect(refused.body.error.receipt_ref).toMatch(/^call:[a-f0-9]{32}$/);
+    expect(refused.headers.get("x-oneiron-receipt-ref")).toBe(refused.body.error.receipt_ref!);
     const refusedReceipt = await engine.client.call("vault.receipts.get", {
-      receipt_ref: refused.body.error.receiptRef!,
+      receipt_ref: refused.body.error.receipt_ref!,
     });
     expect(refusedReceipt).not.toBeNull();
-    expect(refusedReceipt!.receipt_ref).toBe(refused.body.error.receiptRef!);
+    expect(refusedReceipt!.receipt_ref).toBe(refused.body.error.receipt_ref!);
     expect(refusedReceipt!.actor_ref).toBe(guestId);
     expect(refusedReceipt!.actor_class).toBe("human");
     expect(refusedReceipt!.transport).toBe("http_facade");
@@ -1220,7 +1220,7 @@ suite.test(test, "RETRIEVAL-06", "Evidence abstention not invented recall should
     // rows need not survive a different probe's evidence floor.
     for (const row of fixture.claims) {
       const params = new URLSearchParams({ query: row.vector.join(","),
-        limit: "1", view: "standard", countMode: "none" });
+        limit: "1", view: "standard", count_mode: "none" });
       const expectedId = identities.get(row.label)!.id;
       await awaitPublic(async () => (await engine.client.request<VectorPage>("GET", `/api/search/vector?${params}`)).body,
         page => page.items.some(hit => hit.id === expectedId),
@@ -1937,18 +1937,18 @@ suite.test(test, "RETRIEVAL-10", "Clustering produces proposals not truth should
 async function retrieval11OwnerRefusal(engine: EngineFixture, client: PublicHttpClient,
   verb: "vault.claims.review" | "vault.claims.settle" | "vault.consolidation.evidence",
   input: unknown, actorRef: string, actorClass: "agent" | "human") {
-  const reply = await client.raw<{ error: { code: string; message: string; receiptRef?: string } }>(
+  const reply = await client.raw<{ error: { code: string; message: string; receipt_ref?: string } }>(
     "POST", `/v1/core/facade/${verb}`, input);
   expect(reply.status).toBe(403);
   expect(reply.body.error.code).toBe("FORBIDDEN");
   expect(reply.body.error.message).toBe(`${verb} is the vault owner's`);
-  expect(reply.body.error.receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
-  expect(reply.headers.get("x-oneiron-receipt-ref")).toBe(reply.body.error.receiptRef!);
+  expect(reply.body.error.receipt_ref).toMatch(/^call:[a-f0-9]{32}$/);
+  expect(reply.headers.get("x-oneiron-receipt-ref")).toBe(reply.body.error.receipt_ref!);
   const receipt = await engine.client.call("vault.receipts.get", {
-    receipt_ref: reply.body.error.receiptRef!,
+    receipt_ref: reply.body.error.receipt_ref!,
   });
   expect(receipt).not.toBeNull();
-  expect(receipt!.receipt_ref).toBe(reply.body.error.receiptRef!);
+  expect(receipt!.receipt_ref).toBe(reply.body.error.receipt_ref!);
   expect(receipt!.actor_ref).toBe(actorRef);
   expect(receipt!.actor_class).toBe(actorClass);
   expect(receipt!.transport).toBe("http_facade");
@@ -2402,13 +2402,13 @@ async function museRecallHttpRefusalReceipt(
   verb: FacadeVerb,
 ): Promise<void> {
   const wire = reply.body as {
-    readonly error?: { readonly code?: unknown; readonly message?: unknown; readonly receiptRef?: unknown };
+    readonly error?: { readonly code?: unknown; readonly message?: unknown; readonly receipt_ref?: unknown };
   };
   const errorCode = wire.error?.code;
   const code = typeof errorCode === "string" ? errorCode : "<none>";
   const errorMessage = wire.error?.message;
   const message = typeof errorMessage === "string" ? errorMessage : "<none>";
-  const receiptRefValue = wire.error?.receiptRef;
+  const receiptRefValue = wire.error?.receipt_ref;
   const receiptRef = typeof receiptRefValue === "string" && receiptRefValue.length > 0
     ? receiptRefValue : undefined;
   if (!receiptRef) {
@@ -2603,13 +2603,13 @@ async function museRecall01ExpectSettleRefused(
   client: MuseRecall01Client,
   input: FacadeInput<"vault.claims.settle">,
 ): Promise<string> {
-  const reply = await client.raw<{ error: { code: string; message: string; receiptRef?: string } }>(
+  const reply = await client.raw<{ error: { code: string; message: string; receipt_ref?: string } }>(
     "POST", "/v1/core/facade/vault.claims.settle", input,
   );
   expect(reply.status).toBe(403);
   expect(reply.body.error.code.length).toBeGreaterThan(0);
   expect(reply.body.error.message.length).toBeGreaterThan(0);
-  const receiptRef = reply.body.error.receiptRef;
+  const receiptRef = reply.body.error.receipt_ref;
   if (!receiptRef) throw new Error("Settle refusal left no call receipt reference");
   const receipt = await awaitPublic(
     () => engine.client.call("vault.receipts.get", { receipt_ref: receiptRef }),
@@ -5445,7 +5445,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
       const wire = reply.body as {
         readonly error?: {
           readonly code?: unknown; readonly message?: unknown;
-          readonly suggestions?: unknown; readonly receiptRef?: unknown;
+          readonly suggestions?: unknown; readonly receipt_ref?: unknown;
         };
       };
       const errorCode = wire.error?.code;
@@ -5455,7 +5455,7 @@ suite.test(test, "MUSE-RECALL-07", "A short id hydrates for read-granted callers
       const errorSuggestions = wire.error?.suggestions;
       const firstSuggestion = Array.isArray(errorSuggestions) ? errorSuggestions[0] : undefined;
       const suggestion = typeof firstSuggestion === "string" ? firstSuggestion : "<none>";
-      const receiptRefValue = wire.error?.receiptRef;
+      const receiptRefValue = wire.error?.receipt_ref;
       const bodyRef = typeof receiptRefValue === "string" && receiptRefValue.length > 0
         ? receiptRefValue : undefined;
       // Pre-auth refusals have a connection receipt in the header only.

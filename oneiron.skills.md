@@ -365,7 +365,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 
 #### search-vector - `GET /api/search/vector`
 
-- when-to-use: Retrieve nearest entities from an embedding vector when the caller already has a numeric query embedding. It searches the vault's own text index; with `space` (and `queryKind`: `text`, `image` or `audio`) it searches that declared embedding space, and the vector must come from that tower at the space's width.
+- when-to-use: Retrieve nearest entities from an embedding vector when the caller already has a numeric query embedding. It searches the vault's own text index; with `space` (and `query_kind`: `text`, `image` or `audio`) it searches that declared embedding space, and the vector must come from that tower at the space's width.
 - trigger phrases:
   - "semantic vector search"
   - "nearest memories by embedding"
@@ -527,7 +527,7 @@ Fetch Tier-1 first. It contains one endpoint block per route this pack covers an
 
 #### recovery-custody-page - `POST /v1/recovery/custody/page`
 
-- when-to-use: Read one page of a custody lineage's sealed head and log frames from the residence home with the recovery kit alone, to restore on a new host. Page from head offset 0 and sequence 0 until the reply carries no next cursor; `fromSeq` names the first log frame the restore needs (the home starts its frames there, or right after the head), and stays the same on every page.
+- when-to-use: Read one page of a custody lineage's sealed head and log frames from the residence home with the recovery kit alone, to restore on a new host. Page from head offset 0 and sequence 0 until the reply carries no next cursor; `from_seq` names the first log frame the restore needs (the home starts its frames there, or right after the head), and stays the same on every page.
 - trigger phrases:
   - "fetch key custody with the kit"
   - "read a custody page from the home"
@@ -726,17 +726,17 @@ Origins: ordinary serve answers `/a/` on a second listener of its own, at the po
 Path parameters:
 
 - `artifact` required: code project id or canonical lowercase hex blob entity id.
-- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Short entry URLs `/a/{artifact}/` and `/a/{artifact}/_t/{token}/` authorize first, then redirect to canonical `/a/{artifact}/_s/c/published/` or `/a/{artifact}/_t/{token}/_s/c/published/`. Preview uses `/_s/c/preview/`; immutable exports use `/_s/f/{forkHash}/` and `/_s/b/{blobVersion}/`, with the same optional token prefix. The fixed-position `_s` selector marker is never searched inside the artifact id or file suffix. Bundle paths after it may contain `c/`, `f/`, `b/`, `_s/`, or `_t/` as ordinary directories. Code roots select `index.html`; blob roots select the export. Every query-selected entry authorizes then redirects to its selector-bearing path so relative assets inherit both capability and selection. Names containing `#`, `?`, and `%` retain their encoded spelling across redirects.
+- `path` optional: code snapshot file path, or the blob export name / stable `export` path. Short entry URLs `/a/{artifact}/` and `/a/{artifact}/_t/{token}/` authorize first, then redirect to canonical `/a/{artifact}/_s/c/published/` or `/a/{artifact}/_t/{token}/_s/c/published/`. Preview uses `/_s/c/preview/`; immutable exports use `/_s/f/{fork_hash}/` and `/_s/b/{blob_version}/`, with the same optional token prefix. The fixed-position `_s` selector marker is never searched inside the artifact id or file suffix. Bundle paths after it may contain `c/`, `f/`, `b/`, `_s/`, or `_t/` as ordinary directories. Code roots select `index.html`; blob roots select the export. Every query-selected entry authorizes then redirects to its selector-bearing path so relative assets inherit both capability and selection. Names containing `#`, `?`, and `%` retain their encoded spelling across redirects.
 
 Query parameters:
 
 - `channel` optional: pointer channel to resolve, currently `published` by default or `preview`.
-- `forkHash` optional: 64-character hex immutable code snapshot hash. Do not combine with `channel` or `blobVersion`.
-- `blobVersion` optional: positive numbered blob export version. Do not combine with `channel` or `forkHash`.
+- `fork_hash` optional: 64-character hex immutable code snapshot hash. Do not combine with `channel` or `blob_version`.
+- `blob_version` optional: positive numbered blob export version. Do not combine with `channel` or `fork_hash`.
 
 Response behavior:
 
-- Resolves only an authorized live channel pointer to a pinned code snapshot or blob version. Explicit `forkHash` and `blobVersion` require a matching live published or preview pin; unpinned versions and codebase-class snapshots are not hostable.
+- Resolves only an authorized live channel pointer to a pinned code snapshot or blob version. Explicit `fork_hash` and `blob_version` require a matching live published or preview pin; unpinned versions and codebase-class snapshots are not hostable.
 - Serving tiers are private by default: a private pin serves the vault's owner alone, on his full slip, a managed vault's attested owner or a self-hosted root (never on his narrowed slip, another holder's credential or the unauthenticated dev mode); an explicitly public pin serves anonymously; a link-token pin needs its 256-bit URL capability; a world-member pin needs a verified, unrestricted read credential and a live federation membership grant. Wrong or missing authority, absent files, and unpublished pointers return the same artifact `404`. Repointing and unpublishing revoke old direct-version serving, not the underlying immutable export.
 - Returns `400` for malformed or mutually exclusive selector parameters. No vault API is available to served bundles.
 - Public code channel responses use `Cache-Control: no-cache, max-age=0, must-revalidate`; pinned public code snapshots use `public, max-age=31536000, immutable`. Public blob channels use `private, no-cache, max-age=0, must-revalidate` and direct public blob versions use `private, max-age=31536000, immutable`. Token and member responses use `private, no-store`. All responses send `Referrer-Policy: no-referrer` to protect capability URLs. Code snapshots use content-hash ETags; blob exports use version-scoped ETags (including the content hash), so same-byte repoints with different pinned presentation revalidate. Both kinds send restrictive CSP. Blob responses render only passive allowlisted media types inline; active or unknown types download as `application/octet-stream` attachments with `X-Content-Type-Options: nosniff`.
@@ -851,17 +851,17 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: comma-separated `f32` values, for example `0.1,0.2,0.3`.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limit_clamped` says so.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
-- `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
-- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
+- `count_mode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadline_ms` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
 Response:
 
-- Envelope: `items`, optional `nextCursor`, and `meta`.
-- `meta.total`: estimate count for search unless `countMode=none`.
-- `meta.countMode`: `estimate` or `none`.
-- `meta.partial`: `true` only when `deadlineMs` came due before the search finished.
+- Envelope: `items`, optional `next_cursor`, and `meta`.
+- `meta.total`: estimate count for search unless `count_mode=none`.
+- `meta.count_mode`: `estimate` or `none`.
+- `meta.partial`: `true` only when `deadline_ms` came due before the search finished.
 - Summary item fields: `id`, `kind`, `label`, `updatedAt`.
 - Standard item fields: `id`, `score`.
 - Full item fields: summary metadata, raw projected fields, and `score`.
@@ -878,7 +878,7 @@ Example response:
       "updatedAt": 1770000000
     }
   ],
-  "meta": { "total": 1, "countMode": "estimate" }
+  "meta": { "total": 1, "count_mode": "estimate" }
 }
 ```
 
@@ -891,10 +891,10 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Request body:
 
 - `text` required: the natural-language question. Original text bytes past `[limits].semantic_query_bytes` (8 MiB unless set) raise a row question without row truncation or refusal. The server prepends the model's query instruction and embeds it; the caller sends no vector. Transport and embedder input-window limits remain separate.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limit_clamped` says so.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
-- `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
-- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
+- `count_mode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadline_ms` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 - `depth` optional: `light`, `medium`, `high`, `xhigh`, or `max`; default `light`.
 
 Response:
@@ -925,7 +925,7 @@ Example response:
       "updatedAt": 1770000000
     }
   ],
-  "meta": { "total": 1, "countMode": "estimate" },
+  "meta": { "total": 1, "count_mode": "estimate" },
   "embedder": {
     "provider": "local",
     "modelId": "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8",
@@ -943,10 +943,10 @@ Authentication: `Authorization: Bearer <credential>` unless development config a
 Query parameters:
 
 - `query` required: natural language, exact phrase, identifier fragment, or keyword string.
-- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limitClamped` says so.
+- `limit` optional: max returned items, default `10`; past `1000` it is served at `1000` and `meta.limit_clamped` says so.
 - `view` optional: `summary`, `standard`, or `full`; default `summary`. A row whose body would pass the page's `[limits].projection_body_bytes` carries `bodyOmitted` (`code`, `maxBytes`, `bodyBytes`, `ref`) in place of its body; `POST /v1/core/hydrate` with that `ref` returns it whole.
-- `countMode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
-- `deadlineMs` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
+- `count_mode` optional: `none`, `estimate`, or `exact`; search responses coerce `exact` to `estimate`.
+- `deadline_ms` optional: a hard deadline in milliseconds from arrival, 1 to 60000. When it comes due the search answers with the hits ready and sets `meta.partial` to `true`; a value out of range is `BAD_REQUEST` (400).
 
 Response: Same paginated envelope and projection profiles as vector search.
 
@@ -955,7 +955,7 @@ Example response:
 ```json
 {
   "items": [],
-  "meta": { "total": 0, "countMode": "estimate" }
+  "meta": { "total": 0, "count_mode": "estimate" }
 }
 ```
 
@@ -1179,13 +1179,13 @@ Authentication: `Authorization: Bearer <credential>` with `core:read`, and a cre
 List query parameters:
 
 - `limit` optional: default `10`.
-- `after` optional: the `nextCursor` of the previous page.
+- `after` optional: the `next_cursor` of the previous page.
 - `view` optional: `summary`, `standard`, or `full`.
-- `countMode` optional: `none`, `estimate`, or `exact` (default).
+- `count_mode` optional: `none`, `estimate`, or `exact` (default).
 - `kind` optional: `direct`, `agent`, `group`, `channel`, or `mirror`.
 - `external_id` optional: match one external id.
 
-List response: a paginated response (Tier-3) whose rows are conversation projections, each with an optional `lastMessageSnippet`, plus the read's `narrowing` receipt.
+List response: a paginated response (Tier-3) whose rows are conversation projections, each with an optional `last_message_snippet`, plus the read's `narrowing` receipt.
 
 Transcript path parameter:
 
@@ -1245,7 +1245,7 @@ Authentication: no bearer and no slip. The body's `signature` is the authenticat
 
 Request body (JSON, at most 4 KiB; unknown fields are refused):
 
-- `vaultId` required: 64 lowercase hex.
+- `vault_id` required: 64 lowercase hex.
 - `root` required: the kit's recovery root id, 64 lowercase hex.
 - `generation` optional: 48 lowercase hex. Absent or null asks for the newest generation kept for the root; name the generation the first slice returned on every later slice.
 - `object` required: `bundle` or `pads`.
@@ -1380,7 +1380,7 @@ of the bound actor/class, not other actors or worlds.
 - `KeyValueNamespaces`: optional `prefix: string[]`, `suffix: string[]`
   (both default `[]`), `max_depth: integer|null` (1–32), and the same limit/offset.
 
-The facade's existing `{error:{code,message,requestId,suggestions}}` envelope
+The facade's existing `{error:{code,message,request_id,suggestions}}` envelope
 carries failures verbatim. `BAD_REQUEST` rejects invalid selectors/payloads;
 `FORBIDDEN` includes the real claim-gate refusal; `INVALID_STATE` rejects stale
 request replay or conflicting current heads. No new error-code vocabulary or
@@ -1396,13 +1396,13 @@ storage type byte is added.
   "required": ["items", "meta"],
   "properties": {
     "items": { "type": "array" },
-    "nextCursor": { "type": "string" },
+    "next_cursor": { "type": "string" },
     "meta": {
       "type": "object",
-      "required": ["total", "countMode"],
+      "required": ["total", "count_mode"],
       "properties": {
         "total": { "type": "integer", "minimum": 0 },
-        "countMode": { "enum": ["none", "estimate", "exact"] }
+        "count_mode": { "enum": ["none", "estimate", "exact"] }
       }
     }
   }
@@ -1645,7 +1645,7 @@ Fully specified entries:
     "wire_fields": {
       "code": "IDEMPOTENCY_REPLAY_CONFLICT",
       "message": "idempotency key was replayed with a different request",
-      "details": { "code": "IDEMPOTENCY_REPLAY_CONFLICT", "idempotencyKey": "lease-revoke-key" },
+      "details": { "code": "IDEMPOTENCY_REPLAY_CONFLICT", "idempotency_key": "lease-revoke-key" },
       "suggestions": ["Reuse the original request body or send a new Idempotency-Key."]
     }
   }

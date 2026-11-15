@@ -568,7 +568,7 @@ suite.test(test, "MUSE-LOOP-07", "Agent artifact work waits beside the live vers
   );
   // A named brief without a covering grant returns SettleNotAuthorized (400).
   museLoop07ExpectHttpRefusal(museLoop07ProposerKeepRefusal, 400);
-  const museLoop07RefusedKeepReceiptRef = museLoop07ProposerKeepRefusal.error?.receiptRef;
+  const museLoop07RefusedKeepReceiptRef = museLoop07ProposerKeepRefusal.error?.receipt_ref;
   if (typeof museLoop07RefusedKeepReceiptRef !== "string" || !museLoop07RefusedKeepReceiptRef) {
     throw new Error("The HTTP proposer Keep refusal carried no receiptRef");
   }

@@ -11,7 +11,7 @@ impl Lift<oneiron::lens::LensResultSetActionResult> for crate::LensResultSetActi
         let outcome = WireJson::lift(outcome)?;
         Ok(Self {
             outcome,
-            read_receipt: lift_record("vault.lenses.result_set.action:readReceipt", &read_receipt)?,
+            read_receipt: lift_record("vault.lenses.result_set.action:read_receipt", &read_receipt)?,
         })
     }
 }

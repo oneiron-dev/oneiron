@@ -1076,7 +1076,7 @@ async fn timeline_answer(
         ),
     )
     .await;
-    if let Some(request) = body.pointer_mut("/error/requestId") {
+    if let Some(request) = body.pointer_mut("/error/request_id") {
         *request = Value::from("<request>");
     }
     (status, body.to_string().replace(&id.to_hex(), "<id>"))

@@ -47,7 +47,7 @@ const KIT_BUNDLE_PART_TIMEOUT_SECS: u64 = 300;
 const KIT_BUNDLE_PART_REPLY_MAX: usize = 4 * SEALED_BUNDLE_READ_PART_MAX.div_ceil(3) + 241;
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct KitPadIndexReply {
     retained_revision: String,
     generations: Vec<KitPadIndexEntry>,
@@ -57,14 +57,14 @@ struct KitPadIndexReply {
 
 /// Where the next page of the index starts (FIX 9364).
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct KitPadIndexCursor {
     retained_revision: String,
     before_commit_order: u64,
 }
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct KitPadIndexEntry {
     generation: String,
     commit_order: u64,
@@ -120,7 +120,7 @@ impl KitHome {
             .client
             .post(self.url.clone())
             .json(&json!({
-                "vaultId": sealed_digest_hex(&fetch.vault_id),
+                "vault_id": sealed_digest_hex(&fetch.vault_id),
                 "root": sealed_digest_hex(&fetch.root.0),
                 "generation": generation.as_ref().map(sealed_generation_hex),
                 "object": object.name(),
@@ -170,10 +170,10 @@ impl KitHome {
             .client
             .post(url)
             .json(&json!({
-                "vaultId": sealed_digest_hex(&fetch.vault_id),
+                "vault_id": sealed_digest_hex(&fetch.vault_id),
                 "root": sealed_digest_hex(&fetch.root.0),
-                "retainedRevision": fetch.retained_revision.as_ref().map(sealed_digest_hex),
-                "beforeCommitOrder": fetch.before_commit_order,
+                "retained_revision": fetch.retained_revision.as_ref().map(sealed_digest_hex),
+                "before_commit_order": fetch.before_commit_order,
                 "timestamp": fetch.timestamp,
                 "nonce": sealed_digest_hex(&fetch.nonce),
                 "signature": signature,

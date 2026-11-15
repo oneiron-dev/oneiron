@@ -562,7 +562,7 @@ async fn a_submitter_learns_nothing_of_an_identity_it_cannot_read() {
         receipt["error"]
             .as_object_mut()
             .unwrap()
-            .remove("requestId");
+            .remove("request_id");
         faceted_receipts.push(receipt);
     }
     for receipt in &faceted_receipts[1..] {
@@ -642,7 +642,7 @@ async fn a_handoff_status_reads_only_under_its_identity() {
     assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing}");
     for body in [&mut held, &mut missing] {
         let error = body["error"].as_object_mut().unwrap();
-        error.remove("requestId");
+        error.remove("request_id");
         error.remove("message");
         error.remove("details");
     }
@@ -659,7 +659,7 @@ async fn a_handoff_status_reads_only_under_its_identity() {
         let (status, mut body) = status_as(faceted.clone(), correlation).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         let error = body["error"].as_object_mut().unwrap();
-        error.remove("requestId");
+        error.remove("request_id");
         answers.push(body);
     }
     assert_eq!(answers[0], answers[1]);
@@ -725,7 +725,7 @@ async fn a_hidden_handoff_never_makes_a_correlation_ambiguous() {
     assert_eq!(missing_status, StatusCode::NOT_FOUND, "{missing}");
     for body in [&mut held, &mut missing] {
         let error = body["error"].as_object_mut().unwrap();
-        error.remove("requestId");
+        error.remove("request_id");
         error.remove("message");
         error.remove("details");
     }

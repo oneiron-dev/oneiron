@@ -54,7 +54,7 @@ async fn v1_core_batch_query_context_pack_and_hydrate_routes_are_live() {
         query_body["items"][0]["txt"],
         Value::from("blue hallway contextneedle")
     );
-    assert_eq!(query_body["meta"]["countMode"], Value::from("estimate"));
+    assert_eq!(query_body["meta"]["count_mode"], Value::from("estimate"));
 
     let (pack_status, pack_body) = route_json_auth(
         server.clone(),
@@ -708,7 +708,7 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
         server.clone(),
         Request::builder()
             .uri(format!(
-                "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none"
+                "/v1/core/conversations/{conversation_id}/turns?limit=1&count_mode=none"
             ))
             .body(Body::empty())
             .expect("request"),
@@ -719,13 +719,13 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
         .as_str()
         .expect("first page id")
         .to_owned();
-    assert_eq!(first_page["nextCursor"], Value::from(first_id.clone()));
+    assert_eq!(first_page["next_cursor"], Value::from(first_id.clone()));
 
     let (second_page_status, second_page) = route_json(
             server.clone(),
             Request::builder()
                 .uri(format!(
-                    "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none&after={first_id}"
+                    "/v1/core/conversations/{conversation_id}/turns?limit=1&count_mode=none&after={first_id}"
                 ))
                 .body(Body::empty())
                 .expect("request"),
@@ -744,7 +744,7 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
         server.clone(),
         Request::builder()
             .uri(format!(
-                "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none"
+                "/v1/core/conversations/{conversation_id}/turns?limit=1&count_mode=none"
             ))
             .body(Body::empty())
             .expect("request"),
@@ -757,7 +757,7 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
         .to_owned();
     assert_ne!(deleted_gap_first, turn_ids[1]);
     assert_eq!(
-        deleted_gap_page["nextCursor"],
+        deleted_gap_page["next_cursor"],
         Value::from(deleted_gap_first.clone())
     );
 
@@ -765,7 +765,7 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
             server.clone(),
             Request::builder()
                 .uri(format!(
-                    "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none&after={deleted_gap_first}"
+                    "/v1/core/conversations/{conversation_id}/turns?limit=1&count_mode=none&after={deleted_gap_first}"
                 ))
                 .body(Body::empty())
                 .expect("request"),
@@ -782,7 +782,7 @@ async fn v1_core_conversation_turns_honor_after_and_filter_deleted_shells() {
         server,
         Request::builder()
             .uri(format!(
-                "/v1/core/conversations/{conversation_id}/turns?view=full&countMode=exact"
+                "/v1/core/conversations/{conversation_id}/turns?view=full&count_mode=exact"
             ))
             .body(Body::empty())
             .expect("request"),
@@ -1182,13 +1182,14 @@ async fn conversation_list_previews_last_visible_multibyte_message_for_every_row
         let rows = response["items"].as_array().unwrap();
         for (id, source) in &sources {
             let row = rows.iter().find(|row| row["id"] == *id).unwrap();
-            let snippet = row["lastMessageSnippet"].as_str().unwrap();
+            let snippet = row["last_message_snippet"].as_str().unwrap();
             assert!(snippet.chars().count() <= 50);
             assert!(snippet.ends_with('…'));
             assert!(source.starts_with(snippet.trim_end_matches('…')));
         }
         assert!(
-            rows.iter().find(|row| row["id"] == empty_id).unwrap()["lastMessageSnippet"].is_null()
+            rows.iter().find(|row| row["id"] == empty_id).unwrap()["last_message_snippet"]
+                .is_null()
         );
     }
     let bearer = owner_reader_bearer(&server);
@@ -1207,7 +1208,7 @@ async fn conversation_list_previews_last_visible_multibyte_message_for_every_row
             .as_array()
             .unwrap()
             .iter()
-            .filter(|row| row["lastMessageSnippet"].is_string())
+            .filter(|row| row["last_message_snippet"].is_string())
             .count(),
         2
     );
@@ -1269,7 +1270,7 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
         .iter()
         .find(|row| row["id"] == conversation.to_hex())
         .unwrap();
-    assert_eq!(row["lastMessageSnippet"], content);
+    assert_eq!(row["last_message_snippet"], content);
 }
 
 #[tokio::test]
@@ -1595,7 +1596,7 @@ async fn a_turn_page_reads_a_bounded_run_of_edges_and_resumes_past_other_childre
         let after = after.map_or_else(String::new, |after| format!("&after={after}"));
         Request::builder()
             .uri(format!(
-                "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=none{after}"
+                "/v1/core/conversations/{conversation_id}/turns?limit=1&count_mode=none{after}"
             ))
             .body(Body::empty())
             .expect("request")
@@ -1603,7 +1604,7 @@ async fn a_turn_page_reads_a_bounded_run_of_edges_and_resumes_past_other_childre
     let (status, first) = route_json(server.clone(), page(None)).await;
     assert_eq!(status, StatusCode::OK, "{first}");
     assert_eq!(first["items"].as_array().map(Vec::len), Some(0), "{first}");
-    let mut cursor = first["nextCursor"].as_str().map(str::to_owned);
+    let mut cursor = first["next_cursor"].as_str().map(str::to_owned);
     assert!(
         cursor.is_some(),
         "a page that stopped early carries a cursor: {first}"
@@ -1620,7 +1621,7 @@ async fn a_turn_page_reads_a_bounded_run_of_edges_and_resumes_past_other_childre
                 .iter()
                 .map(|item| item["id"].clone()),
         );
-        cursor = body["nextCursor"].as_str().map(str::to_owned);
+        cursor = body["next_cursor"].as_str().map(str::to_owned);
     }
     assert_eq!(listed, vec![turn["id"].clone()]);
     assert_eq!(cursor, None);
@@ -1629,7 +1630,7 @@ async fn a_turn_page_reads_a_bounded_run_of_edges_and_resumes_past_other_childre
         server,
         Request::builder()
             .uri(format!(
-                "/v1/core/conversations/{conversation_id}/turns?limit=1&countMode=exact"
+                "/v1/core/conversations/{conversation_id}/turns?limit=1&count_mode=exact"
             ))
             .body(Body::empty())
             .expect("request"),

@@ -407,10 +407,10 @@ impl NativeClient {
     }
 
     /// Sends one event on a lens card the connected server rendered
-    /// (OF-181). `request_json` is the route's `{event, idempotencyKey}`
+    /// (OF-181). `request_json` is the route's `{event, idempotency_key}`
     /// body, camelCase as the wire spells it; the reply is its wire JSON,
     /// `{"$state"}` (beside the card's refinement for a patch-profile
-    /// caller) or `{outcome, readReceipt}`. The route, the credential and
+    /// caller) or `{outcome, read_receipt}`. The route, the credential and
     /// the embedded refusal all stay in
     /// `oneiron_remote::OneironClient::lens_frame_event`.
     fn lens_frame_event(

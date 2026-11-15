@@ -175,7 +175,7 @@ async fn context_pack_route_projects_json_response_controls() {
                 "query": "projection budget needle",
                 "limit": 5,
                 "policy": { "view": "full" },
-                "budget": { "tokenBudget": 16 }
+                "budget": { "token_budget": 16 }
             })),
         ),
     )

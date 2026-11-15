@@ -442,7 +442,7 @@ suite.test(test, "HOOKS-03", "Before-hook rewrite and durable ask should work", 
     packFiles: Record<string, string>;
   }
   interface ErrorBody {
-    error: { code: string; message: string; hook?: Facade.VerbHookStop; receiptRef?: string };
+    error: { code: string; message: string; hook?: Facade.VerbHookStop; receipt_ref?: string };
   }
   interface HookToolReply {
     isError: boolean;
@@ -993,7 +993,7 @@ suite.test(test, "HOOKS-05", "Hook sandbox and author scope should work", async 
     // error, so the saved-call roundtrip stays on explicit wire metadata like
     // HOOKS-03. No credentials, asks or result envelopes are invented.
     interface Hooks05PendingError {
-      error: { code: string; message: string; hook?: Facade.VerbHookStop; receiptRef?: string };
+      error: { code: string; message: string; hook?: Facade.VerbHookStop; receipt_ref?: string };
     }
     type Hooks05PendingWire = WireReply<FacadeResult<"vault.claims.upsert"> | Hooks05PendingError>;
     const callPending = (

@@ -427,10 +427,10 @@ pub(super) fn assert_error_envelope(body: &Value, code: &str) {
     let error = error_envelope(body);
     assert_eq!(error["code"], Value::from(code));
     assert!(
-        error["requestId"]
+        error["request_id"]
             .as_str()
             .is_some_and(|request_id| !request_id.is_empty()),
-        "enveloped errors must include a requestId: {body:?}"
+        "enveloped errors must include a request_id: {body:?}"
     );
     assert!(
         body.get("code").is_none(),
@@ -949,8 +949,8 @@ pub(super) fn seed_world_claim(
 ///
 /// It proposes no follow-up queries, so the deep round loop ends after one
 /// `decompose`; what the rows here are actually about is the ACCOUNTING —
-/// `tokensUsed` must be the sum of what this stub reports, never the
-/// `tokenBudget` the request carried.
+/// `tokens_used` must be the sum of what this stub reports, never the
+/// `token_budget` the request carried.
 pub(super) struct StubReasonBackend {
     answer: String,
     sources: Option<Vec<String>>,

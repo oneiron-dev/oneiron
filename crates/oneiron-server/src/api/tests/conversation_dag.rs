@@ -919,7 +919,7 @@ async fn list_preview_falls_back_only_through_selected_dag_ancestors() {
         .iter()
         .find(|item| item["id"] == room["id"])
         .unwrap();
-    assert_eq!(row["lastMessageSnippet"], "selected ancestor");
+    assert_eq!(row["last_message_snippet"], "selected ancestor");
 }
 
 #[tokio::test]
@@ -994,7 +994,7 @@ async fn list_preview_traverses_deleted_selected_shells_without_losing_other_roo
     let rows = list["items"].as_array().unwrap();
     for (id, text) in expected {
         let row = rows.iter().find(|row| row["id"] == id).unwrap();
-        assert_eq!(row["lastMessageSnippet"], text, "room {id}");
+        assert_eq!(row["last_message_snippet"], text, "room {id}");
     }
 }
 
@@ -1111,12 +1111,12 @@ async fn selected_preview_lifecycle_matrix_keeps_retained_shape_separate_from_co
                     None
                 };
                 assert_eq!(
-                    selected["lastMessageSnippet"].as_str(),
+                    selected["last_message_snippet"].as_str(),
                     expected,
                     "head_deleted={head_deleted}, ancestor_deleted={ancestor_deleted}, session_deleted={session_deleted}"
                 );
                 assert_eq!(
-                    rows.iter().find(|row| row["id"] == other["id"]).unwrap()["lastMessageSnippet"],
+                    rows.iter().find(|row| row["id"] == other["id"]).unwrap()["last_message_snippet"],
                     "unrelated room"
                 );
             }
@@ -1151,10 +1151,10 @@ async fn empty_room_remains_listable_after_dag_read() {
     let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(
-        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
+        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["last_message_snippet"].is_null()
     );
     assert_eq!(
-        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
+        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["last_message_snippet"],
         "healthy room content"
     );
 }
@@ -1201,10 +1201,10 @@ async fn room_with_only_deleted_childof_turns_lists_after_dag_migration() {
     let list = list(&server, "/v1/core/conversations?limit=20").await;
     let rows = list["items"].as_array().unwrap();
     assert!(
-        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["lastMessageSnippet"].is_null()
+        rows.iter().find(|row| row["id"] == empty["id"]).unwrap()["last_message_snippet"].is_null()
     );
     assert_eq!(
-        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["lastMessageSnippet"],
+        rows.iter().find(|row| row["id"] == healthy["id"]).unwrap()["last_message_snippet"],
         "healthy retained text"
     );
 }

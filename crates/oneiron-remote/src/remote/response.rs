@@ -11,11 +11,11 @@ struct ApiErrorEnvelope {
     narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
 }
 
-/// `{code, message, requestId, suggestions}`.
+/// `{code, message, request_id, suggestions}`.
 ///
 /// `code` is a `String` and stays one: collapsing an unrecognized future
 /// engine code into a local enum is precisely the lossy step the raw-string
-/// envelope exists to avoid. `requestId` is accepted and dropped — it is
+/// envelope exists to avoid. `request_id` is accepted and dropped — it is
 /// diagnostic metadata, not a public field of the error contract.
 #[derive(serde::Deserialize)]
 struct ApiErrorBody {
@@ -30,13 +30,13 @@ struct ApiErrorBody {
     #[serde(default)]
     hook: Option<oneiron::runtime_hooks::VerbHookStop>,
     /// When to call again, in seconds, on a provider outage (FIX 3194).
-    #[serde(default, rename = "retryAfter")]
+    #[serde(default, rename = "retry_after")]
     retry_after: Option<u64>,
     /// Each time the refused call's limit resets, as Unix seconds (FIX 8190).
-    #[serde(default, rename = "resetsAt")]
+    #[serde(default, rename = "resets_at")]
     resets_at: Vec<u64>,
     /// The refusal's stable reason codes, in order (FIX 7398).
-    #[serde(default, rename = "reasonCodes")]
+    #[serde(default, rename = "reason_codes")]
     reason_codes: Vec<String>,
     #[serde(default)]
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,

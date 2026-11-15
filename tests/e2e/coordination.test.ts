@@ -1885,12 +1885,12 @@ suite.test(test, "MUSE-LOOP-01", "An agent's proposed claims are found in the pe
     claim_ref: pending1.claim_ref, review_id: review1.review_id, decision: "approve",
   };
   const deniedHttp = await proposer.client.raw<{
-    error: { code: string; message: string; suggestions?: readonly string[]; receiptRef?: string };
+    error: { code: string; message: string; suggestions?: readonly string[]; receipt_ref?: string };
   }>("POST", "/v1/core/facade/vault.claims.settle", settleApprove1);
   expect(deniedHttp.status).toBe(403);
   expect(deniedHttp.body.error.code.length).toBeGreaterThan(0);
   expect(deniedHttp.body.error.message.length).toBeGreaterThan(0);
-  const deniedReceiptRef = deniedHttp.body.error.receiptRef;
+  const deniedReceiptRef = deniedHttp.body.error.receipt_ref;
   if (!deniedReceiptRef) {
     throw new Error("MUSE-LOOP-01: refused HTTP settle left no receiptRef");
   }
@@ -2253,7 +2253,7 @@ suite.test(test, "MUSE-LOOP-02", "A graduation offer gives go auto, not now and 
     deniedCode = error.error?.code ?? "";
     expect(deniedCode.length).toBeGreaterThan(0);
     expect((error.error?.message ?? "").length).toBeGreaterThan(0);
-    const receiptRef = error.error?.receiptRef;
+    const receipt_ref = error.error?.receipt_ref;
     if (typeof receiptRef === "string") deniedReceiptRef = receiptRef;
   }
   expect(deniedCode.length).toBeGreaterThan(0);
@@ -2843,9 +2843,9 @@ interface MuseLoop04ErrorEnvelope {
   error: {
     code: string;
     message: string;
-    requestId: string;
+    request_id: string;
     suggestions: string[];
-    receiptRef?: string;
+    receipt_ref?: string;
   };
 }
 
@@ -2970,9 +2970,9 @@ async function museLoop04ExpectRefusal(
   expect(error.code.length).toBeGreaterThan(0);
   expect(typeof error?.message).toBe("string");
   expect(error.message.length).toBeGreaterThan(0);
-  expect(typeof error?.requestId).toBe("string");
+  expect(typeof error?.request_id).toBe("string");
   expect(Array.isArray(error?.suggestions)).toBe(true);
-  const receiptRef = error?.receiptRef;
+  const receipt_ref = error?.receipt_ref;
   expect(typeof receiptRef).toBe("string");
   if (typeof receiptRef !== "string") throw new Error(`Refusal of ${verb} left no receiptRef`);
   const receipt = await museLoop04CallReceipt(owner, receiptRef, verb, actorClass);
@@ -3599,7 +3599,7 @@ type museLoop05Snapshot = Extract<
   { kind: "snapshot" }
 >;
 interface museLoop05RefusalEnvelope {
-  error: { code: string; message: string; receiptRef?: string };
+  error: { code: string; message: string; receipt_ref?: string };
 }
 
 async function museLoop05AuditRows(client: PublicHttpClient): Promise<museLoop05AuditRow[]> {
@@ -3822,7 +3822,7 @@ suite.test(test, "MUSE-LOOP-05", "A human-time ask survives restart and resumes 
     expect(deniedAnswer.status).toBe(403);
     expect(deniedAnswer.body.error.code.length).toBeGreaterThan(0);
     expect(deniedAnswer.body.error.message.length).toBeGreaterThan(0);
-    const refusalReceiptRef = deniedAnswer.body.error.receiptRef;
+    const refusalReceiptRef = deniedAnswer.body.error.receipt_ref;
     if (!refusalReceiptRef) throw new Error("MUSE-LOOP-05 tasks.answer refusal carries no receiptRef");
     const refusedReceipt = await awaitPublic(
       () => engine.client.call("vault.receipts.get", { receipt_ref: refusalReceiptRef }),

@@ -29,12 +29,12 @@ lease and native per-rung policy meter have separate state, so native permits
 are not charged twice. Each native call's reservation is sized to the remaining
 request allowance and nonzero line headroom, not the original full reservation.
 An exhausted paid line still fails its native admission; it is not given a zero
-reservation to bypass the line. `tokensUsed` is derived from reported usage, never from
+reservation to bypass the line. `tokens_used` is derived from reported usage, never from
 reservations, billing-unit conversion or the paid meter's balance. The answer's
 aggregate is reconciled with its matched physical token reports before overlaps
 are removed, so absent aggregate counters cannot erase known token use.
 Additional physical observations are added once. When coverage is incomplete,
-`tokensUsageComplete` is false and `tokensUsed` is a lower bound from the reports.
+`tokens_usage_complete` is false and `tokens_used` is a lower bound from the reports.
 A usable answer is not discarded just because usage is incomplete.
 
 Run receipts and budget-hit notifications are held until the request ends.

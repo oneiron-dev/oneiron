@@ -92,7 +92,7 @@ async fn conversation_rooms_members_threads_and_filters_round_trip() {
     let (status, rooms) = route_json(
         server.clone(),
         Request::builder()
-            .uri("/v1/core/conversations?kind=mirror&external_id=remote-room&limit=10&countMode=exact")
+            .uri("/v1/core/conversations?kind=mirror&external_id=remote-room&limit=10&count_mode=exact")
             .header(AUTHORIZATION, owner_reader_bearer(&server))
             .body(Body::empty())
             .unwrap(),

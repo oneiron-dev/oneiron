@@ -267,7 +267,7 @@ class TaskAskPersonEvidence(TypedDict):
 
 # OF-181: a host-rendered lens card's event and close. These keep the wire's
 # camelCase keys: they are the server route's bodies, not snake_case DTOs.
-# `selectedContext` (FIX 3268): the clicker's selectionRefs on this card,
+# `selected_context` (FIX 3268): the clicker's selectionRefs on this card,
 # context for a model round trip only; empty when absent. `stream`
 # (FIX 11399): the profile the answer is framed in; a patch-profile caller
 # takes the card's refinement beside a local action's `$state`.
@@ -275,8 +275,8 @@ LensFrameEventRequest = TypedDict(
     "LensFrameEventRequest",
     {
         "event": Facade.GeneratedUiActionEvent,
-        "idempotencyKey": str,
-        "selectedContext": NotRequired[list[str]],
+        "idempotency_key": str,
+        "selected_context": NotRequired[list[str]],
         "stream": NotRequired[Facade.GeneratedUiStreamProfile],
     },
 )
@@ -289,11 +289,11 @@ LensFrameLocalReply = TypedDict(
 )
 LensFrameToolReply = TypedDict(
     "LensFrameToolReply",
-    {"outcome": Any, "readReceipt": Facade.ScopedReadReceipt},
+    {"outcome": Any, "read_receipt": Facade.ScopedReadReceipt},
 )
 LensFrameCallbackReply = TypedDict(
     "LensFrameCallbackReply",
-    {"queued": bool, "callbackId": str},
+    {"queued": bool, "callback_id": str},
 )
 LensFrameEventReply = LensFrameLocalReply | LensFrameToolReply | LensFrameCallbackReply
 

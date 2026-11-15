@@ -218,7 +218,7 @@ async function codeRuntime02OwnerRefused(owner: PublicHttpClient, actorRef: stri
   }
   expect(failure.reply.status).toBe(403);
   expect(failure.error?.code).toBe("FORBIDDEN");
-  const receiptRef = failure.error?.receiptRef;
+  const receiptRef = failure.error?.receipt_ref;
   if (typeof receiptRef !== "string") throw new Error("Authenticated refusal has no receiptRef");
   expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
   const receipt = await owner.call("vault.receipts.get", { receipt_ref: receiptRef });
@@ -710,7 +710,7 @@ suite.test(test, "CODE-RUNTIME-03", "Code run resumes after an answered question
       expect(refusal).toBeDefined();
       expect(refusal!.reply.status).toBe(400);
       expect(refusal!.error?.code).toBe("BAD_REQUEST");
-      const receiptRef = refusal!.error?.receiptRef;
+      const receiptRef = refusal!.error?.receipt_ref;
       if (typeof receiptRef !== "string") throw new Error("Refusal carries no receiptRef");
       expect(refusal!.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
       const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
@@ -892,7 +892,7 @@ async function codeRuntime07Refused(
   if (!(failure instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
   expect(failure.reply.status).toBe(status);
   expect(failure.error?.code).toBe(code);
-  const receiptRef = failure.error?.receiptRef;
+  const receiptRef = failure.error?.receipt_ref;
   if (typeof receiptRef !== "string") throw new Error("Authenticated refusal has no receiptRef");
   expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
   const receipt = await owner.call("vault.receipts.get", { receipt_ref: receiptRef });

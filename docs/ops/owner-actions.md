@@ -2607,8 +2607,8 @@ like this:
    (`parent`, `subtree`, `project` or `vault`) caps whom it may message; both answers show
    that reach as `comm`, `vault` when you named none.
 2. While the server runs the agent, call `POST /v1/core/live-runs/{run}/attach` with that
-   credential. It answers `{"liveRun": "<handle>"}` to this caller only.
-3. Send `"liveRun": "<handle>"` in the body of `POST /v1/core/actions/{verb}`.
+   credential. It answers `{"live_run": "<handle>"}` to this caller only.
+3. Send `"live_run": "<handle>"` in the body of `POST /v1/core/actions/{verb}`.
 
 A handle has no expiry time. It holds while the run keeps its lease, and a run parked on a
 durable wait keeps its handle. Once the run ends or takes a new lease, attach again. One
@@ -2630,7 +2630,7 @@ step. Refusals carry these codes:
   ask to rebind.
 
 An MCP client runs these actions with the `invoke_action` tool, on either MCP endpoint. Its
-arguments are `verb`, `args`, `idempotencyKey` and `liveRun`, the same fields as the HTTP body,
+arguments are `verb`, `args`, `idempotency_key` and `live_run`, the same fields as the HTTP body,
 and it names the handle on every call. It runs as the connector's own credential, so attach over
 HTTP with that credential, both calls on this device or both off it. A connector bound to a list
 of verbs needs both `invoke_action` and the verb on it. A connector narrowed to one world or facet
@@ -2640,8 +2640,8 @@ A running server holds the frame of each card `vault.lenses.default`, `vault.wea
 `POST /v1/owner/weave/lens` return. The card id finds it; the credential that clicks a card
 authors its action, so you can press a card an agent rendered with your own credential. The card
 lends you none of the renderer's authority: every row the action uses is read again as you.
-- `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotencyKey"}` runs one event.
-  An optional `"selectedContext"` lists `selectionRef`s you made on the card with
+- `POST /v1/core/lens-frames/{card_id}/events` with `{"event", "idempotency_key"}` runs one event.
+  An optional `"selected_context"` lists `selectionRef`s you made on the card with
   `vault.lenses.select`; a model round trip carries them to the agent as context, and any other
   action ignores them. A model round-trip action goes back to the agent that rendered the card,
   as that agent's next turn, naming you as the one who pressed it: it answers
@@ -2649,7 +2649,7 @@ lends you none of the renderer's authority: every row the action uses is read ag
   card and key answer the same callback. A card a person's view or a system job rendered answers
   `409`. A tool action's reply carries its verb's `x-oneiron-receipt-ref`. A tool action whose
   verb acts on a live run acts for the run that rendered the card, through your credential's own
-  attachment to it, and names no `liveRun`: attach that credential to the run first. A card no
+  attachment to it, and names no `live_run`: attach that credential to the run first. A card no
   run rendered, or a run your credential is not attached to, answers `live_run_unavailable`.
 - `DELETE /v1/core/lens-frames/{card_id}` closes the card, for the credential that rendered it;
   any other answers `{"closed": false}`.

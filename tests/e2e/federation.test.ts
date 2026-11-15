@@ -51,7 +51,7 @@ async function fed01Refused(
   expect(failure.reply.status).toBe(status);
   expect(failure.error?.code).toBe(code);
   if (hasReceipt) {
-    const receiptRef = failure.error?.receiptRef;
+    const receiptRef = failure.error?.receipt_ref;
     if (typeof receiptRef !== "string") throw new Error("Authenticated refusal has no receiptRef");
     expect(failure.reply.headers.get("x-oneiron-receipt-ref")).toBe(receiptRef);
     const receipt = await owner.call("vault.receipts.get", { receipt_ref: receiptRef });
@@ -293,7 +293,7 @@ async function fed02Refused(
   if (!(failure instanceof PublicHttpError)) throw new Error("Expected a public HTTP refusal");
   expect(failure.reply.status).toBe(status);
   expect(failure.error?.code).toBe(code);
-  const receiptRef = failure.error?.receiptRef;
+  const receiptRef = failure.error?.receipt_ref;
   if (typeof receiptRef !== "string" || !receiptRef.startsWith("call:")) {
     throw new Error("Authenticated refusal has no call receiptRef");
   }
@@ -639,7 +639,7 @@ async function fed03Refusal(engine: EngineFixture, attempt: Promise<unknown>, st
   expect(refusal.error?.code).toBe(code);
   const receiptRef = refusal.reply.headers.get("x-oneiron-receipt-ref");
   if (!receiptRef) throw new Error("Authenticated refusal has no call receipt");
-  expect(refusal.error?.["receiptRef"]).toBe(receiptRef);
+  expect(refusal.error?.["receipt_ref"]).toBe(receiptRef);
   const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
   expect(receipt?.receipt_ref).toBe(receiptRef);
   expect(receipt?.actor_ref).toBe(actor);
@@ -855,7 +855,7 @@ async function fed04Refusal(attempt: Promise<unknown>, engine: EngineFixture, re
       const receiptRef = error.reply.headers.get("x-oneiron-receipt-ref");
       expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
       if (!receiptRef) throw new Error("Authenticated refusal has no call receipt");
-      expect(error.error?.receiptRef).toBe(receiptRef);
+      expect(error.error?.receipt_ref).toBe(receiptRef);
       const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
       if (!receipt) throw new Error("Refusal receipt was not readable by the owner");
       expect(receipt.receipt_ref).toBe(receiptRef);
@@ -1364,7 +1364,7 @@ async function fed07Refusal(attempt: Promise<unknown>, engine: EngineFixture): P
     const receiptRef = error.reply.headers.get("x-oneiron-receipt-ref");
     expect(receiptRef).toMatch(/^call:[a-f0-9]{32}$/);
     if (!receiptRef) throw new Error("Authenticated refusal has no call receipt");
-    expect(error.error?.receiptRef).toBe(receiptRef);
+    expect(error.error?.receipt_ref).toBe(receiptRef);
     const receipt = await engine.client.call("vault.receipts.get", { receipt_ref: receiptRef });
     if (!receipt) throw new Error("Refusal receipt was not readable by the owner");
     expect(receipt.receipt_ref).toBe(receiptRef);

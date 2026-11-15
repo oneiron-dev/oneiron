@@ -328,9 +328,9 @@ impl NativeClient {
     }
 
     /// Sends one event on a lens card the connected server rendered
-    /// (OF-181): `request` is the route's `{event, idempotencyKey}` body, and
+    /// (OF-181): `request` is the route's `{event, idempotency_key}` body, and
     /// the reply is its wire JSON, `{$state}` (beside the card's refinement
-    /// for a patch-profile caller) or `{outcome, readReceipt}`. The route,
+    /// for a patch-profile caller) or `{outcome, read_receipt}`. The route,
     /// the credential and the embedded refusal all stay in
     /// `oneiron_remote::OneironClient::lens_frame_event`.
     #[napi]
@@ -345,7 +345,7 @@ impl NativeClient {
                 facade_error(oneiron::MemoryError::new(
                     oneiron::memory::MEMORY_CODE_BAD_REQUEST,
                     format!("the lens frame event is not the documented shape: {error}"),
-                    &["Send {event, idempotencyKey}, the event as the rendered card names it."],
+                    &["Send {event, idempotency_key}, the event as the rendered card names it."],
                 ))
             })?;
         let reply = self

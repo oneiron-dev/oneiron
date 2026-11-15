@@ -91,7 +91,7 @@ export type FacadeHookStop =
   | { status: "hidden"; hook: string };
 /** The server's refusal envelope, `{error, narrowing?}`, as `api/facade.rs` writes it. */
 export interface FacadeErrorEnvelope {
-  error: { code: string; message: string; requestId: string; suggestions: string[]; receiptRef?: string; hook?: FacadeHookStop; retryAfter?: number; resetsAt?: number[]; reasonCodes?: string[]; legal_hold?: Facade.LegalHoldNotice; room_join_hold?: Facade.RoomJoinHold; [field: string]: unknown };
+  error: { code: string; message: string; request_id: string; suggestions: string[]; receipt_ref?: string; hook?: FacadeHookStop; retry_after?: number; resets_at?: number[]; reason_codes?: string[]; legal_hold?: Facade.LegalHoldNotice; room_join_hold?: Facade.RoomJoinHold; [field: string]: unknown };
   narrowing?: unknown;
 }
 /**

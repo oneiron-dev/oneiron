@@ -247,7 +247,7 @@ async fn a_text_only_mcp_agent_hydrates_a_generated_image_as_its_asset_text() {
 
 /// Sol on #1517: a batch's body budget bounds the text it serves too. An
 /// image whose text is past what the batch may still decode keeps its id,
-/// kind and time with the `bodyOmitted` marker, and the marker's ref hydrates
+/// kind and time with the `body_omitted` marker, and the marker's ref hydrates
 /// the text whole.
 #[tokio::test]
 async fn a_batch_omits_an_image_whose_text_is_past_its_body_budget() {
@@ -278,12 +278,12 @@ async fn a_batch_omits_an_image_whose_text_is_past_its_body_budget() {
     assert_eq!(batch["results"][0]["outcome"], "live", "{batch}");
     let item = &batch["results"][0]["result"]["item"];
     assert_eq!(
-        item["bodyOmitted"]["code"], "PROJECTION_BYTES_EXCEEDED",
+        item["body_omitted"]["code"], "PROJECTION_BYTES_EXCEEDED",
         "{item}"
     );
     assert!(item.get("text").is_none(), "{item}");
 
-    let marker = &item["bodyOmitted"]["ref"];
+    let marker = &item["body_omitted"]["ref"];
     let (status, whole) = call("/v1/core/hydrate", json!({ "ref": marker })).await;
     assert_eq!(status, StatusCode::OK, "{whole}");
     assert_text_form(&whole["item"], &assets);

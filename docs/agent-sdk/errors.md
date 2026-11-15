@@ -2,7 +2,7 @@
 
 Every SDK failure carries `code`, `message`, and nonempty `suggestions`.
 A refusal whose producer named stable reason codes also carries them, in that
-producer's order (FIX 7398): `reasonCodes` on a JS `MemoryError` and in an HTTP
+producer's order (FIX 7398): `reasonCodes` on a JS `MemoryError`, `reason_codes` in an HTTP
 error body, `reason_codes` on a Python `MemoryError` and in an MCP error's
 `data.reason_codes`. Read them there, never out of `message`.
 Use the returned suggestions; do not parse message prose. No adapter swallows
@@ -28,7 +28,7 @@ or downgrades the engine's refusal. Future remote codes pass through verbatim.
 | `WRONG_ROOT` | The verb was named under the wrong root and nothing ran; the SDK never corrects and runs it. Issue a fresh call to the `replacement` the error carries. |
 | `PENDING_ASK` | A verb hook asked before the verb ran: the verb waits on that open ask and was not refused. The error's `hook` names the invocation and the ask; a retry with the same invocation answers the same ask, never a second one. Each handle's `retry(pending, verb, input)` resends the call under it (UniFFI: the failure's `pending` payload); `oneiron mcp` resends an identical repeated tool call under the pending call's invocation. |
 | `CHECK_IN_PENDING` | The act waits on a check-in, and nothing ran: its door opened, or found, the pending check-in for this exact effect. The one reason code `check_in:<32 hex>` names it. Once a holder approves it, call again with the same input and `check_in_ref` set to that id: the act runs once and spends it. A call without it finds the same open check-in. Distinct from `PENDING_ASK`, which a verb hook's ask answers. |
-| `PACED_HOLD` | A count-bound budget window paced the call, and the engine holds it in its caller's fair line until its turn; nothing was refused. `resetsAt` names the earliest it runs and the message its deadline, after which it ends unrun. Send nothing again: a retry with the same invocation reads what the call came to. HTTP answers 202; over MCP the kind is `paced_hold` (-32020). |
+| `PACED_HOLD` | A count-bound budget window paced the call, and the engine holds it in its caller's fair line until its turn; nothing was refused. `resetsAt` (JS) or `resets_at` (HTTP, Python) names the earliest it runs and the message its deadline, after which it ends unrun. Send nothing again: a retry with the same invocation reads what the call came to. HTTP answers 202; over MCP the kind is `paced_hold` (-32020). |
 | `INVENTED_REFERENCE` | Name only records this writer can read, by the ref the engine issued. The write was refused and receipted. |
 | `HOST_ACTION_REQUIRES_SUPPORT_GRANT` | A hosted operator's root acts as nobody inside a customer's vault. Ask the customer for a support grant; the operator's admin commands need none. |
 | `WORLD_RECIPIENT_LIMIT` | The owner's read setting for a row's world keeps it from where this answer goes; the message names his choice, never the world. Read it where his choice admits, or ask him to change that setting. The row is there: do not treat this as not found. |

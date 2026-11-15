@@ -1159,7 +1159,7 @@ async fn a_members_bounded_credential_reads_its_room_as_missing() {
     for conversation in [room.room, seeded_test_entity_id(0x2401_0012)] {
         let (status, mut body) = pack(faceted.clone(), conversation).await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
-        body["error"].as_object_mut().unwrap().remove("requestId");
+        body["error"].as_object_mut().unwrap().remove("request_id");
         answers.push(body);
     }
     assert_eq!(answers[0], answers[1]);

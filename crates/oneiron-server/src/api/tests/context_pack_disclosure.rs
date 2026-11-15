@@ -116,7 +116,7 @@ async fn core_context_pack_owner_present_true_on_scoped_bearer_is_forbidden() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        body["error"]["details"]["requiredScope"],
+        body["error"]["details"]["required_scope"],
         Value::from("interlocutors.owner_present")
     );
     assert!(
@@ -662,7 +662,7 @@ async fn core_context_pack_scope_only_token_is_clamped_and_cannot_assert_owner_p
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        body["error"]["details"]["requiredScope"],
+        body["error"]["details"]["required_scope"],
         Value::from("interlocutors.owner_present")
     );
 }
@@ -1462,7 +1462,7 @@ async fn a_narrowed_readers_empty_pack_reads_alike_beside_a_hidden_match() {
             )
             .await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{uri}: {body}");
-            body["error"].as_object_mut().unwrap().remove("requestId");
+            body["error"].as_object_mut().unwrap().remove("request_id");
             answers.push(body);
         }
         answers

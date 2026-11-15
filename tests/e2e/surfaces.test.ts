@@ -265,9 +265,9 @@ async function surfaces03Run(
       expect({ verb: command.verb, status: reply.status }).toEqual({ verb: command.verb, status: command.refusal.code === "INVENTED_REFERENCE" ? 422 : 403 });
       const error = surfaces03Object(surfaces03Object(reply.body).error);
       const restRequestId = `REST refusal for ${command.verb} carries a request id`;
-      expect({ check: restRequestId, ok: typeof error.requestId === "string" && error.requestId.length > 0 }).toEqual({ check: restRequestId, ok: true });
-      expect(error.receiptRef).toBe(reply.headers.get("x-oneiron-receipt-ref"));
-      remember(error.receiptRef, command, "http_facade", command.refusal.code);
+      expect({ check: restRequestId, ok: typeof error.request_id === "string" && error.request_id.length > 0 }).toEqual({ check: restRequestId, ok: true });
+      expect(error.receipt_ref).toBe(reply.headers.get("x-oneiron-receipt-ref"));
+      remember(error.receipt_ref, command, "http_facade", command.refusal.code);
       column.push(refusal(error, command));
     } else {
       const value = await surfaces03Call(actor.client, command.verb, inputFor(command, 0));
@@ -282,8 +282,8 @@ async function surfaces03Run(
     if (command.refusal) {
       const error = surfaces03Object(surfaces03Object(cliBody).error);
       const cliRequestId = `CLI refusal for ${command.verb} carries a request id`;
-      expect({ check: cliRequestId, ok: typeof error.requestId === "string" && error.requestId.length > 0 }).toEqual({ check: cliRequestId, ok: true });
-      remember(error.receiptRef, command, "http_facade", command.refusal.code);
+      expect({ check: cliRequestId, ok: typeof error.request_id === "string" && error.request_id.length > 0 }).toEqual({ check: cliRequestId, ok: true });
+      remember(error.receipt_ref, command, "http_facade", command.refusal.code);
       column.push(refusal(error, command));
     } else column.push(cliBody);
     const version = versions.get(command.verb);
@@ -1138,12 +1138,12 @@ suite.test(test, "SURFACES-06", "Owner persona previews cite their sources acros
     const error = surfaces06Object(surfaces06Object(restError.reply.body).error);
     expect({ check: "agent REST preview refusal", status: restError.reply.status, code: error.code, message: error.message })
       .toEqual({ check: "agent REST preview refusal", status: 403, code: "FORBIDDEN", message });
-    expect({ check: "agent REST refusal request id", ok: typeof error.requestId === "string" && error.requestId.length > 0 })
+    expect({ check: "agent REST refusal request id", ok: typeof error.request_id === "string" && error.request_id.length > 0 })
       .toEqual({ check: "agent REST refusal request id", ok: true });
     expect({ check: "agent REST refusal suggestions", ok: Array.isArray(error.suggestions) && error.suggestions.length > 0 })
       .toEqual({ check: "agent REST refusal suggestions", ok: true });
-    expect(restError.reply.headers.get("x-oneiron-receipt-ref")).toBe(error.receiptRef as string);
-    receipts.push(await surfaces06RefusalReceipt(engine, error.receiptRef, reader, "http_facade", "FORBIDDEN", privateValues));
+    expect(restError.reply.headers.get("x-oneiron-receipt-ref")).toBe(error.receipt_ref as string);
+    receipts.push(await surfaces06RefusalReceipt(engine, error.receipt_ref, reader, "http_facade", "FORBIDDEN", privateValues));
 
     const cli = await reader.cli.run(["api", "call", "vault.personas.preview", "--data", "-"], JSON.stringify(input));
     surfaces06Absent("agent CLI refusal omits private values", [cli.stdout, cli.stderr], privateValues);
@@ -1386,9 +1386,9 @@ async function surfaces07Refuse(
     expect({ verb: request.verb, status: http.status }).toEqual({ verb: request.verb, status: 403 });
     const error = surfaces07Object(surfaces07Object(http.body).error);
     expect(error).toMatchObject({ code: "FORBIDDEN", message,
-      requestId: expect.any(String), suggestions: ["Present the owner's own verified, unattenuated credential."] });
-    expect(error.receiptRef).toBe(http.headers.get("x-oneiron-receipt-ref"));
-    receipts.push(await surfaces07RefusalReceipt(engine, error.receiptRef,
+      request_id: expect.any(String), suggestions: ["Present the owner's own verified, unattenuated credential."] });
+    expect(error.receipt_ref).toBe(http.headers.get("x-oneiron-receipt-ref"));
+    receipts.push(await surfaces07RefusalReceipt(engine, error.receipt_ref,
       request.verb, actor.principalRef, "http_facade", "FORBIDDEN"));
     expectedErrors.push({ code: error.code, message: error.message, suggestions: error.suggestions });
 
@@ -1796,7 +1796,7 @@ function surfaces08Error(body: unknown, code: string) {
   expect({ check: "SURFACES-08 refusal message is a nonempty sentence",
     ok: typeof error.message === "string" && error.message.length > 0 })
     .toEqual({ check: "SURFACES-08 refusal message is a nonempty sentence", ok: true });
-  expect(typeof error.requestId).toBe("string");
+  expect(typeof error.request_id).toBe("string");
   expect({ check: "SURFACES-08 refusal carries nonempty string suggestions",
     ok: Array.isArray(error.suggestions) && error.suggestions.length > 0
       && error.suggestions.every((value: unknown) => typeof value === "string") })
@@ -1853,8 +1853,8 @@ async function surfaces08Parity(engine: EngineFixture, actor: PairedActor,
     if (rest.status !== refusal.status)
       throw surfaces08RefusalText(`REST ${label} refusal status`, refusal.verb, rest.status, rest.body);
     const error = surfaces08Error(rest.body, refusal.code);
-    expect(rest.headers.get("x-oneiron-receipt-ref")).toBe<unknown>(error.receiptRef);
-    receipts.push(await surfaces08ReceiptRead(actor, error.receiptRef, refusal.verb,
+    expect(rest.headers.get("x-oneiron-receipt-ref")).toBe<unknown>(error.receipt_ref);
+    receipts.push(await surfaces08ReceiptRead(actor, error.receipt_ref, refusal.verb,
       refusal.code, "http_facade", hidden));
     expectedErrors.push(error);
 
@@ -2271,9 +2271,9 @@ async function surfaces09HttpFailure<V extends surfaces09Verb>(
   expect({ check: `SURFACES-09 ${verb} HTTP refusal status`, status: caught.reply.status, code: error.code })
     .toEqual({ check: `SURFACES-09 ${verb} HTTP refusal status`, status: 403, code: error.code });
   expect({ check: `SURFACES-09 ${verb} HTTP refusal envelope`,
-    ok: typeof error.message === "string" && typeof error.requestId === "string" && Array.isArray(error.suggestions) })
+    ok: typeof error.message === "string" && typeof error.request_id === "string" && Array.isArray(error.suggestions) })
     .toEqual({ check: `SURFACES-09 ${verb} HTTP refusal envelope`, ok: true });
-  const receipt = surfaces09String(error.receiptRef);
+  const receipt = surfaces09String(error.receipt_ref);
   expect(caught.reply.headers.get("x-oneiron-receipt-ref")).toBe(receipt);
   return { code: surfaces09String(error.code), receipt };
 }
@@ -2290,9 +2290,9 @@ async function surfaces09CliFailure<V extends surfaces09Verb>(
   expect({ check: `SURFACES-09 ${verb} CLI refusal stderr`, ok: caught.result.stderr.length > 0 })
     .toEqual({ check: `SURFACES-09 ${verb} CLI refusal stderr`, ok: true });
   expect({ check: `SURFACES-09 ${verb} CLI refusal envelope`,
-    ok: typeof error.message === "string" && typeof error.requestId === "string" && Array.isArray(error.suggestions) })
+    ok: typeof error.message === "string" && typeof error.request_id === "string" && Array.isArray(error.suggestions) })
     .toEqual({ check: `SURFACES-09 ${verb} CLI refusal envelope`, ok: true });
-  return { code: surfaces09String(error.code), receipt: surfaces09String(error.receiptRef) };
+  return { code: surfaces09String(error.code), receipt: surfaces09String(error.receipt_ref) };
 }
 async function surfaces09McpFailure<V extends surfaces09Verb>(
   actor: PairedActor, verb: V, input: FacadeInput<V>,

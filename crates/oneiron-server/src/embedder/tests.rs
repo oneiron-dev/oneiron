@@ -1576,7 +1576,7 @@ fn the_worker_fills_pending_vectors_and_the_semantic_door_finds_them() {
     runtime.shutdown_background();
 
     assert_eq!(body["embedder"]["provider"], json!("endpoint"));
-    assert_eq!(body["embedder"]["modelId"], json!("test/model@rev"));
+    assert_eq!(body["embedder"]["model_id"], json!("test/model@rev"));
     assert_eq!(body["embedder"]["dimensions"], json!(DIMS));
     let hits: Vec<String> = body["items"]
         .as_array()
@@ -1762,7 +1762,7 @@ fn the_text_search_door_refuses_an_oversized_query_with_413() {
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{body}");
     assert_eq!(body["code"], json!("PAYLOAD_TOO_LARGE"));
     assert_eq!(body["details"]["field"], json!("query"));
-    assert_eq!(body["details"]["maxBytes"], json!(8 * 1024));
+    assert_eq!(body["details"]["max_bytes"], json!(8 * 1024));
 }
 
 /// The worker recovers on its own: a provider that fails its first pass and then

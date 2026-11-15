@@ -273,7 +273,7 @@ async fn v1_core_route_rejects_valid_bearer_without_required_scope() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
+        error_envelope(&body)["details"]["required_scope"],
         Value::from("core:read")
     );
 }
@@ -338,7 +338,7 @@ async fn v1_core_idempotency_read_only_token_cannot_replay_cached_write_success(
     assert_eq!(read_status, StatusCode::FORBIDDEN);
     assert_error_envelope(&read_body, "FORBIDDEN");
     assert_eq!(
-        error_envelope(&read_body)["details"]["requiredScope"],
+        error_envelope(&read_body)["details"]["required_scope"],
         Value::from("core:write")
     );
 }

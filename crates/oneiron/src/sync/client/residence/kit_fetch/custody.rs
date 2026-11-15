@@ -27,7 +27,7 @@ use crate::sync::transport::TransportError;
 use crate::world_keys::RecoveryRootSeed;
 
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct KitCustodyPageReply {
     head_object_id: String,
     head_length: u64,
@@ -46,7 +46,7 @@ struct KitCustodyFrame {
 
 /// Where the next page of the home's custody starts.
 #[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct KitCustodyCursor {
     head_offset: u64,
     after_seq: u64,
@@ -90,13 +90,13 @@ impl KitHome {
             .client
             .post(url)
             .json(&json!({
-                "vaultId": sealed_digest_hex(&fetch.vault_id),
+                "vault_id": sealed_digest_hex(&fetch.vault_id),
                 "root": sealed_digest_hex(&fetch.root.0),
-                "custodyVault": custody_vault,
-                "custodyNamespace": custody_namespace,
-                "headOffset": head_offset,
-                "afterSeq": after_seq,
-                "fromSeq": from_seq,
+                "custody_vault": custody_vault,
+                "custody_namespace": custody_namespace,
+                "head_offset": head_offset,
+                "after_seq": after_seq,
+                "from_seq": from_seq,
                 "timestamp": fetch.timestamp,
                 "nonce": sealed_digest_hex(&fetch.nonce),
                 "signature": signature,

@@ -25,7 +25,7 @@ impl Lift<EngineReply> for crate::LensFrameEventReply {
                 let outcome = WireJson::lift(outcome)?;
                 Ok(Self::Tool {
                     outcome,
-                    read_receipt: lift_record("lens_frame_event:Tool.readReceipt", &read_receipt)?,
+                    read_receipt: lift_record("lens_frame_event:Tool.read_receipt", &read_receipt)?,
                 })
             }
             callback @ EngineReply::Callback { .. } => lift_record("lens_frame_event", &callback),

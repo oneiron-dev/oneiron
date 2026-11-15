@@ -1,7 +1,7 @@
 # Memory reasoning request limits
 
 `POST /v1/companion/memory/reason` accepts a positive `limit` (default 10)
-and a positive `tokenBudget` (default 4,000). Both are whole numbers that fit
+and a positive `token_budget` (default 4,000). Both are whole numbers that fit
 the HTTP `usize` fields. Zero is a bad request; omitting either field keeps
 its request default.
 
@@ -19,7 +19,7 @@ owner-aware limit-question port. Crossing a boundary asks and still serves
 the full value. The measure runs outside a held read transaction.
 
 The former 1,000-row serve clamp and 65,536-token request ceiling are removed.
-The response keeps its `limitClamped` field; a full-count read leaves it
+The response keeps its `limit_clamped` field; a full-count read leaves it
 false (and therefore omitted by the existing serializer). The separate
 1,000-row candidate-fetch floor for narrowed reads is unchanged.
 

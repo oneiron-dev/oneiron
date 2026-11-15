@@ -390,7 +390,7 @@ put the host issuer secret in any request-credential variable.
 | `handle.withReadCredential(credential)` | a new handle whose every read runs under that delegated-reader credential, verified once; reads refuse unless the slip's holder is the bound actor, rebindings keep the same proof, and a connected handle fails `FORBIDDEN` |
 | `handle.lastReceiptRef()` | the `call:<32hex>` receipt the last remote reply stated, answered or refused; `null` when embedded or before any call |
 | `handle.retry(pending, verb, input)` | resends a call a verb hook stopped on an ask (`OneironError` `PENDING_ASK`, its `hook` naming the invocation) under that invocation, with the same verb name and input; answers the verb's wire JSON |
-| `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotencyKey }` on a lens card the connected server rendered; answers `{ $state }`, `{ outcome, readReceipt }`, or a model round trip's `{ queued, callbackId }` |
+| `handle.lensFrameEvent(cardId, request)` | sends one `{ event, idempotency_key }` on a lens card the connected server rendered; answers `{ $state }`, `{ outcome, read_receipt }`, or a model round trip's `{ queued, callback_id }` |
 | `handle.closeLensFrame(cardId)` | closes that card and frees its frame; answers `{ closed }` |
 | `handle.vault.witness(turn)` | `WitnessReceipt` |
 | `handle.vault.claims.upsert(claim)` | `CommitReceipt` |
@@ -433,10 +433,10 @@ TypedDicts, in the Python stubs.
 `vault.recall` options are `effort` (`"light" | "medium" | "high" | "xhigh" | "max" | "call"`,
 default `"medium"`), `scope` (`{ worldRef?, facet?, kinds? }`), `limit` (default
 `10`), `format` (`"json" | "yaml" | "toon" | "md" | "txt"`), `asOf` (Unix seconds
-the query's time words resolve against; default now), `deadlineMs` (1 to
-60000), `media` (`{ space, mime, bytesB64, kinds? }`: bytes the server embeds
+the query's time words resolve against; default now), `deadline_ms` (1 to
+60000), `media` (`{ space, mime, bytes_b64, kinds? }`: bytes the server embeds
 into that declared space and searches beside the query, at medium effort or
-above; an embedded client returns `MODEL_UNAVAILABLE`) and `queryAffect`
+above; an embedded client returns `MODEL_UNAVAILABLE`) and `query_affect`
 (`{ valence, arousal, dominance }`: the affect the query is asked in, valence
 -1 to 1, arousal and dominance 0 to 1; emotion congruence ranks each item by how
 near its own affect sits, embedded and remote alike; out of range returns
@@ -445,7 +445,7 @@ conversations, sessions, facets and worlds. `high`, `xhigh` and `max` need
 a budget lease this package never mints: an embedded client returns `LEASE_REQUIRED`;
 a remote one gets what the server serves (reranked on its `[models]` reranker, or
 unreranked and saying so). `call` is call mode for live calls: light effort
-under a hard deadline (`deadlineMs`, or the vault's call-mode deadline). With a
+under a hard deadline (`deadline_ms`, or the vault's call-mode deadline). With a
 deadline, recall answers with the best results ready, marked `partial`; without
 one, it runs to the end.
 

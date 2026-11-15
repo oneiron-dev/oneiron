@@ -324,7 +324,7 @@ suite.todo(test, "SYNC-03", "waits on an independent native EphemeralStore wire 
  *     -> {mode,retained:string[],unsynced:string[],pruned_items:number}
  * Each is vault.residence.<name>; CLI typed api call is available.
  * GET /api/search/text?query=... already asks the home and can return
- * residence:{source:"home"|"localOnly",complete:boolean,
+ * residence:{source:"home"|"local_only",complete:boolean,
  *            hits:[{id,score,window}]}. Do not call home search missing.
  *
  * Required typed read: the opened NOTE body plus a local-versus-home residence
@@ -477,7 +477,7 @@ suite.test(test, "SYNC-04", "A device in opened mode lists only metadata, opens 
   expect(neighbour.reply.status).toBe(400);
   expect(neighbour.error?.code).toBe("BAD_REQUEST");
   const cutSearch = await sync04Search(device, query);
-  expect(cutSearch.residence?.source).toBe("localOnly");
+  expect(cutSearch.residence?.source).toBe("local_only");
   expect(cutSearch.residence?.complete).toBe(false);
   expect(cutSearch.residence?.hits.map(hit => hit.id) ?? []).not.toContain(unopened.id_hex);
 

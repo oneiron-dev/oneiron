@@ -27,7 +27,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
+        error_envelope(&body)["details"]["required_scope"],
         Value::from("core:auth")
     );
 
@@ -45,7 +45,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
+        error_envelope(&body)["details"]["required_scope"],
         Value::from("core:auth")
     );
 
@@ -64,7 +64,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
+        error_envelope(&body)["details"]["required_scope"],
         Value::from("companion_profile.read")
     );
 
@@ -102,7 +102,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_error_envelope(&body, "FORBIDDEN");
     assert_eq!(
-        error_envelope(&body)["details"]["requiredScope"],
+        error_envelope(&body)["details"]["required_scope"],
         Value::from("core:auth")
     );
     assert!(
@@ -204,7 +204,7 @@ async fn v1_companion_profile_access_grants_allow_deny_and_revoke() {
         let (status, body) = revoke_as(id.clone(), "core:read").await;
         assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
         assert_eq!(
-            error_envelope(&body)["details"]["requiredScope"],
+            error_envelope(&body)["details"]["required_scope"],
             Value::from("companion:access-grant:write")
         );
     }
@@ -425,7 +425,7 @@ async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
         .expect("put psych profile");
 
     let path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={},{}",
+        "/v1/companion/profiles/{}?person_ref={}&source_revision_ids={},{}",
         persona_ref.to_hex(),
         person_ref.to_hex(),
         source_b.to_hex(),
@@ -464,7 +464,7 @@ async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
                 "compact": "compact tier",
                 "text": "retrieval text tier",
                 "narrative": "Narrative profile tier.",
-                "sourceRevisionIds": [source_a.to_hex(), source_b.to_hex()],
+                "source_revision_ids": [source_a.to_hex(), source_b.to_hex()],
                 "confidence": {
                     "compact": 0.8,
                     "text": 0.7,
@@ -477,11 +477,11 @@ async fn v1_companion_profile_read_returns_persisted_tiers_snapshot() {
             "drift_anchors": [
                 {
                     "state": "keep",
-                    "sourceRevisionRef": source_a.to_hex(),
+                    "source_revision_ref": source_a.to_hex(),
                 },
                 {
                     "state": "keep",
-                    "sourceRevisionRef": source_b.to_hex(),
+                    "source_revision_ref": source_b.to_hex(),
                 },
             ],
         })
@@ -597,7 +597,7 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
     );
 
     let stale_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={}",
+        "/v1/companion/profiles/{}?person_ref={}&source_revision_ids={}",
         stale_persona_ref.to_hex(),
         person_ref.to_hex(),
         source_b.to_hex()
@@ -619,12 +619,12 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
         stale_body["stale_reason"],
         json!({
             "kind": "marked_stale",
-            "expectedSourceRevisionIds": null,
-            "actualSourceRevisionIds": null,
+            "expected_source_revision_ids": null,
+            "actual_source_revision_ids": null,
         })
     );
     assert_eq!(
-        stale_body["next_action"]["sourceRevisionIds"],
+        stale_body["next_action"]["source_revision_ids"],
         json!([source_b.to_hex()])
     );
     assert_eq!(
@@ -632,11 +632,11 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
         json!([
             {
                 "state": "revert",
-                "sourceRevisionRef": source_a.to_hex(),
+                "source_revision_ref": source_a.to_hex(),
             },
             {
                 "state": "tune",
-                "sourceRevisionRef": source_b.to_hex(),
+                "source_revision_ref": source_b.to_hex(),
             },
         ])
     );
@@ -660,7 +660,7 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
     assert_eq!(fallback_status, StatusCode::OK);
     assert_eq!(fallback_body["state"], Value::from("stale"));
     assert_eq!(
-        fallback_body["next_action"]["sourceRevisionIds"],
+        fallback_body["next_action"]["source_revision_ids"],
         json!([source_a.to_hex()])
     );
     assert_eq!(
@@ -668,7 +668,7 @@ async fn v1_companion_profile_read_returns_missing_and_stale_next_actions() {
         json!([
             {
                 "state": "keep",
-                "sourceRevisionRef": source_a.to_hex(),
+                "source_revision_ref": source_a.to_hex(),
             },
         ])
     );
@@ -713,7 +713,7 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         person_ref.to_hex()
     );
     let refresh_request = json!({
-        "sourceRevisionIds": [
+        "source_revision_ids": [
             keep_source.to_hex(),
             tune_source.to_hex(),
             tune_source.to_hex(),
@@ -734,15 +734,15 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], Value::from("stale"));
     assert_eq!(
-        body["profile"]["sourceRevisionIds"],
+        body["profile"]["source_revision_ids"],
         json!([keep_source.to_hex(), revert_source.to_hex()])
     );
     assert_eq!(
         body["stale_reason"],
         json!({
             "kind": "source_revision_mismatch",
-            "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
-            "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            "expected_source_revision_ids": [keep_source.to_hex(), tune_source.to_hex()],
+            "actual_source_revision_ids": [keep_source.to_hex(), revert_source.to_hex()],
         })
     );
     assert_eq!(
@@ -750,15 +750,15 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         json!([
             {
                 "state": "keep",
-                "sourceRevisionRef": keep_source.to_hex(),
+                "source_revision_ref": keep_source.to_hex(),
             },
             {
                 "state": "revert",
-                "sourceRevisionRef": revert_source.to_hex(),
+                "source_revision_ref": revert_source.to_hex(),
             },
             {
                 "state": "tune",
-                "sourceRevisionRef": tune_source.to_hex(),
+                "source_revision_ref": tune_source.to_hex(),
             },
         ])
     );
@@ -774,7 +774,7 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     );
 
     let refresh_query_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds={},{}",
+        "/v1/companion/profiles/{}?person_ref={}&source_revision_ids={},{}",
         persona_ref.to_hex(),
         person_ref.to_hex(),
         keep_source.to_hex(),
@@ -796,8 +796,8 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         query_body["stale_reason"],
         json!({
             "kind": "source_revision_mismatch",
-            "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
-            "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            "expected_source_revision_ids": [keep_source.to_hex(), tune_source.to_hex()],
+            "actual_source_revision_ids": [keep_source.to_hex(), revert_source.to_hex()],
         })
     );
 
@@ -817,8 +817,8 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         bodyless_query_body["stale_reason"],
         json!({
             "kind": "source_revision_mismatch",
-            "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
-            "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            "expected_source_revision_ids": [keep_source.to_hex(), tune_source.to_hex()],
+            "actual_source_revision_ids": [keep_source.to_hex(), revert_source.to_hex()],
         })
     );
 
@@ -840,7 +840,7 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     assert_error_envelope(&malformed_body, "BAD_REQUEST");
 
     let reordered_request = json!({
-        "sourceRevisionIds": [tune_source.to_hex(), keep_source.to_hex()],
+        "source_revision_ids": [tune_source.to_hex(), keep_source.to_hex()],
     });
     let (reordered_status, reordered_body) = route_json(
         server.clone(),
@@ -859,13 +859,13 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
         reordered_body["stale_reason"],
         json!({
             "kind": "source_revision_mismatch",
-            "expectedSourceRevisionIds": [keep_source.to_hex(), tune_source.to_hex()],
-            "actualSourceRevisionIds": [keep_source.to_hex(), revert_source.to_hex()],
+            "expected_source_revision_ids": [keep_source.to_hex(), tune_source.to_hex()],
+            "actual_source_revision_ids": [keep_source.to_hex(), revert_source.to_hex()],
         })
     );
 
     let conflict_request = json!({
-        "sourceRevisionIds": [keep_source.to_hex()],
+        "source_revision_ids": [keep_source.to_hex()],
     });
     let (conflict_status, conflict_body) = route_json(
         server.clone(),
@@ -882,11 +882,11 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     assert_error_envelope(&conflict_body, "BAD_REQUEST");
     assert_eq!(
         error_envelope(&conflict_body)["details"]["field"],
-        Value::from("sourceRevisionIds")
+        Value::from("source_revision_ids")
     );
 
     let refresh_empty_query_path = format!(
-        "/v1/companion/profiles/{}?person_ref={}&sourceRevisionIds=",
+        "/v1/companion/profiles/{}?person_ref={}&source_revision_ids=",
         persona_ref.to_hex(),
         person_ref.to_hex()
     );
@@ -912,7 +912,7 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
             &refresh_path,
             "companion:profile:read",
             &principal_ref.to_hex(),
-            Some(&json!({ "sourceRevisionIds": [] })),
+            Some(&json!({ "source_revision_ids": [] })),
         ),
     )
     .await;
@@ -981,14 +981,14 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
         items
             .iter()
             .find(|row| row["persona_ref"] == first.to_hex())
-            .unwrap()["personalityCompact"],
+            .unwrap()["personality_compact"],
         literal
     );
     assert!(
         items
             .iter()
             .find(|row| row["persona_ref"] == second.to_hex())
-            .unwrap()["personalityCompact"]
+            .unwrap()["personality_compact"]
             .is_null()
     );
     assert!(
@@ -1027,7 +1027,7 @@ async fn companion_lists_inline_compact_tiers_and_pending_grant_scopes_without_g
         route_json(server, core_request("GET", request_path, "core:auth", None)).await;
     assert_eq!(status, StatusCode::OK, "{response}");
     assert_eq!(response["items"][0]["id"], request_id.to_hex());
-    let preview = response["items"][0]["grantContentPreview"]
+    let preview = response["items"][0]["grant_content_preview"]
         .as_str()
         .unwrap();
     assert!(preview.contains("companion_profile"));
@@ -1058,7 +1058,9 @@ async fn pending_access_requests_list_exposes_every_page_after_one_hundred() {
     assert_eq!(status, StatusCode::OK, "{first}");
     let first_items = first["items"].as_array().unwrap();
     assert_eq!(first_items.len(), 100);
-    let cursor = first["nextCursor"].as_str().expect("more pending requests");
+    let cursor = first["next_cursor"]
+        .as_str()
+        .expect("more pending requests");
     assert_eq!(cursor, first_items[99]["id"]);
     let (status, last) = route_json(
         server,
@@ -1071,7 +1073,7 @@ async fn pending_access_requests_list_exposes_every_page_after_one_hundred() {
         last["items"][0]["id"],
         seeded_test_entity_id(0x0002_2364).to_hex()
     );
-    assert!(last["nextCursor"].is_null());
+    assert!(last["next_cursor"].is_null());
 }
 
 #[tokio::test]
@@ -1142,13 +1144,13 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
     assert_eq!(
         rows.iter()
             .find(|row| row["persona_ref"] == first.to_hex())
-            .unwrap()["personalityCompact"],
+            .unwrap()["personality_compact"],
         "first compact"
     );
     assert_eq!(
         rows.iter()
             .find(|row| row["persona_ref"] == second.to_hex())
-            .unwrap()["personalityCompact"],
+            .unwrap()["personality_compact"],
         "second compact"
     );
 
@@ -1162,13 +1164,13 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
     assert!(
         rows.iter()
             .find(|row| row["persona_ref"] == first.to_hex())
-            .unwrap()["personalityCompact"]
+            .unwrap()["personality_compact"]
             .is_null()
     );
     assert_eq!(
         rows.iter()
             .find(|row| row["persona_ref"] == second.to_hex())
-            .unwrap()["personalityCompact"],
+            .unwrap()["personality_compact"],
         "second compact"
     );
 
@@ -1179,7 +1181,7 @@ async fn companion_list_skips_deleted_grants_and_profiles_without_hiding_live_ro
     let rows = list(server).await;
     assert_eq!(rows.len(), 1);
     assert_eq!(rows[0]["persona_ref"], second.to_hex());
-    assert_eq!(rows[0]["personalityCompact"], "second compact");
+    assert_eq!(rows[0]["personality_compact"], "second compact");
 }
 
 #[tokio::test]
@@ -1249,7 +1251,7 @@ async fn persona_list_and_profile_get_keep_expired_grant_denied_after_clock_roll
     let (status, listed) = read(server.clone(), &list_uri).await;
     assert_eq!(status, StatusCode::OK, "{listed}");
     assert_eq!(
-        listed["items"][0]["personalityCompact"],
+        listed["items"][0]["personality_compact"],
         "stored compact before expiry"
     );
     let (status, profile) = read(server.clone(), &get_uri).await;
@@ -1317,7 +1319,7 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
             &refresh_path,
             "companion:profile:read",
             &principal_ref.to_hex(),
-            Some(&json!({ "sourceRevisionIds": ids })),
+            Some(&json!({ "source_revision_ids": ids })),
         )
     };
     // oneiron's MAX_PSYCH_PROFILE_SOURCE_REVISIONS.
@@ -1330,7 +1332,7 @@ async fn a_refresh_naming_more_source_revisions_than_one_snapshot_holds_is_refus
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["state"], Value::from("stale"));
     assert_eq!(
-        body["stale_reason"]["expectedSourceRevisionIds"]
+        body["stale_reason"]["expected_source_revision_ids"]
             .as_array()
             .map(Vec::len),
         Some(bound)

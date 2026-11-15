@@ -1265,7 +1265,7 @@ async fn a_query_off_this_device_is_released_by_the_row_it_counts_past_its_page(
             json!({"arguments": {"request": {
                 "query": "orchid",
                 "limit": 1,
-                "countMode": "estimate",
+                "count_mode": "estimate",
             }}}),
         );
         async move {

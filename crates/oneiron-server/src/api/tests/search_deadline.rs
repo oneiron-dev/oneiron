@@ -1,4 +1,4 @@
-//! Raw search under a request's hard deadline, `deadlineMs` (retrieval hub
+//! Raw search under a request's hard deadline, `deadline_ms` (retrieval hub
 //! #call-mode).
 
 use super::*;
@@ -18,14 +18,14 @@ fn search_request(method: &str, uri: &str, body: Option<Value>) -> Request<Body>
     .expect("search request")
 }
 
-/// Every raw search door takes `deadlineMs` and refuses one outside
+/// Every raw search door takes `deadline_ms` and refuses one outside
 /// 1..=60000 with a typed 400 naming the field.
 #[tokio::test]
 async fn raw_search_takes_a_deadline_and_refuses_one_out_of_range() {
     let (_dir, server) = auth_test_server();
     seed_turn(&server, "The night ferry leaves at nine.");
     for deadline_ms in [1, 60_000] {
-        let uri = format!("/api/search/text?query=ferry&deadlineMs={deadline_ms}");
+        let uri = format!("/api/search/text?query=ferry&deadline_ms={deadline_ms}");
         let (status, page) =
             route_json_auth(server.clone(), search_request("GET", &uri, None)).await;
         assert_eq!(status, StatusCode::OK, "{uri}: {page}");
@@ -34,25 +34,25 @@ async fn raw_search_takes_a_deadline_and_refuses_one_out_of_range() {
         for request in [
             search_request(
                 "GET",
-                &format!("/api/search/text?query=ferry&deadlineMs={deadline_ms}"),
+                &format!("/api/search/text?query=ferry&deadline_ms={deadline_ms}"),
                 None,
             ),
             search_request(
                 "GET",
-                &format!("/api/search/vector?query=0.1,0.2,0.3&deadlineMs={deadline_ms}"),
+                &format!("/api/search/vector?query=0.1,0.2,0.3&deadline_ms={deadline_ms}"),
                 None,
             ),
             search_request(
                 "POST",
                 "/api/search/semantic",
-                Some(json!({"text": "ferry", "deadlineMs": deadline_ms})),
+                Some(json!({"text": "ferry", "deadline_ms": deadline_ms})),
             ),
         ] {
             let uri = request.uri().to_string();
             let (status, body) = route_json_auth(server.clone(), request).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
             assert_eq!(body["code"], "BAD_REQUEST", "{uri}: {body}");
-            assert_eq!(body["details"]["field"], "deadlineMs", "{uri}: {body}");
+            assert_eq!(body["details"]["field"], "deadline_ms", "{uri}: {body}");
             assert_eq!(
                 body["message"], "deadline_ms must be a whole number between 1 and 60000",
                 "{uri}: {body}"
@@ -88,7 +88,7 @@ fn raw_search_answers_by_its_deadline_when_it_could_not_read_yet() {
         server.clone(),
         search_request(
             "GET",
-            &format!("/api/search/text?query=ferry&depth=high&deadlineMs={DEADLINE_MS}"),
+            &format!("/api/search/text?query=ferry&depth=high&deadline_ms={DEADLINE_MS}"),
             None,
         ),
     ));
@@ -97,7 +97,7 @@ fn raw_search_answers_by_its_deadline_when_it_could_not_read_yet() {
         server,
         search_request(
             "GET",
-            &format!("/api/search/text?query=ferry&deadlineMs={DEADLINE_MS}"),
+            &format!("/api/search/text?query=ferry&deadline_ms={DEADLINE_MS}"),
             None,
         ),
     ));

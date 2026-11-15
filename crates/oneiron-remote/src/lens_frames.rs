@@ -33,7 +33,7 @@ use crate::{Backend, OneironClient};
 /// dispatch replays under, and the selections this handle made on the card.
 /// The key is required in the body.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub struct LensFrameEventRequest {
     /// What was touched: the card, the element, the action, an optional
     /// `$state` patch and when. It names no command and no authority.
@@ -80,7 +80,6 @@ pub enum LensFrameEventReply {
         /// The outcome as the run's replay record spells it.
         outcome: serde_json::Value,
         /// The principal's scoped read of the action's entity arguments.
-        #[serde(rename = "readReceipt")]
         read_receipt: ScopedReadReceipt,
     },
     /// A model round trip went back to the agent that emitted the card, as
@@ -89,7 +88,6 @@ pub enum LensFrameEventReply {
         /// False once the agent's run that carried it has finished.
         queued: bool,
         /// The agent run that carries the callback.
-        #[serde(rename = "callbackId")]
         callback_id: String,
     },
 }

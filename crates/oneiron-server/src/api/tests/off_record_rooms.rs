@@ -716,7 +716,7 @@ async fn an_agent_without_the_grant_asks_and_a_holder_answers() {
             let (status, refused) = act(&server, path, who.clone(), room.id, "loft").await;
             assert_eq!(status, StatusCode::FORBIDDEN, "{path}: {refused}");
             assert_eq!(
-                error_envelope(&refused)["details"]["requiredScope"],
+                error_envelope(&refused)["details"]["required_scope"],
                 "core:write",
                 "{path}: {refused}"
             );
@@ -1489,7 +1489,7 @@ async fn a_rostered_viewer_learns_nothing_from_another_rooms_message_ids() {
         .await;
         // Each response's own request id says nothing of the record.
         if let Some(error) = answer["error"].as_object_mut() {
-            error.remove("requestId");
+            error.remove("request_id");
         }
         answers.push((status, answer));
     }

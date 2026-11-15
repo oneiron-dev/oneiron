@@ -519,18 +519,18 @@ suite.test(test, "SECRETS-03", "T0 custody use keeps values private across rotat
       const secrets03ActualCode = typeof error.code === "string" ? redactor.text(error.code) : "no-code";
       expect({ check: `SECRETS-03 ${verb} refusal envelope`, status: reply.status, code: secrets03ActualCode,
         ok: reply.status === status && error.code === code && typeof error.message === "string"
-          && typeof error.requestId === "string" && Array.isArray(error.suggestions) }).toEqual({
+          && typeof error.request_id === "string" && Array.isArray(error.suggestions) }).toEqual({
         check: `SECRETS-03 ${verb} refusal envelope`, status, code, ok: true });
       const ref = reply.headers.get("x-oneiron-receipt-ref");
       if (noRecord) {
         expect({ check: `SECRETS-03 ${verb} refusal is no-record`, header: secrets03SafeText(ref),
-          ok: ref === "none; no-record" && error.receiptRef == null }).toEqual({
+          ok: ref === "none; no-record" && error.receipt_ref == null }).toEqual({
           check: `SECRETS-03 ${verb} refusal is no-record`, header: secrets03SafeText(ref), ok: true });
         return;
       }
       if (!ref || !ref.startsWith("call:")) throw new Error("SECRETS-03 refusal lacks its public call receipt");
-      expect({ check: `SECRETS-03 ${verb} refusal receiptRef matches header`, receiptRef: secrets03SafeText(error.receiptRef),
-        header: secrets03SafeText(ref), ok: error.receiptRef === ref }).toEqual({
+      expect({ check: `SECRETS-03 ${verb} refusal receiptRef matches header`, receiptRef: secrets03SafeText(error.receipt_ref),
+        header: secrets03SafeText(ref), ok: error.receipt_ref === ref }).toEqual({
         check: `SECRETS-03 ${verb} refusal receiptRef matches header`, receiptRef: secrets03SafeText(ref),
         header: secrets03SafeText(ref), ok: true });
       const receipt = await secrets03Facade(client, "vault.receipts.get", { receipt_ref: ref });
@@ -878,8 +878,8 @@ interface secrets06ScenarioFixture {
   };
 }
 interface secrets06RefusalEnvelope {
-  error: { code: string; message: string; requestId: string;
-    suggestions: string[]; receiptRef?: string | null };
+  error: { code: string; message: string; request_id: string;
+    suggestions: string[]; receipt_ref?: string | null };
 }
 
 function secrets06Object(value: unknown): Record<string, unknown> {
@@ -948,8 +948,8 @@ suite.test(test, "SECRETS-06",
             }
           }
         };
-        const error = (body as { error?: { message?: unknown; reasonCodes?: unknown; gateDenial?: { outcome?: unknown; reasonCodes?: unknown } } } | null)?.error;
-        collect(error?.reasonCodes);
+        const error = (body as { error?: { message?: unknown; reason_codes?: unknown; gateDenial?: { outcome?: unknown; reasonCodes?: unknown } } } | null)?.error;
+        collect(error?.reason_codes);
         collect(error?.gateDenial?.reasonCodes);
         const outcome = error?.gateDenial?.outcome;
         const message = error?.message;
@@ -1024,7 +1024,7 @@ suite.test(test, "SECRETS-06",
         expect({ check: `refusal ${verb} uses HTTP ${status}`, status: reply.status }).toEqual({ check: `refusal ${verb} uses HTTP ${status}`, status });
         expect({ check: `refusal ${verb} carries ${status === 403 ? "FORBIDDEN" : "UNAUTHORIZED"}`, code: redactor.text(secrets06ErrorCode(reply.body)) }).toEqual({ check: `refusal ${verb} carries ${status === 403 ? "FORBIDDEN" : "UNAUTHORIZED"}`, code: status === 403 ? "FORBIDDEN" : "UNAUTHORIZED" });
         expect({ check: `refusal ${verb} carries a message`, ok: typeof reply.body.error.message === "string" && reply.body.error.message.length > 0 }).toEqual({ check: `refusal ${verb} carries a message`, ok: true });
-        expect({ check: `refusal ${verb} carries a request id`, ok: typeof reply.body.error.requestId === "string" && reply.body.error.requestId.length > 0 }).toEqual({ check: `refusal ${verb} carries a request id`, ok: true });
+        expect({ check: `refusal ${verb} carries a request id`, ok: typeof reply.body.error.request_id === "string" && reply.body.error.request_id.length > 0 }).toEqual({ check: `refusal ${verb} carries a request id`, ok: true });
         expect({ check: `refusal ${verb} carries suggestions`, ok: Array.isArray(reply.body.error.suggestions) }).toEqual({ check: `refusal ${verb} carries suggestions`, ok: true });
         const ref = reply.headers.get("x-oneiron-receipt-ref");
         if (ref === null) throw new Error("SECRETS-06 refusal has no receipt header");
@@ -1033,7 +1033,7 @@ suite.test(test, "SECRETS-06",
           expect(row).toMatchObject({ transport: "http_facade", actor_class: "connection",
             verb, outcome: { refused: { code: "HTTP_401" } } });
         } else {
-          expect(reply.body.error.receiptRef).toBe(ref);
+          expect(reply.body.error.receipt_ref).toBe(ref);
           expect(row).toMatchObject({ transport: "http_facade", actor_ref: actorRef,
             actor_class: "agent", verb, outcome: { refused: { code: "FORBIDDEN" } } });
         }
@@ -1556,14 +1556,14 @@ enabled = false
         expect({ check: `SECRETS-07 ${verb} refusal answers HTTP ${status} with ${code}`, status: reply.status, error: secrets07ErrorText(reply.body), ok: reply.status === status && error.code === code }).toEqual({ check: `SECRETS-07 ${verb} refusal answers HTTP ${status} with ${code}`, status, error: `code=${code}`, ok: true });
         expect({ check: "SECRETS-07 refusal carries a message", ok: typeof error.message === "string" && error.message.length > 0 }).toEqual({ check: "SECRETS-07 refusal carries a message", ok: true });
         expect({ check: "SECRETS-07 refusal carries suggestions", ok: Array.isArray(error.suggestions) }).toEqual({ check: "SECRETS-07 refusal carries suggestions", ok: true });
-        expect({ check: "SECRETS-07 refusal carries a request id", ok: typeof error.requestId === "string" && error.requestId.length > 0 }).toEqual({ check: "SECRETS-07 refusal carries a request id", ok: true });
+        expect({ check: "SECRETS-07 refusal carries a request id", ok: typeof error.request_id === "string" && error.request_id.length > 0 }).toEqual({ check: "SECRETS-07 refusal carries a request id", ok: true });
         expect(providers.seenFixtureCalls.length).toBe(count);
         const ref = secrets07Ref(reply.headers);
         const row = await secrets07ReadCall(ref);
         expect(row.verb).toBe(verb);
         expect(row.transport).toBe("http_facade");
         if (authenticated) {
-          expect({ check: "SECRETS-07 refusal receipt matches its header", ok: error.receiptRef === ref }).toEqual({ check: "SECRETS-07 refusal receipt matches its header", ok: true });
+          expect({ check: "SECRETS-07 refusal receipt matches its header", ok: error.receipt_ref === ref }).toEqual({ check: "SECRETS-07 refusal receipt matches its header", ok: true });
           expect(row.actor_ref).toBe(actor.principalRef);
           expect(row.actor_class).toBe("agent");
           expect(row.outcome).toEqual({ refused: { code } });
@@ -1971,7 +1971,7 @@ async function secrets09Refuse<V extends FacadeVerb>(
     .toEqual({ check: `SECRETS-09 ${verb} refusal message is non-empty`, ok: true });
   expect({ check: `SECRETS-09 ${verb} refusal carries suggestions`, ok: Array.isArray(error.suggestions) })
     .toEqual({ check: `SECRETS-09 ${verb} refusal carries suggestions`, ok: true });
-  expect({ check: `SECRETS-09 ${verb} refusal carries a request id`, ok: typeof error.requestId === "string" && error.requestId.length > 0 })
+  expect({ check: `SECRETS-09 ${verb} refusal carries a request id`, ok: typeof error.request_id === "string" && error.request_id.length > 0 })
     .toEqual({ check: `SECRETS-09 ${verb} refusal carries a request id`, ok: true });
   return reply;
 }
@@ -1986,9 +1986,9 @@ async function secrets09CallReceipt(
   }
   if (reply.status !== 200) {
     const error = secrets09Object(secrets09Object(reply.body).error);
-    if (actorRef === null) expect({ check: `SECRETS-09 ${verb} connection refusal carries no body receipt ref`, ok: error.receiptRef == null })
+    if (actorRef === null) expect({ check: `SECRETS-09 ${verb} connection refusal carries no body receipt ref`, ok: error.receipt_ref == null })
       .toEqual({ check: `SECRETS-09 ${verb} connection refusal carries no body receipt ref`, ok: true });
-    else expect(error.receiptRef).toBe(ref);
+    else expect(error.receipt_ref).toBe(ref);
   }
   const receipt = await awaitPublic(
     () => secrets09Call(client, "vault.receipts.get", { receipt_ref: ref }, needles),

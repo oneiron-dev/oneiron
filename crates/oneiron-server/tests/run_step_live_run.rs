@@ -183,7 +183,7 @@ impl Fixture {
             )
             .await?;
         assert_eq!(status, StatusCode::OK, "the run's agent attaches: {body}");
-        fixture.handle = body["liveRun"]
+        fixture.handle = body["live_run"]
             .as_str()
             .ok_or("the attach answers a handle")?
             .to_owned();

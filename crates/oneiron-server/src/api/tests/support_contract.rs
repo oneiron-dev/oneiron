@@ -15,7 +15,6 @@ pub(super) fn normalize_contract_body(body: &mut Value) {
                     "deleted_at" => *value = Value::from("<deleted-at>"),
                     "query_time_us" => *value = Value::from("<duration-us>"),
                     "request_id" => *value = Value::from("<request-id>"),
-                    "requestId" => *value = Value::from("<request-id>"),
                     "last_retrieval_run_id" => *value = Value::from("<retrieval-run-id>"),
                     "retrieval_run_id" => *value = Value::from("<retrieval-run-id>"),
                     _ => normalize_contract_body(value),
@@ -98,7 +97,7 @@ pub(super) fn retrieval_quality_success_snapshot() -> String {
         let body = &mut exchange["response"]["body"];
         let body = if is_board { &mut body["pack"] } else { body };
         body["quality"] = json!("passthrough");
-        body["confidenceAdjustment"] = json!(-0.35);
+        body["confidence_adjustment"] = json!(-0.35);
         if let Some(empty) = body.get_mut("empty") {
             empty["retrievalQuality"] = json!({
                 "quality": "passthrough", "confidenceAdjustment": -0.35,

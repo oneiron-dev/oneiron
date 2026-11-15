@@ -430,7 +430,7 @@ impl RemoteClient {
         // asked first, and the body names the ask.
         if status == StatusCode::ACCEPTED {
             let body: serde_json::Value = read_json(reply.body, status, "a lens frame event")?;
-            if body.get("callbackId").is_some() {
+            if body.get("callback_id").is_some() {
                 return serde_json::from_value(body).map_err(|error| {
                     transport_error(format!(
                         "the server queued a lens callback this call could not decode: {error}"

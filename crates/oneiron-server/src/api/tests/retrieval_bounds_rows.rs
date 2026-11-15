@@ -78,12 +78,12 @@ fn rest_doors(
         (
             "GET",
             format!(
-                "/api/search/vector?query=0.1,0.2,0.3&queryText={}",
+                "/api/search/vector?query=0.1,0.2,0.3&query_text={}",
                 percent(query)
             ),
             None,
             "search_vector",
-            "queryText",
+            "query_text",
         ),
         (
             "POST",
@@ -135,8 +135,8 @@ async fn a_query_crossing_its_row_asks_once_per_door_and_field() {
             assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE, "{uri}: {reply}");
             let details = too_large(&reply);
             assert_eq!(details["field"], field, "{uri}");
-            assert_eq!(details["maxBytes"], ROW, "{uri}");
-            assert_eq!(details["receivedBytes"], query.len(), "{uri}");
+            assert_eq!(details["max_bytes"], ROW, "{uri}");
+            assert_eq!(details["received_bytes"], query.len(), "{uri}");
         }
         let checks = server.retrieval_query_checks();
         let doors = rest_doors(query);
