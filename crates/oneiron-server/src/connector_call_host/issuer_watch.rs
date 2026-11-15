@@ -18,6 +18,7 @@ use oneiron::connector_key::{
     ConnectorIssuerObservation,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::secret_custody::SentValue;
 use oneiron::{EntityId, Vault};
 use reqwest::header::{ACCEPT, HeaderMap, WWW_AUTHENTICATE};
 use reqwest::{StatusCode, Url};
@@ -157,8 +158,11 @@ fn listed_issuers(
 /// Reads a refusal of a send under connector key `key_ref` to `endpoint`
 /// for an issuer change. Only a 401 with a `Bearer` challenge reads the
 /// metadata; any other refusal, an unreadable or mismatched metadata reply,
-/// or one with no issuer records nothing. Answers each binding the core
-/// door found drifted.
+/// or one with no issuer records nothing. Nor does a reply naming the value
+/// `presented`, the one this send presented: the connector reflected its
+/// credential, and an issuer is a row the owner and connector.status read
+/// (pipeline review round 2 of #8115). Answers each binding the core door
+/// found drifted.
 ///
 /// # Errors
 /// The core door's: a malformed detection or a failed write.
@@ -169,6 +173,7 @@ pub(crate) fn detect_at_refusal(
     key_ref: &EntityId,
     status: StatusCode,
     headers: &HeaderMap,
+    presented: Option<&SentValue<'_>>,
 ) -> oneiron::Result<Vec<ConnectorCredentialBinding>> {
     if status != StatusCode::UNAUTHORIZED || !bearer_challenge(headers) {
         return Ok(Vec::new());
@@ -176,6 +181,13 @@ pub(crate) fn detect_at_refusal(
     let Some((authorization_servers, read)) = read_listed_issuers(client, endpoint) else {
         return Ok(Vec::new());
     };
+    if presented.is_some_and(|value| {
+        authorization_servers
+            .iter()
+            .any(|issuer| !value.spans(issuer.as_bytes()).is_empty())
+    }) {
+        return Ok(Vec::new());
+    }
     vault.detect_connector_credential_issuer(&ConnectorIssuerDetection {
         key_ref: *key_ref,
         authorization_servers,
