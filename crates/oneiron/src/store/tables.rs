@@ -678,9 +678,6 @@ crate::side_table::side_tables! {
     /// Per-vault random FastCDC boundary-randomization seed (u64 LE). Key: ().
     ORIGIN_LFS_CDC_SEED: VaultMeta b"origin:lfs:cdc:v1" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Device-local threshold row (u64) of one engine scan. Key: u8 (scan).
-    ORIGIN_SCAN_POLICY: VaultMeta b"origin:scan_policy:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Gate outcome of a scheduled outbound attempt's first dispatch. Key: id16.
     ///
     /// Codec fixed to `Raw` (T47 store slice): `store::outbound_send_receipt`

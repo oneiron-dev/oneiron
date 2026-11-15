@@ -34,8 +34,6 @@ use engine_scan_table::EngineScanThreshold;
 
 pub use crate::store::DEFAULT_SCAN_CHECK_THRESHOLD;
 
-/// Device-local threshold row of one scan. Key: the scan's tag.
-use crate::store::scan_count::POLICY;
 /// The check one scan raised for one scope. Key: the scan's tag, then its
 /// scope's bytes, or nothing for a vault-wide scan.
 const CHECK: SideTable<([u8; 1], Vec<u8>), ScanCheck, Named> =
@@ -120,25 +118,13 @@ impl Vault {
         })
     }
 
-    /// The threshold row of one engine scan.
+    /// One engine scan's threshold on this machine.
     pub fn scan_threshold(&self, scan: EngineScan) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
         if scan == EngineScan::DependentWalkRows {
             return Ok(self.dependent_walk_policy_in(&txn)?.check_threshold);
         }
         threshold_in_txn(&self.store, &txn, scan)
-    }
-
-    /// Sets one engine scan's device-local threshold row. Crossing it raises
-    /// a check; no value makes the scan refuse.
-    pub fn set_scan_threshold(&self, scan: EngineScan, threshold: u64) -> Result<()> {
-        self.with_write_txn_grouped(|wtxn| {
-            if scan == EngineScan::DependentWalkRows {
-                return self.set_dependent_walk_check_threshold_in(wtxn, threshold);
-            }
-            POLICY.put(&self.store, wtxn, &scan.tag(), &threshold)?;
-            Ok(())
-        })
     }
 
     /// Every OF-520 check an engine scan raised, kept or still waiting for

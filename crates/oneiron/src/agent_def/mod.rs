@@ -23,6 +23,7 @@ mod plan_mode;
 mod powers;
 mod proposed_change;
 mod refusal;
+pub(crate) mod setting_keys;
 mod tree_pause;
 mod types;
 mod widening;
@@ -49,9 +50,7 @@ pub use self::optional_memory_set::{
     AgentOptionalMemorySetRequest, AgentOptionalMemoryState, OptionalMemoryChoice,
     OptionalMemoryView, set_agent_optional_memory_from_request_as,
 };
-pub use self::plan_mode::{
-    AgentPlanMode, AgentPlanModeSetRequest, AgentPlanModeView, set_agent_plan_mode_from_request_as,
-};
+pub use self::plan_mode::AgentPlanMode;
 pub(crate) use self::plan_mode::{refuse_plan_from_off_agent_in_txn, refuse_unplanned_run_in_txn};
 pub use self::powers::{
     AgentPowerHolderKind, AgentPowerSetRequest, AgentPowerTarget, AgentPowers, ChildPowerRequest,

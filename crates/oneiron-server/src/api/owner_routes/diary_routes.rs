@@ -1,8 +1,8 @@
 //! `/v1/owner/diary`: the owner's doors to agent diaries (OF-490, AGM-1+8).
 //! The owner mints the `diary.read` Grants that decide what a reader gets,
-//! sets whether an agent reviews each read first, and reads a diary under
-//! its own Grant, stating a reason the agent sees. Owning the vault reads
-//! nothing by itself.
+//! and reads a diary under its own Grant, stating a reason the agent sees.
+//! Owning the vault reads nothing by itself. Whether an agent reviews each
+//! read first is the setting `memory.diary.read_review` (`vault.settings.set`).
 
 use std::sync::Arc;
 
@@ -22,19 +22,6 @@ use crate::server::SyncServer;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
-        (
-            OwnerRoute {
-                method: "post",
-                path: "/diary/review",
-                summary: "Whether an agent reviews each read first.",
-                row: None,
-                shape: Some(RestShape::json(
-                    diary_review_body_schema,
-                    diary_review_schema,
-                )),
-            },
-            post(review),
-        ),
         (
             OwnerRoute {
                 method: "post",
@@ -59,30 +46,6 @@ pub(super) fn owner_table() -> OwnerTable {
             post(read),
         ),
     ]
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct SetReview {
-    /// The agent, as 32 hex.
-    agent: String,
-    on: bool,
-}
-
-#[derive(Debug, Serialize, schemars::JsonSchema)]
-struct ReviewSet {
-    agent: String,
-    on: bool,
-}
-
-/// The OpenAPI schema of `POST /v1/owner/diary/review`'s body (FIX 11103): [`SetReview`].
-pub(crate) fn diary_review_body_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<SetReview>()
-}
-
-/// The OpenAPI schema of `POST /v1/owner/diary/review`'s answer (FIX 11103): [`ReviewSet`].
-pub(crate) fn diary_review_schema() -> serde_json::Value {
-    oneiron_contracts::code_run::vault_read::request_schema::<ReviewSet>()
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -137,33 +100,6 @@ pub(crate) fn diary_read_outcome_schema() -> serde_json::Value {
 
 fn memory_refused(error: oneiron::memory::MemoryError) -> OwnerError {
     OwnerError::Refused(error.to_string())
-}
-
-/// `POST /v1/owner/diary/review`: whether an agent reviews each read first.
-async fn review(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    payload: OwnerJsonBody<SetReview>,
-) -> OwnerReply<ReviewSet> {
-    let owner = owner(&auth, &server)?;
-    let request = payload.read(&server).await?;
-    let locality = auth.locality();
-    let set = blocking(move || -> OwnerResult<ReviewSet> {
-        let agent = entity_id("agent", &request.agent)?;
-        let vault = server.vault();
-        let actor = owner.revalidate(vault)?;
-        vault
-            .memory(actor, EdgeActorClass::Human)
-            .at(locality)
-            .set_diary_read_review(&owner, agent, request.on)
-            .map_err(memory_refused)?;
-        Ok(ReviewSet {
-            agent: agent.to_hex(),
-            on: request.on,
-        })
-    })
-    .await?;
-    Ok(Json(set))
 }
 
 /// `POST /v1/owner/diary/grants`: a `diary.read` Grant for one reader.

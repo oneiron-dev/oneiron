@@ -14,17 +14,17 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::gate::{PolicyRowScope, default_policy_manifest_id};
+use crate::policy_model::setting_keys::{self, MAX_DIGEST_INTERVAL};
+use crate::setting::SettingScope;
 use crate::{EntityId, Vault};
 
 const RULE_KEY: &str = crate::gate::POLICY_OWNER_POLICY_NOTIFY_KEY;
-const PREF: &[u8] = b"owner_policy:notification:preference:v1:";
 pub(super) const QUEUED: &[u8] = b"owner_policy:notification:queued:v1:";
 const QUEUE_CURSOR: &[u8] = b"owner_policy:notification:cursor:v1";
 const QUEUE_FAILURE: &[u8] = b"owner_policy:notification:failure:v1:";
 const DIGEST_WINDOW: &[u8] = b"owner_policy:notification:digest_window:v1:";
 const DIGEST_RECIPIENT: &[u8] = b"owner_policy:notification:digest_recipient:v1:";
 const DIGEST_BATCH_LIMIT: usize = 64;
-const MAX_DIGEST_INTERVAL: u64 = 31_536_000;
 const RULE_RECEIPT: &[u8] = b"owner_policy:notification:rule_receipt:v1:";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,8 +79,9 @@ pub use oneiron_records::policy_model::owner_rows::notifications::{
     PolicyNotificationFailure, PolicyNotificationMode, PolicyQueuedNotification,
 };
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// One recipient's delivery choice: the settings `policy.notification.mode` and
+/// `policy.notification.digest_interval_secs` at that person's scope.
+#[derive(Debug, Clone, Copy)]
 struct NotificationPreference {
     mode: PolicyNotificationMode,
     digest_interval_seconds: Option<u64>,
@@ -178,18 +179,16 @@ fn preference_in(
     txn: &heed::RoTxn<'_>,
     recipient: EntityId,
 ) -> Result<NotificationPreference> {
-    vault
-        .store
-        .vault_meta
-        .get(txn, &key(PREF, recipient.as_bytes()))?
-        .map(|raw| decode(&raw))
-        .transpose()
-        .map(|v| {
-            v.unwrap_or(NotificationPreference {
-                mode: PolicyNotificationMode::Inherit,
-                digest_interval_seconds: None,
-            })
-        })
+    let at = [SettingScope::Person(recipient)];
+    Ok(NotificationPreference {
+        mode: setting_keys::NOTIFICATION_MODE
+            .read_in_txn(vault, txn, &at, None)?
+            .value,
+        digest_interval_seconds: setting_keys::NOTIFICATION_DIGEST_INTERVAL
+            .read_in_txn(vault, txn, &at, None)?
+            .value
+            .map(|interval| interval.0),
+    })
 }
 
 pub(super) fn enqueue_change_in_txn(
@@ -272,48 +271,6 @@ pub(super) fn enqueue_change_in_txn(
 }
 
 impl Vault {
-    /// Recipient's own dial, bound to the authenticated human actor.
-    pub fn set_policy_notification_mode(
-        &self,
-        actor: &AuthenticatedOwner,
-        mode: PolicyNotificationMode,
-    ) -> Result<()> {
-        let mut txn = self.store.env.write_txn()?;
-        let actor_id = actor.revalidate_person_in_txn(self, &txn)?;
-        let mut preference = preference_in(self, &txn, actor_id)?;
-        preference.mode = mode;
-        self.store.vault_meta.put(
-            &mut txn,
-            &key(PREF, actor_id.as_bytes()),
-            &encode(&preference)?,
-        )?;
-        txn.commit()?;
-        Ok(())
-    }
-
-    /// Recipient-owned cadence override; absent uses the selected manifest row.
-    /// An open digest window keeps its original due time when this dial changes.
-    pub fn set_policy_notification_digest_interval(
-        &self,
-        actor: &AuthenticatedOwner,
-        interval_seconds: Option<u64>,
-    ) -> Result<()> {
-        if interval_seconds.is_some_and(|n| !(1..=MAX_DIGEST_INTERVAL).contains(&n)) {
-            return Err(invalid());
-        }
-        let mut txn = self.store.env.write_txn()?;
-        let actor_actor = actor.revalidate_person_in_txn(self, &txn)?;
-        let mut preference = preference_in(self, &txn, actor_actor)?;
-        preference.digest_interval_seconds = interval_seconds;
-        self.store.vault_meta.put(
-            &mut txn,
-            &key(PREF, actor_actor.as_bytes()),
-            &encode(&preference)?,
-        )?;
-        txn.commit()?;
-        Ok(())
-    }
-
     /// What was durably queued for holders; delivery itself uses the human follow-up driver.
     pub fn policy_queued_notifications(&self) -> Result<Vec<PolicyQueuedNotification>> {
         let txn = self.store.env.read_txn()?;

@@ -5,22 +5,21 @@ use heed::RoTxn;
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
-use crate::side_table::{self, Raw, SideTable};
 use crate::store::{EngineScan, ManifestDbs, PendingScanChecks, ScanCheck};
 
 pub(crate) use engine_scan_table::EngineScanThreshold;
 use oneiron_store::scan_count::engine_scan_table;
 
-pub(crate) const POLICY: SideTable<[u8; 1], u64, Raw> =
-    SideTable::new(&side_table::ORIGIN_SCAN_POLICY);
-
+/// One scan's threshold on this machine: the setting `origin.scan_threshold` for the scan, or
+/// the scan's default.
 pub(crate) fn threshold_in_txn(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
     scan: EngineScan,
 ) -> Result<u64> {
-    Ok(POLICY
-        .get(store, txn, &scan.tag())?
+    Ok(super::setting_keys::SCAN_THRESHOLD
+        .read_in_dbs_txn(store, txn, &[], Some(scan.code()))?
+        .value
         .unwrap_or(scan.default_threshold()))
 }
 

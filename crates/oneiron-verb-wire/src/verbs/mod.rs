@@ -45,8 +45,6 @@ pub use crate::verbs::eval_cohort::*;
 pub use crate::verbs::explain::*;
 pub use crate::verbs::fanout_launch::*;
 pub use crate::verbs::federation::*;
-#[cfg(feature = "sync")]
-pub use crate::verbs::federation_burst::*;
 pub use crate::verbs::feedback::*;
 pub use crate::verbs::files::*;
 pub use crate::verbs::follower_keyframe::*;
@@ -377,8 +375,6 @@ pub mod eval_cohort;
 pub mod explain;
 pub mod fanout_launch;
 pub mod federation;
-#[cfg(feature = "sync")]
-pub mod federation_burst;
 pub mod feedback;
 pub mod files;
 pub mod follower_keyframe;

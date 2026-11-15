@@ -1,23 +1,19 @@
 //! The model connection is a disclosure audience, not a read grant.
 //! These registry dials change serialization only, after the caller's own read.
+//! Each dial is a row of the setting `disclosure.model_ceiling`
+//! (`super::setting_keys::MODEL_CEILING`), its item the connection and class.
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::claim::{ClaimBody, ClaimSubject, ScopedReadActorKey, claim_surfaceable};
-use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::ShortIdStoreRead;
-use crate::side_table::{self, Named, SideTable};
+use crate::setting::SettingValue;
 use oneiron_authority::federation::{Scope, Sensitivity, SensitivityCeiling};
 
-const CEILINGS: SideTable<String, DisclosureBand, Named> =
-    SideTable::new(&side_table::DISCLOSURE_MODEL_CEILING);
-
 #[doc(hidden)]
-pub use oneiron_verb_wire::disclosure::model_channel::{
-    DisclosureCeilingRequest, DisclosureDataClass,
-};
+pub use oneiron_verb_wire::disclosure::model_channel::DisclosureDataClass;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -57,34 +53,28 @@ impl DisclosureBand {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DisclosureCeilingSet {
-    pub connection: String,
-    #[serde(default)]
-    pub class: Option<DisclosureDataClass>,
-    pub ceiling: DisclosureBand,
-}
+impl SettingValue for DisclosureBand {}
 
-/// None means no dial: class falls back to connection, then actor inference.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DisclosureCeilingView {
-    pub connection: String,
-    pub class: Option<DisclosureDataClass>,
-    pub ceiling: Option<DisclosureBand>,
-}
-
-fn key(connection: &str, class: Option<DisclosureDataClass>) -> Result<String> {
-    let valid = connection.split_once(':').is_some_and(|(kind, id)| {
+/// Whether `item` names one dial: `agent:<hex>` or `owner:<hex>`, then `/`
+/// and a data class or `*` for the whole connection.
+pub(super) fn is_dial_item(item: &str) -> bool {
+    let Some((connection, class)) = item.rsplit_once('/') else {
+        return false;
+    };
+    let connection_ok = connection.split_once(':').is_some_and(|(kind, id)| {
         matches!(kind, "agent" | "owner") && EntityId::from_hex(id).is_ok()
     });
-    if !valid {
-        return Err(Error::InvalidClaimBody(
-            "connection is agent:<hex> or owner:<hex>",
-        ));
-    }
-    Ok(dial_key(connection, class))
+    let class_ok = class == "*"
+        || [
+            DisclosureDataClass::Names,
+            DisclosureDataClass::Dates,
+            DisclosureDataClass::Contact,
+            DisclosureDataClass::Ids,
+            DisclosureDataClass::Health,
+        ]
+        .iter()
+        .any(|known| known.as_str() == class);
+    connection_ok && class_ok
 }
 
 fn dial_key(connection: &str, class: Option<DisclosureDataClass>) -> String {
@@ -92,56 +82,6 @@ fn dial_key(connection: &str, class: Option<DisclosureDataClass>) -> String {
         "{connection}/{}",
         class.map_or("*", DisclosureDataClass::as_str)
     )
-}
-
-impl Vault {
-    pub fn model_disclosure_ceiling(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: DisclosureCeilingRequest,
-    ) -> Result<DisclosureCeilingView> {
-        let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
-        let ceiling = CEILINGS.get(&self.store, &txn, &key(&input.connection, input.class)?)?;
-        Ok(DisclosureCeilingView {
-            connection: input.connection,
-            class: input.class,
-            ceiling,
-        })
-    }
-
-    pub fn set_model_disclosure_ceiling(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: DisclosureCeilingSet,
-    ) -> Result<DisclosureCeilingView> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let key = key(&input.connection, input.class)?;
-            CEILINGS.put(&self.store, txn, &key, &input.ceiling)?;
-            Ok(DisclosureCeilingView {
-                connection: input.connection,
-                class: input.class,
-                ceiling: Some(input.ceiling),
-            })
-        })
-    }
-
-    pub fn clear_model_disclosure_ceiling(
-        &self,
-        owner: &AuthenticatedOwner,
-        input: DisclosureCeilingRequest,
-    ) -> Result<DisclosureCeilingView> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            CEILINGS.delete(&self.store, txn, &key(&input.connection, input.class)?)?;
-            Ok(DisclosureCeilingView {
-                connection: input.connection,
-                class: input.class,
-                ceiling: None,
-            })
-        })
-    }
 }
 
 pub(crate) fn claim_data_class(body: &ClaimBody) -> Option<DisclosureDataClass> {
@@ -201,14 +141,20 @@ fn admits(
     band: DisclosureBand,
 ) -> Result<bool> {
     let connection = connection(reader);
-    let ceiling = CEILINGS
-        .get(&vault.store, txn, &dial_key(&connection, Some(class)))?
-        .or(CEILINGS.get(&vault.store, txn, &dial_key(&connection, None))?)
-        .unwrap_or(if reader.reads_as_vault_owner() {
-            DisclosureBand::Restricted
-        } else {
-            DisclosureBand::Public
-        });
+    let dial = |class| {
+        super::setting_keys::MODEL_CEILING
+            .read_in_txn(vault, txn, &[], Some(&dial_key(&connection, class)))
+            .map(|resolved| resolved.value)
+    };
+    let ceiling = match dial(Some(class))? {
+        Some(ceiling) => Some(ceiling),
+        None => dial(None)?,
+    }
+    .unwrap_or(if reader.reads_as_vault_owner() {
+        DisclosureBand::Restricted
+    } else {
+        DisclosureBand::Public
+    });
     let channel = Scope {
         sensitivity: SensitivityCeiling::AtMost(ceiling.sensitivity()),
         ..Scope::top()

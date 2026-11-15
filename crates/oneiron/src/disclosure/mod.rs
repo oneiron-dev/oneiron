@@ -19,6 +19,7 @@ mod model_channel;
 mod retained_copies;
 mod room_party;
 mod scope_codec;
+pub(crate) mod setting_keys;
 pub mod task_ask_default;
 mod tier_classification;
 mod vault_agent;
@@ -31,10 +32,7 @@ pub use self::attendee_ask::{
 pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
 pub use self::import_audience::import_audience_rule_ref;
-pub use self::model_channel::{
-    DisclosureBand, DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView,
-    DisclosureDataClass,
-};
+pub use self::model_channel::{DisclosureBand, DisclosureDataClass};
 pub(crate) use self::model_channel::{
     claim_data_class, claim_handle_in, model_names_admitted_in, person_name_claim_in,
     project_model_pack_in,

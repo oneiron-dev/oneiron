@@ -188,10 +188,6 @@ side_tables! {
     /// expires, is refused or is erased. Key: hex64 (signer key) then hex32 (entity id).
     SYNC_MAINTENANCE_RETAINED_WORK: SyncState b"retained:maintenance:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// The owner's wait for one retained-work queue (u64 big-endian seconds). Key: string (the
-    /// queue's code).
-    SYNC_RETAINED_WORK_WAIT: SyncState b"retained:wait:" Raw
-        [restore: content] [family: unclassified] [tier: canonical];
     /// A room's host pin or platform handle this device changed while no open window carried the
     /// room, or a join or offer card it changed that its window does not hold yet (FIX 1794),
     /// mirrored as that window opens. Key: string (the row's `room_facts` map key).

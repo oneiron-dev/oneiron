@@ -663,16 +663,6 @@ impl Vault {
         policy_in(&self.store, txn)
     }
 
-    pub(crate) fn set_dependent_walk_check_threshold_in(
-        &self,
-        txn: &mut RwTxn<'_>,
-        threshold: u64,
-    ) -> Result<()> {
-        let mut policy = self.dependent_walk_policy_in(txn)?;
-        policy.check_threshold = threshold;
-        POLICY.put(&self.store, txn, &(), &policy)
-    }
-
     /// Sets the local dependent walk policy for the batches that follow.
     ///
     /// # Errors

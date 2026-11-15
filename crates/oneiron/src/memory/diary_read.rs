@@ -5,8 +5,8 @@
 //! the diary entries it covers. Owning the vault is no bypass; the owner
 //! reads under a Grant like anyone else. Every read states a reason, kept in
 //! the agent's own read log, where the agent sees it. An agent whose review
-//! setting is on (on for Eiri; the host that provisions her turns it on by
-//! her agent id) answers each reader's reason Y/N first, and one yes admits
+//! setting is on (`memory.diary.read_review` at its agent scope, on for
+//! Eiri) answers each reader's reason Y/N first, and one yes admits
 //! one read. A vault export is a read with the reason `export`
 //! (`crate::batch::export::EXPORT_DIARY_READ_REASON`). An agent
 //! reading its own diary needs none of this.
@@ -25,7 +25,8 @@ use crate::error::{Error, Result};
 use crate::note::{NoteBody, NoteKind};
 use crate::ports::EdgeDirection;
 use crate::registry::ENTITY_TYPE_NOTE;
-use crate::side_table::{self, Named, Raw, RawValue, SideTable};
+use crate::setting::SettingScope;
+use crate::side_table::{self, Named, SideTable};
 use crate::{EntityId, Vault, WriteActor};
 use serde::{Deserialize, Serialize};
 
@@ -37,29 +38,10 @@ pub const DIARY_READ_VERB: &str = "diary.read";
 /// A review waiting on its agent ranks with the other rows that wait on it.
 const REVIEW_INBOX_IMPACT: u16 = 100;
 
-const DIARY_READ_REVIEW: SideTable<EntityId, DiaryReadReview, Raw> =
-    SideTable::new(&side_table::DIARY_READ_REVIEW);
 const DIARY_READ_LOG: SideTable<(EntityId, EntityId), DiaryReadRecord, Named> =
     SideTable::new(&side_table::DIARY_READ_LOG);
 const DIARY_READ_REQUEST: SideTable<(EntityId, EntityId), DiaryReadRequest, Named> =
     SideTable::new(&side_table::DIARY_READ_REQUEST);
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct DiaryReadReview(bool);
-
-impl RawValue for DiaryReadReview {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
-        Ok(vec![u8::from(self.0)])
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, side_table::CodecError> {
-        match bytes {
-            [0] => Ok(Self(false)),
-            [1] => Ok(Self(true)),
-            _ => Err(Error::CorruptedIndex("diary read review setting").into()),
-        }
-    }
-}
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::memory::diary_read::{
@@ -374,9 +356,9 @@ pub(crate) fn agent_reviews_diary_reads_in_txn(
     txn: &heed::RoTxn<'_>,
     agent: &EntityId,
 ) -> Result<bool> {
-    Ok(DIARY_READ_REVIEW
-        .get(&vault.store, txn, agent)?
-        .is_some_and(|review| review.0))
+    Ok(super::setting_keys::DIARY_READ_REVIEW
+        .read_in_txn(vault, txn, &[SettingScope::Agent(*agent)], None)?
+        .value)
 }
 
 /// The live diary entries `agent` wrote, oldest first, with their current

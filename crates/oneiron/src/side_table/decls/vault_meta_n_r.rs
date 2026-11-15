@@ -19,9 +19,6 @@ side_tables! {
     /// Failed delivery of one queued owner policy notification. Key: its queue key suffix.
     OWNER_POLICY_NOTIFICATION_FAILURE: VaultMeta b"owner_policy:notification:failure:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
-    /// Owner policy notification preference of one recipient. Key: recipient.
-    OWNER_POLICY_NOTIFICATION_PREFERENCE: VaultMeta b"owner_policy:notification:preference:v1:" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Queued owner policy notification. Key: queue order ‖ recipient.
     OWNER_POLICY_NOTIFICATION_QUEUED: VaultMeta b"owner_policy:notification:queued:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];

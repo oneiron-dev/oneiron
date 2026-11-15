@@ -8,7 +8,6 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, Raw, SideTable, SideTableDbs};
 use crate::store::Store;
 use crate::{Error, Result, Vault};
@@ -18,9 +17,6 @@ pub use oneiron_verb_wire::sync::federation_burst::schedule::{
     FACET_STAMP_WAIT_SECS, FEDERATION_BURST_WAIT_SECS, MAINTENANCE_INGEST_WAIT_SECS,
     RetainedWorkQueue,
 };
-
-/// The owner's wait for one queue, in seconds (u64 big-endian).
-const WAIT: SideTable<String, Vec<u8>, Raw> = SideTable::new(&side_table::SYNC_RETAINED_WORK_WAIT);
 
 /// The caller one queue served last, so the next pass starts after it.
 const CURSOR: SideTable<String, Vec<u8>, Raw> =
@@ -94,19 +90,17 @@ pub(crate) fn turns<T>(items: Vec<Waiting<T>>, after: Option<&[u8]>, now: u64) -
     Turns { due, expired }
 }
 
-/// How long `queue`'s work waits from its arrival, read in `txn`.
+/// How long `queue`'s work waits from its arrival, read in `txn`: the owner's
+/// wait (the setting `sync.retained_work.wait_secs`), or the queue's default.
 pub(crate) fn wait_secs_in(
     dbs: &impl SideTableDbs,
     txn: &heed::RoTxn<'_>,
     queue: RetainedWorkQueue,
 ) -> Result<u64> {
-    match WAIT.get(dbs, txn, &queue.code().to_owned())? {
-        None => Ok(queue.default_wait_secs()),
-        Some(bytes) => bytes
-            .try_into()
-            .map(u64::from_be_bytes)
-            .map_err(|_| Error::CorruptedIndex("retained work wait")),
-    }
+    Ok(crate::store::setting_keys::RETAINED_WORK_WAIT
+        .read_in_dbs_txn(dbs, txn, &[], Some(queue.code()))?
+        .value
+        .map_or(queue.default_wait_secs(), |wait| wait.0))
 }
 
 /// The caller `queue` served last, read in `txn`.
@@ -224,31 +218,5 @@ impl Vault {
     pub fn retained_work_wait_secs(&self, queue: RetainedWorkQueue) -> Result<u64> {
         let txn = self.store.env.read_txn()?;
         wait_secs_in(self, &txn, queue)
-    }
-
-    /// Sets how long work `queue` retains from now on waits for its turn,
-    /// or with `None` returns it to the default; answers the wait in force.
-    pub fn set_retained_work_wait_secs(
-        &self,
-        owner: &AuthenticatedOwner,
-        queue: RetainedWorkQueue,
-        secs: Option<u64>,
-    ) -> Result<u64> {
-        self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let key = queue.code().to_owned();
-            match secs {
-                Some(0) => {
-                    return Err(Error::InvalidConfig(
-                        "a retained work wait must be greater than zero".into(),
-                    ));
-                }
-                Some(secs) => WAIT.put(self, txn, &key, &secs.to_be_bytes().to_vec())?,
-                None => {
-                    WAIT.delete(self, txn, &key)?;
-                }
-            }
-            wait_secs_in(self, txn, queue)
-        })
     }
 }

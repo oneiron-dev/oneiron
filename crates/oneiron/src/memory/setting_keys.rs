@@ -1,5 +1,6 @@
 //! Memory's catalogue keys (DESIGN 15-setting-primitive): the owner's message-stream policy, as
-//! one row at the vault and one per agent for the write mode, and the vault's idle timeout.
+//! one row at the vault and one per agent for the write mode, and the vault's idle timeout; and
+//! whether an agent reviews each read of its diary.
 
 use serde::{Deserialize, Serialize};
 
@@ -44,5 +45,12 @@ crate::setting::setting_keys! {
     /// presence TTL.
     pub(crate) MESSAGE_STREAM_IDLE_TIMEOUT: StreamIdleTimeoutMs = "memory.message_stream.idle_timeout_ms" {
         kind: Kind::new(default_idle_timeout),
+    };
+    /// Whether an agent answers each reader's reason Y/N before its diary is read (OF-490): on
+    /// for Eiri, off unless set. An agent's row is that agent's choice; the vault's row is every
+    /// other agent's. The owner sets both.
+    pub(crate) DIARY_READ_REVIEW: bool = "memory.diary.read_review" {
+        kind: Kind::new(bool::default),
+        scopes: &[ScopeKind::Vault, ScopeKind::Agent],
     };
 }

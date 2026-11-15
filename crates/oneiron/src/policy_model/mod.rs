@@ -163,6 +163,7 @@ pub use verdict::{
     PolicyHedgeBucket, PolicyPassAudit, PolicyReadError, PolicySkipReason, PolicyVerdictCategory,
 };
 
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 #[cfg(test)]
 mod tests;
