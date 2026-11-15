@@ -333,6 +333,7 @@ fn codebase_snapshot_codec_rejects_unsorted_or_duplicate_manifest() {
         fork_hash: [0; CODEBASE_FORK_HASH_LEN],
         scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
         files: vec![file("src/lib.rs", 1), file("src/lib.rs", 2)],
+        repository: None,
     };
     let err = encode_codebase_snapshot(&raw).expect_err("duplicate paths fail closed");
     assert_eq!(err.kind(), ErrorKind::InvalidCodebaseSnapshotBody);
@@ -403,6 +404,7 @@ fn codebase_snapshot_codec_rejects_backslash_manifest_paths() {
         fork_hash: [0; CODEBASE_FORK_HASH_LEN],
         scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
         files: vec![file("src\\..\\secret", 1)],
+        repository: None,
     };
 
     let err = encode_codebase_snapshot(&raw)
@@ -424,6 +426,7 @@ fn codebase_snapshot_codec_rejects_invalid_constructed_repo_ref() {
         fork_hash: [0; CODEBASE_FORK_HASH_LEN],
         scope_key: [0; CODEBASE_SCOPE_KEY_LEN],
         files: vec![file("src/main.rs", 1)],
+        repository: None,
     };
 
     let err = encode_codebase_snapshot(&raw)
@@ -669,6 +672,7 @@ fn declared_path_is_filtered_during_atomic_snapshot_write() -> Result<()> {
         name: "snapshot-declared".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"declared secret".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -918,6 +922,7 @@ fn local_repo_ingest_filtered_identity_matches_persisted_snapshot_and_artifact()
         name: "ingest-declared-cargo".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"declared path fixture".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -1023,6 +1028,7 @@ fn local_repo_ingest_rechecks_custody_after_first_pass_before_any_write() -> Res
                 name: "late-declaration".to_owned(),
                 class: CustodyClass::CustodyPortable,
                 device_only: false,
+                model_reveal_allowed: false,
                 value_bytes: b"late registered fixture".to_vec(),
                 status: SecretCustodyStatus::Active,
                 registered_at: 1,
@@ -1083,6 +1089,7 @@ fn assert_historical_declared_asset_reclaimed(replacement: Option<&[u8]>) -> Res
         name: "historical-declaration".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"declared path fixture".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -1196,6 +1203,7 @@ fn local_repo_ingest_keeps_excluded_hash_used_by_another_snapshot() -> Result<()
         name: "shared-source-declaration".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"declared path fixture".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -1268,6 +1276,7 @@ fn local_repo_ingest_preserves_clean_historical_body_at_newly_quarantined_path()
         name: "historical-shared-source".to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"declared path fixture".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,

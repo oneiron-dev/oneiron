@@ -6,8 +6,8 @@ use crate::edit_roundtrip::pptx::tests::support;
 use crate::edit_settle::{SettleConsent, SettleOutcomeKind};
 use crate::error::ArtifactError;
 use crate::llm::decision::{
-    AnswerContract, DecisionCall, DecisionClass, DecisionProvider, HeldLadder, PairedAnswer,
-    ProviderDecision, ProviderPin,
+    AnswerContract, DecisionBand, DecisionCall, DecisionClass, DecisionProvider, HeldLadder,
+    PairedAnswer, ProviderDecision, ProviderPin,
 };
 use crate::registry::ENTITY_TYPE_PERSON;
 use crate::test_util::{embedding_test_config, open_test_vault_with};

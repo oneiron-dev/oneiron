@@ -239,16 +239,20 @@ fn an_import_leaves_a_plain_conversation_at_its_derived_id_alone() {
         .witness(&WitnessTurn {
             conversation_ref: id.to_hex(),
             turn_ref: None,
+            thread_audience: None,
             messages: vec![WitnessMessage {
                 id: None,
                 author: WitnessAuthor::User,
                 message_type: "dialogue".to_owned(),
                 content: "a plain turn".to_owned(),
+                parts: None,
                 metadata: None,
                 is_visible: true,
                 order: 0,
+                quote: None,
             }],
             occurred_at: WITNESSED_AT,
+            assertions: Default::default(),
         })
         .expect("plain witness");
     let body = vault.get(&id).expect("read the plain conversation");
@@ -333,6 +337,7 @@ fn a_fill_in_needs_the_shared_vault_content_write_a_turn_needs() {
                 crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
                 at(11),
                 11,
+                None,
                 &encode_federation_grant_body(&grant).expect("encode the grant"),
             )
             .commit()

@@ -1,7 +1,5 @@
 use super::*;
 
-// FIX [LIBTEST-QUARANTINE-RETRIEVAL-DEPTH-TESTS-REPAIRS]: the lib test target's type check fails here (4 errors: E0061 x4); port it, then drop this gate
-#[cfg(any())]
 mod repairs;
 
 type TestResult = std::result::Result<(), Box<dyn std::error::Error>>;
@@ -166,8 +164,6 @@ impl DeepSearchBackend for ScriptedBackend {
 
 // ── Admission ───────────────────────────────────────────────────────────
 
-// FIX [LIBTEST-QUARANTINE-RETRIEVAL-DEPTH-TESTS-ITEMS]: the lib test target's type check fails here (2 errors: E0061 x2); port it, then drop this gate
-#[cfg(any())]
 /// A claim the actor-keyed door refuses stays refused at EVERY effort,
 /// including the deep tier whose extra rounds a host drives. The expansion,
 /// the fan-out and the backend's own queries all run through the same
@@ -196,9 +192,9 @@ fn no_effort_widens_what_the_actor_keyed_door_admits() -> TestResult {
 
     vault
         .batch()
-        .put_replicated(&surfaceable, ENTITY_TYPE_CLAIM, range(1), 1, &open)
+        .put_replicated(&surfaceable, ENTITY_TYPE_CLAIM, range(1), 1, None, &open)
         .text(&surfaceable, &[("body", text)])
-        .put_replicated(&withheld, ENTITY_TYPE_CLAIM, range(1), 1, &closed)
+        .put_replicated(&withheld, ENTITY_TYPE_CLAIM, range(1), 1, None, &closed)
         .text(&withheld, &[("body", text)])
         .edge(
             &surfaceable,

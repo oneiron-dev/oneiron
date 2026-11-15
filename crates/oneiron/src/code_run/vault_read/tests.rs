@@ -91,6 +91,7 @@ fn empty_projection() -> CoreContextPackProjection {
         narrowing: read_receipt_fixture(),
         results: Vec::new(),
         neighbors: Vec::new(),
+        instruction_files: Vec::new(),
         stats: CoreContextPackStats {
             candidates_considered: 0,
             signals_used: Vec::new(),
@@ -99,6 +100,7 @@ fn empty_projection() -> CoreContextPackProjection {
             neighbors_hydrated: 0,
             cosine_ghosts_dampened: 0,
             claims_suppressed: 0,
+            deadline_exceeded: false,
             tokens: CoreContextPackTokenStats {
                 tokenizer_id: String::new(),
                 total_tokens: 0,
@@ -192,6 +194,8 @@ fn hydrate_request(reference: &str) -> CoreHydrateRequest {
         content_hash: None,
         view: None,
         filter: None,
+        image_input: false,
+        task: None,
     }
 }
 
@@ -459,6 +463,8 @@ fn scoped_grant_denial_reads_as_absence() {
             refs: vec![admitted_ref, denied_ref.clone(), missing_ref.to_owned()],
             view: None,
             filter: None,
+            image_input: false,
+            task: None,
         })
         .expect("batch hydrate");
     assert_eq!(batch.results.len(), 3);
@@ -564,6 +570,9 @@ fn vector_pack_request() -> CoreContextPackRequest {
         max_neighbors: None,
         budget: None,
         filter: None,
+        type_ref: None,
+        axis: None,
+        media: None,
     }
 }
 
@@ -801,6 +810,8 @@ fn batch_aborting_error_carries_the_batch_method() {
             refs: vec![reference],
             view: None,
             filter: None,
+            image_input: false,
+            task: None,
         })
         .expect_err("a non-NOT_FOUND item error aborts the batch");
     assert!(

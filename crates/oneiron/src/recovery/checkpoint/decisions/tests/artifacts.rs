@@ -53,6 +53,7 @@ fn revoked_secret(vault: &Vault) -> Result<()> {
         name: SECRET.to_owned(),
         class: CustodyClass::CustodyPortable,
         device_only: false,
+        model_reveal_allowed: false,
         value_bytes: b"census taint value".to_vec(),
         status: SecretCustodyStatus::Active,
         registered_at: 1,
@@ -234,6 +235,7 @@ fn a_restore_does_not_lift_a_taint_attached_since_the_backup() -> Result<()> {
     let restore = |name: &str| {
         Vault::restore_checkpoint_keeping_authority(
             &image,
+            &vault.checkpoint_key()?,
             &backups.path().join(name),
             vault.config.clone(),
             &vault,
@@ -261,6 +263,7 @@ fn a_restore_does_not_lift_a_taint_attached_since_the_backup() -> Result<()> {
 
     let (unguarded, _) = Vault::restore_checkpoint(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("unguarded"),
         vault.config.clone(),
         RestoreReason::Restore,
@@ -315,6 +318,7 @@ fn a_restore_does_not_publish_a_held_site_through_another_owner() -> Result<()> 
 
     let (unguarded, _) = Vault::restore_checkpoint(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("unguarded"),
         vault.config.clone(),
         RestoreReason::Restore,
@@ -324,6 +328,7 @@ fn a_restore_does_not_publish_a_held_site_through_another_owner() -> Result<()> 
 
     let refused = Vault::restore_checkpoint_keeping_authority(
         &image,
+        &vault.checkpoint_key()?,
         &backups.path().join("guarded"),
         vault.config.clone(),
         &vault,

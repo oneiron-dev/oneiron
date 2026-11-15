@@ -124,6 +124,7 @@ pub(super) fn esign_ledger(reader: ConsolidationReader) -> Result<()> {
         title: "Agreement".into(),
         sequential: false,
         expires_at: 1000,
+        token_expires_at: None,
         items: vec![EsignItem {
             artifact_ref: document.to_hex(),
             original_version: 1,
@@ -137,10 +138,12 @@ pub(super) fn esign_ledger(reader: ConsolidationReader) -> Result<()> {
             expires_at: 1000,
             principal_ref: None,
             automated: false,
+            natural_person: None,
         }],
         fields: Vec::new(),
         full_trail_appendix: true,
         lifecycle: None,
+        project: None,
         commitments: Vec::new(),
     };
     vault.create_esign_document(document, &body, actor(), 2)?;

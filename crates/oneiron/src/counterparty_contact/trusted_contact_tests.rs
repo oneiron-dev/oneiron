@@ -196,6 +196,7 @@ impl Fixture {
                     content_ref: None,
                     idempotency_key: None,
                     dedupe_key: None,
+                    mention: None,
                 },
                 OutboundIntentTrigger::record_transition(notice.fire.clone()),
             ),
@@ -429,6 +430,10 @@ fn only_the_gates_route_to_help_fires_the_notify() -> Result<()> {
         channel: "email".to_owned(),
         verb: "send".to_owned(),
         target: CONTACT_ADDRESS.to_owned(),
+        authorization: super::TrustedContactNoticeAuthorization::Policy {
+            row_ref: "owner:crisis".to_owned(),
+            tier: TrustedContactTier::Imminent,
+        },
     };
     AttemptQueue::new(&fx.vault).enqueue(crate::attempt_queue::EnqueueAttempt {
         kind: TRUSTED_CONTACT_NOTICE_ATTEMPT_KIND.to_owned(),
@@ -575,17 +580,22 @@ fn the_notice_carries_the_fact_of_concern_and_nothing_from_the_turn() -> Result<
             &crate::memory::WitnessTurn {
                 conversation_ref: String::new(),
                 turn_ref: None,
+                thread_audience: None,
                 messages: vec![crate::memory::WitnessMessage {
                     id: None,
                     author: crate::memory::WitnessAuthor::User,
                     message_type: "utterance".to_owned(),
                     content: PRIVATE_TURN.to_owned(),
+                    parts: None,
                     metadata: None,
                     is_visible: true,
                     order: 0,
+                    quote: None,
                 }],
                 occurred_at: 1_000,
+                assertions: Default::default(),
             },
+            None,
             None,
         )
         .expect("off-record witness");

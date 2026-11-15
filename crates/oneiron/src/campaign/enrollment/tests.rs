@@ -199,6 +199,7 @@ fn install_enrollment_rows(vault: &Vault, outbound: Option<CampaignProgramOutbou
             schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
             program_ref,
             campaign_ref,
+            audience: None,
         },
     )
     .expect("program row");
@@ -212,6 +213,7 @@ fn install_enrollment_rows(vault: &Vault, outbound: Option<CampaignProgramOutbou
             sender_ref,
             basis_evidence: entity(0x58),
             outbound,
+            arm: None,
         },
     )
     .expect("step row");
@@ -237,6 +239,7 @@ fn outbound_step() -> CampaignProgramOutbound {
         verb: VERB.to_owned(),
         payload: b"enrollment-body".to_vec(),
         idempotency_supported: true,
+        subject: Some("Enrollment update".to_owned()),
     }
 }
 
@@ -251,7 +254,7 @@ fn dispatch_leg<T: OutboundTransport>(
     match run_enrollment_outbound_leg(vault, authority, HOME_NODE, attempt, transport, now_ms)
         .expect("outbound leg")
     {
-        EnrollmentOutboundLeg::Dispatched(dispatch) => dispatch,
+        EnrollmentOutboundLeg::Dispatched(dispatch) => dispatch.effect.dispatch,
         other => panic!("expected a dispatch, got {other:?}"),
     }
 }
@@ -447,6 +450,7 @@ fn gate_rejection_prevents_a_direct_send() -> Result<()> {
             verb: "call".to_owned(),
             payload: b"enrollment-body".to_vec(),
             idempotency_supported: true,
+            subject: Some("Enrollment update".to_owned()),
         }),
     );
     let attempt = queued_attempt(&vault, &fixture);
@@ -580,6 +584,7 @@ fn mismatched_program_refs_fail_closed() -> Result<()> {
             schema_version: CAMPAIGN_ENROLLMENT_SCHEMA_VERSION,
             program_ref: foreign_program,
             campaign_ref: entity(0x62),
+            audience: None,
         },
     )?;
     let crossed = CampaignEnrollmentAttemptPayload {

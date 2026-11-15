@@ -90,15 +90,10 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
         crate::DeleteReason::UserDelete,
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
-        let vault = crate::Vault::open(
-            dir.path(),
-            VaultConfig {
-                embedding_model: Some("test/model@v1".to_owned()),
-                dimensions: ERASED_MEANING.len(),
-                ..VaultConfig::default()
-            },
-        )
-        .expect("open vault");
+        let mut config = VaultConfig::device();
+        config.embedding_model = Some("test/model@v1".to_owned());
+        config.dimensions = ERASED_MEANING.len();
+        let vault = crate::Vault::open(dir.path(), config).expect("open vault");
         let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
         crate::conversation_dag::fixtures::grant(&vault, owner, true);
@@ -125,6 +120,8 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
                     witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
                 ],
                 occurred_at: 500,
+                thread_audience: None,
+                assertions: Default::default(),
             })
             .expect("witness turn");
         let id_of = |short_id: &str| {
@@ -215,11 +212,9 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
         crate::DeleteReason::UserDelete,
     ] {
         let dir = tempfile::tempdir().expect("tempdir");
-        let model = VaultConfig {
-            embedding_model: Some("test/model@v1".to_owned()),
-            dimensions: ERASED_MEANING.len(),
-            ..VaultConfig::default()
-        };
+        let mut model = VaultConfig::device();
+        model.embedding_model = Some("test/model@v1".to_owned());
+        model.dimensions = ERASED_MEANING.len();
         let mut vault = crate::Vault::open(dir.path(), model.clone()).expect("open vault");
         let alice = put_owner(&vault);
         let owner = crate::WriteActor::new(alice, EdgeActorClass::Human);
@@ -248,6 +243,8 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
                         witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
                     ],
                     occurred_at: 500,
+                    thread_audience: None,
+                    assertions: Default::default(),
                 })
                 .expect("witness turn");
             let id_of = |short_id: &str| {
@@ -968,6 +965,7 @@ fn napi_schedule_outbound_forwards_timezone_context() {
         trigger_ref: "session:napi".to_owned(),
         job_ref: None,
         occurred_at: Some(3_600),
+        mention: None,
     };
     let receipt = facade
         .schedule_outbound_with_context(

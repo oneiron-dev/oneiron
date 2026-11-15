@@ -341,6 +341,7 @@ fn forged_action_and_actor_are_rejected() -> Result<()> {
     let archived = GeneratedUiRender::interactive(
         render.card_id,
         render.catalog,
+        render.catalog_version,
         render.root,
         render.nodes,
         render.actions,
