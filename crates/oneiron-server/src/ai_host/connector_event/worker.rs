@@ -204,9 +204,6 @@ fn answer(
                 reply_run_id(agent, event_id),
                 result,
             )?;
-            if let Some((mode, log)) = self_log {
-                enter_thread_breakpoint(server, agent, &origin, mode, log.log, &admitted);
-            }
             let answer = answer.trim();
             if answer.is_empty() {
                 return Ok(());
@@ -222,6 +219,11 @@ fn answer(
                 result.reason = Some(Error::EntityNotFound.to_string());
                 return Ok(());
             };
+            // The thread's compaction files its paid calls under the reply's
+            // MESSAGE, so it starts only once that reply's body is kept.
+            if let Some((mode, log)) = self_log {
+                enter_thread_breakpoint(server, agent, &origin, mode, log.log, &admitted);
+            }
             kept
         }
     };

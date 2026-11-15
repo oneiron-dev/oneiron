@@ -358,7 +358,9 @@ impl Vault {
 /// thread's earlier turns alike; a turn already held keeps its SESSION
 /// (first-write-wins). A turn that occurred before the last turn the
 /// thread's landed epochs cover is not held: numbered there, it would move
-/// the turns they cover, so it stays a raw line no epoch takes.
+/// the turns they cover, so it stays a raw line no epoch takes. While that
+/// last covered turn's own row does not read (it was hard-erased), no turn
+/// can be placed against it, so none is held.
 fn hold_in_thread_session_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -370,9 +372,10 @@ fn hold_in_thread_session_in_txn(
     let session = vault.thread_session_in_txn(txn, conversation, agent, now)?;
     let end =
         match crate::compaction::conversation_covered_end_in(store, txn, session, conversation)? {
-            Some(end) => {
-                crate::compaction::thread_turn_key_in(store, txn, &end)?.map(|(key, _)| key)
-            }
+            Some(end) => match crate::compaction::thread_turn_key_in(store, txn, &end)? {
+                Some((key, _)) => Some(key),
+                None => return Ok(()),
+            },
             None => None,
         };
     for turn in crate::compaction::conversation_turns_in(store, txn, &conversation)? {

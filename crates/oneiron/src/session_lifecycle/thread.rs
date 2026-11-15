@@ -32,11 +32,16 @@ pub(crate) fn thread_session_id(conversation: EntityId) -> Result<EntityId> {
 impl Vault {
     /// The connector thread `conversation`'s SESSION in `wtxn`, minted when
     /// absent: its entity and an open lifecycle record started at `now`,
-    /// keyed to `actor` on this vault's machine, and no open pointer.
+    /// keyed to `actor` on this vault's machine, and no open pointer. The
+    /// id derives from the thread alone, so another host of this vault mints
+    /// the same SESSION; when its entity arrived here without this store's
+    /// own lifecycle record, the entity stands and only the record is
+    /// written.
     ///
     /// # Errors
     ///
-    /// Storage errors, and a derived id that is taken by another kind of row.
+    /// Storage errors, and a derived id that names a row other than a live
+    /// SESSION.
     pub(crate) fn thread_session_in_txn(
         &self,
         wtxn: &mut RwTxn<'_>,
@@ -48,11 +53,18 @@ impl Vault {
         if RECORDS.get(&self.store, wtxn, &id)?.is_some() {
             return Ok(id);
         }
-        if crate::ports::EntityStoreRead::port_entity_raw(&self.store, wtxn, &id)?.is_some() {
-            return Err(Error::InvariantViolation(
-                "a thread session's id names a row with no lifecycle record",
-            ));
-        }
+        let entity_stands = match crate::vault::live_entity_row_in_txn(&self.store, wtxn, &id)? {
+            crate::vault::LiveEntityRow::Absent => false,
+            crate::vault::LiveEntityRow::Live {
+                entity_type: ENTITY_TYPE_SESSION,
+                ..
+            } => true,
+            _ => {
+                return Err(Error::InvariantViolation(
+                    "a thread session's id names a row that is no live SESSION",
+                ));
+            }
+        };
         let machine = crate::identity::load_or_mint_machine_id_in_txn(self, wtxn)?;
         let key = SessionKey { actor, machine };
         let effective_ms = now.saturating_mul(1_000);
@@ -73,19 +85,21 @@ impl Vault {
             speakers: SessionSpeakers::default(),
             summary_attempt: None,
         };
-        let body = session_entity_body(key)?;
-        self.batch_in()
-            .put(
-                &id,
-                ENTITY_TYPE_SESSION,
-                TimeRange {
-                    start: now,
-                    end: now,
-                },
-                now,
-                &body,
-            )
-            .apply(wtxn)?;
+        if !entity_stands {
+            let body = session_entity_body(key)?;
+            self.batch_in()
+                .put(
+                    &id,
+                    ENTITY_TYPE_SESSION,
+                    TimeRange {
+                        start: now,
+                        end: now,
+                    },
+                    now,
+                    &body,
+                )
+                .apply(wtxn)?;
+        }
         RECORDS.put(&self.store, wtxn, &id, &record)?;
         Ok(id)
     }
