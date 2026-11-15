@@ -46,8 +46,8 @@ use super::work_binding::{
 };
 use super::{
     ByoEndpointBackendFactory, ByoEndpointSpec, ByoaDispatcher, ByoaEgressLease, ByoaEgressPort,
-    ByoaError, ByoaResult, ProviderAdapterRegistry, RunnerSeatPolicy, SkippedRunnerSeat,
-    SkippedRunnerSeatView, StagedJob,
+    ByoaError, ByoaResult, ProviderAdapterRegistry, RunnerSeat, RunnerSeatPolicy,
+    SkippedRunnerSeat, SkippedRunnerSeatView, StagedJob,
 };
 
 /// The step key the hand-over binds its runner work under.
@@ -434,9 +434,92 @@ fn validated_conversation(request: &ContinueOutsideWorkRequest) -> MemoryResult<
     Ok(conversation)
 }
 
-/// The first seat index whose runner is `runner`, if one names it.
-fn runner_start(policy: &RunnerSeatPolicy, runner: &str) -> Option<usize> {
-    policy.seats.iter().position(|seat| seat.runner == runner)
+/// The seats of the owner's policy that name the runner a continue asks
+/// for. A continue searches only these, so a seat passed over as spent or
+/// as one this runtime may not run never hands the work to another
+/// vendor's runner; each seat keeps its quota and placement checks.
+struct RunnerSeats {
+    /// Those seats as a policy of their own, in the owner's order, under
+    /// the owner's spend rule.
+    policy: RunnerSeatPolicy,
+    /// Each seat's index in the owner's policy.
+    indices: Vec<usize>,
+}
+
+impl RunnerSeats {
+    /// The seats of `policy` that name `runner`; `None` when no seat does.
+    fn of(policy: &RunnerSeatPolicy, runner: &str) -> Option<Self> {
+        let (indices, seats): (Vec<usize>, Vec<RunnerSeat>) = policy
+            .seats
+            .iter()
+            .enumerate()
+            .filter(|(_, seat)| seat.runner == runner)
+            .map(|(index, seat)| (index, seat.clone()))
+            .unzip();
+        if seats.is_empty() {
+            return None;
+        }
+        Some(Self {
+            policy: RunnerSeatPolicy {
+                seats,
+                on_spent: policy.on_spent,
+            },
+            indices,
+        })
+    }
+
+    /// The seat search over these seats from the first, read in `txn`, its
+    /// seat indices put back in the owner's order.
+    ///
+    /// # Errors
+    ///
+    /// Every refusal the search has.
+    fn search_in_txn(
+        &self,
+        dispatcher: &ByoaDispatcher<'_, ContinueEndpoints, ContinueEgress>,
+        txn: &heed::RoTxn<'_>,
+        registry: &ProviderAdapterRegistry,
+        work: &BindRunnerWork,
+    ) -> ByoaResult<RunnerSeatSearch> {
+        let found = dispatcher.search_runner_seat_in_txn(txn, registry, &self.policy, work)?;
+        Ok(match found {
+            RunnerSeatSearch::Found {
+                seat,
+                connector,
+                context,
+                task_source,
+            } => RunnerSeatSearch::Found {
+                seat: self.owner_index(seat),
+                connector,
+                context,
+                task_source,
+            },
+            RunnerSeatSearch::NoSeat { skipped } => RunnerSeatSearch::NoSeat {
+                skipped: self.owner_skipped(skipped),
+            },
+            RunnerSeatSearch::Exhausted { back_at, skipped } => RunnerSeatSearch::Exhausted {
+                back_at,
+                skipped: self.owner_skipped(skipped),
+            },
+        })
+    }
+
+    /// Seat `index` of these seats as its index in the owner's policy. A
+    /// search over these seats answers only their own indices.
+    fn owner_index(&self, index: usize) -> usize {
+        self.indices[index]
+    }
+
+    /// `skipped` with each seat named by its index in the owner's policy.
+    fn owner_skipped(&self, skipped: Vec<SkippedRunnerSeat>) -> Vec<SkippedRunnerSeat> {
+        skipped
+            .into_iter()
+            .map(|skip| SkippedRunnerSeat {
+                seat: self.owner_index(skip.seat),
+                ..skip
+            })
+            .collect()
+    }
 }
 
 /// The owner whose will the caller's act carries, checked live in `txn`:
@@ -471,6 +554,12 @@ impl Vault {
     /// so a later ref move cannot change what runs. The caller is checked
     /// first inside the writer, so a refused caller never learns the policy.
     ///
+    /// The work runs only on a seat of `policy` that names `input.runner`:
+    /// the first such seat in the owner's order that this runtime may run
+    /// and whose quota is not spent. `registry` is the one the node's own
+    /// seat settings build, so an official seat's adapter and its login
+    /// machine ride the work.
+    ///
     /// # Errors
     ///
     /// A request that fails its checks; a commit that is not the tip; a
@@ -480,6 +569,7 @@ impl Vault {
     pub fn continue_outside_work(
         &self,
         caller: RunnerContinueCaller<'_>,
+        registry: &ProviderAdapterRegistry,
         policy: &RunnerSeatPolicy,
         input: &ContinueOutsideWorkRequest,
     ) -> MemoryResult<ContinueOutsideWorkView> {
@@ -504,10 +594,9 @@ impl Vault {
         let run_id = format!("runner.continue:{hand_over_hex}");
         let conversation_hex = conversation.to_hex();
         let dispatcher = ByoaDispatcher::new(self, ContinueEndpoints, ContinueEgress);
-        let registry = ProviderAdapterRegistry::standard();
         self.try_with_write_txn_grouped(|wtxn| -> MemoryResult<ContinueOutsideWorkView> {
             let owner = caller_owner_in_txn(self, wtxn, &caller)?;
-            let Some(from) = runner_start(policy, &input.runner) else {
+            let Some(seats) = RunnerSeats::of(policy, &input.runner) else {
                 return Ok(ContinueOutsideWorkView::NoRunnerSeat {
                     runner: input.runner.clone(),
                 });
@@ -521,12 +610,14 @@ impl Vault {
                 checkout_id: checkout,
                 task_ref: None,
                 run_id: Some(run_id.clone()),
-                choice: RunnerSeatChoice::NextSeat { from },
+                // The search over the runner's own seats starts at their
+                // first; a bound work answers where it stands.
+                choice: RunnerSeatChoice::NextSeat { from: 0 },
                 now,
             };
             if head_hop(self, wtxn, binding).map_err(refusal)?.is_some() {
                 let bound = dispatcher
-                    .bind_runner_work_in_txn(wtxn, &registry, policy, work)
+                    .bind_runner_work_in_txn(wtxn, registry, policy, work)
                     .map_err(refusal)?;
                 let RunnerWorkBound::Bound {
                     binding,
@@ -567,11 +658,11 @@ impl Vault {
                     existing: true,
                 });
             }
-            let found = dispatcher
-                .search_runner_seat_in_txn(wtxn, &registry, policy, &work)
+            let found = seats
+                .search_in_txn(&dispatcher, wtxn, registry, &work)
                 .map_err(refusal)?;
-            match found {
-                RunnerSeatSearch::Found { .. } => {}
+            let seat = match found {
+                RunnerSeatSearch::Found { seat, .. } => seat,
                 RunnerSeatSearch::NoSeat { skipped } => {
                     return Ok(ContinueOutsideWorkView::NoSeat {
                         skipped: skipped_views(&skipped),
@@ -583,7 +674,7 @@ impl Vault {
                         skipped: skipped_views(&skipped),
                     });
                 }
-            }
+            };
             if !crate::ports::EntityStoreRead::port_entity_present(
                 &self.store,
                 wtxn,
@@ -662,8 +753,11 @@ impl Vault {
                 persist_staged_input_in_txn(self, wtxn, &staged, &run_id, now).map_err(refusal)?;
             work.staged_input = Some(pin);
             work.task_ref = Some(task);
+            // The bind takes the seat the search found, by its index in the
+            // owner's policy, so the binding names it there.
+            work.choice = RunnerSeatChoice::Seat(seat);
             let bound = dispatcher
-                .bind_runner_work_in_txn(wtxn, &registry, policy, work)
+                .bind_runner_work_in_txn(wtxn, registry, policy, work)
                 .map_err(refusal)?;
             let RunnerWorkBound::Bound {
                 binding,
@@ -693,8 +787,10 @@ impl Vault {
 
     /// Checks whether this node would take the outside session the local CLI
     /// would push to the custody repo `input.repo` for `input.runner`: the
-    /// repo is in custody here, the caller holds, and a seat search over the
-    /// policy lands. One read snapshot; it writes nothing.
+    /// repo is in custody here, the caller holds, and the search
+    /// [`Self::continue_outside_work`] runs over the seats of `policy` that
+    /// name `input.runner`, under `registry`, lands. One read snapshot; it
+    /// writes nothing.
     ///
     /// # Errors
     ///
@@ -703,6 +799,7 @@ impl Vault {
     pub fn continue_outside_work_check(
         &self,
         caller: RunnerContinueCaller<'_>,
+        registry: &ProviderAdapterRegistry,
         policy: &RunnerSeatPolicy,
         input: &ContinueOutsideWorkCheckRequest,
     ) -> MemoryResult<ContinueOutsideWorkCheckView> {
@@ -724,10 +821,9 @@ impl Vault {
             .map_err(refusal)?;
         let checkout = hand_over_checkout(hand_over).map_err(refusal)?;
         let dispatcher = ByoaDispatcher::new(self, ContinueEndpoints, ContinueEgress);
-        let registry = ProviderAdapterRegistry::standard();
         let rtxn = self.store.env.read_txn().map_err(Error::from)?;
         caller_owner_in_txn(self, &rtxn, &caller)?;
-        let Some(from) = runner_start(policy, &input.runner) else {
+        let Some(seats) = RunnerSeats::of(policy, &input.runner) else {
             return Ok(ContinueOutsideWorkCheckView::NoRunnerSeat {
                 runner: input.runner.clone(),
             });
@@ -741,11 +837,11 @@ impl Vault {
             checkout_id: checkout,
             task_ref: None,
             run_id: None,
-            choice: RunnerSeatChoice::NextSeat { from },
+            choice: RunnerSeatChoice::NextSeat { from: 0 },
             now,
         };
-        let found = dispatcher
-            .search_runner_seat_in_txn(&rtxn, &registry, policy, &work)
+        let found = seats
+            .search_in_txn(&dispatcher, &rtxn, registry, &work)
             .map_err(refusal)?;
         Ok(match found {
             RunnerSeatSearch::Found { seat, .. } => ContinueOutsideWorkCheckView::Ready {
