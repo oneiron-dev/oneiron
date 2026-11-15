@@ -247,6 +247,17 @@ impl DreamerRunnerStore<'_> {
         self.admit_next_kind(MAINTENANCE_QUEUE_KIND, input)
     }
 }
+/// One curator pass over the admitted `attempt` at `now` (Unix seconds),
+/// answering the findings it landed, held or applied: the cfg test door's
+/// way in (`test_doors::curator_finding::run_curator_once`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn run_curator(
+    vault: &Vault,
+    attempt: &DreamerAdmittedAttempt,
+    now: u64,
+) -> Result<Vec<crate::EntityId>> {
+    curator::run(vault, attempt, now)
+}
 pub(crate) fn execute(
     attempt: &DreamerAdmittedAttempt,
     ctx: &WakeAttemptContext<'_>,

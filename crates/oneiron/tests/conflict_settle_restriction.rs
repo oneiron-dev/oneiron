@@ -16,7 +16,9 @@
 //! RULING RESTRICTION-CLOSE-BY-CURATOR-APPROVAL = A (18:33) is folded in: an
 //! agent holder's approval of a curator finding that retracts a restricting
 //! target (here a Generated `comm.do_not_contact`) is refused and stays for a
-//! person holder or the owner.
+//! person holder or the owner. The curator's own pass holds the same rung on
+//! a restricting target for a person, whatever its predicate's criticality
+//! (reviews of #8238: Muse §3, Astra F5); the owner's approval applies it.
 //!
 //! Two closes of the same kind, from the Astra review on #8189, are folded
 //! in too:
@@ -68,7 +70,9 @@ use oneiron::memory::{
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::comm_claim_rows::put_comm_claim_row;
-use oneiron::test_doors::curator_finding::emit_retract_finding;
+use oneiron::test_doors::curator_finding::{
+    emit_retract_finding, land_stale_consolidation, run_curator_once,
+};
 use oneiron::test_doors::derive::open_conflict;
 use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
@@ -121,6 +125,11 @@ impl Fixture {
         vault
             .ensure_host_root_slip(&issuer)
             .expect("the host root binds the owner");
+        // The Dreamer signs its marker, findings and settlements as a
+        // MACHINE; an unsigned MACHINE write is refused.
+        vault
+            .provision_engine_machine_identities(&issuer)
+            .expect("the engine's machine signers");
         let proposer = vault
             .ensure_agent_principal("conflict-settle-proposer")
             .expect("proposer");
@@ -176,6 +185,14 @@ impl Fixture {
             .put_claim(&id, &body, at(), LEARNED_AT)
             .unwrap_or_else(|error| panic!("the {predicate} row lands: {error:?}"));
         id
+    }
+
+    /// `predicate` about the subject holding `value`, as the Dreamer's own
+    /// consolidation on its last curator rung, learned long before now: the
+    /// curator's next pass grades it for a retract. Returns its id.
+    fn stale_consolidation(&self, predicate: &str, value: Value) -> EntityId {
+        land_stale_consolidation(&self.vault, self.subject, predicate, value, LEARNED_AT)
+            .unwrap_or_else(|error| panic!("the Dreamer's {predicate} consolidation: {error:?}"))
     }
 
     /// Two delivery windows about the subject, the second opening a
@@ -366,14 +383,15 @@ impl Fixture {
         })
     }
 
-    /// `writer`'s claim of `predicate` about the subject holding `value`, in
-    /// the default facet, through `vault.claims.propose` (`replaces` false)
-    /// or `vault.claims.upsert` (true). Returns the receipt's approval and
-    /// the claim's id.
+    /// `writer`'s claim of `predicate` about the subject holding `value`
+    /// from `source`, in the default facet, through `vault.claims.propose`
+    /// (`replaces` false) or `vault.claims.upsert` (true). Returns the
+    /// receipt's approval and the claim's id.
     fn writes(
         &self,
         writer: WriteActor,
         replaces: bool,
+        source: &str,
         predicate: &str,
         value: serde_json::Value,
     ) -> (String, EntityId) {
@@ -384,7 +402,7 @@ impl Fixture {
             value,
             confidence: 1.0,
             confidence_details: None,
-            source: "inferred".to_owned(),
+            source: source.to_owned(),
             world_ref: None,
             relationship_ref: None,
             scope: Some(json!({ "facet": self.facet.to_hex() })),
@@ -410,6 +428,7 @@ impl Fixture {
         let (approval, id) = self.writes(
             WriteActor::new(self.proposer, EdgeActorClass::Agent),
             false,
+            "inferred",
             predicate,
             value,
         );
@@ -442,19 +461,24 @@ impl Fixture {
             .expect("the owner settles the proposal")
     }
 
-    /// F4: an approved head of `predicate` holding `prior`, then the agent
-    /// holder's upsert of `next` over it, which parks as a replacement
-    /// whose supersession waits for a grant. Returns both.
+    /// F4: the agent holder's observed Auto head of `predicate` holding
+    /// `prior`, then its own upsert of `next` over it, which parks as a
+    /// replacement whose supersession waits for a grant. One author writes
+    /// both: another agent's upsert never replaces a head it did not write
+    /// (`require_claim_supersede_in_txn`). Observed, because only a
+    /// user-stated or observed write asks Auto, and a Proposed head is no
+    /// prior an upsert replaces. Returns both.
     fn parked_replacement(
         &self,
         predicate: &str,
         prior: serde_json::Value,
         next: serde_json::Value,
     ) -> (EntityId, EntityId) {
-        let head = self.proposes(predicate, prior);
-        let settled = self.owner_settles(head, ClaimSettleDecision::Approve);
-        assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
-        let (approval, replacement) = self.writes(self.agent_holder(), true, predicate, next);
+        let (approval, head) =
+            self.writes(self.agent_holder(), true, "observed", predicate, prior);
+        assert_eq!(approval, "auto", "the {predicate} head lands");
+        let (approval, replacement) =
+            self.writes(self.agent_holder(), true, "observed", predicate, next);
         assert_eq!(approval, "proposed", "the replacement parks");
         assert_eq!(
             self.vault
@@ -814,6 +838,56 @@ fn a_person_holder_approves_a_curator_retract_of_a_do_not_contact() {
 
     assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
     assert_eq!(f.stored(bar).lifecycle, ClaimLifecycleStatus::Retracted);
+}
+
+/// The curator's own pass, red: it retracted a delivery window the Dreamer
+/// consolidated, its predicate declared normal, with no one's approval. The
+/// retract now waits as a held finding, and the owner's approval of the
+/// finding applies it.
+#[test]
+fn the_curators_own_pass_never_retracts_a_delivery_window() {
+    let f = Fixture::new();
+    let window = f.stale_consolidation(DELIVERY_WINDOW_CONTEXT, window("asleep"));
+
+    let findings = run_curator_once(&f.vault, f.vault.now_recorded_at()).expect("one curator pass");
+
+    assert_eq!(
+        f.stored(window).lifecycle,
+        ClaimLifecycleStatus::Active,
+        "the restricting window still holds (findings: {findings:?})"
+    );
+    let [finding] = findings.as_slice() else {
+        panic!("one finding over the window: {findings:?}");
+    };
+    assert_eq!(
+        f.stored(*finding).approval,
+        ClaimApprovalStatus::Proposed,
+        "the retract waits for a person"
+    );
+    let settled = f.owner_settles(*finding, ClaimSettleDecision::Approve);
+    assert_eq!(settled.verdict, ClaimSettlementVerdict::Landed);
+    assert_eq!(
+        f.stored(window).lifecycle,
+        ClaimLifecycleStatus::Retracted,
+        "the owner's approval retracts the window"
+    );
+}
+
+/// The curator's own pass, control: a note the Dreamer consolidated is
+/// still retracted at once (the Dreamer keeps autoapply + revert there).
+#[test]
+fn the_curators_own_pass_still_retracts_a_note() {
+    let f = Fixture::new();
+    let note = f.stale_consolidation(NOTE, Value::from("the first"));
+
+    let findings = run_curator_once(&f.vault, f.vault.now_recorded_at()).expect("one curator pass");
+
+    assert_eq!(
+        f.stored(note).lifecycle,
+        ClaimLifecycleStatus::Retracted,
+        "the note's retract applied (findings: {findings:?})"
+    );
+    assert_eq!(findings.len(), 1, "the applied finding");
 }
 
 /// F4, red: the Auto grant superseded the restricting window. It now waits
