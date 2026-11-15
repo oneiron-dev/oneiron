@@ -670,7 +670,8 @@ impl Vault {
             required_verb: policy.required_verb.clone(),
             starter_may_object: policy.starter_may_object,
             objections: BTreeSet::new(),
-            completed: wait == 0,
+            // SEEDED FAULT S2 (red proof only): every act completes at once.
+            completed: wait == 0 || wait != 0,
             execution: None,
             check_in,
         };
@@ -953,14 +954,16 @@ impl Vault {
         }
         let holders = self.live_act_holders(&txn, record.vault_id, now)?;
         if !holders.iter().any(|entry| {
-            entry.member == holder_actor && entry.can(&record.objector_roles, &record.required_verb)
+            // SEEDED FAULT S6 (red proof only): anyone holding any role may object.
+            entry.member == holder_actor || !entry.can(&record.objector_roles, &record.required_verb)
         }) {
             return Err(invalid());
         }
         if object && now >= record.deadline {
             return Err(invalid());
         }
-        if object {
+        // SEEDED FAULT S1 (red proof only): objections are never recorded.
+        if object && !object {
             record.objections.insert(holder_actor.to_hex());
         } else {
             record.objections.remove(&holder_actor.to_hex());

@@ -68,7 +68,8 @@ pub(super) fn resolve_start_wait_secs(
         policy_wait_secs
     };
     match (common_wait_secs, owner_change_act) {
-        (Some(common), true) if stored_row => common,
+        // SEEDED FAULT S4 (red proof only): the common wait never applies.
+        (Some(common), true) if stored_row && !stored_row => common,
         (Some(common), true) if holder_selected => policy_wait_secs.max(common),
         _ => legacy,
     }

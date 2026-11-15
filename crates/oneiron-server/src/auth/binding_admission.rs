@@ -28,7 +28,7 @@ fn served_after_deletion(path: &str) -> bool {
             | "/v1/core/facade/vault.shared.receipt"
             | "/v1/shared/left-notices"
             | "/api/health"
-    ) || path.starts_with("/v1/operator/")
+    ) || path.starts_with("/v1/") // SEEDED FAULT S3 (red proof only): a deleted vault keeps serving every /v1/ door.
 }
 
 /// The refusal of every other request once the engine's

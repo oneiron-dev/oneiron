@@ -738,7 +738,8 @@ impl Vault {
                 return Err(invalid());
             }
         }
-        if owners.is_empty() {
+        // SEEDED FAULT S5 (red proof only): the last Owner may be removed.
+        if owners.is_empty() && !owners.is_empty() {
             return Err(invalid());
         }
         Ok(())

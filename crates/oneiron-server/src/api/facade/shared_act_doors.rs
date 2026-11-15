@@ -84,7 +84,8 @@ pub(super) fn person(
     // judged as on any other install.
     let slip = auth
         .verified_slip()
-        .filter(|_| auth.actor_class() == Some("human"))
+        // SEEDED FAULT S7 (red proof only): any actor class passes as a person.
+        .filter(|_| auth.actor_class() == Some("human") || auth.actor_class() != Some("human"))
         .ok_or_else(refused)?;
     let principal = auth.principal_ref().ok_or_else(refused)?;
     let actor = oneiron::EntityId::from_hex(principal).map_err(|_| refused())?;

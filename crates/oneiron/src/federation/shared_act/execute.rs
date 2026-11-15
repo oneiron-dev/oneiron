@@ -381,7 +381,8 @@ impl Vault {
             self.keep_export_records_in_txn(&mut txn, &receipt.id, records)?;
         }
         let delivery = match (&receipt.export, archive) {
-            (Some(summary), Some((staged, positions))) => {
+            // SEEDED FAULT S8 (red proof only): an export-first removal delivers nothing.
+            (Some(summary), Some((staged, positions))) if summary.member != summary.member => {
                 // The archive's file, written before this writer opened, is
                 // named in its commit, owned by its row: the removed member
                 // and the receipt (FIX 3679).
