@@ -611,7 +611,12 @@ impl<'a> Exchange<'a> {
     /// Reads a refusal at the connector's door for an issuer change (L5-11)
     /// before the send answers with it: a change found holds the call's
     /// dependent rows from the next send on, and never changes this answer.
-    fn watch_refusal(&self, status: reqwest::StatusCode, headers: &HeaderMap) {
+    fn watch_refusal(
+        &self,
+        status: reqwest::StatusCode,
+        headers: &HeaderMap,
+        presented: Option<&SentValue<'_>>,
+    ) {
         let Some((vault, key_ref, _)) = &self.issuer else {
             return;
         };
@@ -622,6 +627,7 @@ impl<'a> Exchange<'a> {
             key_ref,
             status,
             headers,
+            presented,
         ) {
             tracing::warn!(%error, "connector issuer change not recorded");
         }
@@ -654,7 +660,7 @@ impl<'a> Exchange<'a> {
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
         };
         if !response.status().is_success() {
-            self.watch_refusal(response.status(), response.headers());
+            self.watch_refusal(response.status(), response.headers(), value);
             // FIX 11025: a rate refusal keeps the provider's wait.
             return Sent::refused_status(response.status(), response.headers());
         }
@@ -688,7 +694,7 @@ impl<'a> Exchange<'a> {
             Ok(response) if response.status().is_success() => {}
             // FIX 11025: a rate refusal keeps the provider's wait.
             Ok(response) => {
-                self.watch_refusal(response.status(), response.headers());
+                self.watch_refusal(response.status(), response.headers(), value);
                 return Sent::refused_status(response.status(), response.headers());
             }
             Err(_) => return Sent::not_sent(OutboundFailureKind::TransportNotStarted, None),
@@ -750,7 +756,7 @@ impl<'a> Exchange<'a> {
             return Sent::ambiguous("connector_server_error");
         }
         if !status.is_success() {
-            self.watch_refusal(status, response.headers());
+            self.watch_refusal(status, response.headers(), value);
             // A refusal at the door: the tool never ran. A rate refusal
             // keeps the provider's wait (FIX 11025).
             return Sent::refused_status(status, response.headers());

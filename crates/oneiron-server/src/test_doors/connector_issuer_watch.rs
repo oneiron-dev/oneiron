@@ -3,6 +3,7 @@
 //! as the three refusal sites of one send call it.
 
 use oneiron::connector_key::ConnectorCredentialBinding;
+use oneiron::secret_custody::SentValue;
 use oneiron::{EntityId, Vault};
 use reqwest::StatusCode;
 use reqwest::header::{HeaderMap, HeaderValue, WWW_AUTHENTICATE};
@@ -28,6 +29,42 @@ pub fn watch_refusal(
     status: u16,
     www_authenticate: Option<&str>,
 ) -> oneiron::Result<Vec<ConnectorCredentialBinding>> {
+    watch(vault, endpoint, key_ref, status, www_authenticate, None)
+}
+
+/// [`watch_refusal`] for a send that presented `presented`, the value its
+/// door released: a metadata reply that names it records nothing (pipeline
+/// review round 2 of #8115).
+///
+/// # Errors
+/// As [`watch_refusal`].
+pub fn watch_refusal_presenting(
+    vault: &Vault,
+    endpoint: &str,
+    key_ref: &EntityId,
+    status: u16,
+    www_authenticate: Option<&str>,
+    presented: &str,
+) -> oneiron::Result<Vec<ConnectorCredentialBinding>> {
+    let value = SentValue::new(presented.as_bytes(), "[presented]");
+    watch(
+        vault,
+        endpoint,
+        key_ref,
+        status,
+        www_authenticate,
+        Some(&value),
+    )
+}
+
+fn watch(
+    vault: &Vault,
+    endpoint: &str,
+    key_ref: &EntityId,
+    status: u16,
+    www_authenticate: Option<&str>,
+    presented: Option<&SentValue<'_>>,
+) -> oneiron::Result<Vec<ConnectorCredentialBinding>> {
     let client = connector_client()?;
     let status = StatusCode::from_u16(status)
         .map_err(|_| oneiron::Error::InvalidConfig("not an HTTP status".to_owned()))?;
@@ -37,5 +74,7 @@ pub fn watch_refusal(
             .map_err(|_| oneiron::Error::InvalidConfig("not a header value".to_owned()))?;
         headers.insert(WWW_AUTHENTICATE, value);
     }
-    issuer_watch::detect_at_refusal(vault, &client, endpoint, key_ref, status, &headers)
+    issuer_watch::detect_at_refusal(
+        vault, &client, endpoint, key_ref, status, &headers, presented,
+    )
 }

@@ -24,7 +24,9 @@ use oneiron::connector_key::{
 };
 use oneiron::store::GateDecisionId;
 use oneiron::{EntityId, Vault, VaultConfig};
-use oneiron_server::test_doors::connector_issuer_watch::{resource_metadata_url, watch_refusal};
+use oneiron_server::test_doors::connector_issuer_watch::{
+    resource_metadata_url, watch_refusal, watch_refusal_presenting,
+};
 use serde_json::json;
 
 const NOW: u64 = 1_700_000_000;
@@ -35,6 +37,8 @@ const WRITE_ROW: &str = "write";
 const OLD_ISSUER: &str = "https://as-old.test";
 const NEW_ISSUER: &str = "https://as-new.test";
 const BEARER_CHALLENGE: &str = "Bearer error=\"invalid_token\"";
+/// The credential value a send presented, as its door released it.
+const PRESENTED: &str = "route-token-presented";
 const METADATA_REQUEST_LINE: &str = "GET /.well-known/oauth-protected-resource/mcp HTTP/1.1";
 
 struct Fixture {
@@ -298,6 +302,43 @@ fn bearer_challenge_after_another_scheme_in_one_field_holds_dependent_row() {
         Some(CONNECTOR_ISSUER_HOLD_REASON),
         "the next send on the dependent row holds"
     );
+}
+
+/// Pipeline review round 2 of #8115: a connector whose metadata names the
+/// value the refused send presented reflected its credential. Nothing it
+/// names is recorded, so the value never becomes an issuer row that the
+/// owner and connector.status read.
+#[test]
+fn prm_naming_the_presented_credential_records_nothing() {
+    let fixture = fixture();
+    let origin = ConnectorOrigin::serve(|endpoint| {
+        json!({
+            "resource": endpoint,
+            "authorization_servers": [format!("{NEW_ISSUER}/{PRESENTED}")],
+        })
+    });
+
+    let drifted = watch_refusal_presenting(
+        &fixture.vault,
+        &origin.endpoint,
+        &fixture.key,
+        401,
+        Some(BEARER_CHALLENGE),
+        PRESENTED,
+    )
+    .expect("the watch reads the refusal");
+
+    assert!(
+        drifted.is_empty(),
+        "metadata naming the presented credential records nothing: {drifted:?}"
+    );
+    assert_eq!(origin.heads().len(), 1, "the metadata was read once");
+    assert_eq!(
+        open_halt(&fixture),
+        None,
+        "no issuer change names the credential"
+    );
+    assert_eq!(hold(&fixture, WRITE_ROW), None);
 }
 
 #[test]
