@@ -10,10 +10,11 @@ use crate::blob_artifact::{
     BlobVersionProvenance, VersionReconciliation, read_blob_artifact_head_in_txn,
 };
 use crate::edit_settle::codec::{RECORD, settlement_key_parts};
-use crate::edit_settle::receipts::{already_settled, settlement_receipt_record};
+use crate::edit_settle::receipts::settlement_receipt_record;
 use crate::edit_settle::records::{
     SettleConsent, SettleOutcomeKind, SettleSelectOutcome, SettledReview,
 };
+use crate::edit_settle::ref_state::{RefMove, move_ref_in_txn};
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::federation::record_scope::BirthPosition;
@@ -57,9 +58,7 @@ impl Vault {
         let (version, record, reconciliation, rebound, _hold) =
             self.with_write_txn_grouped(|wtxn| {
                 let grant_ref = self.authorize_settle_in_txn(wtxn, consent, actor)?;
-                if let Some(existing) = RECORD.get(&self.store, wtxn, &key)? {
-                    return Err(already_settled(&existing));
-                }
+                move_ref_in_txn(&self.store, wtxn, &key, RefMove::Settle)?;
                 let head = read_blob_artifact_head_in_txn(&self.store, wtxn, artifact_id)?;
                 // The output forks from the version it was made against; a later
                 // head keeps both, as a person may keep a machine version beside

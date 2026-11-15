@@ -2,8 +2,6 @@
 //! formats it takes text from, why a file is held by its name only, and the
 //! facts of the revision the ledger took.
 
-use serde::{Deserialize, Serialize};
-
 use super::super::folder_source::OriginalBytes;
 
 /// The extensions, any case, whose files are UTF-8 text a Files source
@@ -100,83 +98,11 @@ pub const FILES_TEXT_EXTENSIONS: &[&str] = &[
     "dockerfile",
 ];
 
-/// Why a file has no text in the vault: it is held by its name, and
-/// never as text it does not have.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum NameOnlyReason {
-    /// A format the source takes no text from.
-    Unsupported,
-    /// Named as text, but its bytes are not UTF-8 text.
-    NotText,
-    /// Its bytes could not be read, or a PDF that is encrypted or does not
-    /// parse.
-    Unreadable,
-    /// No text: blank, or a PDF with no text layer.
-    Empty,
-    /// It has another name (a hard link), which may be outside the folder:
-    /// its bytes are not read.
-    Linked,
-    /// The write door's secret scan refused its text: it is held by name,
-    /// never as text (FIX 10244).
-    Refused,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::note::files::metadata::{FileReadiness, NameOnlyReason};
 
-/// Whether the vault holds a file's text, or its name only.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FileReadiness {
-    /// Its text landed as a NOTE (or as its parts).
-    Text,
-    /// Held by its name only.
-    NameOnly { why: NameOnlyReason },
-}
-
-/// What the host read of a file, beside its text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileFacts {
-    pub bytes: u64,
-    /// When the file was last written (seconds).
-    pub modified_at: u64,
-}
-
-/// What the ledger keeps of a Files source's file: the facts of the
-/// revision it took, when it first saw the file and when it last took the
-/// file's text.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct FileMeta {
-    pub bytes: u64,
-    pub modified_at: u64,
-    pub first_seen_at: u64,
-    /// When the vault last took the file's text; none while it holds the
-    /// file by name only.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub indexed_at: Option<u64>,
-}
-
-impl FileMeta {
-    /// The meta of a file first seen `at`, whose text the vault took at
-    /// `indexed_at`.
-    pub(crate) fn first(facts: FileFacts, at: u64, indexed_at: Option<u64>) -> Self {
-        Self {
-            bytes: facts.bytes,
-            modified_at: facts.modified_at,
-            first_seen_at: at,
-            indexed_at,
-        }
-    }
-
-    /// This meta on the revision `facts` names, whose text the vault took
-    /// at `indexed_at`.
-    pub(crate) fn moved(self, facts: FileFacts, indexed_at: Option<u64>) -> Self {
-        Self {
-            bytes: facts.bytes,
-            modified_at: facts.modified_at,
-            first_seen_at: self.first_seen_at,
-            indexed_at,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::note::files::metadata::{FileFacts, FileMeta};
 
 /// One file the host holds by name only: its path under the folder,
 /// why, and its facts. A file whose bytes the walk read carries them, kept

@@ -102,6 +102,7 @@ impl crate::Vault {
                 locator,
                 drift: None,
                 body: None,
+                sub_session: None,
             };
             self.write_thread_head_in_txn(
                 txn,

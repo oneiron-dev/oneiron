@@ -3,10 +3,7 @@
 //! stored flag (FIX 8747, the `disclosure` child).
 use serde::{Deserialize, Serialize};
 
-use super::{
-    IssueCategory, ReportDisclosure, ReportIssue, ReportKind, ReportRequest, ReportStatus, invalid,
-    validate_ref,
-};
+use super::{ReportDisclosure, ReportIssue, ReportRequest, ReportStatus, invalid, validate_ref};
 use crate::consent::AuthenticatedOwner;
 use crate::side_table::{self, LegacyJson, Named, SideTable};
 use crate::skill_hub::HubImportReceipt;
@@ -20,34 +17,11 @@ pub(super) const IMPORTS: SideTable<(EntityId, EntityId, [u8; 32]), HubImportRec
 const ROUTES: SideTable<String, ReportRoute, Named> =
     SideTable::new(&side_table::FEEDBACK_REPORT_ROUTE);
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "destination", rename_all = "snake_case", deny_unknown_fields)]
-pub enum ReportRoute {
-    #[default]
-    OwnerInbox,
-    Publisher {
-        publisher_ref: String,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::feedback::report::routing::{ReportDisclosureChoice, ReportRoute};
 
-/// The three DEC-0006 choices, scoped to this issue or its already-resolved publisher.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ReportDisclosureChoice {
-    ApproveOnce,
-    StopAskingForPublisher,
-    Deny,
-}
-
-/// Fixed-shape content-free evidence. No caller-authored reference or prose crosses here.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReportSignature {
-    pub issue_ref: String,
-    pub subject_hash: [u8; 32],
-    pub category: IssueCategory,
-    pub kind: ReportKind,
-}
+#[doc(hidden)]
+pub use oneiron_records::feedback::report::routing::ReportSignature;
 
 /// The transport consumes this only after resolving the stored maker route.
 /// `disclosed` is absent unless the owner's disclosure of this report's text
