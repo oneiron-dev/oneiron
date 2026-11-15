@@ -50,7 +50,7 @@ fn listing(day: u64) -> BookingAvailabilityInput {
 /// Three busy EVENTs on `day`: 11:00-12:00 inside working hours, 16:00-18:00
 /// across the close, 20:00-21:00 after it.
 fn seed_busy(fixture: &Fixture, day: u64) {
-    let owner = oneiron::WriteActor::new(id(0x77), EdgeActorClass::Human);
+    let owner = oneiron::WriteActor::new(fixture.owner_actor(), EdgeActorClass::Human);
     for (name, from, to) in [("standup", 11, 12), ("review", 16, 18), ("dinner", 20, 21)] {
         fixture
             .server
