@@ -84,8 +84,8 @@ pub enum RootSuccessor {
 /// What the root's door answers once its write transaction committed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RootRecovery {
-    /// The root's authority key vouched: the new key's enrolment and each
-    /// lost key's revocation, in the order written.
+    /// The root's authority key vouched: each lost key's revocation, in the
+    /// order written, and the new key's enrolment, written after them.
     Vouched {
         enrollment: OwnerKeyEnrollmentReceipt,
         revoked: Vec<AuthorityEntryHash>,
@@ -151,9 +151,9 @@ impl Vault {
             .map(RootRecovery::Appointed)
     }
 
-    /// The authority arm: one write transaction enrols the successor with
-    /// the root's authority key as predecessor and revokes each lost key
-    /// under it. This install's fresh key is made in that transaction, once
+    /// The authority arm: one write transaction revokes each lost key under
+    /// the root's authority key and then enrols the successor with that key
+    /// as predecessor. This install's fresh key is made in that transaction, once
     /// the roster reads its slot's key revoked there, and is held as a
     /// checkpoint root signer once the transaction commits, as at the device
     /// door.
@@ -195,6 +195,17 @@ impl Vault {
             }
             (RootSuccessor::ThisInstall, None) => return Err(invalid_authority()),
         };
+        // The lost keys go first: a self-hosted vault binds an owner's new
+        // key only while no live `human` binding names them, and a lost key
+        // that held the owner's binding takes it with it when revoked. So
+        // the successor's enrolment binds them when the revocations left
+        // them unbound, and an owner whose own key held their binding keeps
+        // owner control.
+        let mut revoked = Vec::with_capacity(lost.len());
+        for key in lost {
+            let signer = EntrySigner::Key(&root_key, &sign_revoke);
+            revoked.push(self.append_revoke_device_in_txn(&mut txn, signer, key)?);
+        }
         let enrollment = self.enrol_owner_signing_key_in_txn(
             &mut txn,
             authority,
@@ -202,12 +213,11 @@ impl Vault {
             root_key.clone(),
             &mut sign_enrolment,
         )?;
-        let mut revoked = Vec::with_capacity(lost.len());
-        for key in lost {
-            let signer = EntrySigner::Key(&root_key, &sign_revoke);
-            revoked.push(self.append_revoke_device_in_txn(&mut txn, signer, key)?);
-        }
+        let rows =
+            authority_rows_counted_since(&fold, &self.authority_view_readonly_in_txn(&txn)?)?;
+        self.mark_authority_rows_in_txn(&mut txn, &rows)?;
         txn.commit()?;
+        self.note_committed_authority_rows(rows);
         if let Some(key) = held {
             self.hold_checkpoint_root_signer(Arc::new(key));
         }
@@ -283,6 +293,23 @@ fn this_install_successor(
         proof: key.sign_possession(&challenge),
     };
     Ok((input, key))
+}
+
+/// The authority rows `after` counts and `before` did not, as their entity
+/// ids: every row the root door's write staged (frontier joins, the
+/// revocations, the enrolment and its binding). The door marks them for the
+/// vault's loaded windows in its write and announces them once it committed,
+/// as the ReRoot writer does (FIX 11993), so the host and every replica see
+/// the lost key revoked without a window reload.
+fn authority_rows_counted_since(
+    before: &AuthorityFold,
+    after: &AuthorityFold,
+) -> Result<BTreeSet<EntityId>> {
+    after
+        .valid_entries
+        .difference(&before.valid_entries)
+        .map(authority_log_entity_id_from_hash)
+        .collect()
 }
 
 /// Whether `fold`'s roster holds `key` live with the owner role.

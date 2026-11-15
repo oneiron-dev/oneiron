@@ -500,7 +500,7 @@ impl Vault {
     /// Marks authority `rows` this write stages for the vault's loaded
     /// windows, in the write (FIX 11993, as FIX 11821 does for an import), so
     /// a crash before the announcement still mirrors them.
-    fn mark_authority_rows_in_txn(
+    pub(super) fn mark_authority_rows_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         rows: &BTreeSet<EntityId>,
