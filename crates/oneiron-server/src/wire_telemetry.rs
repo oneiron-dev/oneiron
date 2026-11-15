@@ -346,6 +346,9 @@ pub struct WireTelemetry {
     saving: Mutex<()>,
     flusher_started: std::sync::atomic::AtomicBool,
     limits: Arc<LimitQuestions>,
+    /// One permit for each count on the blocking pool, held until the count
+    /// ends (`record_on_blocking_pool`): `MAX_PENDING_COUNTS` of them.
+    pending_counts: Arc<tokio::sync::Semaphore>,
 }
 fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>> {
     rmp_serde::to_vec_named(value).map_err(|_| Error::CorruptedIndex("wire observation"))
@@ -418,6 +421,7 @@ impl WireTelemetry {
             saving: Mutex::new(()),
             flusher_started: std::sync::atomic::AtomicBool::new(false),
             limits: Arc::new(LimitQuestions::with_pool_pressure()),
+            pending_counts: Arc::new(tokio::sync::Semaphore::new(MAX_PENDING_COUNTS)),
         }
     }
     /// Where this server's `[limits]` rows ask when they are crossed.

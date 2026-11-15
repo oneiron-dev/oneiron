@@ -83,13 +83,29 @@ fn method_label(method: &axum::http::Method) -> &str {
 /// blocking thread, never one of the runtime's workers (FIX
 /// [WIRE-TELEMETRY-SYNC-PERSIST-ON-ASYNC-PATH]). The count still lands before
 /// the caller goes on. A count that fails is telemetry lost, never a refusal.
+///
+/// A count on the blocking pool runs to its end even when its call is
+/// dropped, so each holds one of `MAX_PENDING_COUNTS` permits until it ends.
+/// A call with no permit free waits for one here, on the runtime, and that
+/// wait ends with the call: calls dropped while the counter is held leave at
+/// most that many counts behind.
 pub(crate) async fn record_on_blocking_pool(
     server: &Arc<crate::server::SyncServer>,
     count: impl FnOnce(&super::WireTelemetry, u64) -> oneiron::Result<()> + Send + 'static,
 ) {
-    let server = Arc::clone(server);
     let now = oneiron_vault_contract::now_ts();
-    let _ = tokio::task::spawn_blocking(move || count(&server.wire_telemetry, now)).await;
+    let Ok(permit) = Arc::clone(&server.wire_telemetry.pending_counts)
+        .acquire_owned()
+        .await
+    else {
+        return;
+    };
+    let server = Arc::clone(server);
+    let _ = tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        count(&server.wire_telemetry, now)
+    })
+    .await;
 }
 
 /// The vault owner's actor id, as `Vault::ensure_embedded_owner_actor` makes
