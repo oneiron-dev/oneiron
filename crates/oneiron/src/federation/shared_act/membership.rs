@@ -24,7 +24,7 @@ pub(super) use pending_execution::UnsignedExecution;
 
 use super::{
     ChangeRecord, DetachOutcome, DetachReport, Effect, RemoveOwnerPlan, SharedActExecutionReceipt,
-    SharedActKind, SharedVaultChange, decode, invalid, live_owners, non_root,
+    SharedActKind, SharedVaultChange, admin_act_recipients, decode, invalid, live_owners, non_root,
 };
 use crate::authority::{
     CapabilitySlip, HostSlipIssuer, MembershipExecutionCause, OwnerHandover, OwnerHandoverCause,
@@ -756,7 +756,12 @@ impl Vault {
             }
             None => None,
         };
-        let owners = live_owners(&holders, None);
+        // An admin power's change is told to every live Owner, Admin and
+        // Deputy; any other change to the live Owners.
+        let recipients = match power {
+            Some(_) => admin_act_recipients(&holders),
+            None => live_owners(&holders, None),
+        };
         let id = self.store.clock.entity_id()?.to_hex();
         let (effect, unsigned) = apply(&mut txn, actor_id, now, &id)?;
         let record = match unsigned {
@@ -766,7 +771,7 @@ impl Vault {
             None => ChangeRecord::Unnamed,
         };
         let mut receipt = self.record_shared_change_in_txn(
-            &mut txn, id, vault_id, None, actor_id, owners, effect, None, record, None, now,
+            &mut txn, id, vault_id, None, actor_id, recipients, effect, None, record, None, now,
         )?;
         self.record_receipt_check_in_in_txn(&mut txn, &mut receipt, decision)?;
         if let Some(ask) = ask {

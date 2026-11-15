@@ -472,6 +472,19 @@ impl crate::Vault {
             false,
             true,
         )?;
+        // The mint is an admin act: every live Owner, Admin and Deputy hears
+        // of it (UNBUILT06-SHAPE Q3 = A).
+        let recorded = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+        self.record_admin_act_in_txn(
+            txn,
+            vault_id,
+            holder_actor,
+            super::SharedVaultChange::DelegateGranted {
+                grant: id.to_hex(),
+                member: member_ref.to_hex(),
+            },
+            recorded,
+        )?;
         Ok(id)
     }
 }

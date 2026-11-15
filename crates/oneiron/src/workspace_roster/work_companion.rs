@@ -110,10 +110,18 @@ impl Vault {
             let mut row = PRESET
                 .get(&self.store, txn, &key)?
                 .ok_or(Error::EntityNotFound)?;
-            require_settings_authority_in_txn(self, txn, row.preset.workspace_vault_id, owner)?;
+            let actor =
+                require_settings_authority_in_txn(self, txn, row.preset.workspace_vault_id, owner)?;
             if row.work_companion != policy {
                 row.work_companion = policy;
                 PRESET.put(&self.store, txn, &key, &row)?;
+                log_workspace_setting_in_txn(
+                    self,
+                    txn,
+                    row.preset.workspace_vault_id,
+                    actor,
+                    &key,
+                )?;
             }
             Ok(())
         })
@@ -137,7 +145,8 @@ impl Vault {
     ) -> Result<()> {
         let key = preset.workspace_ref.clone();
         self.with_write_txn_grouped(|txn| {
-            require_settings_authority_in_txn(self, txn, preset.workspace_vault_id, owner)?;
+            let actor =
+                require_settings_authority_in_txn(self, txn, preset.workspace_vault_id, owner)?;
             super::steps::validate_workspace_preset_in_txn(self, txn, preset)?;
             let existing = PRESET.get(&self.store, txn, &key)?;
             if let Some(existing) = &existing
@@ -153,6 +162,7 @@ impl Vault {
                     work_companion: policy,
                 };
                 PRESET.put(&self.store, txn, &key, &row)?;
+                log_workspace_setting_in_txn(self, txn, preset.workspace_vault_id, actor, &key)?;
             }
             Ok(())
         })
@@ -167,10 +177,10 @@ fn require_settings_authority_in_txn(
     txn: &heed::RoTxn<'_>,
     vault_id: u64,
     owner: &AuthenticatedOwner,
-) -> Result<()> {
+) -> Result<EntityId> {
     let actor = owner.revalidate_person_in_txn(vault, txn)?;
     if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
-        return Ok(());
+        return Ok(actor);
     }
     vault
         .authorize_shared_vault_write_in_txn(
@@ -185,6 +195,30 @@ fn require_settings_authority_in_txn(
             }
             other => other,
         })
+        .map(|()| actor)
+}
+
+/// Logs `actor`'s change to workspace `workspace`'s settings to every live
+/// Owner, Admin and Deputy of shared vault `vault_id`, in the change's writer
+/// (`SharedVaultChange::WorkspaceSettingsChanged`).
+pub(super) fn log_workspace_setting_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    vault_id: u64,
+    actor: EntityId,
+    workspace: &str,
+) -> Result<()> {
+    let now = crate::ports::recorded_at_in_txn(&vault.store, txn)?;
+    vault.record_admin_act_in_txn(
+        txn,
+        vault_id,
+        actor,
+        crate::federation::SharedVaultChange::WorkspaceSettingsChanged {
+            workspace: workspace.to_owned(),
+        },
+        now,
+    )?;
+    Ok(())
 }
 
 impl Memory<'_> {

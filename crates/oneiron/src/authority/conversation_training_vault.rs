@@ -402,6 +402,21 @@ impl Vault {
             return Err(authority_refused(NOT_COUNTED));
         }
         let view = self.setting_view_in_txn(txn, &after)?;
+        // In a shared vault the choice is an admin act: every live Owner,
+        // Admin and Deputy hears of it (UNBUILT06-SHAPE Q3 = A).
+        if let Some(creation) = self.shared_vault_creation_in_txn(txn)? {
+            let recorded = crate::ports::recorded_at_in_txn(&self.store, txn)?;
+            self.record_admin_act_in_txn(
+                txn,
+                creation.vault_id,
+                person,
+                crate::federation::SharedVaultChange::ConversationLearningChanged {
+                    on,
+                    allow_opt_out,
+                },
+                recorded,
+            )?;
+        }
         Ok((entry_hash, view, now))
     }
 

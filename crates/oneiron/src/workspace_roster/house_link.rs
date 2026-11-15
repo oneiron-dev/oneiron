@@ -330,7 +330,7 @@ fn append_receipt_in_txn(
 /// the house already holds there is rewritten in place at the new role; a
 /// house already seated at exactly `role` is left as it is, with no second
 /// receipt. `binder` must be able to assign `role`, and every role the house
-/// holds there now, by the role table.
+/// holds there now, by the role table. Whether it wrote a grant.
 pub(crate) fn link_house_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
@@ -338,7 +338,7 @@ pub(crate) fn link_house_in_txn(
     role: FederationGrantRole,
     binder: EntityId,
     now: u64,
-) -> Result<()> {
+) -> Result<bool> {
     require_house_role(role)?;
     let house = preset.house_actor_ref;
     let vault_id = preset.workspace_vault_id;
@@ -373,7 +373,7 @@ pub(crate) fn link_house_in_txn(
             .iter()
             .all(|(id, grant)| grant.role == role && linked_here(id))
     {
-        return Ok(());
+        return Ok(false);
     }
     let mut ids: Vec<EntityId> = held.into_iter().map(|(id, _)| id).collect();
     if ids.is_empty() {
@@ -426,7 +426,7 @@ pub(crate) fn link_house_in_txn(
             },
         )?;
     }
-    Ok(())
+    Ok(true)
 }
 
 /// Removes the live grants that seat `preset`'s house in its workspace's
@@ -525,7 +525,8 @@ impl Vault {
     /// naming `actor`. `actor` must be able to assign `role`, and the role it
     /// replaces, by the role table: `org:assign-role` for member, steward or
     /// admin, an Owner for deputy or owner; the vault's owner may assign
-    /// any. The house
+    /// any. A change is logged to every live Owner, Admin and Deputy
+    /// (`SharedVaultChange::HouseRoleChanged`). The house
     /// already at `role` is left as it is, with no receipt. No stored preset
     /// is `EntityNotFound`.
     pub fn set_house_role(
@@ -538,7 +539,19 @@ impl Vault {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            link_house_in_txn(self, txn, &preset, role, actor, now)
+            if link_house_in_txn(self, txn, &preset, role, actor, now)? {
+                self.record_admin_act_in_txn(
+                    txn,
+                    preset.workspace_vault_id,
+                    actor,
+                    crate::federation::SharedVaultChange::HouseRoleChanged {
+                        workspace: preset.workspace_ref.clone(),
+                        role: Some(role),
+                    },
+                    now,
+                )?;
+            }
+            Ok(())
         })
     }
 
@@ -546,8 +559,8 @@ impl Vault {
     /// grant goes, with one unbind receipt naming `actor`, and the root's
     /// leader stays as it is. `actor` must be able to assign the role it
     /// clears, by the role table, as [`Self::set_house_role`] asks; a refusal
-    /// writes nothing. `Ok(false)`, writing nothing, when the house holds no
-    /// role there.
+    /// writes nothing. A clear is logged as a set is. `Ok(false)`, writing
+    /// nothing, when the house holds no role there.
     pub fn clear_house_role(
         &self,
         actor: &AuthenticatedOwner,
@@ -557,7 +570,20 @@ impl Vault {
             let actor = actor.revalidate_person_in_txn(self, txn)?;
             let preset = stored_preset_in_txn(self, txn, workspace_ref)?;
             let now = crate::ports::recorded_at_in_txn(&self.store, txn)?;
-            unlink_preset_in_txn(self, txn, &preset, actor, now)
+            let cleared = unlink_preset_in_txn(self, txn, &preset, actor, now)?;
+            if cleared {
+                self.record_admin_act_in_txn(
+                    txn,
+                    preset.workspace_vault_id,
+                    actor,
+                    crate::federation::SharedVaultChange::HouseRoleChanged {
+                        workspace: preset.workspace_ref.clone(),
+                        role: None,
+                    },
+                    now,
+                )?;
+            }
+            Ok(cleared)
         })
     }
 }

@@ -268,6 +268,13 @@ impl Vault {
             }
             if prior != next {
                 PRESET.put(&self.store, txn, &key, &next)?;
+                super::work_companion::log_workspace_setting_in_txn(
+                    self,
+                    txn,
+                    vault_id,
+                    authenticated_writer.entity_ref(),
+                    &key,
+                )?;
             }
             Ok(())
         })
