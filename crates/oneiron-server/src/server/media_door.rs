@@ -209,8 +209,15 @@ impl AiMediaDoor for MediaDoor {
             let request = self.admit(request)?;
             // No whole source set is asserted from routing or credential metadata.
             if let Some(phone) = &self.phone {
-                let release = || {
-                    phone.agent(&self.vault).map(|_| ())?;
+                // A call the phone line no longer admits is a release refusal,
+                // so the gate settles it unsent when nothing was sent yet.
+                let release = || -> LlmResult<()> {
+                    phone.agent(&self.vault).map_err(|_| {
+                        oneiron::RetryableLlmError::not_sent(
+                            "media_release",
+                            "phone media authority is no longer current",
+                        )
+                    })?;
                     if let Some(release) = release {
                         release()?;
                     }
