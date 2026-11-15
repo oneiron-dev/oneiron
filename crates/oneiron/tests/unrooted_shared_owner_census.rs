@@ -21,6 +21,12 @@
 //! room's meet. Each now reads the same census once the vault holds a
 //! shared-vault creation.
 //!
+//! The source-audience owner PERSON (Astra review of #8133, F1): on an
+//! unrooted vault the embedded owner stands for the one owner PERSON the
+//! census holds, so once the co-owner made it an Admin it stood for the
+//! co-owner, and read and changed the co-owner's personal mail and calendar
+//! sources as the co-owner. It reads the same census now.
+//!
 //! Every vault here is unrooted (no host root), as in
 //! `tests/admin_is_not_steward.rs`, whose shared-vault steps these follow.
 //!
@@ -581,4 +587,69 @@ fn a_personal_vaults_owner_keeps_its_shortcuts() {
     f.owner_sets_admin(room, member)
         .expect("the embedded owner delegates a role in another person's room");
     assert_eq!(f.owner_party(), RoomParty::VaultOwner);
+}
+
+/// The source-audience owner PERSON (Astra review of #8133, F1): once the
+/// co-owner made the embedded owner an Admin, the census holds one Owner,
+/// the co-owner, and the former owner stood for it, so it read the rows of
+/// the co-owner's personal source. It stands for no one there now; a source
+/// open to the vault still reads to it.
+#[cfg(oneiron_test_support)]
+mod source_audience {
+    use std::collections::BTreeSet;
+
+    use oneiron::EdgeActorClass;
+    use oneiron::test_doors::source_audience::land_source_bound_artifact;
+
+    use super::Fixture;
+
+    #[test]
+    fn an_owner_the_co_owner_made_an_admin_reads_no_co_owners_source() {
+        let f = Fixture::new();
+        let co_owner = f.share_with_co_owner();
+        let personal =
+            land_source_bound_artifact(&f.vault, BTreeSet::from([co_owner]), false, co_owner, 1)
+                .expect("the co-owner's personal source lands a row");
+        let open = land_source_bound_artifact(&f.vault, BTreeSet::new(), true, co_owner, 1)
+            .expect("a source open to the vault lands a row");
+        f.co_owner_demotes_the_embedded_owner(co_owner);
+
+        let co_owner_key = f
+            .vault
+            .memory(co_owner, EdgeActorClass::Human)
+            .read_key()
+            .expect("the co-owner's read key");
+        assert!(
+            f.vault
+                .scoped_read(co_owner_key)
+                .is_entity_readable(&personal.row)
+                .expect("the co-owner's read"),
+            "the co-owner reads its own source's row"
+        );
+        let former_owner = f.vault.memory(f.owner, EdgeActorClass::Human);
+        let key = former_owner
+            .read_key()
+            .expect("the former owner's read key");
+        assert!(
+            f.vault
+                .scoped_read(key)
+                .is_entity_readable(&open.row)
+                .expect("the former owner's read of the open source"),
+            "the former owner, an Admin, reads a source open to the vault"
+        );
+
+        let key = former_owner
+            .read_key()
+            .expect("the former owner's read key");
+        let read = f
+            .vault
+            .scoped_read(key)
+            .is_entity_readable(&personal.row)
+            .expect("the former owner's read of the personal source");
+
+        assert!(
+            !read,
+            "a former owner reads no co-owner's personal source as that co-owner"
+        );
+    }
 }
