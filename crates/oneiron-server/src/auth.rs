@@ -554,11 +554,8 @@ impl CoreAuth {
         actor: oneiron::EntityId,
         class: oneiron::EdgeActorClass,
     ) -> oneiron::WriteActor {
-        let writer = oneiron::WriteActor::new(actor, class);
-        match self.verified_slip() {
-            Some(slip) if slip.is_transferred() => writer.with_handed_on_credential(),
-            _ => writer,
-        }
+        // RED: the base's unmarked actor (the mark arm removed).
+        oneiron::WriteActor::new(actor, class)
     }
 
     /// The managed owner this request was attested as
