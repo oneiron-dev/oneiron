@@ -10,6 +10,7 @@
 //! result shapes are Afterglow's `search_web` tool's, so it can move in later.
 mod provider;
 mod setting;
+pub(crate) mod setting_keys;
 pub(crate) mod tables;
 mod usage;
 

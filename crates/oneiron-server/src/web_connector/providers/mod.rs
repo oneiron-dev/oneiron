@@ -102,20 +102,45 @@ pub(super) fn client() -> Result<Client, ProviderError> {
         .map_err(|error| ProviderError::message(&error.to_string()))
 }
 
-/// One search on `provider`.
+/// One search on `provider` that asks for `count` results
+/// ([`super::search_count`]).
 pub(super) fn search(
     provider: WebProvider,
     client: &Client,
     key: &str,
     input: &WebSearchInput,
+    count: u32,
 ) -> Result<ProviderAnswer, ProviderError> {
     match provider {
-        WebProvider::Tavily => tavily::search(client, key, input),
-        WebProvider::Exa => exa::search(client, key, input),
-        WebProvider::Brave => brave::search(client, key, input),
-        WebProvider::Tinyfish => tinyfish::search(client, key, input),
-        WebProvider::ContextDev => context_dev::search(client, key, input),
-        WebProvider::Octen => octen::search(client, key, input),
+        WebProvider::Tavily => tavily::search(client, key, input, count),
+        WebProvider::Exa => exa::search(client, key, input, count),
+        WebProvider::Brave => brave::search(client, key, input, count),
+        WebProvider::Tinyfish => tinyfish::search(client, key, input, count),
+        WebProvider::ContextDev => context_dev::search(client, key, input, count),
+        WebProvider::Octen => octen::search(client, key, input, count),
+    }
+}
+
+/// The most results one search on `provider` asks for: the documented maximum
+/// of the count its adapter sends (read 16 Nov 2026). Tinyfish takes no
+/// count; its adapter cuts the page it gets, so only the cap bounds it.
+pub(super) const fn search_ceiling(provider: WebProvider) -> u32 {
+    match provider {
+        // `max_results`: "maximum: 20"
+        // (https://docs.tavily.com/documentation/api-reference/endpoint/search).
+        WebProvider::Tavily => 20,
+        // `numResults`: "The maximum public limit is 100 results."
+        // (https://docs.exa.ai/reference/search).
+        WebProvider::Exa => 100,
+        // `count`: "Maximum number of results per page (max 20, default 20)."
+        // (https://api-dashboard.search.brave.com/app/documentation/web-search/query).
+        WebProvider::Brave => 20,
+        WebProvider::Tinyfish => u32::MAX,
+        // `numResults`: "Number of results to request and return (1-100)."
+        // (https://docs.context.dev/api-reference/web-scraping/search).
+        WebProvider::ContextDev => 100,
+        // `count`: "maximum: 100" (https://docs.octen.ai/api-reference/search).
+        WebProvider::Octen => 100,
     }
 }
 

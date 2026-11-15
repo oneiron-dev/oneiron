@@ -42,6 +42,10 @@ provider's results.
 - `search` takes a string or `{query, max_results}` (default 5, at most 10). It returns
   `{provider, results: [{title, url, snippet}], latency_ms, cost_usd}`, the same shape as
   Afterglow's `search_web`. A snippet is at most 300 characters.
+- When the owner's own provider key pays, the owner's Setting key
+  `connectors.web.search_max_results` (default 10) replaces the 10. Each call is also cut to its
+  provider's documented maximum: Tavily and Brave 20, Exa, context.dev and Octen 100. Calls on
+  the deploy's backend key and a hub connector's calls keep 10.
 - `fetch` takes a string or `{url}`. It returns `{provider, url, title, content, latency_ms,
   cost_usd}`, with at most 50,000 characters of content.
 - A provider failure answers as a tool error (`is_error: true`) with `{provider, error: {status,

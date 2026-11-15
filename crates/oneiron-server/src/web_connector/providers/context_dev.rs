@@ -14,10 +14,11 @@ pub(super) fn search(
     client: &Client,
     key: &str,
     input: &WebSearchInput,
+    count: u32,
 ) -> Result<ProviderAnswer, ProviderError> {
     let body = json!({
         "query": input.query,
-        "numResults": input.result_count(),
+        "numResults": count,
     });
     let reply = post_json(client, SEARCH_URL, Auth::Bearer, key, &body)?;
     let hits = reply

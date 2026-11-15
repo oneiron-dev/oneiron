@@ -12,16 +12,14 @@ pub(super) fn search(
     client: &Client,
     key: &str,
     input: &WebSearchInput,
+    count: u32,
 ) -> Result<ProviderAnswer, ProviderError> {
     let reply = get_json(
         client,
         SEARCH_URL,
         Auth::Header("x-subscription-token"),
         key,
-        &[
-            ("q", input.query.clone()),
-            ("count", input.result_count().to_string()),
-        ],
+        &[("q", input.query.clone()), ("count", count.to_string())],
     )?;
     let hits = reply
         .pointer("/web/results")
