@@ -5,12 +5,14 @@ pub use crate::secret_custody::pending_restore::owner::PENDING_CREDENTIAL_RELEAS
 pub use crate::secret_custody::pending_restore::owner::PendingCredentialConfirmation;
 pub use crate::secret_custody::pending_restore::owner::PendingCredentialOutcome;
 pub use crate::secret_custody::pending_restore::owner::PendingCredentialReleaseReceipt;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::Serialize;
 
 /// What a pending credential came to (FIX-LIST 10671).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("pending.credential.result")]
 pub enum PendingCredentialResult {
     /// Its row landed as the image carried it, and its value opens under
     /// its key here.
@@ -27,15 +29,4 @@ pub enum PendingCredentialResult {
     Pending,
 }
 
-impl PendingCredentialResult {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Readable => "readable",
-            Self::StillUnavailable => "still_unavailable",
-            Self::Erased => "erased",
-            Self::Superseded => "superseded",
-            Self::Pending => "pending",
-        }
-    }
-}
 pub mod owner;

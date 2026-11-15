@@ -1,6 +1,8 @@
 //! Moved from `crates/oneiron/src/context_board/self_brief/class_verdicts.rs` (lib split R2: record types below the lib).
 //! `oneiron` re-exports each item at its old path.
 
+use oneiron_contracts::register::Register;
+
 /// A consent grant's action envelope as its bound states it. An act's
 /// selectors must all be among `selectors`; its target must be `target` when
 /// one is set; its draw must stay within `budget`. `receipt_required` is an
@@ -14,8 +16,9 @@ pub struct BriefActionEnvelope {
 }
 
 /// A default rule of DEC-0006 invariant 1, as C2:201 states it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("brief.default.rule")]
 pub enum BriefDefaultRule {
     /// "Reversible vault effects proceed."
     ReversibleVaultEffect,
@@ -34,15 +37,6 @@ impl BriefDefaultRule {
         Self::DestructiveOutboundOrCritical,
         Self::CatastropheFloor,
     ];
-
-    /// The rule's name, as identity spells it: the class its line names.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ReversibleVaultEffect => "reversible_vault_effect",
-            Self::DestructiveOutboundOrCritical => "destructive_outbound_or_critical",
-            Self::CatastropheFloor => "catastrophe_floor",
-        }
-    }
 }
 
 /// A check every act inside a line's bound still meets, which only the act
