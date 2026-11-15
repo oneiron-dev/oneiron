@@ -2,7 +2,6 @@
 //! a room (OF-365 P5, FIX 2288): an ask the owner answers, never an admit.
 
 use super::*;
-use crate::consent::setting_keys::WIDEN_MAX_OPEN_SECS;
 
 /// The id the engine files its own offers under: no agent speaks for them,
 /// and the owner who settles them never filed them. No parts.
@@ -97,7 +96,7 @@ impl Vault {
         );
         // An entry offer's term: the longest a widen proposal may stay open, the owner's
         // `consent.widen.max_open_secs` (one hour unless set).
-        let term_secs = WIDEN_MAX_OPEN_SECS
+        let term_secs = crate::consent::setting_keys::WIDEN_MAX_OPEN_SECS
             .read_in_txn(self, txn, &[], None)?
             .value
             .secs();
