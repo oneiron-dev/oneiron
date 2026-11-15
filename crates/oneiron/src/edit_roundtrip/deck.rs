@@ -21,13 +21,10 @@ use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use oneiron_docedit::design_plan::MediaType;
 use oneiron_docedit::edit::transaction::{
-    AssetRef, Assets, DeckTransaction, DeckTransactionReport, IdMarks, TransactionError,
-    run_transaction,
+    AssetRef, Assets, DeckTransaction, IdMarks, TransactionError, run_transaction,
 };
-use oneiron_docedit::edit::wire::{DeckInspection, inspect_deck};
 use oneiron_docedit::graphic::{AssetRecord, Origin};
-use oneiron_docedit::retained_opc::{Limits, Package};
-use serde::{Deserialize, Serialize};
+use oneiron_docedit::retained_opc::Limits;
 
 /// Managed native-id history per deck artifact, raised at each settle.
 const DECK_ID_MARKS: SideTable<EntityId, IdMarks, Named> =
@@ -52,21 +49,8 @@ const MAX_RENDERER_BYTES: usize = 256;
 
 pub use crate::blob_artifact::deck_context::{DeckEditContext, DeckRender, DeckRenderSide};
 
-/// One line of the semantic diff for a deck transaction.
-pub(super) fn render_report(report: &str) -> String {
-    match serde_json::from_str::<DeckTransactionReport>(report) {
-        Ok(report) => {
-            let verbs: Vec<_> = report.steps.iter().map(|step| step.verb.as_str()).collect();
-            format!(
-                "deck transaction {}: {} ({} part(s) changed)",
-                report.handoff.to_hex(),
-                verbs.join(", "),
-                report.parts.len()
-            )
-        }
-        Err(_) => "deck transaction (unreadable report)".to_owned(),
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::edit_roundtrip::deck::DeckSettleEvidence;
 
 fn invalid(message: &'static str) -> Error {
     Error::Artifact(ArtifactError::InvalidEditManifest(message))
@@ -216,16 +200,6 @@ fn validate_context(context: &DeckEditContext) -> Result<()> {
         return Err(invalid("deck review renders are invalid"));
     }
     Ok(())
-}
-
-/// The settled deck transaction, kept with the consume-once ledger row: the
-/// handoff hash it settled, its canonical report (part diff, effects, marks,
-/// fit) and its context (made_by, thread, review renders).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct DeckSettleEvidence {
-    pub handoff: [u8; 32],
-    pub report: String,
-    pub context: DeckEditContext,
 }
 
 /// What a replay at the settle door proved, and the managed marks after it.

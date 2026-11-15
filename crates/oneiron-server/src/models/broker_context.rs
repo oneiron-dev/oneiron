@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use oneiron::{BudgetLease, FatalLlmError, LlmError, LlmResult, RetryableLlmError, Vault};
 use oneiron_broker::{CallHeader, Shape};
-use oneiron_llm_systemone::{
+use oneiron_llm::systemone::{
     SystemOneHttpRequest, SystemOneHttpResponse, SystemOneTransport, SystemOneTransportFuture,
 };
 use zeroize::Zeroizing;
