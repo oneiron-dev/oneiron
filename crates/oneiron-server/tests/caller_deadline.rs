@@ -787,13 +787,17 @@ async fn assert_cut_with_timeout(served: &Served, door: Door) {
         Some("timeout"),
         "{door:?}: the cut call answers timeout, got {answered:?}"
     );
-    let status = if door.streams() {
-        StatusCode::OK
+    // A streamed turn whose own work before its stream outlasts the deadline
+    // (a loaded host: 2.83 s for a 1500 ms deadline, batch-15) is refused
+    // before the stream starts (504); a started stream ends with the
+    // `timeout` line (200). A whole turn is always refused (504).
+    let statuses: &[StatusCode] = if door.streams() {
+        &[StatusCode::OK, StatusCode::GATEWAY_TIMEOUT]
     } else {
-        StatusCode::GATEWAY_TIMEOUT
+        &[StatusCode::GATEWAY_TIMEOUT]
     };
-    assert_eq!(
-        answered.status, status,
+    assert!(
+        statuses.contains(&answered.status),
         "{door:?}: 504, or a started stream's last line, got {answered:?}"
     );
     assert!(
