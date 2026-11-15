@@ -432,9 +432,11 @@ impl Vault {
     /// [`Self::activate_owner_root`]'s transaction, in the caller's: the
     /// root's record, the marks, the pin and the re-wraps, with `secret` and
     /// `request` this install's own from [`Self::activation_prep`], plus R's
-    /// enrolment after the marks and the pin move (WAYBACK-R4-FIRST-KEY = B).
-    /// `authority` carries the true act surface for R's row; `predecessor`
-    /// was loaded before the write txn opened.
+    /// enrolment after the marks and the pin move (WAYBACK-R4-FIRST-KEY = B),
+    /// with the owner's earlier R keys revoked just before it
+    /// (WAYBACK-SECOND-KIT-OLD-ROOT-KEY = A). `authority` carries the true
+    /// act surface for R's row; `predecessor` was loaded before the write
+    /// txn opened and signs both.
     pub(super) fn activate_owner_root_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -486,18 +488,25 @@ impl Vault {
         }
         let vault_id = mid.vault_id.ok_or_else(invalid_authority)?;
         let authority_signer = RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
-        match mid.roster.get(&authority_signer.authority_key()) {
-            Some(device) if !device.revoked => {}
+        let r_key = authority_signer.authority_key();
+        let enrol = match mid.roster.get(&r_key) {
+            Some(device) if !device.revoked => false,
             Some(_) => return Err(authority_refused(REVOKED_AUTHORITY_KEY)),
-            None => {
-                self.enrol_recovery_authority_key_in_txn(
-                    txn,
-                    authority,
-                    secret.machine,
-                    seed,
-                    predecessor,
-                )?;
-            }
+            None => true,
+        };
+        // A new kit replaces the old one (WAYBACK-SECOND-KIT-OLD-ROOT-KEY =
+        // A): the owner's earlier R keys go first, so R's enrolment binds
+        // the owner on a self-hosted vault when a revoked R held their
+        // binding, as the root door's lost keys go before its successor.
+        self.revoke_earlier_recovery_authority_keys_in_txn(txn, actor, &r_key, predecessor)?;
+        if enrol {
+            self.enrol_recovery_authority_key_in_txn(
+                txn,
+                authority,
+                secret.machine,
+                seed,
+                predecessor,
+            )?;
         }
         let report = self.repin_finish_in_txn(txn, &door, start)?.report;
         let authority_seed = RecoveryAuthoritySeed::from_guarded(
