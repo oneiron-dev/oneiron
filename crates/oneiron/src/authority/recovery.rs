@@ -20,29 +20,60 @@ const HOSTED_FOLD_REROOT: &str = "a ReRoot by a key the host does not hold revok
 /// owner key stamped as the host's (`ROLE_CLOUD` or `CloudCustodial`, the
 /// stamp a hosted vault's root carries, [`HostSlipIssuer::root_device`]),
 /// unless `signer` carries that stamp itself: the host's own move, as
-/// [`Vault::recover_cloud_account`] signs it, still serves. Every door that
-/// writes a ReRoot meets it in the one writer
-/// ([`Vault::apply_signed_re_root_with_joins`] and the moves signed here).
-/// It reads the fold alone, never this install's posture, so a device's
-/// replica of a hosted vault or a stopped hosted vault opened under another
-/// posture refuses alike, and a self-hosted vault, whose root carries no
-/// cloud stamp, never does. A ReRoot imported with a history is judged by
-/// the fold alone (FIX [HOSTED-REROOT-FOLD-RULE]).
+/// [`Vault::recover_cloud_account`] signs it, still serves. The ReRoot writer
+/// meets it ([`Vault::apply_signed_re_root_with_joins`] and the moves signed
+/// here), and each admission door that stages a ReRoot meets it against the
+/// fold before that row: the signed-history import, the authority-log puts,
+/// and the replicated validator. It reads the fold alone, never this
+/// install's posture, so a device's replica of a hosted vault or a stopped
+/// hosted vault opened under another posture refuses alike, and a self-hosted
+/// vault, whose root carries no cloud stamp, never does. Rows already stored,
+/// a replica without this engine, and a gap-closing import's rows stay open
+/// under the fold rule (FIX [HOSTED-REROOT-FOLD-RULE]).
 pub(super) fn refuse_re_root_of_a_serving_host(
     fold: &AuthorityFold,
+    signer: &AuthorityKey,
+) -> Result<()> {
+    refuse_re_root_of_a_serving_host_beside(fold, fold, signer)
+}
+
+/// [`refuse_re_root_of_a_serving_host`] at the replicated door, where a
+/// window's rows arrive in no set order. `before`, the fold before the row,
+/// says whether the host serves. The signer's stamp is read from `before`,
+/// else from `with_rows`, the fold with the row and the rows beside it, so a
+/// host's move signed by the root its earlier move in the same window named
+/// still serves.
+pub(crate) fn refuse_re_root_of_a_serving_host_beside(
+    before: &AuthorityFold,
+    with_rows: &AuthorityFold,
     signer: &AuthorityKey,
 ) -> Result<()> {
     let host_stamped = |device: &FoldedDevice| {
         device.roles & ROLE_CLOUD != 0 || device.tier == AuthorityTier::CloudCustodial
     };
-    let host_serves = fold
+    let host_serves = before
         .roster
         .values()
         .any(|device| !device.revoked && device.roles & ROLE_OWNER != 0 && host_stamped(device));
-    if host_serves && !fold.roster.get(signer).is_some_and(host_stamped) {
+    let signer_row = before
+        .roster
+        .get(signer)
+        .or_else(|| with_rows.roster.get(signer));
+    if host_serves && !signer_row.is_some_and(host_stamped) {
         return Err(authority_refused(HOSTED_FOLD_REROOT));
     }
     Ok(())
+}
+
+/// The signer of `entry` when it is a ReRoot this vault does not hold yet
+/// (`resident` false), which an admission door judges before it stages the
+/// row.
+pub(crate) fn arriving_re_root_signer(
+    entry: &AuthorityLogEntry,
+    resident: bool,
+) -> Option<AuthorityKey> {
+    (!resident && matches!(entry.op, AuthorityOp::ReRoot { .. }))
+        .then(|| entry.signer_key().clone())
 }
 
 impl Vault {
