@@ -16,6 +16,8 @@
 //! - The three expression-preference rows, the doors only napi's
 //!   `ActorScopedVault` had, run through the generic invoke; an omitted
 //!   `occurred_at` on the write is the vault's recording clock.
+//! - The retrieval quality report writes `confidence_adjustment`; a body
+//!   with the old `confidenceAdjustment` key still reads.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test engine_owned_input_rules`
 #![cfg(feature = "test-support")]
@@ -305,4 +307,37 @@ fn the_expression_preference_rows_run_through_the_generic_invoke() {
     )
     .expect("the preferences after the retraction");
     assert_eq!(after["language"], Value::Null, "{after}");
+}
+
+/// The retrieval quality report writes `confidence_adjustment`, as every
+/// other field of it does, and a body written with the old camelCase key
+/// still reads the same (UC02-B1-SPLIT = A, note 2: the stored-change path
+/// is keep).
+#[test]
+fn the_confidence_adjustment_key_is_snake_case_and_the_old_key_still_reads() {
+    use oneiron::retrieval_quality::{RetrievalQuality, RetrievalQualityReport};
+    let report = RetrievalQualityReport {
+        quality: RetrievalQuality::Degraded,
+        degradation: Vec::new(),
+        confidence_adjustment: RetrievalQuality::Degraded.confidence_adjustment(),
+    };
+    let written = serde_json::to_value(&report).expect("the report writes");
+    let Value::Object(mut members) = written.clone() else {
+        panic!("the report is an object: {written}");
+    };
+    assert!(
+        members.contains_key("confidence_adjustment")
+            && !members.contains_key("confidenceAdjustment"),
+        "{written}"
+    );
+    let reread: RetrievalQualityReport =
+        serde_json::from_value(written.clone()).expect("the new body reads");
+    assert_eq!(reread, report);
+    let adjustment = members
+        .remove("confidence_adjustment")
+        .expect("the adjustment member");
+    members.insert("confidenceAdjustment".to_owned(), adjustment);
+    let old: RetrievalQualityReport =
+        serde_json::from_value(Value::Object(members)).expect("a body with the old key reads");
+    assert_eq!(old, report);
 }
