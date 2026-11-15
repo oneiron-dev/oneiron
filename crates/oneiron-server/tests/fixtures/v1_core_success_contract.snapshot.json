@@ -332,11 +332,11 @@
           "empty": {
             "hint": "Try removing filters or widening the world, type, or time scope",
             "reason": "filter_matched_none",
-            "retrievalQuality": {
+            "retrieval_quality": {
               "confidenceAdjustment": -0.35,
               "quality": "passthrough"
             },
-            "totalInScope": 0
+            "total_in_scope": 0
           },
           "evidence": {
             "result_ids": [],
