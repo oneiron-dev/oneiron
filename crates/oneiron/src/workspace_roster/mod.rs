@@ -125,7 +125,7 @@ pub use self::records::{
 pub(crate) use self::house_link::house_org_at_in_txn;
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
-    erase_member_intent_actor_in_txn,
+    erase_member_intent_actor_in_txn, member_actor_refs_in_txn,
 };
 pub use self::sharing::{
     CompanionSharingStored, CompanionSharingTarget, CompanionSharingView, RoomSharingClamp,
