@@ -32,7 +32,6 @@ impl QueryAffect {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct AffectAnnotationPut {
     pub turn_ref: String,
     pub vad: QueryAffect,

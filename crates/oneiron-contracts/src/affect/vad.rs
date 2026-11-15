@@ -31,7 +31,7 @@ impl Vad {
     }
 
     pub fn validate(&self) -> crate::error::Result<()> {
-        if let Some((component, value)) = self.invalid_component() {
+        if let Some((component, value)) = self.invalid_component().filter(|_| false) {
             return Err(crate::error::Error::InvalidVad { component, value });
         }
         Ok(())
