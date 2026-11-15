@@ -1,14 +1,14 @@
 //! The host doors of the app's policy actions (OF-181):
-//! `vault.settings.wake_policy.set`, `vault.settings.inference_defaults` and
-//! `.replace`. `host_doors` re-exports them, so the generated HTTP facade
-//! handler and the MCP dispatcher call them by the name every host door has.
-//! Each runs the app's one action table ([`SharedActionExecutor::app`]) as
+//! `vault.settings.inference_defaults` and `.replace`. `host_doors`
+//! re-exports them, so the generated HTTP facade handler and the MCP
+//! dispatcher call them by the name every host door has. Each runs the app's
+//! one action table ([`SharedActionExecutor::app`]) as
 //! `POST /v1/core/actions/{verb}` does: as the credential's own principal,
-//! reading under its read key. The wake policy also takes the owner's proof,
-//! as `/v1/owner` takes it, or a holder of `engine.controls` (untangle
-//! 6.6d), whose grant the engine checks in its write; the inference defaults leave the caller's Auto
+//! reading under its read key. The inference defaults leave the caller's Auto
 //! ceiling to the table, and carry the owner's proof when the vault's owner
 //! sets them in person, which the setter revalidates in its own transaction.
+//! The Dreamer's wake policy is the setting `dreamer.wake.policy`
+//! (`vault.settings.set`).
 //!
 //! A managed vault's attested owner (`ManagedOwnerAction`) presents no slip:
 //! [`super::owner_binding`] binds the request's own owner proof, the owner's
@@ -18,8 +18,8 @@
 //! machine its request's headers prove, through `host_door_surface`; FIX
 //! 4625), never an input field.
 //!
-//! Each lists no row beside its outcome (`host_door_lists`): the wake policy
-//! and the inference defaults live in side tables, an action's replay record
+//! Each lists no row beside its outcome (`host_door_lists`): the inference
+//! defaults live in a side table, an action's replay record
 //! in the code-run table, and its text argument names no target the table
 //! would read.
 use std::sync::Arc;
@@ -28,9 +28,7 @@ use oneiron::WriteActor;
 use oneiron::authority::ActSurface;
 use oneiron::code_run::actions::{ActionHostBinding, AgentActionCall};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
-use oneiron::policy_setting_doors::{
-    self, InferenceDefaultsReplaceRequest, PolicyActionOutcome, WakePolicySetRequest,
-};
+use oneiron::policy_setting_doors::{self, InferenceDefaultsReplaceRequest, PolicyActionOutcome};
 use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::FacadeApiError;
@@ -40,18 +38,17 @@ use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
 /// Runs `call` from the app's table as the credential's principal, under
-/// the owner's proof when `needs_owner`, his act recording `surface`. Beside
-/// its outcome, no row.
+/// the owner's proof when the credential carries it, his act recording
+/// `surface`. Beside its outcome, no row.
 async fn run_action(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     verb: &'static str,
     call: MemoryResult<AgentActionCall>,
-    needs_owner: bool,
     surface: ActSurface,
 ) -> Listed<PolicyActionOutcome> {
     (
-        run_action_answer(server, auth, verb, call, needs_owner, surface).await,
+        run_action_answer(server, auth, verb, call, surface).await,
         Vec::new(),
     )
 }
@@ -61,7 +58,6 @@ async fn run_action_answer(
     auth: &CoreAuth,
     verb: &'static str,
     call: MemoryResult<AgentActionCall>,
-    needs_owner: bool,
     surface: ActSurface,
 ) -> MemoryResult<PolicyActionOutcome> {
     let call = call?;
@@ -98,7 +94,6 @@ async fn run_action_answer(
     };
     let owner = match attested {
         Some(owner) => Some(owner),
-        None if needs_owner => Some(super::owner_binding::facade_owner(server, auth, verb)?),
         // The owner's own credential carries its proof; any other caller,
         // an agent within its Grant included, keeps the Auto ceiling alone.
         None => super::owner_authorship(auth, server)
@@ -130,40 +125,6 @@ async fn run_action_answer(
     .map_err(MemoryError::from)
 }
 
-/// `vault.settings.wake_policy.set`: the owner sets the dreamer's wake
-/// policy through `dreamer.wake_policy.set`, his act recording `surface`; a
-/// holder of `engine.controls` on its own slip sets it through the engine's
-/// holder door, with the engine-control receipt (untangle 6.6d).
-pub(crate) async fn vault_settings_wake_policy_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    surface: ActSurface,
-    input: WakePolicySetRequest,
-) -> Listed<PolicyActionOutcome> {
-    const VERB: &str = "vault.settings.wake_policy.set";
-    match super::engine_control_doors::engine_controller(server, auth, VERB) {
-        Ok(Some(_)) => {
-            let call = input.into_action().map_err(MemoryError::from);
-            run_action(server, auth, VERB, call, true, surface).await
-        }
-        // A holder of `engine.controls` (untangle 6.6d; wake cadence): the
-        // engine's holder door, which checks the grant in its write.
-        Ok(None) => {
-            let answer = super::substrate_read_doors::as_reader(
-                server,
-                auth,
-                VERB,
-                move |server, holder| {
-                    policy_setting_doors::wake_policy_set_as_holder(server.vault(), holder, input)
-                },
-            )
-            .await;
-            (answer, Vec::new())
-        }
-        Err(refusal) => (Err(refusal), Vec::new()),
-    }
-}
-
 /// `vault.settings.inference_defaults`: the per-purpose inference defaults,
 /// through `inference.defaults.read`.
 pub(crate) async fn vault_settings_inference_defaults(
@@ -178,7 +139,6 @@ pub(crate) async fn vault_settings_inference_defaults(
         auth,
         "vault.settings.inference_defaults",
         call,
-        false,
         super::owner_binding::act_surface(auth),
     )
     .await
@@ -198,7 +158,6 @@ pub(crate) async fn vault_settings_inference_defaults_replace(
         auth,
         "vault.settings.inference_defaults.replace",
         call,
-        false,
         surface,
     )
     .await

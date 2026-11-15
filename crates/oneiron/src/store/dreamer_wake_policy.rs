@@ -5,8 +5,8 @@ pub use oneiron_store::dreamer_wake_policy::*;
 
 use serde::{Deserialize, Serialize};
 
-/// Per-vault recipe dials. An owner may write a different v1 row; these are
-/// data, not compiled thresholds. `new_records` excludes Generated claims.
+/// Per-vault recipe dials, the setting `dreamer.wake.policy`: data the owner
+/// changes, not compiled thresholds. `new_records` excludes Generated claims.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DreamerWakePolicy {

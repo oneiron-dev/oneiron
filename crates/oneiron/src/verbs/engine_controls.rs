@@ -5,9 +5,10 @@
 //! `vault.consolidation.selection_timing.set`,
 //! `vault.consolidation.strength.set`, `vault.curator.cadence.set`,
 //! `vault.evaluation.retune_thresholds.set`,
-//! `vault.stewardship.rules.period.set`, `vault.dreamer.projector.set`,
-//! `vault.sieve.budgets.lower`, `vault.free_time.schedule.set`, and (6.6f)
-//! `vault.settings.snapshot_read.lower`.
+//! `vault.stewardship.rules.period.set`, `vault.free_time.schedule.set`, and
+//! (6.6f) `vault.settings.snapshot_read.lower`. The projector policy, the
+//! sieve's budgets and the wake policy are settings: a holder moves them
+//! through `vault.settings.set`.
 //!
 //! Each runs as the vault owner under its proof, or as a holder of
 //! `engine.controls`; the knob's writer checks which in the write itself
@@ -15,18 +16,15 @@
 //! changes nothing from its next call on. Every change writes the
 //! engine-control receipt, which each verb answers with and
 //! `vault.engine.controls.changes` lists for the owner. Owner pins and the
-//! owner's caps stand: the sieve's budgets only go down through
-//! `vault.sieve.budgets.lower`, and `vault.free_time.schedule.set` moves
-//! only the schedule of a policy that stands (S66B-BUDGETS B1 = A, B2 = A).
-//! The snapshot bounds only go down through
-//! `vault.settings.snapshot_read.lower` (SNAPSHOT-SETTINGS-IN-6.6).
-//! The owner keeps `vault.sieve.policy.set`, `vault.free_time.policy.set`
+//! owner's caps stand: `vault.free_time.schedule.set` moves only the
+//! schedule of a policy that stands (S66B-BUDGETS B2 = A). The snapshot
+//! bounds only go down through `vault.settings.snapshot_read.lower`
+//! (SNAPSHOT-SETTINGS-IN-6.6). The owner keeps `vault.free_time.policy.set`
 //! and `vault.settings.snapshot_read.replace` for the whole rows.
 
 use super::EngineControlChangeEntry;
 use crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy;
 use crate::dreamer_runner::maintenance::RetuneThresholds;
-use crate::dreamer_wake::{ProjectorPolicy, SievePassBudgets};
 use crate::federation::EngineControlActor;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::settings::snapshot_read::SnapshotReadSettings;
@@ -35,8 +33,8 @@ use crate::{EntityId, Error, Result, Vault};
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::engine_controls::{
     ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
-    CuratorCadenceSetRequest, DreamerProjectorSetRequest, FreeTimeScheduleSetRequest,
-    RetuneThresholdsSetRequest, SieveBudgetsLowerRequest, StewardshipRulePeriodSetRequest,
+    CuratorCadenceSetRequest, FreeTimeScheduleSetRequest, RetuneThresholdsSetRequest,
+    StewardshipRulePeriodSetRequest,
 };
 
 /// The receipt the engine-control door wrote under `id`.
@@ -231,76 +229,6 @@ pub fn set_stewardship_rule_period_embedded(
         "vault.stewardship.rules.period.set",
         |vault, actor| set_stewardship_rule_period_as(vault, actor, input),
     )
-}
-
-/// `vault.dreamer.projector.set` as `actor`.
-///
-/// # Errors
-///
-/// An actor that is neither the owner nor a live holder; store failures.
-pub fn set_dreamer_projector_as(
-    vault: &Vault,
-    actor: EngineControlActor<'_>,
-    input: DreamerProjectorSetRequest,
-) -> Result<EngineControlChangeEntry> {
-    let id = vault.set_dreamer_projector_policy_by(
-        actor,
-        ProjectorPolicy {
-            min_new_statements: input.min_new_statements,
-        },
-    )?;
-    receipt(vault, id)
-}
-
-/// `vault.dreamer.projector.set` on a bound handle.
-///
-/// # Errors
-///
-/// As [`set_dreamer_projector_as`].
-pub fn set_dreamer_projector_embedded(
-    memory: &Memory<'_>,
-    input: DreamerProjectorSetRequest,
-) -> MemoryResult<EngineControlChangeEntry> {
-    as_controller(memory, "vault.dreamer.projector.set", |vault, actor| {
-        set_dreamer_projector_as(vault, actor, input)
-    })
-}
-
-/// `vault.sieve.budgets.lower` as `actor`: each budget at or below its
-/// value in force (S66B-BUDGETS B1 = A).
-///
-/// # Errors
-///
-/// An actor that is neither the owner nor a live holder; a budget above its
-/// value in force, or a row the sieve policy refuses; store failures.
-pub fn lower_sieve_budgets_as(
-    vault: &Vault,
-    actor: EngineControlActor<'_>,
-    input: SieveBudgetsLowerRequest,
-) -> Result<EngineControlChangeEntry> {
-    let id = vault.lower_dreamer_sieve_budgets_by(
-        actor,
-        SievePassBudgets {
-            max_turns_per_pass: input.max_turns_per_pass,
-            max_scan_per_pass: input.max_scan_per_pass,
-            max_text_bytes_per_pass: input.max_text_bytes_per_pass,
-        },
-    )?;
-    receipt(vault, id)
-}
-
-/// `vault.sieve.budgets.lower` on a bound handle.
-///
-/// # Errors
-///
-/// As [`lower_sieve_budgets_as`].
-pub fn lower_sieve_budgets_embedded(
-    memory: &Memory<'_>,
-    input: SieveBudgetsLowerRequest,
-) -> MemoryResult<EngineControlChangeEntry> {
-    as_controller(memory, "vault.sieve.budgets.lower", |vault, actor| {
-        lower_sieve_budgets_as(vault, actor, input)
-    })
 }
 
 /// `vault.settings.snapshot_read.lower` as `actor`: the six snapshot

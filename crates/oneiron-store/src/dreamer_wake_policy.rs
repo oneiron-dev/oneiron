@@ -1,5 +1,5 @@
-//! The owner-editable dreamer wake-policy row (`DREAMER_WAKE_POLICY`) and
-//! its parts: the recipe dials, the resident role table with each role's
+//! The parts of the dreamer wake policy (the setting `dreamer.wake.policy`):
+//! the recipe dials, the resident role table with each role's
 //! trigger classes and the cadence precedence, and the trigger facts the
 //! scheduler supplies. The dreamer wake (`dreamer_wake::policy`) validates
 //! and applies them; agent definitions take them to decide a resident's

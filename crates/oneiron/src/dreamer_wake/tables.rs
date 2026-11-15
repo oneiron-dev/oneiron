@@ -99,13 +99,4 @@ crate::side_table::side_tables! {
     /// Committed weave-recipe result bound to its pin, evidence and claim. Key: id16(attempt).
     DREAMER_WEAVE_RECIPE_RESULT: VaultMeta b"dreamer:weave:result:v1:" LegacyJson
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Owner-set projector surprise policy. Key: ().
-    DREAMER_PROJECTOR_POLICY: VaultMeta b"settings:dreamer:projector-policy:v1" LegacyJson
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Owner-set continuous sieve policy. Key: ().
-    DREAMER_SIEVE_POLICY: VaultMeta b"settings:dreamer:sieve-policy:v1" LegacyJson
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Owner-controlled wake thresholds. Key: ().
-    DREAMER_WAKE_POLICY: VaultMeta b"settings:dreamer:wake-policy:v1" LegacyJson
-        [restore: live] [family: unclassified] [tier: canonical];
 }

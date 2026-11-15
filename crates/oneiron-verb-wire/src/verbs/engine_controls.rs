@@ -56,27 +56,6 @@ pub struct StewardshipRulePeriodSetRequest {
     pub every_secs: u64,
 }
 
-/// `vault.dreamer.projector.set`'s input: how many new statements the wake
-/// projector waits for before it projects a turn.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct DreamerProjectorSetRequest {
-    pub min_new_statements: u32,
-}
-
-/// `vault.sieve.budgets.lower`'s input: the sieve's three per-pass work
-/// budgets, each at or below its value in force.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SieveBudgetsLowerRequest {
-    /// Turns one pass reads.
-    pub max_turns_per_pass: u32,
-    /// Timeline rows one pass's forward scan steps over.
-    pub max_scan_per_pass: u32,
-    /// Bytes of turn text one pass reads.
-    pub max_text_bytes_per_pass: u32,
-}
-
 /// `vault.free_time.schedule.set`'s input: the agent (32 hex) whose standing
 /// free-time policy moves, the revision the caller read, and the new
 /// schedule. The policy's units, split and shown cap stay the owner's.

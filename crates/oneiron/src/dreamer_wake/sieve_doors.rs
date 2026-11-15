@@ -1,14 +1,11 @@
 //! Typed owner doors over the sieve interest queue, its retained spans,
-//! its consumed-span receipts, the sieve policy row, and the wake-budget
-//! lease that pays for spending the queue (the recipe policy is the setting
-//! `dreamer.wake.recipe_policy`). No queue logic
-//! lives here: reads project the sieve's own rows, policy writes go
-//! through the owner-authenticated setters, and a refill only raises a
-//! counter's total.
+//! its consumed-span receipts, and the wake-budget lease that pays for
+//! spending the queue (the sieve's policy is the settings
+//! `dreamer.sieve.budgets` and `dreamer.sieve.scoring`, its recipe policy
+//! `dreamer.wake.recipe_policy`). No queue logic lives here: reads project
+//! the sieve's own rows, and a refill only raises a counter's total.
 
-use serde::{Deserialize, Serialize};
-
-use super::{SievePolicy, SieveSpan, SpanBand, SpanKind};
+use super::{SieveSpan, SpanBand, SpanKind};
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::bytes_to_hex_lower;
@@ -19,16 +16,9 @@ const MAX_PAGE: u32 = 1000;
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_wake::sieve_doors::{
     SieveLeaseCounter, SieveLeaseRefillRequest, SieveLeaseRequest, SieveLeaseView,
-    SievePageRequest, SievePolicyRequest, SieveQueuePage, SieveReceiptView, SieveReceiptsPage,
-    SieveRetainedPage, SieveSpanView,
+    SievePageRequest, SieveQueuePage, SieveReceiptView, SieveReceiptsPage, SieveRetainedPage,
+    SieveSpanView,
 };
-
-/// The owner's replacement sieve policy row.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SievePolicySetRequest {
-    pub policy: SievePolicy,
-}
 
 fn page_limit(limit: Option<u32>) -> usize {
     usize::try_from(limit.unwrap_or(MAX_PAGE).min(MAX_PAGE)).unwrap_or(usize::MAX)
@@ -120,24 +110,6 @@ pub fn sieve_receipts_as_owner(
             })
             .collect(),
     })
-}
-
-pub fn sieve_policy_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    _input: &SievePolicyRequest,
-) -> Result<SievePolicy> {
-    owner.revalidate(vault)?;
-    vault.dreamer_sieve_policy()
-}
-
-pub fn sieve_policy_set_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: &SievePolicySetRequest,
-) -> Result<SievePolicy> {
-    vault.set_dreamer_sieve_policy(owner, input.policy)?;
-    vault.dreamer_sieve_policy()
 }
 
 fn lease_view(

@@ -19,12 +19,9 @@ pub use crate::store::dreamer_wake_policy::{
 };
 pub use observation::*;
 
-const POLICY: SideTable<(), DreamerWakePolicy, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_WAKE_POLICY);
 const STATE: SideTable<(), WakeState, LegacyJson> = SideTable::new(&side_table::DREAMER_WAKE_STATE);
 const OUTBOX: SideTable<[u8; 1], WakePolicyTrigger, LegacyJson> =
     SideTable::new(&side_table::DREAMER_WAKE_RECIPE_INPUT);
-const DEFAULT_POLICY: &str = include_str!("wake_policy_defaults.json");
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_wake::policy::WakeIdleState;
@@ -97,6 +94,18 @@ impl DreamerWakePolicy {
         }
         Ok(self)
     }
+}
+
+impl crate::setting::SettingValue for DreamerWakePolicy {
+    fn check(self) -> Result<Self> {
+        self.validate()
+    }
+}
+
+/// The default of `dreamer.wake.policy`: the shipped wake_policy_defaults.json.
+pub(super) fn shipped_wake_policy() -> DreamerWakePolicy {
+    serde_json::from_str(include_str!("wake_policy_defaults.json"))
+        .expect("the shipped wake_policy_defaults.json decodes")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -204,15 +213,12 @@ fn row_error(error: Error, invalid_row: Error) -> Error {
     }
 }
 
+/// The wake policy in force: the setting `dreamer.wake.policy`, else the shipped one.
 pub(crate) fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<DreamerWakePolicy> {
-    let policy = match POLICY
-        .get(&vault.store, txn, &())
-        .map_err(|e| row_error(e, invalid()))?
-    {
-        Some(row) => row,
-        None => serde_json::from_str(DEFAULT_POLICY).map_err(|_| invalid())?,
-    };
-    policy.validate()
+    super::setting_keys::WAKE_POLICY
+        .read_in_txn(vault, txn, &[], None)?
+        .value
+        .validate()
 }
 fn state_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<WakeState> {
     Ok(STATE
@@ -463,103 +469,34 @@ impl Vault {
         Ok(WakePolicyTimerLease { vault: self })
     }
 
-    /// An owner-authenticated v1 policy write; no chat text can impersonate a policy row.
-    pub fn set_dreamer_wake_policy(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        policy: DreamerWakePolicy,
-    ) -> Result<()> {
-        policy.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            POLICY
-                .put(&self.store, txn, &(), &policy)
-                .map_err(|e| row_error(e, invalid()))?;
-            Ok(())
-        })
-    }
-
-    /// A holder of `engine.controls` sets the Dreamer's wake policy
-    /// (untangle 6.6b, the C1 family; wake cadence): its grain, triggers,
-    /// waits, quiet windows and role cadence, through the one check, with a
-    /// receipt naming it. The owner's own act record is the owner's door's
-    /// alone. Returns the receipt.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidConfig` when `holder` holds no live `engine.controls`; a
-    /// policy its validation refuses; store failures.
-    pub fn set_dreamer_wake_policy_as_holder(
-        &self,
-        holder: crate::entity_id::EntityId,
-        policy: DreamerWakePolicy,
-    ) -> Result<crate::entity_id::EntityId> {
-        policy.validate()?;
-        self.apply_engine_control(
-            crate::federation::EngineControlActor::Holder(holder),
-            crate::federation::EngineControlClass::WakeCadence,
-            "DREAMER_WAKE_POLICY",
-            &crate::federation::rendered_change(&policy)?,
-            |txn| {
-                POLICY
-                    .put(&self.store, txn, &(), &policy)
-                    .map_err(|e| row_error(e, invalid()))
-            },
-        )
-    }
-
-    /// [`Self::set_dreamer_wake_policy`], recording the owner's act with the
-    /// policy it replaces when `surface` names where the owner said so
-    /// (WILL-PLAN L13 row 01), in the same commit.
+    /// The owner's change of the wake policy, the setting `dreamer.wake.policy`, from the owner
+    /// action `dreamer.wake_policy.set`: an owner's change through the Setting door, signed as
+    /// the owner's act when `surface` names where the owner said so (WILL-PLAN L13 row 01; stage
+    /// 7a-1, RULING SETTING-7A-SIGNED-ACT-BASE = A). A holder of the wake cadence class moves the
+    /// key through `vault.settings.set`.
     pub(crate) fn set_dreamer_wake_policy_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
         surface: Option<crate::authority::ActSurface>,
         policy: DreamerWakePolicy,
     ) -> Result<()> {
-        policy.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            let actor =
-                crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            let prior = policy_in_txn(self, txn)?;
-            POLICY
-                .put(&self.store, txn, &(), &policy)
-                .map_err(|e| row_error(e, invalid()))?;
-            let signed = crate::policy_setting_doors::record_policy_setting_act_in_txn(
-                self,
-                txn,
-                crate::policy_setting_doors::PolicySetting::DreamerWakePolicy,
-                actor,
-                surface,
-                &prior,
-                &policy,
-            )?;
-            // The signed record goes last, best effort (FIX 4624).
-            if let Some(act) = signed {
-                self.record_policy_setting_op_in_txn(txn, act);
-            }
-            Ok(())
-        })
-    }
-    /// Update just the grain on the same owner-authenticated policy row used
-    /// by the host tick scheduler and the projector's turn door.
-    pub fn set_wake_grain(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        grain: super::grain::WakeGrain,
-    ) -> Result<()> {
-        super::grain::WakeGrain::new(grain.turns_per_wake)?;
-        self.with_write_txn_grouped(|txn| {
-            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            let mut policy = policy_in_txn(self, txn)?;
-            policy.wake_grain_turns = grain.turns_per_wake;
-            POLICY
-                .put(&self.store, txn, &(), &policy)
-                .map_err(|e| row_error(e, invalid()))?;
-            Ok(())
-        })
+        let value = serde_json::to_value(policy.validate()?).map_err(|_| invalid())?;
+        let request = crate::setting::SetSetting {
+            surface,
+            ..crate::setting::SetSetting::vault_value(
+                super::setting_keys::WAKE_POLICY.spec.name,
+                value,
+            )
+        };
+        match self.set_setting(crate::setting::SettingCaller::Owner(owner), request)? {
+            crate::setting::SetSettingOutcome::Applied { .. } => Ok(()),
+            crate::setting::SetSettingOutcome::Pending { .. } => Err(Error::InvariantViolation(
+                "the owner's wake policy change waits on a check-in",
+            )),
+        }
     }
 
+    /// The wake policy in force, the setting `dreamer.wake.policy`.
     pub fn dreamer_wake_policy(&self) -> Result<DreamerWakePolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)

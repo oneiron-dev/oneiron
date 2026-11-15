@@ -71,7 +71,8 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) use chunks::span_words_in_txn;
 use chunks::{Admission, ChunkRef};
-pub use policy::{SievePassBudgets, SievePolicy};
+pub use policy::{SievePassBudgets, SievePolicy, SieveScoring};
+pub(crate) use policy::{shipped_sieve_budgets, shipped_sieve_scoring};
 pub use rules::RuleClass;
 
 use super::read_phase::{OnStale, ReadWrite, WakeStop};

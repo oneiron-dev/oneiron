@@ -17,9 +17,8 @@ use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::task_verb::sdk::{
     self, ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
-    CuratorCadenceSetRequest, DreamerProjectorSetRequest, EngineControlChangeEntry,
-    FreeTimeScheduleSetRequest, RetuneThresholdsSetRequest, SieveBudgetsLowerRequest,
-    StewardshipRulePeriodSetRequest,
+    CuratorCadenceSetRequest, EngineControlChangeEntry, FreeTimeScheduleSetRequest,
+    RetuneThresholdsSetRequest, StewardshipRulePeriodSetRequest,
 };
 
 use super::FacadeApiError;
@@ -165,38 +164,6 @@ pub(crate) async fn vault_stewardship_rules_period_set(
         auth,
         "vault.stewardship.rules.period.set",
         move |server, actor| sdk::set_stewardship_rule_period_as(server.vault(), actor, input),
-    )
-    .await;
-    (answer, Vec::new())
-}
-
-/// `vault.dreamer.projector.set`.
-pub(crate) async fn vault_dreamer_projector_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: DreamerProjectorSetRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.dreamer.projector.set",
-        move |server, actor| sdk::set_dreamer_projector_as(server.vault(), actor, input),
-    )
-    .await;
-    (answer, Vec::new())
-}
-
-/// `vault.sieve.budgets.lower`.
-pub(crate) async fn vault_sieve_budgets_lower(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: SieveBudgetsLowerRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.sieve.budgets.lower",
-        move |server, actor| sdk::lower_sieve_budgets_as(server.vault(), actor, input),
     )
     .await;
     (answer, Vec::new())

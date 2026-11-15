@@ -77,7 +77,7 @@ pub(crate) use self::sieve::owe_read_in_txn as owe_sieve_read_in_txn;
 pub use self::sieve::{
     RuleClass, SieveAudit, SieveAuditDiscovery, SieveAuditExpectation, SieveAuditFinding,
     SieveAuditRecord, SieveAuditWindow, SieveConsumeReceipt, SievePass, SievePassBudgets,
-    SievePolicy, SieveQueue, SieveRung, SieveSkipped, SieveSpan, SieveUnlocatedCause,
+    SievePolicy, SieveQueue, SieveRung, SieveScoring, SieveSkipped, SieveSpan, SieveUnlocatedCause,
     SieveUnlocatedDiscovery, SieveWindowAudit, SpanBand, SpanKind, SpanOrigin,
 };
 pub mod sieve_doors;

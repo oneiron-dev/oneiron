@@ -71,11 +71,6 @@ pub struct SieveReceiptsPage {
     pub receipts: Vec<SieveReceiptView>,
 }
 
-/// An empty request: the vault's one sieve policy row.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SievePolicyRequest {}
-
 /// One wake-budget lease counter, by the id its wake driver spends under.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

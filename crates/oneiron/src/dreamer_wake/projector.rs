@@ -71,7 +71,7 @@ use crate::dreamer_consolidation::{
 use crate::dreamer_runner::{EnqueueDreamerAttemptOutcome, dreamer_turn_role};
 use crate::error::{Error, Result};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead, withdrawn_in_txn};
-use crate::side_table::{self, LegacyJson, Named, Raw, SideTable};
+use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{EntityId, Vault};
@@ -83,9 +83,6 @@ mod erasure;
 pub(crate) use erasure::demote_turns_in_txn;
 pub(crate) use erasure::erase_turn_in_txn;
 
-const POLICY: SideTable<(), ProjectorPolicy, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_PROJECTOR_POLICY);
-const DEFAULT_POLICY: &str = include_str!("projector_policy_defaults.json");
 /// The latest turn the projector queued. Key: ().
 const LATEST: SideTable<(), LatestTurn, Named> =
     SideTable::new(&side_table::DREAMER_PROJECTION_LATEST);
@@ -109,8 +106,8 @@ const RIDES: SideTable<EntityId, TurnKey, Named> =
 /// A TURN's own temporal key, `(learned_at, id)`.
 type TurnKey = (u64, EntityId);
 
-/// The projector's policy row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// The projector's policy, the setting `dreamer.projector.policy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectorPolicy {
     /// New statements a due window needs before its wake writes. Zero writes
@@ -186,80 +183,27 @@ pub(crate) struct ProjectionPlan {
     ride: Option<([u8; 32], TurnKey, Vec<TurnKey>)>,
 }
 
-fn invalid() -> Error {
-    Error::InvalidConfig("invalid dreamer projector policy row".into())
+impl crate::setting::SettingValue for ProjectorPolicy {}
+
+/// The default of `dreamer.projector.policy`: the shipped projector_policy_defaults.json.
+pub(super) fn shipped_projector_policy() -> ProjectorPolicy {
+    serde_json::from_str(include_str!("projector_policy_defaults.json"))
+        .expect("the shipped projector_policy_defaults.json decodes")
 }
 
+/// The projector policy in force: the setting `dreamer.projector.policy`, else the shipped one.
 fn policy_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<ProjectorPolicy> {
-    Ok(
-        match POLICY
-            .get(&vault.store, txn, &())
-            .map_err(|error| match error {
-                Error::Store(crate::error::StoreError::SideTableRow { .. }) => invalid(),
-                other => other,
-            })? {
-            Some(row) => row,
-            None => serde_json::from_str(DEFAULT_POLICY).map_err(|_| invalid())?,
-        },
-    )
+    Ok(super::setting_keys::PROJECTOR_POLICY
+        .read_in_txn(vault, txn, &[], None)?
+        .value)
 }
 
 impl Vault {
-    /// The projector policy row this vault reads, or the shipped default.
+    /// The projector policy in force, the setting `dreamer.projector.policy`: the owner and a
+    /// holder of the maintenance cadence class set it through `vault.settings.set`.
     pub fn dreamer_projector_policy(&self) -> Result<ProjectorPolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
-    }
-
-    /// An owner-authenticated projector policy write.
-    pub fn set_dreamer_projector_policy(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        policy: ProjectorPolicy,
-    ) -> Result<()> {
-        self.with_write_txn_grouped(|txn| {
-            crate::dreamer_runner::maintenance::validate_owner_in_txn(self, txn, owner)?;
-            POLICY.put(&self.store, txn, &(), &policy)
-        })
-    }
-
-    /// The owner, by its proof, or a holder of `engine.controls` sets the projector policy
-    /// (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming it.
-    /// Untangle 6.6d gives it its verb. Returns the receipt.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
-    /// holder of `engine.controls`; the row's own validation; store failures.
-    pub fn set_dreamer_projector_policy_by(
-        &self,
-        actor: crate::federation::EngineControlActor<'_>,
-        policy: ProjectorPolicy,
-    ) -> Result<crate::entity_id::EntityId> {
-        self.apply_engine_control(
-            actor,
-            crate::federation::EngineControlClass::MaintenanceCadence,
-            "DREAMER_PROJECTOR_POLICY",
-            &crate::federation::rendered_change(&policy)?,
-            |txn| POLICY.put(&self.store, txn, &(), &policy),
-        )
-    }
-
-    /// [`Self::set_dreamer_projector_policy_by`] for a holder of `engine.controls` (untangle
-    /// 6.6b).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::set_dreamer_projector_policy_by`].
-    pub fn set_dreamer_projector_policy_as_holder(
-        &self,
-        holder: crate::entity_id::EntityId,
-        policy: ProjectorPolicy,
-    ) -> Result<crate::entity_id::EntityId> {
-        self.set_dreamer_projector_policy_by(
-            crate::federation::EngineControlActor::Holder(holder),
-            policy,
-        )
     }
 }
 
