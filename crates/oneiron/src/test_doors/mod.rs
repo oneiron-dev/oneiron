@@ -43,6 +43,7 @@ pub mod derive_verbs;
 pub mod disclosure_word_sources;
 pub mod dreamer_attempt_binding;
 pub mod dreamer_stage_line;
+pub mod erase_preview_rows;
 pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
