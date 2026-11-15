@@ -920,3 +920,78 @@ fn the_owner_reads_and_tears_down_the_continued_checkout() {
         "with no pushed-head receipt the teardown keeps the tree: {torn:?}"
     );
 }
+
+#[test]
+fn a_second_runner_never_answers_the_first_runners_work() {
+    // One hand-off continued under two runner names: the second never
+    // answers the first runner's work as its own, and the same request
+    // again still answers the work it bound.
+    let (_dir, vault, owner_proof) = owner_vault();
+    let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
+    let conversation = import_conversation(&vault, &owner_proof);
+    let mut policy = login_policy("claude-code");
+    policy.seats.extend(login_policy("codex").seats);
+    let registry = ProviderAdapterRegistry::standard();
+    let request = |runner: &str| ContinueOutsideWorkRequest {
+        repo: "demo".to_owned(),
+        git_ref: CONTINUE_REF.to_owned(),
+        commit: commit_c.clone(),
+        conversation: conversation.to_hex(),
+        runner: runner.to_owned(),
+        note: None,
+    };
+    let continue_as = |runner: &str| {
+        vault
+            .continue_outside_work(
+                RunnerContinueCaller::Owner(&owner_proof),
+                &registry,
+                &policy,
+                &request(runner),
+            )
+            .expect("the door answers")
+    };
+    let first = continue_as("claude-code");
+    let ContinueOutsideWorkView::Bound {
+        seat: 0,
+        attempt: first_attempt,
+        existing: false,
+        ..
+    } = first
+    else {
+        panic!("precondition: Claude Code binds the work on seat 0: {first:?}");
+    };
+    let second = continue_as("codex");
+    match &second {
+        ContinueOutsideWorkView::Bound {
+            seat,
+            attempt,
+            existing,
+            ..
+        } => {
+            assert!(
+                !existing,
+                "a Codex continue is not the Claude Code work: {second:?}"
+            );
+            assert_eq!(*seat, 1, "a Codex continue binds the Codex seat");
+            assert_ne!(
+                attempt, &first_attempt,
+                "a Codex continue runs its own attempt"
+            );
+        }
+        ContinueOutsideWorkView::NoSeat { .. } | ContinueOutsideWorkView::Exhausted { .. } => {}
+        other => panic!("a Codex continue answers its own seats: {other:?}"),
+    }
+    let again = continue_as("claude-code");
+    assert!(
+        matches!(
+            &again,
+            ContinueOutsideWorkView::Bound {
+                seat: 0,
+                attempt,
+                existing: true,
+                ..
+            } if attempt == &first_attempt
+        ),
+        "the same request again answers the work it bound: {again:?}"
+    );
+}

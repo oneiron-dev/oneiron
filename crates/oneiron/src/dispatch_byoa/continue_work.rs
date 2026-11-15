@@ -31,7 +31,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue};
 use crate::authority::OwnerActKind;
 use crate::checkout::lease::transactions::claim_in_txn;
 use crate::checkout::{CheckoutClaimRequest, CheckoutError, CheckoutId, CheckoutTaskClass};
-use crate::codebase::RepoRef;
+use crate::codebase::{RepoRef, entity_id_from_hash_material};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
@@ -55,10 +55,10 @@ use super::{
 const CONTINUE_STEP_KEY: &str = "byoa.runner.continue";
 
 /// The domain a hand-over id is derived under.
-const HAND_OVER_DOMAIN: &str = "oneiron.byoa.runner-continue.v1";
+const HAND_OVER_DOMAIN: &[u8] = b"oneiron.byoa.runner-continue.v1";
 
 /// The domain a hand-over checkout id is derived under.
-const HAND_OVER_CHECKOUT_DOMAIN: &str = "oneiron.byoa.runner-continue-checkout.v1";
+const HAND_OVER_CHECKOUT_DOMAIN: &[u8] = b"oneiron.byoa.runner-continue-checkout.v1";
 
 /// The longest hand-over note the door carries, in bytes.
 const CONTINUE_NOTE_MAX_BYTES: usize = 4096;
@@ -265,11 +265,13 @@ fn claim_refusal(error: CheckoutError) -> MemoryError {
     }
 }
 
-/// The hand-over id: the work's parent id, derived from the conversation and
-/// the pushed coordinates. No attempt row answers to it; a runner work's
-/// parent is only bytes in its id and its child's payload. The same request
-/// twice derives the same binding
-/// ([`RunnerWorkBindingId::of`] under [`CONTINUE_STEP_KEY`]).
+/// The hand-over id: the work's parent id, derived from the conversation,
+/// the pushed coordinates and the runner. No attempt row answers to it; a
+/// runner work's parent is only bytes in its id and its child's payload.
+/// The same request twice derives the same binding
+/// ([`RunnerWorkBindingId::of`] under [`CONTINUE_STEP_KEY`]); the same
+/// hand-off under another runner derives its own, so it never answers the
+/// first runner's work.
 ///
 /// # Errors
 ///
@@ -278,21 +280,20 @@ fn hand_over_id(
     repo: &str,
     git_ref: &str,
     commit: &str,
+    runner: &str,
     conversation: EntityId,
 ) -> ByoaResult<AttemptId> {
-    let mut hasher = blake3::Hasher::new_derive_key(HAND_OVER_DOMAIN);
-    hasher.update(conversation.as_bytes());
-    for part in [repo, git_ref, commit] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part.as_bytes());
-    }
-    let digest = hasher.finalize();
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    if bytes == [0; 16] {
-        bytes[0] = 1;
-    }
-    Ok(AttemptId::from_bytes(&bytes)?)
+    let id = entity_id_from_hash_material(
+        HAND_OVER_DOMAIN,
+        &[
+            conversation.as_bytes(),
+            repo.as_bytes(),
+            git_ref.as_bytes(),
+            commit.as_bytes(),
+            runner.as_bytes(),
+        ],
+    )?;
+    Ok(AttemptId::from_bytes(id.as_bytes())?)
 }
 
 /// The checkout a hand-over runs against, derived from the hand-over id.
@@ -301,15 +302,9 @@ fn hand_over_id(
 ///
 /// A derived id the checkout door refuses; a store failure.
 fn hand_over_checkout(hand_over: AttemptId) -> ByoaResult<CheckoutId> {
-    let mut hasher = blake3::Hasher::new_derive_key(HAND_OVER_CHECKOUT_DOMAIN);
-    hasher.update(hand_over.as_bytes());
-    let digest = hasher.finalize();
-    let mut bytes = [0_u8; 16];
-    bytes.copy_from_slice(&digest.as_bytes()[..16]);
-    if bytes == [0; 16] {
-        bytes[0] = 1;
-    }
-    CheckoutId::from_bytes(bytes).map_err(|_| super::error::invalid(ERR_CONTINUE_CHECKOUT_ID))
+    let id = entity_id_from_hash_material(HAND_OVER_CHECKOUT_DOMAIN, &[hand_over.as_bytes()])?;
+    CheckoutId::from_bytes(*id.as_bytes())
+        .map_err(|_| super::error::invalid(ERR_CONTINUE_CHECKOUT_ID))
 }
 
 /// The hand-over job's bytes: the conversation, the pushed coordinates and
@@ -603,8 +598,14 @@ impl Vault {
                 &["Push the hand-off commit, then call again."],
             ));
         }
-        let hand_over = hand_over_id(&input.repo, &input.git_ref, &input.commit, conversation)
-            .map_err(refusal)?;
+        let hand_over = hand_over_id(
+            &input.repo,
+            &input.git_ref,
+            &input.commit,
+            &input.runner,
+            conversation,
+        )
+        .map_err(refusal)?;
         let binding = RunnerWorkBindingId::of(hand_over, CONTINUE_STEP_KEY).map_err(refusal)?;
         let checkout = hand_over_checkout(hand_over).map_err(refusal)?;
         let job = hand_over_job(input)?;
@@ -848,8 +849,14 @@ impl Vault {
         let placeholder = b"{}";
         let staged = StagedJob::new(placeholder);
         let pointer = staged.pointer();
-        let hand_over = hand_over_id(&input.repo, "", "", EntityId::from_bytes_unchecked([0; 16]))
-            .map_err(refusal)?;
+        let hand_over = hand_over_id(
+            &input.repo,
+            "",
+            "",
+            &input.runner,
+            EntityId::from_bytes_unchecked([0; 16]),
+        )
+        .map_err(refusal)?;
         let checkout = hand_over_checkout(hand_over).map_err(refusal)?;
         let dispatcher = ByoaDispatcher::new(self, ContinueEndpoints, ContinueEgress);
         let Some(seats) = RunnerSeats::of(policy, &input.runner) else {
