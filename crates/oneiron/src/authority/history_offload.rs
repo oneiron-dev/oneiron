@@ -241,10 +241,6 @@ fn offload_scope_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<std::result::Result<(Arc<VerifiedAuthorityCheckpoint>, HeldCovered), &'static str>> {
-    if !crate::gate::resolve_policy_manifest(&vault.store, txn)?.authority_history_offload_enabled()
-    {
-        return Ok(Err("authority history offload is disabled"));
-    }
     if elected_home_in_txn(vault, txn)? {
         return Ok(Err(
             "the vault's elected home keeps its whole authority log",
@@ -260,11 +256,6 @@ fn offload_scope_in_txn(
     if super::checkpoint::checkpoint_head_in_txn(&vault.store, txn)? != Some(adopted.id()) {
         return Ok(Err(
             "authority history offload names an image that is not the adopted head",
-        ));
-    }
-    if adopted.image().covers_sealed_row() {
-        return Ok(Err(
-            "an image that covers a sealed row folds its stored log whole",
         ));
     }
     let held = held_covered_in_txn(vault, txn, &adopted)?;
@@ -322,11 +313,6 @@ impl Vault {
     ) -> Result<Option<AuthorityHistoryOffload>> {
         let offload = self.with_write_txn_grouped(|txn| {
             let (adopted, held) = offload_scope_in_txn(self, txn)?.map_err(refused)?;
-            if adopted.id() != *image {
-                return Err(refused(
-                    "authority history offload names an image that is not the adopted head",
-                ));
-            }
             if held.is_empty() {
                 return Ok(None);
             }
