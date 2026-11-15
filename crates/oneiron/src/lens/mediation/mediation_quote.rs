@@ -29,12 +29,8 @@ use super::mediation_frame_read::LENS_SPAN_DRIFTED;
 #[cfg(feature = "sync")]
 use super::{LensRenderFrame, LensSpanSelectionRequest};
 
-/// Half-open offsets in Unicode scalar values, not UTF-8 bytes or UTF-16 units.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct LensQuoteRange {
-    pub start: usize,
-    pub end: usize,
-}
+#[doc(hidden)]
+pub use oneiron_records::lens::mediation::mediation_quote::{LensQuoteProof, LensQuoteRange};
 
 /// An engine-issued quote citation. It carries no copy of the selected text.
 /// The private selection is used to re-prove the citation at the render boundary.
@@ -54,20 +50,6 @@ pub struct LensQuoteHandle {
     quote_hash: String,
     #[serde(skip)]
     selection: LensReadHandle,
-}
-
-/// What proving an issued quote found (FIX 9895; the drift answer is a call,
-/// canon silent).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum LensQuoteProof {
-    /// The reader may still read the message, and its cursors still select
-    /// the text they quoted, wherever edits elsewhere moved them.
-    Live,
-    /// The reader may still read the message, but the quote no longer reads
-    /// as issued: its text was edited or deleted, or a key lifted inside it
-    /// since now reads to this reader as its handle.
-    Drifted,
 }
 
 impl LensQuoteHandle {
