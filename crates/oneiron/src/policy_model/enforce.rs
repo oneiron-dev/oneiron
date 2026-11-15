@@ -116,12 +116,8 @@ impl PolicyEnforcementAction {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyEnforcementVoice {
-    Persona,
-    System,
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::enforce::{PolicyEnforcementVoice, PolicyHelpRouting};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PolicyBargeInKill {
@@ -138,17 +134,6 @@ impl PolicyBargeInKill {
             cancel_llm: true,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PolicyHelpRouting {
-    pub category: PolicyVerdictCategory,
-    pub message: String,
-    pub diagnosis: Option<String>,
-    pub persona_present: bool,
-    /// Host-configured resources, not an engine-owned safety taxonomy.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub resources: Vec<crate::store::GateSystemNoticeAction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

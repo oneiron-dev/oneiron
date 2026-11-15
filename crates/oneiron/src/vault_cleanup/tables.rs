@@ -21,7 +21,7 @@ crate::side_table::side_tables! {
     /// person cleanup arm. Key: id16 (PERSON id).
     VAULT_CLEANUP_EXTRACTION_PERSON: VaultMeta b"vault_cleanup.extraction_person.v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Owner-set cleanup posture: propose-first (default) vs auto-with-digest. Key: ().
+    /// Owner-set cleanup posture: auto-with-digest when absent, or propose-first. Key: ().
     VAULT_CLEANUP_POSTURE: VaultMeta b"vault_cleanup.posture.v1" Raw
         [restore: live] [family: unclassified] [tier: canonical];
     /// Open vault-cleanup archive proposal awaiting owner accept/reject. Key: id16.
