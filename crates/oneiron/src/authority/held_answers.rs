@@ -272,8 +272,9 @@ impl Vault {
     /// stand or nothing is written. A confirm names entries, never "all that
     /// is held now": an answer that arrived after his surface listed them is
     /// never confirmed unseen. A confirm gives a machine a role and a class,
-    /// never other keys than it stands under. His answer about a machine
-    /// ends the ask of every held answer about it that it saw. The
+    /// never other keys than it stands under on this install
+    /// ([`AuthorityFold::replaces_standing_keys`]). His answer about a
+    /// machine ends the ask of every held answer about it that it saw. The
     /// credentials are sealed again for the roster the confirm changed.
     ///
     /// # Errors
