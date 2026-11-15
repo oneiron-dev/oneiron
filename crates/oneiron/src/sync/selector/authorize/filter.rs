@@ -489,6 +489,20 @@ pub(in crate::sync::selector) fn filter_window_doc(
     let export =
         super::super::tombstones::TombstoneExport::new(&grant.authority_scope, open && all);
     let ttxn = vault.store.env.read_txn()?;
+    // The window's bodies of each tombstoned row, under every hex casing of
+    // its key: a case-shifted alias still names the row (ONE-1158), so the
+    // label fallback below judges each body the window holds of it.
+    let mut tombstoned_bodies = HashMap::<EntityId, Vec<Vec<u8>>>::new();
+    if member_access.is_some() {
+        map_for_each_value_bytes(&source_entities, |raw_key, maybe_blob| {
+            if let Some(blob) = maybe_blob.filter(|blob| blob.len() > ENTITY_METADATA_HEADER_LEN)
+                && let Ok(id) = EntityId::from_hex(raw_key)
+                && tombstoned.contains(&id)
+            {
+                tombstoned_bodies.entry(id).or_default().push(blob.to_vec());
+            }
+        });
+    }
     map_for_each_tombstone_value(&source_tombstones, |raw_key, value| {
         let Ok(id) = EntityId::from_hex(raw_key) else {
             return;
@@ -505,17 +519,19 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // The relationship read its delete captured decides first: it was
         // taken while the row was live, before the delete retired a MESSAGE's
         // or SUMMARY's scope stamp. With no capture bound to the tombstone's
-        // request, a body the window still holds decides by its bytes. A read
-        // that fails withholds the tombstone.
+        // request, every body the window still holds of the row decides by its
+        // bytes, under whichever casing of the id it is keyed: one the member
+        // does not read withholds the tombstone. A read that fails withholds
+        // it too.
         let member = member_access.as_ref();
         let reads =
             super::super::tombstones::member_reads_by_capture(vault, &ttxn, member, &id, value)
                 .unwrap_or_else(|| {
-                    crate::sync::loro_support::map_get_bytes(&source_entities, &id.to_hex())
-                        .filter(|blob| blob.len() > ENTITY_METADATA_HEADER_LEN)
-                        .is_none_or(|blob| {
-                            member_reads_labels(vault, &ttxn, member, &id, &blob).unwrap_or(false)
+                    tombstoned_bodies.get(&id).is_none_or(|bodies| {
+                        bodies.iter().all(|blob| {
+                            member_reads_labels(vault, &ttxn, member, &id, blob).unwrap_or(false)
                         })
+                    })
                 });
         if reads {
             let _ = map_insert_bytes(&out_tombstones, raw_key, value);
