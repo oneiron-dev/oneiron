@@ -32,22 +32,7 @@ impl NightStepRequestId {
     /// anything else.
     #[must_use]
     pub fn parse_hex(text: &str) -> Option<Self> {
-        if text.len() != 32 {
-            return None;
-        }
-        let mut bytes = [0_u8; 16];
-        for (byte, pair) in bytes.iter_mut().zip(text.as_bytes().chunks_exact(2)) {
-            *byte = (lower_hex_nibble(pair[0])? << 4) | lower_hex_nibble(pair[1])?;
-        }
-        Some(Self(bytes))
-    }
-}
-
-const fn lower_hex_nibble(digit: u8) -> Option<u8> {
-    match digit {
-        b'0'..=b'9' => Some(digit - b'0'),
-        b'a'..=b'f' => Some(digit - b'a' + 10),
-        _ => None,
+        oneiron_hex::decode::<16>(text).map(Self)
     }
 }
 

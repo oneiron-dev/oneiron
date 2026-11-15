@@ -11,9 +11,9 @@ use serde::{Deserialize, Serialize};
 use super::{OwnerReply, OwnerRoute, OwnerTable, RestShape, blocking, owner};
 use crate::api::body_spool::OwnerJsonBody;
 use crate::auth::CoreAuth;
-use crate::owner::stamp::now_unix_ms;
 use crate::owner::{OwnerResult, entity_id};
 use crate::server::SyncServer;
+use oneiron_base::unix_millis_now;
 
 pub(super) fn owner_table() -> OwnerTable {
     vec![
@@ -81,7 +81,7 @@ async fn schedule(
         let attempt = server.vault().schedule_harness_evaluation_as(
             &owner,
             &evaluation,
-            now_unix_ms() / 1_000,
+            unix_millis_now() / 1_000,
         )?;
         Ok(Scheduled {
             attempt: crate::owner::healer::attempt_hex(&attempt),
@@ -130,7 +130,7 @@ async fn schedule_of360(
         let scheduled = server.vault().schedule_harness_of360_evaluation_as(
             &owner,
             &request,
-            now_unix_ms() / 1_000,
+            unix_millis_now() / 1_000,
         )?;
         Ok(serde_json::json!({
             "attempt": scheduled.attempt.as_ref().map(crate::owner::healer::attempt_hex),

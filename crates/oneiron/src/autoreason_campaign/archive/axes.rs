@@ -13,13 +13,8 @@ use super::{
 };
 use crate::autoreason_campaign::CampaignResult;
 
-/// One categorical dimension proposed from this task's goal and samples.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ArchiveAxis {
-    pub name: String,
-    pub bins: Vec<String>,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::autoreason_campaign::archive::axes::ArchiveAxis;
 
 /// Descriptors are output kinds, never optimization axes of a skill or goal.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]

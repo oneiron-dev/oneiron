@@ -266,6 +266,28 @@ fn inspect(runtime: &Path, name: &str) -> io::Result<serde_json::Value> {
     }
     serde_json::from_slice(&result.stdout).map_err(io::Error::other)
 }
+
+/// The runtime's full inspect document for `name`, when it still runs.
+pub(crate) fn inspect_value(runtime: &Path, name: &str) -> Option<serde_json::Value> {
+    inspect(runtime, name).ok()
+}
+
+/// This container's cgroup path as its runtime names it, if it names one.
+pub(crate) fn cgroup_path(evidence: &serde_json::Value) -> Option<&str> {
+    evidence
+        .pointer("/0/State/CgroupPath")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.is_empty())
+}
+
+/// This container's host pid as its runtime names it, if it names one.
+pub(crate) fn host_pid(evidence: &serde_json::Value) -> Option<u32> {
+    evidence
+        .pointer("/0/State/Pid")
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid != 0)
+}
 fn network_none(e: &serde_json::Value) -> bool {
     let host = &e[0]["HostConfig"];
     host["NetworkMode"] == "none"
@@ -305,8 +327,7 @@ fn from_container(
         None => {
             let Some(pid) = inspect(runtime, name)
                 .ok()
-                .and_then(|evidence| evidence[0]["State"]["Pid"].as_u64())
-                .filter(|pid| *pid != 0)
+                .and_then(|evidence| host_pid(&evidence).map(u64::from))
             else {
                 return false;
             };

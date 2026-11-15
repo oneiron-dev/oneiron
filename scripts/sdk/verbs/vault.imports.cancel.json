@@ -1,0 +1,17 @@
+{
+  "name": "vault.imports.cancel",
+  "description": "The owner, or a holder of a Steward grant naming delete, cancels one hosted import: its job lands nothing more and its staging is removed. What already landed stays in the import's review for the owner.",
+  "input": "crate::ingest::history::HostedImportLookup",
+  "output": "Option<crate::ingest::history::HostedImportCancel>",
+  "call": "crate::ingest::history::hosted_import_cancel(memory, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "import_canceller"
+}

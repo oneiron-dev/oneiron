@@ -11,7 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, PoisonError, TryLockError};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use base64::Engine as _;
 use oneiron::consent::AuthenticatedOwner;
@@ -546,9 +546,7 @@ impl SyncServer {
         moves: &[SpaceMove],
         passes: &mut SpacePasses,
     ) {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |since| since.as_secs());
+        let now = oneiron_base::unix_seconds_now();
         for moving in moves
             .iter()
             .filter(|moving| moving.state == SpaceMoveState::Open)
