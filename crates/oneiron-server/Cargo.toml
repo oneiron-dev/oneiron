@@ -344,6 +344,14 @@ name = "selector_home_clearance_ws"
 path = "tests/selector_home_clearance_ws.rs"
 required-features = ["oneiron/test-hooks"]
 
+# L5-02 PR 5's history page test seeds its federation grants with
+# `put_selector_test_federation_grant` (`oneiron/test-hooks`) and binds the
+# vault owner with `bind_host_owner` (`oneiron/test-support`).
+[[test]]
+name = "machine_history_page_controls"
+path = "tests/machine_history_page_controls.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 [lints]
 workspace = true
 
