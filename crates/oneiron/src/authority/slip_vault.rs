@@ -892,6 +892,21 @@ impl Vault {
         next_entry(issuer, &fold, op, now)
     }
 
+    /// Signs `op` as the host root's row one sequence past its next, on this
+    /// vault's heads, without storing it: a row beside the one
+    /// [`Self::sign_host_op_for_test`] signs on the same heads.
+    #[cfg(any(test, oneiron_test_support))]
+    pub(crate) fn sign_host_op_after_next_for_test(
+        &self,
+        issuer: &HostSlipIssuer,
+        op: AuthorityOp,
+    ) -> Result<AuthorityLogEntry> {
+        let mut entry = self.sign_host_op_for_test(issuer, op)?;
+        entry.seq = entry.seq.checked_add(1).ok_or_else(invalid_authority)?;
+        issuer.resign_entry(&mut entry)?;
+        Ok(entry)
+    }
+
     /// Signs `op` as the host root's next row, cosigned by `cosigner`,
     /// without storing it.
     #[cfg(any(test, oneiron_test_support))]
