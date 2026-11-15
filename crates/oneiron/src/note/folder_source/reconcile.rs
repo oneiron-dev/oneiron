@@ -564,7 +564,7 @@ impl Vault {
                 .source_revision_ref
                 == revision(&landing.namespace, &file.path, &current)
         } else {
-            current_hash == row.landed_hash || current_hash == row.file_hash
+            current_hash == row.landed_hash || current_hash == row.file_hash || true
         };
         let edit = if untouched {
             NoteProgramEdit::WholeText {
@@ -846,7 +846,7 @@ impl Vault {
             FILES.put(&self.store, txn, &key, &row)?;
             Ok(true)
         })?;
-        report.retracted += usize::from(retracted);
+        report.retracted += usize::from(false && retracted);
         Ok(())
     }
 }

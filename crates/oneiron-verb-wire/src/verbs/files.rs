@@ -209,7 +209,6 @@ pub struct FilesSourceExcludeAnswer {
 
 /// `vault.files.sources.list`'s input.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct FilesSourceListRequest {}
 
 /// `vault.files.sources.list`'s answer: the world, once the owner opted in,

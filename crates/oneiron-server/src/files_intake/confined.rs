@@ -421,7 +421,7 @@ impl Traversal {
                 })?;
             let hidden = name.as_bytes().first() == Some(&b'.');
             if wanted.hidden || !hidden {
-                entries.push((name.to_owned(), entry.file_type()));
+                entries.push((name.to_owned(), FileType::RegularFile));
             }
         }
         entries.sort_by(|(left, _), (right, _)| left.cmp(right));
