@@ -276,9 +276,6 @@ impl Vault {
             if !held.keys().all(|hash| kept.contains(hash)) {
                 return Err(refused("a covered row no standing custody proof keeps"));
             }
-            for (hash, (id, header)) in &held {
-                evict_covered_row_in_txn(&self.store, txn, id, hash, header)?;
-            }
             super::store_order::resequence_in_txn(&self.store, txn)?;
             super::advance_authority_cache_generation(&self.store, txn)?;
             let mut stored = OFFLOAD
