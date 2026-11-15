@@ -96,8 +96,9 @@ pub(in crate::sync::selector) fn filter_window_doc(
     // row: the vault owner, and each co-Owner on an Owner-role grant
     // (federation:G, co-ownership is direct access to the whole vault).
     // Admin, Steward, Member, Viewer, Delegate and Guest grants are gated. An
-    // owner check that fails gates.
-    let member_access = member_label_access(vault, &rtxn, &grant)?;
+    // owner check that fails gates. The conversation home binds the member
+    // at the same gate ([`member_reads_row`]).
+    let member_access = member_access(vault, &rtxn, &grant)?;
     // Credentials never leave through a selector, whatever the carrier says, and neither does
     // this vault's embedding setup (OF-370): a peer or a guest keeps its own.
     let mut custody_withheld = BTreeSet::new();
@@ -204,7 +205,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
         {
             return;
         }
-        match member_reads_labels(vault, &rtxn, member_access.as_ref(), &id, blob) {
+        match member_reads_row(vault, &rtxn, &member_access, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             Err(error) => {
@@ -216,7 +217,7 @@ pub(in crate::sync::selector) fn filter_window_doc(
         // other rows' words (a scope SUMMARY, the TURN that copies one, a
         // merge header) reaches the member only when it reads every one of
         // those sources at the same gate, as its scoped read admits it.
-        match member_reads_word_sources(vault, &rtxn, member_access.as_ref(), &id, blob) {
+        match member_reads_word_sources(vault, &rtxn, &member_access, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
             Err(error) => {
@@ -258,20 +259,18 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 )? {
                     return Ok(false);
                 }
-                Ok(
-                    member_reads_labels(vault, &rtxn, member_access.as_ref(), source, raw)?
-                        && source_selected(
-                            vault,
-                            &rtxn,
-                            (source, raw),
-                            &grant.authority_scope,
-                            selector,
-                            scope_position,
-                            &facet_scope,
-                        )?
-                        && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
-                            .is_none(),
-                )
+                Ok(member_reads_row(vault, &rtxn, &member_access, source, raw)?
+                    && source_selected(
+                        vault,
+                        &rtxn,
+                        (source, raw),
+                        &grant.authority_scope,
+                        selector,
+                        scope_position,
+                        &facet_scope,
+                    )?
+                    && crate::store::legal_hold::use_limit_in_txn(&vault.store, &rtxn, source)?
+                        .is_none())
             }) {
                 Ok(true) => {}
                 Ok(false) => return,
@@ -526,66 +525,106 @@ pub(in crate::sync::selector) fn filter_window_doc(
     Ok(out)
 }
 
-/// The access context `grant`'s member reads with at the relationship gate
-/// (FIX SELECTOR-RELATIONSHIP-LABELS): `None` for an Owner's member, the
-/// vault owner or a co-Owner on an Owner-role grant, which reads every row.
-/// An owner check that fails gates.
-pub(in crate::sync::selector) fn member_label_access<'v>(
+/// How `grant`'s member reads the rows of a selector export.
+pub(in crate::sync::selector) struct MemberAccess<'v> {
+    /// The access context the member reads with at the relationship gate
+    /// (FIX SELECTOR-RELATIONSHIP-LABELS): `None` for an Owner's member, the
+    /// vault owner or a co-Owner on an Owner-role grant, which reads every
+    /// row.
+    labels: Option<crate::access_grant::AccessContext<'v>>,
+    /// Whether the member is homed in this vault (DEC-0006 `#home-clearance`;
+    /// RULING SECREAD-HOME-SELECTOR-EXPORT = A): an Owner's member, or one of
+    /// the vault's own agents. Any other member reads no stamped claim:
+    /// stamped company content "was never saved in the member's vault"
+    /// (ARCH-0043 `#leaving-a-company`).
+    homed_here: bool,
+}
+
+/// [`MemberAccess`] for `grant`'s member. An owner check that fails gates,
+/// and an own-agent check that fails binds the member to the home.
+pub(in crate::sync::selector) fn member_access<'v>(
     vault: &'v Vault,
     rtxn: &heed::RoTxn<'_>,
     grant: &crate::federation::FederationGrant,
-) -> Result<Option<crate::access_grant::AccessContext<'v>>> {
+) -> Result<MemberAccess<'v>> {
     if grant.role == crate::federation::FederationGrantRole::Owner
         || crate::memory::owner_exemption_holds_in_txn(vault, rtxn, grant.member_ref)
             .unwrap_or(false)
     {
-        return Ok(None);
+        return Ok(MemberAccess {
+            labels: None,
+            homed_here: true,
+        });
     }
-    Ok(Some(crate::access_grant::AccessContext::load(
-        vault,
-        rtxn,
-        Some(grant.member_ref),
-    )?))
+    let labels = crate::access_grant::AccessContext::load(vault, rtxn, Some(grant.member_ref))?;
+    let homed_here = vault
+        .authority_fold_readonly_in_txn(rtxn)
+        .and_then(|fold| {
+            crate::disclosure::is_vault_agent_in(vault, rtxn, &fold, &grant.member_ref)
+        })
+        .unwrap_or(false);
+    Ok(MemberAccess {
+        labels: Some(labels),
+        homed_here,
+    })
 }
 
-/// Whether the selector's member reads the row `raw` of `id` at the
-/// relationship gate (FIX SELECTOR-RELATIONSHIP-LABELS): `None` is an
-/// Owner's member (the vault owner, or a co-Owner on an Owner-role grant),
-/// which reads every row. A CLAIM body that does not decode is withheld, as
-/// the causal check withholds it.
-pub(in crate::sync::selector) fn member_reads_labels(
+/// Whether the selector's member reads the row `raw` of `id`: a member homed
+/// elsewhere reads no stamped claim ([`stamped_claim`]), and a gated member
+/// reads a row only at the relationship gate (FIX
+/// SELECTOR-RELATIONSHIP-LABELS). An Owner's member reads every row. A CLAIM
+/// body that does not decode is withheld, as the causal check withholds it.
+pub(in crate::sync::selector) fn member_reads_row(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
-    member: Option<&crate::access_grant::AccessContext<'_>>,
+    member: &MemberAccess<'_>,
     id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    let Some(member) = member else {
+    if !member.homed_here && stamped_claim(raw) {
+        return Ok(false);
+    }
+    let Some(labels) = &member.labels else {
         return Ok(true);
     };
     match crate::claim::relationship_label_read(&vault.store, rtxn, id, raw) {
-        Ok(read) => Ok(read.allowed_by(member)),
+        Ok(read) => Ok(read.allowed_by(labels)),
         Err(Error::InvalidClaimBody(_)) => Ok(false),
         Err(error) => Err(error),
     }
 }
 
-/// Whether the selector's member reads, at the relationship gate, every
-/// source the words of the row `raw` of `id` came from (FIX
+/// Whether `raw` is a CLAIM whose scope carries a stamp other than public, as
+/// the scoped read judges it ([`crate::disclosure::scope_home_band`]). A CLAIM
+/// body that does not decode reads as stamped: the home check fails closed.
+fn stamped_claim(raw: &[u8]) -> bool {
+    if EntityMetadataHeader::parse(raw)
+        .is_none_or(|header| header.entity_type != crate::registry::ENTITY_TYPE_CLAIM)
+    {
+        return false;
+    }
+    raw.get(ENTITY_METADATA_HEADER_LEN..)
+        .and_then(|body| crate::claim::decode_claim_body(body, true).ok())
+        .is_none_or(|body| crate::disclosure::scope_home_band(body.scope.as_ref()).is_some())
+}
+
+/// Whether the selector's member reads, at the member gate
+/// ([`member_reads_row`]), every source the words of the row `raw` of `id`
+/// came from (FIX
 /// SELECTOR-SCOPE-SUMMARY-WORDS): the sources
 /// `scope_summary::word_sources_in` names, as the scoped read admits a
 /// derived row (`claim/scoped_read/visibility.rs`). A row with words of its
 /// own passes; one whose sources no longer resolve, or name a row not held
-/// here, is withheld. `None` is an Owner's member, which reads every row.
-/// Only a member the label gate binds pays for the lookup.
+/// here, is withheld. An Owner's member reads every row: only a member the
+/// label gate binds pays for the lookup.
 fn member_reads_word_sources(
     vault: &Vault,
     rtxn: &heed::RoTxn<'_>,
-    member: Option<&crate::access_grant::AccessContext<'_>>,
+    member: &MemberAccess<'_>,
     id: &EntityId,
     raw: &[u8],
 ) -> Result<bool> {
-    if member.is_none() {
+    if member.labels.is_none() {
         return Ok(true);
     }
     let sources = match crate::scope_summary::word_sources_in(vault, rtxn, id, raw) {
@@ -600,7 +639,7 @@ fn member_reads_word_sources(
         let Some(source_raw) = vault.get_raw_in(rtxn, source)? else {
             return Ok(false);
         };
-        if !member_reads_labels(vault, rtxn, member, source, &source_raw)? {
+        if !member_reads_row(vault, rtxn, member, source, &source_raw)? {
             return Ok(false);
         }
     }
