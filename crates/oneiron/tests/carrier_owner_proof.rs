@@ -37,6 +37,11 @@
 //! through any carrier. Their opt back in widens it, and a carrier proves
 //! only itself: through a machine that is not the owner's it waits where the
 //! vault holds an owner key, and the person's door refuses it there.
+//!
+//! The vault asks only on account of a key whose proof the fold takes
+//! (Engine RULING 16 Nov, CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A): a proof
+//! is an Ed25519 cosign, so a vault whose only owner key is a P-256 key (a
+//! passkey's suite) keeps today's acts, as a vault with no owner key does.
 
 #![cfg(oneiron_test_support)]
 
@@ -76,6 +81,7 @@ use oneiron_authority::authority::{
     ConversationTrainingSet, ConversationTrainingVaultSet, HomeNodePick,
     conversation_training_vault_target, home_pick_target, machine_answer_revision,
 };
+use p256::ecdsa::{Signature as P256Signature, SigningKey as P256SigningKey};
 
 const ROOT_SEED: u8 = 61;
 const NODE_SEED: u8 = 62;
@@ -101,6 +107,8 @@ const PREDECESSOR_SEED: u8 = 67;
 /// The machine the held-answer door tests enrol: the seed of its machine
 /// key.
 const JOINING_SEED: u8 = 68;
+/// The seed of a vault root that is a P-256 key.
+const P256_ROOT_SEED: u8 = 69;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -156,28 +164,107 @@ fn hash(row: &AuthorityLogEntry) -> AuthorityEntryHash {
     authority_entry_hash(row).expect("a hash")
 }
 
+/// The genesis op of a vault whose root key `root` holds `roles` at `tier`.
+fn genesis_op(root: AuthorityKey, roles: u16, tier: AuthorityTier) -> AuthorityOp {
+    AuthorityOp::Genesis {
+        device: DeviceAuthority {
+            key: root,
+            transport_key_binding: [7; 32],
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".to_owned(),
+                evidence: vec![1, 2, 3],
+            },
+            tier,
+            roles,
+        },
+        genesis_nonce: [196; 32],
+        recovery: GenesisRecoveryStep::Saved([1; 32]),
+    }
+}
+
 /// The genesis row of a vault whose root key `root` holds `roles` at `tier`.
 fn genesis_row(root: &SigningKey, roles: u16, tier: AuthorityTier) -> AuthorityLogEntry {
     signed(
         None,
         0,
         Vec::new(),
-        AuthorityOp::Genesis {
-            device: DeviceAuthority {
-                key: key_of(root),
-                transport_key_binding: [7; 32],
-                attestation: AuthorityAttestation {
-                    kind: "SoftwareArgon2id".to_owned(),
-                    evidence: vec![1, 2, 3],
-                },
-                tier,
-                roles,
-            },
-            genesis_nonce: [196; 32],
-            recovery: GenesisRecoveryStep::Saved([1; 32]),
-        },
+        genesis_op(key_of(root), roles, tier),
         root,
         &[],
+    )
+}
+
+fn p256_signing(seed: u8) -> P256SigningKey {
+    P256SigningKey::from_slice(&[seed; 32]).expect("a P-256 signing key")
+}
+
+fn p256_key_of(signing: &P256SigningKey) -> AuthorityKey {
+    AuthorityKey::P256(
+        signing
+            .verifying_key()
+            .to_encoded_point(true)
+            .as_bytes()
+            .to_vec(),
+    )
+}
+
+/// `signer`, a P-256 key, signs `op` on `parent_hashes` with no cosign, in
+/// the low-S form the signature check takes.
+fn signed_by_p256(
+    vault_id: Option<AuthorityVaultId>,
+    seq: u64,
+    parent_hashes: Vec<AuthorityEntryHash>,
+    op: AuthorityOp,
+    signer: &P256SigningKey,
+) -> AuthorityLogEntry {
+    let mut row = AuthorityLogEntry {
+        schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+        vault_id,
+        seq,
+        parent_hashes,
+        op,
+        signer: signature_slot(p256_key_of(signer)),
+        cosigns: Vec::new(),
+        ts: 1,
+    };
+    let transcript = authority_transcript(&row).expect("the transcript");
+    let mut signature: P256Signature = signer.sign(&transcript);
+    if let Some(normalized) = signature.normalize_s() {
+        signature = normalized;
+    }
+    row.signer.signature = signature.to_bytes().to_vec();
+    row
+}
+
+/// The owner's home pick of [`PICKED_NODE`] that `node`, the install key of
+/// `machine`, carries on `registration`, cosigned by each of `cosigners`.
+fn home_pick_row(
+    vault_id: AuthorityVaultId,
+    registration: AuthorityEntryHash,
+    machine: EntityId,
+    node: &SigningKey,
+    cosigners: &[&SigningKey],
+) -> AuthorityLogEntry {
+    let target = home_pick_target(&vault_id).expect("the pick's target");
+    // No pick is live yet, so the pick saw the zero revision.
+    let act = OwnerAct::by_owner(
+        owner(),
+        OwnerActKind::HomeNodePick,
+        target,
+        ActSurface::ThisInstall,
+        [0; 32],
+    );
+    signed(
+        Some(vault_id),
+        1,
+        vec![registration],
+        AuthorityOp::HomeNodePick(HomeNodePick {
+            act,
+            machine,
+            node_id: Some(PICKED_NODE),
+        }),
+        node,
+        cosigners,
     )
 }
 
@@ -293,25 +380,10 @@ impl HostedNodeAnswer {
     /// The node carries the owner's home pick of [`PICKED_NODE`] on the
     /// registration, signed by its own install key.
     fn pick_home(mut self, cosigners: &[&SigningKey]) -> AuthorityFold {
-        let registration = hash(&self.rows[1]);
-        let target = home_pick_target(&self.vault_id()).expect("the pick's target");
-        // No pick is live yet, so the pick saw the zero revision.
-        let act = OwnerAct::by_owner(
-            owner(),
-            OwnerActKind::HomeNodePick,
-            target,
-            ActSurface::ThisInstall,
-            [0; 32],
-        );
-        let pick = signed(
-            Some(self.vault_id()),
-            1,
-            vec![registration],
-            AuthorityOp::HomeNodePick(HomeNodePick {
-                act,
-                machine: self.machine,
-                node_id: Some(PICKED_NODE),
-            }),
+        let pick = home_pick_row(
+            self.vault_id(),
+            hash(&self.rows[1]),
+            self.machine,
             &self.node,
             cosigners,
         );
@@ -842,6 +914,67 @@ fn a_hosted_nodes_unproven_home_pick_lands_on_a_hosted_vault_with_no_owner_devic
         home_pick_in_force(&fold),
         Some(PICKED_NODE),
         "a hosted vault with no enrolled owner device key keeps today's pick: {:?}",
+        fold.issues
+    );
+}
+
+/// Item 2 asks only on account of a key whose proof the fold takes (Engine
+/// RULING 16 Nov 01:37, CARRIER-ASKS-ON-PASSKEY-ONLY-VAULT = A). A proof is
+/// an Ed25519 cosign, so a vault whose only owner key is a P-256 key (a
+/// passkey's suite) holds no key that could prove the pick: it lands, as on
+/// a vault with no owner key. Before the rule: the pick waits, and no key of
+/// the vault can ever end the wait.
+#[test]
+fn a_not_mine_nodes_unproven_home_pick_lands_where_the_only_owner_key_is_a_p256_key() {
+    let root = p256_signing(P256_ROOT_SEED);
+    let node = signing(NODE_SEED);
+    let genesis = signed_by_p256(
+        None,
+        0,
+        Vec::new(),
+        genesis_op(
+            p256_key_of(&root),
+            ROLE_OWNER | ROLE_ADMIN,
+            AuthorityTier::Software,
+        ),
+        &root,
+    );
+    let vault_id = genesis_vault_id(&genesis).expect("the vault id");
+    let machine = EntityId::from_bytes([0x70; 16]).expect("an id");
+    let registration = signed_by_p256(
+        Some(vault_id),
+        1,
+        vec![hash(&genesis)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            machine,
+            &node,
+            MachineRole::HostedNode,
+            1,
+            None,
+        )),
+        &root,
+    );
+    let registered = fold_authority_log(&[genesis.clone(), registration.clone()]);
+    assert!(
+        registered
+            .machine(machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .is_some_and(|head| head.is_live()),
+        "a P-256 root's registration of the node stands: {:?}",
+        registered.issues
+    );
+    let pick = home_pick_row(vault_id, hash(&registration), machine, &node, &[]);
+    let fold = fold_authority_log(&[genesis, registration, pick]);
+    assert_eq!(
+        home_pick_in_force(&fold),
+        Some(PICKED_NODE),
+        "no key of this vault can prove an act, so a not-mine node's pick lands: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.waiting_owner_choices().is_empty(),
+        "no pick waits for a proof that no key of the vault can give: {:?}",
         fold.issues
     );
 }
