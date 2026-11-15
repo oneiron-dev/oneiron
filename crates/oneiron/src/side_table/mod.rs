@@ -27,7 +27,7 @@ use heed::{RoTxn, RwTxn};
 use crate::error::{Error, Result, SideTableRowProblem, StoreError};
 use crate::overlay_db::{OverlayDb, OverlayStrDb};
 use crate::secret_record::CustodyWrite;
-use crate::store::ManifestDbs;
+use crate::store::{ManifestDbs, Store};
 
 pub(crate) use codec::{
     CodecError, LegacyCompact, LegacyJson, Named, Raw, RawValue, SideCodec, VersionedNamed,
@@ -51,9 +51,18 @@ pub(crate) trait SideTableDbs {
 
     /// The custody door a mask on write mints through (OF-067): a vault's. A
     /// bare store, a session view or an open gate holds none, so a hit the
-    /// side-row wall finds in a row written there refuses the write.
+    /// side-row wall finds in a row written there that needs a new custody
+    /// record refuses the write.
     fn side_custody(&self) -> Option<CustodyWrite<'_>> {
         None
+    }
+
+    /// The store whose kept values and known values the side-row wall plans
+    /// a row with: the custody door's, or a room's base, which a room only
+    /// reads (FIX 2329). A value that custody holds takes its handle; with
+    /// `None`, no value does.
+    fn side_decides(&self) -> Option<&Store> {
+        self.side_custody().map(|door| door.store)
     }
 
     /// Whether this target is an off-record room's view, whose rows stage
@@ -73,14 +82,19 @@ impl<T: ManifestDbs> SideTableDbs for T {
         Some(self.sync_state())
     }
 
+    fn side_decides(&self) -> Option<&Store> {
+        self.room_base()
+    }
+
     fn side_off_record(&self) -> bool {
-        self.is_union()
+        self.room_base().is_some()
     }
 }
 
 /// One routed transaction's side databases: the vault's own, or an off-record session's view
 /// composed over them, which stages its writes into the session's overlay. Only the vault's own
-/// holds the custody door, so an off-record view refuses a secret the side-row wall would mint.
+/// holds the custody door, so an off-record view refuses a secret the side-row wall would mint;
+/// a value base custody holds takes its handle there (FIX 2329).
 #[derive(Clone, Copy)]
 pub(crate) enum RoutedDbs<'v> {
     Base(&'v crate::Vault),
@@ -106,6 +120,13 @@ impl SideTableDbs for RoutedDbs<'_> {
         match self {
             Self::Base(vault) => vault.side_custody(),
             Self::Session(_) => None,
+        }
+    }
+
+    fn side_decides(&self) -> Option<&Store> {
+        match self {
+            Self::Base(vault) => vault.side_decides(),
+            Self::Session(view) => view.side_decides(),
         }
     }
 

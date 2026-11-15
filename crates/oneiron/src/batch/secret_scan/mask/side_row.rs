@@ -405,13 +405,13 @@ struct Scope<'a> {
 
 impl<'a> Scope<'a> {
     /// A writer's own target, which decides with the custody door it holds
-    /// and mints through it.
+    /// and mints through it. A room's view holds no door and decides with
+    /// its base's custody (FIX 2329), as a reply published there does.
     fn of(dbs: &'a impl SideTableDbs, wtxn: &RwTxn<'_>) -> Result<Self> {
-        let door = dbs.side_custody();
         Ok(Self {
             mode: secret_scan_mode_in_txn(dbs, wtxn)?,
-            decides: door.as_ref().map(|door| door.store),
-            door,
+            decides: dbs.side_decides(),
+            door: dbs.side_custody(),
             off_record: dbs.side_off_record(),
         })
     }
