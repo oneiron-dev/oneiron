@@ -124,10 +124,6 @@ pub(super) fn archive_coverage_in_txn(
         }
     }
     coverage.unavailable = requested.difference(&coverage.held).copied().collect();
-    coverage.offloaded = super::history_offload::offloaded_rows_in_txn(vault, txn)?
-        .intersection(&coverage.unavailable)
-        .copied()
-        .collect();
     let Some(adopted) = adopted else {
         return Ok(coverage);
     };

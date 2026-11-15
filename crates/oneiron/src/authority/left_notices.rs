@@ -195,7 +195,7 @@ impl Vault {
         signer: &AuthorityKey,
         member_heads: &BTreeSet<AuthorityEntryHash>,
     ) -> Result<Vec<Vec<u8>>> {
-        let history = self.root_walk_history_in_txn(txn)?;
+        let history = super::history_transfer::history_in_txn(self, txn)?;
         let folded = member_folded(&history, member_heads);
         Ok(root_chain(&history, fold, signer)?
             .iter()
