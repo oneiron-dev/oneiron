@@ -5,8 +5,9 @@
 //! on the owner's approval.
 //!
 //! Direction: a lower count is tighter, since an edit with more ops is refused before the organ
-//! runs. A row that does not decode reads as one op. Whatever the count, the organ's own memory
-//! grant and frame limits still bound each call (`too_large`).
+//! runs. A row that does not decode reads as one op. The host sends the count with its
+//! `image.render` call, and the organ applies it in place of its own default of 256. Whatever the
+//! count, the organ's own memory grant and frame limits still bound each call (`too_large`).
 
 use serde::{Deserialize, Serialize};
 

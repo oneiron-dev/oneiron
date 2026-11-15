@@ -252,8 +252,10 @@ const fn organ_code(code: ErrorCode) -> &'static str {
 
 impl ImageEdit {
     /// The edit as one `image.render` call over `source`: each op in order,
-    /// then the PNG export.
-    fn render_call(&self, source: OrganInput) -> OrganCall {
+    /// then the PNG export. `max_ops` is the vault owner's count
+    /// (`organ_host.image.max_ops`), which the organ applies in place of
+    /// its own default.
+    fn render_call(&self, source: OrganInput, max_ops: usize) -> OrganCall {
         let ops = self.ops.iter().copied().map(ImageOp::render_arg).collect();
         OrganCall {
             organ: IMAGE_ORGAN.to_owned(),
@@ -262,6 +264,7 @@ impl ImageEdit {
             args: Value::Map(vec![
                 ("ops".into(), Value::Array(ops)),
                 ("format".into(), "png".into()),
+                ("max_ops".into(), max_ops.into()),
             ]),
             body: None,
             inputs: vec![SightedInput {
@@ -340,7 +343,7 @@ pub fn edit_image(
     };
     let job = JobCall {
         run_ref: edit.run_ref.clone(),
-        call: edit.render_call(input),
+        call: edit.render_call(input, max),
         lent: Vec::new(),
         trigger: edit.trigger.clone(),
         submitter: edit.submitter,

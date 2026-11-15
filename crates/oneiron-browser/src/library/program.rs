@@ -53,7 +53,8 @@ pub trait WorkflowLibrary: Send {
         supersedes: Option<&str>,
     ) -> Result<Admitted, BrowserError>;
     /// Counts one library run: whether it met its postcondition, and, for
-    /// a strict run, its strict misses in a row, the third retiring it
+    /// a strict run, its strict misses in a row, the third (the vault
+    /// owner's `browser.library.drift_misses`, 3 by default) retiring it
     /// `drift` in the same write.
     fn record_run(&mut self, workflow: &str, outcome: &RunOutcome) -> Result<(), BrowserError>;
     /// Takes a program out of the library for `reason`; `None` when none is

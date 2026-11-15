@@ -18,7 +18,8 @@ pub struct ImageEditRequest {
     /// The version edited; the head when absent.
     #[serde(default)]
     pub version: Option<u64>,
-    /// 1 to 256 steps, applied in order. Each is in canvas pixels after the
+    /// 1 to the vault owner's `organ_host.image.max_ops` steps (256 by
+    /// default), applied in order. Each is in canvas pixels after the
     /// steps before it, from the top-left corner, after EXIF orientation.
     pub ops: Vec<ImageEditOp>,
     /// The export's format: PNG, the only one this build writes.

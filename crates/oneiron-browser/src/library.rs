@@ -15,7 +15,8 @@
 //! and a run that misses its postcondition goes back to the planner with
 //! the checks it missed and the page it left. A run is strict, where only a
 //! rule answers its routine steps, or assisted (CUA E2); a program whose
-//! strict runs miss three times in a row retires `drift`. A program that
+//! strict runs miss three times in a row (the vault owner's
+//! `browser.library.drift_misses`, 3 by default) retires `drift`. A program that
 //! stops working leaves by retire, and a later solved run that passes both
 //! checks files it afresh, or files its repair as its successor
 //! (`supersedes`), which retires it in the same write.

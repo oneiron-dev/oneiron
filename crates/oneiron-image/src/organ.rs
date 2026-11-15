@@ -36,8 +36,13 @@ const VERBS: [(&str, bool); 7] = [
     (VERB_RENDER, false),
 ];
 
-/// The most ops one `image.render` applies.
+/// The most ops one `image.render` applies when its call names no
+/// `max_ops`: the host's default count (`organ_host.image.max_ops`).
 const MAX_RENDER_OPS: usize = 256;
+
+const fn default_max_render_ops() -> usize {
+    MAX_RENDER_OPS
+}
 
 /// The warning code for a source with no colour profile, read as sRGB. Notes
 /// carry codes; the host words them.
@@ -178,11 +183,17 @@ struct ExportArgs {
 }
 
 /// `image.render`'s args: the ops in order, each a map naming its `op`
-/// beside that op's own args, and the format.
+/// beside that op's own args, the format, and `max_ops`, the most ops this
+/// render applies: the host's count, which is the vault owner's
+/// `organ_host.image.max_ops`. A call that names none takes
+/// [`MAX_RENDER_OPS`]. The memory grant and frame limits bound each call
+/// whatever the count.
 #[derive(Deserialize)]
 struct RenderArgs {
     ops: Vec<Value>,
     format: String,
+    #[serde(default = "default_max_render_ops")]
+    max_ops: usize,
 }
 
 #[derive(Deserialize)]
@@ -488,9 +499,10 @@ impl ImageOrgan {
     fn render(&self, call: &CallContext<'_>) -> Result<Answer, OrganError> {
         let args: RenderArgs = from_value(call.args, "render args")?;
         png_only(&args.format)?;
-        if args.ops.len() > MAX_RENDER_OPS {
+        if args.ops.len() > args.max_ops {
             return Err(bad(format!(
-                "a render takes at most {MAX_RENDER_OPS} ops, not {}",
+                "a render takes at most {} ops, not {}",
+                args.max_ops,
                 args.ops.len()
             )));
         }

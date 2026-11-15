@@ -150,7 +150,15 @@ impl Vault {
         let bytes = self
             .read_blob_artifact_version_sighted_in_txn(&rtxn, artifact_id, head.version, sight)?
             .ok_or(Error::EntityNotFound)?;
-        self.text_offers_scoped(&rtxn, artifact_id, head.version, &bytes, &unattached)
+        let max_offers = super::super::setting_keys::reattach_max_offers_in_txn(self, &rtxn)?;
+        self.text_offers_scoped(
+            &rtxn,
+            artifact_id,
+            head.version,
+            &bytes,
+            &unattached,
+            max_offers,
+        )
     }
 
     /// [`Vault::annotation_reattach_offers`] for `lane` (FIX 8063): offers
