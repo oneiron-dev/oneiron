@@ -43,6 +43,10 @@ impl Vault {
             if !self.active_delete_scope_exists_in_txn(&rtxn, id)? {
                 return Ok(DeleteEntityOutcome::missing());
             }
+            // A row may have landed since the header read: an audit_read
+            // grant the owner made meanwhile is still his to revoke, never
+            // a delete's (Astra delta D2).
+            crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, &rtxn, id)?;
         }
         // Load the receipt's device key before the first txn (P6c).
         self.prepare_install_signing()?;
@@ -135,6 +139,9 @@ impl Vault {
             self.reject_erase_hold_in_txn(&wtxn, id, requester.as_ref())?;
             crate::world_keys::reject_held_pad_world_in_txn(&self.store, &wtxn, &[*id])?;
         }
+        // The purge's own view: an audit_read grant that landed after the
+        // probe stays (Astra delta D2).
+        crate::access_grant::reject_audit_read_grant_delete_in_txn(&self.store, &wtxn, id)?;
         if !crdt_persisted && reason.active_store_hard_purge_v1() {
             self.guard_active_merge_hard_delete_in_txn(&wtxn, id)?;
         }

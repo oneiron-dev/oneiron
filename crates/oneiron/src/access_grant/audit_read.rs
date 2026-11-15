@@ -51,8 +51,9 @@ const AUDIT_READ_GRANT_DOMAIN: &[u8] = b"oneiron.access_grant.audit_read.v1";
 /// holder of the audit_read power.
 const AUDIT_READ_REFUSAL: &str = "an audit read needs the owner's proof or a live audit_read power";
 
-/// What a generic delete door answers for an audit_read grant.
-const AUDIT_READ_DELETE_REFUSAL: &str =
+/// What a generic delete door answers for an audit_read grant. A replayed
+/// peer tombstone's refusal matches it exactly.
+pub(crate) const AUDIT_READ_DELETE_REFUSAL: &str =
     "an audit_read grant ends only through the owner's vault.audit_read.revoke, never a delete";
 
 /// Who reads an audit door (RULING AUDIT-READ-POWER-LIST = B): the vault's
@@ -427,7 +428,12 @@ fn id_held_by_another_row() -> Error {
 /// review auditread-8435-pr1 T1): the owner's revoke verb alone ends one, and
 /// it records his act, which a delete does not. An erased principal's grant
 /// stays too, as the history the authority audit lists. Every other row
-/// passes. The record delete guard and the batch delete arm both ask it.
+/// passes. The record delete guard, its headerless leg, the batch delete arm
+/// and a replayed peer tombstone's protection gate all ask it.
+///
+/// It reads the stored row, whatever its deletion state (Astra delta D4): a
+/// row marked stale keeps its whole body, so it is still the grant. Only a
+/// row whose body is gone (a shell) passes.
 ///
 /// # Errors
 /// The row at `id` is an audit_read grant, live or erased; or it does not
@@ -437,24 +443,38 @@ pub(crate) fn reject_audit_read_grant_delete_in_txn(
     txn: &heed::RoTxn<'_>,
     id: &EntityId,
 ) -> Result<()> {
-    let LiveEntityRow::Live {
-        entity_type: ENTITY_TYPE_ACCESS_GRANT,
-        body,
-    } = crate::vault::live_entity_row_in_txn(store, txn, id)?
-    else {
-        return Ok(());
-    };
-    let audit_read = match decode_access_grant_body(&body) {
-        Ok(grant) => matches!(grant.scope, AccessGrantScope::VaultAudit),
-        Err(_) => decode_erased_grant_body(&body)
-            .is_ok_and(|terms| matches!(terms.scope, AccessGrantScope::VaultAudit)),
-    };
-    if audit_read {
+    if stored_audit_read_grant_in_txn(store, txn, id)? {
         return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
             AUDIT_READ_DELETE_REFUSAL,
         )));
     }
     Ok(())
+}
+
+/// Whether the row stored at `id` is an audit_read grant, live or erased,
+/// whatever its deletion state: its body still decodes as one.
+///
+/// # Errors
+/// The row does not read.
+pub(crate) fn stored_audit_read_grant_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(store
+        .port_entity_record(txn, id)?
+        .is_some_and(|row| is_audit_read_grant_row(row.entity_type, &row.body)))
+}
+
+/// Whether a row of type `entity_type` holding `body` is an audit_read grant,
+/// live or erased. A shell's empty body is none.
+pub(crate) fn is_audit_read_grant_row(entity_type: u8, body: &[u8]) -> bool {
+    entity_type == ENTITY_TYPE_ACCESS_GRANT
+        && match decode_access_grant_body(body) {
+            Ok(grant) => matches!(grant.scope, AccessGrantScope::VaultAudit),
+            Err(_) => decode_erased_grant_body(body)
+                .is_ok_and(|terms| matches!(terms.scope, AccessGrantScope::VaultAudit)),
+        }
 }
 
 /// The id of `holder`'s audit_read grant.

@@ -13,8 +13,11 @@ pub use context::{AccessContext, AccessLimited, GrantedData};
 mod request;
 pub use request::{AccessRequest, AccessRequestResponder, AccessRequestStatus, AddressedAnswer};
 mod audit_read;
+pub(crate) use audit_read::{
+    AUDIT_READ_DELETE_REFUSAL, AuditReadChange, is_audit_read_grant_row,
+    reject_audit_read_grant_delete_in_txn, stored_audit_read_grant_in_txn,
+};
 pub use audit_read::{AuditHolder, AuditReader};
-pub(crate) use audit_read::{AuditReadChange, reject_audit_read_grant_delete_in_txn};
 mod codec;
 mod companion_admission;
 mod companion_index;

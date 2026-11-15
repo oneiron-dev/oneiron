@@ -28,9 +28,10 @@ use super::sweep_queue::{WithdrawnReplacement, enqueue_withdrawn_generation_in_t
 /// before anything changes; a TURN's DAG topology is pinned content-free
 /// next; then its document, row revisions, short-id rows and L2 cache go, and
 /// the row keeps its header byte for byte. Whether it scrubbed: an absent or
-/// header-only row, one not marked stale and any SUMMARY are left as they are
-/// (an epoch summary's own scrub keeps its keyframe, and a scope summary
-/// keeps its editor history).
+/// header-only row, one not marked stale, any SUMMARY and an audit_read
+/// grant are left as they are (an epoch summary's own scrub keeps its
+/// keyframe, a scope summary keeps its editor history, and an audit_read
+/// grant ends only through the owner's revoke).
 pub(crate) fn scrub_withdrawn_record_in_txn(
     store: &Store,
     txn: &mut heed::RwTxn<'_>,
@@ -44,7 +45,10 @@ pub(crate) fn scrub_withdrawn_record_in_txn(
     }
     let header = EntityMetadataHeader::parse(&raw)
         .ok_or(Error::CorruptedIndex("withdrawn record header"))?;
-    if header.entity_type == ENTITY_TYPE_SUMMARY || !crate::ports::stale_in_txn(store, txn, id)? {
+    if header.entity_type == ENTITY_TYPE_SUMMARY
+        || crate::access_grant::stored_audit_read_grant_in_txn(store, txn, id)?
+        || !crate::ports::stale_in_txn(store, txn, id)?
+    {
         return Ok(false);
     }
     let at = crate::ports::recorded_at_in_txn(store, txn)?;
@@ -72,7 +76,8 @@ pub(crate) fn scrub_withdrawn_record_in_txn(
 
 /// Whether `id` still holds words here of a generation at or below `cutoff`,
 /// a Shell cutoff another machine of this vault carries. A SUMMARY never
-/// takes a Shell.
+/// takes a Shell, and nor does an audit_read grant: a carried cutoff is no
+/// owner act, and the owner's revoke alone ends one (Astra delta D1).
 #[cfg(feature = "sync")]
 pub(crate) fn holds_withdrawn_record_in(
     store: &Store,
@@ -83,7 +88,10 @@ pub(crate) fn holds_withdrawn_record_in(
     let Some(row) = store.port_entity_record(txn, id)? else {
         return Ok(false);
     };
-    Ok(row.learned_at <= cutoff && !row.body.is_empty() && row.entity_type != ENTITY_TYPE_SUMMARY)
+    Ok(row.learned_at <= cutoff
+        && !row.body.is_empty()
+        && row.entity_type != ENTITY_TYPE_SUMMARY
+        && !crate::access_grant::is_audit_read_grant_row(row.entity_type, &row.body))
 }
 
 /// Withdraws `id` here as the withdrawal on the machine that cut it off at
