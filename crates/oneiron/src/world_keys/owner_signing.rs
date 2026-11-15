@@ -30,9 +30,15 @@
 //! forgotten, with a PIN set or with none: every key the device held was
 //! lost with that PIN, and its next key is made under a new one. A signer
 //! made from a slot also signs only while that slot still holds its seed,
-//! and it reads the slot at each signature: a seed that a PIN took under
-//! itself, or that a forget or a fresh key removed, leaves no signer behind,
-//! whatever the keystore says about its PIN afterwards. Either way, a key
+//! and it reads the slot at each signature: while the slot is empty or holds
+//! another seed, a seed that a PIN took under itself, or that a forget or a
+//! fresh key removed, leaves no signer behind, whatever the keystore says
+//! about its PIN afterwards. Known limit: a copy of the slot's stored form
+//! that someone kept from before the PIN brings the key back with no PIN,
+//! once it is put back and the device PIN key, or the mark of a forgotten
+//! PIN, is removed; so does a key directory restored from before the PIN. A
+//! PIN added to a key does not undo an earlier copy of that key. Renewing
+//! the key does (row DEVICE-PIN-ADD-ROTATES-OWNER-KEY). Either way, a key
 //! signs only while the roster lists it live, and it checks that at each
 //! signature.
 
@@ -139,11 +145,13 @@ impl OwnerRootSigner {
     /// device PIN is set on its keystore: from then on the key signs from
     /// under the PIN, and what was read before is dead. It stays dead when
     /// that PIN is forgotten: the key was lost with it. The slot is read
-    /// too, so the key is dead once its seed left the slot, and stays dead
-    /// when a writer of the keystore's files removes what says a PIN is set
-    /// or was forgotten: nobody without the seed puts it back. A keystore
-    /// that does not answer signs nothing. Every key stops when the roster
-    /// no longer lists it live.
+    /// too, so the key signs only while its slot holds its seed: when a
+    /// writer of the keystore's files removes what says a PIN is set or was
+    /// forgotten, a key whose slot is empty or holds another seed stays
+    /// dead. A copy of the slot's stored form from before the PIN, put back,
+    /// revives it: the module's known limit. A keystore that does not answer
+    /// signs nothing. Every key stops when the roster no longer lists it
+    /// live.
     fn refusal(&self, vault: &Vault) -> Option<Error> {
         if let Some(home) = &self.slot_home {
             if home.slot.vault_id != *vault.vault_id().as_bytes() {
