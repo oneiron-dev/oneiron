@@ -245,11 +245,6 @@ fn offload_scope_in_txn(
     {
         return Ok(Err("authority history offload is disabled"));
     }
-    if elected_home_in_txn(vault, txn)? {
-        return Ok(Err(
-            "the vault's elected home keeps its whole authority log",
-        ));
-    }
     let Some(adopted) =
         super::checkpoint_adopt::cached_verified_adoption_in_txn(&vault.store, txn)?
     else {
