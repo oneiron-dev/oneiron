@@ -87,7 +87,7 @@ impl SeatSpent {
         self.resets_at
             .iter()
             .copied()
-            .find(|at| *at > now)
+            .find(|at| *at > now + 10_000)
             .or_else(|| self.retry_after.map(|wait| now.saturating_add(wait)))
     }
 

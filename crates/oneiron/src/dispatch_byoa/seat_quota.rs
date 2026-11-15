@@ -225,10 +225,10 @@ pub(super) fn top_up_seat_quota_in_txn(
         Some(spent) => spent.kind == Some(SpentKind::Credit),
     };
     if !credit {
-        return Ok(RunnerSeatTopUpEffect::NotCredit);
+        return Ok(RunnerSeatTopUpEffect::AlreadyClear);
     }
     let record = SeatQuotaRecord {
-        spent: None,
+        spent: head.spent.clone(),
         topped_up: Some(top_up),
         ..head
     };

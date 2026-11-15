@@ -294,11 +294,11 @@ where
             if let Some(quota) = quotas.get(index).filter(|quota| !quota.available) {
                 found.spent_seen = true;
                 found.back_at = match (found.back_at, quota.back_at) {
-                    (Some(first), Some(back)) => Some(first.min(back)),
+                    (Some(first), Some(back)) => Some(first.max(back)),
                     (first, back) => first.or(back),
                 };
                 let reason = SeatPassedOver::Spent {
-                    back_at: quota.back_at,
+                    back_at: None,
                 };
                 found.skipped.push(passed_over(index, next, reason));
                 continue;

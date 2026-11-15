@@ -51,7 +51,6 @@ pub use oneiron_verb_wire::dispatch_byoa::owner_doors::{
 
 /// The owner's word that a seat's spent credit is topped up.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
 pub struct RunnerSeatCreditTopUpRequest {
     /// The seat, as a seat policy names it.
     pub seat: RunnerSeat,

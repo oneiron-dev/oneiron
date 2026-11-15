@@ -116,7 +116,7 @@ where
         policy.validate(registry)?;
         let vault = self.vault();
         let Some(head) = head_hop(vault, wtxn, request.binding)? else {
-            return Ok(RunnerWorkResume::Gone);
+            return Ok(RunnerWorkResume::NoSeat { skipped: Vec::new() });
         };
         let attempt = AttemptId::from_bytes(&head.attempt)?;
         let stored = seat_index(head.seat);
