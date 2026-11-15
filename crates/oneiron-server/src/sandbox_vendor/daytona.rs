@@ -9,8 +9,11 @@
 //! bases this client was built with, never to a URL an answer names, and it
 //! is scrubbed from every error text.
 //!
-//! A snapshot fixes a sandbox's resources, so the step's budget is kept by
-//! the guest itself, as on our own backends. The sandbox has no network
+//! A snapshot fixes a sandbox's resources: the guest holds its program to
+//! the budget's processes and to its own memory limit, and the sandbox may
+//! have more memory than the budget (FIX [VENDOR-MEM-BUDGET]). The guest
+//! image's snapshot is the owner's, named after the image's digest; Daytona
+//! cannot show that it holds that image. The sandbox has no network
 //! (`networkBlockAll`): a vendor run has no egress (module doc of
 //! `VendorBatchBackend`). A sandbox a lost run leaves behind stops after
 //! [`AUTO_STOP_MINUTES`] idle minutes and is then deleted by Daytona.
