@@ -14,7 +14,9 @@ use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{Error, Result};
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
-use crate::store::{GateDecisionId, GateDecisionRecord, Store};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateEnginePart, GateReceipt, PolicyBasis, ReceiptActor, Store};
+use oneiron_contracts::RecordedSeconds;
 
 use super::codec::{decode_connector_key_body, encode_connector_key_body};
 use super::meter::{EffectorBudgetLocation, budget_exhausted_reason};
@@ -427,28 +429,19 @@ pub(super) fn append_connector_key_op_record(
     let mut hasher = Sha256::new();
     hasher.update(CONNECTOR_KEY_OP_DIFF_DOMAIN);
     hasher.update(&body);
-    store.append_gate_decision_in_txn(
-        wtxn,
-        &GateDecisionRecord {
-            version: 0,
-            decision_id: GateDecisionId::from_bytes(store.clock.ulid()?),
-            created_at: at,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![op_reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "first_party".to_owned(),
-            actor_ref: None,
-            content_kind: "connector_key_op".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(format!("ckey:{}", id.to_hex())),
-            diff_handle: hasher.finalize().to_vec(),
-            read_frontier_hash: policy_frontier,
-            context: Default::default(),
-            redacted_at: None,
-        },
-    )
+    let mut receipt = GateReceipt::new(
+        GateReceiptOutcome::Allow,
+        "connector_key_op",
+        op_reason,
+        ReceiptActor::Part(GateEnginePart::FirstParty, None),
+        hasher.finalize().to_vec(),
+        PolicyBasis::frontier(policy_frontier),
+    );
+    receipt.grant_ref = Some(format!("ckey:{}", id.to_hex()));
+    // The op's own second, as its caller dates it.
+    receipt.decided_at = Some(RecordedSeconds::from_secs(at));
+    store.record_gate_receipt_in_txn(wtxn, receipt)?;
+    Ok(())
 }
 
 pub(crate) fn rebuild_checkpoint_connector_index(

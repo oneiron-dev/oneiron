@@ -20,9 +20,8 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result, SyncProtocolValidation, SyncSelectorValidation};
 use crate::registry::ENTITY_TYPE_FEDERATION_GRANT;
 use crate::share_travel::{GrantTravel, travelled_value};
-use crate::store::{
-    GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
-};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
 use oneiron_authority::share_travel::TravelChoice;
 
 /// The Gate decision reason of an owner act that sets a choice.
@@ -106,31 +105,19 @@ impl GrantTravelAct<'_> {
         } else {
             GRANT_TRAVEL_SET_REASON
         };
-        let mut record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-            created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-            outcome: "approved".to_owned(),
-            reason_codes: vec![reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: GateSystemNoticeRecord::receipt_details(
-                GRANT_TRAVEL_CONTENT_KIND,
-                details,
-            ),
-            actor_class: "human".to_owned(),
-            actor_ref: Some(self.actor.to_hex()),
-            content_kind: GRANT_TRAVEL_CONTENT_KIND.to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(self.grant.to_hex()),
-            diff_handle: after.to_vec(),
-            read_frontier_hash: self.frontier,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        vault
-            .store
-            .append_fresh_gate_decision_in_txn(txn, &mut record)
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Approved,
+            GRANT_TRAVEL_CONTENT_KIND,
+            reason,
+            ReceiptActor::human(self.actor),
+            after.to_vec(),
+            // The main-log heads the act observed, in the frontier field.
+            PolicyBasis::frontier(self.frontier),
+        );
+        receipt.grant_ref = Some(self.grant.to_hex());
+        receipt.details = details;
+        vault.store.record_gate_receipt_in_txn(txn, receipt)?;
+        Ok(())
     }
 }
 

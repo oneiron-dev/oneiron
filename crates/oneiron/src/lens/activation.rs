@@ -12,7 +12,8 @@ use super::proposal::{LensSlotRecord, PROPOSALS, SLOTS, active_at, invalid_state
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::receipt::{LensActivationReceipt, LensSlotDecision};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionId, GateReceipt, PolicyBasis, ReceiptActor};
 use crate::{EntityId, Error, Result, Vault};
 
 #[doc(hidden)]
@@ -154,26 +155,18 @@ impl Vault {
         let bytes = serde_json::to_vec(receipt)
             .map_err(|_| Error::InvariantViolation("lens slot receipt encoding failed"))?;
         digest.update(&bytes);
-        let record = GateDecisionRecord {
-            version: GATE_DECISION_LEDGER_VERSION,
-            decision_id,
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: "allow".to_owned(),
-            reason_codes: vec![reason.to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: "human".to_owned(),
-            actor_ref: Some(actor.to_hex()),
-            content_kind: "lens_slot".to_owned(),
-            policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: None,
-            diff_handle: digest.finalize().as_bytes().to_vec(),
-            read_frontier_hash: [0_u8; 32],
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store.append_gate_decision_in_txn(txn, &record)
+        let mut gate_receipt = GateReceipt::new(
+            GateReceiptOutcome::Allow,
+            "lens_slot",
+            reason,
+            ReceiptActor::human(actor),
+            digest.finalize().as_bytes().to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        // The slot row already names this decision.
+        gate_receipt.id = Some(decision_id);
+        self.store.record_gate_receipt_in_txn(txn, gate_receipt)?;
+        Ok(())
     }
 
     /// The generated lens the owner selected for a pack/skill slot, rechecked
