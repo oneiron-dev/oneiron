@@ -1,7 +1,8 @@
 //! The general grant act's wire and rule (Fable pass 28 R2): seven keys always, a nil act for a
 //! rule's end and a nil `terms` for any end, and one rule per decider. A person gives or ends a
 //! Grant of any family but the owner's agent Grant, whose mint and revoke are his own act; a
-//! rule only ends that Grant; no giving commits to all-zero terms.
+//! rule ends a Grant of any family (a lapse, a direct delete, an owed end whose person was
+//! erased) and gives none; no giving commits to all-zero terms.
 
 use oneiron_authority::authority::{
     ActBy, ActSurface, AuthorityOp, GRANT_ACT_SEEN, GrantActChange, GrantActRecord, GrantDecider,
