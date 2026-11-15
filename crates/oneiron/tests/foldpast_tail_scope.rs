@@ -26,6 +26,7 @@ use oneiron::test_doors::foldpast::{
     sign_host_op_beside_next, sign_next_host_op, sign_next_host_op_cosigned, sign_next_op_as,
 };
 use oneiron::{EntityId, OpenOptions, Vault, VaultConfig, VaultStorageId};
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 /// Home vault H, adopting vault A, and H's host issuer. The vaults close
 /// before their directories go.
@@ -349,17 +350,21 @@ fn sign_on_home(fixture: &Fixture, op: AuthorityOp) -> AuthorityLogEntry {
 }
 
 /// Asserts that `result`, a store and then a fold on the adopting vault,
-/// asked for the history. A batch of grants alone that only the history
-/// folds is kept as pending evidence, and its store asks for the history
-/// itself; any other batch is stored, and its fold asks.
-fn asks_history<T: std::fmt::Debug>(result: oneiron::error::Result<T>) {
+/// asked for the history, for `reason`. A batch of grants alone that only
+/// the history folds is kept as pending evidence, and its store asks for the
+/// history itself; any other batch is stored, and its fold asks.
+fn asks_history<T: std::fmt::Debug>(
+    result: oneiron::error::Result<T>,
+    reason: AuthorityHistoryReason,
+) {
     let err = result.expect_err("adopting needs history");
     assert!(
         matches!(
-            err,
-            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+            &err,
+            Error::Record(RecordError::AuthorityHistoryRequired { reason: asked, .. })
+                if *asked == Some(reason)
         ),
-        "history required, got {err:?}"
+        "history required for {reason:?}, got {err:?}"
     );
 }
 
@@ -731,16 +736,10 @@ fn rejected_row_beside_a_serial_withdrawal_still_needs_history() {
         !home_fold.valid_entries.contains(&second_hash),
         "home rejects the rotation"
     );
-    let err = fixture
-        .adopting
-        .authority_fold()
-        .expect_err("adopting needs history");
-    assert!(
-        matches!(
-            err,
-            Error::Record(RecordError::AuthorityHistoryRequired { .. })
-        ),
-        "history required, got {err:?}"
+    // The serial row's tail folds whole, and the rotation folds rejected.
+    asks_history(
+        fixture.adopting.authority_fold(),
+        AuthorityHistoryReason::RejectedRowCrossed,
     );
 }
 
@@ -1053,16 +1052,9 @@ fn covered_approval_with_no_adoption_receipt_needs_history() {
     );
     revoke_agent(&fixture);
     fixture.home.authority_fold().expect("home folds revoke");
-    let err = fixture
-        .adopting
-        .authority_fold()
-        .expect_err("adopting needs history");
-    assert!(
-        matches!(
-            err,
-            Error::Record(RecordError::AuthorityHistoryRequired { .. })
-        ),
-        "history required, got {err:?}"
+    asks_history(
+        fixture.adopting.authority_fold(),
+        AuthorityHistoryReason::StaleRosterWindow,
     );
 }
 
@@ -1166,16 +1158,9 @@ fn readoption_keeps_no_receipt_for_a_row_the_prior_image_covered() {
     );
     revoke_agent(&fixture);
     fixture.home.authority_fold().expect("home folds revoke");
-    let err = fixture
-        .adopting
-        .authority_fold()
-        .expect_err("adopting needs history");
-    assert!(
-        matches!(
-            err,
-            Error::Record(RecordError::AuthorityHistoryRequired { .. })
-        ),
-        "history required, got {err:?}"
+    asks_history(
+        fixture.adopting.authority_fold(),
+        AuthorityHistoryReason::StaleRosterWindow,
     );
 }
 
@@ -1254,6 +1239,7 @@ fn slip_burn_below_a_rejected_tail_row_still_needs_history() {
     asks_history(
         put_signed_entries(&fixture.adopting, &[rejected, burn])
             .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::RejectedRowCrossed,
     );
 }
 
@@ -1445,6 +1431,7 @@ fn old_root_row_beside_a_re_root_still_needs_history() {
     asks_history(
         put_signed_entries(&fixture.adopting, std::slice::from_ref(&handoff))
             .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::HandoffFence,
     );
 }
 
@@ -1485,6 +1472,7 @@ fn two_re_roots_in_one_tail_still_need_history() {
     asks_history(
         put_signed_entries(&fixture.adopting, &both)
             .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::OpNotFoldedPast,
     );
 }
 
@@ -1719,6 +1707,7 @@ fn rebinding_a_key_back_to_a_covered_actor_still_needs_history() {
     asks_history(
         put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
             .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::UnsettledMove,
     );
 }
 
@@ -1742,6 +1731,7 @@ fn rebinding_back_past_a_successor_image_still_needs_history() {
     asks_history(
         put_signed_entries(&readopting, std::slice::from_ref(&tail))
             .and_then(|()| readopting.authority_fold()),
+        AuthorityHistoryReason::UnsettledMove,
     );
 }
 
@@ -2079,6 +2069,7 @@ fn machine_revision_beside_a_covered_row_still_needs_history() {
     asks_history(
         put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
             .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::CoveredRowConcurrent,
     );
 }
 
@@ -2104,5 +2095,173 @@ fn machine_revision_by_a_non_owner_still_needs_history() {
     asks_history(
         put_signed_entries(&home.fixture.adopting, std::slice::from_ref(&tail))
             .and_then(|()| home.fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::RejectedRowCrossed,
+    );
+}
+
+#[test]
+fn tail_row_on_an_unheld_row_asks_for_that_row_alone() {
+    let fixture = fixture();
+    let first = sign_on_home(
+        &fixture,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xF0)),
+    );
+    let second = sign_on_home(
+        &fixture,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xF4)),
+    );
+    let first_hash = authority_entry_hash(&first).expect("first hash");
+    assert_eq!(
+        second.parent_hashes,
+        vec![first_hash],
+        "the second row stands on the first"
+    );
+    // The adopter stores the second row alone: its parent is no covered row,
+    // and only a fetch of that row closes the request.
+    let err = put_signed_entries(&fixture.adopting, std::slice::from_ref(&second))
+        .and_then(|()| fixture.adopting.authority_fold())
+        .expect_err("adopting needs the first row");
+    assert!(
+        matches!(
+            &err,
+            Error::Record(RecordError::AuthorityHistoryRequired {
+                missing,
+                reason: Some(AuthorityHistoryReason::UnheldRows),
+                ..
+            }) if *missing == vec![first_hash]
+        ),
+        "history required for the first row alone, got {err:?}"
+    );
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&first))
+        .expect("store the named row");
+    assert!(
+        fixture
+            .adopting
+            .authority_fold()
+            .expect("the fetched row closes the request")
+            .valid_entries
+            .contains(&first_hash),
+        "the adopter folds the fetched row"
+    );
+}
+
+#[test]
+fn device_revocation_on_an_unheld_row_asks_for_that_row() {
+    let fixture = fixture();
+    let first = sign_on_home(
+        &fixture,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xF8)),
+    );
+    let revoke = sign_on_home(
+        &fixture,
+        AuthorityOp::RevokeDevice {
+            revoked_key: agent_key(),
+        },
+    );
+    let first_hash = authority_entry_hash(&first).expect("first hash");
+    let revoke_hash = authority_entry_hash(&revoke).expect("revoke hash");
+    assert_eq!(
+        revoke.parent_hashes,
+        vec![first_hash],
+        "the revocation stands on the first row"
+    );
+    // The adopter stores the revocation alone. A serial row folds past the
+    // image with every covered row in its causal past, and its parent is
+    // neither tail nor covered: the walk stops at a row this vault does not
+    // hold, which proves no covered row concurrent.
+    let err = put_signed_entries(&fixture.adopting, std::slice::from_ref(&revoke))
+        .and_then(|()| fixture.adopting.authority_fold())
+        .expect_err("adopting needs the first row");
+    assert!(
+        matches!(
+            &err,
+            Error::Record(RecordError::AuthorityHistoryRequired {
+                missing,
+                reason: Some(AuthorityHistoryReason::UnheldRows),
+                ..
+            }) if missing.contains(&first_hash)
+        ),
+        "history required for the unheld first row, got {err:?}"
+    );
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&first))
+        .expect("store the named row");
+    let home_fold = fixture.home.authority_fold().expect("home folds revoke");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("the fetched row closes the request");
+    assert!(
+        adopting_fold.valid_entries.contains(&revoke_hash),
+        "the adopter folds the revocation"
+    );
+    assert!(
+        adopting_fold
+            .roster
+            .get(&agent_key())
+            .is_some_and(|device| device.revoked),
+        "the adopter holds the agent key revoked"
+    );
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+}
+
+#[test]
+fn device_revocation_past_an_image_with_issues_still_needs_history() {
+    let ConcurrentHome {
+        home,
+        issuer,
+        home_dir,
+        next_seq,
+        heads,
+    } = concurrent_home();
+    // Covered: a world's side join the fold rejects, and a main agent row
+    // beside it: the image covers a row its fold did not accept.
+    let side = rejected_side_join(&home, &issuer, next_seq, heads.clone());
+    let device = fresh_device(0x5d, ROLE_AGENT);
+    let revoked_key = device.key.clone();
+    let main = oneiron::test_doors::foldpast::sign_host_op_at(
+        &home,
+        &issuer,
+        AuthorityOp::EnrollDevice { device },
+        next_seq + 1,
+        heads,
+    )
+    .expect("sign main row");
+    put_signed_entries(&home, &[side, main.clone()]).expect("store the covered rows");
+    let head = home
+        .write_authority_checkpoint_v2(&issuer)
+        .expect("write image");
+    let image = home
+        .authority_checkpoint_v2(&head)
+        .expect("read image")
+        .expect("image some");
+    let image_fold = image.fold();
+    assert!(
+        image
+            .covered
+            .iter()
+            .any(|hash| !image_fold.valid_entries.contains(hash)),
+        "the image covers the rejected side join"
+    );
+    let (adopting, adopt_dir) = adopt_image(&home, &head, &image);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    // A device revocation folds past only a clean image.
+    let revoke = oneiron::test_doors::foldpast::sign_host_op_at(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::RevokeDevice { revoked_key },
+        next_seq + 2,
+        vec![authority_entry_hash(&main).expect("main hash")],
+    )
+    .expect("sign revocation");
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&revoke))
+            .and_then(|()| fixture.adopting.authority_fold()),
+        AuthorityHistoryReason::UncleanImage,
     );
 }
