@@ -27,7 +27,11 @@
 //! agent is not in, pairs for the owner's own question over the same claim,
 //! and never for the bound or the agent's question: neither in its
 //! person-changed pairs nor in its calibration pairs. The answer over a claim
-//! the lane reads pairs for each.
+//! the lane reads pairs for each. A record a host puts under an ask pairs
+//! only as that ask's own answered change: a record naming the question's
+//! first version, saved under the owner's own lane, put under an open ask of
+//! its second version over a claim outside that version's worlds, pairs
+//! nothing.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -42,8 +46,8 @@ use oneiron::llm::decision::questions::{
     OutcomeBinding, OutcomeLabel, OutcomeSource, OutcomeWindowClose, QuestionActivation,
     QuestionDefinitionInput, RefreshPolicy, WindowOutcome, calibration_pairs,
     close_due_outcome_windows, closed_outcome_windows, create_question, create_question_with_lane,
-    outcome_labels, person_changed_pairs, project_bound_outcomes, read_question,
-    refresh_standing_question_with,
+    edit_question_with_lane, outcome_labels, person_changed_pairs, project_bound_outcomes,
+    read_question, refresh_standing_question_with,
 };
 use oneiron::llm::decision::{
     AnswerContract, AskTo, DecisionAnswer, DecisionBand, DecisionClass, DecisionDial,
@@ -1033,6 +1037,37 @@ fn prior_pin() -> ProviderPin {
     }
 }
 
+/// `principal`'s `question` going up to the owners over `evidence`, with
+/// the model's yes at 0.9.
+fn asked_up(
+    question: DecisionQuestion,
+    principal: EntityId,
+    evidence: Vec<EntityId>,
+) -> HumanDecisionRequest {
+    HumanDecisionRequest {
+        question,
+        principal,
+        evidence,
+        reason: HumanAskReason::Uncertain,
+        prior: Some(ProviderDecision {
+            answer: DecisionAnswer::Noul(true),
+            probability: Some(0.9),
+            paired: None,
+            person: None,
+            served: None,
+            cost_per_thousand: None,
+        }),
+        prior_provider: Some(prior_pin()),
+        queue_pin: ProviderPin {
+            rung: DecisionRung::Human,
+            model: "questions.saved_lane.person".into(),
+            version: "1".into(),
+        },
+        to: AskTo::owner(),
+        correlation: None,
+    }
+}
+
 /// `principal`'s saved `question` goes up to the owners over `evidence`,
 /// with the model's yes at 0.9, and the owner answers no: a person changed
 /// the model's answer. The ask's id, the source its person-changed record is
@@ -1048,28 +1083,11 @@ fn owner_changes_an_asked_up_answer(
         .expect("read the saved question")
         .expect("precondition: the principal's saved question");
     let seq = vault
-        .queue_decision_ask(&HumanDecisionRequest {
-            question: record.definition.question,
+        .queue_decision_ask(&asked_up(
+            record.definition.question,
             principal,
-            evidence: evidence.clone(),
-            reason: HumanAskReason::Uncertain,
-            prior: Some(ProviderDecision {
-                answer: DecisionAnswer::Noul(true),
-                probability: Some(0.9),
-                paired: None,
-                person: None,
-                served: None,
-                cost_per_thousand: None,
-            }),
-            prior_provider: Some(prior_pin()),
-            queue_pin: ProviderPin {
-                rung: DecisionRung::Human,
-                model: "questions.saved_lane.person".into(),
-                version: "1".into(),
-            },
-            to: AskTo::owner(),
-            correlation: None,
-        })
+            evidence.clone(),
+        ))
         .expect("precondition: the ask goes up to the owners");
     let ask = vault
         .answer_decision_ask(proof, seq, DecisionAnswer::Noul(false))
@@ -1172,6 +1190,123 @@ fn a_world_bound_saved_question_takes_no_person_changed_pair_over_a_claim_outsid
         "actor=owner's question saved under the base-world lane; expected a calibration pair \
          from its ask over claim {inside:?} only, none from its ask {over_outside:?} over claim \
          {outside:?} outside its worlds; seen {pairs:?}"
+    );
+}
+
+#[test]
+fn a_person_changed_record_naming_an_earlier_version_under_an_open_ask_pairs_nothing() {
+    let fixture = fixture();
+    let actor = WriteActor::new(fixture.owner, EdgeActorClass::Human);
+    let claim_in = |world: EntityId| {
+        write_owner_claim(
+            &fixture.vault,
+            fixture.owner,
+            &fixture.proof,
+            fixture.unit,
+            REFERENCE_PREDICATE,
+            fixture.fact_at(),
+            world,
+            all_relationships(),
+        )
+    };
+    let inside = claim_in(base_world_id());
+    let outside = claim_in(fixture.other_world);
+    assert!(
+        fixture.owner_reads(&outside)
+            && fixture.bound_lane_reads(&inside)
+            && !fixture.bound_lane_reads(&outside),
+        "precondition: the owner reads claim {outside:?} in world {:?}, and the base-world lane \
+         reads claim {inside:?} and not that one",
+        fixture.other_world
+    );
+    let first = read_question(&fixture.vault, fixture.owner, fixture.control, Some(1))
+        .expect("read the owner's question at its first version")
+        .expect("precondition: the owner's question keeps its first version");
+    assert!(
+        first.read_lane.is_principal(),
+        "precondition: the first version reads under the owner's own lane"
+    );
+    let narrowed = edit_question_with_lane(
+        &fixture.vault,
+        actor,
+        &fixture.bound_lane(),
+        fixture.control,
+        1,
+        definition(fixture.unit),
+        fixture.fact_at(),
+    )
+    .expect("precondition: the owner saves a second version through the base-world lane");
+    assert!(
+        narrowed.definition.question.version == 2 && !narrowed.read_lane.is_principal(),
+        "precondition: the second version keeps the base-world bound; seen version {} lane {:?}",
+        narrowed.definition.question.version,
+        narrowed.read_lane
+    );
+    let over_inside = owner_changes_an_asked_up_answer(
+        &fixture.vault,
+        &fixture.proof,
+        fixture.owner,
+        fixture.control,
+        vec![fixture.unit, inside],
+    );
+    let seq = fixture
+        .vault
+        .queue_decision_ask(&asked_up(
+            narrowed.definition.question,
+            fixture.owner,
+            vec![fixture.unit, outside],
+        ))
+        .expect("precondition: a second-version ask over the outside claim goes up to the owners");
+    let open = fixture
+        .vault
+        .decision_ask(seq)
+        .expect("read the open ask")
+        .expect("precondition: the vault keeps the open ask");
+    assert!(
+        open.answer.is_none() && open.question.version == 2,
+        "precondition: no one answered the second-version ask over claim {outside:?}; seen {open:?}"
+    );
+    let record = asked_up(
+        first.definition.question,
+        fixture.owner,
+        vec![fixture.unit, outside],
+    )
+    .changed_by(DecisionAnswer::Noul(false))
+    .expect("a person's no to the first version")
+    .expect("precondition: the no changes the model's yes");
+    fixture
+        .vault
+        .record_person_changed_answer(open.id, &record)
+        .expect("precondition: the host keeps a first-version record under the open ask");
+    let pairs = person_changed_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("narrowed question person-changed pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=owner's question narrowed to the base-world lane at version 2; expected a \
+         person-changed pair from its answered ask over claim {inside:?} only, none from the \
+         first-version record put under its open ask {:?} over claim {outside:?}; seen {pairs:?}",
+        open.id
+    );
+    let pairs = calibration_pairs(
+        &fixture.vault,
+        fixture.owner,
+        fixture.control,
+        CallerLocality::OnDevice,
+    )
+    .expect("narrowed question calibration pairs");
+    assert_eq!(
+        paired_asks(&pairs),
+        vec![over_inside],
+        "actor=owner's question narrowed to the base-world lane at version 2; expected a \
+         calibration pair from its answered ask over claim {inside:?} only, none from the \
+         first-version record put under its open ask {:?} over claim {outside:?}; seen {pairs:?}",
+        open.id
     );
 }
 
