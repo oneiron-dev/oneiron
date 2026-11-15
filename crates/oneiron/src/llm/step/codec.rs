@@ -64,23 +64,6 @@ pub(super) fn decode_entity_id_value(value: &Value) -> Result<EntityId> {
 }
 
 pub(super) fn decode_hash_hex(hex: &str) -> Result<[u8; 32]> {
-    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(invalid_step("dreamer step step_hash must be 64 hex chars"));
-    }
-    let mut out = [0_u8; 32];
-    for (index, chunk) in hex.as_bytes().chunks_exact(2).enumerate() {
-        let high = hex_nibble(chunk[0])?;
-        let low = hex_nibble(chunk[1])?;
-        out[index] = (high << 4) | low;
-    }
-    Ok(out)
-}
-
-const fn hex_nibble(byte: u8) -> Result<u8> {
-    match byte {
-        b'0'..=b'9' => Ok(byte - b'0'),
-        b'a'..=b'f' => Ok(byte - b'a' + 10),
-        b'A'..=b'F' => Ok(byte - b'A' + 10),
-        _ => Err(invalid_step("dreamer step step_hash must be hex")),
-    }
+    oneiron_hex::decode_any_case::<32>(hex)
+        .ok_or_else(|| invalid_step("dreamer step step_hash must be 64 hex chars"))
 }
