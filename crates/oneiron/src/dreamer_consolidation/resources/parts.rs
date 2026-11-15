@@ -233,6 +233,19 @@ impl<'a> BranchResources<'a> {
         Ok(facts)
     }
 
+    /// The sitting a queued TURN joined, from its DREAM-008 membership row;
+    /// `None` when none was recorded (FIX 395). Read after [`Self::turn`]
+    /// admitted the TURN. The row is first-write-wins, so it never names
+    /// another sitting later.
+    pub(in crate::dreamer_consolidation) fn turn_sitting(
+        &self,
+        id: &EntityId,
+    ) -> Result<Option<EntityId>> {
+        let vault = self.read.vault();
+        let txn = vault.store.env.read_txn()?;
+        crate::compaction::turn_session_membership_in_txn(&vault.store, &txn, id)
+    }
+
     /// Whether `scope` reads every part's bucket: the branch reads whole.
     pub(super) fn buckets_readable(&self, scope: &Scope) -> bool {
         self.buckets.iter().all(|bucket| scope.allows_read(bucket))

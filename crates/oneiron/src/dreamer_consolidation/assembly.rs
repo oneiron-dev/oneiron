@@ -216,7 +216,7 @@ fn selection_input(
     let facts = candidate_facts(&candidate.proposal.candidate)?;
     let mut earliest = None;
     let mut latest = 0;
-    let mut sessions = BTreeSet::new();
+    let mut diversity_keys = BTreeSet::new();
     for (id, _hash, claim) in candidate.evidence.signal_sources() {
         let learned_at = resources
             .evidence_time(resources.scope(), &id)?
@@ -224,9 +224,13 @@ fn selection_input(
         earliest = Some(earliest.map_or(learned_at, |at: u64| at.min(learned_at)));
         latest = latest.max(learned_at);
         if claim {
-            sessions.insert(id.to_hex());
+            diversity_keys.insert(id.to_hex());
         } else if let Some(speaker) = resources.turn(resources.scope(), &id)?.speaker {
-            sessions.insert(speaker.trim().to_lowercase());
+            let sitting = resources.turn_sitting(&id)?;
+            diversity_keys.insert(super::strength::turn_diversity_key(
+                &speaker,
+                sitting.as_ref(),
+            ));
         }
     }
     let count = candidate.evidence.count();
@@ -234,7 +238,7 @@ fn selection_input(
         &facts.predicate,
         count,
         latest,
-        sessions.len(),
+        diversity_keys.len(),
         now,
         config,
     );

@@ -183,6 +183,29 @@ pub(crate) fn observation_pin_in_txn(
     Ok(Some(hash.finalize().to_hex().to_string()))
 }
 
+/// The prefix of a sitting-bound TURN's diversity key, which keeps it apart
+/// from a bare speaker key. Rows stored before FIX 395 keep their bare keys
+/// and read as before.
+const SITTING_DIVERSITY_PREFIX: &str = "session:";
+
+/// The independence key of one TURN of evidence, spoken by `speaker`, for
+/// the diversity signal (FIX 395, RULING FIX395-DIVERSITY-KEY = C): one key
+/// per (sitting, speaker) pair when its witness recorded the sitting it
+/// joined (DREAM-008), so a fact the owner repeats in three sittings counts
+/// three times and two speakers in one sitting count apart. A TURN that
+/// joined no sitting keeps its normalized speaker alone. Selection and the
+/// stored observation both count by this key.
+pub(super) fn turn_diversity_key(speaker: &str, sitting: Option<&EntityId>) -> String {
+    let speaker = speaker.trim().to_lowercase();
+    match sitting {
+        Some(session) => format!(
+            "{SITTING_DIVERSITY_PREFIX}{}|speaker:{speaker}",
+            session.to_hex()
+        ),
+        None => speaker,
+    }
+}
+
 /// Called only after the promotion/attachment gate and its evidence fence.
 /// Replays of the same (source, quote hash) do not refresh the quiet clock.
 pub(crate) fn record_verified_in_txn(
@@ -231,9 +254,11 @@ pub(crate) fn record_verified_in_txn(
         let diversity = if is_claim {
             Some(source.to_hex())
         } else {
+            let sitting =
+                crate::compaction::turn_session_membership_in_txn(&vault.store, txn, &source)?;
             decode_turn_body(&raw[ENTITY_METADATA_HEADER_LEN..])
                 .speaker
-                .map(|speaker| speaker.trim().to_lowercase())
+                .map(|speaker| turn_diversity_key(&speaker, sitting.as_ref()))
         };
         observations.sources.push(StrengthSource {
             source,
