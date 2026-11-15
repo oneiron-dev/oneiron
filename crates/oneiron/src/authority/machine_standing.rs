@@ -281,7 +281,10 @@ impl<'s> Standing<'s> {
 
     /// The chains whose live head names `id` under `signer`, in any role,
     /// each with its mark: an owner act's signing chains (a world edit, a
-    /// grant travel choice; FIX 2998, mesh contract §3).
+    /// grant travel choice; FIX 2998, mesh contract §3). Only the roster's
+    /// chain admits a carrier ([`super::owner_act_signer_admits`]), so only
+    /// its mark is one: an anchor's chain, a stranger's among them, gives the
+    /// removal race no reason to refuse an act.
     pub(super) fn live_signing_chains(
         &self,
         id: EntityId,
@@ -292,8 +295,10 @@ impl<'s> Standing<'s> {
         };
         folded
             .chains()
-            .filter(|(_, chain)| {
-                chain.is_live() && *signer == AuthorityKey::Ed25519(chain.profile.machine_key)
+            .filter(|(admitter, chain)| {
+                *admitter == MachineAdmitter::Roster
+                    && chain.is_live()
+                    && *signer == AuthorityKey::Ed25519(chain.profile.machine_key)
             })
             .map(|(admitter, chain)| {
                 let prior = self

@@ -1,15 +1,20 @@
-//! A stranger's removal mark of the install that carries an owner act
-//! refuses nothing (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES],
-//! site S1; Engine RULING FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C, 16 Nov 05:10).
+//! Only the roster's chain admits or removes the install that carries an
+//! owner act (FIX [FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES],
+//! site S1, and FIX [FOREIGN-ANCHOR-ADMIT-SIDE]; Engine RULINGs
+//! FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C, 16 Nov 05:10, and
+//! FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 05:38).
 //!
 //! Any fresh key publishes an owner root, and that root's anchor marks any
-//! machine in its own chain, removed among the rest, under any keys that
-//! carry their own machine proof. The one carrier rule
-//! (`owner_act_signer_admits`) refused a carrier when any chain of it was
-//! removed. So one such mark of this install stopped every owner act it
-//! carries: at the door (`carrier_in_txn`), and in the fold, which judges
-//! the act at its parents once a main-log row names the mark. The veto now
-//! reads the roster's chain alone; admission still takes any live chain.
+//! machine in its own chain, owned or removed, under any keys that carry
+//! their own machine proof. The one carrier rule (`owner_act_signer_admits`)
+//! read every chain: a removal in any chain refused the carrier, and a live
+//! chain naming the key admitted it. So one stranger's mark of this install
+//! stopped every owner act it carries, at the door (`carrier_in_txn`) and in
+//! the fold, which judges the act at its parents once a main-log row names
+//! the mark. And a stranger's own mark of a fresh machine under a key it
+//! holds made that key a carrier, whose owner answer wrote the machine a
+//! roster chain with no owner, roster or honest machine signature. Now the
+//! roster's chain alone admits and removes a carrier.
 //!
 //! Each test serves a self-host vault that pins no root, so this install
 //! stands under the roster's chain alone.
@@ -24,8 +29,8 @@ use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityEntryHash, AuthorityKey, AuthorityLogEntry,
     AuthorityOp, AuthoritySignature, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
     MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
-    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerRootRecord,
-    authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
+    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
+    OwnerRootRecord, authority_entry_hash, authority_transcript, machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::store::GateDecisionId;
@@ -35,6 +40,8 @@ use oneiron_authority::authority::{FrontierJoin, FrontierJoinFamily, FrontierJoi
 
 /// The seed of the joining machine's machine key.
 const JOINING_SEED: u8 = 68;
+/// The seed of the machine key a stranger holds for the machine it marks.
+const STRANGER_MACHINE_SEED: u8 = 71;
 /// The stored rows' occurred range and learned-at, as the store-door tests use.
 const AT: TimeRange = TimeRange { start: 2, end: 2 };
 
@@ -91,6 +98,8 @@ fn stranger_owner() -> EntityId {
 struct ServedVault {
     vault: Vault,
     owner: AuthenticatedOwner,
+    /// The owner's PERSON, bound to a live human actor.
+    person: EntityId,
     /// This install, the carrier of every owner act its doors sign.
     carrier: EntityId,
     _issuer: HostSlipIssuer,
@@ -119,6 +128,7 @@ impl ServedVault {
         Self {
             vault,
             owner,
+            person,
             carrier,
             _issuer: issuer,
             _dir: dir,
@@ -145,9 +155,15 @@ impl ServedVault {
 
     /// Another machine's request to join this vault.
     fn joining_machine(&self) -> MachineEnrolmentRequest {
+        self.request_for(
+            EntityId::from_bytes([0x76; 16]).expect("an id"),
+            &signing(JOINING_SEED),
+        )
+    }
+
+    /// `machine`'s identity under the machine key `node`, with its own proof.
+    fn request_for(&self, machine: EntityId, node: &SigningKey) -> MachineEnrolmentRequest {
         let vault_id = self.vault_id();
-        let machine = EntityId::from_bytes([0x76; 16]).expect("an id");
-        let node = signing(JOINING_SEED);
         let machine_key = node.verifying_key().to_bytes();
         let device_class = MachineDeviceClass::Computer;
         let encryption_key = MachineEncryptionKey {
@@ -392,4 +408,93 @@ fn a_roster_removal_of_the_carrier_still_refuses_its_owner_acts() {
             .is_none(),
         "the refused enrolment landed a row"
     );
+}
+
+/// A carrier that only a stranger's chain admits writes no roster chain (the
+/// read's Q3 forgery). A stranger's root marks a fresh machine X owned, under
+/// a machine key K the stranger holds and K's own proof (seq 2, on the
+/// root). K then signs the owner's answer that X is his, carried by X itself
+/// (seq 1, on the mark), naming the vault's real owner, with no cosign. On
+/// main the fold admits K as X's carrier from the stranger's chain and the
+/// answer writes X a roster chain; now it is refused and X has none.
+#[test]
+fn a_carrier_only_a_strangers_root_admits_writes_no_roster_chain() {
+    let served = ServedVault::self_host();
+    let vault_id = served.vault_id();
+    let (anchor, root) = publish_stranger_root(&served);
+    let stranger_key = signing(STRANGER_MACHINE_SEED);
+    let machine = EntityId::from_bytes([0x5C; 16]).expect("an id");
+    let identity = served.request_for(machine, &stranger_key);
+    let profile =
+        |owner: EntityId, act: Option<OwnerAct>, carrier: Option<EntityId>| MachineProfile {
+            machine,
+            owner,
+            machine_key: identity.machine_key,
+            device_class: identity.device_class,
+            encryption_key: identity.encryption_key.clone(),
+            role: MachineRole::Owned(MachineOwnership::Yours),
+            revision: 1,
+            machine_proof: identity.machine_proof,
+            seen_world_edits: BTreeSet::new(),
+            carrier,
+            act,
+        };
+    let mark = signed(
+        vault_id,
+        2,
+        vec![root],
+        AuthorityOp::MachineProfile(profile(stranger_owner(), None, None)),
+        &anchor,
+    );
+    let mark_hash = hash(&mark);
+    served
+        .vault
+        .put_authority_log_entry(&mark, AT, 2)
+        .expect("the stranger's mark of X is stored");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.valid_entries.contains(&mark_hash),
+        "guard: the stranger's mark of X is in valid_entries"
+    );
+    assert!(
+        fold.machine(machine)
+            .and_then(|folded| folded.anchored.get(&anchor.verifying_key().to_bytes()))
+            .is_some_and(|chain| chain.is_live()),
+        "guard: the stranger's chain holds X live under K"
+    );
+
+    let act = OwnerAct::by_owner(
+        served.person,
+        OwnerActKind::MachineAnswer,
+        machine,
+        ActSurface::ThisInstall,
+        [0; 32],
+    );
+    let answer = signed(
+        vault_id,
+        1,
+        vec![mark_hash],
+        AuthorityOp::MachineProfile(profile(served.person, Some(act), Some(machine))),
+        &stranger_key,
+    );
+    let answer_hash = hash(&answer);
+    // Storing it is the store's call; a refusal at the door is as safe.
+    let _ = served.vault.put_authority_log_entry(&answer, AT, 2);
+
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        !fold.valid_entries.contains(&answer_hash),
+        "an owner answer carried by a key only a stranger's root admits stood"
+    );
+    assert!(
+        fold.machine(machine)
+            .is_none_or(|folded| folded.roster.is_none()),
+        "a stranger's carrier wrote X a roster chain"
+    );
+    for row in [root, mark_hash] {
+        assert!(
+            fold.valid_entries.contains(&row),
+            "the stranger's root and mark stay valid"
+        );
+    }
 }
