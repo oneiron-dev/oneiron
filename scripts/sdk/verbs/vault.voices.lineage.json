@@ -4,14 +4,14 @@
   "input": "crate::task_verb::sdk::VoiceRenderLineageRequest",
   "output": "Vec<crate::task_verb::sdk::VoiceRenderEventView>",
   "call": "crate::task_verb::sdk::read_voice_render_lineage(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "voice_bank",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "voice_bank"
+  "openapi": true
 }

@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::HooksReplayRequest",
   "output": "crate::task_verb::sdk::HooksReplayPage",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.hooks.replay\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {
@@ -18,6 +19,5 @@
     "resume": "spec",
     "within": "cursor"
   },
-  "section": false,
-  "host_door_proof": "owner"
+  "section": false
 }

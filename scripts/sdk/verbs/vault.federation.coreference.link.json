@@ -4,14 +4,14 @@
   "input": "crate::task_verb::sdk::CoreferenceLinkRequest",
   "output": "crate::task_verb::sdk::CoreferenceLinkReceipt",
   "call": "crate::task_verb::sdk::link_coreference_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.coreference.link\")?, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

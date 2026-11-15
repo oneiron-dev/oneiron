@@ -4,13 +4,13 @@
   "input": "crate::claim::WeaveWrongLinkRequest",
   "output": "crate::claim::WeaveLinkCorrectionView",
   "call": "memory.weave_owner_wrong_link(&memory.embedded_owner(\"vault.weave.owner.link.wrong\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "owner"
+  "section": false
 }

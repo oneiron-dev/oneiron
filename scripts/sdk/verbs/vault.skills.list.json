@@ -4,14 +4,14 @@
   "input": "SkillLibraryListRequest",
   "output": "crate::task_verb::sdk::SkillLibraryPage",
   "call": "memory.witness_skill_bodies(crate::snapshot_read::skill_library_list_embedded(memory, &input))?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {
     "lane_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "skill_reader"
+  "openapi": true
 }

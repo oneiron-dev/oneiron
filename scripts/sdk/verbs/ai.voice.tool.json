@@ -4,7 +4,8 @@
   "input": "crate::task_verb::sdk::LiveVoiceToolRequest",
   "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::LiveVoiceToolReply>",
   "call": "crate::task_verb::sdk::host_only(memory, \"ai.voice.tool\", &input)?",
-  "host_door": true,
+  "proof": "owner",
+  "door": "hand",
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
@@ -12,6 +13,5 @@
   },
   "section": false,
   "host_door_caller": true,
-  "host_door_lists": true,
-  "host_door_proof": "owner"
+  "lists": true
 }

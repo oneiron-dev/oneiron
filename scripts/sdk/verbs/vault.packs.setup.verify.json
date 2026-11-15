@@ -4,13 +4,13 @@
   "input": "PackSetupVerifyRequest",
   "output": "crate::task_verb::sdk::PackSetupReceipt",
   "call": "crate::task_verb::sdk::verify_pack_setup_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "packs_setup",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "packs_setup"
+  "section": false
 }

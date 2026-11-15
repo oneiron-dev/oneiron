@@ -4,9 +4,9 @@
   "input": "crate::memory::commitment_doors::CommitmentLedgerRequest",
   "output": "crate::memory::commitment_doors::CommitmentLedgerView",
   "call": "memory.commitments_ledger_as(&memory.embedded_owner(\"vault.commitments.ledger\")?, input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "read",
   "admission": {

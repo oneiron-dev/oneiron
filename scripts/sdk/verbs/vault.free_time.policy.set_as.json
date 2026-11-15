@@ -4,9 +4,9 @@
   "input": "crate::dreamer_runner::FreeTimePolicySetRequest",
   "output": "crate::dreamer_runner::FreeTimePolicyView",
   "call": "crate::task_verb::sdk::free_time_policy_set_as_agent(memory, input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

@@ -4,13 +4,13 @@
   "input": "PositiveRetireRequest",
   "output": "crate::task_verb::sdk::PositiveRetireReceipt",
   "call": "crate::task_verb::sdk::skill_attribution_positive_retire_as_owner(memory.vault(), &memory.embedded_owner(\"vault.skills.attribution.positive.retire\")?, &input)?",
-  "host_door": true,
+  "proof": "owner",
+  "door": "hand",
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

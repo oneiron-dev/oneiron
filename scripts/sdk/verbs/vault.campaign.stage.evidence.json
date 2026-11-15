@@ -11,8 +11,8 @@
   },
   "openapi": true,
   "section": false,
-  "host_door": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
   "host_door_caller": true,
-  "host_door_lists": true
+  "lists": true
 }

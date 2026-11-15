@@ -4,9 +4,9 @@
   "input": "crate::claim::WeaveWrongItemRequest",
   "output": "crate::claim::WeaveItemCorrectionView",
   "call": "memory.weave_wrong_item(None, &memory.embedded_owner(\"vault.weave.item.wrong\")?, &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "lens_person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

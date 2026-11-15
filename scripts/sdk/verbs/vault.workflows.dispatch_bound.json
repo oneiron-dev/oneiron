@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::WorkflowPersonDispatchRequest",
   "output": "crate::task_verb::sdk::WorkflowRunView",
   "call": "crate::task_verb::sdk::dispatch_workflow_bound_as_member(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "member",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Write",
   "act_class": "spawn",
@@ -14,6 +15,5 @@
   },
   "mcp_scope": "filtered",
   "section": false,
-  "openapi": true,
-  "host_door_proof": "workflow_member"
+  "openapi": true
 }

@@ -4,10 +4,10 @@
   "input": "crate::derive::DeriveRevertInput",
   "output": "crate::derive::DeriveRevertView",
   "call": "crate::code_run::fold_api::host_required(memory, &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
   "host_door_session": true,
-  "host_door_lists": true,
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

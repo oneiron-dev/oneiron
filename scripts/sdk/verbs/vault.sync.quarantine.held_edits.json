@@ -4,9 +4,9 @@
   "input": "crate::task_verb::sdk::EmptyRequest",
   "output": "Vec<(u64, crate::task_verb::sdk::SyncHeldEditEvidence)>",
   "call": "crate::task_verb::sdk::sync_quarantine_held_edits_as_owner(memory.vault(), &memory.embedded_owner(\"vault.sync.quarantine.held_edits\")?, input)?",
-  "host_door": true,
-  "host_door_precheck": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "rust_feature": "sync",
   "scope": "Read",
   "act_class": "read",
@@ -14,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

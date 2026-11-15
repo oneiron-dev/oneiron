@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::InvitationCodeRequest",
   "output": "crate::task_verb::sdk::InvitationCode",
   "call": "crate::task_verb::sdk::issue_invitation_code_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "member_add",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

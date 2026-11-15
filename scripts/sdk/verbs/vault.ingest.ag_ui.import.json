@@ -4,14 +4,13 @@
   "input": "crate::ingest::AgUiFileImport",
   "output": "crate::ingest::AgUiFileReceipt",
   "call": "memory.vault().ingest_ag_ui_file(&memory.embedded_owner(\"vault.ingest.ag_ui.import\")?, &input).map_err(crate::memory::MemoryError::from)?",
-  "host_door": true,
-  "host_door_precheck": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "owner"
+  "section": false
 }

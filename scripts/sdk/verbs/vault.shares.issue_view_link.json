@@ -4,9 +4,9 @@
   "input": "crate::task_verb::sdk::ShareViewLinkRequest",
   "output": "crate::authority::PairingLink",
   "call": "crate::task_verb::sdk::issue_share_view_link_as_caller(memory, input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "grant_widen",
   "admission": {

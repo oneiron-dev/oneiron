@@ -4,7 +4,8 @@
   "input": "crate::task_verb::sdk::OffRecordRoomRequest",
   "output": "crate::task_verb::sdk::OffRecordRoomView",
   "call": "crate::task_verb::sdk::off_record_host_only(memory, \"vault.off_record.rooms.suggest_save\", &input)?",
-  "host_door": true,
+  "proof": "off_record_room",
+  "door": "hand",
   "no_record": true,
   "scope": "Write",
   "act_class": "reversible_work",
@@ -14,6 +15,5 @@
   "section": false,
   "openapi": true,
   "proposes": true,
-  "mcp_scope": "filtered",
-  "host_door_proof": "off_record_room"
+  "mcp_scope": "filtered"
 }

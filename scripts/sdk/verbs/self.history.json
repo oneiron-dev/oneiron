@@ -4,8 +4,8 @@
   "input": "crate::code_run::fold_api::FoldHistoryRequest",
   "output": "crate::engine_executor::history::FoldHistory",
   "call": "crate::code_run::fold_api::host_required(memory, &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +13,6 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door_lists": true,
+  "lists": true,
   "openapi": true
 }

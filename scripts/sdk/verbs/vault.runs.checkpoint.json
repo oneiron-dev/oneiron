@@ -4,8 +4,9 @@
   "input": "crate::engine_executor::checkpoint_read::CheckpointReadRequest",
   "output": "Option<crate::engine_executor::checkpoint_read::CheckpointView>",
   "call": "crate::snapshot_read::checkpoint_embedded(memory, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_holder",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +14,5 @@
     "lane_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "run_reader"
+  "openapi": true
 }

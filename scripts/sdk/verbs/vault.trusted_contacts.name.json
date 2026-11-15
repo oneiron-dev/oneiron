@@ -4,14 +4,14 @@
   "input": "crate::task_verb::sdk::TrustedContactNameRequest",
   "output": "crate::counterparty_contact::TrustedContact",
   "call": "crate::task_verb::sdk::name_trusted_contact(memory.vault(), &memory.embedded_owner(\"vault.trusted_contacts.name\")?, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "trusted_contact_person"
+  "openapi": true
 }

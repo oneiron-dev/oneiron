@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::FanoutResumeRequest",
   "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::FanoutLaunchView>",
   "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::resume_fanout_launch_holder(memory, input)?)",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "decision_holder",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "decision_holder"
+  "section": false
 }

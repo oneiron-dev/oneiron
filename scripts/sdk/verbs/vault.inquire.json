@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::InquireRequest",
   "output": "crate::task_verb::sdk::InquireAnswer",
   "call": "crate::task_verb::sdk::inquire_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "caller",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "facade_actor"
+  "openapi": true
 }

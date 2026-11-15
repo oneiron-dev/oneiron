@@ -6,12 +6,12 @@
   "call": "{ let _ = &input; crate::outbound::undo_send_held_embedded(memory)? }",
   "scope": "Read",
   "act_class": "read",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "openapi": true,
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

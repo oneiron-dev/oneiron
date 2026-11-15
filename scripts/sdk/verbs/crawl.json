@@ -4,8 +4,9 @@
   "input": "crate::web_fetch::WebCrawlRequest",
   "output": "crate::web_fetch::CrawlResult",
   "call": "crate::task_verb::sdk::host_only(memory, \"crawl\", &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "caller",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Write",
   "act_class": "unstated",
@@ -14,6 +15,5 @@
     "validate": "crate::web_fetch::CrawlPageBudget::new(input.page_budget).map_err(|error| MemoryError::bad_request(error.to_string()))?;"
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "facade_actor"
+  "openapi": true
 }

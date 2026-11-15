@@ -4,9 +4,9 @@
   "input": "crate::task_verb::sdk::FilesSourceExcludeRequest",
   "output": "crate::task_verb::sdk::FilesSourceExcludeAnswer",
   "call": "crate::task_verb::sdk::exclude_files_source_embedded(memory, input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

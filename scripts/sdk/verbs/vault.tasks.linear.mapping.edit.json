@@ -4,10 +4,10 @@
   "input": "crate::linear_sync::LinearMappingEdit",
   "output": "crate::linear_sync::LinearMappingEditReceipt",
   "call": "memory.linear_mapping_edit(&input, None)?",
-  "host_door": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
   "host_door_caller": true,
-  "host_door_lists": true,
+  "lists": true,
   "scope": "Write",
   "act_class": "reversible_work",
   "admission": {

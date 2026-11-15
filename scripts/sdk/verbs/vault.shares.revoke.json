@@ -3,9 +3,9 @@
   "input": "crate::task_verb::sdk::ShareRevokeRequest",
   "output": "crate::receipt::ShareRevokeReceipt",
   "call": "crate::task_verb::sdk::revoke_share_as_caller(memory, input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "caller",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {

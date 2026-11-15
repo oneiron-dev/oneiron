@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::CheckInAnswerRequest",
   "output": "crate::task_verb::sdk::CheckInSettlement",
   "call": "crate::task_verb::sdk::check_in_answer(memory, input)?",
-  "host_door": true,
+  "proof": "member",
+  "door": "hand",
   "scope": "Write",
   "grant_class": "the answering person's own human credential, pinned on the ask's current rung, with a live Grant (or the owner role) whose own check-in admits the act",
   "act_class": "unstated",
   "admission": {
     "credential_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "check_in_holder"
+  "section": false
 }

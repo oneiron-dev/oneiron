@@ -4,9 +4,9 @@
   "input": "crate::task_verb::sdk::TaskWaveRequest",
   "output": "crate::task_verb::sdk::TaskWaveReceipt",
   "call": "crate::task_verb::sdk::host_only(memory, \"tasks.wave\", &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "spawn",
   "admission": {

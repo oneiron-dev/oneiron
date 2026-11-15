@@ -4,8 +4,9 @@
   "input": "crate::task_verb::sdk::EmptyRequest",
   "output": "Vec<crate::sync::federation_burst::FederationBurstReviewBundle>",
   "call": "crate::task_verb::sdk::federation_burst_reviews_as_owner(memory.vault(), &memory.embedded_owner(\"vault.federation.burst.review\")?)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "rust_feature": "sync",
   "scope": "Read",
   "act_class": "read",
@@ -14,6 +15,5 @@
   },
   "section": false,
   "openapi": true,
-  "mcp_fields": {},
-  "host_door_proof": "owner"
+  "mcp_fields": {}
 }

@@ -10,10 +10,10 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door": true,
+  "proof": "owner",
+  "door": "hand",
   "host_door_caller": true,
-  "host_door_lists": true,
+  "lists": true,
   "host_door_surface": true,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

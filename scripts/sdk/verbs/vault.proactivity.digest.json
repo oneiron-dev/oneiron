@@ -4,8 +4,9 @@
   "input": "crate::memory::ProactivityDigestRequest",
   "output": "Option<crate::dreamer_runner::maintenance::digest::ProactivityDigestView>",
   "call": "memory.proactivity_digest_as_owner(&memory.embedded_owner(\"vault.proactivity.digest\")?, &input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
@@ -13,6 +14,5 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "openapi": true,
-  "host_door_proof": "owner"
+  "openapi": true
 }

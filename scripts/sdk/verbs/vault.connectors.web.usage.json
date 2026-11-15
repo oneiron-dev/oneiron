@@ -6,9 +6,9 @@
   "call": "crate::task_verb::sdk::read_web_connector_usage(memory, input)?",
   "scope": "Read",
   "act_class": "read",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "openapi": true,
   "admission": {
     "unrestricted_record_scope": true

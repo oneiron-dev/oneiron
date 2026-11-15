@@ -4,9 +4,9 @@
   "input": "crate::memory::ExportTransferReadRequest",
   "output": "crate::memory::ExportTransferPiece",
   "call": "crate::task_verb::sdk::host_only(memory, \"vault.export.transfer.read\", &input)?",
-  "host_door": true,
-  "host_door_precheck": false,
-  "host_door_lists": true,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "scope": "Read",
   "act_class": "mass_secret_export",
   "admission": {

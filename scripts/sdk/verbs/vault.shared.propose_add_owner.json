@@ -4,14 +4,13 @@
   "input": "crate::task_verb::sdk::SharedAddOwnerRequest",
   "output": "crate::federation::PendingAuthorityAct",
   "call": "crate::task_verb::sdk::propose_shared_add_owner(memory.vault(), &memory.embedded_owner(\"vault.shared.propose_add_owner\")?, input)?",
-  "host_door": true,
-  "host_door_precheck": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "ownership_transfer",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

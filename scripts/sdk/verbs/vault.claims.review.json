@@ -4,12 +4,12 @@
   "input": "crate::memory::ClaimProposalReviewRequest",
   "output": "crate::memory::ClaimProposalReview",
   "call": "memory.claim_review(&input)?",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "owner_or_caller",
+  "door": "hand",
+  "lists": true,
   "host_door_caller": true,
   "scope": "Read",
   "act_class": "read",
   "section": false,
-  "openapi": true,
-  "host_door_proof": "claim_settler"
+  "openapi": true
 }

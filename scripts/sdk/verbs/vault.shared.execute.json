@@ -4,13 +4,13 @@
   "input": "crate::task_verb::sdk::SharedActRequest",
   "output": "crate::task_verb::sdk::ActAnswer<crate::task_verb::sdk::SharedActExecuted>",
   "call": "crate::task_verb::sdk::ActAnswer::Done(crate::task_verb::sdk::execute_shared_act(memory.vault(), &memory.embedded_owner(\"vault.shared.execute\")?, None, input)?)",
-  "host_door": true,
-  "host_door_lists": true,
+  "proof": "person",
+  "door": "hand",
+  "lists": true,
   "scope": "Write",
   "act_class": "unstated",
   "admission": {
     "unrestricted_record_scope": true
   },
-  "section": false,
-  "host_door_proof": "shared_person"
+  "section": false
 }

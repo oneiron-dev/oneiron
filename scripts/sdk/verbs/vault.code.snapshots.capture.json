@@ -10,8 +10,8 @@
     "unrestricted_record_scope": true
   },
   "section": false,
-  "host_door": true,
-  "host_door_lists": true,
-  "host_door_precheck": false,
+  "proof": "in_door",
+  "door": "hand",
+  "lists": true,
   "openapi": true
 }
