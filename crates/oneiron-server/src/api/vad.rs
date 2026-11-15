@@ -110,11 +110,11 @@ impl From<VadAnnotationSource> for TurnVadAnnotationSource {
 }))]
 pub(crate) struct TurnVadAnnotateRequest {
     /// Hex-encoded TURN entity id anchoring the annotation request.
-    #[serde(rename = "turn_id", alias = "turnId")]
+    #[serde(rename = "turn_id")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     turn_id: String,
     /// Optional hex-encoded MESSAGE entity id; omit to annotate the turn itself.
-    #[serde(default, rename = "message_id", alias = "messageId")]
+    #[serde(default, rename = "message_id")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
     message_id: Option<String>,
     /// VAD values to persist.
@@ -122,7 +122,7 @@ pub(crate) struct TurnVadAnnotateRequest {
     /// Source that produced the VAD values.
     source: TurnVadAnnotationSource,
     /// Unix seconds timestamp for the annotation. Defaults to server time.
-    #[serde(default, rename = "annotated_at", alias = "annotatedAt")]
+    #[serde(default, rename = "annotated_at")]
     #[schema(example = 1782357635_u64)]
     annotated_at: Option<u64>,
 }
@@ -132,12 +132,12 @@ pub(crate) struct TurnVadAnnotateRequest {
 #[into_params(parameter_in = Query)]
 pub(crate) struct TurnVadAnnotateQuery {
     /// Hex-encoded TURN entity id anchoring the annotation lookup.
-    #[serde(rename = "turn_id", alias = "turnId")]
+    #[serde(rename = "turn_id")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     #[param(example = "0123456789abcdef0123456789abcdef")]
     turn_id: String,
     /// Optional hex-encoded MESSAGE entity id; omit to read the turn annotation.
-    #[serde(default, rename = "message_id", alias = "messageId")]
+    #[serde(default, rename = "message_id")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
     #[param(example = "fedcba9876543210fedcba9876543210")]
     message_id: Option<String>,

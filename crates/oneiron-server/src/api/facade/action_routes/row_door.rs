@@ -218,7 +218,7 @@ impl FacadeRowDoor {
                 code: text("/error/code").unwrap_or(fallback.code),
                 message: text("/error/message").unwrap_or(fallback.message),
                 suggestions: texts("/error/suggestions"),
-                reason_codes: texts("/error/reasonCodes"),
+                reason_codes: texts("/error/reason_codes"),
             },
             hook: hook.map(Box::new),
         })

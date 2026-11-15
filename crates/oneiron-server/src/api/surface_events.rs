@@ -220,10 +220,7 @@ pub(crate) struct SurfaceEventSubmitRequest {
     #[schema(example = "slack")]
     channel: String,
     /// Address or handle the provider delivered this event to.
-    #[serde(
-        rename = "receiving_address_or_handle",
-        alias = "receivingAddressOrHandle"
-    )]
+    #[serde(rename = "receiving_address_or_handle")]
     #[schema(example = "T024BE7LH/agent")]
     receiving_address_or_handle: String,
     /// Optional provider-native workspace/team stamp.

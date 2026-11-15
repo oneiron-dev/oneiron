@@ -73,7 +73,7 @@ pub(crate) fn routes() -> Router<Arc<SyncServer>> {
 /// One action call's body. The verb is the path's; the principal is the
 /// credential's.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
 pub(crate) struct ActionRequest {
     pub(crate) args: Vec<ActionArgument>,
     pub(crate) idempotency_key: String,
@@ -84,7 +84,7 @@ pub(crate) struct ActionRequest {
 
 /// An attach's optional body.
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
 struct AttachRequest {
     /// Take the run's attachment over from another credential of its own
     /// agent (FIX 2651).
@@ -142,7 +142,7 @@ pub(crate) async fn invoke_action(
         Ok(FacadeCallOutput {
             value: serde_json::json!({
                 "outcome": dispatch.outcome_value().map_err(engine)?,
-                "readReceipt": dispatch.read_receipt,
+                "read_receipt": dispatch.read_receipt,
             }),
             rows,
             hook_notice: false,
@@ -476,7 +476,7 @@ pub(super) async fn execute_result_set_action(
 }
 
 /// `POST /v1/core/live-runs/{run}/attach` (OF-181): attaches this credential
-/// to the live run `run` and answers `{"liveRun": <handle>}`, to this caller
+/// to the live run `run` and answers `{"live_run": <handle>}`, to this caller
 /// only. It needs the verified credential and write admission an action
 /// needs, from the run's own agent, while the run's runner holds its lease.
 /// An optional `{"rebind": true}` body takes the attachment over from
@@ -495,7 +495,7 @@ async fn attach_live_run(
         .transpose()?
         .is_some_and(|request| request.rebind);
     let handle = attach_run_as(&server, &auth, &run, rebind).await?;
-    Ok(Json(serde_json::json!({ "liveRun": handle })))
+    Ok(Json(serde_json::json!({ "live_run": handle })))
 }
 
 /// The attach operation shared by the REST route and its verb-table door.
@@ -537,7 +537,7 @@ pub(super) async fn attach_run_as(
 /// Binds `bound` to the live run that rendered a lens card, for an event on
 /// it whose tool is a live-run verb (FIX 2652): `creator_run`, the card's
 /// creating run, resolved for this credential only (the run's own agent,
-/// attached to it now), as a `liveRun` handle resolves for an action. Its
+/// attached to it now), as a `live_run` handle resolves for an action. Its
 /// answer is the event's key, namespaced as that run's action key. A card
 /// no run rendered answers `live_run_unavailable`.
 pub(super) fn bind_card_run(

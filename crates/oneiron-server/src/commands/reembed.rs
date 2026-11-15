@@ -29,7 +29,7 @@ use crate::config::{EmbedderProvider, ServeConfig, resolve_serve_config};
 
 /// What `reembed` did, printed as one JSON line.
 #[derive(Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct ReembedOutcome {
     /// The space the vault held before, when it held a different one.
     from: Option<String>,

@@ -95,7 +95,7 @@ impl Drop for DeepAdmission {
 /// Admits a deep read, or refuses it.
 ///
 /// The non-deep tiers admit trivially with no host and no lease, which is what
-/// makes `tokensUsed: 0` on those tiers a structural fact rather than a
+/// makes `tokens_used: 0` on those tiers a structural fact rather than a
 /// promise: there is no meter to draw on.
 pub(crate) fn admit_deep_retrieval(
     server: &SyncServer,

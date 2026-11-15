@@ -230,10 +230,7 @@ pub(crate) struct CoreContextPackResponse {
     #[schema(value_type = Option<Vec<String>>)]
     degradation: Option<Vec<RetrievalDegradation>>,
     /// Pinned presentation confidence adjustment for the execution tier: 0, -0.15, or -0.35.
-    #[serde(
-        rename = "confidenceAdjustment",
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<f32>, example = -0.15)]
     confidence_adjustment: Option<ConfidenceAdjustment>,
     /// Primary hydrated retrieval results.

@@ -51,7 +51,7 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
 /// for the newest kept for the root), the object and the offset, signed at
 /// `timestamp` with a fresh `nonce`; each in lower-case hex.
 #[derive(Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) struct KitBundlePartRequest {
     /// The vault, 64 hex.
     vault_id: String,
@@ -96,7 +96,7 @@ pub(super) struct KitBundlePartResponse {
 /// A kept pad object whose bytes the home lacks from the offset asked (FIX
 /// 7106), with its generation's entry as the home keeps it now.
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(super) struct KitPadObjectUnavailableResponse {
     /// Always `PAD_OBJECT_UNAVAILABLE`.
     outcome: String,
@@ -118,13 +118,13 @@ pub(super) struct KitPadObjectUnavailableResponse {
 /// the kit's root, the cursor a page before named (none for the first),
 /// `timestamp` and a fresh `nonce`; each in lower-case hex.
 #[derive(Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(super) struct KitPadIndexRequest {
     /// The vault, 64 hex.
     vault_id: String,
     /// The kit's recovery root, 64 hex.
     root: String,
-    /// The cursor's revision, 64 hex, as a page's `nextCursor` named it;
+    /// The cursor's revision, 64 hex, as a page's `next_cursor` named it;
     /// absent for the first page.
     #[serde(default)]
     retained_revision: Option<String>,
@@ -143,7 +143,7 @@ pub(super) struct KitPadIndexRequest {
 
 /// One kept generation named for the kit's root.
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(super) struct KitPadIndexEntry {
     /// The generation, 48 hex.
     generation: String,
@@ -163,7 +163,7 @@ pub(super) struct KitPadIndexEntry {
 /// newest committed first, the revision of the one read that named them, and
 /// where the next page starts when more follow (FIX 9364).
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(super) struct KitPadIndexResponse {
     /// The revision of the home's read of its kept generations, 64 hex.
     /// Opaque: it names a read, never an order.
@@ -178,7 +178,7 @@ pub(super) struct KitPadIndexResponse {
 
 /// Where the next page of the kit's index starts.
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(super) struct KitPadIndexCursor {
     /// The revision the page was read at, 64 hex.
     retained_revision: String,
@@ -264,7 +264,7 @@ pub(super) async fn part(
         .map(|hex| sealed_generation_from_hex(hex).ok_or_else(|| bad("generation")))
         .transpose()?;
     let fetch = KitBundleFetch {
-        vault_id: parse_slip_id(&input.vault_id).map_err(|_| bad("vaultId"))?,
+        vault_id: parse_slip_id(&input.vault_id).map_err(|_| bad("vault_id"))?,
         root: RecoveryRootId(parse_slip_id(&input.root).map_err(|_| bad("root"))?),
         origin: origins
             .next()
@@ -371,7 +371,7 @@ pub(super) async fn index(
     let bad = |field: &str| ApiError::bad_request("the kit fetch field is malformed", Some(field));
     let mut origins = kit_origins(kit_public_urls(&server), &uri, &headers).into_iter();
     let fetch = KitPadIndexFetch {
-        vault_id: parse_slip_id(&input.vault_id).map_err(|_| bad("vaultId"))?,
+        vault_id: parse_slip_id(&input.vault_id).map_err(|_| bad("vault_id"))?,
         root: RecoveryRootId(parse_slip_id(&input.root).map_err(|_| bad("root"))?),
         origin: origins
             .next()
@@ -379,7 +379,7 @@ pub(super) async fn index(
         retained_revision: input
             .retained_revision
             .as_deref()
-            .map(|revision| parse_slip_id(revision).map_err(|_| bad("retainedRevision")))
+            .map(|revision| parse_slip_id(revision).map_err(|_| bad("retained_revision")))
             .transpose()?,
         before_commit_order: input.before_commit_order,
         timestamp: input.timestamp,

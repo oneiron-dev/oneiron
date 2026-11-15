@@ -195,7 +195,7 @@ fn project_entity_fields(
 /// The stored body bytes one multi-row read may still decode
 /// (`[limits].projection_body_bytes`, H27). Each row's body is charged before
 /// it is decoded. A body the rest of the budget cannot hold is not decoded:
-/// its row keeps its id, kind and time, and carries a `bodyOmitted` marker
+/// its row keeps its id, kind and time, and carries a `body_omitted` marker
 /// naming the bound, the body's size and the ref that reads it whole. A
 /// single-entity read takes no budget and returns its body whole.
 pub(crate) struct BodyBudget<'a> {
@@ -353,7 +353,7 @@ impl<'a> BodyBudget<'a> {
                     "kind".to_owned(),
                     Value::String(self.vault.entity_kind_name(entity_type)),
                 );
-                object.insert("updatedAt".to_owned(), json!(updated_at));
+                object.insert("updated_at".to_owned(), json!(updated_at));
                 object
             }
             View::Full => {
@@ -369,11 +369,11 @@ impl<'a> BodyBudget<'a> {
                 object
             }
         };
-        object.insert("bodyOmitted".to_owned(), self.marker(&prepared));
+        object.insert("body_omitted".to_owned(), self.marker(&prepared));
         Value::Object(object)
     }
 
-    /// `bodyOmitted`: the closed code, the bound, the body's size, and the
+    /// `body_omitted`: the closed code, the bound, the body's size, and the
     /// ref `POST /v1/core/hydrate` reads that same body by: the row's short
     /// id with the omitted body's own content hash, pinned to its revision
     /// when the read was. A row with no short id gives its hex id, read whole
@@ -399,8 +399,8 @@ impl<'a> BodyBudget<'a> {
         };
         json!({
             "code": "PROJECTION_BYTES_EXCEEDED",
-            "maxBytes": self.bound,
-            "bodyBytes": body_len,
+            "max_bytes": self.bound,
+            "body_bytes": body_len,
             "ref": reference,
         })
     }
@@ -484,7 +484,7 @@ fn summary_object(
         "id": id_hex,
         "kind": vault.entity_kind_name(entity_type),
         "label": label,
-        "updatedAt": updated_at,
+        "updated_at": updated_at,
     })
 }
 
@@ -503,7 +503,7 @@ fn insert_entity_metadata(
     );
     object.insert("type".to_owned(), json!(entity_type));
     object.insert("label".to_owned(), Value::String(label));
-    object.insert("updatedAt".to_owned(), json!(updated_at));
+    object.insert("updated_at".to_owned(), json!(updated_at));
 }
 
 fn decode_body_fields(entity_type: u8, body: &[u8]) -> Map<String, Value> {

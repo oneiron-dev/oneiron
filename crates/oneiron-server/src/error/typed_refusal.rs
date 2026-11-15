@@ -1,6 +1,6 @@
 //! Typed refusals and their payloads in the direct error vocabulary. The
 //! FIX 6032 refusals keep their route's 403 and name their own code, bound
-//! (`requiredScope`) and way out. Kept apart from `error/mod.rs` so that
+//! (`required_scope`) and way out. Kept apart from `error/mod.rs` so that
 //! file stays under the giant-file bar.
 
 use super::{ApiError, ApiErrorDetails};

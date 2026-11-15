@@ -222,7 +222,7 @@ const PROPERTY_DESCRIPTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Observed reasons for degraded execution; absent when none were recorded.",
             ),
             (
-                "confidenceAdjustment",
+                "confidence_adjustment",
                 "Pinned presentation confidence adjustment for the execution tier: 0, -0.15, or -0.35.",
             ),
             (

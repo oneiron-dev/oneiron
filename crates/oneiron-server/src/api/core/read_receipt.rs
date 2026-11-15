@@ -32,14 +32,14 @@ pub(crate) struct ReadReceiptSchema {
 
 #[derive(ToSchema)]
 #[expect(dead_code, reason = "OpenAPI mirror of engine read projection")]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct GrantedDataSchema {
     granted_data: Vec<String>,
     access_limited: Option<AccessLimitedSchema>,
 }
 #[derive(ToSchema)]
 #[expect(dead_code, reason = "OpenAPI mirror of engine read projection")]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct AccessLimitedSchema {
     suppressed_count: usize,
     required_action: String,

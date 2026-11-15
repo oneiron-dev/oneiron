@@ -6,7 +6,7 @@ use super::{RuntimeMode, RuntimeProviderKind, RuntimeRole};
 
 /// Configured model target for one runtime role.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RuntimeRoleTarget {
     /// Runtime mode selected for this role.
     pub mode: RuntimeMode,
@@ -101,7 +101,7 @@ impl RuntimeRoleDefaultExplicitFields {
 
 /// Per-role runtime defaults after preset and config overrides are resolved.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RuntimeRoleDefaults {
     /// Default route for orchestrator work.
     pub orchestrator: RuntimeRoleTarget,

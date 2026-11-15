@@ -32,7 +32,7 @@ pub(super) async fn source_revision_ids(
             if value.is_empty() {
                 continue;
             }
-            let id = parse_entity_id_param(value, "sourceRevisionIds")?;
+            let id = parse_entity_id_param(value, "source_revision_ids")?;
             if seen.insert(id) {
                 ids.push(id);
             }

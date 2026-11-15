@@ -19,7 +19,7 @@
 //! ERRORS are the facade's own, not the server's closed
 //! [`crate::error::ErrorCode`] enum.
 //! The engine's `code` string travels verbatim inside the same
-//! `{error:{code,message,requestId,suggestions}}` envelope shape the rest of
+//! `{error:{code,message,request_id,suggestions}}` envelope shape the rest of
 //! `/v1/core` uses, so a future engine code reaches a client losslessly
 //! instead of collapsing into `INTERNAL_SERVER_ERROR`. `crate::error` is not
 //! edited to admit these codes; that is the whole point of the local type.
@@ -474,13 +474,13 @@ struct FacadeErrorEnvelope {
     narrowing: Option<Box<oneiron::claim::ScopedReadReceipt>>,
 }
 
-/// The facade error payload: `{code, message, requestId, suggestions}`.
+/// The facade error payload: `{code, message, request_id, suggestions}`.
 ///
 /// `code` is a `String` and that is the load-bearing difference from
 /// [`crate::error::ApiErrorEnvelopeBody`]. `details` is absent because the
 /// engine vocabulary has no per-code detail variants to project.
 #[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 struct FacadeErrorBody {
     code: String,
     message: String,
@@ -544,7 +544,7 @@ pub(crate) struct MemoryErrorEnvelopeSchema {
     dead_code,
     reason = "OpenAPI schema mirror; a refusal serializes FacadeErrorBody"
 )]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct MemoryErrorBodySchema {
     code: String,
     message: String,

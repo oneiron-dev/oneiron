@@ -19,7 +19,7 @@ pub(super) const DEFAULT_BYO_KEY_ENV: &str = "ONEIRON_BYO_PROVIDER_API_KEY";
 
 /// Fully resolved runtime routing configuration.
 #[derive(Clone, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RuntimeConfig {
     /// Explicit runtime mode.
     pub mode: RuntimeMode,

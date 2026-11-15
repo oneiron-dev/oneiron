@@ -44,7 +44,7 @@ pub(crate) use self::keyed::intervene_idempotency;
 pub(crate) struct CoreRunTreeQuery {
     /// Runtime run id to filter the tree. Unfiltered HTTP reads are rejected to
     /// avoid unbounded queue scans.
-    #[serde(default, rename = "run_id", alias = "runId")]
+    #[serde(default, rename = "run_id")]
     #[schema(example = "run-2026-07-03T12:00:00Z")]
     #[param(required = true, example = "run-2026-07-03T12:00:00Z")]
     run_id: Option<String>,
@@ -59,7 +59,7 @@ pub(crate) struct CoreRunTreeQuery {
 }))]
 pub(crate) struct CoreRunTreeInterventionRequest {
     /// Hex-encoded attempt id to intervene on.
-    #[serde(rename = "job_id", alias = "jobId")]
+    #[serde(rename = "job_id")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     attempt_id: String,
     /// Intervention primitive to apply.

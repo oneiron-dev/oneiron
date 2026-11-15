@@ -26,7 +26,7 @@ fn render_json(evidence: &[MemoryReasonEvidence]) -> String {
         .iter()
         .map(|row| {
             json!({
-                "shortId": row.short_id,
+                "short_id": row.short_id,
                 "kind": row.kind,
                 "text": row.text,
                 "confidence": row.confidence,
@@ -58,7 +58,7 @@ fn render_plaintext(evidence: &[MemoryReasonEvidence]) -> String {
 /// TOON tabular rows: one header carrying the row count and field names, then
 /// one comma-separated line per row.
 fn render_toon(evidence: &[MemoryReasonEvidence]) -> String {
-    let mut out = format!("evidence[{}]{{shortId,kind,text}}:", evidence.len());
+    let mut out = format!("evidence[{}]{{short_id,kind,text}}:", evidence.len());
     for row in evidence {
         out.push_str("\n  ");
         out.push_str(&quoted(&row.short_id));
@@ -74,7 +74,7 @@ fn render_toon(evidence: &[MemoryReasonEvidence]) -> String {
 fn render_yaml(evidence: &[MemoryReasonEvidence]) -> String {
     let mut out = String::new();
     for row in evidence {
-        out.push_str(&format!("- shortId: {}\n", quoted(&row.short_id)));
+        out.push_str(&format!("- short_id: {}\n", quoted(&row.short_id)));
         out.push_str(&format!("  kind: {}\n", quoted(&row.kind)));
         out.push_str(&format!("  text: {}\n", quoted(&row.text)));
     }

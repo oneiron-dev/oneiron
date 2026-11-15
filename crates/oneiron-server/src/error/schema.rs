@@ -56,12 +56,12 @@ pub fn api_error_envelope_schema() -> Value {
             "narrowing": { "$ref": "#/components/schemas/ReadReceiptSchema" },
             "error": {
                 "type": "object",
-                "required": ["code", "message", "requestId", "details", "suggestions"],
+                "required": ["code", "message", "request_id", "details", "suggestions"],
                 "additionalProperties": false,
                 "properties": {
                     "code": error_code_schema(),
                     "message": { "type": "string" },
-                    "requestId": { "type": "string" },
+                    "request_id": { "type": "string" },
                     "details": {
                         "oneOf": ErrorCode::ALL
                             .iter()
@@ -106,7 +106,7 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
         | ErrorCode::OwnerBindingRequired
         | ErrorCode::CourtesyDeleteUnauthenticated
         | ErrorCode::ControlScopeDenied => {
-            optional_string(&mut properties, "requiredScope");
+            optional_string(&mut properties, "required_scope");
         }
         ErrorCode::NotFound => {
             required.push("resource");
@@ -114,28 +114,28 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_string(&mut properties, "id");
         }
         ErrorCode::StaleEpoch => {
-            required.extend(["currentEpoch", "requestedEpoch"]);
-            properties.insert("currentEpoch".to_owned(), json!({ "type": "integer" }));
-            properties.insert("requestedEpoch".to_owned(), json!({ "type": "integer" }));
+            required.extend(["current_epoch", "requested_epoch"]);
+            properties.insert("current_epoch".to_owned(), json!({ "type": "integer" }));
+            properties.insert("requested_epoch".to_owned(), json!({ "type": "integer" }));
         }
         ErrorCode::IdempotencyReplayConflict => {
-            optional_string(&mut properties, "idempotencyKey");
+            optional_string(&mut properties, "idempotency_key");
         }
         ErrorCode::InvalidState => {
             optional_string(&mut properties, "state");
         }
         ErrorCode::SnapshotMismatch => {
-            optional_integer(&mut properties, "expectedEpoch");
-            optional_integer(&mut properties, "receivedEpoch");
+            optional_integer(&mut properties, "expected_epoch");
+            optional_integer(&mut properties, "received_epoch");
         }
         ErrorCode::DailyBudgetExhausted => {
             optional_integer(&mut properties, "limit");
             optional_integer(&mut properties, "used");
-            optional_string(&mut properties, "resetAt");
+            optional_string(&mut properties, "reset_at");
         }
         ErrorCode::TooManyAttempts => {
-            required.push("retryAfterSecs");
-            properties.insert("retryAfterSecs".to_owned(), json!({ "type": "integer" }));
+            required.push("retry_after_secs");
+            properties.insert("retry_after_secs".to_owned(), json!({ "type": "integer" }));
         }
         ErrorCode::MirrorNotReady => {
             optional_string(&mut properties, "mirror");
@@ -158,20 +158,20 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             // `verb` is optional: connector-only discovery errors omit it.
             required.extend([
                 "connector",
-                "connectorKnown",
-                "supportedConnectors",
-                "supportedVerbs",
+                "connector_known",
+                "supported_connectors",
+                "supported_verbs",
                 "recovery_suggestions",
             ]);
             properties.insert("connector".to_owned(), json!({ "type": "string" }));
             properties.insert("verb".to_owned(), json!({ "type": "string" }));
-            properties.insert("connectorKnown".to_owned(), json!({ "type": "boolean" }));
+            properties.insert("connector_known".to_owned(), json!({ "type": "boolean" }));
             properties.insert(
-                "supportedConnectors".to_owned(),
+                "supported_connectors".to_owned(),
                 json!({ "type": "array", "items": { "type": "string" } }),
             );
             properties.insert(
-                "supportedVerbs".to_owned(),
+                "supported_verbs".to_owned(),
                 json!({ "type": "array", "items": { "type": "string" } }),
             );
             properties.insert(
@@ -183,18 +183,18 @@ fn detail_schema_for_code(code: ErrorCode) -> Value {
             optional_integer(&mut properties, "tag");
         }
         ErrorCode::CrdtFrameTooLarge => {
-            optional_integer(&mut properties, "maxBytes");
-            optional_integer(&mut properties, "receivedBytes");
+            optional_integer(&mut properties, "max_bytes");
+            optional_integer(&mut properties, "received_bytes");
         }
         ErrorCode::CrdtVersionMismatch => {
-            optional_integer(&mut properties, "expectedVersion");
-            optional_integer(&mut properties, "receivedVersion");
+            optional_integer(&mut properties, "expected_version");
+            optional_integer(&mut properties, "received_version");
         }
         ErrorCode::PayloadTooLarge => {
-            required.extend(["field", "maxBytes", "receivedBytes"]);
+            required.extend(["field", "max_bytes", "received_bytes"]);
             properties.insert("field".to_owned(), json!({ "type": "string" }));
-            properties.insert("maxBytes".to_owned(), json!({ "type": "integer" }));
-            properties.insert("receivedBytes".to_owned(), json!({ "type": "integer" }));
+            properties.insert("max_bytes".to_owned(), json!({ "type": "integer" }));
+            properties.insert("received_bytes".to_owned(), json!({ "type": "integer" }));
         }
         ErrorCode::Unauthorized
         | ErrorCode::NotImplemented

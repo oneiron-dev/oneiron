@@ -35,7 +35,7 @@ pub(crate) struct ProfileListRow {
     /// Persisted PsychProfile compact tier; no generation on list reads.
     /// Null as well when the owner's recipient choice keeps the profile from
     /// where this read goes (FIX 8141).
-    #[serde(rename = "personalityCompact", default)]
+    #[serde(default)]
     personality_compact: Option<String>,
 }
 
@@ -115,7 +115,7 @@ pub(crate) struct AccessRequestListRow {
     principal_ref: String,
     capability: String,
     /// Exact scope description from the persisted requested grant, not a read of protected content.
-    #[serde(rename = "grantContentPreview", default)]
+    #[serde(default)]
     grant_content_preview: Option<String>,
     /// The person or agent the request asks (FIX 1379), when it asks one.
     #[serde(default)]
@@ -126,7 +126,7 @@ pub(crate) struct AccessRequestListRow {
 pub(crate) struct AccessRequestsListResponse {
     items: Vec<AccessRequestListRow>,
     /// Null when the pending set is exhausted; otherwise the last returned request id.
-    #[serde(rename = "nextCursor", default)]
+    #[serde(default)]
     next_cursor: Option<String>,
 }
 

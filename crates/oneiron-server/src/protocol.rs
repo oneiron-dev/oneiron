@@ -48,7 +48,7 @@ use oneiron::retrieval_quality::{
     Default,
     utoipa::ToSchema,
 )]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) enum CountMode {
     /// Skip count work and report `total = 0`.
     None,
@@ -75,10 +75,9 @@ impl CountMode {
 /// Metadata block shared by paginated list/search responses.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq, utoipa::ToSchema)]
 pub(crate) struct ResponseMeta {
-    /// Total result count, or an estimate when `countMode` is `estimate`.
+    /// Total result count, or an estimate when `count_mode` is `estimate`.
     pub total: u64,
     /// Precision used for the reported `total` value.
-    #[serde(rename = "countMode")]
     pub count_mode: CountMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<String>)]
@@ -86,11 +85,7 @@ pub(crate) struct ResponseMeta {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<Vec<String>>)]
     pub degradation: Option<Vec<RetrievalDegradation>>,
-    #[serde(
-        rename = "confidenceAdjustment",
-        default,
-        skip_serializing_if = "Option::is_none"
-    )]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schema(value_type = Option<f32>, example = -0.15)]
     pub confidence_adjustment: Option<ConfidenceAdjustment>,
     /// True when the request's deadline cut retrieval short: the items are
@@ -98,11 +93,7 @@ pub(crate) struct ResponseMeta {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub partial: bool,
     /// Whether the door or a retrieval policy lowered the requested result count.
-    #[serde(
-        rename = "limitClamped",
-        default,
-        skip_serializing_if = "std::ops::Not::not"
-    )]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub limit_clamped: bool,
 }
 
@@ -142,7 +133,7 @@ pub(crate) struct PaginatedResponse<T> {
     /// Items returned for the current page or search request.
     pub items: Vec<T>,
     /// Opaque cursor for the next page when the endpoint supports cursor pagination.
-    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
     /// Pagination and count metadata for the response.
     pub meta: ResponseMeta,

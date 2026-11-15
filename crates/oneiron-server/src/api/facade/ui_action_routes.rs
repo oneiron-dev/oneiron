@@ -4,7 +4,7 @@
 //! `vault.lenses.default`'s host door ([`vault_lenses_default`]) renders the
 //! card and records its frame before the answer leaves. `POST
 //! /v1/core/lens-frames/{card_id}/events` then takes one client event, its
-//! idempotency key and an optional `selectedContext`. The event names only
+//! idempotency key and an optional `selected_context`. The event names only
 //! what was touched: the frame, the exact render the client was handed and
 //! the card's current `$state` are the host's, found by the card id alone.
 //!
@@ -21,11 +21,11 @@
 //! dispatches nothing. A model round trip goes back to the agent that
 //! rendered the card, as its next turn
 //! ([`crate::ai_host::queue_lens_callback`]), labelled with who pressed it:
-//! it answers `202 {"queued", "callbackId"}`, and a card a person's view or
+//! it answers `202 {"queued", "callback_id"}`, and a card a person's view or
 //! a system job rendered answers `409`. Closing a card stays with the
 //! credential that rendered it, and retiring it with its run.
 //!
-//! `selectedContext` (FIX 3268) names selections the clicker made on this
+//! `selected_context` (FIX 3268) names selections the clicker made on this
 //! card (`vault.lenses.select`'s `selectionRef`s), each a host-held
 //! [`oneiron::lens::LensReadHandle`]. On a model round trip each is proved
 //! again under the held render and the clicker's read before the callback is
@@ -150,7 +150,7 @@ pub(crate) async fn vault_lenses_default(
 /// `selectionRef` each `vault.lenses.select` answered (FIX 3268), and the
 /// stream profile its answer is framed in (FIX 11399).
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
+#[serde(deny_unknown_fields, rename_all = "snake_case")]
 struct UiEventRequest {
     event: GeneratedUiActionEvent,
     idempotency_key: String,
@@ -331,7 +331,7 @@ async fn event_answer(
                     queued,
                 } => Ok((
                     StatusCode::ACCEPTED,
-                    Json(serde_json::json!({ "queued": queued, "callbackId": callback_id })),
+                    Json(serde_json::json!({ "queued": queued, "callback_id": callback_id })),
                 )),
                 LensCallback::NoAgent => Err(FacadeApiError::new(
                     StatusCode::CONFLICT,
@@ -376,7 +376,7 @@ async fn dispatch_tool(
         let _ = take_action_rows(&mut dispatch);
         Ok(serde_json::json!({
             "outcome": dispatch.outcome_value().map_err(engine)?,
-            "readReceipt": dispatch.read_receipt,
+            "read_receipt": dispatch.read_receipt,
         }))
     });
     (answer, stamp)
@@ -444,7 +444,7 @@ fn rerender() -> FacadeApiError {
     )
 }
 
-/// A `selectedContext` ref this credential selected nothing under on this
+/// A `selected_context` ref this credential selected nothing under on this
 /// card.
 fn unselected() -> MemoryError {
     MemoryError::new(

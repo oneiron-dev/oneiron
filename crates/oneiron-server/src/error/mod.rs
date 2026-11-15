@@ -210,15 +210,15 @@ impl ErrorCode {
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
 #[serde(tag = "code")]
 pub enum ApiErrorDetails {
-    #[serde(rename = "BAD_REQUEST", rename_all = "camelCase")]
+    #[serde(rename = "BAD_REQUEST", rename_all = "snake_case")]
     BadRequest { field: Option<String> },
-    #[serde(rename = "DEADLINE_EXCEEDED", rename_all = "camelCase")]
+    #[serde(rename = "DEADLINE_EXCEEDED", rename_all = "snake_case")]
     DeadlineExceeded { field: Option<String> },
     #[serde(rename = "UNAUTHORIZED")]
     Unauthorized,
-    #[serde(rename = "FORBIDDEN", rename_all = "camelCase")]
+    #[serde(rename = "FORBIDDEN", rename_all = "snake_case")]
     Forbidden { required_scope: Option<String> },
-    #[serde(rename = "NOT_FOUND", rename_all = "camelCase")]
+    #[serde(rename = "NOT_FOUND", rename_all = "snake_case")]
     NotFound {
         resource: String,
         id: Option<String>,
@@ -227,21 +227,21 @@ pub enum ApiErrorDetails {
     NotImplemented,
     #[serde(rename = "INTERNAL_SERVER_ERROR")]
     InternalServerError,
-    #[serde(rename = "STALE_EPOCH", rename_all = "camelCase")]
+    #[serde(rename = "STALE_EPOCH", rename_all = "snake_case")]
     StaleEpoch {
         current_epoch: u64,
         requested_epoch: u64,
     },
-    #[serde(rename = "IDEMPOTENCY_REPLAY_CONFLICT", rename_all = "camelCase")]
+    #[serde(rename = "IDEMPOTENCY_REPLAY_CONFLICT", rename_all = "snake_case")]
     IdempotencyReplayConflict { idempotency_key: Option<String> },
-    #[serde(rename = "INVALID_STATE", rename_all = "camelCase")]
+    #[serde(rename = "INVALID_STATE", rename_all = "snake_case")]
     InvalidState { state: Option<String> },
-    #[serde(rename = "SNAPSHOT_MISMATCH", rename_all = "camelCase")]
+    #[serde(rename = "SNAPSHOT_MISMATCH", rename_all = "snake_case")]
     SnapshotMismatch {
         expected_epoch: Option<u64>,
         received_epoch: Option<u64>,
     },
-    #[serde(rename = "DAILY_BUDGET_EXHAUSTED", rename_all = "camelCase")]
+    #[serde(rename = "DAILY_BUDGET_EXHAUSTED", rename_all = "snake_case")]
     DailyBudgetExhausted {
         limit: Option<u64>,
         used: Option<u64>,
@@ -250,17 +250,17 @@ pub enum ApiErrorDetails {
     /// A door that counts a caller's failed attempts makes it wait before
     /// it tries again (FIX 12477): how long, in whole seconds, also sent as
     /// `Retry-After`.
-    #[serde(rename = "TOO_MANY_ATTEMPTS", rename_all = "camelCase")]
+    #[serde(rename = "TOO_MANY_ATTEMPTS", rename_all = "snake_case")]
     TooManyAttempts { retry_after_secs: u64 },
-    #[serde(rename = "MIRROR_NOT_READY", rename_all = "camelCase")]
+    #[serde(rename = "MIRROR_NOT_READY", rename_all = "snake_case")]
     MirrorNotReady { mirror: Option<String> },
-    #[serde(rename = "UNSUPPORTED_FORMAT", rename_all = "camelCase")]
+    #[serde(rename = "UNSUPPORTED_FORMAT", rename_all = "snake_case")]
     UnsupportedFormat { format: Option<String> },
-    #[serde(rename = "NOT_ACCEPTABLE", rename_all = "camelCase")]
+    #[serde(rename = "NOT_ACCEPTABLE", rename_all = "snake_case")]
     NotAcceptable { accepted: Vec<String> },
-    #[serde(rename = "INVALID_HEADER", rename_all = "camelCase")]
+    #[serde(rename = "INVALID_HEADER", rename_all = "snake_case")]
     InvalidHeader { header: String },
-    #[serde(rename = "UNSUPPORTED_CAPABILITY", rename_all = "camelCase")]
+    #[serde(rename = "UNSUPPORTED_CAPABILITY", rename_all = "snake_case")]
     UnsupportedCapability {
         connector: String,
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -288,7 +288,7 @@ pub enum ApiErrorDetails {
     EmbedderUnavailable,
     #[serde(rename = "SUMMARY_WRITER_UNAVAILABLE")]
     SummaryWriterUnavailable,
-    #[serde(rename = "PAYLOAD_TOO_LARGE", rename_all = "camelCase")]
+    #[serde(rename = "PAYLOAD_TOO_LARGE", rename_all = "snake_case")]
     PayloadTooLarge {
         field: String,
         max_bytes: usize,
@@ -296,27 +296,27 @@ pub enum ApiErrorDetails {
     },
     #[serde(
         rename = "HOST_ACTION_REQUIRES_SUPPORT_GRANT",
-        rename_all = "camelCase"
+        rename_all = "snake_case"
     )]
     HostActionRequiresSupportGrant { required_scope: Option<String> },
-    #[serde(rename = "OWNER_BINDING_REQUIRED", rename_all = "camelCase")]
+    #[serde(rename = "OWNER_BINDING_REQUIRED", rename_all = "snake_case")]
     OwnerBindingRequired { required_scope: Option<String> },
-    #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED", rename_all = "camelCase")]
+    #[serde(rename = "COURTESY_DELETE_UNAUTHENTICATED", rename_all = "snake_case")]
     CourtesyDeleteUnauthenticated { required_scope: Option<String> },
-    #[serde(rename = "CONTROL_SCOPE_DENIED", rename_all = "camelCase")]
+    #[serde(rename = "CONTROL_SCOPE_DENIED", rename_all = "snake_case")]
     ControlScopeDenied { required_scope: Option<String> },
     #[serde(rename = "4001")]
     CrdtAuthExpired,
     #[serde(rename = "4002")]
     CrdtDecodeError,
-    #[serde(rename = "4003", rename_all = "camelCase")]
+    #[serde(rename = "4003", rename_all = "snake_case")]
     CrdtUnknownTag { tag: Option<u8> },
-    #[serde(rename = "4004", rename_all = "camelCase")]
+    #[serde(rename = "4004", rename_all = "snake_case")]
     CrdtFrameTooLarge {
         max_bytes: Option<usize>,
         received_bytes: Option<usize>,
     },
-    #[serde(rename = "4006", rename_all = "camelCase")]
+    #[serde(rename = "4006", rename_all = "snake_case")]
     CrdtVersionMismatch {
         expected_version: Option<u16>,
         received_version: Option<u16>,
@@ -745,7 +745,7 @@ pub struct ApiErrorEnvelope {
 
 /// Typed error payload nested under the transport envelope's error field.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct ApiErrorEnvelopeBody {
     code: ErrorCode,
     message: String,

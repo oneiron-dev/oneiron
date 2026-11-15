@@ -369,7 +369,7 @@ pub(crate) fn vault_artifact_app(server: Arc<SyncServer>) -> Router {
                 },
                 "runtime": {
                     "mode": "local_free",
-                    "oneironSpendMetered": false,
+                    "oneiron_spend_metered": false,
                     "state": "available"
                 },
                 "ai": {

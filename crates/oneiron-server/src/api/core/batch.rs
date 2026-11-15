@@ -60,19 +60,19 @@ pub(crate) struct CoreBatchEntityInput {
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     pub(crate) id: Option<String>,
     /// Numeric entity type byte.
-    #[serde(rename = "entity_type", alias = "entityType")]
+    #[serde(rename = "entity_type")]
     #[schema(example = 1)]
     pub(crate) entity_type: u8,
     /// Occurrence start timestamp in Unix seconds. Defaults to `learned_at` or current server time.
-    #[serde(default, rename = "occurred_start", alias = "occurredStart")]
+    #[serde(default, rename = "occurred_start")]
     #[schema(example = 1782357600_u64)]
     pub(crate) occurred_start: Option<u64>,
     /// Occurrence end timestamp in Unix seconds. Defaults to `occurred_start`.
-    #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
+    #[serde(default, rename = "occurred_end")]
     #[schema(example = 1782357600_u64)]
     pub(crate) occurred_end: Option<u64>,
     /// Learned-at timestamp in Unix seconds. Defaults to current server time.
-    #[serde(default, rename = "learned_at", alias = "learnedAt")]
+    #[serde(default, rename = "learned_at")]
     #[schema(example = 1782357635_u64)]
     pub(crate) learned_at: Option<u64>,
     /// JSON body encoded into the vault's msgpack entity payload.

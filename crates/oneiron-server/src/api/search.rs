@@ -81,7 +81,7 @@ impl std::ops::Deref for ScopedSearchResponse {
 }
 
 /// The home's answer to a text search on a machine that syncs only what it
-/// opened (OF-534). `home` is complete; `localOnly` is not: the home was out
+/// opened (OF-534). `home` is complete; `local_only` is not: the home was out
 /// of reach or not asked, and the hits are this device's opened items alone.
 /// A hit the page lacks is one the device does not hold; its window opens it.
 #[derive(Serialize)]
@@ -102,7 +102,7 @@ impl ResidenceAnswer {
     /// The local page alone, which the home did not complete.
     fn local_only() -> Self {
         Self {
-            source: "localOnly",
+            source: "local_only",
             complete: false,
             hits: Vec::new(),
         }
@@ -114,7 +114,7 @@ impl From<oneiron::sync::ResidenceSearch> for ResidenceAnswer {
         Self {
             source: match search.source {
                 oneiron::sync::SearchSource::Home => "home",
-                oneiron::sync::SearchSource::LocalOnly => "localOnly",
+                oneiron::sync::SearchSource::LocalOnly => "local_only",
             },
             complete: search.complete,
             hits: search
@@ -168,7 +168,7 @@ async fn ask_home(
 #[schema(example = json!({
     "query": "0.12,-0.04,0.98",
     "limit": 10,
-    "countMode": "estimate"
+    "count_mode": "estimate"
 }))]
 pub(crate) struct VectorSearchQuery {
     /// Comma-separated `f32` embedding values used as the vector search probe.
@@ -185,7 +185,7 @@ pub(crate) struct VectorSearchQuery {
     #[param(example = "summary")]
     pub(crate) view: Option<View>,
     /// Count precision for response metadata. Search defaults to estimate.
-    #[serde(default = "CountMode::default_estimate", rename = "countMode")]
+    #[serde(default = "CountMode::default_estimate")]
     #[schema(example = "estimate")]
     #[param(example = "estimate")]
     pub(crate) count_mode: CountMode,
@@ -199,14 +199,14 @@ pub(crate) struct VectorSearchQuery {
     /// The text this embedding was produced from. Optional at `minimal` and
     /// `standard`, which never read it, and REQUIRED at `deep`, whose
     /// decomposition and cross-encoder scoring operate on language.
-    #[serde(default, rename = "queryText")]
+    #[serde(default)]
     #[schema(example = "project kickoff notes")]
     #[param(example = "project kickoff notes")]
     pub(crate) query_text: Option<String>,
     /// A hard deadline in milliseconds, 1 to 60000: the search answers with
     /// the hits ready when it comes due, and `meta.partial` says so.
     /// Omitted, the search runs to the end.
-    #[serde(default, rename = "deadlineMs")]
+    #[serde(default)]
     #[schema(example = 100)]
     #[param(example = 100)]
     pub(crate) deadline_ms: Option<u64>,
@@ -219,7 +219,7 @@ pub(crate) struct VectorSearchQuery {
     pub(crate) space: Option<String>,
     /// The query tower that encoded `query` when `space` is set: `text`
     /// (the default), `image` or `audio`.
-    #[serde(default, rename = "queryKind")]
+    #[serde(default)]
     #[schema(value_type = Option<String>, example = "image")]
     #[param(value_type = Option<String>, example = "image")]
     pub(crate) query_kind: Option<InputKind>,
@@ -265,17 +265,17 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
                     "id": "0123456789abcdef0123456789abcdef",
                     "kind": "task",
                     "label": "Project kickoff notes",
-                    "updatedAt": 1782357635_u64
+                    "updated_at": 1782357635_u64
                 }],
                 "meta": {
                     "total": 1,
-                    "countMode": "estimate"
+                    "count_mode": "estimate"
                 }
             })
         ),
         (
             status = 400,
-            description = "Malformed query vector or invalid query parameters, an undeclared `space`, or a vector the space's `queryKind` tower does not take at the space's width.",
+            description = "Malformed query vector or invalid query parameters, an undeclared `space`, or a vector the space's `query_kind` tower does not take at the space's width.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -287,7 +287,7 @@ pub(crate) type SearchResponse = PaginatedResponse<Value>;
         ),
         (
             status = 413,
-            description = "`queryText` exceeds `[limits].retrieval_query_bytes` (1 MiB unless set); the error names the field, the bound and the bytes received.",
+            description = "`query_text` exceeds `[limits].retrieval_query_bytes` (1 MiB unless set); the error names the field, the bound and the bytes received.",
             body = ApiError,
             content_type = "application/json"
         ),
@@ -319,7 +319,7 @@ pub(crate) async fn search_vector(
         server.check_retrieval_query(
             query_caller(&auth),
             QueryDoor::SearchVector,
-            "queryText",
+            "query_text",
             text,
         )?;
     }
@@ -347,8 +347,8 @@ pub(crate) async fn search_vector(
     // touched.
     if params.depth.requires_rerank() && probe_text(params.query_text.as_deref()).is_none() {
         return Err(ApiError::bad_request(
-            "queryText is required when depth=deep on vector search",
-            Some("queryText"),
+            "query_text is required when depth=deep on vector search",
+            Some("query_text"),
         ));
     }
     let query_text = probe_text(params.query_text.as_deref()).map(str::to_owned);
@@ -379,8 +379,8 @@ pub(crate) async fn search_vector(
         }
         None if params.query_kind.is_some() => {
             return Err(ApiError::bad_request(
-                "queryKind names a tower of a declared space; set space too",
-                Some("queryKind"),
+                "query_kind names a tower of a declared space; set space too",
+                Some("query_kind"),
             ));
         }
         None => SearchProbe::Vector {
@@ -408,7 +408,7 @@ pub(crate) async fn search_vector(
 #[schema(example = json!({
     "query": "project kickoff notes",
     "limit": 10,
-    "countMode": "estimate"
+    "count_mode": "estimate"
 }))]
 pub(crate) struct TextSearchQuery {
     /// Natural-language or keyword query used by the BM25 text index.
@@ -425,7 +425,7 @@ pub(crate) struct TextSearchQuery {
     #[param(example = "summary")]
     pub(crate) view: Option<View>,
     /// Count precision for response metadata. Search defaults to estimate.
-    #[serde(default = "CountMode::default_estimate", rename = "countMode")]
+    #[serde(default = "CountMode::default_estimate")]
     #[schema(example = "estimate")]
     #[param(example = "estimate")]
     pub(crate) count_mode: CountMode,
@@ -439,7 +439,7 @@ pub(crate) struct TextSearchQuery {
     /// A hard deadline in milliseconds, 1 to 60000: the search answers with
     /// the hits ready when it comes due, and `meta.partial` says so.
     /// Omitted, the search runs to the end.
-    #[serde(default, rename = "deadlineMs")]
+    #[serde(default)]
     #[schema(example = 100)]
     #[param(example = 100)]
     pub(crate) deadline_ms: Option<u64>,
@@ -468,11 +468,11 @@ pub(crate) struct TextSearchQuery {
                     "id": "fedcba9876543210fedcba9876543210",
                     "kind": "task",
                     "label": "Project kickoff notes",
-                    "updatedAt": 1782357635_u64
+                    "updated_at": 1782357635_u64
                 }],
                 "meta": {
                     "total": 1,
-                    "countMode": "estimate"
+                    "count_mode": "estimate"
                 }
             })
         ),
@@ -557,9 +557,9 @@ pub(crate) async fn search_text(
     page.map(|page| Json(page.limit_clamped(false).residence(residence)))
 }
 
-/// A blank `queryText` is an ABSENT one.
+/// A blank `query_text` is an ABSENT one.
 ///
-/// `?queryText=` on a URL is what an unset form field serializes to, and
+/// `?query_text=` on a URL is what an unset form field serializes to, and
 /// treating that empty string as "the caller supplied text" would let a deep
 /// vector read past the grounding check with nothing to decompose.
 fn probe_text(query_text: Option<&str>) -> Option<&str> {
@@ -782,11 +782,11 @@ pub(crate) fn search_response_with_revisions(
 
 /// Request body for semantic search.
 #[derive(Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 #[schema(example = json!({
     "text": "what did we decide about the embedder slot",
     "limit": 10,
-    "countMode": "estimate"
+    "count_mode": "estimate"
 }))]
 pub(crate) struct SemanticSearchRequest {
     /// Natural-language query. The server embeds it with the active provider,
@@ -805,7 +805,7 @@ pub(crate) struct SemanticSearchRequest {
     #[schema(example = "summary")]
     pub(crate) view: Option<View>,
     /// Count precision for response metadata. Search defaults to estimate.
-    #[serde(default = "CountMode::default_estimate", rename = "countMode")]
+    #[serde(default = "CountMode::default_estimate")]
     #[schema(example = "estimate")]
     pub(crate) count_mode: CountMode,
     /// Retrieval effort: `minimal`, `standard`, or `deep`. Omitted means
@@ -850,15 +850,15 @@ pub(crate) struct SemanticSearchRequest {
                     "id": "0123456789abcdef0123456789abcdef",
                     "kind": "claim",
                     "label": "the embedder slot is a selection",
-                    "updatedAt": 1782357635_u64
+                    "updated_at": 1782357635_u64
                 }],
                 "meta": {
                     "total": 1,
-                    "countMode": "estimate"
+                    "count_mode": "estimate"
                 },
                 "embedder": {
                     "provider": "local",
-                    "modelId": "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8",
+                    "model_id": "perplexity-ai/pplx-embed-v1-0.6b@2c4d510dd4a732063c31a0f70193e35067b51fd8",
                     "dimensions": 1024
                 }
             })
@@ -930,7 +930,7 @@ pub(crate) async fn search_semantic(
                 .ok_or_else(ApiError::embedder_unavailable)?;
             json!({
                 "provider": descriptor.provider,
-                "modelId": descriptor.model_id,
+                "model_id": descriptor.model_id,
                 "dimensions": descriptor.dimensions,
             })
         }

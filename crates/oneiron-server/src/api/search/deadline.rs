@@ -1,4 +1,4 @@
-//! Raw search under a request's hard deadline (`deadlineMs`): the page reads
+//! Raw search under a request's hard deadline (`deadline_ms`): the page reads
 //! on the blocking pool, and the door answers when the deadline comes due.
 
 use super::*;
@@ -8,7 +8,7 @@ use std::time::Duration;
 /// The request's hard deadline, refused out of range with the field named.
 pub(super) fn search_deadline(deadline_ms: Option<u64>) -> Result<Option<Duration>, ApiError> {
     oneiron::memory::caps::check_deadline_ms(deadline_ms)
-        .map_err(|refusal| ApiError::bad_request(refusal.message, Some("deadlineMs")))?;
+        .map_err(|refusal| ApiError::bad_request(refusal.message, Some("deadline_ms")))?;
     Ok(deadline_ms.map(Duration::from_millis))
 }
 

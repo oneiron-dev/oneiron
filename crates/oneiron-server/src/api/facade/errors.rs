@@ -356,15 +356,15 @@ impl FacadeApiError {
         let mut refusal = Self::new(status, code, message, Vec::<String>::new());
         let replayed = &mut refusal.body.error;
         replayed.suggestions = replayed_field(error, "suggestions").unwrap_or_default();
-        replayed.receipt_ref = replayed_field(error, "receiptRef");
+        replayed.receipt_ref = replayed_field(error, "receipt_ref");
         replayed.wrong_root = serde_json::from_value(error.clone()).ok().map(Box::new);
         replayed.hook = replayed_field(error, "hook").map(Box::new);
-        replayed.retry_after = replayed_field(error, "retryAfter");
-        replayed.resets_at = replayed_field(error, "resetsAt").unwrap_or_default();
-        replayed.reason_codes = replayed_field(error, "reasonCodes").unwrap_or_default();
+        replayed.retry_after = replayed_field(error, "retry_after");
+        replayed.resets_at = replayed_field(error, "resets_at").unwrap_or_default();
+        replayed.reason_codes = replayed_field(error, "reason_codes").unwrap_or_default();
         replayed.legal_hold = replayed_field(error, "legal_hold").map(Box::new);
         replayed.room_join_hold = replayed_field(error, "room_join_hold").map(Box::new);
-        replayed.program_steps = replayed_field(error, "programSteps").unwrap_or_default();
+        replayed.program_steps = replayed_field(error, "program_steps").unwrap_or_default();
         refusal.body.narrowing = replayed_field(body, "narrowing").map(Box::new);
         Some(refusal)
     }
@@ -437,19 +437,19 @@ impl IntoResponse for FacadeApiError {
 const REPLAYED_ERROR_FIELDS: [&str; 15] = [
     "code",
     "message",
-    "requestId",
+    "request_id",
     "suggestions",
-    "receiptRef",
+    "receipt_ref",
     "attempted",
     "replacement",
     "schemaRef",
     "hook",
-    "retryAfter",
-    "resetsAt",
-    "reasonCodes",
+    "retry_after",
+    "resets_at",
+    "reason_codes",
     "legal_hold",
     "room_join_hold",
-    "programSteps",
+    "program_steps",
 ];
 
 /// Member `name` of a replayed reply's JSON `object`, when it reads as `T`.

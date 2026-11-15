@@ -6,7 +6,7 @@ use super::*;
 
 /// Records one facade call once its handler has answered, in its own write
 /// transaction, and states the receipt on the reply: the
-/// `x-oneiron-receipt-ref` header on every reply, and `receiptRef` inside a
+/// `x-oneiron-receipt-ref` header on every reply, and `receipt_ref` inside a
 /// refusal's error body. A success body keeps its shape (some are JSON
 /// arrays). A call inside an anonymous off-record session records nothing
 /// and says so (`none; no-record`).

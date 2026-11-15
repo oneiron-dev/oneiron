@@ -176,8 +176,8 @@ impl ArtifactServeQuery {
         if let Some(version) = self.blob_version {
             if version == 0 || self.channel.is_some() || self.fork_hash.is_some() {
                 return Err(ApiError::bad_request(
-                    "blobVersion must be positive and exclusive",
-                    Some("blobVersion"),
+                    "blob_version must be positive and exclusive",
+                    Some("blob_version"),
                 )
                 .into());
             }
@@ -185,15 +185,15 @@ impl ArtifactServeQuery {
         }
         if self.channel.is_some() && self.fork_hash.is_some() {
             return Err(ApiError::bad_request(
-                "channel and forkHash cannot be combined",
-                Some("forkHash"),
+                "channel and fork_hash cannot be combined",
+                Some("fork_hash"),
             )
             .into());
         }
         if let Some(fork) = &self.fork_hash {
             return Ok(ArtifactSnapshotSelector::ForkHash(
                 oneiron::parse_codebase_fork_hash_hex(fork)
-                    .map_err(|error| ApiError::bad_request(error.to_string(), Some("forkHash")))?,
+                    .map_err(|error| ApiError::bad_request(error.to_string(), Some("fork_hash")))?,
             ));
         }
         let channel =
@@ -231,7 +231,7 @@ pub(super) fn backend_redirect_path(encoded: &str) -> Result<String, EnvelopedAp
 
 pub(super) fn selector_query_pair(raw: &str) -> bool {
     decode_component(raw.split('=').next().unwrap_or_default())
-        .is_ok_and(|key| matches!(key.as_str(), "channel" | "forkHash" | "blobVersion"))
+        .is_ok_and(|key| matches!(key.as_str(), "channel" | "fork_hash" | "blob_version"))
 }
 
 fn missing() -> EnvelopedApiError {
@@ -287,11 +287,11 @@ mod tests {
             (
                 "site",
                 "f/nested%23a.js",
-                "?forkHash=",
+                "?fork_hash=",
                 format!("f/{}", "00".repeat(32)),
             ),
         ] {
-            let full_query = if query == "?forkHash=" {
+            let full_query = if query == "?fork_hash=" {
                 format!("{query}{}", "00".repeat(32))
             } else {
                 query.to_owned()
@@ -304,7 +304,7 @@ mod tests {
                     channel: Some("preview".into()),
                     ..Default::default()
                 },
-                q if q.starts_with("?forkHash=") => ArtifactServeQuery {
+                q if q.starts_with("?fork_hash=") => ArtifactServeQuery {
                     fork_hash: Some("00".repeat(32)),
                     ..Default::default()
                 },

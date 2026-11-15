@@ -21,7 +21,7 @@ const REASON_ANSWER_ROW: &str = "memory.reason";
 /// its evidence does not carry: the composition's text never escapes, and
 /// the read answers from the evidence itself beside this.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct MemoryReasonCompositionRefusal {
     /// The typed refusal, the shape a refused claim write and a refused
     /// `memory.chat` answer carry.

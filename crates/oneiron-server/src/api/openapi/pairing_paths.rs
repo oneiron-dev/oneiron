@@ -72,7 +72,7 @@ const PAIRING_ROUTES: &[PairingRoute] = &[
             ),
             (
                 "429",
-                "TOO_MANY_ATTEMPTS: this client address made more redemptions than limits.pairing_redeem_free_failures that no success answered, and waits before its next code is read (FIX 12477); Retry-After and details.retryAfterSecs name the wait.",
+                "TOO_MANY_ATTEMPTS: this client address made more redemptions than limits.pairing_redeem_free_failures that no success answered, and waits before its next code is read (FIX 12477); Retry-After and details.retry_after_secs name the wait.",
             ),
         ],
         owner_bearer: false,

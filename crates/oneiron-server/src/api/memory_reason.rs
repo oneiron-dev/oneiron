@@ -7,7 +7,7 @@
 //! Three things live here and nowhere else on this route:
 //!
 //! 1. THE COST GATE. `minimal` and `standard` are model-free, so they reach no
-//!    host, spend nothing, and report `tokensUsed: 0`. `deep` requires an
+//!    host, spend nothing, and report `tokens_used: 0`. `deep` requires an
 //!    [`DeepRetrievalHost`] — an explicitly attached backend, or a production
 //!    backend built for this request from the configured model roles — AND
 //!    its budget guard. With neither it is refused with
@@ -118,7 +118,7 @@ pub(crate) enum MemoryReasonFormat {
 /// session hint that could widen an actor-keyed read would be a way to ask for
 /// someone else's memory by naming their world.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) struct MemoryReasonSessionContext {
     /// Keep only claims scoped to this WORLD entity id.
     #[schema(example = "0123456789abcdef0123456789abcdef")]
@@ -134,11 +134,11 @@ pub(crate) struct MemoryReasonSessionContext {
 
 /// One reasoning request.
 #[derive(Clone, Debug, Deserialize, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 #[schema(example = json!({
     "query": "what did we decide about the launch date",
     "depth": "medium",
-    "tokenBudget": 4000,
+    "token_budget": 4000,
     "format": "markdown"
 }))]
 pub(crate) struct MemoryReasonRequest {
@@ -156,7 +156,7 @@ pub(crate) struct MemoryReasonRequest {
     /// Positive total decompose + rerank + compose budget; default `4000`.
     /// Past `[limits].memory_reason_tokens`, ask and use the full budget.
     ///
-    /// A BUDGET, never the reported spend: `tokensUsed` in the response is
+    /// A BUDGET, never the reported spend: `tokens_used` in the response is
     /// what the backend actually spent, which for the model-free tiers is 0
     /// however large a budget was offered.
     #[schema(example = 4000)]
@@ -171,7 +171,7 @@ pub(crate) struct MemoryReasonRequest {
 
 /// What the read did, for a caller that needs to explain its own answer.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct MemoryReasonTrace {
     /// The text queries the read executed, in order.
     ///
@@ -190,13 +190,13 @@ pub(crate) struct MemoryReasonTrace {
 
 /// One reasoning answer.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 #[schema(example = json!({
     "answer": "- **cl_7f3a:2b** (CLAIM) — launch moved to March 14",
     "sources": ["cl_7f3a:2b"],
     "confidence": 0.82,
     "gaps": [],
-    "tokensUsed": 0
+    "tokens_used": 0
 }))]
 pub(crate) struct MemoryReasonResponse {
     /// Receipts for every executed retrieval and evidence projection.
@@ -217,12 +217,12 @@ pub(crate) struct MemoryReasonResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) reasoning: Option<MemoryReasonTrace>,
     /// Reported backend tokens across decompose, rerank and compose.
-    /// A lower bound when `tokensUsageComplete` is false; never reserved units.
+    /// A lower bound when `tokens_usage_complete` is false; never reserved units.
     /// `0` whenever no backend ran.
     #[schema(example = 0)]
     pub(crate) tokens_used: u64,
     /// False when a dispatched physical call did not report its full usage.
-    /// `tokensUsed` then contains only the reported portion, never a reservation.
+    /// `tokens_used` then contains only the reported portion, never a reservation.
     pub(crate) tokens_usage_complete: bool,
     /// Retrieval execution quality, independent of answer confidence and evidence count.
     #[schema(value_type = String)]
@@ -237,7 +237,7 @@ pub(crate) struct MemoryReasonResponse {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub(crate) limit_clamped: bool,
     /// Evidence rows whose bodies passed `[limits].projection_body_bytes`:
-    /// each names its row and carries `bodyOmitted`. They are neither cited
+    /// each names its row and carries `body_omitted`. They are neither cited
     /// nor read into the answer.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schema(value_type = Vec<Object>)]
@@ -358,7 +358,7 @@ pub(crate) fn depth_search_error(error: oneiron::Error) -> ApiError {
         ),
         (
             status = 400,
-            description = "Blank query, a zero limit, an out-of-range tokenBudget, unknown depth, or an unknown field.",
+            description = "Blank query, a zero limit, an out-of-range token_budget, unknown depth, or an unknown field.",
             body = ApiErrorEnvelope,
             content_type = "application/json"
         ),
@@ -463,7 +463,7 @@ pub(crate) async fn companion_memory_reason(
             let remaining = (token_budget as u64)
                 .checked_sub(retrieved.tokens_used)
                 .ok_or_else(|| {
-                    ApiError::bad_request("retrieval exceeded tokenBudget", Some("tokenBudget"))
+                    ApiError::bad_request("retrieval exceeded token_budget", Some("token_budget"))
                 })?;
             let mut bodies = crate::projection::BodyBudget::new(
                 &server.vault,
@@ -552,8 +552,8 @@ fn validate_token_budget(token_budget: Option<usize>) -> Result<usize, ApiError>
         Ok(token_budget)
     } else {
         Err(ApiError::bad_request(
-            "tokenBudget must be at least 1",
-            Some("tokenBudget"),
+            "token_budget must be at least 1",
+            Some("token_budget"),
         ))
     }
 }
@@ -563,8 +563,8 @@ fn session_scope(context: Option<&MemoryReasonSessionContext>) -> Result<Session
         return Ok(SessionScope::default());
     };
     Ok(SessionScope {
-        world_ref: parse_scope_ref(context.world_ref.as_deref(), "sessionContext.worldRef")?,
-        facet_ref: parse_scope_ref(context.facet_ref.as_deref(), "sessionContext.facetRef")?,
+        world_ref: parse_scope_ref(context.world_ref.as_deref(), "session_context.world_ref")?,
+        facet_ref: parse_scope_ref(context.facet_ref.as_deref(), "session_context.facet_ref")?,
         document_short_ids: context
             .document_short_ids
             .iter()
@@ -682,8 +682,8 @@ fn compose_read(
 ) -> Result<AnsweredRead, ApiError> {
     if token_budget == 0 {
         return Err(ApiError::bad_request(
-            "tokenBudget exhausted before composition",
-            Some("tokenBudget"),
+            "token_budget exhausted before composition",
+            Some("token_budget"),
         ));
     }
     let composed = admission.host.backend.compose(

@@ -36,7 +36,6 @@ pub(crate) struct ContextPackMediaQuery {
     mime: String,
     /// The bytes, standard base64, at most `[limits].retrieval_query_bytes`
     /// as sent.
-    #[serde(alias = "bytesB64")]
     #[schema(example = "iVBORw0KGgo=")]
     bytes_b64: String,
     /// The kinds of item the space's list keeps (`text`, `image`, `audio`);

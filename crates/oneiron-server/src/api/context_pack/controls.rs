@@ -12,11 +12,11 @@ use utoipa::ToSchema;
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackDepthControls {
     /// Edge expansion depth for neighbor hydration.
-    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
+    #[serde(default, rename = "edge_hop")]
     #[schema(example = 1)]
     pub(super) edge_hop: Option<u32>,
     /// Maximum neighbors to hydrate during edge expansion.
-    #[serde(default, rename = "max_neighbors", alias = "maxNeighbors")]
+    #[serde(default, rename = "max_neighbors")]
     #[schema(example = 50)]
     pub(super) max_neighbors: Option<usize>,
 }
@@ -29,11 +29,11 @@ pub(crate) struct ContextPackPolicyControls {
     #[schema(example = true)]
     pub(super) hydrate: Option<bool>,
     /// Whether to include edge records in hydrated entities.
-    #[serde(default, rename = "include_edges", alias = "includeEdges")]
+    #[serde(default, rename = "include_edges")]
     #[schema(example = true)]
     pub(super) include_edges: Option<bool>,
     /// Whether to include stored vectors when present.
-    #[serde(default, rename = "include_vectors", alias = "includeVectors")]
+    #[serde(default, rename = "include_vectors")]
     #[schema(example = false)]
     pub(super) include_vectors: Option<bool>,
     /// Field profile for hydrated fields.
@@ -41,19 +41,19 @@ pub(crate) struct ContextPackPolicyControls {
     #[schema(example = "standard")]
     pub(super) view: Option<View>,
     /// Apply recency boost with the supplied half-life in days.
-    #[serde(default, rename = "boost_recency_days", alias = "boostRecencyDays")]
+    #[serde(default, rename = "boost_recency_days")]
     #[schema(example = 7.0)]
     pub(super) boost_recency_days: Option<f32>,
     /// Apply salience boost.
-    #[serde(default, rename = "boost_salience", alias = "boostSalience")]
+    #[serde(default, rename = "boost_salience")]
     #[schema(example = true)]
     pub(super) boost_salience: Option<bool>,
     /// Apply confidence boost.
-    #[serde(default, rename = "boost_confidence", alias = "boostConfidence")]
+    #[serde(default, rename = "boost_confidence")]
     #[schema(example = true)]
     pub(super) boost_confidence: Option<bool>,
     /// Apply contiguity boost.
-    #[serde(default, rename = "boost_contiguity", alias = "boostContiguity")]
+    #[serde(default, rename = "boost_contiguity")]
     #[schema(example = true)]
     pub(super) boost_contiguity: Option<bool>,
 }
@@ -66,19 +66,19 @@ pub(crate) struct ContextPackTimeControls {
     #[schema(example = 1_782_357_600_u64)]
     pub(super) since: Option<u64>,
     /// Occurrence window start, inclusive.
-    #[serde(default, rename = "occurred_start", alias = "occurredStart")]
+    #[serde(default, rename = "occurred_start")]
     #[schema(example = 1_782_357_600_u64)]
     pub(super) occurred_start: Option<u64>,
     /// Occurrence window end, inclusive.
-    #[serde(default, rename = "occurred_end", alias = "occurredEnd")]
+    #[serde(default, rename = "occurred_end")]
     #[schema(example = 1_782_357_900_u64)]
     pub(super) occurred_end: Option<u64>,
     /// Learned-at window start, inclusive.
-    #[serde(default, rename = "learned_start", alias = "learnedStart")]
+    #[serde(default, rename = "learned_start")]
     #[schema(example = 1_782_357_600_u64)]
     pub(super) learned_start: Option<u64>,
     /// Learned-at window end, inclusive.
-    #[serde(default, rename = "learned_end", alias = "learnedEnd")]
+    #[serde(default, rename = "learned_end")]
     #[schema(example = 1_782_357_900_u64)]
     pub(super) learned_end: Option<u64>,
 }
@@ -101,7 +101,7 @@ pub(crate) struct ContextPackRetrievalBudgetControls {
     #[serde(default)]
     #[schema(example = 1)]
     pub(crate) other: Option<usize>,
-    #[serde(default, rename = "selected_edges", alias = "selectedEdges")]
+    #[serde(default, rename = "selected_edges")]
     #[schema(example = 50)]
     pub(crate) selected_edges: Option<usize>,
 }
@@ -110,15 +110,15 @@ pub(crate) struct ContextPackRetrievalBudgetControls {
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextPackBudgetControls {
     /// Serialized token budget for context-pack responses, including structured JSON projection.
-    #[serde(default, rename = "token_budget", alias = "tokenBudget")]
+    #[serde(default, rename = "token_budget")]
     #[schema(example = 4000)]
     pub(super) token_budget: Option<usize>,
     /// Per-item token cap for context-pack serialization; 0 disables it.
-    #[serde(default, rename = "max_item_tokens", alias = "maxItemTokens")]
+    #[serde(default, rename = "max_item_tokens")]
     #[schema(example = 512)]
     pub(super) max_item_tokens: Option<usize>,
     /// Maximum field characters before serialization truncation.
-    #[serde(default, rename = "max_field_chars", alias = "maxFieldChars")]
+    #[serde(default, rename = "max_field_chars")]
     #[schema(example = 500)]
     pub(super) max_field_chars: Option<usize>,
     /// Per-kind retrieval item budgets before final result truncation.
@@ -136,15 +136,15 @@ pub(crate) struct CoreInterlocutorControls {
     /// Physical owner presence asserted by the embedder. May only be `true`
     /// on an owner-grade credential — un-narrowed on both the scope and the
     /// `principal_ref` axis (403 otherwise); `false` always narrows.
-    #[serde(default, rename = "owner_present", alias = "ownerPresent")]
+    #[serde(default, rename = "owner_present")]
     #[schema(example = true)]
     pub(super) owner_present: Option<bool>,
     /// Third-party conversation participants.
-    #[serde(default, rename = "third_parties", alias = "thirdParties")]
+    #[serde(default, rename = "third_parties")]
     pub(super) third_parties: Vec<CoreInterlocutorParty>,
     /// Voice session roster reference. Accepted now; the roster merge lands
     /// with ILD-3 (ONE-1518).
-    #[serde(default, rename = "voice_session_ref", alias = "voiceSessionRef")]
+    #[serde(default, rename = "voice_session_ref")]
     #[schema(example = "call-123")]
     pub(super) voice_session_ref: Option<String>,
 }
@@ -154,11 +154,11 @@ pub(crate) struct CoreInterlocutorControls {
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct CoreInterlocutorParty {
     /// Hex CounterpartyContact entity id.
-    #[serde(default, rename = "contact_ref", alias = "contactRef")]
+    #[serde(default, rename = "contact_ref")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     pub(super) contact_ref: Option<String>,
     /// Hex ChannelIdentity entity id; requires `counterparty`.
-    #[serde(default, rename = "channel_identity_ref", alias = "channelIdentityRef")]
+    #[serde(default, rename = "channel_identity_ref")]
     #[schema(example = "fedcba9876543210fedcba9876543210")]
     pub(super) channel_identity_ref: Option<String>,
     /// Provider-native counterparty key; requires `channel_identity_ref`.
@@ -170,7 +170,7 @@ pub(crate) struct CoreInterlocutorParty {
     #[schema(example = "unknown speaker 2")]
     pub(super) label: Option<String>,
     /// Label-only owner claim carried on the stamp; never authority.
-    #[serde(default, rename = "claimed_owner", alias = "claimedOwner")]
+    #[serde(default, rename = "claimed_owner")]
     #[schema(example = false)]
     pub(super) claimed_owner: Option<bool>,
 }
@@ -316,7 +316,7 @@ pub(crate) struct CoreContextPackRequest {
     #[schema(example = "blue hallway")]
     pub(super) query: Option<String>,
     /// Optional vector query.
-    #[serde(default, rename = "query_vector", alias = "queryVector")]
+    #[serde(default, rename = "query_vector")]
     #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
     pub(super) query_vector: Option<Vec<f32>>,
     /// Optional media query (OF-370), embedded by the server into one
@@ -327,7 +327,7 @@ pub(crate) struct CoreContextPackRequest {
     /// Optional affect the query is asked in (OF-423): emotion congruence
     /// ranks a candidate by how near its own valence, arousal and dominance
     /// sit.
-    #[serde(default, alias = "queryAffect")]
+    #[serde(default)]
     pub(super) query_affect: Option<ContextPackQueryAffect>,
     /// Maximum primary candidates to retrieve, served whole. The response's
     /// `limit_clamped` stays false.
@@ -339,23 +339,19 @@ pub(crate) struct CoreContextPackRequest {
     #[schema(default = default_true, example = true)]
     pub(super) hydrate: bool,
     /// Whether to include edge records in hydrated entities.
-    #[serde(default, rename = "include_edges", alias = "includeEdges")]
+    #[serde(default, rename = "include_edges")]
     #[schema(example = true)]
     pub(super) include_edges: bool,
     /// Edge expansion depth for neighbor hydration.
-    #[serde(default, rename = "edge_hop", alias = "edgeHop")]
+    #[serde(default, rename = "edge_hop")]
     #[schema(example = 1)]
     pub(super) edge_hop: u32,
     /// Maximum neighbors to hydrate during edge expansion.
-    #[serde(
-        default = "default_context_neighbors",
-        rename = "max_neighbors",
-        alias = "maxNeighbors"
-    )]
+    #[serde(default = "default_context_neighbors", rename = "max_neighbors")]
     #[schema(default = default_context_neighbors, example = 50)]
     pub(super) max_neighbors: usize,
     /// Whether to include vectors in hydrated entities.
-    #[serde(default, rename = "include_vectors", alias = "includeVectors")]
+    #[serde(default, rename = "include_vectors")]
     #[schema(example = false)]
     pub(super) include_vectors: bool,
     /// Field profile for hydrated fields. Defaults to standard.

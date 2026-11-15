@@ -137,7 +137,7 @@ impl LiveRunRefusal {
     pub(crate) const fn suggestion(self) -> &'static str {
         match self {
             Self::Required | Self::Invalid | Self::Unavailable => {
-                "Attach at POST /v1/core/live-runs/{run}/attach and send its liveRun."
+                "Attach at POST /v1/core/live-runs/{run}/attach and send its live_run."
             }
             Self::Stale => "Attach again once the run holds its next lease.",
             Self::Busy => "Retry once the current entry or action of the run ends.",

@@ -29,7 +29,7 @@ use crate::server::SyncServer;
 /// reached and the first one the restore needs, signed at `timestamp` with
 /// a fresh `nonce`; each in lower-case hex.
 #[derive(Deserialize, ToSchema)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(in crate::api) struct KitCustodyPageRequest {
     /// The vault, 64 hex.
     vault_id: String,
@@ -68,7 +68,7 @@ pub(in crate::api) struct KitCustodyFrame {
 
 /// Where the next page starts.
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(in crate::api) struct KitCustodyCursor {
     /// The head's bytes the next page starts at.
     head_offset: u64,
@@ -80,7 +80,7 @@ pub(in crate::api) struct KitCustodyCursor {
 /// log frames once the head is whole, read as one pair under the lineage's
 /// lock.
 #[derive(Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(in crate::api) struct KitCustodyPageResponse {
     /// The BLAKE3 of the whole head the page was read with, 64 hex. A page
     /// that names another head than the page before means the home switched
@@ -93,10 +93,10 @@ pub(in crate::api) struct KitCustodyPageResponse {
     head_seq: u64,
     /// Where the page's slice of the head starts.
     head_offset: u64,
-    /// The head's bytes from `headOffset`, in standard base64; empty once the
+    /// The head's bytes from `head_offset`, in standard base64; empty once the
     /// head is whole.
     head_part: String,
-    /// The frames after the cursor's sequence number, from `fromSeq` or
+    /// The frames after the cursor's sequence number, from `from_seq` or
     /// right after the head where that is earlier, in order and without a
     /// gap: through the head's, then on past it as far as the home's log
     /// runs.
@@ -139,13 +139,13 @@ pub(in crate::api) async fn custody_page(
     let bad = |field: &str| ApiError::bad_request("the kit fetch field is malformed", Some(field));
     let mut origins = kit_origins(kit_public_urls(&server), &uri, &headers).into_iter();
     let fetch = KitCustodyFetch {
-        vault_id: parse_slip_id(&input.vault_id).map_err(|_| bad("vaultId"))?,
+        vault_id: parse_slip_id(&input.vault_id).map_err(|_| bad("vault_id"))?,
         root: RecoveryRootId(parse_slip_id(&input.root).map_err(|_| bad("root"))?),
         origin: origins
             .next()
             .ok_or_else(|| ApiError::bad_request("the request names no host", None))?,
         lineage: Lineage::from_hex(&input.custody_vault, &input.custody_namespace)
-            .ok_or_else(|| bad("custodyVault"))?,
+            .ok_or_else(|| bad("custody_vault"))?,
         head_offset: input.head_offset,
         after_seq: input.after_seq,
         from_seq: input.from_seq,

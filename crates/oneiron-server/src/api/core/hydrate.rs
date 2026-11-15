@@ -26,15 +26,15 @@ pub(crate) use routes::*;
 }))]
 pub(crate) struct CoreHydrateRequest {
     /// Canonical short reference in `shortId:contentHashHex[@revisionHex]` form.
-    #[serde(default, rename = "ref", alias = "short_ref", alias = "shortRef")]
+    #[serde(default, rename = "ref", alias = "short_ref")]
     #[schema(example = "tn1:a7")]
     reference: Option<String>,
     /// Short id without the content hash, accepted when `content_hash` is also supplied.
-    #[serde(default, rename = "short_id", alias = "shortId")]
+    #[serde(default, rename = "short_id")]
     #[schema(example = "tn1")]
     short_id: Option<String>,
     /// Two-hex-digit content hash, accepted when `short_id` is also supplied.
-    #[serde(default, rename = "content_hash", alias = "contentHash")]
+    #[serde(default, rename = "content_hash")]
     #[schema(example = "a7")]
     content_hash: Option<String>,
     /// Projection view for live entities. Defaults to full.
@@ -44,7 +44,7 @@ pub(crate) struct CoreHydrateRequest {
     /// Whether the reader's model takes images in: a live generated image
     /// is then served as its bytes, base64, rather than its text form.
     /// Defaults to false.
-    #[serde(default, rename = "image_input", alias = "imageInput")]
+    #[serde(default, rename = "image_input")]
     #[schema(example = true)]
     image_input: bool,
     /// The task the reader's model serves. With `image_input`, the host's
@@ -159,14 +159,7 @@ pub(crate) enum CoreHydrateDeletionReason {
 }))]
 pub(crate) struct CoreBatchShortIdHydrateRequest {
     /// Canonical short references in `shortId:contentHashHex[@revisionHex]` form.
-    #[serde(
-        default,
-        rename = "refs",
-        alias = "short_refs",
-        alias = "shortRefs",
-        alias = "short_ids",
-        alias = "shortIds"
-    )]
+    #[serde(default, rename = "refs", alias = "short_refs", alias = "short_ids")]
     #[schema(example = json!(["tn1:a7", "tn2:ff"]))]
     refs: Vec<String>,
     /// Projection view for live entities. Defaults to full.
@@ -176,7 +169,7 @@ pub(crate) struct CoreBatchShortIdHydrateRequest {
     /// Whether the reader's model takes images in: a live generated image
     /// is then served as its bytes, base64, rather than its text form.
     /// Defaults to false.
-    #[serde(default, rename = "image_input", alias = "imageInput")]
+    #[serde(default, rename = "image_input")]
     #[schema(example = true)]
     image_input: bool,
     /// The task the reader's model serves. With `image_input`, the host's

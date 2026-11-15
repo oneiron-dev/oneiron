@@ -44,7 +44,7 @@ use utoipa::ToSchema;
     "query_vector": [0.1, 0.2, 0.3, 0.4],
     "limit": 10,
     "view": "summary",
-    "countMode": "estimate"
+    "count_mode": "estimate"
 }))]
 pub(crate) struct CoreQueryRequest {
     /// Optional BM25 text query.
@@ -52,7 +52,7 @@ pub(crate) struct CoreQueryRequest {
     #[schema(example = "blue hallway")]
     query: Option<String>,
     /// Optional vector query. If supplied with `query`, the retrieval pipeline combines signals.
-    #[serde(default, rename = "query_vector", alias = "queryVector")]
+    #[serde(default, rename = "query_vector")]
     #[schema(example = json!([0.1, 0.2, 0.3, 0.4]))]
     query_vector: Option<Vec<f32>>,
     /// Optional media query (OF-370), embedded by the server into one
@@ -63,10 +63,10 @@ pub(crate) struct CoreQueryRequest {
     /// Optional affect the query is asked in (OF-423), as on the context
     /// pack: emotion congruence ranks a candidate by how near its own
     /// valence, arousal and dominance sit.
-    #[serde(default, alias = "queryAffect")]
+    #[serde(default)]
     query_affect: Option<ContextPackQueryAffect>,
     /// Maximum result count. The whole requested count is served, and
-    /// `meta.limitClamped` stays false.
+    /// `meta.limit_clamped` stays false.
     #[serde(default = "default_limit")]
     #[schema(default = default_limit, example = 10)]
     limit: usize,
@@ -75,11 +75,7 @@ pub(crate) struct CoreQueryRequest {
     #[schema(example = "summary")]
     view: Option<View>,
     /// Count precision for response metadata. Query defaults to estimate.
-    #[serde(
-        default = "CountMode::default_estimate",
-        rename = "countMode",
-        alias = "count_mode"
-    )]
+    #[serde(default = "CountMode::default_estimate")]
     #[schema(example = "estimate")]
     count_mode: CountMode,
     /// Session receiving the result. Defaults to the caller's current board session.
@@ -464,7 +460,7 @@ pub(crate) struct CoreListQuery {
     #[param(example = "summary")]
     pub(crate) view: Option<View>,
     /// Count precision for response metadata. List endpoints default to exact.
-    #[serde(default, rename = "countMode", alias = "count_mode")]
+    #[serde(default)]
     #[schema(example = "exact")]
     #[param(example = "exact")]
     pub(crate) count_mode: CountMode,

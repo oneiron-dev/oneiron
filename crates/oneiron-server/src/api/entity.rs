@@ -53,7 +53,7 @@ use utoipa::ToSchema;
                                     "id": "0123456789abcdef0123456789abcdef",
                                     "kind": "TASK",
                                     "label": "Ship OpenAPI projections",
-                                    "updatedAt": 1782357635_u64
+                                    "updated_at": 1782357635_u64
                                 })
                             )
                         ),
@@ -65,7 +65,7 @@ use utoipa::ToSchema;
                                     "kind": "TASK",
                                     "type": 1,
                                     "label": "Ship OpenAPI projections",
-                                    "updatedAt": 1782357635_u64,
+                                    "updated_at": 1782357635_u64,
                                     "title": "Ship OpenAPI projections",
                                     "body": "Document JSON entity projection responses."
                                 })

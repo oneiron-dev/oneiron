@@ -162,7 +162,7 @@ impl Recall<'_> {
         let arguments = if name == "vault.recall" {
             json!({"spec": {"query": self.query, "effort": self.effort.as_str(), "limit": self.limit}})
         } else {
-            json!({"request": {"query": self.query, "limit": self.limit, "view": "summary", "countMode": "none"}})
+            json!({"request": {"query": self.query, "limit": self.limit, "view": "summary", "count_mode": "none"}})
         };
         Ok((
             name,

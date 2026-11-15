@@ -95,7 +95,7 @@ fn responses(answer: Value) -> Value {
 const CORE_ERROR_ENVELOPE: &str = "#/components/schemas/ApiErrorEnvelope";
 
 /// The facade's refusal envelope, as `MemoryErrorEnvelopeSchema` mirrors it:
-/// `{error: {code, message, requestId, suggestions}}`, with the read's
+/// `{error: {code, message, request_id, suggestions}}`, with the read's
 /// narrowing receipt beside it when a read refused.
 fn facade_error_schema() -> Value {
     json!({
@@ -104,11 +104,11 @@ fn facade_error_schema() -> Value {
         "properties": {
             "error": {
                 "type": "object",
-                "required": ["code", "message", "requestId", "suggestions"],
+                "required": ["code", "message", "request_id", "suggestions"],
                 "properties": {
                     "code": {"type": "string", "description": "The stable refusal code."},
                     "message": {"type": "string", "description": "What was refused, in words."},
-                    "requestId": {
+                    "request_id": {
                         "type": "string",
                         "description": "This refusal's correlation id."
                     },
@@ -117,21 +117,21 @@ fn facade_error_schema() -> Value {
                         "items": {"type": "string"},
                         "description": "What to do instead."
                     },
-                    "receiptRef": {
+                    "receipt_ref": {
                         "type": "string",
                         "description": "The call's lasting receipt (`call:<32hex>`), when it has one."
                     },
-                    "retryAfter": {
+                    "retry_after": {
                         "type": "integer",
                         "minimum": 0,
                         "description": "When to call again, in seconds, when no provider answered."
                     },
-                    "resetsAt": {
+                    "resets_at": {
                         "type": "array",
                         "items": {"type": "integer", "minimum": 0},
                         "description": "Each time the refused call's limit resets, as Unix seconds, when its source said."
                     },
-                    "reasonCodes": {
+                    "reason_codes": {
                         "type": "array",
                         "items": {"type": "string"},
                         "description": "The refusal's stable reason codes, in its producer's order, when it named any."

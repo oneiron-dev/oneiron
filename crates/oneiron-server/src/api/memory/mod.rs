@@ -129,11 +129,11 @@ pub(crate) struct CoreMemoryVerbRequest {
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     id: Option<String>,
     /// New claim id for `supersede`.
-    #[serde(default, rename = "new_id", alias = "newId")]
+    #[serde(default, rename = "new_id")]
     #[schema(example = "22222222222222222222222222222222")]
     new_id: Option<String>,
     /// Old claim id for `supersede`.
-    #[serde(default, rename = "old_id", alias = "oldId")]
+    #[serde(default, rename = "old_id")]
     #[schema(example = "11111111111111111111111111111111")]
     old_id: Option<String>,
     /// Operation timestamp for supersede/retract verbs. Defaults to server time.

@@ -44,7 +44,6 @@ pub(crate) struct CompanionProfileQuery {
     #[param(example = "44444444444444444444444444444444")]
     world_ref: Option<String>,
     /// Optional comma-separated source revisions to check freshness against.
-    #[serde(rename = "sourceRevisionIds", alias = "source_revision_ids")]
     #[param(example = "cccccccccccccccccccccccccccccccc,dddddddddddddddddddddddddddddddd")]
     source_revision_ids: Option<String>,
 }
@@ -78,7 +77,6 @@ pub(crate) struct CompanionProfilePayload {
     #[schema(example = "A warm narrative profile for the companion.")]
     narrative: String,
     /// Persisted source revisions used to build this profile.
-    #[serde(rename = "sourceRevisionIds")]
     #[schema(example = json!(["cccccccccccccccccccccccccccccccc"]))]
     source_revision_ids: Vec<String>,
     /// Per-tier confidence metadata.
@@ -109,11 +107,9 @@ pub(crate) struct CompanionProfileStaleReasonPayload {
     #[schema(example = "source_revision_mismatch")]
     kind: String,
     /// Source revisions requested by the caller when they differ from storage.
-    #[serde(rename = "expectedSourceRevisionIds")]
     #[schema(example = json!(["dddddddddddddddddddddddddddddddd"]))]
     expected_source_revision_ids: Option<Vec<String>>,
     /// Source revisions persisted on the profile when they differ.
-    #[serde(rename = "actualSourceRevisionIds")]
     #[schema(example = json!(["cccccccccccccccccccccccccccccccc"]))]
     actual_source_revision_ids: Option<Vec<String>>,
 }
@@ -125,7 +121,6 @@ pub(crate) struct CompanionProfileDriftAnchor {
     #[schema(example = "keep")]
     state: String,
     /// Source revision this anchor applies to.
-    #[serde(rename = "sourceRevisionRef")]
     #[schema(example = "cccccccccccccccccccccccccccccccc")]
     source_revision_ref: String,
 }
@@ -140,7 +135,6 @@ pub(crate) struct CompanionProfileNextAction {
     #[schema(example = "source_revision_mismatch")]
     reason: String,
     /// Source revisions to use for the next refresh when known.
-    #[serde(rename = "sourceRevisionIds")]
     #[schema(example = json!(["dddddddddddddddddddddddddddddddd"]))]
     source_revision_ids: Option<Vec<String>>,
     /// Drift anchors to carry into refresh bookkeeping.
@@ -150,12 +144,12 @@ pub(crate) struct CompanionProfileNextAction {
 /// Request body for refresh planning over a persisted PsychProfile.
 #[derive(Clone, Debug, Default, Deserialize, ToSchema)]
 #[schema(example = json!({
-    "sourceRevisionIds": ["cccccccccccccccccccccccccccccccc"]
+    "source_revision_ids": ["cccccccccccccccccccccccccccccccc"]
 }))]
 pub(crate) struct CompanionProfileRefreshRequest {
     /// Currently selected source revisions for the next profile refresh.
     /// Any number: a large set is read in fair, bounded batches.
-    #[serde(rename = "sourceRevisionIds", alias = "source_revision_ids", default)]
+    #[serde(default)]
     source_revision_ids: Option<Vec<String>>,
 }
 
@@ -257,7 +251,7 @@ pub(crate) async fn get_companion_profile(
     Ok(Json(state))
 }
 
-/// Plan a companion profile refresh while preserving persisted sourceRevisionIds.
+/// Plan a companion profile refresh while preserving persisted source_revision_ids.
 #[utoipa::path(
     post,
     path = "/v1/companion/profiles/{person_ref}",
@@ -495,8 +489,8 @@ pub(crate) fn select_refresh_source_revision_ids(
     match (body_source_revision_ids, query_source_revision_ids) {
         (Some(body), Some(query)) if !same_source_revision_selection(&body, &query) => {
             Err(ApiError::bad_request(
-                "sourceRevisionIds query and body values must match when both are provided",
-                Some("sourceRevisionIds"),
+                "source_revision_ids query and body values must match when both are provided",
+                Some("source_revision_ids"),
             ))
         }
         (Some(body), _) => Ok(Some(body)),

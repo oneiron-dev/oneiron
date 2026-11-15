@@ -61,7 +61,7 @@ pub(crate) struct ContextBoardMemoriesControls {
 pub(crate) struct ContextBoardSessionControls {
     /// Stable session key that carries the MEMORIES cursor across calls.
     /// Defaults to the caller's own identity.
-    #[serde(default, rename = "session_id", alias = "sessionId")]
+    #[serde(default, rename = "session_id")]
     #[schema(example = "session-123")]
     pub(super) session_id: Option<String>,
     /// The conversation branch this board renders for. A hook block
@@ -75,7 +75,7 @@ pub(crate) struct ContextBoardSessionControls {
 #[derive(Debug, Default, Deserialize, ToSchema)]
 pub(crate) struct ContextBoardCompanionControls {
     /// Optional PERSON identity (32-hex entity id) or opaque person label.
-    #[serde(default, rename = "person_ref", alias = "personRef")]
+    #[serde(default, rename = "person_ref")]
     #[schema(example = "0123456789abcdef0123456789abcdef")]
     person_ref: Option<String>,
     /// Optional PERSON at the relationship's other end (32-hex entity id) or opaque label.

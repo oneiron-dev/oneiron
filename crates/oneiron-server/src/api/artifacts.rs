@@ -111,7 +111,7 @@ fn code_artifact_policy(
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub(crate) struct ArtifactServeQuery {
     channel: Option<String>,
     fork_hash: Option<String>,

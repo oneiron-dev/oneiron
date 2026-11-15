@@ -333,19 +333,19 @@ pub(crate) struct RateLimitStatus {
                 },
                 "runtime": {
                     "mode": "local_free",
-                    "oneironSpendMetered": false,
+                    "oneiron_spend_metered": false,
                     "routes": [{
                         "role": "orchestrator",
                         "mode": "local_free",
-                        "providerKind": "local",
+                        "provider_kind": "local",
                         "model": "local-orchestrator-default",
                         "state": "available",
                         "reason": "ready",
                         "provenance": {
-                            "roleDefault": "orchestrator",
+                            "role_default": "orchestrator",
                             "source": "mode_preset"
                         },
-                        "oneironSpendMetered": false
+                        "oneiron_spend_metered": false
                     }]
                 },
                 "counts": {

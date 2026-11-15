@@ -6,7 +6,7 @@ use super::{RuntimeConfig, RuntimeMode, RuntimeProviderKind, RuntimeRole};
 
 /// Runtime routing status advertised by health and discovery responses.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RuntimeStatus {
     /// Default runtime mode used when a role does not override it.
     pub mode: RuntimeMode,
@@ -34,7 +34,7 @@ impl RuntimeStatus {
 
 /// Redacted runtime availability advertised by unauthenticated health.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RuntimeHealthStatus {
     /// Default runtime mode used when a role does not override it.
     pub mode: RuntimeMode,
@@ -72,7 +72,7 @@ impl RuntimeHealthStatus {
 
 /// Resolved route decision for one runtime role.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RuntimeRoute {
     /// Role resolved by this route.
     pub role: RuntimeRole,
@@ -121,7 +121,7 @@ pub enum RuntimeRouteReason {
 
 /// Provenance for a resolved role route.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, ToSchema)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "snake_case")]
 pub struct RuntimeRouteProvenance {
     /// Role default used for this selection.
     pub role_default: RuntimeRole,
