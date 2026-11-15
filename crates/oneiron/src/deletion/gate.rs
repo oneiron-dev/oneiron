@@ -119,6 +119,11 @@ impl<'a> GatedDeletion<'a> {
         self.context.actor
     }
 
+    /// The actor this delete runs as, as a write names it: the revoker of a share it retracts.
+    pub(super) fn write_actor(&self) -> crate::write_envelope::WriteActor {
+        crate::write_envelope::WriteActor::new(self.context.actor, self.context.actor_class)
+    }
+
     /// The owner act the delete carries out, when its door bound one.
     pub(super) fn owner_act(&self) -> Option<&'a crate::secret_custody::EraseOwnerAct<'a>> {
         self.owner_act

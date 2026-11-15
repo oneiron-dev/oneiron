@@ -290,6 +290,7 @@ impl Vault {
             reason,
             DeleteReason::UserDelete | DeleteReason::UserHardDelete | DeleteReason::OwnerErase
         ) {
+            self.retract_brief_shares_unconfirmed(id, gate)?;
             let mut txn = self.store.env.write_txn()?;
             reverify_deletion_authority_before_publication(gate, &txn)?;
             self.store.delete_guards.precheck_goal_delete(
@@ -312,6 +313,43 @@ impl Vault {
             }
             crate::share::reserve_brief_delete(&self.store, &mut txn, id)?;
             txn.commit()?;
+        }
+        Ok(())
+    }
+
+    /// With the owner's `deletion.brief_share.require_confirmed` off, the owner's own delete first
+    /// revokes `id`'s live brief shares, each in its own write as the confirmed door does, so the
+    /// reservation that follows finds none and the delete goes on. The default keeps every share,
+    /// and the reservation sends the delete to the confirmed door. So does a delete by anyone the
+    /// owner rule of [`Vault::revoke_share`] does not admit for every share (an agent may stop
+    /// only a share it issued), and a proof-free delete, which names no actor to revoke as. A
+    /// revoke stands if a later phase of the delete fails, as the confirmed door's does.
+    fn retract_brief_shares_unconfirmed(
+        &self,
+        id: &EntityId,
+        gate: Option<&GatedDeletion<'_>>,
+    ) -> Result<()> {
+        let Some(gate) = gate else {
+            return Ok(());
+        };
+        let actor = gate.write_actor();
+        let now = self.store.clock.now_recorded_at();
+        let shares = {
+            let txn = self.store.env.read_txn()?;
+            let shares = crate::share::active_brief_shares_for(&self.store, &txn, id, now)?;
+            if shares.is_empty()
+                || super::super::setting_keys::BRIEF_SHARE_REQUIRES_CONFIRMED
+                    .read_in_txn(self, &txn, &[], None)?
+                    .value
+                || !crate::share::owner_revokes_every_share_in_txn(self, &txn, &actor)?
+            {
+                return Ok(());
+            }
+            reverify_deletion_authority_before_publication(Some(gate), &txn)?;
+            shares
+        };
+        for (share_id, _) in shares {
+            self.revoke_share(&share_id, &actor, now)?;
         }
         Ok(())
     }

@@ -20,6 +20,22 @@ fn revoke_refused() -> Error {
     Error::Record(RecordError::AuthorityRefused(SHARE_REVOKE_REFUSED))
 }
 
+/// Whether `actor` may stop every share, issued by it or not: a human whose authority-log owner
+/// binding is live, on a vault root that is not conflicted. [`Vault::revoke_share`] admits
+/// anyone else only on a share it issued.
+pub(crate) fn owner_revokes_every_share_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    actor: &WriteActor,
+) -> Result<bool> {
+    if actor.actor_class() != EdgeActorClass::Human {
+        return Ok(false);
+    }
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    Ok(!fold.vault_root_is_conflicted()
+        && crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human"))
+}
+
 impl Vault {
     /// Revokes the same grant immediately. Only the authenticated original issuer
     /// or a live authority-log owner may stop it. No new consent is requested.
@@ -38,14 +54,9 @@ impl Vault {
             Error::EntityNotFound => revoke_refused(),
             error => error,
         })?;
-        if Some(*actor) != admission.issuer {
-            let fold = self.authority_fold_readonly_in_txn(&txn)?;
-            if actor.actor_class() != EdgeActorClass::Human
-                || fold.vault_root_is_conflicted()
-                || !crate::authority::actor_binding_is_active(&fold, &actor.entity_ref(), "human")
-            {
-                return Err(revoke_refused());
-            }
+        if Some(*actor) != admission.issuer && !owner_revokes_every_share_in_txn(self, &txn, actor)?
+        {
+            return Err(revoke_refused());
         }
         if share.status == AccessGrantStatus::Revoked {
             return Ok(share);
