@@ -108,7 +108,7 @@ const PREDECESSOR_SEED: u8 = 67;
 /// key.
 const JOINING_SEED: u8 = 68;
 /// The seed of a vault root that is a P-256 key.
-const P256_ROOT_SEED: u8 = 69;
+const P256_ROOT_SEED: u8 = 60;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
