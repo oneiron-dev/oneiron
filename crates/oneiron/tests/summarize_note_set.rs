@@ -4,9 +4,11 @@
 //! Each test drives a real QuickJS guest through the shipped executor
 //! (`EngineNativeExecutor`) with a scripted model backend answering the
 //! programs. No real model, no sleeps, no ports. The full-access door below
-//! admits every run call as the run's own actor, so the run reads NOTEs as
-//! actor A reads them; a reader seat on the host meter (`ReaderSpend::Host`,
-//! no ledger scope to fund) lets `dispatch_summarize` queue the summary job.
+//! admits every run call as the run's own actor and answers that actor's own
+//! read key for the host turn, as the server's run door does, so the run
+//! reads NOTEs as actor A reads them; a reader seat on the host meter
+//! (`ReaderSpend::Host`, no ledger scope to fund) lets `dispatch_summarize`
+//! queue the summary job.
 //! A fake runner whose `wake` only notes the task stands in for the reader
 //! runner: the test body settles the job after the first call parks, then
 //! re-enters the run with the identical program, which hits the summary memo
@@ -70,12 +72,27 @@ const B_TEXT: &str = "The cartographer charts the reef by starlight.";
 const DIGEST: &str = "Both NOTEs keep the night watch over the strait.";
 
 /// The test's `AgentVerbDoor`: full access without the MCP server. Every run
-/// call is admitted as the run's own actor, so the run reads NOTEs as actor
-/// A reads them. No agent verb is bound: these programs call nothing through
-/// the verb door.
-struct FullAccessDoor;
+/// call is admitted as the run's own actor, and the host turn reads on that
+/// actor's own key, so the run reads NOTEs as actor A reads them. A bound
+/// door that answers no host-turn key reads nothing at all. No agent verb is
+/// bound: these programs call nothing through the verb door.
+struct FullAccessDoor {
+    /// The run actor's own read key, as a run with no door derives it from
+    /// the actor's class.
+    key: ScopedReadActorKey,
+}
 
 impl FullAccessDoor {
+    fn for_actor(actor: EntityId) -> Self {
+        Self {
+            key: ScopedReadActorKey::with_actor_class(
+                actor.to_hex(),
+                EdgeActorClass::Agent.gate_actor_class(),
+            )
+            .expect("the run actor's read key"),
+        }
+    }
+
     fn refused(code: &str) -> AgentVerbRefusal {
         AgentVerbRefusal {
             code: code.to_owned(),
@@ -110,6 +127,12 @@ impl AgentVerbDoor for FullAccessDoor {
         _destination: RunSpeechDestination,
     ) -> std::result::Result<Option<ScopedReadActorKey>, AgentVerbRefusal> {
         Ok(None)
+    }
+
+    /// The host turn reads as the run's own actor, as the server's run door
+    /// answers it.
+    fn host_turn_read_key(&self) -> Option<ScopedReadActorKey> {
+        Some(self.key.clone())
     }
 }
 
@@ -267,7 +290,7 @@ fn execute_run(
         run_ref,
     )
     .expect("a dispatcher binds")
-    .with_agent_verb_door(Arc::new(FullAccessDoor))
+    .with_agent_verb_door(Arc::new(FullAccessDoor::for_actor(actor)))
     .with_reader_spawn(reader_seat());
     let mut runtime = factory.runtime().expect("a guest runtime");
     let mut executor = EngineNativeExecutor::new(vault, &backend, &lease, &mut runtime, &gated);
