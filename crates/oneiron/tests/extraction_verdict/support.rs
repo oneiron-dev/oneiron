@@ -1,6 +1,7 @@
 //! Shared helpers for the bound extraction verdict tests: vault setup, request builders, and one counting backend.
 //!
-//! Both `extraction_verdict` and `extraction_read_layout` include this file instead of copying these helpers.
+//! `extraction_verdict`, `extraction_read_layout` and `extraction_observations_listing` include this file
+//! instead of copying these helpers.
 #![allow(dead_code)]
 
 use oneiron::dreamer_runner::{DreamerAdmittedAttempt, DreamerAttemptBinding};
