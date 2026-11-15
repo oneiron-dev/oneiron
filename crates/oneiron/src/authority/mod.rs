@@ -149,6 +149,7 @@ mod retired_signers;
 mod revocation_notice;
 mod revoke_proof;
 mod root_appointment_door;
+mod root_recovery_door;
 mod root_appointment_judge;
 mod seat_child_slip;
 mod sequence_ancestry;
@@ -238,6 +239,7 @@ pub use oneiron_authority::authority::{
     root_appointment_challenge,
 };
 pub use root_appointment_door::RootAppointmentReceipt;
+pub use root_recovery_door::{RootMaterial, RootRecovery, RootSuccessor};
 pub(crate) use root_appointment_door::refuse_unneeded_appointment;
 pub use root_appointment_judge::{AppointmentVerdict, AppointmentVoidReason};
 // The export secret work body and its sealed result (FIX 4624(b)).
@@ -400,7 +402,7 @@ pub(crate) use owner_act::{
 };
 pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
-    EnrolledOwnerKey, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+    EnrolledOwnerKey, EnrolledOwnerKeyKind, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
 };
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};

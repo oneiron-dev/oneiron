@@ -51,6 +51,22 @@ const KEY_ON_ROSTER: &str = "the vault's roster already names this key, live or 
 /// that would sign its own entry.
 const NOT_VALID: &str = "the enrollment does not verify: the proof must be the new key's own \
                          signature over its challenge for this vault, machine, key and owner";
+/// The fold did not count a key revocation signed by a roster key in this
+/// transaction. Nothing was written.
+const REVOKE_NOT_COUNTED: &str = "this install's fold does not count the key revocation; nothing \
+                                  was written";
+
+/// The signer of one authority entry a door writes in its own write
+/// transaction (the one `RevokeDevice` writer, pass 27 R4).
+pub(crate) enum EntrySigner<'a> {
+    /// This vault's live host root, through its slip issuer.
+    Host(&'a HostSlipIssuer),
+    /// A live roster key held behind the caller's signing callback, which
+    /// signs the entry's authority transcript: the recovery root's
+    /// authority key at the root's door.
+    Key(&'a AuthorityKey, &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
+}
+
 /// The enrollment would name more rows than one authority entry may: the
 /// log's encoding bound, never a possession test.
 const TOO_MANY_HEADS: &str = "the authority log has more concurrent heads than one key enrollment \
@@ -135,6 +151,40 @@ pub struct EnrolledOwnerKey {
     pub eligible: bool,
     /// When it was signed, advisory unix seconds.
     pub at: u64,
+    /// What the key is, as its enrollment's attestation kind says.
+    pub kind: EnrolledOwnerKeyKind,
+}
+
+/// What an enrolled owner key is, read from its enrollment row alone (pass
+/// 27 R4): a device's own key, or the recovery root's authority key. The
+/// owner's "last key held on a device" counts the first kind only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnrolledOwnerKeyKind {
+    /// A device's own owner signing key, held in its keystore
+    /// ([`OWNER_KEY_POSSESSION_KIND`]).
+    Device,
+    /// The recovery root's authority key, derived from the kit's seed
+    /// ([`RECOVERY_AUTHORITY_POSSESSION_KIND`]).
+    RecoveryAuthority,
+}
+
+impl EnrolledOwnerKeyKind {
+    /// The attestation kind an enrollment of this kind carries.
+    fn attestation_kind(self) -> &'static str {
+        match self {
+            Self::Device => OWNER_KEY_POSSESSION_KIND,
+            Self::RecoveryAuthority => RECOVERY_AUTHORITY_POSSESSION_KIND,
+        }
+    }
+
+    /// The kind an enrollment row names.
+    fn of(enroll: &OwnerKeyEnroll) -> Self {
+        if enroll.is_recovery_authority() {
+            Self::RecoveryAuthority
+        } else {
+            Self::Device
+        }
+    }
 }
 
 /// The binding of an owner's first enrolled key to them, as the enrollment's
@@ -154,13 +204,18 @@ fn not_valid(reason: &'static str) -> Error {
 }
 
 /// The one device shape an enrolled owner key has: Ed25519, `ROLE_OWNER`
-/// alone, Software tier, no transport binding, its proof as evidence.
-fn enrolled_device(public_key: [u8; 32], proof: Vec<u8>) -> DeviceAuthority {
+/// alone, Software tier, no transport binding, its proof as evidence under
+/// the attestation kind of `kind`.
+fn enrolled_device(
+    public_key: [u8; 32],
+    proof: Vec<u8>,
+    kind: EnrolledOwnerKeyKind,
+) -> DeviceAuthority {
     DeviceAuthority {
         key: AuthorityKey::Ed25519(public_key),
         transport_key_binding: [0; 32],
         attestation: AuthorityAttestation {
-            kind: OWNER_KEY_POSSESSION_KIND.to_owned(),
+            kind: kind.attestation_kind().to_owned(),
             evidence: proof,
         },
         tier: AuthorityTier::Software,
@@ -234,7 +289,64 @@ impl Vault {
         authority: &ActAuthority,
         input: OwnerKeyEnrollment,
         predecessor: AuthorityKey,
+        sign_predecessor: S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        self.enrol_owner_key_of_kind_as(
+            authority,
+            input,
+            EnrolledOwnerKeyKind::Device,
+            predecessor,
+            sign_predecessor,
+        )
+    }
+
+    /// [`Self::enrol_owner_signing_key_as`] for a key of `kind`, in a write
+    /// transaction of its own.
+    fn enrol_owner_key_of_kind_as<S>(
+        &self,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
+        predecessor: AuthorityKey,
         mut sign_predecessor: S,
+    ) -> Result<OwnerKeyEnrollmentReceipt>
+    where
+        S: FnMut(&[u8]) -> Result<Vec<u8>>,
+    {
+        if matches!(authority, ActAuthority::Agent(_)) {
+            return Err(authority_refused(OWNER_ONLY));
+        }
+        let mut txn = self.store.env.write_txn()?;
+        let receipt = self.enrol_owner_signing_key_in_txn(
+            &mut txn,
+            authority,
+            input,
+            kind,
+            predecessor,
+            &mut sign_predecessor,
+        )?;
+        txn.commit()?;
+        Ok(receipt)
+    }
+
+    /// [`Self::enrol_owner_signing_key_as`] for a key of `kind`, in the
+    /// caller's write transaction, which commits it or not: the recovery
+    /// root's door enrols the new key and revokes the lost ones in one (pass
+    /// 27 R4).
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`].
+    pub(super) fn enrol_owner_signing_key_in_txn<S>(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        kind: EnrolledOwnerKeyKind,
+        predecessor: AuthorityKey,
+        sign_predecessor: &mut S,
     ) -> Result<OwnerKeyEnrollmentReceipt>
     where
         S: FnMut(&[u8]) -> Result<Vec<u8>>,
@@ -243,12 +355,11 @@ impl Vault {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
-        let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let (carrier, carrier_key) = self
-            .carrier_in_txn(&txn, &fold)
+            .carrier_in_txn(txn, &fold)
             .map_err(authority_refusal_as(NO_CARRIER))?;
         let key = AuthorityKey::Ed25519(input.public_key);
         if fold.roster.contains_key(&key) {
@@ -257,7 +368,7 @@ impl Vault {
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(carrier, &carrier_key);
         let fold = self
-            .prepare_authority_frontier_in_txn(&mut txn, &fold, joiner, MAX_PARENTS)?
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
         // The main-log heads alone: the carrier's standing rows and the
         // predecessor's roster rows are main-log rows among them or their
@@ -276,7 +387,7 @@ impl Vault {
             surface,
             OWNER_KEY_ENROLLMENT_SEEN,
         );
-        let now = self.instant_in_txn(&txn)?.secs();
+        let now = self.instant_in_txn(txn)?.secs();
         let mut entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(vault_id),
@@ -286,7 +397,7 @@ impl Vault {
                 act,
                 machine: input.machine,
                 carrier,
-                device: enrolled_device(input.public_key, input.proof),
+                device: enrolled_device(input.public_key, input.proof, kind),
             }),
             signer: AuthoritySignature {
                 suite: predecessor.suite(),
@@ -311,8 +422,8 @@ impl Vault {
             start: now,
             end: now,
         };
-        self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
-        let after = self.authority_view_readonly_in_txn(&txn)?;
+        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
         if !after.valid_entries.contains(&hash)
             || after.install.held_back.contains(&hash)
             || !after.roster.get(&key).is_some_and(|device| !device.revoked)
@@ -329,9 +440,8 @@ impl Vault {
                 key,
                 owner: actor,
             };
-            self.bind_enrolled_owner_key_in_txn(&mut txn, bind, &mut sign_predecessor)?;
+            self.bind_enrolled_owner_key_in_txn(txn, bind, sign_predecessor)?;
         }
-        txn.commit()?;
         Ok(OwnerKeyEnrollmentReceipt {
             entry: hash,
             machine: input.machine,
@@ -359,7 +469,8 @@ impl Vault {
     /// Explicitly enrol the distinct authority key backed by `seed`, before loss.
     /// The seed's source kit does not gain authority by existing or being restored.
     /// This returns the ordinary counted enrollment receipt; it does not publish a
-    /// kit or make kit issuance atomic with enrollment.
+    /// kit or make kit issuance atomic with enrollment. The row carries the
+    /// root's own attestation kind ([`EnrolledOwnerKeyKind::RecoveryAuthority`]).
     ///
     /// `machine` and the carrying install must satisfy the existing owner-key
     /// enrollment rules. The predecessor signs inside that door's own writer.
@@ -386,7 +497,13 @@ impl Vault {
             let signer = crate::world_keys::RecoveryAuthoritySigner::from_seed(seed, &vault_id)?;
             signer.enrollment(machine, actor)?
         };
-        self.enrol_owner_signing_key_as(authority, input, predecessor, sign_predecessor)
+        self.enrol_owner_key_of_kind_as(
+            authority,
+            input,
+            EnrolledOwnerKeyKind::RecoveryAuthority,
+            predecessor,
+            sign_predecessor,
+        )
     }
 
     /// [`Self::enrol_recovery_authority_key_as`] with this host's existing root
@@ -476,7 +593,10 @@ impl Vault {
     }
 
     /// [`Self::enrolled_owner_keys`] in the caller's transaction.
-    fn enrolled_owner_keys_in_txn(&self, txn: &heed::RoTxn<'_>) -> Result<Vec<EnrolledOwnerKey>> {
+    pub(super) fn enrolled_owner_keys_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<EnrolledOwnerKey>> {
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let managed = CheckpointPosture::from(self.privacy_posture()) == CheckpointPosture::Managed;
         let mut keys = BTreeMap::new();
@@ -523,7 +643,7 @@ impl Vault {
             .filter(|key| *key != root)
             .collect();
         for revoked_key in keys {
-            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::RevokeDevice { revoked_key })?;
+            self.append_revoke_device_in_txn(txn, EntrySigner::Host(issuer), revoked_key)?;
         }
         let fold = self.authority_view_readonly_in_txn(txn)?;
         let bindings: Vec<(AuthorityKey, u64)> = fold
@@ -547,6 +667,72 @@ impl Vault {
             )?;
         }
         Ok(())
+    }
+
+    /// One `RevokeDevice` of `revoked_key`, signed by `signer`, in the
+    /// caller's write transaction: the one writer of the act (the
+    /// membership move signs it with the host root, the recovery root's door
+    /// with the root's authority key). It joins a frontier wider than one
+    /// entry names, names the main-log heads, takes the signer's next
+    /// sequence, and answers the entry's hash only once the fold counts it.
+    ///
+    /// # Errors
+    /// The log's: a signer that is not a live roster key of this vault, or
+    /// an entry the fold does not count.
+    pub(crate) fn append_revoke_device_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        signer: EntrySigner<'_>,
+        revoked_key: AuthorityKey,
+    ) -> Result<AuthorityEntryHash> {
+        let op = AuthorityOp::RevokeDevice { revoked_key };
+        let (key, sign) = match signer {
+            EntrySigner::Host(issuer) => return self.append_hashed_slip_op_in_txn(txn, issuer, op),
+            EntrySigner::Key(key, sign) => (key, sign),
+        };
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
+        let joiner = FrontierSigner::Callback(key, sign);
+        let fold = self
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
+            .unwrap_or(fold);
+        let parents = fold.append_heads.clone();
+        if parents.is_empty() {
+            return Err(invalid_authority());
+        }
+        if parents.len() > MAX_PARENTS {
+            return Err(authority_refused(TOO_MANY_HEADS));
+        }
+        let now = self.instant_in_txn(txn)?.secs();
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: Some(vault_id),
+            seq: next_sequence(&fold, key)?,
+            parent_hashes: parents.into_iter().collect(),
+            op,
+            signer: AuthoritySignature {
+                suite: key.suite(),
+                public_key: key.clone(),
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts: now,
+        };
+        entry.signer.signature = sign(&authority_transcript(&entry)?)?;
+        let hash = authority_entry_hash(&entry)?;
+        let at = TimeRange {
+            start: now,
+            end: now,
+        };
+        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        if !self
+            .authority_view_readonly_in_txn(txn)?
+            .valid_entries
+            .contains(&hash)
+        {
+            return Err(authority_refused(REVOKE_NOT_COUNTED));
+        }
+        Ok(hash)
     }
 
     /// Binds the embedded owner again under the host root, in the
@@ -677,6 +863,7 @@ fn keep_enrolled(
             eligible: device
                 .is_some_and(|device| super::checkpoint_policy::selectable_root(device, managed)),
             at: entry.ts,
+            kind: EnrolledOwnerKeyKind::of(enroll),
         },
     );
 }

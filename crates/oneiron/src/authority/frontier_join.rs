@@ -76,7 +76,8 @@ pub(crate) enum FrontierSigner<'a> {
     /// P-256 (FIX 11993), held behind the caller's signing callback, which
     /// signs each join's transcript (FIX 11867). Its joins are in the host
     /// family: that family's rule, a live owner roster key, is the standing
-    /// the ReRoot itself stands on.
+    /// the ReRoot itself stands on. The recovery root's authority key joins
+    /// the same way at the root's door, under the same rule (pass 27 R4).
     Callback(&'a AuthorityKey, &'a dyn Fn(&[u8]) -> Result<Vec<u8>>),
 }
 

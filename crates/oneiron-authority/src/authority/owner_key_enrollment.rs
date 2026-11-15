@@ -24,6 +24,13 @@
 //! fresh key and an ordinary `RevokeDevice` of the old one. An agent never
 //! enrols an owner key: no Grant line names the act, and the codec refuses an
 //! agent's act outright.
+//!
+//! The recovery root's authority key enrols in the same shape with its own
+//! attestation kind ([`RECOVERY_AUTHORITY_POSSESSION_KIND`], pass 27 R4), so
+//! a reader tells it from a device's key by the row alone: the owner's
+//! "last key held on a device" never counts the root's key. The kind is the
+//! enroller's statement under the predecessor's signature; the evidence is
+//! the same proof of possession and cannot show the derivation.
 
 use ed25519_dalek::Signature as Ed25519Signature;
 use rmpv::Value;
@@ -41,6 +48,10 @@ const OWNER_KEY_ENROLL_KEYS: [&str; 5] = [OP_KEY_KIND, OP_KEY_ACT, "machine", "c
 pub const OWNER_KEY_POSSESSION_KIND: &str = "owner-key-possession/v1";
 /// The length of that evidence: one raw Ed25519 signature.
 pub const OWNER_KEY_POSSESSION_PROOF_LEN: usize = 64;
+/// The attestation kind the recovery root's authority key carries when it
+/// enrols as an owner key: the device shape and the evidence of
+/// [`OWNER_KEY_POSSESSION_KIND`], under a kind of its own.
+pub const RECOVERY_AUTHORITY_POSSESSION_KIND: &str = "recovery-authority-possession/v1";
 
 /// The policy hook of CALLS "FIX 4920 enrollment shape": the `seen` of every
 /// owner key enrollment act. Fresh keys only: the target is the key itself,
@@ -138,6 +149,13 @@ impl OwnerKeyEnroll {
         }
     }
 
+    /// Whether the enrolled key is the recovery root's authority key, as its
+    /// attestation kind says ([`RECOVERY_AUTHORITY_POSSESSION_KIND`]).
+    #[must_use]
+    pub fn is_recovery_authority(&self) -> bool {
+        self.device.attestation.kind == RECOVERY_AUTHORITY_POSSESSION_KIND
+    }
+
     /// The fixed device shape and the owner's own act: no agent, no answered
     /// ask, and a zero `seen`.
     pub fn validate(&self) -> Result<()> {
@@ -146,7 +164,10 @@ impl OwnerKeyEnroll {
             || self.device.roles != ROLE_OWNER
             || self.device.tier != AuthorityTier::Software
             || self.device.transport_key_binding != [0; 32]
-            || self.device.attestation.kind != OWNER_KEY_POSSESSION_KIND
+            || !matches!(
+                self.device.attestation.kind.as_str(),
+                OWNER_KEY_POSSESSION_KIND | RECOVERY_AUTHORITY_POSSESSION_KIND
+            )
             || self.device.attestation.evidence.len() != OWNER_KEY_POSSESSION_PROOF_LEN
             || self.act.act != OwnerActKind::OwnerKeyEnrollment
             || self.act.by != ActBy::Owner
