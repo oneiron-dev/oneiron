@@ -803,10 +803,14 @@ pub(super) fn stored_replay_generation(
     txn: &heed::RoTxn<'_>,
     run_id: &EntityId,
 ) -> Result<Option<CodeRunReplayGeneration>> {
-    REPLAY_RECORDS
-        .get_borrowed(dbs, txn, run_id)?
-        .map(|bytes| decode_code_run_replay_generation(&bytes))
-        .transpose()
+    replay_generation_of(REPLAY_RECORDS.get_borrowed(dbs, txn, run_id)?.as_deref())
+}
+
+/// The generation of a stored replay row's bytes; `None` for no row.
+pub(super) fn replay_generation_of(
+    stored: Option<&[u8]>,
+) -> Result<Option<CodeRunReplayGeneration>> {
+    stored.map(decode_code_run_replay_generation).transpose()
 }
 
 pub(super) fn replay_generation_matches(

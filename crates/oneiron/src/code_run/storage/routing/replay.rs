@@ -14,7 +14,7 @@ use std::borrow::Cow;
 use super::super::overlay_erase::fence_overlay_replay_in_txn;
 use super::super::records::{
     MODEL_HEAL_COUNTS, REPLAY_RECORDS, next_additive_heal_count, replay_generation_matches,
-    stored_replay_generation,
+    replay_generation_of, stored_replay_generation,
 };
 use super::super::response_erase::fence_replay_in_txn;
 use super::super::response_owners::stamp_response_owner_in_txn;
@@ -91,10 +91,7 @@ impl SessionBinding<'_> {
                     &REPLAY_RECORDS,
                     &record.run_id,
                     record,
-                    |current| {
-                        let stored = current.map(CodeRunReplayRecord::generation).transpose()?;
-                        replay_generation_matches(stored, expected)
-                    },
+                    |stored| replay_generation_matches(replay_generation_of(stored)?, expected),
                     &MODEL_HEAL_COUNTS,
                     &model.as_str().to_owned(),
                     next_additive_heal_count,
