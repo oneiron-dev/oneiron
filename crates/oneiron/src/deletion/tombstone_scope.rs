@@ -34,6 +34,29 @@ pub(crate) struct DeletedRecordScope {
 const TOMBSTONE_SCOPE: SideTable<HexId, DeletedRecordScope, Named> =
     SideTable::new(&side_table::FEDERATION_TOMBSTONE_SCOPE);
 
+/// Whether the scope `id` held when a delete took it, whichever request the
+/// capture is bound to, names a WORLD of the received foreign range: the
+/// erased row was a foreign copy. Ids alone answer, never content; the
+/// foreign-copy guards read it once the row is gone (L7-02).
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn deleted_scope_names_foreign_world_in(
+    store: &impl ManifestDbs,
+    txn: &RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(TOMBSTONE_SCOPE
+        .get(store, txn, &HexId(*id))?
+        .is_some_and(|row| match &row.scope.worlds {
+            oneiron_authority::federation::ScopeAxis::Some(worlds) => worlds
+                .iter()
+                .any(|world| crate::entity_id::is_foreign_world_id_range(world.0)),
+            _ => false,
+        }))
+}
+
 /// Captures `id`'s scope in the delete's own transaction, before its row is
 /// torn down. `request` binds it; an unbound capture keeps the request a row
 /// is already bound to.
@@ -107,29 +130,6 @@ pub(crate) fn deleted_scope_in(
         .get(store, txn, &HexId(*id))?
         .filter(|row| row.request.as_ref() == Some(request))
         .map(|row| row.scope))
-}
-
-/// Whether the scope `id` held when a delete took it, whichever request the
-/// capture is bound to, names a WORLD of the received foreign range: the
-/// erased row was a foreign copy. Ids alone answer, never content; the
-/// foreign-copy guards read it once the row is gone (L7-02).
-///
-/// # Errors
-///
-/// Storage errors.
-pub(crate) fn deleted_scope_names_foreign_world_in(
-    store: &impl ManifestDbs,
-    txn: &RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    Ok(TOMBSTONE_SCOPE
-        .get(store, txn, &HexId(*id))?
-        .is_some_and(|row| match &row.scope.worlds {
-            oneiron_authority::federation::ScopeAxis::Some(worlds) => worlds
-                .iter()
-                .any(|world| crate::entity_id::is_foreign_world_id_range(world.0)),
-            _ => false,
-        }))
 }
 
 /// A live row's scope is written. With no live row (none, or a deleted
