@@ -35,6 +35,7 @@ fn connector_admission<'a>(
         verdict_fold: VerdictFold::default(),
         continuations: None,
         owed_booking_moves: 0,
+        admitted_claims: Vec::new(),
     }
 }
 /// Checks every event's values before any is admitted. Value checks run no

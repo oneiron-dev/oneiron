@@ -170,27 +170,39 @@ pub fn run_ics_property_continuation(
     safeguard_enabled: bool,
     payload: &IcsPropertyContinuationPayload,
 ) -> Result<(), CalendarError> {
+    run_ics_property_continuation_admitting(vault, screener, safeguard_enabled, payload).map(drop)
+}
+
+/// [`run_ics_property_continuation`], answering the imported claims it
+/// admitted: an installed feed's continuation settles them under the feed's
+/// consent (CAL-02), as its poll settles its own.
+pub(in crate::calendar::ingest) fn run_ics_property_continuation_admitting(
+    vault: &Vault,
+    screener: Option<&dyn CalendarBodyScreener>,
+    safeguard_enabled: bool,
+    payload: &IcsPropertyContinuationPayload,
+) -> Result<Vec<EntityId>, CalendarError> {
     let event_ref = EntityId::from_hex(&payload.event_ref)
         .map_err(|_| ingest("property continuation names no event"))?;
     // FIX 4797: the vault's one calendar admission turn, from the passport
     // check through the admissions.
     let _turn = crate::calendar::ingest::admission_turn(vault)?;
     if vault.get_entity_type(&event_ref)? != Some(ENTITY_TYPE_EVENT) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let Some(bytes) = read_archived_version(vault, &payload.source_version)? else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     let feed = parse_ics_feed(&bytes)?;
     let Some(event) = feed.events.iter().find(|event| {
         event.uid == payload.uid && event.properties.recurrence_id_utc == payload.recurrence_id_utc
     }) else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     if !live_passport_for(vault, &event_ref, &payload.system, &payload.uid)?
         .is_some_and(|(_, passport)| passport.content_hash == event.content_hash)
     {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let mut admission = PollAdmission {
         vault,
@@ -205,10 +217,12 @@ pub fn run_ics_property_continuation(
         verdict_fold: VerdictFold::default(),
         continuations: Some(Vec::new()),
         owed_booking_moves: 0,
+        admitted_claims: Vec::new(),
     };
     admission.preflight_event(event)?;
     admission.admit_properties(event_ref, event)?;
-    admission.queue_property_continuations_reading(&payload.source_version)
+    admission.queue_property_continuations_reading(&payload.source_version)?;
+    Ok(admission.admitted_claims)
 }
 
 /// The bytes of the archived version an `artifact#vN` reference names;

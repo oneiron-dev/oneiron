@@ -41,7 +41,6 @@ use oneiron::calendar::ingest::feed_door::{self, CalendarIcsFeedRequest};
 use oneiron::calendar::ingest::{
     CustodyDoorIcsFeedFetcher, ICS_POLL_ATTEMPT_KIND, ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND,
     IcsFeedPollConfig, IcsFeedPollPayload, IcsPropertyContinuationPayload,
-    run_ics_property_continuation,
 };
 use oneiron::calendar::{
     CALDAV_SYNC_ATTEMPT_KIND, CalDavConnector, CalendarConnectorSeatConfig,
@@ -249,11 +248,10 @@ fn settle_continuation(
         .map_err(anyhow::Error::from)
         .and_then(|actor| {
             let memory = vault.memory(actor, EdgeActorClass::Human);
-            let safeguard_enabled = feed_door::inbound_safeguard_enabled(&memory)?;
-            run_ics_property_continuation(
-                vault,
+            feed_door::run_installed_continuation(
+                &memory,
+                owner,
                 super::calendar_body_screener(),
-                safeguard_enabled,
                 &payload,
             )
             .map_err(anyhow::Error::from)
@@ -355,6 +353,15 @@ fn poll_installed_feed(
         tracing::info!(
             system = %config.system,
             "calendar feed poll row outlived its feed; completed unpolled"
+        );
+        return Ok(());
+    }
+    // CAL-02: the feed's first poll's review is open, or the owner declined
+    // it. The owner's approval starts a new chain.
+    if feed_door::poll_waits_on_owner(vault, config)? {
+        tracing::info!(
+            system = %config.system,
+            "calendar feed poll waits on the owner's import review; completed unpolled"
         );
         return Ok(());
     }

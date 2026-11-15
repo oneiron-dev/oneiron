@@ -226,6 +226,7 @@ fn apply_upload(
         verdict_fold: VerdictFold::default(),
         continuations: Some(Vec::new()),
         owed_booking_moves: 0,
+        admitted_claims: Vec::new(),
     };
     admission.apply_feed(feed).map_err(calendar_error)?;
     if complete {

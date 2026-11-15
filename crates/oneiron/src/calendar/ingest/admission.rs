@@ -35,6 +35,7 @@ pub(in crate::calendar) use connector::{
     sweep_connector_uids,
 };
 use continuation::OwedProperties;
+pub(super) use continuation::run_ics_property_continuation_admitting;
 pub use continuation::{
     ICS_PROPERTY_CONTINUATION_ATTEMPT_KIND, IcsPropertyContinuationPayload,
     run_ics_property_continuation,
@@ -73,6 +74,10 @@ pub(super) struct PollAdmission<'a> {
     /// passport stays as it was, so the source reads its update again; the
     /// caller keeps the source's read position owed.
     pub(crate) owed_booking_moves: u32,
+    /// Every imported claim this pass admitted, in admission order. An
+    /// installed feed's poll settles them under the feed's consent (CAL-02):
+    /// its first poll's become the one review, a later poll's land Approved.
+    pub(crate) admitted_claims: Vec<EntityId>,
 }
 
 impl PollAdmission<'_> {
@@ -624,7 +629,9 @@ impl PollAdmission<'_> {
         })?;
         let (admitted, token) = screened.value;
         self.verdict_fold.record(token);
-        Ok(admitted?)
+        let admitted = admitted?;
+        self.admitted_claims.push(admitted);
+        Ok(admitted)
     }
 
     fn passport_value(

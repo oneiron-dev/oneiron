@@ -1,0 +1,17 @@
+{
+  "name": "calendar.ics.review",
+  "description": "Approves or declines an installed ICS feed's first-poll review whole under owner proof, with one consent receipt; an approval is the feed's standing consent for later polls.",
+  "input": "crate::calendar::ingest::feed_door::CalendarIcsFeedReviewRequest",
+  "output": "crate::calendar::ingest::feed_door::CalendarIcsFeedConsent",
+  "call": "crate::task_verb::sdk::host_only(memory, \"calendar.ics.review\", &input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Write",
+  "act_class": "unstated",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "openapi": true,
+  "host_door_proof": "owner"
+}
