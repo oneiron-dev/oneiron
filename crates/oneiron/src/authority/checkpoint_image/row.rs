@@ -19,6 +19,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::*;
+use crate::error::Error;
 
 /// One covered row, as a fold past the image reads it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
