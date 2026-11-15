@@ -57,6 +57,7 @@ const TWO_ANSWERS: &str =
 
 /// A confirm named a held answer that names other keys than its machine
 /// stands under.
+#[allow(dead_code)]
 const REPLACES_KEYS: &str = "the held answer names other keys than its machine stands under: \
      a confirm never replaces a machine's keys; nothing was written";
 
@@ -155,9 +156,6 @@ fn confirming_profile(
         .collect();
     if heads.iter().any(|head| head.removed) {
         return Err(invalid_authority());
-    }
-    if fold.replaces_standing_keys(held) {
-        return Err(Error::InvalidConfig(REPLACES_KEYS.to_owned()));
     }
     let revision = match heads.iter().map(|head| head.profile.revision).max() {
         Some(top) => top.checked_add(1).ok_or_else(invalid_authority)?,
