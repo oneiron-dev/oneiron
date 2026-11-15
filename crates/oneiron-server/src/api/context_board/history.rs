@@ -333,7 +333,7 @@ pub(super) fn record_board_turn_with_layout(
             |receipt| {
                 response.board_turn = Some(ContextBoardTurnRecord {
                     turn: receipt.turn.to_hex(),
-                    source_revision_ref: hex(&receipt.source_revision_ref.0),
+                    source_revision_ref: oneiron_hex::encode(&receipt.source_revision_ref.0),
                     changed_claims: receipt
                         .changed_claims
                         .iter()
@@ -422,7 +422,7 @@ pub(crate) async fn context_board_turn_history(
         turn: board.turn.to_hex(),
         owner: board.owner.to_hex(),
         at: board.at,
-        source_revision_ref: hex(&board.source_revision_ref.0),
+        source_revision_ref: oneiron_hex::encode(&board.source_revision_ref.0),
         selection: ContextBoardSelectionView {
             allowed: ids(&board.selection.allowed),
             default_on: ids(&board.selection.default_on),
@@ -439,10 +439,6 @@ pub(crate) async fn context_board_turn_history(
             .map(|(id, body)| (id.to_hex(), engine.encode(body)))
             .collect(),
     }))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn board_history_error(turn: &EntityId, error: BoardHistoryError) -> ApiError {

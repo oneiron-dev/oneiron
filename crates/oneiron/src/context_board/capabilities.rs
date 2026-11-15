@@ -8,17 +8,8 @@ use crate::{
     registry::{ENTITY_TYPE_AGENT_DEF, ENTITY_TYPE_SKILL},
 };
 
-/// A hit from the capability channel. Other entity types are ignored.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct CapabilityHit {
-    #[serde(
-        serialize_with = "serialize_capability_id",
-        deserialize_with = "deserialize_capability_id"
-    )]
-    pub id: EntityId,
-    pub entity_type: u8,
-    pub label: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::context_board::capabilities::CapabilityHit;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SkillsSection {
@@ -167,18 +158,4 @@ fn found_rows<'a>(
         ));
     }
     Ok(rows)
-}
-
-fn serialize_capability_id<S: serde::Serializer>(
-    id: &EntityId,
-    serializer: S,
-) -> Result<S::Ok, S::Error> {
-    serializer.serialize_str(&id.to_hex())
-}
-
-fn deserialize_capability_id<'de, D: serde::Deserializer<'de>>(
-    deserializer: D,
-) -> Result<EntityId, D::Error> {
-    let value = <String as serde::Deserialize>::deserialize(deserializer)?;
-    EntityId::from_hex(&value).map_err(serde::de::Error::custom)
 }

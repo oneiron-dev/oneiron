@@ -25,7 +25,7 @@ use crate::side_table::{self, Named, SideTable};
 use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 
-/// One handle row. Key: blake3 hash32 of the handle id.
+/// One handle row. Key: the content hash (plain BLAKE3) of the handle id.
 const HANDLES: SideTable<[u8; 32], McpTaskRecord, Named> = SideTable::new(&side_table::MCP_TASK);
 
 /// The id of one MCP task handle: 32 bytes from the OS random source, written as 64 lowercase hex
@@ -55,9 +55,9 @@ impl McpTaskId {
         Some(Self(bytes))
     }
 
-    /// The row key: the id's BLAKE3 hash, never the id itself.
+    /// The row key: the id's content hash (plain BLAKE3), never the id itself.
     fn row_key(&self) -> [u8; 32] {
-        *blake3::hash(&self.0).as_bytes()
+        oneiron_contracts::fingerprint::ContentHash::of(&self.0).into_bytes()
     }
 }
 

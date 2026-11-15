@@ -57,7 +57,7 @@ pub(super) fn body_entry(grant: &FederationGrant) -> Option<(Value, Value)> {
 pub(super) fn decode_body_entry(
     entries: &[(Value, Value)],
 ) -> Result<Option<ConnectMemberLeaveBinding>> {
-    let Some(value) = optional_value(entries, KEY_DETACH_ON_MEMBER_LEAVE) else {
+    let Some(value) = optional_value(entries, KEY_DETACH_ON_MEMBER_LEAVE)? else {
         return Ok(None);
     };
     let Value::Map(binding) = value else {

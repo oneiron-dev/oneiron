@@ -20,7 +20,7 @@ use std::time::Instant;
 
 use oneiron::code_run::{CacheBoundary, HOST_PROVIDER_OPTIONS, LiveForkRung, cache_boundaries};
 use oneiron::llm::SingleRouteBackend;
-use oneiron_llm_anthropic::{AnthropicCacheTier, AnthropicProviderOptions};
+use oneiron_llm::anthropic::{AnthropicCacheTier, AnthropicProviderOptions};
 
 use super::*;
 use crate::models::output_cap::LIMIT_KEYS;

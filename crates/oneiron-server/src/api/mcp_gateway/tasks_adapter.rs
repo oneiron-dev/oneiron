@@ -786,14 +786,14 @@ impl<'a> Form<'a> {
         if questions.is_empty() {
             return None;
         }
-        let mut digest = blake3::Hasher::new();
+        let mut digest = oneiron_contracts::fingerprint::ContentHasher::new();
         for question in questions {
             digest.update(question.handle.group_ref.as_bytes());
             digest.update(&question.revision.to_le_bytes());
         }
         let key = format!(
             "{MCP_TASK_FORM_KEY_PREFIX}{}",
-            &digest.finalize().to_hex()[..16]
+            &digest.finish().to_hex()[..16]
         );
         Some(Self { key, questions })
     }
