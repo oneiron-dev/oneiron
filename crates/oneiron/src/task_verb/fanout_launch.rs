@@ -639,10 +639,15 @@ impl FanoutSurfaceSink for LaunchSurface<'_, '_> {
         Ok(surface_ref)
     }
 
-    fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String> {
+    fn persist_choice_receipt(
+        &mut self,
+        choice: &FanoutApprovalChoice,
+        receipt: &ReceiptRecord,
+    ) -> Result<String> {
         let receipt_ref = append_human_ruling(
             self.vault,
             self.txn,
+            choice,
             receipt,
             FANOUT_LAUNCH_CONTENT_KIND,
             self.launch.launch_ref.to_hex(),

@@ -41,8 +41,11 @@
 
 use crate::Vault;
 use crate::error::Result;
-use crate::gate;
-use crate::store::{GateDecisionRecord, GateSystemNoticeRecord};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{
+    GateEnginePart, GateReceipt, GateSystemNoticeRecord, PolicyBasis, ReceiptActor,
+};
+use oneiron_contracts::RecordedSeconds;
 
 use super::planes::PolicyPlane;
 use super::request::PolicyClassifyRequest;
@@ -57,12 +60,16 @@ impl Vault {
     /// their verdict against the policy in force there, so a manifest that
     /// moved after the pass is never receipted under a binding nobody can
     /// reproduce.
+    ///
+    /// `outcome` is one of the closed words, the verdict's
+    /// `PolicyClassifyDecision::ledger_outcome` for a row that records it as
+    /// given; the verdict's own word stays its reason code.
     pub(super) fn append_policy_model_gate_receipt_in_txn(
         &self,
         wtxn: &mut heed::RwTxn<'_>,
         request: &PolicyClassifyRequest,
         verdict: &PolicyClassifyVerdict,
-        outcome: &str,
+        outcome: GateReceiptOutcome,
         reason_codes: Vec<String>,
         system_notices: Vec<GateSystemNoticeRecord>,
     ) -> Result<String> {
@@ -83,28 +90,22 @@ impl Vault {
                 queue_ref.rsplit(':').next().expect("queue token")
             ));
         }
-        self.store.append_policy_gate_decision_in_txn(
-            wtxn,
-            &GateDecisionRecord {
-                version: 0,
-                decision_id,
-                created_at: mutation_recorded_at,
-                outcome: outcome.to_owned(),
-                reason_codes,
-                receipt_reasons: Vec::new(),
-                system_notices,
-                actor_class: "policy_model".to_owned(),
-                actor_ref: request.caller_ref.clone(),
-                content_kind: request.subject.as_str().to_owned(),
-                policy_manifest_version: gate::POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                grant_ref: None,
-                diff_handle: verdict.binding.content_hash.to_vec(),
-                read_frontier_hash: verdict.binding.read_frontier_hash,
-                context: Default::default(),
-                redacted_at: None,
-            },
-        )?;
+        let mut receipt = GateReceipt::with_reasons(
+            outcome,
+            request.subject.as_str(),
+            reason_codes,
+            ReceiptActor::Part(GateEnginePart::PolicyModel, request.caller_ref.clone()),
+            verdict.binding.content_hash.to_vec(),
+            PolicyBasis::frontier(verdict.binding.read_frontier_hash),
+        );
+        receipt.notices = system_notices;
+        // The id a queued hold already names, and the time read before it.
+        receipt.id = Some(decision_id);
+        receipt.decided_at = Some(RecordedSeconds::from_secs(mutation_recorded_at));
+        // Minted, then sealed under the policy partition (FIX 7806).
+        let record = self.store.mint_gate_receipt_in_txn(wtxn, receipt)?;
+        self.store
+            .append_policy_gate_decision_in_txn(wtxn, &record)?;
         Ok(format!("gate:{}", decision_id.to_hex()))
     }
 }

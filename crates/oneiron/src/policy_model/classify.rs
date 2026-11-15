@@ -290,7 +290,7 @@ impl Vault {
             &mut wtxn,
             request,
             verdict,
-            &format!("owner_plane_{}", verdict.decision.ledger_str()),
+            verdict.decision.ledger_outcome(),
             reason_codes,
             system_notices,
         )?;

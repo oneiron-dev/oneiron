@@ -143,38 +143,23 @@ impl Vault {
         }
         item.resolution = Some(resolution);
         HOLD_QUEUE.put(&self.store, &mut txn, &hold_key(reference), &item)?;
-        self.store.append_gate_decision_in_txn(
-            &mut txn,
-            &crate::store::GateDecisionRecord {
-                version: 0,
-                decision_id: crate::store::GateDecisionId::now(),
-                created_at: crate::unix_seconds_now(),
-                outcome: match resolution {
-                    PolicyHoldResolution::Cleared => "allow",
-                    PolicyHoldResolution::Declined => "block",
-                }
-                .to_owned(),
-                reason_codes: vec![
-                    match resolution {
-                        PolicyHoldResolution::Cleared => "gate.policy_model.hold_cleared",
-                        PolicyHoldResolution::Declined => "gate.policy_model.hold_declined",
-                    }
-                    .to_owned(),
-                ],
-                receipt_reasons: Vec::new(),
-                system_notices: Vec::new(),
-                actor_class: "human".to_owned(),
-                actor_ref: Some(actor.to_hex()),
-                content_kind: "policy_hold".to_owned(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-                claim_id: None,
-                grant_ref: Some(reference.to_owned()),
-                diff_handle: item.content_hash.to_vec(),
-                read_frontier_hash: item.policy_frontier,
-                context: Default::default(),
-                redacted_at: None,
+        let mut receipt = crate::store::GateReceipt::new(
+            resolution.ledger_outcome(),
+            "policy_hold",
+            match resolution {
+                PolicyHoldResolution::Cleared => "gate.policy_model.hold_cleared",
+                PolicyHoldResolution::Declined => "gate.policy_model.hold_declined",
             },
-        )?;
+            crate::store::ReceiptActor::human(actor),
+            item.content_hash.to_vec(),
+            crate::store::PolicyBasis::frontier(item.policy_frontier),
+        );
+        receipt.grant_ref = Some(reference.to_owned());
+        // The ruling keeps its wall-clock second (UC-03 4-1 moves it).
+        receipt.decided_at = Some(oneiron_contracts::RecordedSeconds::from_secs(
+            crate::unix_seconds_now(),
+        ));
+        self.store.record_gate_receipt_in_txn(&mut txn, receipt)?;
         txn.commit()?;
         Ok(())
     }

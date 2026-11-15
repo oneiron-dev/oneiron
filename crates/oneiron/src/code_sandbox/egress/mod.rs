@@ -17,6 +17,7 @@ use oneiron_container::{EgressRelay, HostNetFloor, HttpRequest, HttpResponse};
 use oneiron_sandbox_contract::network::global_address;
 pub use quic::EgressDatagramNameRefusal;
 pub use receipt::EgressReceipt;
+pub(crate) use receipt::SandboxReceiptOutcome;
 use std::collections::HashMap;
 use std::io;
 use std::net::{IpAddr, SocketAddr, SocketAddrV4, TcpStream, ToSocketAddrs, UdpSocket};

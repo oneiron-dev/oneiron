@@ -279,7 +279,7 @@ impl Memory<'_> {
                 txn,
                 run_id,
                 "session_manifest",
-                "recorded",
+                crate::code_sandbox::egress::SandboxReceiptOutcome::noted("recorded"),
                 manifest,
                 digest,
             )?;
@@ -385,7 +385,13 @@ impl Memory<'_> {
                     .map_err(|_| MemoryError::bad_request("foreign proposal cannot be encoded"))?;
                 let digest = *blake3::hash(body.as_bytes()).as_bytes();
                 proposal.receipt_ref = self.vault.append_sandbox_gate_receipt_in_txn(
-                    txn, run_id, "proposal", "proposed", body, digest,
+                    txn,
+                    run_id,
+                    "proposal",
+                    // The proposal waits on its own record; the row decides nothing.
+                    crate::code_sandbox::egress::SandboxReceiptOutcome::noted("proposed"),
+                    body,
+                    digest,
                 )?;
                 proposals.push(proposal);
             }

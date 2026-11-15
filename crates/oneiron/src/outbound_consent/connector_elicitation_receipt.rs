@@ -13,8 +13,10 @@
 
 use crate::Vault;
 use crate::entity_id::bytes_to_hex_lower;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{
-    GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GateDecisionId, GateDecisionRecord, GateSystemNoticeRecord,
+    GATE_SYSTEM_NOTICE_BODY_MAX_LEN, GateEnginePart, GateReceipt, GateSystemNoticeRecord,
+    PolicyBasis, ReceiptActor,
 };
 
 use super::execution::ConnectorElicitationBinding;
@@ -25,11 +27,8 @@ const RECEIPT_KIND: &str = "elicitation_answer";
 /// The audit channel its details are written under.
 const RECEIPT_CHANNEL: &str = "connector.elicitation_answer";
 
-/// Its one reason code.
+/// Its reason code; a second one adds the egress word as its last segment.
 const RECEIPT_REASON: &str = "gate.connector.elicitation_answer";
-
-/// The actor class a receipt names its principal under.
-const RECEIPT_ACTOR_CLASS: &str = "connector_caller";
 
 /// The bytes a split detail's part keeps for its ` part=i/n=` index.
 const PART_LABEL_ROOM: usize = 48;
@@ -81,6 +80,14 @@ impl ElicitationEgress {
             Self::Uncertain => "uncertain",
             Self::NotSent => "not_sent",
         }
+    }
+
+    /// The Gate receipt outcome an answer's egress is recorded under: always
+    /// `Noted`, because the receipt decides nothing and admits nothing (UC-03
+    /// D1 = A). The word [`Self::as_str`] stays on the row as the last
+    /// segment of its second reason code.
+    const fn ledger_outcome(self) -> GateReceiptOutcome {
+        GateReceiptOutcome::Noted
     }
 }
 
@@ -184,34 +191,25 @@ impl Vault {
         receipt: &ConnectorElicitationReceipt<'_>,
     ) -> crate::Result<String> {
         let mut txn = self.store.env.write_txn()?;
-        let created_at = crate::ports::recorded_at_in_txn(&self.store, &mut txn)?;
-        let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
-        self.store.append_gate_decision_in_txn(
-            &mut txn,
-            &GateDecisionRecord {
-                version: 0,
-                decision_id,
-                created_at,
-                outcome: receipt.egress.as_str().to_owned(),
-                reason_codes: vec![RECEIPT_REASON.to_owned()],
-                receipt_reasons: Vec::new(),
-                system_notices: GateSystemNoticeRecord::receipt_details(
-                    RECEIPT_CHANNEL,
-                    receipt.details(),
-                ),
-                actor_class: RECEIPT_ACTOR_CLASS.to_owned(),
-                actor_ref: Some(receipt.binding.principal_ref.clone()),
-                content_kind: RECEIPT_KIND.to_owned(),
-                policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
-                claim_id: None,
-                grant_ref: Some(receipt.binding.grant_id.to_hex()),
-                diff_handle: receipt.answer_digest.to_vec(),
-                read_frontier_hash: [0; 32],
-                context: Default::default(),
-                redacted_at: None,
-            },
-        )?;
+        let mut row = GateReceipt::with_reasons(
+            receipt.egress.ledger_outcome(),
+            RECEIPT_KIND,
+            vec![
+                RECEIPT_REASON.to_owned(),
+                format!("{RECEIPT_REASON}.{}", receipt.egress.as_str()),
+            ],
+            ReceiptActor::Part(
+                GateEnginePart::ConnectorCaller,
+                Some(receipt.binding.principal_ref.clone()),
+            ),
+            receipt.answer_digest.to_vec(),
+            PolicyBasis::NOT_READ,
+        );
+        row.grant_ref = Some(receipt.binding.grant_id.to_hex());
+        // The details go on the connector's channel, not the kind's.
+        row.notices = GateSystemNoticeRecord::receipt_details(RECEIPT_CHANNEL, receipt.details());
+        let record = self.store.record_gate_receipt_in_txn(&mut txn, row)?;
         txn.commit()?;
-        Ok(format!("gate:{}", decision_id.to_hex()))
+        Ok(format!("gate:{}", record.decision_id.to_hex()))
     }
 }

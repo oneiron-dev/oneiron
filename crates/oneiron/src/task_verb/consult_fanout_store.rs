@@ -13,13 +13,14 @@ use crate::error::{Error, Result};
 use crate::llm::decision::DecisionReceipt;
 use crate::memory::{MemoryError, MemoryResult};
 use crate::outbound_chokepoint::{
-    FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge, FanoutSurfaceSink,
-    FanoutWidthCheck, FanoutWidthClass, fanout_estimate, fanout_plan_digest,
+    FanoutApprovalChoice, FanoutApprovalRow, FanoutEstimate, FanoutPlan, FanoutPlanEdge,
+    FanoutSurfaceSink, FanoutWidthCheck, FanoutWidthClass, fanout_estimate, fanout_plan_digest,
 };
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
 use crate::receipt::{ERASED_CALL_IDENTITY, ReceiptRecord};
 use crate::side_table::{self, HexId, Named, SideTable};
-use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
+use crate::store::{GateReceipt, PolicyBasis, ReceiptActor};
+use oneiron_contracts::RecordedSeconds;
 use serde::{Deserialize, Serialize};
 
 /// One fan-out run's frozen plan and progress, keyed by its correlation id.
@@ -473,10 +474,15 @@ impl FanoutSurfaceSink for TxnSurface<'_, '_> {
         Ok(surface_ref)
     }
 
-    fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String> {
+    fn persist_choice_receipt(
+        &mut self,
+        choice: &FanoutApprovalChoice,
+        receipt: &ReceiptRecord,
+    ) -> Result<String> {
         let receipt_ref = append_human_ruling(
             self.vault,
             self.txn,
+            choice,
             receipt,
             "consult_fanout",
             self.run.correlation.clone(),
@@ -488,38 +494,36 @@ impl FanoutSurfaceSink for TxnSurface<'_, '_> {
 }
 
 /// Appends a human fan-out ruling to the gate decision ledger in the
-/// caller's transaction and returns its `gate:` ref. `grant_ref` names the
-/// ruled run, `plan_digest` the exact plan the human saw.
+/// caller's transaction and returns its `gate:` ref. `choice` is the ruling
+/// `receipt` records, `grant_ref` names the ruled run, `plan_digest` the
+/// exact plan the human saw.
 pub(super) fn append_human_ruling(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
+    choice: &FanoutApprovalChoice,
     receipt: &ReceiptRecord,
     content_kind: &str,
     grant_ref: String,
     plan_digest: [u8; 32],
 ) -> Result<String> {
     let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
-    let mut decision = GateDecisionRecord {
-        version: GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::from_bytes(*vault.new_entity_id()?.as_bytes()),
-        created_at: receipt.occurred_at / 1000,
-        outcome: receipt.outcome.clone(),
-        reason_codes: vec!["gate.fanout.human_ruling".to_owned()],
-        receipt_reasons: Vec::new(),
-        system_notices: Vec::new(),
-        actor_class: "human".to_owned(),
-        actor_ref: receipt.actor.clone(),
-        content_kind: content_kind.to_owned(),
-        policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.to_owned(),
-        claim_id: None,
-        grant_ref: Some(grant_ref),
-        diff_handle: plan_digest.to_vec(),
-        read_frontier_hash: policy.read_frontier_hash()?,
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut decision)?;
-    Ok(format!("gate:{}", decision.decision_id.to_hex()))
+    let mut ruling = GateReceipt::with_reasons(
+        choice.ledger_outcome(),
+        content_kind.to_owned(),
+        vec![
+            "gate.fanout.human_ruling".to_owned(),
+            format!("gate.fanout.human_ruling.{}", choice.outcome()),
+        ],
+        ReceiptActor::Verbatim {
+            class: "human".to_owned(),
+            actor_ref: receipt.actor.clone(),
+        },
+        plan_digest.to_vec(),
+        PolicyBasis::frontier(policy.read_frontier_hash()?),
+    );
+    ruling.grant_ref = Some(grant_ref);
+    // The ruling's own second, from the receipt's milliseconds.
+    ruling.decided_at = Some(RecordedSeconds::from_secs(receipt.occurred_at / 1000));
+    let record = vault.store.record_gate_receipt_in_txn(txn, ruling)?;
+    Ok(format!("gate:{}", record.decision_id.to_hex()))
 }

@@ -213,13 +213,17 @@ pub(crate) trait FanoutSurfaceSink {
     /// pause that cannot be surfaced never degrades into a proceed.
     fn persist_pause_row(&mut self, row: &FanoutApprovalRow) -> Result<String>;
 
-    /// Persists one choice receipt and returns its durable ref.
+    /// Persists the receipt of `choice` and returns its durable ref.
     ///
     /// # Errors
     ///
     /// Any failure to durably record the choice. Resume propagates it, so an
     /// unreceipted approval never releases a plan.
-    fn persist_choice_receipt(&mut self, receipt: &ReceiptRecord) -> Result<String>;
+    fn persist_choice_receipt(
+        &mut self,
+        choice: &FanoutApprovalChoice,
+        receipt: &ReceiptRecord,
+    ) -> Result<String>;
 
     /// Records the exceptional-width check of a plan that proceeds and, when
     /// it asks, persists its question row and returns that row's durable ref.
@@ -448,7 +452,7 @@ pub(crate) fn answer_fanout_width_check(
         now_ms,
     );
     Ok(durable_ref(
-        surface.persist_choice_receipt(&receipt)?,
+        surface.persist_choice_receipt(&choice, &receipt)?,
         "fan-out choice receipt sink returned a blank ref",
     )?)
 }
@@ -513,7 +517,7 @@ pub(crate) fn approve_and_resume_fanout(
         now_ms,
     );
     let choice_receipt_ref = durable_ref(
-        surface.persist_choice_receipt(&receipt)?,
+        surface.persist_choice_receipt(&choice, &receipt)?,
         "fan-out choice receipt sink returned a blank ref",
     )?;
 

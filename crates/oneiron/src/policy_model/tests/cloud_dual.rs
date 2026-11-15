@@ -294,12 +294,9 @@ fn cloud_vault_safeguard_binding_mismatch_falls_back_and_audits() -> Result<()> 
 #[test]
 fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()> {
     for (decision, outcome) in [
-        (PolicyClassifyDecision::Block, "relay_boundary_block"),
-        (
-            PolicyClassifyDecision::RouteToHelp,
-            "relay_boundary_route_to_help",
-        ),
-        (PolicyClassifyDecision::Warn, "relay_boundary_warn"),
+        (PolicyClassifyDecision::Block, "deny"),
+        (PolicyClassifyDecision::RouteToHelp, "deny"),
+        (PolicyClassifyDecision::Warn, "allow"),
     ] {
         let (_tmp, vault) = temp_vault();
         let request = PolicyClassifyRequest::outbound_content("ordinary content");
@@ -335,6 +332,10 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
         assert_eq!(receipts[0].outcome, outcome);
         assert!(has_trace(
             &receipts[0],
+            &format!("gate.policy_model.{}", decision.ledger_str())
+        ));
+        assert!(has_trace(
+            &receipts[0],
             "gate.relay.resolution.vault_side_decided"
         ));
         assert!(!has_trace(
@@ -344,7 +345,7 @@ fn cloud_vault_non_allow_receipts_halt_and_record_real_decisions() -> Result<()>
         assert!(
             !receipts
                 .iter()
-                .any(|receipt| receipt.outcome == "relay_trusted_vault_side")
+                .any(|receipt| has_trace(receipt, "gate.relay.trusted_vault_side"))
         );
     }
     Ok(())
@@ -384,8 +385,17 @@ fn relay_skips_write_audit_receipts_with_trust_domain() -> Result<()> {
         .iter()
         .map(|receipt| receipt.outcome.as_str())
         .collect::<Vec<_>>();
-    assert!(outcomes.contains(&"relay_trusted_vault_side"));
-    assert!(outcomes.contains(&"relay_not_relayed"));
+    assert_eq!(outcomes, ["noted", "noted"]);
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.trusted_vault_side"))
+    );
+    assert!(
+        receipts
+            .iter()
+            .any(|receipt| has_trace(receipt, "gate.relay.not_relayed"))
+    );
     assert!(
         receipts
             .iter()
@@ -482,15 +492,15 @@ fn a_dual_plane_pass_receipts_both_planes() -> Result<()> {
     let receipts = gate_receipts(&vault)?;
     let owner_row = receipts
         .iter()
-        .find(|receipt| receipt.outcome == "owner_plane_warn")
+        .find(|receipt| has_trace(receipt, "gate.relay.owner_plane.classify.ran"))
         .expect("the owner plane's own row");
+    assert_eq!(owner_row.outcome, "allow");
     assert!(has_trace(owner_row, "gate.relay.owner_plane.classify.ran"));
     assert!(has_trace(owner_row, "gate.policy_model.plane.owner_policy"));
     assert!(has_trace(owner_row, "gate.policy_model.warn"));
     assert!(
-        receipts
-            .iter()
-            .any(|receipt| receipt.outcome == "relay_boundary_block"),
+        receipts.iter().any(|receipt| receipt.outcome == "deny"
+            && !has_trace(receipt, "gate.relay.owner_plane.classify.ran")),
         "the hosted plane's row is still written"
     );
     Ok(())
