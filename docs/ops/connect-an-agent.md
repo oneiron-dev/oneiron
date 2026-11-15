@@ -59,7 +59,7 @@ listens by default; pass `--url` (or set `ONEIRON_URL`) only if your server
 listens elsewhere. `--surface tool-first` is the endpoint that lists one tool
 per exported verb (`/mcp/tool-first`); `--surface primary` is the code-mode
 endpoint (`/mcp`: `setup_oneiron` and `execute_code`). Both also list
-`invoke_action`, which runs an app action with its live run (`liveRun`; see
+`invoke_action`, which runs an app action with its live run (`live_run`; see
 owner-actions.md). Without `--surface`,
 `oneiron mcp` asks the server at its first request and takes `/mcp` when the
 server has a bound code host (`[models.code_mode]`) and the credential may run

@@ -458,8 +458,8 @@ fn endpoint_census_args(tool: McpEndpointTool) -> Value {
             object.remove("cache");
             object.insert("verb".to_owned(), json!("census.action"));
             object.insert("args".to_owned(), json!([]));
-            object.insert("idempotencyKey".to_owned(), json!("census-key"));
-            object.insert("liveRun".to_owned(), json!("census-live-run"));
+            object.insert("idempotency_key".to_owned(), json!("census-key"));
+            object.insert("live_run".to_owned(), json!("census-live-run"));
         }
         McpEndpointTool::Verb(verb) => {
             object.insert("arguments".to_owned(), endpoint_census_arguments(verb));
