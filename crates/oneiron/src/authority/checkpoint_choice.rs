@@ -40,6 +40,7 @@ pub(super) fn apply_checkpoint_policy(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &set.act,
@@ -47,6 +48,7 @@ pub(super) fn apply_checkpoint_policy(
         choice: set.choice.as_ref(),
         context: CHECKPOINT_POLICY_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        needs_proof_off_the_line,
     };
     let landing = owner_choice_landing(
         state,

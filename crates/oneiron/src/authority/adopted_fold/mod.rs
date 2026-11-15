@@ -495,6 +495,11 @@ fn tail_folds_past(
     {
         return None;
     }
+    // An owner choice on a covered parent the image's owner key does not
+    // reach is judged by the whole log (row CARRIER-PROOF-OLD-PARENTS).
+    if super::owner_key_line::tail_reaches_old_parents(image, tail) {
+        return None;
+    }
     let mut confirms = (
         image.safety.confirm_ids.clone(),
         image.safety.confirm_nonces.clone(),

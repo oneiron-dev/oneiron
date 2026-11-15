@@ -62,11 +62,30 @@ pub(super) struct FoldContext<'a> {
     /// This install's pin on a fold of its own vault's log: which world-key
     /// records count here. It decides no entry's validity.
     pub(super) pin: Option<&'a PinnedRoot>,
+    /// The entries outside a proving owner-key enrolment's line (row
+    /// CARRIER-PROOF-OLD-PARENTS): set only on a log's second fold, when
+    /// its first found one.
+    pub(super) owner_key_lines: Option<&'a super::owner_key_line::OwnerKeyLines>,
 }
 
 impl FoldContext<'_> {
     pub(super) fn device_can_consent(self, device: &FoldedDevice) -> bool {
         (self.consent_arm)(device)
+    }
+
+    /// Whether entry `hash` is an owner choice or a carried machine answer
+    /// outside a proving owner-key enrolment's line: it needs the owner's
+    /// proof whatever its parents hold.
+    pub(super) fn needs_owner_proof_off_the_line(self, hash: &AuthorityEntryHash) -> bool {
+        self.owner_key_lines
+            .is_some_and(|lines| lines.needs_proof(hash))
+    }
+
+    /// Whether entry `hash` enrols an owner's key outside the line of the
+    /// enrolment that made it the owner's: an invalid entry.
+    pub(super) fn refuses_off_the_line_enrolment(self, hash: &AuthorityEntryHash) -> bool {
+        self.owner_key_lines
+            .is_some_and(|lines| lines.refuses(hash))
     }
 }
 
@@ -369,7 +388,23 @@ pub(super) fn fold_authority_log_once(
     // Restrictive facts are proved independently of the surviving roster.
     let mut revoke_facts =
         super::revoke_proof::derive_revoke_facts(&by_hash, &entry_ancestors, context);
+    let issues_before_states = issues.len();
     let mut states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
+    // An owner key's enrolment reaches across branches, as a handoff does
+    // (row CARRIER-PROOF-OLD-PARENTS): when the first fold finds an entry
+    // outside a proving enrolment's line, the log folds again with the
+    // lines in the context. The first fold's issues are dropped for the
+    // second's.
+    let owner_key_lines =
+        super::owner_key_line::OwnerKeyLines::of(&states, &by_hash, &entry_ancestors);
+    let context = FoldContext {
+        owner_key_lines: owner_key_lines.as_ref(),
+        ..context
+    };
+    if owner_key_lines.is_some() {
+        issues.truncate(issues_before_states);
+        states = super::fold_schedule::fold_entry_states(&by_hash, context, &mut issues);
+    }
 
     // A handoff's predecessor stays retired on every branch, not only its own.
     // Fences close before concurrent confirmations contend, so a retired
@@ -459,6 +494,7 @@ pub(super) fn fold_authority_log_once(
     revoke_facts.add_dropped_slip_restrictions(&by_hash, &entry_ancestors, context, &states);
     revoke_facts.forget_retired(&retirements, &by_hash, &entry_ancestors);
     revoke_facts.forget_unsettled(&states, &by_hash, &entry_ancestors);
+    revoke_facts.forget_held_off_the_line(owner_key_lines.as_ref(), &states);
     let mut merged: Option<FoldState> = None;
     let mut valid_entries = ValidEntries::new();
     for (hash, state) in &states {

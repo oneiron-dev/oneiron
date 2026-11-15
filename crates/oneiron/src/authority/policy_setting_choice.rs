@@ -90,6 +90,7 @@ pub(super) fn apply_policy_setting(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &set.act,
@@ -97,6 +98,7 @@ pub(super) fn apply_policy_setting(
         choice: set.value.as_ref(),
         context: POLICY_SETTING_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        needs_proof_off_the_line,
     };
     let landing = owner_choice_landing(
         state,

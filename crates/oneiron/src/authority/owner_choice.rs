@@ -168,6 +168,10 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     /// goes through the gate as every act does (ruling
     /// CARRIER-PERSON-OPT-BACK-IN = A, AUTH-4 PERSON-PROOF-RUNG = A).
     pub(super) persons_own_narrowing: bool,
+    /// The choice lies outside a proving owner-key enrolment's line (row
+    /// CARRIER-PROOF-OLD-PARENTS, [`super::owner_key_line`]): it needs the
+    /// owner's proof as if its parents held that key.
+    pub(super) needs_proof_off_the_line: bool,
 }
 
 /// What a valid choice does to its register ([`OwnerChoiceState::land`]).
@@ -262,7 +266,7 @@ pub(super) fn owner_choice_landing<P: Clone>(
     if proof.is_none()
         && !carrier_is_mine
         && !op.persons_own_narrowing
-        && super::owner_proof::not_mine_carriers_need_proof(state)
+        && (op.needs_proof_off_the_line || super::owner_proof::not_mine_carriers_need_proof(state))
     {
         return Ok(OwnerChoiceLanding::Waiting {
             target: op.act.target,

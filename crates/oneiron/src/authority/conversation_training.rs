@@ -121,6 +121,7 @@ pub(super) fn apply_conversation_training(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &set.act,
@@ -130,6 +131,7 @@ pub(super) fn apply_conversation_training(
         // Leaving their own messages out narrows the person's own row;
         // letting them back in widens it, and a carrier proves only itself.
         persons_own_narrowing: set.act.target == set.act.owner && set.leave_out,
+        needs_proof_off_the_line,
     };
     let landing = owner_choice_landing(
         state,

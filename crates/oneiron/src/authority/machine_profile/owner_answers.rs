@@ -113,6 +113,9 @@ impl MachineRevision {
 /// or a forged entry; there is never a second. An answer that lands and is
 /// the owner's (proven, or carried by one of the owner's machines) ends the
 /// ask of every held answer about the machine that its parent state held.
+/// `needs_proof_off_the_line`: the answer lies outside a proving owner-key
+/// enrolment's line ([`super::super::owner_key_line`]), so a carrier that is
+/// not the owner's needs the proof whatever the parents hold.
 pub(in crate::authority) fn apply_owner_answer(
     state: &mut FoldState,
     entry: &AuthorityLogEntry,
@@ -120,6 +123,7 @@ pub(in crate::authority) fn apply_owner_answer(
     hash: AuthorityEntryHash,
     (pin, counted): (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let (Some(carrier), Some(act)) = (profile.carrier, profile.act) else {
         return Err(AuthorityFoldIssue::InvalidEntry(hash));
@@ -179,13 +183,17 @@ pub(in crate::authority) fn apply_owner_answer(
         })),
         say_so: Some(say_so),
     };
+    // Outside a proving owner-key enrolment's line (row
+    // CARRIER-PROOF-OLD-PARENTS), a carrier that is not the owner's needs the
+    // proof as if the parents held that key.
     if proof.is_none()
-        && super::super::owner_proof::machine_answer_needs_proof(
-            state,
-            profile,
-            carrier_is_mine,
-            target_key,
-        )
+        && ((needs_proof_off_the_line && !carrier_is_mine)
+            || super::super::owner_proof::machine_answer_needs_proof(
+                state,
+                profile,
+                carrier_is_mine,
+                target_key,
+            ))
     {
         super::super::owner_proof::hold_answer(state, hash, folded);
         return Ok(());

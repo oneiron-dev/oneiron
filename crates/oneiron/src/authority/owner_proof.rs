@@ -66,7 +66,7 @@ pub(super) fn owner_proof_key(
 /// with `ROLE_OWNER`, and not in the host's custody on a hosted fold. A
 /// revoked or retired key, an admin-only key and a managed host's custodial
 /// root prove nothing.
-fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
+pub(super) fn proves_for_the_owner(state: &FoldState, key: &AuthorityKey) -> bool {
     roster_has_live_owner(&state.roster, key) && !(state.hosted && in_host_custody(state, key))
 }
 

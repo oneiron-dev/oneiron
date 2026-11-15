@@ -62,6 +62,7 @@ pub(super) fn apply_home_pick(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let op = OwnerChoiceOp {
         act: &pick.act,
@@ -69,6 +70,7 @@ pub(super) fn apply_home_pick(
         choice: pick.node_id.as_ref(),
         context: HOME_PICK_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        needs_proof_off_the_line,
     };
     let landing = owner_choice_landing(
         state,

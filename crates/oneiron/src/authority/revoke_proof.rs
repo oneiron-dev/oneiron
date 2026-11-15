@@ -363,6 +363,34 @@ impl RevokeFacts {
             .retain(|hash, fact| !retirements.excludes(hash, entries, ancestors, &fact.routed));
     }
 
+    /// Forgets the machine removal of every carried answer outside a proving
+    /// owner-key enrolment's line that the fold did not count (row
+    /// CARRIER-PROOF-OLD-PARENTS): one it held for the owner's proof, or one
+    /// that does not stand. Its own branch, which lacks the owner's key,
+    /// proves the removal, but the fold judged it where that key reaches, so
+    /// the removal would otherwise end the machine on every branch.
+    pub(super) fn forget_held_off_the_line(
+        &mut self,
+        lines: Option<&super::owner_key_line::OwnerKeyLines>,
+        settled: &BTreeMap<AuthorityEntryHash, FoldState>,
+    ) {
+        let Some(lines) = lines else {
+            return;
+        };
+        self.by_hash.retain(|_, fact| {
+            let Restriction::MachineRemoval { machine, .. } = &fact.kind else {
+                return true;
+            };
+            !lines.needs_proof(&fact.entry_hash)
+                || settled.get(&fact.entry_hash).is_some_and(|state| {
+                    !state
+                        .held_machine_answers
+                        .get(machine)
+                        .is_some_and(|held| held.contains_key(&fact.entry_hash))
+                })
+        });
+    }
+
     /// Forgets every restriction proved through a handoff that did not take
     /// effect. The heir a refused or pruned ReRoot names was never root, so
     /// it restricts nothing, however its own branch folds; a restriction the

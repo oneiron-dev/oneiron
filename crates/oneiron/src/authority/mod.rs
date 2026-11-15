@@ -132,6 +132,7 @@ mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_line;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;

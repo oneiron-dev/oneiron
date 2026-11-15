@@ -110,6 +110,7 @@ pub(super) fn apply_device_succession(
     hash: AuthorityEntryHash,
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
+    needs_proof_off_the_line: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
     let choice = DeviceSuccessionChoice {
         successor: succession.successor,
@@ -120,6 +121,7 @@ pub(super) fn apply_device_succession(
         choice: Some(&choice),
         context: DEVICE_SUCCESSION_REVISION_CONTEXT,
         persons_own_narrowing: false,
+        needs_proof_off_the_line,
     };
     let landing = owner_choice_landing(
         state,
