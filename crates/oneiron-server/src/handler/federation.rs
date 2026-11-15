@@ -111,6 +111,12 @@ pub(super) async fn handle_selector_fetch(
         return Ok(ControlFlow::Break(()));
     }
     let doc = window.doc.clone();
+    // The answer leaves only while the grant and the authority it is made
+    // under stand (SELECTOR-RELEASE-POINT = B): read before the filter.
+    let basis = crate::selector_release::SelectorReleaseBasis::take(
+        server.vault.as_ref(),
+        prepared.selector.grant_id,
+    );
     let filtered = filtered_window_doc_for_peer(
         server.vault.as_ref(),
         &doc,
@@ -123,7 +129,12 @@ pub(super) async fn handle_selector_fetch(
     let delta = filtered
         .export(ExportMode::all_updates())
         .map_err(|e| ProtocolError::ExportFailed(e.to_string()))?;
-    send(direct_tx, key, window_sub_tags::UPDATE, &delta)?;
+    let update = window_sync_frame(key, window_sub_tags::UPDATE, &delta)?;
+    for frame in state.selector_answers.queue(basis, vec![update]) {
+        direct_tx
+            .send(frame)
+            .map_err(|_| ProtocolError::Persistence("selector response channel closed".into()))?;
+    }
     // The rows it admitted are the ones whose by-reference bodies this socket
     // is served, while its selector stands (FIX 12118).
     state
@@ -141,11 +152,14 @@ fn send(
     tag: u8,
     payload: &[u8],
 ) -> Result<(), ProtocolError> {
-    let frame = protocol::encode_window_sync(key.as_str(), tag, payload)
-        .into_result()
-        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))?;
-    tx.send(frame)
+    tx.send(window_sync_frame(key, tag, payload)?)
         .map_err(|_| ProtocolError::Persistence("selector response channel closed".into()))
+}
+
+fn window_sync_frame(key: &WindowKey, tag: u8, payload: &[u8]) -> Result<Vec<u8>, ProtocolError> {
+    protocol::encode_window_sync(key.as_str(), tag, payload)
+        .into_result()
+        .map_err(|e| ProtocolError::InvalidPayload(protocol::transport_err_msg(e)))
 }
 
 /// Selector bytes are a standalone closed subgraph. Recheck only that

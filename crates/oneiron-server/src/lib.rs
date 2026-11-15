@@ -97,6 +97,7 @@ pub mod replay_judge;
 mod residence_machines;
 pub mod runtime;
 mod saved_query_sweep;
+mod selector_release;
 pub mod server;
 mod shared_envs;
 mod skills_pack;

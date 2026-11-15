@@ -443,6 +443,43 @@ pub(super) async fn handle_connection(
                 let Some(data) = direct_msg else {
                     break;
                 };
+                // A queued selector answer leaves only while the grant and
+                // the authority it was made under stand, judged once per
+                // answer before any part of it leaves (SELECTOR-RELEASE-POINT
+                // = B).
+                let answer = crate::selector_release::queued_answer_frame(&data).map(|answer| {
+                    (
+                        conn_state.selector_answers.release(server.vault(), &answer),
+                        answer.frame.to_vec(),
+                    )
+                });
+                let data = match answer {
+                    None => data,
+                    Some((true, frame)) => frame,
+                    Some((false, frame)) if frame.first() == Some(&protocol::TAG_WINDOW_SYNC) => {
+                        // A federation UPDATE: not sent. A selector socket is
+                        // sent no ready notice, so its next fetch asks again,
+                        // judged under the grant as it is then.
+                        if let Some(key) = frame
+                            .get(1..)
+                            .and_then(|payload| protocol::decode_window_sync(payload).ok())
+                            .and_then(|(key, _, _)| oneiron::sync::WindowKey::try_new(key))
+                        {
+                            ready_windows.retry(&key);
+                        }
+                        continue;
+                    }
+                    Some((false, frame)) => {
+                        if !crate::livequery::connection::Connection::is_scoped_broadcast(&frame) {
+                            // A refusal, which carries no rows.
+                            frame
+                        } else if let Some(refusal) = app_connection.refuse_reply(&frame) {
+                            refusal
+                        } else {
+                            continue;
+                        }
+                    }
+                };
                 let machine_only_reply = app_connection.is_own_machine_reply(&data);
                 let mut data = data;
                 // A queued app body is judged again at its last door before

@@ -52,6 +52,7 @@ use self::index::*;
 use self::search::*;
 use super::{AppError, CoreAuth, CoreScope, RpcRequest};
 use crate::api::call_receipt::ForwardedAttribution;
+use crate::selector_release::SelectorReleaseBasis;
 use crate::wire_telemetry::LimitRow;
 
 /// A result and the rows it carries (DEC-0005).
@@ -443,8 +444,12 @@ pub(super) fn run(
     index_cache: &mut Option<ResidenceIndexCache>,
     append_stage: &mut Option<AuthorityAppendStage>,
     touch_stage: &mut Option<ResidenceTouchStage>,
-) -> Result<super::RpcReply, crate::protocol::ProtocolError> {
+) -> Result<(super::RpcReply, Option<SelectorReleaseBasis>), crate::protocol::ProtocolError> {
     let call = super::RpcCall::of(&request);
+    // An answer under a selector leaves only while the grant and the
+    // authority it is made under stand (SELECTOR-RELEASE-POINT = B): read
+    // before the call binds the selector.
+    let basis = SelectorReleaseBasis::of_residence_params(&server.vault, &request.params);
     // A forwarded search's verified caller, whom its receipt names (FIX 3550),
     // and whether it sits off the carrying device (FIX 11991).
     let mut attribution = None;
@@ -530,7 +535,7 @@ pub(super) fn run(
         request.request_id,
         result,
     )
-    .map(|reply| reply.released_off_carrier(off_carrier))
+    .map(|reply| (reply.released_off_carrier(off_carrier), basis))
 }
 
 fn operation_budgets(server: &SyncServer) -> Result<ResidenceOperationBudgets, AppError> {

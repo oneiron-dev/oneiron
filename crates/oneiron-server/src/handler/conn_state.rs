@@ -55,6 +55,9 @@ pub(super) struct ConnState {
     pub(super) residence_touch: Option<crate::livequery::ResidenceTouchStage>,
     /// Tracked durable-work attachments, independent of the verb-RPC gate.
     pub(super) residence_work: crate::livequery::ResidenceWorkState,
+    /// Each selector answer this socket queued, with what it was made under,
+    /// judged again as it leaves (SELECTOR-RELEASE-POINT = B).
+    pub(super) selector_answers: crate::selector_release::SelectorAnswers,
     /// The authority entry this socket's machine appends in parts, held
     /// until it is whole; it goes with the socket (FIX 8246).
     pub(super) authority_append_stage: Option<oneiron::sync::residence::AuthorityAppendStage>,
@@ -117,6 +120,7 @@ impl ConnState {
             residence_index: None,
             residence_touch: None,
             residence_work: Default::default(),
+            selector_answers: Default::default(),
             authority_append_stage: None,
             countersigned: false,
             proven_machine: oneiron::authority::PeerMachine::Unknown,
