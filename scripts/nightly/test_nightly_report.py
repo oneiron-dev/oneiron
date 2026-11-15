@@ -8,6 +8,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import re
 import sys
 import tempfile
@@ -408,6 +409,27 @@ class DeleteBinariesTest(unittest.TestCase):
             self.assertEqual((result["files"], result["cargo_named"], result["not_found"]), (2, ["alpha", "beta"], []))
             self.assertTrue(
                 nightly_report.delete_line("tests-01", result).startswith("## NIGHTLY delete-tests-01 rc=1 files=2 ")
+            )
+
+    def test_a_hard_link_whose_place_resolves_outside_the_target_is_refused_and_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            target, cache = base / "target", base / "cache"
+            out = target / "debug/build/oneiron/0123456789abcdef/out"
+            out.mkdir(parents=True)
+            cache.mkdir()
+            (target / "debug/deps").symlink_to(cache, target_is_directory=True)
+            alpha = write(out / "alpha-0123456789abcdef", "test binary")
+            kept = cache / "keep"
+            os.link(alpha, kept)
+            messages = write(base / "build-tests-01.json", self.artifact("alpha", "test", alpha))
+            result = nightly_report.delete_binaries({"tests": ["alpha"], "bin_targets": []}, messages, target)
+            self.assertFalse(alpha.exists())
+            self.assertTrue(kept.exists(), "a hard link reached through a symlink out of the target dir stays")
+            self.assertEqual(result["refused"], [str(target / "debug/deps/keep")])
+            self.assertEqual((result["files"], result["cargo_named"], result["not_found"]), (1, ["alpha"], []))
+            self.assertTrue(
+                nightly_report.delete_line("tests-01", result).startswith("## NIGHTLY delete-tests-01 rc=1 files=1 ")
             )
 
     def test_a_missing_messages_file_falls_back_to_the_deps_glob_and_says_so(self) -> None:

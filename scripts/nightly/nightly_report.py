@@ -381,7 +381,7 @@ def delete_binaries(entry: dict, messages: Path, target: Path) -> dict:
     debug/build/<package>/<hash>/out/ and makes no debug/deps. Only a name the messages do not name falls back to
     the old layout's debug/deps glob (and a bin to debug/<bin>). Every hard link of a deleted file goes too: a
     bin's copy in debug/ is a hard link of its build copy, and deleting one name alone frees nothing. A path that
-    does not resolve inside the target dir is never deleted.
+    does not resolve inside the target dir is never deleted: a cargo-named path and a hard link alike are refused.
     """
     tests, bins = set(entry["tests"]), set(entry.get("bin_targets", []))
     built = built_executables(messages)
@@ -403,14 +403,25 @@ def delete_binaries(entry: dict, messages: Path, target: Path) -> dict:
             found[name].append(debug / name)
     root = Path(os.path.realpath(target))
     refused: list[str] = []
+
+    def inside(path: Path) -> Path | None:
+        """PATH's place inside the target dir, or None (and PATH refused) when it resolves outside.
+
+        The parent is resolved and the name kept: a symlink is judged by where it sits, never followed, and a
+        symlinked dir on the way is followed.
+        """
+        where = Path(os.path.realpath(path.parent)) / path.name
+        if not where.is_relative_to(root) or where == root:
+            refused.append(str(path))
+            return None
+        return where
+
     files: dict[Path, tuple[str, tuple[int, int]]] = {}
     inodes: dict[tuple[int, int], int] = {}
     for name, paths in found.items():
         for path in paths:
-            # the parent resolved and the name kept: a symlink is judged by where it sits, never followed
-            where = Path(os.path.realpath(path.parent)) / path.name
-            if not where.is_relative_to(root) or where == root:
-                refused.append(str(path))
+            where = inside(path)
+            if where is None:
                 continue
             try:
                 status = os.lstat(where)
@@ -432,9 +443,13 @@ def delete_binaries(entry: dict, messages: Path, target: Path) -> dict:
             except OSError:
                 continue
             key = (status.st_dev, status.st_ino)
-            if key in linked and stat.S_ISREG(status.st_mode) and path not in files:
+            if key not in linked or not stat.S_ISREG(status.st_mode):
+                continue
+            # a link found through a symlinked deps or build dir is judged by its resolved place too
+            where = inside(path)
+            if where is not None and where not in files:
                 owner = next(name for name, k in files.values() if k == key)
-                files[path] = (owner, key)
+                files[where] = (owner, key)
     deleted: dict[str, int] = {}
     freed: set[tuple[int, int]] = set()
     kb = 0
