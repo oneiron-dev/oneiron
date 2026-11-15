@@ -83,6 +83,10 @@ pub struct ScopedReadActorKey {
     /// Set on every key that names a base agent (untangle 6.3, X04); see
     /// [`Self::for_engine_actor`].
     system_agent: Option<EntityId>,
+    /// Set only on a credential's key whose reader is neither the vault's
+    /// owner nor one of its own agents reading on its own; see
+    /// [`Self::homed_unnamed`].
+    home_unnamed: bool,
 }
 
 pub use crate::settings::CallerLocality;
@@ -405,6 +409,7 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent,
+            home_unnamed: false,
         })
     }
 
@@ -449,6 +454,7 @@ impl ScopedReadActorKey {
             owner_by_census: false,
             record_bound: None,
             system_agent: None,
+            home_unnamed: false,
         }
     }
 
@@ -656,6 +662,35 @@ impl ScopedReadActorKey {
     pub(crate) fn within_room_facets(mut self, room: EntityId) -> Self {
         self.room_facets = Some(room);
         self
+    }
+
+    /// Read as a reader homed in no conversation of this vault (DEC-0006
+    /// `#home-clearance`; RULING L5-02-UNNAMED-HOME = A, RULING
+    /// SECREAD-HOME-READ-DOORS = B): every read door that serves a
+    /// credential of neither the vault's owner nor one of its own agents
+    /// reading on its own builds its key so, and the key then reads no CLAIM
+    /// stamped with any band but public unless it reads inside a room of this
+    /// vault, a room turn's or a named room's facets
+    /// ([`Self::reads_homed_unnamed`]). The home binds the reader, not only
+    /// the assembly routes. It only narrows: every check the key already
+    /// makes still runs.
+    #[must_use]
+    pub fn homed_unnamed(mut self) -> Self {
+        self.home_unnamed = true;
+        self
+    }
+
+    /// Whether this key withholds stamped claims ([`Self::homed_unnamed`]):
+    /// its reader is homed in no conversation of this vault and it reads
+    /// inside no room of this vault.
+    pub(crate) fn reads_homed_unnamed(&self) -> bool {
+        self.home_unnamed && self.room_turn.is_none() && self.room_facets.is_none()
+    }
+
+    /// Whether [`Self::homed_unnamed`] built this key, inside a room or not:
+    /// what a saved lane and a key fingerprint keep of it.
+    pub(crate) fn is_homed_unnamed(&self) -> bool {
+        self.home_unnamed
     }
 
     /// Read only rows in `worlds`, each where `record_world_in` places it: a

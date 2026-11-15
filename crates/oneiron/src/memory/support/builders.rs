@@ -383,10 +383,13 @@ impl Memory<'_> {
     }
 
     /// Marks this surface as a caller's whose credential this host admitted.
-    /// It grants and narrows nothing: a verb hook's ask on its call saves no
-    /// way to run the call without the credential, so the caller's retry,
-    /// which the host verifies again, resumes it, or the host's own check
-    /// when it bound the credential's instrument and door (ARCH-0080 §3 Ask).
+    /// It grants nothing: a verb hook's ask on its call saves no way to run
+    /// the call without the credential, so the caller's retry, which the
+    /// host verifies again, resumes it, or the host's own check when it bound
+    /// the credential's instrument and door (ARCH-0080 §3 Ask). It narrows
+    /// one read: with no slip bound, a caller that is neither the owner nor
+    /// one of the vault's own agents reads homed in no conversation of this
+    /// vault (`ScopedReadActorKey::homed_unnamed`).
     #[must_use]
     pub fn for_credential(mut self) -> Self {
         self.credential = true;

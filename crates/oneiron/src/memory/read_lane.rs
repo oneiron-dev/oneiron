@@ -343,18 +343,31 @@ impl Memory<'_> {
                     )
                 });
         }
-        let key = if owner {
-            ScopedReadActorKey::vault_owner(self.actor)
-        } else {
-            ScopedReadActorKey::with_actor_class(
-                self.actor.to_hex(),
-                self.actor_class.gate_actor_class(),
-            )
-            .ok_or_else(|| {
-                MemoryError::bad_request("bound actor cannot be used as a scoped read key")
-            })?
-            .require_access_grants(Some(self.actor))
-        };
+        if owner {
+            return Ok(ScopedReadActorKey::vault_owner(self.actor));
+        }
+        let key = ScopedReadActorKey::with_actor_class(
+            self.actor.to_hex(),
+            self.actor_class.gate_actor_class(),
+        )
+        .ok_or_else(|| MemoryError::bad_request("bound actor cannot be used as a scoped read key"))?
+        .require_access_grants(Some(self.actor));
+        // A transport caller with no slip is a credential too: the
+        // conversation home binds it as it binds a proof-backed key
+        // (credential_key.rs; RULING SECREAD-HOME-READ-DOORS = B).
+        if self.credential
+            && !self
+                .vault
+                .own_agent_credential_in(
+                    txn,
+                    &self.actor,
+                    Some(self.actor_class.gate_actor_class()),
+                    false,
+                )
+                .map_err(MemoryError::from)?
+        {
+            return Ok(key.homed_unnamed());
+        }
         Ok(key)
     }
 

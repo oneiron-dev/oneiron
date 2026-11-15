@@ -90,20 +90,29 @@ pub struct HomeClearanceView {
 /// otherwise the stamped band. A stamp that does not read as one band (a duplicate key, an unknown
 /// value, a scope that is not a map) reads `Restricted`: it fails closed.
 pub(crate) fn claim_home_band(body: &ClaimBody) -> Option<DisclosureBand> {
-    match &body.scope {
-        None => None,
-        Some(Value::Map(entries))
-            if !entries
-                .iter()
-                .any(|(key, _)| key.as_str() == Some(SENSITIVITY_STAMP_KEY)) =>
-        {
-            None
-        }
-        Some(Value::Map(_)) => match DisclosureBand::of_claim(body) {
-            DisclosureBand::Public => None,
-            band => Some(band),
-        },
-        Some(_) => Some(DisclosureBand::Restricted),
+    scope_home_band(body.scope.as_ref())
+}
+
+/// [`claim_home_band`] of a claim whose scope map is `scope`: the scoped read judges a claim by its
+/// read view, which holds the scope map and not the body.
+pub(crate) fn scope_home_band(scope: Option<&Value>) -> Option<DisclosureBand> {
+    let entries = match scope {
+        None => return None,
+        Some(Value::Map(entries)) => entries,
+        Some(_) => return Some(DisclosureBand::Restricted),
+    };
+    let mut stamps = entries
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(SENSITIVITY_STAMP_KEY));
+    let (_, stamp) = stamps.next()?;
+    if stamps.next().is_some() {
+        return Some(DisclosureBand::Restricted);
+    }
+    match crate::claim::sensitivity_band_from_value(stamp) {
+        Some(0) => None,
+        Some(1) => Some(DisclosureBand::Private),
+        Some(2) => Some(DisclosureBand::Sensitive),
+        _ => Some(DisclosureBand::Restricted),
     }
 }
 

@@ -383,6 +383,13 @@ pub(crate) fn scoped_read_for_core_auth<'a>(
             auth.principal_ref()
                 .and_then(|id| oneiron::EntityId::from_hex(id).ok()),
         );
+        // The conversation home binds a slip-less reader as the engine's
+        // credential key binds a slip (RULING SECREAD-HOME-READ-DOORS = B):
+        // one that is not one of the vault's own agents reads no stamped
+        // claim outside a room of this vault.
+        if !super::context_pack::own_agent_credential(vault, auth)? {
+            key = key.homed_unnamed();
+        }
     }
     Ok(vault.scoped_read(key.for_destination(&auth.destination())))
 }

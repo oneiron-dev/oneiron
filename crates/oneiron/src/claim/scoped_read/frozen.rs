@@ -69,6 +69,11 @@ pub struct FrozenReadLane {
     /// The room whose signed facets the saved lane read inside (FIX 643).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     room_facets: Option<EntityId>,
+    /// Whether the saved lane's reader was homed in no conversation of this
+    /// vault (`ScopedReadActorKey::homed_unnamed`): every rebuild reads no
+    /// stamped claim outside a room of this vault, as the saving key did.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    home_unnamed: bool,
     /// The fields a narrower reader's view of this lane withheld a row or a
     /// scope id from (FIX 12171, 12285), by name: `records` when the caveat
     /// names a row that reader does not read, `room_facets` when it does not
@@ -156,6 +161,7 @@ impl FrozenReadLane {
             && worlds.is_none()
             && key.room_facets.is_none()
             && key.grant_alternatives().is_none()
+            && !key.is_homed_unnamed()
         {
             return Ok(Self::principal());
         }
@@ -180,6 +186,7 @@ impl FrozenReadLane {
             records,
             worlds,
             room_facets: key.room_facets,
+            home_unnamed: key.is_homed_unnamed(),
             withheld: Vec::new(),
         })
     }
@@ -333,6 +340,9 @@ impl FrozenReadLane {
         }
         if let Some(room) = self.room_facets {
             key = key.within_room_facets(room);
+        }
+        if self.home_unnamed {
+            key = key.homed_unnamed();
         }
         Ok(key)
     }

@@ -6,7 +6,8 @@
 //! and a fingerprint that cannot be read refuses nothing (its caller keeps
 //! the path it had). It folds, in ONE snapshot, what those lanes resolve live
 //! for the key: its own ceilings (credential Scope, world ceiling, locality,
-//! room bounds, owner exemption, a saved lane's records bound), the reader's
+//! room bounds, conversation home, owner exemption, a saved lane's records
+//! bound), the reader's
 //! standing for `read` and each agent Grant that stands for it, and the
 //! principal's live access grants and relationship memberships. A change in
 //! any of them changes the digest; a raw key, a grant id alone or a
@@ -111,6 +112,12 @@ impl ScopedReadActorKey {
             for bound in &bounds {
                 fold_scope(&mut hasher, bound)?;
             }
+        }
+        // A reader homed in no conversation of this vault reads no stamped
+        // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B); any
+        // other key folds nothing more, so its fingerprint is as before.
+        if self.is_homed_unnamed() {
+            hasher.update(b"home_unnamed");
         }
         Ok(hasher.finalize().into())
     }
@@ -338,12 +345,23 @@ impl ScopedReadActorKey {
         if let Some(holder) = self.agent_grant_holder() {
             key_fold_id(&mut hasher, Some(holder));
         }
+        // Last, and only when set, so every other key keeps its fingerprint:
+        // a reader homed in no conversation of this vault reads no stamped
+        // claim outside a room (RULING SECREAD-HOME-READ-DOORS = B).
+        if self.is_homed_unnamed() {
+            hasher.update(KEY_FINGERPRINT_HOME_UNNAMED);
+        }
         *hasher.finalize().as_bytes()
     }
 }
 
 /// Domain tag for [`ScopedReadActorKey::key_fingerprint`].
 const KEY_FINGERPRINT_DOMAIN: &[u8] = b"oneiron.scoped_read.actor_key_fingerprint.v1";
+
+/// [`ScopedReadActorKey::key_fingerprint`]'s fold of a key homed in no
+/// conversation of this vault (`ScopedReadActorKey::homed_unnamed`).
+const KEY_FINGERPRINT_HOME_UNNAMED: &[u8] =
+    b"oneiron.scoped_read.actor_key_fingerprint.home_unnamed";
 
 fn key_fold_len(hasher: &mut blake3::Hasher, len: usize) {
     hasher.update(&(len as u64).to_be_bytes());

@@ -373,7 +373,10 @@ pub(crate) fn core_conversation_home(
 /// reading on its own. A transferred slip is another holder's, acting on the
 /// agent's word, so it is not the agent reading on its own (as the inquiry
 /// and guest-document doors hold it).
-fn own_agent_credential(vault: &oneiron::Vault, auth: &CoreAuth) -> Result<bool, ApiError> {
+pub(crate) fn own_agent_credential(
+    vault: &oneiron::Vault,
+    auth: &CoreAuth,
+) -> Result<bool, ApiError> {
     if auth.actor_class() != Some("agent")
         || auth
             .verified_slip()
