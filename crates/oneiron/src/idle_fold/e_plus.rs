@@ -151,6 +151,19 @@ pub(crate) fn idle_choice(
     choice
 }
 
+/// The Keeps a cold start gets (rule D; RULING L2-37-COLD-START = B): enough refreshes that the
+/// prefix stays warm through `keep_through_secs` from the answer that cached it. The first call
+/// comes `T = lifetime - 60` (at least one second) after that answer and each Keep moves the next
+/// one `T` on, so: none when `keep_through_secs` is zero, else `max(1, ceil(keep_through / T) - 1)`.
+pub(crate) fn cold_start_keeps(keep_through_secs: u64, lifetime_secs: u64) -> u32 {
+    if keep_through_secs == 0 {
+        return 0;
+    }
+    let period = lifetime_secs.saturating_sub(60).max(1);
+    let keeps = keep_through_secs.div_ceil(period).saturating_sub(1).max(1);
+    u32::try_from(keeps).unwrap_or(u32::MAX)
+}
+
 /// How many of `cell`'s waits were still waiting at `elapsed_secs`: those that returned then or
 /// later, and those that never did. The cold-start floor counts these.
 pub(crate) fn still_waiting(cell: &IdleReturnCell, elapsed_secs: u64) -> u64 {

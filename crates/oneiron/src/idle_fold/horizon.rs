@@ -11,10 +11,11 @@
 //!   context. The resumed run takes the batch as its first brief boundary (Engine call FOLD B).
 //! - Expire writes nothing.
 //!
-//! Each call is recorded per wait for the replay check. A cell too thin to read decides Expire
-//! (RULING L2-37-COLD-START = A until the fixed cold-start rule lands with its setting), as does a
-//! price the catalog does not hold. A wait whose run came back first, or moved off its park, gets
-//! no call. The pump sends each refresh outside any vault write through the pass's refresh
+//! Each call is recorded per wait for the replay check. A cell too thin to read takes the fixed
+//! cold-start rule D (RULING L2-37-COLD-START = B): Keep through the owner's
+//! `idle_fold.cold_start_keep_through_secs` (thirty minutes unless set), then Fold when the run
+//! holds kind marks, else Expire. A price the catalog does not hold decides Expire. A wait whose
+//! run came back first, or moved off its park, gets no call. The pump sends each refresh outside any vault write through the pass's refresh
 //! callback, which returns the horizon its answer stamped, or nothing when nothing was sent or
 //! nothing answered.
 
@@ -22,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use super::e_plus::{self, CachePrices, IdleChoice, PromptAtHorizon};
 use super::returns::backed_off_cell;
+use super::setting_keys::COLD_START_KEEP_THROUGH_SECS;
 use super::{IdleWait, WAITS, band_of, row};
 use crate::attempt_queue::AttemptId;
 use crate::code_run::WaitKey;
@@ -379,9 +381,9 @@ struct IdlePlan {
     fallback: IdleChoice,
 }
 
-/// E+'s call for `key`'s wait at `now_ms`, with the fold its marks ask for. A thin cell decides
-/// Expire (RULING L2-37-COLD-START = A), as does a price the catalog does not hold; Keep is offered
-/// only over a cell that passed its floor. With one ask left Keep is not offered.
+/// E+'s call for `key`'s wait at `now_ms`, with the fold its marks ask for. A thin cell takes rule
+/// D ([`cold_start_plan`]); a price the catalog does not hold decides Expire. With one ask left
+/// Keep is not offered.
 fn plan_idle_call(
     vault: &Vault,
     key: &WaitKey,
@@ -424,15 +426,15 @@ fn plan_idle_call(
             elapsed_secs,
         )?
     };
+    let lifetime_secs = u64::from(due.prefix.horizon.lifetime_secs);
+    let asks_left = MAX_ASKS_PER_WAIT.saturating_sub(due.keeps);
     let Some(cell) = cell else {
-        return Ok(expired);
+        return cold_start_plan(vault, due, fold, prices, lifetime_secs, asks_left);
     };
     let prompt = PromptAtHorizon {
         prefix_tokens: due.prefix.horizon.tokens,
         folded_tokens: fold.as_ref().map_or(0, |fold| fold.folded_tokens),
     };
-    let lifetime_secs = u64::from(due.prefix.horizon.lifetime_secs);
-    let asks_left = MAX_ASKS_PER_WAIT.saturating_sub(due.keeps);
     let choice = e_plus::idle_choice(
         &cell,
         elapsed_secs,
@@ -455,6 +457,40 @@ fn plan_idle_call(
         fold,
         choice,
         fallback,
+    })
+}
+
+/// Rule D's call for a wait whose cell is too thin to read (RULING L2-37-COLD-START = B): Keep
+/// while the wait has had fewer Keeps than the owner's window asks
+/// ([`e_plus::cold_start_keeps`]), then Fold when the run holds kind marks, else Expire. As in
+/// E+, Keep needs a later ask and an output price that reads; a Keep whose refresh sends nothing
+/// falls back to the call after the Keeps.
+fn cold_start_plan(
+    vault: &Vault,
+    due: &IdleFoldDue,
+    fold: Option<ParkedKindFolds>,
+    prices: CachePrices,
+    lifetime_secs: u64,
+    asks_left: u32,
+) -> Result<IdlePlan> {
+    let keep_through_secs = {
+        let txn = vault.store.env.read_txn()?;
+        COLD_START_KEEP_THROUGH_SECS
+            .read_in_txn(vault, &txn, &[], None)?
+            .value
+    };
+    let after = if fold.is_some() {
+        IdleChoice::Fold
+    } else {
+        IdleChoice::Expire
+    };
+    let keep = due.keeps < e_plus::cold_start_keeps(keep_through_secs, lifetime_secs)
+        && asks_left > 1
+        && prices.output_per_token.is_some();
+    Ok(IdlePlan {
+        fold,
+        choice: if keep { IdleChoice::Keep } else { after },
+        fallback: after,
     })
 }
 
