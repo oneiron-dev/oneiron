@@ -22,7 +22,7 @@ use super::codec::invalid;
 use super::equivalent::redirect_equivalent_subjects_in_txn;
 use super::posterior::{KEY_ALPHA, KEY_BETA};
 use super::read::{active_claims_in_txn, active_reliability_heads_in_txn, posterior_from_estimate};
-use super::setting_keys::RELIABILITY_FLOOR;
+use super::setting_keys::{RELIABILITY_FLOOR, RELIABILITY_FLOOR_MIN_OUTCOMES};
 
 /// The floor-crossing PROPOSAL predicate. A proposal to quarantine is a ROW,
 /// never a lifecycle state (`skill.rs` lifecycle machine): the record stays
@@ -57,7 +57,9 @@ impl SettingValue for ReliabilityFloor {
 /// rather than an unlucky provenance class.
 pub const DEFAULT_SKILL_RELIABILITY_FLOOR: f32 = 0.25;
 
-/// Attributed outcomes a skill must carry before the floor can fire.
+/// Attributed outcomes a skill must carry before the floor can fire, while the
+/// owner has not set `skills.reliability_floor_min_outcomes`
+/// ([`super::setting_keys::RELIABILITY_FLOOR_MIN_OUTCOMES`]).
 ///
 /// A lower bound computed on a pure prior measures IGNORANCE, not
 /// unreliability — every prior in the table sits under the floor on its lower
@@ -65,6 +67,31 @@ pub const DEFAULT_SKILL_RELIABILITY_FLOOR: f32 = 0.25;
 /// quarantining every newborn skill. The floor answers "the evidence says this
 /// is bad", which needs evidence.
 pub const SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES: u32 = 5;
+
+/// The attributed outcomes a learning cell must carry before the floor can
+/// propose quarantine: the catalogue key `skills.reliability_floor_min_outcomes`
+/// ([`super::setting_keys::RELIABILITY_FLOOR_MIN_OUTCOMES`]), default
+/// [`SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES`]. A lower count is a loosening: an
+/// earlier proposal, still never an automatic quarantine.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+pub struct ReliabilityFloorMinOutcomes(pub u32);
+
+impl SettingValue for ReliabilityFloorMinOutcomes {
+    /// At least one: with no attributed outcome the lower bound is the prior's,
+    /// which measures ignorance, not unreliability.
+    fn check(self) -> Result<Self> {
+        if self.0 == 0 {
+            Err(Error::InvalidConfig(
+                "the reliability floor needs at least one attributed outcome".into(),
+            ))
+        } else {
+            Ok(self)
+        }
+    }
+}
 
 const KEY_LOWER_BOUND: &str = "lowerBound";
 
@@ -177,6 +204,10 @@ pub(super) fn check_floor_cells_in_txn(
             })
             .collect();
     let floor = floor_in_txn(vault, wtxn)?;
+    let min_outcomes = RELIABILITY_FLOOR_MIN_OUTCOMES
+        .read_in_txn(vault, wtxn, &[], None)?
+        .value
+        .0;
     let mut live_cells = Vec::with_capacity(cells.len());
     let mut first_proposal = None;
     for (head, stored) in cells.into_values() {
@@ -188,9 +219,7 @@ pub(super) fn check_floor_cells_in_txn(
             .collect();
         let posterior = posterior_from_estimate(&stored.estimate)?;
         let lower_bound = posterior.lower_bound();
-        if stored.estimate.runs < f64::from(SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES)
-            || lower_bound >= floor
-        {
+        if stored.estimate.runs < f64::from(min_outcomes) || lower_bound >= floor {
             for (old_id, _, old_start) in matching {
                 vault.supersede_reserved_claim_in_txn(wtxn, &head, old_id, at.max(*old_start))?;
             }

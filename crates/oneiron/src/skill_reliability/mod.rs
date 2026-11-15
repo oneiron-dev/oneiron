@@ -32,7 +32,7 @@ pub(crate) use self::equivalent::redirect_equivalent_subjects_in_txn;
 pub(crate) use self::floor::open_floor_crossings_in_txn;
 pub use self::floor::{
     DEFAULT_SKILL_RELIABILITY_FLOOR, PREDICATE_SKILL_QUARANTINE_PROPOSAL, ReliabilityFloor,
-    SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,
+    ReliabilityFloorMinOutcomes, SKILL_RELIABILITY_FLOOR_MIN_OUTCOMES, check_reliability_floor,
     check_reliability_floor_for_executor, skill_reliability_floor,
 };
 pub(crate) use self::ledger::{
