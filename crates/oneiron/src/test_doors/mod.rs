@@ -46,6 +46,7 @@ pub mod dreamer_attempt_binding;
 pub mod dreamer_partition_window;
 pub mod dreamer_stage_line;
 pub mod esign_commitments;
+pub mod extraction_probe;
 pub mod fanout_admission;
 pub mod feeds;
 pub mod free_time_cycle_writer;
