@@ -55,7 +55,7 @@ use crate::error::{Error, Result};
 pub use crate::store::authority_overlay_custody::ErasedSubject;
 use crate::store::authority_overlay_custody::{
     OverlayInventory, awaits_retirement_by, clear_destroyed_holder_debts, export_key,
-    open_received_key, overlay_inventory, record_sender,
+    open_received_key, overlay_inventory, peer_not_admitted, record_sender,
 };
 use crate::store::home_handoff_custody::{LiveTarget, SessionBinding, TransitSeal};
 
@@ -181,11 +181,6 @@ pub(crate) fn overlay_peer_trusted_in_txn(
     Ok(fold.trusted_machine(peer).is_some() && fold.machine_proof_key(peer) == Some(key))
 }
 
-/// The refusal of a page whose peer `admitted` no longer admits.
-fn peer_not_admitted() -> Error {
-    refused("the peer is no longer a machine this install trusts")
-}
-
 /// Refuses unless `admitted` holds in a fresh snapshot: asked again before
 /// a key is sealed to the peer or its debts clear.
 fn check_admitted(
@@ -203,6 +198,10 @@ fn check_admitted(
 /// The admission the in-process test rounds hand in: every peer admitted,
 /// as no cheap fixture mints a trusted proven machine.
 #[cfg(test)]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "it stands where an admission callback goes, which answers Result<bool>"
+)]
 pub(crate) fn peer_admitted_for_test(_: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(true)
 }
@@ -473,16 +472,18 @@ fn install_keys(
 }
 
 /// Seals each of `keys`, held here, to `target`, each one's holder debt
-/// recorded first. One that does not export (retired or erased since the
-/// inventory) is logged and left out.
+/// recorded first, `admitted` asked again for each key (Sol review of
+/// census L5-22 PR 1b). One that does not export (retired or erased since
+/// the inventory, or the target no longer admitted) is logged and left out.
 fn export_keys(
     vault: &Vault,
     target: &LiveTarget,
     keys: impl IntoIterator<Item = (EntityId, [u8; 32])>,
+    admitted: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Vec<OverlaySentKey> {
     let mut sent = Vec::new();
     for (subject, key_ref) in keys {
-        match export_key(&vault.store, &subject, &key_ref, target) {
+        match export_key(&vault.store, &subject, &key_ref, target, admitted) {
             Ok(sealed) => sent.push(OverlaySentKey {
                 subject,
                 key_ref,
@@ -582,7 +583,7 @@ pub(crate) fn answer_offer(
         })
         .copied();
     check_admitted(vault, admitted)?;
-    let keys = export_keys(vault, &target, send);
+    let keys = export_keys(vault, &target, send, admitted);
     let wanted: BTreeSet<(EntityId, [u8; 32])> = theirs
         .ready
         .iter()
@@ -686,7 +687,7 @@ pub fn apply_overlay_answer(
         offer.ready.contains(&(*subject, *key_ref)) && !answer.erased.contains_key(subject)
     });
     check_admitted(vault, admitted)?;
-    Ok(export_keys(vault, &target, wanted))
+    Ok(export_keys(vault, &target, wanted, admitted))
 }
 
 /// One whole round between two installs of one vault, in this process and

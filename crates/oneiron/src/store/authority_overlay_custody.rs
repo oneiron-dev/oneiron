@@ -263,7 +263,10 @@ pub(crate) fn open(
 /// Every overlay key of `subject` this install knows (census L5-22 1a-iii):
 /// each custody holds a directory for (live, retired, or an aborted
 /// writer's), each with a ref row, each a sealed row of `heads` names for
-/// `subject`, and each ref of `refs`, held here or not.
+/// `subject` whose ref row here names no other key, and each ref of
+/// `refs`, held here or not. A held row's head names its key as its arrival
+/// carried it, unchecked: a ref whose ref row names another subject's key
+/// is that subject's, and stays out (Sol review of census L5-22 PR 1b).
 ///
 /// # Errors
 /// A ref of `refs` whose ref row here names another key: one ref names one
@@ -289,12 +292,12 @@ fn subject_keys_in_txn(
         ErasablePurpose::AuthorityOverlay,
         parent,
     )?);
-    items.extend(
-        heads
-            .iter()
-            .filter(|head| head.subject == *subject)
-            .map(|head| item(subject, &head.key_ref)),
-    );
+    for head in heads.iter().filter(|head| head.subject == *subject) {
+        let item = item(subject, &head.key_ref);
+        if !erasable_ref_names_another_in_txn(store, txn, &item)? {
+            items.insert(item);
+        }
+    }
     for key_ref in refs {
         let item = item(subject, key_ref);
         if erasable_ref_names_another_in_txn(store, txn, &item)? {
@@ -532,16 +535,31 @@ pub(crate) fn overlay_inventory(store: &Store) -> Result<OverlayInventory> {
 /// committed after the first check refuses the seal, and one that commits
 /// after the second owes the holder's retirement.
 ///
+/// `admitted` is asked in the snapshot of each check, so a target machine
+/// removed before the second check gets no seal (Sol review of census
+/// L5-22 PR 1b).
+///
 /// # Errors
 /// An archived vault; a key not held here live and ready, or of an erased
-/// subject, at either check; custody and sealing faults.
+/// subject, or a target `admitted` no longer holds, at either check;
+/// custody and sealing faults.
 pub(crate) fn export_key(
     store: &Store,
     subject: &EntityId,
     key_ref: &[u8; 32],
     target: &LiveTarget,
+    admitted: &dyn Fn(&RoTxn<'_>) -> Result<bool>,
 ) -> Result<TransitSeal> {
-    export_key_checked(store, subject, key_ref, target, || Ok(()))
+    export_key_checked(store, subject, key_ref, target, admitted, || Ok(()))
+}
+
+/// The refusal of a peer the caller's admission no longer holds: a key is
+/// sealed to it, or its debts clear, only while it stands.
+pub(crate) fn peer_not_admitted() -> Error {
+    Error::InvalidConfig(
+        "authority overlay custody refused: the peer is no longer a machine this install trusts"
+            .to_owned(),
+    )
 }
 
 /// [`export_key`], running `before_read` between its first check and its
@@ -551,6 +569,7 @@ fn export_key_checked(
     subject: &EntityId,
     key_ref: &[u8; 32],
     target: &LiveTarget,
+    admitted: &dyn Fn(&RoTxn<'_>) -> Result<bool>,
     before_read: impl FnOnce() -> Result<()>,
 ) -> Result<TransitSeal> {
     if store.core.gate_custody_archived() {
@@ -562,7 +581,7 @@ fn export_key_checked(
         .local()
         .ok_or_else(|| CustodyKind::ErasableKey.corrupt())?;
     let item = item(subject, key_ref);
-    check_exportable(store, &custody, subject, &item)?;
+    check_exportable(store, &custody, subject, &item, admitted)?;
     before_read()?;
     let secret = custody.read_erasable(&item)?;
     custody.record_holder(key_ref, &target.machine)?;
@@ -572,19 +591,24 @@ fn export_key_checked(
     plain.extend_from_slice(&item.incarnation);
     plain.extend_from_slice(secret.expose());
     let sealed = seal_transit(target, key_ref, &plain)?;
-    check_exportable(store, &custody, subject, &item)?;
+    check_exportable(store, &custody, subject, &item, admitted)?;
     Ok(sealed)
 }
 
 /// Refuses `item`, the overlay key of `subject`, unless it is held here
-/// live and ready and `subject` is not erased here, in one snapshot.
+/// live and ready, `subject` is not erased here and `admitted` holds for
+/// the target, in one snapshot.
 fn check_exportable(
     store: &Store,
     custody: &LocalCustody<'_>,
     subject: &EntityId,
     item: &ErasableItem,
+    admitted: &dyn Fn(&RoTxn<'_>) -> Result<bool>,
 ) -> Result<()> {
     let txn = store.env.read_txn()?;
+    if !admitted(&txn)? {
+        return Err(peer_not_admitted());
+    }
     let known = subject_keys_in_txn(store, &txn, custody, subject, &[], &[])?;
     if !KEY_READY.contains(store, &txn, &item.key_ref)?
         || custody.erasable_state(item)? != EntryState::Live
@@ -978,7 +1002,7 @@ mod carrier_tests {
         let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
         let machine = EntityId::now();
         let (_session, target) = live_session(machine, [0x11; 32], [0x22; 32]);
-        export_key(&vault.store, &subject, &key_ref, &target).unwrap();
+        export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(true)).unwrap();
         let debts = vault
             .store
             .core
@@ -1027,16 +1051,25 @@ mod carrier_tests {
         let (_dir, vault, subject, key_ref) = vault_with_one_ready_overlay_key();
         let machine = EntityId::now();
         let (_session, target) = live_session(machine, [0x11; 32], [0x22; 32]);
-        let exported = super::export_key_checked(&vault.store, &subject, &key_ref, &target, || {
-            vault.with_write_txn_grouped(|txn| {
-                super::retire_subject_keys_in_txn(&vault.store, txn, &subject, &[], &[])
-            })
-        });
+        let exported = super::export_key_checked(
+            &vault.store,
+            &subject,
+            &key_ref,
+            &target,
+            &|_| Ok(true),
+            || {
+                vault.with_write_txn_grouped(|txn| {
+                    super::retire_subject_keys_in_txn(&vault.store, txn, &subject, &[], &[])
+                })
+            },
+        );
         assert!(
             exported.is_err(),
             "a retirement that commits after the export's first check must refuse the seal"
         );
-        assert!(super::export_key(&vault.store, &subject, &key_ref, &target).is_err());
+        assert!(
+            super::export_key(&vault.store, &subject, &key_ref, &target, &|_| Ok(true)).is_err()
+        );
     }
 }
 

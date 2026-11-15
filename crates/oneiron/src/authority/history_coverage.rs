@@ -108,7 +108,12 @@ pub(super) fn archive_coverage_in_txn(
             && row.hash()? == *hash
         {
             coverage.held.insert(*hash);
-            if authority_row_erased_in_txn(&vault.store, txn, hash)? {
+            // Erased is a pass-through row the erase marked, as verification
+            // reports it: a row that opens here is not erased, whatever a
+            // mark says (Sol review of census L5-22 PR 1b).
+            if matches!(row, FoldRow::PassThrough(_))
+                && authority_row_erased_in_txn(&vault.store, txn, hash)?
+            {
                 coverage.erased.insert(*hash);
             }
         }

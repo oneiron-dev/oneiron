@@ -1084,6 +1084,10 @@ fn a_page_naming_another_subjects_key_under_an_erased_subject_closes_nothing() {
 #[test]
 #[cfg(feature = "sync")]
 fn an_answer_from_a_home_no_longer_admitted_erases_and_seals_nothing() {
+    #[allow(
+        clippy::unnecessary_wraps,
+        reason = "it stands where an admission callback goes, which answers Result<bool>"
+    )]
     fn home_removed(_: &heed::RoTxn<'_>) -> crate::error::Result<bool> {
         Ok(false)
     }
