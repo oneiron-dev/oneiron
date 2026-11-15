@@ -84,7 +84,15 @@ pub(super) fn windows(
     candidates.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     candidates.dedup();
     let limit = input.limit.min(budgets.index_page_limit.max(1));
+    // FIX 7608 slice 4: rows stay source-bound, as `residence.index` names them.
+    let aliases = oneiron::sync::selector::RepoCopyAliases::read(&server.vault)
+        .map_err(|_| AppError::internal_server_error("catalogue aliases unavailable"))?;
     let mut listed = Vec::new();
+    // The rows the page was derived from: every row of each readable window it
+    // judged, the one past a full page included. The send judges them again for
+    // the destination (DEC-0005), as it does `residence.index`'s rows; a reply
+    // that names none is withheld from every destination off this device.
+    let mut derived = Vec::new();
     let mut more = false;
     for key in &candidates {
         let window = server
@@ -105,6 +113,11 @@ pub(super) fn windows(
         if rows.is_empty() {
             continue;
         }
+        for row in &rows {
+            let id = EntityId::from_hex(&row.entity_id)
+                .map_err(|_| AppError::internal_server_error("catalogue entry malformed"))?;
+            derived.push(aliases.stored(&id));
+        }
         // One readable window past a full page: the caller has more to read.
         if listed.len() == limit {
             more = true;
@@ -115,5 +128,5 @@ pub(super) fn windows(
     // The grant, credential and selector are judged again after the page.
     bound_selector(server, auth, lane, &input.selector)?;
     let next = if more { listed.last().cloned() } else { None };
-    Ok((json!({ "windows": listed, "next": next }), None))
+    Ok((json!({ "windows": listed, "next": next }), Some(derived)))
 }
