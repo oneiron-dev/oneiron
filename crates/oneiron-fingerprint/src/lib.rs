@@ -37,7 +37,7 @@ mod record;
 pub use legacy::{LegacyDigest, LegacyHash, LegacyPurpose, TagMode};
 pub use purposes::assert_distinct_contexts;
 #[cfg(feature = "record")]
-pub use record::{CanonicalBytesError, canonical_bytes};
+pub use record::{CanonicalBytesError, canonical_bytes, canonical_value_bytes};
 
 use std::fmt;
 
@@ -88,7 +88,9 @@ impl Fingerprint {
     /// `Fingerprint::of_parts(purpose, &[&canonical_bytes(record)?])`.
     ///
     /// A value that is stored, signed or sent as encoded bytes is fingerprinted from
-    /// those bytes with [`Fingerprint::of_parts`]; it is not encoded a second time.
+    /// those bytes with [`Fingerprint::of_parts`]; it is not encoded a second time. A
+    /// MessagePack value held as an `rmpv::Value` is one part of its
+    /// [`canonical_value_bytes`], which keeps an invalid UTF-8 string apart from a binary.
     ///
     /// # Errors
     /// [`CanonicalBytesError`] when the value has no canonical bytes.

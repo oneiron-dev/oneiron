@@ -26,7 +26,8 @@ Usage:
       count (default FILE: TREE/scripts/ratchet/baseline.json)
 
 TREE defaults to the current directory. Exit 2, never a silent pass, on a missing tree,
-an allowlist line without a scope or a reason, or an unreadable baseline.
+a tree with no counted source file, an allowlist line without a scope or a reason, or an
+unreadable baseline.
 """
 
 import argparse
@@ -102,10 +103,12 @@ def starts(tree):
     """Every counted start, as (path, line, text), in path order."""
     entries = read_allowlist(tree)
     hits = []
+    scanned = 0
     for source in sorted((tree / "crates").glob("*/src/**/*.rs")):
         relative = source.relative_to(tree).as_posix()
         if not counted_file(relative):
             continue
+        scanned += 1
         scope = allowed_scope(relative, entries)
         if scope == "all":
             continue
@@ -118,6 +121,9 @@ def starts(tree):
                 lines = text.splitlines()
             line = text.count("\n", 0, match.start()) + 1
             hits.append((relative, line, lines[line - 1].strip()))
+    if scanned == 0:
+        # A count of 0 is the goal; a tree with no source to count is not that.
+        fail(f"no counted .rs file under {tree}/crates/*/src: not an engine tree")
     return hits
 
 

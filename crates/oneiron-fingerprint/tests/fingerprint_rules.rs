@@ -9,7 +9,7 @@ use oneiron_fingerprint::purposes::testing::{
 };
 use oneiron_fingerprint::{
     CanonicalBytesError, ContentHash, ContentHasher, Fingerprint, Fingerprinter, LegacyDigest,
-    LegacyHash, Purpose, TagMode, canonical_bytes,
+    LegacyHash, Purpose, TagMode, canonical_bytes, canonical_value_bytes,
 };
 use serde::ser::{SerializeMap, Serializer};
 use sha2::Digest as _;
@@ -336,6 +336,53 @@ fn bytes_strings_and_arrays_keep_their_kinds() {
     assert_eq!(canonical_bytes(&"").expect("encodes"), [0xa0]);
     assert_eq!(canonical_bytes(&()).expect("encodes"), [0xc0]);
     assert_eq!(canonical_bytes(&None::<u8>).expect("encodes"), [0xc0]);
+}
+
+/// A MessagePack value read from its bytes, as a site that holds an `rmpv::Value` has it.
+fn read_value(bytes: &[u8]) -> rmpv::Value {
+    rmpv::decode::read_value(&mut &bytes[..]).expect("decodes")
+}
+
+#[test]
+fn a_value_keeps_an_invalid_utf8_string_apart_from_a_binary() {
+    // `a1 ff` is a one-byte string that is not valid UTF-8; `c4 01 ff` is a binary.
+    let invalid_string = read_value(&[0xa1, 0xff]);
+    let binary = read_value(&[0xc4, 0x01, 0xff]);
+    assert_eq!(
+        canonical_value_bytes(&invalid_string).expect("encodes"),
+        [0xa1, 0xff]
+    );
+    assert_eq!(
+        canonical_value_bytes(&binary).expect("encodes"),
+        [0xc4, 0x01, 0xff]
+    );
+    // {"b": 1, "a": 2 as a u16}: the map sorts and the integer takes its shortest
+    // form, as the serde door writes the same map.
+    let map = read_value(&[0x82, 0xa1, b'b', 0x01, 0xa1, b'a', 0xcd, 0x00, 0x02]);
+    let expected = [0x82, 0xa1, b'a', 0x02, 0xa1, b'b', 0x01];
+    assert_eq!(canonical_value_bytes(&map).expect("encodes"), expected);
+    let same_map: BTreeMap<&str, u16> = [("b", 1), ("a", 2)].into_iter().collect();
+    assert_eq!(canonical_bytes(&same_map).expect("encodes"), expected);
+    let duplicate = read_value(&[0x82, 0xa1, b'x', 0x01, 0xa1, b'x', 0x02]);
+    assert_eq!(
+        canonical_value_bytes(&duplicate),
+        Err(CanonicalBytesError::DuplicateKey)
+    );
+}
+
+#[test]
+fn a_value_nested_in_many_maps_keeps_its_bytes() {
+    // 256 one-entry maps around one string: the 256 map headers and keys, then the string.
+    let mut value = rmpv::Value::from("leaf");
+    for _ in 0..256 {
+        value = rmpv::Value::Map(vec![(rmpv::Value::from("k"), value)]);
+    }
+    let mut expected = Vec::new();
+    for _ in 0..256 {
+        expected.extend_from_slice(&[0x81, 0xa1, b'k']);
+    }
+    expected.extend_from_slice(&[0xa4, b'l', b'e', b'a', b'f']);
+    assert_eq!(canonical_value_bytes(&value).expect("encodes"), expected);
 }
 
 #[derive(serde::Serialize)]

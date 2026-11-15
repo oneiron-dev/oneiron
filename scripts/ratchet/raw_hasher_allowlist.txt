@@ -5,10 +5,9 @@
 # An entry joins only in a reviewed PR, with its reason on the same line. Class A and B
 # are DESIGN section 2.4 (fable pass 22, work/sha256-census.jsonl at 570f051b78da).
 
-# The door itself, and the crypto and signature crates.
+# The door itself, and the crypto crate.
 crates/oneiron-fingerprint/ all  # the fingerprint door: Fingerprint, ContentHash and the K door
 crates/oneiron-crypto/ all  # key derivation, MACs and signature schemes (class B); their contexts join the registry in stage 8
-crates/oneiron-seal/ all  # PDF and CMS signatures and OCSP, which RFC 5652, RFC 6960 and PDF readers fix (class A)
 
 # Deleted by another row.
 crates/oneiron/src/gate/resolution/frontier_hash.rs all  # Setting 6d deletes it (M-6 = a; PLAN-UC-04 1.2 deferred)
@@ -20,13 +19,14 @@ crates/oneiron-code-check/src/wasm.rs sha256  # wasm component pin minted by com
 crates/oneiron-docedit/src/emit/oracle_cases.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
 crates/oneiron-docedit/src/live/oracle_run/record.rs sha256  # run-manifest digests checked by scripts/office/deck_create_gate.py
 crates/oneiron-organ-host/src/seal/binding.rs sha256  # PDF ByteRange and CMS signed-attribute digests that PDF readers recompute
+crates/oneiron-seal/src/native/cms/der.rs sha256  # CMS message digest (RFC 5652)
+crates/oneiron-seal/src/native/profile/material/ocsp.rs sha256  # OCSP CertID issuer name and key hashes (RFC 6960)
 crates/oneiron-server/src/ai_host/training_pack/wire.rs sha256  # training-pack pins that scripts/training_pack/worker.py mints and checks
 crates/oneiron-server/src/api/esign.rs sha256  # CSP script-src sha256 hash that browsers recompute
 crates/oneiron-server/src/api/esign_qr.rs sha256  # CSP script-src sha256 hash that browsers recompute
 crates/oneiron-server/src/api/oauth_server/authorize.rs sha256  # CSP script-src sha256 hash that browsers recompute
 crates/oneiron-server/src/builtin_host/webhooks.rs sha256  # provider webhook HMAC-SHA256 over the raw body
 crates/oneiron-server/src/commands/owner/meeting_audio.rs sha256  # meeting-audio digests that scripts/meeting-audio-*.py recompute
-crates/oneiron-server/src/models/llama_identity.rs sha256  # model manifest digest minted by deploy/house-model/llama_identity.py
 crates/oneiron-server/src/models/worker_host/install.rs sha256  # tokenizer digest that deploy/house-model/cache_usage.py recomputes
 crates/oneiron-server/src/oneironer/local/classifier.rs sha256  # question-head file pins exported by scripts/training_pack/worker.py
 crates/oneiron-store/src/origin/lfs/oid.rs sha256  # git-LFS object id (LFS spec)
@@ -39,7 +39,6 @@ crates/oneiron/src/code_sandbox/egress/quic/crypto.rs sha256  # QUIC Initial key
 crates/oneiron/src/code_sandbox/foreign.rs sha256  # foreign QuickJS component pin minted by components/code-run-quickjs/build.py
 crates/oneiron/src/dispatch_byoa/official_seats.rs sha256  # PKCE S256 for vendor OAuth logins (RFC 7636)
 crates/oneiron/src/ingest/meeting_audio/provenance.rs sha256  # pcm_sha256 that scripts/meeting-audio-native.py recomputes
-crates/oneiron/src/ingest/meeting_audio/recorded_evaluation.rs sha256  # reference digests minted by the meeting-audio Python tools
 crates/oneiron/src/llm/step/schema_runtime.rs sha256  # validator artifact pin minted by components/schema-validator/build.py
 crates/oneiron/src/origin/lfs/store.rs sha256  # git-LFS object id check on read (LFS spec)
 crates/oneiron/src/origin/lfs/upload.rs sha256  # git-LFS object id of an upload (LFS spec)

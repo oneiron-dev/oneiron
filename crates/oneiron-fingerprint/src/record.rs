@@ -51,6 +51,11 @@ impl std::error::Error for CanonicalBytesError {}
 /// The canonical bytes of a value. Public for the few sites that store or compare the
 /// bytes; a digest of a value is [`crate::Fingerprint::of_record`].
 ///
+/// The bytes are those of the value's serde form. A MessagePack value already held as
+/// an [`rmpv::Value`] goes through [`canonical_value_bytes`] instead: `rmpv`'s
+/// `Serialize` writes a string that is not valid UTF-8 as a binary, so here the two
+/// would give one byte string.
+///
 /// # Errors
 /// [`CanonicalBytesError::Encode`] when the value's `Serialize` fails or nests too deep;
 /// [`CanonicalBytesError::DuplicateKey`] when a map holds two equal keys.
@@ -64,6 +69,19 @@ pub fn canonical_bytes<T: serde::Serialize + ?Sized>(
         .map_err(|error| CanonicalBytesError::Encode(error.to_string()))?;
     let mut canonical = Vec::with_capacity(named.len());
     write_canonical(&value, &mut canonical)?;
+    Ok(canonical)
+}
+
+/// The canonical bytes of a MessagePack value, written from the value itself with no
+/// serde step, so a string that is not valid UTF-8 keeps the string marker and never
+/// equals a binary. Equals [`canonical_bytes`] for every value without such a string.
+///
+/// # Errors
+/// [`CanonicalBytesError::Encode`] when a length does not fit a MessagePack header;
+/// [`CanonicalBytesError::DuplicateKey`] when a map holds two equal keys.
+pub fn canonical_value_bytes(value: &Value) -> Result<Vec<u8>, CanonicalBytesError> {
+    let mut canonical = Vec::new();
+    write_canonical(value, &mut canonical)?;
     Ok(canonical)
 }
 
@@ -111,26 +129,25 @@ fn write_canonical(value: &Value, out: &mut Vec<u8>) -> Result<(), CanonicalByte
     Ok(())
 }
 
-/// Each entry's key and value in canonical bytes, sorted by the key bytes.
+/// The entries sorted by their keys' canonical bytes, each key's bytes then its value.
+///
+/// Only the keys are encoded apart; each value is written straight into `out`, so a
+/// value nested in many maps is written once, not copied at every level.
 fn write_map(entries: &[(Value, Value)], out: &mut Vec<u8>) -> Result<(), CanonicalBytesError> {
-    let mut encoded = Vec::with_capacity(entries.len());
+    let mut keyed = Vec::with_capacity(entries.len());
     for (key, value) in entries {
         let mut key_bytes = Vec::new();
         write_canonical(key, &mut key_bytes)?;
-        let mut value_bytes = Vec::new();
-        write_canonical(value, &mut value_bytes)?;
-        encoded.push((key_bytes, value_bytes));
+        keyed.push((key_bytes, value));
     }
-    // Sorting the pairs sorts by key bytes first; two equal keys are refused below,
-    // so the value never decides the order.
-    encoded.sort_unstable();
-    if encoded.windows(2).any(|pair| pair[0].0 == pair[1].0) {
+    keyed.sort_unstable_by(|(left, _), (right, _)| left.cmp(right));
+    if keyed.windows(2).any(|pair| pair[0].0 == pair[1].0) {
         return Err(CanonicalBytesError::DuplicateKey);
     }
-    rmp::encode::write_map_len(out, header_len(encoded.len())?).map_err(write_failed)?;
-    for (key_bytes, value_bytes) in &encoded {
-        out.extend_from_slice(key_bytes);
-        out.extend_from_slice(value_bytes);
+    rmp::encode::write_map_len(out, header_len(keyed.len())?).map_err(write_failed)?;
+    for (key_bytes, value) in keyed {
+        out.extend_from_slice(&key_bytes);
+        write_canonical(value, out)?;
     }
     Ok(())
 }
