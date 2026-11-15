@@ -27,13 +27,7 @@ use super::tombstone::decode_tombstone_value;
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DeletedRecordScope {
-    /// `None` for a row the record-scope rules do not place: one born without
-    /// its same-transaction FacetOf, or a local put of a replicated row, so it
-    /// has no stamp. Such a row is captured for its relationship read alone
-    /// (OPUS-LEAKS, SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE), and a
-    /// narrower grant takes its tombstone no more than before (FIX 10161).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) scope: Option<Scope>,
+    pub(crate) scope: Scope,
     pub(crate) request: Option<[u8; 16]>,
     /// The relationship read the record's labels gave it: its kind, the
     /// relationships it was scoped to, whether it was private, and its record
@@ -110,8 +104,7 @@ pub(crate) fn capture_received_scope(vault: &Vault, id: &EntityId, raw_value: &[
 }
 
 /// The scope `id` held when delete `request` took it. Only a row bound to that
-/// request answers, and only with a scope: a row captured with none answers
-/// as no row does.
+/// request answers.
 pub(crate) fn deleted_scope_in(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -121,7 +114,7 @@ pub(crate) fn deleted_scope_in(
     Ok(TOMBSTONE_SCOPE
         .get(store, txn, &HexId(*id))?
         .filter(|row| row.request.as_ref() == Some(request))
-        .and_then(|row| row.scope))
+        .map(|row| row.scope))
 }
 
 /// The relationship read `id` held when delete `request` took it. Only a row
@@ -139,14 +132,9 @@ pub(crate) fn deleted_relationship_read_in(
         .map(|row| row.relationship_read))
 }
 
-/// A live row with a scope has its scope and its relationship read written.
-/// Otherwise a held row is rebound to `request` whenever `request` is some and
-/// differs from the row's, and nothing else changes: with no live row (none,
-/// or a deleted shell), or with a live row whose stamp is gone, the held read
-/// was taken from the stamped row. A live row with no scope and no held row
-/// has its relationship read written alone (OPUS-LEAKS,
-/// SELECTOR-TOMBSTONE-UNSCOPED-ROW-NO-CAPTURE): an unstamped row the
-/// relationship gate withholds keeps its tombstone off the same members.
+/// A live row's scope is written. With no live row (none, or a deleted
+/// shell), a held row is rebound to `request` whenever `request` is some and
+/// differs from the row's; nothing else changes.
 fn capture_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -157,31 +145,28 @@ fn capture_in_txn(
     let held = TOMBSTONE_SCOPE.get(store, txn, &key)?;
     let live = crate::ports::EntityStoreRead::port_entity_raw(store, txn, id)?
         .filter(|raw| raw.len() > ENTITY_METADATA_HEADER_LEN);
-    let live_scope = match &live {
-        Some(raw) => crate::federation::record_scope::scope_for_blob(store, txn, *id, raw)?,
+    let captured = match live {
+        Some(raw) => crate::federation::record_scope::scope_for_blob(store, txn, *id, &raw)?
+            .map(|scope| (scope, live_relationship_read(store, txn, id, &raw))),
         None => None,
     };
-    let row = match (live, live_scope, held) {
-        (Some(raw), Some(scope), held) => DeletedRecordScope {
-            scope: Some(scope),
+    let row = match (captured, held) {
+        (Some((scope, relationship_read)), held) => DeletedRecordScope {
+            scope,
             request: request.copied().or(held.and_then(|row| row.request)),
-            relationship_read: Some(live_relationship_read(store, txn, id, &raw)),
+            relationship_read: Some(relationship_read),
         },
-        (_, _, Some(held)) => {
+        (None, Some(held)) => {
             if request.is_none() || request == held.request.as_ref() {
                 return Ok(());
             }
             DeletedRecordScope {
+                scope: held.scope,
                 request: request.copied(),
-                ..held
+                relationship_read: held.relationship_read,
             }
         }
-        (Some(raw), None, None) => DeletedRecordScope {
-            scope: None,
-            request: request.copied(),
-            relationship_read: Some(live_relationship_read(store, txn, id, &raw)),
-        },
-        (None, _, None) => return Ok(()),
+        (None, None) => return Ok(()),
     };
     TOMBSTONE_SCOPE.put(store, txn, &key, &row)
 }
