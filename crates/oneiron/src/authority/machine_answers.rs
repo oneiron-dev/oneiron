@@ -582,11 +582,65 @@ impl Vault {
             carrier: None,
             act: None,
         };
+        self.append_owner_signed_roster_revision_in_txn(txn, (signer, sign), &fold, profile)
+            .map(Some)
+    }
+
+    /// The next revision of `machine`'s live roster head, the same standing,
+    /// signed by `signer`, a live owner key of the roster held behind `sign`,
+    /// in the caller's transaction: a kit change's carry of a standing the
+    /// R it revokes signed ([`Self::carry_recovery_authority_approvals_in_txn`],
+    /// WAYBACK-R-REVOCATION-STALES-R-APPROVALS = A), as
+    /// [`Self::carry_machine_standing_in_txn`] carries a host re-root's.
+    ///
+    /// # Errors
+    /// A machine with no roster head, or a revision that does not stand.
+    pub(crate) fn carry_roster_standing_under_key_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        machine: EntityId,
+    ) -> Result<AuthorityEntryHash> {
+        let fold = self.authority_view_readonly_in_txn(txn)?;
+        let current = fold
+            .machine(machine)
+            .and_then(|folded| folded.roster.as_ref())
+            .ok_or_else(invalid_authority)?;
+        let profile = MachineProfile {
+            revision: current
+                .profile
+                .revision
+                .checked_add(1)
+                .ok_or_else(invalid_authority)?,
+            seen_world_edits: super::act_standing::acknowledged_by_in_txn(
+                &self.store,
+                txn,
+                &fold,
+                machine,
+            )?,
+            ..current.profile.clone()
+        };
+        self.append_owner_signed_roster_revision_in_txn(txn, (signer, sign), &fold, profile)
+    }
+
+    /// Signs `profile`, an act-free roster revision, by `signer`, a live
+    /// owner key of the roster held behind `sign`, and lands it in the
+    /// caller's transaction ([`Self::put_machine_on_roster_in_txn`],
+    /// [`Self::carry_roster_standing_under_key_in_txn`]). The fold is the
+    /// judge: the revision must stand.
+    fn append_owner_signed_roster_revision_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        (signer, sign): (&AuthorityKey, &dyn Fn(&[u8]) -> Result<Vec<u8>>),
+        fold: &AuthorityFold,
+        profile: MachineProfile,
+    ) -> Result<AuthorityEntryHash> {
+        let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         profile.validate()?;
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Callback(signer, sign);
-        let joined = self.prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?;
-        let fold = joined.as_deref().unwrap_or(&fold);
+        let joined = self.prepare_authority_frontier_in_txn(txn, fold, joiner, MAX_PARENTS)?;
+        let fold = joined.as_deref().unwrap_or(fold);
         let parents = fold.append_heads.clone();
         if parents.is_empty() {
             return Err(invalid_authority());
@@ -616,7 +670,7 @@ impl Vault {
         self.land_machine_profile_in_txn(txn, entry, &profile, now)?
             .into_standing()
             .ok_or_else(invalid_authority)?;
-        Ok(Some(hash))
+        Ok(hash)
     }
 
     /// Lands one machine revision and reads the fold back. A removal keeps
