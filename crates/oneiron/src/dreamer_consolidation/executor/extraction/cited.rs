@@ -3,16 +3,20 @@
 //! the checked step instead, so the reply is never memoized and is asked
 //! again after its retry delay. A quote that binds nothing (FIX 7506: one
 //! its source holds nowhere or more than once, or a label its call did not
-//! show) takes the same refusal, as an out-of-source byte range did.
+//! show) takes the same refusal, as an out-of-source byte range did. A claim
+//! citation verification would refuse as not evidence-admissible (a generated
+//! head, GATE-11) takes it too.
 
 use super::wire::{CallPins, ReplyContext, read_candidate};
-use super::{check_extraction_reply, extraction_reply, resolve_proposal};
+use super::{ParsedCandidate, check_extraction_reply, extraction_reply, resolve_proposal};
+use crate::EntityId;
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::branch::BranchAxes;
 use crate::dreamer_consolidation::call_labels::CallLabelMap;
 use crate::dreamer_consolidation::evidence::EvidenceLocator;
 use crate::dreamer_consolidation::extracted_people::{MintNamespace, bind_people};
-use crate::dreamer_consolidation::resources::{BranchResources, OwnedPins};
+use crate::dreamer_consolidation::resources::{BranchPins, BranchResources, OwnedPins};
+use crate::dreamer_consolidation::value_projection::rmpv_to_json;
 use oneiron_model::llm::LlmResponse;
 use oneiron_model::llm::{FinishReason, Scope};
 
@@ -84,12 +88,15 @@ impl CitationCheck {
             let Ok((parsed, unbound)) = read_candidate(item, ctx, scope, false) else {
                 continue;
             };
-            if call
+            // A candidate only a correction question could bind stays
+            // decode's: one that restates a listed head unchanged is never
+            // asked about it (FIX 8295), so with nothing asked it surely
+            // reaches verification uncorrected.
+            let asked = call
                 .pins
                 .correctable(parsed.subject, scope)
-                .next()
-                .is_some()
-            {
+                .any(|(claim, _, _)| !reinforces(&parsed, call.pins, claim));
+            if asked {
                 continue;
             }
             let Ok((_, locators)) = resolve_proposal(
@@ -103,9 +110,10 @@ impl CitationCheck {
                 continue;
             };
             if let Some(reason) = unbound.or_else(|| {
-                locators
-                    .into_iter()
-                    .find_map(|locator| self.range_fault(locator))
+                locators.into_iter().find_map(|locator| {
+                    self.range_fault(locator)
+                        .or_else(|| self.claim_fault(locator))
+                })
             }) {
                 return Err(format!(
                     "extraction candidate {index} cites outside its source: {reason}"
@@ -113,6 +121,16 @@ impl CitationCheck {
             }
         }
         Ok(())
+    }
+
+    /// Why verification refuses `locator`'s claim citation: a head that is
+    /// no evidence under GATE-11. `None` for a TURN locator, or for a head
+    /// the branch holds no prior for: that stays verification's to judge.
+    fn claim_fault(&self, locator: EvidenceLocator) -> Option<&'static str> {
+        let claim = locator.reference().claim_id?;
+        let head = self.pins.pins().prior(claim)?;
+        (!crate::claim::claim_evidence_admissible(&head.body))
+            .then_some("generated claim cannot corroborate")
     }
 
     /// Why verification refuses `locator`'s TURN byte range, by the function
@@ -131,4 +149,17 @@ impl CitationCheck {
             Err(_) => Some("evidence range refused"),
         }
     }
+}
+
+/// Whether `candidate` restates the listed head `claim` unchanged: it cites
+/// the head for its own predicate and value. The correction pack never asks
+/// about such a head (FIX 8295); this mirrors its `reinforces` over the
+/// check's owned pins, so the two can never disagree on what is asked.
+fn reinforces(candidate: &ParsedCandidate<'_>, pins: BranchPins<'_>, claim: EntityId) -> bool {
+    candidate.locators.iter().any(
+        |locator| matches!(locator, EvidenceLocator::Claim { claim_id, .. } if *claim_id == claim),
+    ) && pins.prior(claim).is_some_and(|prior| {
+        candidate.predicate.as_deref() == Some(prior.body.predicate.as_str())
+            && rmpv_to_json(&prior.body.value) == candidate.value
+    })
 }

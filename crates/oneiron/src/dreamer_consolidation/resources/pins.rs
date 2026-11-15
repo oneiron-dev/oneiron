@@ -44,6 +44,11 @@ impl<'r> BranchPins<'r> {
         }
     }
 
+    /// The prior head the branch holds for `id`, when it holds one.
+    pub(in crate::dreamer_consolidation) fn prior(self, id: EntityId) -> Option<&'r PriorHead> {
+        self.priors.get(&id)
+    }
+
     /// The exact version the branch pinned for `id`.
     pub(in crate::dreamer_consolidation) fn source_version(
         self,
