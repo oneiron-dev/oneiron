@@ -2,14 +2,18 @@
 use std::fmt;
 use std::str::FromStr;
 
+use oneiron_contracts::register::Register;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 use crate::usage::UsageMode;
 
 /// Runtime execution mode selected for model routing.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("runtime.mode")]
 pub enum RuntimeMode {
     /// Free local runtime. Never meters Oneiron Cloud spend.
     #[default]
@@ -24,14 +28,6 @@ pub enum RuntimeMode {
 }
 
 impl RuntimeMode {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::LocalFree => "local_free",
-            Self::ByoCloudKey => "byo_cloud_key",
-            Self::OneironCloud => "oneiron_cloud",
-        }
-    }
-
     pub fn oneiron_spend_metered(self) -> bool {
         matches!(self, Self::OneironCloud)
     }
@@ -85,8 +81,11 @@ impl FromStr for RuntimeMode {
 }
 
 /// Provider class used by a runtime route.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, ToSchema, Register,
+)]
 #[serde(rename_all = "snake_case")]
+#[register("runtime.provider.kind")]
 pub enum RuntimeProviderKind {
     /// Local runtime/provider owned by the user process.
     #[default]
@@ -97,16 +96,6 @@ pub enum RuntimeProviderKind {
     /// Oneiron-hosted provider.
     #[serde(alias = "cloud", alias = "oneiron-cloud")]
     OneironCloud,
-}
-
-impl RuntimeProviderKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Local => "local",
-            Self::ByoCloud => "byo_cloud",
-            Self::OneironCloud => "oneiron_cloud",
-        }
-    }
 }
 
 impl fmt::Display for RuntimeProviderKind {
@@ -131,8 +120,9 @@ impl FromStr for RuntimeProviderKind {
 }
 
 /// Role whose model route is being resolved.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToSchema, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("runtime.role")]
 pub enum RuntimeRole {
     /// Planner/coordinator model route.
     Orchestrator,
@@ -144,14 +134,6 @@ pub enum RuntimeRole {
 
 impl RuntimeRole {
     pub const ALL: [Self; 3] = [Self::Orchestrator, Self::Subagent, Self::Summarizer];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Orchestrator => "orchestrator",
-            Self::Subagent => "subagent",
-            Self::Summarizer => "summarizer",
-        }
-    }
 }
 
 impl fmt::Display for RuntimeRole {
