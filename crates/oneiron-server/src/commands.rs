@@ -749,7 +749,7 @@ pub fn token_pair(args: TokenPairArgs) -> anyhow::Result<()> {
 /// revoking an already-revoked id succeeds and reports `false`.
 pub fn token_revoke(args: TokenRevokeArgs) -> anyhow::Result<()> {
     let config = resolve_serve_config(&args.serve)?;
-    init_tracing(&config.log_level);
+    init_tracing_stderr(&config.log_level);
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     let mut vault_config = config.vault_config();
@@ -955,7 +955,7 @@ fn claim_subject_json(subject: &oneiron::ClaimSubject) -> JsonValue {
 pub async fn revoke(args: RevokeArgs) -> anyhow::Result<()> {
     let client_id = parse_client_id_hex(&args.client)?;
     let config = resolve_serve_config(&args.serve)?;
-    init_tracing(&config.log_level);
+    init_tracing_stderr(&config.log_level);
 
     let dicts = resolve_dict_search_paths(&config.dict_search_paths);
     if let Some(warning) = dicts.warning {
@@ -1028,6 +1028,15 @@ pub(crate) fn init_tracing(log_level: &str) {
     use tracing_subscriber::util::SubscriberInitExt as _;
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
     let _ = crate::logging::subscriber(filter, io::stdout).try_init();
+}
+
+/// [`init_tracing`] for the commands whose stdout is their JSON answer
+/// (`token revoke`, `revoke`): the log lines go to stderr, so a caller
+/// parsing stdout reads JSON alone (FIX-LIST 23427).
+pub(crate) fn init_tracing_stderr(log_level: &str) {
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(log_level));
+    let _ = crate::logging::subscriber(filter, io::stderr).try_init();
 }
 
 pub fn resolve_dict_search_paths(configured_paths: &[PathBuf]) -> DictSearchResolution {
