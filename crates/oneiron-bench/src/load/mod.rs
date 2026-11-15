@@ -15,6 +15,9 @@
 //! * `oneiron-bench load corpus-recall --server <oneiron-server> --corpus <turns.jsonl> --work <dir> --out <file.json>`
 //!   — warm recall latency, per stage when the server logs stage timers, on a
 //!   vault seeded from a recorded conversation corpus
+//! * `oneiron-bench load lives (--server <oneiron-server> --embedder <e> | --in-process) --lives <path>... --work <dir> --out <file.json>`
+//!   — the synthetic-lives screen: accuracy and latency on the same lives
+//!   and questions for every system (ARCH-0042 #lives-bench)
 //! * `oneiron-bench load compare <a.json> <b.json>`
 //!
 //! Latencies are measured by the client on loopback, so they include HTTP and
@@ -26,6 +29,7 @@ mod corpus;
 mod corpus_recall;
 mod dream;
 mod embedder;
+mod lives;
 mod phases;
 mod report;
 pub(crate) mod server;
@@ -83,6 +87,8 @@ or:    oneiron-bench load startup --server <oneiron-server> --work <dir> --out <
 or:    oneiron-bench load corpus-recall --server <oneiron-server> --corpus <turns.jsonl> --work <dir>\n\
   --out <file.json> [--query TEXT]... [--repeat 10] [--warmup 2] [--limit 20] [--effort light]\n\
   [--as-of corpus|none] [--claims notes|none] [--profile-repeat N] [--server-env KEY=VALUE]...\n\
+or:    oneiron-bench load lives (--server <oneiron-server> --embedder none|local|endpoint=... | --in-process)\n\
+  --lives <file|dir>... --work <dir> --out <file.json> [--life ID]... [--sample N] [flags]\n\
 or:    oneiron-bench load compare <a.json> <b.json>";
 
 fn list<T: std::str::FromStr>(value: &str) -> Result<Vec<T>, String> {
@@ -199,6 +205,8 @@ pub(crate) fn run(args: &[String]) -> ExitCode {
             })
         }
         [cmd, rest @ ..] if cmd == "dream" => dream::run(rest),
+        // `--server` mode checks for Linux itself: `--in-process` runs anywhere.
+        [cmd, rest @ ..] if cmd == "lives" => lives::run(rest),
         _ => Err(USAGE.to_owned()),
     };
     match result {

@@ -101,6 +101,18 @@ On a shared host, book the whole box and repeat each run; the result records
 the load average before and after every cell, the host's CPU and the job's
 cgroup CPU quota.
 
+ARCH-0042's latency curve (#lives-bench: p50 and p95 at 10k, 100k and 1M
+records, and at 1, 8 and 32 agents; the 100k call cell is the unmeasured
+p95 ≤ 150 ms bar) is one `load run` on a whole booked box. It runs before a
+release (PRE-RELEASE-CHECKLIST, "Full benches"), and the 1M vault needs
+several GiB of work directory:
+
+```sh
+$B/oneiron-bench load run --server $B/oneiron-server --work /tmp/curve --out curve.json \
+  --label "$(git rev-parse --short HEAD)" --records 10000,100000,1000000 --vectors off \
+  --agents 1,8,32 --grades call,light,medium --skip mixed,fairness,agent-memory
+```
+
 The server runs in the bench's process group. Stop a run with Ctrl-C or a
 signal to the whole group (`kill -TERM -<pgid>`); a signal to the bench alone
 skips its cleanup and leaves the server running.
@@ -131,3 +143,68 @@ after the named cell. With gperftools' CPU profiler, which needs no
 --signal-cell recall_medium_x1:USR2
 google-pprof --text $B/oneiron-server /tmp/serve.prof.0
 ```
+
+## Lives screen
+
+`load lives` is ARCH-0042's synthetic-lives bench (#lives-bench): every system
+ingests the same synthetic lives and answers the same questions, and each row
+carries its accuracy and its latency. The lives stay outside the repository;
+pass the generation run's `lives-*.jsonl` files or their directories:
+
+```sh
+$B/oneiron-bench load lives --server $B/oneiron-server --embedder none \
+  --lives /data/lives-snapshot/seats --lives /data/lives-snapshot/kimi \
+  --sample 5 --seed 7 --work /tmp/lives --out screen-oneiron.json --label "$(git rev-parse --short HEAD)"
+```
+
+- **The pick.** `--sample N --seed S` sorts the lives by key, shuffles them
+  with the bench's fixed generator and takes them in that order until it holds
+  N lives and at least `--min-turns` turns (default 1,000, canon's corpus floor
+  for latency), or the files end. `--life ID` (repeatable) takes exactly those
+  lives; with neither flag every life is taken (the full run). The report lists
+  the picked keys and each file's sha256, so another system's run takes the
+  same set with `--life`. A life's key is its `life_id`; when the files read
+  hold two lives under one id (the 2026-10-14 run has 12), the later copies
+  are keyed `id~2`, `id~3` in read order.
+- **One store.** All the picked lives go into one store per system (one vault
+  for Oneiron). Questions name their person, and every system faces the same
+  mixed store.
+- **Ingest.** One conversation per session, its id fixed by the life key and
+  the session id. One `vault.witness` per turn with one message: `user` for
+  the user, `companion` for the assistant, `companion` with message type
+  `tool_result` for a tool turn (its tool name, then its lines). A turn
+  happens at its day's date, 09:00 UTC, plus 2 h per session of the day, plus
+  20 s per turn. The ledger, persona, plan and meta are never ingested. Then
+  the bench waits for the server's CPU to go quiet (`--settle-max-seconds`)
+  and, with an embedder, for its embedding passes to stop
+  (`--drain-settle-seconds` after the last pass).
+- **Asking.** Every question (`questions`, then `questions_ja`) goes to
+  `vault.recall` at every grade of `--grades` (default `call,light,medium`)
+  with `--limit` items (default 10), one at a time, at `as_of` = the end of
+  the asked life's last day. `as_of` filters nothing: it anchors the
+  question's time words ("last week") and recency, so they read on that
+  person's own timeline. Each grade starts with one untimed recall.
+- **Context accuracy** (no model). A question is scored when its answer span
+  was checked (`support: string`, with a span) and it is not `unanswerable`;
+  the others stay in the report with `unscored_reason` (`unanswerable`,
+  `unchecked_support`, `no_answer_span`). `answer_in_context`: the span,
+  lower-cased with whitespace collapsed, is inside one of the top-k returned
+  texts (an Oneiron item's text and the texts of the messages it cites).
+  `evidence_rank`: the rank of the first item holding a gold evidence turn's
+  whole text (`d2s1t04:L02` names turn `d2s1t04`); a text the system cut short
+  holds the turn when its 32 or more characters lie inside it.
+- **Latency.** `ms` is the client round trip on loopback. Each grade's summary
+  applies canon's floor: below 1,000 documents its latency reads
+  `not_measured` (`corpus_below_1000_documents`) instead of a number.
+- **Embedders.** `--embedder` is required with `--server`, so a run names what
+  it measured: `none`, `local`, or
+  `endpoint=<url>,<model-key>,<model-id@revision>,<dimensions>` for the shared
+  GPU model every system uses (`--embedder-api-key-env NAME` when the endpoint
+  wants a key; the bench passes the name, never the key). A network endpoint
+  is declared `owner-server`.
+- **`--in-process`** serves the engine linked into the bench (with its
+  `test-support` features) on loopback and calls it as the vault owner, on any
+  platform. Its timings are for checking the harness only and are never a
+  published number; the report records `server.mode` and `server.principal`.
+  `--server` mode calls the shipped binary as a minted full-access agent and
+  runs on Linux.

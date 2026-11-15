@@ -19,12 +19,36 @@ use serde_json::Value;
 
 use super::embedder::{MODEL_ID, MODEL_KEY, PassCount};
 
-/// How the vault embeds: not at all, through the loopback stub, or with the
-/// shipped local model.
+/// How the vault embeds: not at all, through the loopback stub, with the
+/// shipped local model, or through an OpenAI-compatible endpoint the run
+/// names (the lives screen's shared GPU model).
 pub(crate) enum Embedding {
     None,
-    Stub { endpoint: String, dimensions: usize },
+    Stub {
+        endpoint: String,
+        dimensions: usize,
+    },
     Local,
+    Endpoint {
+        url: String,
+        model_key: String,
+        /// `model_id@revision`, the pinned embedding space.
+        model_id: String,
+        dimensions: usize,
+        /// The NAME of the environment variable holding the key, never the key.
+        api_key_env: Option<String>,
+    },
+}
+
+/// Whether `url`'s host is the loopback interface (the Chroma arm's rule).
+pub(super) fn loopback_url(url: &reqwest::Url) -> bool {
+    url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .trim_matches(['[', ']'])
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    })
 }
 
 /// A fresh vault with its config, issuer secret and owner principal.
@@ -110,6 +134,35 @@ impl Vault {
                     "--dimensions",
                     dimensions.as_str(),
                 ]);
+            }
+            Embedding::Endpoint {
+                url,
+                model_key,
+                model_id,
+                dimensions: d,
+                api_key_env,
+            } => {
+                dimensions = d.to_string();
+                args.extend([
+                    "endpoint",
+                    "--embedder-endpoint",
+                    url.as_str(),
+                    "--embedder-model-key",
+                    model_key.as_str(),
+                    "--embedder-model-id",
+                    model_id.as_str(),
+                    "--dimensions",
+                    dimensions.as_str(),
+                ]);
+                if let Some(name) = api_key_env {
+                    args.extend(["--embedder-api-key-env", name.as_str()]);
+                }
+                // A model host on the network is the owner's own GPU box
+                // (ARCH-0042 #lives-bench: "the same model on our GPUs"),
+                // not a third party; a loopback one is on the device.
+                if !reqwest::Url::parse(url).is_ok_and(|url| loopback_url(&url)) {
+                    args.extend(["--embedder-locality", "owner-server"]);
+                }
             }
         }
         let env = env

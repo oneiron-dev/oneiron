@@ -297,15 +297,16 @@ fn stage_line(server: &Running, seen: usize) -> (usize, Option<BTreeMap<String, 
     (count, parsed)
 }
 
-/// Waits until the server's CPU stays under 2% for five straight seconds, or
-/// `max` passes; returns the seconds waited.
-fn settle(server: &Running, max: Duration) -> f64 {
+/// Waits until process `pid`'s CPU stays under 2% for five straight seconds,
+/// or `max` passes; returns the seconds waited. Where `/proc` is missing it
+/// waits the five seconds.
+pub(super) fn settle(pid: u32, max: Duration) -> f64 {
     let started = Instant::now();
     let mut quiet = 0;
-    let mut last = cpu_seconds(server.pid).unwrap_or(0.0);
+    let mut last = cpu_seconds(pid).unwrap_or(0.0);
     while started.elapsed() < max && quiet < 5 {
         std::thread::sleep(Duration::from_secs(1));
-        let now = cpu_seconds(server.pid).unwrap_or(last);
+        let now = cpu_seconds(pid).unwrap_or(last);
         quiet = if now - last < 0.02 { quiet + 1 } else { 0 };
         last = now;
     }
@@ -550,7 +551,7 @@ fn execute(plan: &Plan) -> Result<(), String> {
         "seeded {} runs ({} messages) and {} claims in {seed_seconds:.1} s; errors {:?}",
         seeded.runs, seeded.messages, seeded.claims, seeded.errors
     ));
-    let settle_seconds = settle(&server, plan.settle_max);
+    let settle_seconds = settle(server.pid, plan.settle_max);
     say(&format!("settled after {settle_seconds:.1} s"));
     let disk_mib = vault.disk_bytes() as f64 / 1_048_576.0;
     let as_of = plan.as_of_corpus.then_some(seeded.last_at + 3600);

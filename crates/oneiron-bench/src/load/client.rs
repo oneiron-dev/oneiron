@@ -1,10 +1,11 @@
 //! One agent on the facade doors: its signed slip, a fresh holder proof per
 //! request, and the three verbs the bench drives (witness, claim upsert, recall).
 
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ed25519_dalek::SigningKey;
-use oneiron::authority::CapabilitySlip;
+use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
 use serde_json::{Value, json};
 
 use super::corpus::{Corpus, Record, Subject, tag_index};
@@ -16,9 +17,40 @@ pub(super) struct Agent {
     base: String,
     bearer: String,
     slip: CapabilitySlip,
-    key: SigningKey,
+    signer: Signer,
     /// Seconds added to the wall clock for a holder proof's timestamp.
     skew: i64,
+}
+
+/// What signs each request's holder proof.
+enum Signer {
+    /// A minted agent's own holder key (`token agent`'s binding key).
+    Holder(SigningKey),
+    /// The vault's host issuer, for its host root slip: the vault owner. The
+    /// lives bench's in-process store draws this issuer itself, as the fleet
+    /// bench does (`fleet/workload.rs`).
+    HostRoot(Arc<HostSlipIssuer>),
+}
+
+impl Signer {
+    /// The `x-oneiron-binding` value: `{timestamp, nonce, signature}`.
+    fn proof(&self, slip: &CapabilitySlip, timestamp: u64) -> Result<Value, String> {
+        match self {
+            Self::Holder(key) => oneiron::authority::holder_proof(slip, key, timestamp)
+                .map_err(|e| format!("proof: {e}")),
+            Self::HostRoot(issuer) => {
+                let nonce = oneiron::EntityId::now().to_hex();
+                let challenge = oneiron::authority::holder_proof_challenge(timestamp, &nonce);
+                let signature = issuer
+                    .binding_proof(slip, &challenge)
+                    .map_err(|e| format!("proof: {e}"))?
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect::<String>();
+                Ok(json!({"timestamp": timestamp, "nonce": nonce, "signature": signature}))
+            }
+        }
+    }
 }
 
 /// What a recall answered, beside its timing.
@@ -77,8 +109,31 @@ impl Agent {
             bearer: format!("Bearer {}", credential.token),
             slip: CapabilitySlip::from_token(&credential.token)
                 .map_err(|e| format!("slip: {e}"))?,
-            key: SigningKey::from_bytes(&decode_seed(&credential.binding_key)?),
+            signer: Signer::Holder(SigningKey::from_bytes(&decode_seed(
+                &credential.binding_key,
+            )?)),
             skew,
+        })
+    }
+
+    /// The vault owner on its host root slip, signed by the host issuer that
+    /// rooted the vault: the in-process store's caller.
+    pub(super) fn host_root(
+        http: &reqwest::blocking::Client,
+        base: &str,
+        root: CapabilitySlip,
+        issuer: Arc<HostSlipIssuer>,
+    ) -> Result<Self, String> {
+        Ok(Self {
+            http: http.clone(),
+            base: base.to_owned(),
+            bearer: format!(
+                "Bearer {}",
+                root.to_token().map_err(|e| format!("root slip: {e}"))?
+            ),
+            slip: root,
+            signer: Signer::HostRoot(issuer),
+            skew: 0,
         })
     }
 
@@ -133,9 +188,9 @@ impl Agent {
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
         let timestamp = wall.saturating_add_signed(self.skew);
-        let proof = match oneiron::authority::holder_proof(&self.slip, &self.key, timestamp) {
+        let proof = match self.signer.proof(&self.slip, timestamp) {
             Ok(proof) => proof.to_string(),
-            Err(e) => return (0.0, Err(format!("proof: {e}"))),
+            Err(e) => return (0.0, Err(e)),
         };
         let started = Instant::now();
         let sent = self
@@ -274,12 +329,9 @@ impl Agent {
         let wall = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_or(0, |d| d.as_secs());
-        let proof = oneiron::authority::holder_proof(
-            &self.slip,
-            &self.key,
-            wall.saturating_add_signed(self.skew),
-        )
-        .map_err(|e| format!("proof: {e}"))?;
+        let proof = self
+            .signer
+            .proof(&self.slip, wall.saturating_add_signed(self.skew))?;
         Ok(request
             .header("authorization", &self.bearer)
             .header("x-oneiron-binding", proof.to_string()))
