@@ -25,7 +25,7 @@ use oneiron::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSubject, EntityId, TimeRange, Vault,
     VaultConfig,
 };
-use oneiron_server::test_doors::wire_counter_hold::while_wire_counter_held;
+use oneiron_server::test_doors::one_click_wire_counter::while_wire_counter_held;
 use oneiron_server::wire_telemetry::{WireTelemetry, WireThresholds};
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
