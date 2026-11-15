@@ -354,8 +354,7 @@ impl VendorSandboxClient for BoatClient {
             &key,
             bound,
         )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
+        .json()?;
         let id = VendorSandboxId::new(HTTP.segment(&made.sandbox.id)?)?;
         // From here the VM is this run's to delete, on any failure.
         let ready = self
