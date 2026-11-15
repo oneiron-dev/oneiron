@@ -43,13 +43,8 @@ pub struct PolicyChangedEvent {
     pub at: u64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PolicyProposalStatus {
-    Pending,
-    Approved { receipt_id: String, holder: String },
-    Declined { holder: String },
-}
+#[doc(hidden)]
+pub use oneiron_records::policy_model::owner_rows::ledger::PolicyProposalStatus;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

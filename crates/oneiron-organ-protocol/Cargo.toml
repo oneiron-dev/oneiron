@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "The open organ protocol: how an organ process talks to the Oneiron engine"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false
@@ -16,7 +15,6 @@ doctest = false
 [dependencies]
 blake3 = { workspace = true }
 rmp-serde = { workspace = true }
-rmpv = { workspace = true, features = ["with-serde"] }
 serde = { workspace = true }
 serde_bytes = "0.11"
 thiserror = { workspace = true }

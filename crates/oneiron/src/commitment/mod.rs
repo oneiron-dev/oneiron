@@ -23,7 +23,7 @@ pub use self::codec::{
 };
 pub(crate) use self::instance_state::CommitmentInstanceState;
 pub(crate) use self::lapse_batch::{
-    lapse_claim_ids, lapse_commitments_in_txn, pending_commitment_lapses_in_txn,
+    lapse_claim_ids, lapse_commitments_in_txn, lapse_envelope_for, pending_commitment_lapses_in_txn,
 };
 pub use self::types::{
     COMMITMENT_CLAIM_PREDICATES, COMMITMENT_VALUE_KEYS, COMMITMENT_VALUE_SCHEMA_VERSION,

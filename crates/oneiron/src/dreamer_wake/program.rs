@@ -608,6 +608,11 @@ fn settle(
         | EngineExecutorStatus::WindowFull { next_step_seq, .. } => Ok(stopped(format!(
             "the turn program stopped at step {next_step_seq} as the pass ended; {RESUMES}"
         ))),
+        // A turn program's lease is its program's, not an agent run's, so no
+        // Pause signal reaches it.
+        EngineExecutorStatus::Paused { .. } => Err(Error::InvariantViolation(
+            "a turn program took a step-boundary pause",
+        )),
     }
 }
 

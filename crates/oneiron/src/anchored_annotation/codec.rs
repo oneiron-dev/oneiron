@@ -33,6 +33,8 @@ const KEY_PINNED_VERSION: &str = "pinned_version";
 
 const KEY_BODY: &str = "body";
 
+const KEY_SUB_SESSION_ID: &str = "sub_session_id";
+
 const KEY_FRONTIER: &str = "frontier";
 
 const KEY_AUTHOR: &str = "author";
@@ -90,6 +92,8 @@ pub(super) struct ThreadHead {
     pub(super) locator: Locator,
     pub(super) drift: Option<DriftMarker>,
     pub(super) body: Option<BodyAnchor>,
+    /// The sub-session of the plan run this thread's approval started.
+    pub(super) sub_session: Option<EntityId>,
 }
 
 pub(super) fn validate_locator_text(text: &str, context: &'static str) -> Result<()> {
@@ -315,6 +319,12 @@ pub(super) fn encode_thread_head_value(head: &ThreadHead) -> Value {
             ]),
         ));
     }
+    if let Some(sub_session) = head.sub_session {
+        entries.push((
+            Value::from(KEY_SUB_SESSION_ID),
+            Value::Binary(sub_session.as_bytes().to_vec()),
+        ));
+    }
     Value::Map(entries)
 }
 
@@ -350,6 +360,10 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
             })
         }
     };
+    let sub_session = match map_get(value, KEY_SUB_SESSION_ID) {
+        None | Some(Value::Nil) => None,
+        Some(_) => Some(map_entity(value, KEY_SUB_SESSION_ID)?),
+    };
     Ok(ThreadHead {
         thread_id,
         origin_version,
@@ -358,6 +372,7 @@ pub(super) fn decode_thread_head(value: &Value) -> Result<ThreadHead> {
         locator,
         drift,
         body,
+        sub_session,
     })
 }
 
