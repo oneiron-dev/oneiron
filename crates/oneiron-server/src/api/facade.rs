@@ -86,7 +86,6 @@ mod craft_candidate_doors;
 mod credential_doors;
 mod critic_review_doors;
 mod critical_confirm_doors;
-mod custody_drain_doors;
 mod decision_ask_doors;
 mod decision_band_doors;
 pub(super) mod decision_role_asks;
@@ -171,7 +170,6 @@ mod off_record_doors;
 mod off_record_room_doors;
 mod origin_doors;
 mod origin_publish_doors;
-mod outbound_call_erase_doors;
 pub(crate) mod outbox_diverged_doors;
 mod output;
 pub(super) mod owner_binding;
@@ -193,7 +191,6 @@ mod repo_manifest_conflict_doors;
 mod research_doors;
 mod reservoir_source_doors;
 mod residence_doors;
-mod result_doors;
 mod retrieval_doors;
 pub(super) mod role_picks;
 // FIX 13274: the owner reviews and settles a retained document-copy edit.
@@ -254,7 +251,6 @@ mod weave_admin_doors;
 mod weave_doors;
 mod web_connector_doors;
 mod web_fetch_doors;
-mod widen_proposal_doors;
 mod wire_health_doors;
 
 pub(crate) use admission_doors::{

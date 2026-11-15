@@ -4,24 +4,21 @@
 //! caller's own credential read lane. The program's
 //! waking actor or the verified owner reads its rows; every record a field
 //! derives from reads on the caller's lane or is withheld. None executes,
-//! admits, resumes or leases anything. Beside them, the owner's release of
-//! a held program (FIX 5880), which takes the vault owner's proof as
-//! `/v1/owner` takes it and rechecks it in its own write.
+//! admits, resumes or leases anything. The owner's releases of a held
+//! program and of a parked attempt (FIX 5880) are generated from their rows
+//! (UC-01 PR 2.1).
 use std::sync::Arc;
 
 use oneiron::dreamer_runner::{
-    self, ParkReleaseView, ProgramCheckpointRequest, ProgramCheckpointView, ProgramHoldReleaseView,
-    ProgramRunRequest, ProgramRunView, ReleaseParkedAttemptRequest, ReleaseTurnProgramHoldRequest,
+    ProgramCheckpointRequest, ProgramCheckpointView, ProgramRunRequest, ProgramRunView,
     SettledProgramStepRequest, SettledProgramStepView, TurnProgramAdmissionRequest,
     TurnProgramAdmissionView, program_checkpoint, program_run, settled_program_step,
     turn_program_admission,
 };
-use oneiron::memory::MemoryError;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing};
-use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
@@ -89,44 +86,6 @@ pub(crate) async fn vault_runs_program_checkpoint(
         caller,
         "vault.runs.program_checkpoint",
         move |_, _, memory| program_checkpoint(&memory, &input),
-    )
-    .await
-}
-
-pub(crate) async fn vault_runs_program_hold_release(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ReleaseTurnProgramHoldRequest,
-) -> Listed<ProgramHoldReleaseView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.runs.program_hold.release",
-        move |server, owner| {
-            dreamer_runner::release_turn_program_hold_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
-    .await
-}
-
-/// `vault.runs.parks.release` (WAKE-D1): the owner resumes a parked try that waits on an owner act, or stops a
-/// parked try of the Dreamer server's own pass.
-pub(crate) async fn vault_runs_parks_release(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ReleaseParkedAttemptRequest,
-) -> Listed<ParkReleaseView> {
-    as_owner_naming(
-        server,
-        auth,
-        "vault.runs.parks.release",
-        move |server, owner| {
-            dreamer_runner::release_parked_attempt_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
     )
     .await
 }

@@ -1,12 +1,15 @@
-//! The drafter host doors (FIX 12569): the owner's `vault.drafters.list`,
-//! `.status`, `.policy.set` and `.revert`, and the agent's `.list_as` and
-//! `.revert_as`. `host_doors` re-exports them, so the generated HTTP facade
-//! handler and the MCP dispatcher call them by the name every host door
-//! has. Each owner row takes the vault owner's proof as `/v1/owner` takes
-//! it, and each engine door revalidates it in its own read or write; each
-//! agent row takes the credential's own agent, whose live Grant naming the
-//! act the engine door checks in its own snapshot. An owner door's answer is
-//! ids, states, counts and times: it lists complete and empty.
+//! The drafter host doors written by hand (FIX 12569): the owner's
+//! `vault.drafters.status` and `.policy.set`, setting doors that keep their
+//! hand door until Setting stages 1 to 3 have landed (UC-01 plan, U1-A2),
+//! and the agent's `.list_as` and `.revert_as`. The owner's `.list` and
+//! `.revert` are generated from their rows (UC-01 PR 2.1). `host_doors`
+//! re-exports them, so the generated HTTP facade handler and the MCP
+//! dispatcher call them by the name every host door has. Each owner row
+//! takes the vault owner's proof as `/v1/owner` takes it, and each engine
+//! door revalidates it in its own read or write; each agent row takes the
+//! credential's own agent, whose live Grant naming the act the engine door
+//! checks in its own snapshot. An owner door's answer is ids, states, counts
+//! and times: it lists complete and empty.
 use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
@@ -47,17 +50,6 @@ async fn owned_control<T: Send + 'static>(
     (owned(server, auth, verb, act).await, Vec::new())
 }
 
-pub(crate) async fn vault_drafters_list(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: DrafterListRequest,
-) -> Listed<Vec<DrafterVersionView>> {
-    owned_control(server, auth, "vault.drafters.list", move |vault, owner| {
-        drafter::list_drafters_as_owner(vault, owner, &input)
-    })
-    .await
-}
-
 pub(crate) async fn vault_drafters_status(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -82,20 +74,6 @@ pub(crate) async fn vault_drafters_policy_set(
         auth,
         "vault.drafters.policy.set",
         move |vault, owner| drafter::set_drafter_policy_as_owner(vault, owner, &input),
-    )
-    .await
-}
-
-pub(crate) async fn vault_drafters_revert(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: DrafterRevertRequest,
-) -> Listed<DrafterRevertReceipt> {
-    owned_control(
-        server,
-        auth,
-        "vault.drafters.revert",
-        move |vault, owner| drafter::revert_drafter_as_owner(vault, owner, &input),
     )
     .await
 }

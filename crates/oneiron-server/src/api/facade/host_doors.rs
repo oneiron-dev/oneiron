@@ -215,8 +215,6 @@ pub(crate) use super::secret_lift_doors::*;
 // The owner's custody register, rotate, rewrap, view and sealed submit
 // doors (FIX 4993), likewise.
 pub(crate) use super::secret_custody_doors::*;
-// The owner's custody member drain doors (FIX 11274), likewise.
-pub(crate) use super::custody_drain_doors::*;
 // The owner's reservoir source preview door (FIX 11352), likewise.
 pub(crate) use super::reservoir_source_doors::*;
 // A kept export's read and release doors (FIX 11176), likewise.
@@ -227,8 +225,6 @@ pub(crate) use super::export_transfer::{
 pub(crate) use super::usage_repair_doors::*;
 // The owner's root wave door (OF-427), likewise.
 pub(crate) use super::wave_doors::*;
-// The owner's context-widen proposal doors (OF-568), likewise.
-pub(crate) use super::widen_proposal_doors::*;
 pub(crate) use super::wire_health_doors::*;
 // The owner's craft-candidate review doors (OF-490), likewise.
 pub(crate) use super::craft_candidate_doors::*;
@@ -263,8 +259,6 @@ pub(crate) use super::connector_revision_doors::*;
 pub(crate) use super::connector_slate_doors::*;
 // The owner's witness-read grant revoke (FIX 10895), likewise.
 pub(crate) use super::connector_witness_read_doors::*;
-// The owner's per-call outbound request erase (FIX 11801), likewise.
-pub(crate) use super::outbound_call_erase_doors::*;
 pub(crate) use super::proxy_doors::*;
 pub(crate) use crate::api::openai_proxy::ai_chat_completions;
 // The secret use door, whose connector.call sends (OF-560), likewise.
@@ -274,7 +268,6 @@ pub(crate) use super::secret_grant_doors::*;
 // The message reaction door (OF-181), likewise.
 pub(crate) use super::reaction_doors::*;
 pub(crate) use super::reply_doors::*;
-pub(crate) use super::result_doors::*;
 // The core write doors (OF-181), likewise.
 pub(crate) use super::core_write_doors::*;
 // The critic review door (OF-352), likewise.

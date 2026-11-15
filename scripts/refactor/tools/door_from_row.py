@@ -13,12 +13,20 @@ left as it is, with the reason. With --apply it rewrites each accepted row (the 
 1.3 in `call`, `"door": "hand"` dropped) and deletes each accepted door fn with its doc comment. It edits no
 `use` line: the build's unused-import warnings name the ones a move leaves.
 
-Known shapes (each wrapper proves the owner with `facade_owner`, as rule `owner` does):
-- `as_owner(server, auth, "<verb>", move |memory, owner| <call>)` of host_doors/support/owner_listing.rs: on the
-  credential's handle as its own principal (`facade_actor`), listing what the handle read; rule `owner` on the handle.
-- `as_owner_naming(server, auth, "<verb>", move |server, owner| <call>, |_| Vec::new())` of legal_hold_doors.rs: off
-  the runtime with no handle, listing no row.
+Known shapes (WRAPPERS; each wrapper proves the owner with `facade_owner`, as rule `owner` does, and a refusal or a
+join error answers as `refused` does):
+- `as_owner(server, auth, "<verb>", move |memory, owner| <call>)` of host_doors/support/owner_listing.rs, and the
+  file-local one of result_doors.rs: on the credential's handle as its own principal (`facade_actor`), listing what the
+  handle read; rule `owner` on the handle.
+- `as_owner_naming(server, auth, "<verb>", move |server, owner| <call>, |_| Vec::new())` of legal_hold_doors.rs, and
+  the file-local `as_custody_owner(.., move |vault, owner| <call>)` of custody_drain_doors.rs: off the runtime with no
+  handle, listing no row.
+- the file-local `owned_control(.., move |vault, owner| <call>)` of drafter_doors.rs and `as_owner_listing(..,
+  move |server, owner| <call>)` of widen_proposal_doors.rs: the same, with the engine's error mapped into a
+  MemoryError by the wrapper, where the row's call maps it itself.
+With --apply it names each file-local wrapper that no door of its file calls any more (`## UNUSED`).
 """
+import collections
 import json
 import pathlib
 import re
@@ -31,11 +39,25 @@ VERBS = pathlib.Path("scripts/sdk/verbs")
 # a `calls` fn takes them.
 BOUND_NAMES = ["memory", "vault", "owner", "surface", "input", "server", "answer"]
 
-# Each known wrapper: its full path, which the door file's `use` line must resolve to, the closure parameters it hands
-# the call, and whether the call reads through the credential's handle.
+# A known wrapper: the closure parameters it hands the call, whether the call reads through the credential's handle,
+# the error map it applies to the call's result (which the row's call writes itself), and whether it takes a rows
+# closure after the call.
+Wrapper = collections.namedtuple("Wrapper", "params on_handle error_map rows_closure")
+
+# The engine's `oneiron::Result` mapped into the door's MemoryResult, as a row's call writes it.
+MEMORY_ERROR_MAP = ".map_err(crate::memory::MemoryError::from)"
+
+# Each known wrapper by its full path: the path a door file's `use` line resolves to, or `<module>::<name>` for a fn
+# of the door file itself. Each was read to its call (UC-01 PR 2.1; its read leg's shapes W4, W7, W8 and W9).
 WRAPPERS = {
-    "as_owner": ("crate::api::facade::host_doors::support::owner_listing::as_owner", ("memory", "owner"), True),
-    "as_owner_naming": ("crate::api::facade::legal_hold_doors::as_owner_naming", ("server", "owner"), False),
+    "crate::api::facade::host_doors::support::owner_listing::as_owner": Wrapper(("memory", "owner"), True, "", False),
+    "crate::api::facade::legal_hold_doors::as_owner_naming": Wrapper(("server", "owner"), False, "", True),
+    "crate::api::facade::result_doors::as_owner": Wrapper(("memory", "owner"), True, "", False),
+    "crate::api::facade::custody_drain_doors::as_custody_owner": Wrapper(("vault", "owner"), False, "", False),
+    "crate::api::facade::drafter_doors::owned_control": Wrapper(("vault", "owner"), False, MEMORY_ERROR_MAP, False),
+    "crate::api::facade::widen_proposal_doors::as_owner_listing": Wrapper(
+        ("server", "owner"), False, MEMORY_ERROR_MAP, False
+    ),
 }
 
 # The 31 pure doors on setting verbs (UC-01 plan, U1-A2: fable/15's setting tables joined with fable/19's door
@@ -282,28 +304,29 @@ def check_door(source, match, rows, names, module):
         refuse(f"parameters {params} are not {expected} and the input")
     body = source[source.index("{", close_at) : end].strip()[1:-1].strip()
     wrapper = re.match(r"(\w+)\s*\(", body)
-    if not wrapper or wrapper.group(1) not in WRAPPERS:
+    if not wrapper:
         refuse("its body is not one known wrapper call")
-    use_path, closure_params, on_handle = WRAPPERS[wrapper.group(1)]
     # The whole path, resolved from this file's module: a suffix match takes any wrapper of that name (F3).
-    if absolute(names.get(wrapper.group(1), ""), module) != use_path:
-        refuse(f"`{wrapper.group(1)}` is not imported from {use_path}")
+    path = wrapper_path(source, wrapper.group(1), names, module)
+    if path not in WRAPPERS:
+        refuse(f"its body is not one known wrapper call (`{wrapper.group(1)}`: {path or 'not imported, not its own'})")
+    known = WRAPPERS[path]
     close = balanced(body, wrapper.end() - 1, "(", ")")
     if squash(body[close:]) != ".await":
         refuse("the wrapper call is not the whole body")
     args = split_args(body[wrapper.end() : close - 1])
-    want = 5 if wrapper.group(1) == "as_owner_naming" else 4
+    want = 5 if known.rows_closure else 4
     if len(args) != want or args[:2] != ["server", "auth"] or args[2] != json.dumps(verb):
         refuse(f"wrapper arguments {args[:3]} are not server, auth, the verb")
     if want == 5 and squash(args[4]) != "|_|Vec::new()":
         refuse("its rows closure names rows")
     closure = re.match(r"move\s*\|([^|]*)\|\s*(.*)$", args[3], re.S)
-    if not closure or [p.strip() for p in closure.group(1).split(",")] != list(closure_params):
-        refuse(f"its call closure takes {closure.group(1) if closure else '?'}, not {closure_params}")
+    if not closure or [p.strip() for p in closure.group(1).split(",")] != list(known.params):
+        refuse(f"its call closure takes {closure.group(1) if closure else '?'}, not {known.params}")
     door_call = closure.group(2).strip()
     if door_call.startswith("{") and door_call.endswith("}"):
         door_call = door_call[1:-1].strip()
-    door_call = resolve(door_call, names).replace("server.vault()", "vault")
+    door_call = resolve(door_call, names).replace("server.vault()", "vault") + known.error_map
     if "server" in free_names(door_call):
         refuse("its call reads the server beyond its vault")
     call = new_call(row)
@@ -313,10 +336,20 @@ def check_door(source, match, rows, names, module):
         refuse("its call names a bound name inside a string (a format capture), which the generator refuses")
     if squash(call_result(call)) != squash(door_call):
         refuse(f"its call `{door_call}` is not the row's `{call_result(call)}`")
-    if ("memory" in free_names(call)) != on_handle:
+    if ("memory" in free_names(call)) != known.on_handle:
         refuse("the row's call reads the handle exactly when the old door did not")
     return dict(verb=verb, text=text, start=match.start(), end=end, call=call,
-                door=generated_door(row, call), wrapper=wrapper.group(1))
+                door=generated_door(row, call), wrapper=wrapper.group(1), wrapper_path=path)
+
+
+def wrapper_path(source, name, names, module):
+    """The full path of the wrapper `name` a door in `source` calls: its `use` line's, or `<module>::<name>` for an
+    `async fn` of the file itself; "" for neither."""
+    if name in names:
+        return absolute(names[name], module)
+    if re.search(rf"^(?:pub\([^)]*\) )?async fn {re.escape(name)}\b", source, re.M):
+        return f"{module}::{name}"
+    return ""
 
 
 def main(argv):
@@ -370,6 +403,10 @@ def main(argv):
         path.write_text(source)
         if not FN.search(source):
             print(f"## EMPTY {path}: no door fn is left; delete the file and its `mod` and `use` lines")
+            continue
+        for wrapper in sorted({e["wrapper"] for e in accepted if e["wrapper_path"] == f"{module}::{e['wrapper']}"}):
+            if not re.search(rf"(?<!fn )\b{wrapper}\s*\(", source):
+                print(f"## UNUSED {path}: no door calls its own `{wrapper}` any more; delete it")
     print(f"## DONE moved={moved} hand={refused} applied={'yes' if apply else 'no'}")
     return 0
 
