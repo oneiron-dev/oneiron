@@ -11,12 +11,13 @@ use crate::limit_ask::EngineLimit;
 
 use super::error::{FeedbackError, checked_embedding_model, checked_note, checked_token};
 
-/// Stable encoding token for the v1 feedback bundle wire contract.
-pub const FEEDBACK_BUNDLE_ENCODING: &str = "oneiron.feedback.bundle.v1";
-
-/// Stable encoding token for a bundle that carries a proposal: the six v1
-/// keys in v1 order, then `proposal`.
-pub const FEEDBACK_BUNDLE_ENCODING_V2: &str = "oneiron.feedback.bundle.v2";
+#[doc(hidden)]
+pub use oneiron_records::feedback::bundle::{
+    FEEDBACK_BUNDLE_ENCODING, FEEDBACK_BUNDLE_ENCODING_V2, FEEDBACK_ENGINE_VERSION_MAX_BYTES,
+    FeedbackHnswSnapshot,
+};
+#[doc(hidden)]
+use oneiron_records::feedback::bundle::{FEEDBACK_DIGEST_DOMAIN, FEEDBACK_DIGEST_DOMAIN_V2};
 
 /// The single protocol verb of the feedback family.
 pub const FEEDBACK_SEND_VERB: &str = "feedback.send";
@@ -27,20 +28,11 @@ pub const FEEDBACK_VERBS: [&str; 1] = [FEEDBACK_SEND_VERB];
 /// Consent action id that authorizes exactly one feedback act.
 pub const FEEDBACK_APPROVE_ONCE_ACTION: &str = "approve_once";
 
-/// Maximum accepted `engine_version` length in bytes.
-pub const FEEDBACK_ENGINE_VERSION_MAX_BYTES: usize = 64;
-
 /// Maximum accepted `embedding_model` length in bytes.
 pub const FEEDBACK_EMBEDDING_MODEL_MAX_BYTES: usize = 128;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::feedback::bundle::{FEEDBACK_REF_MAX_BYTES, FeedbackCategory};
-
-/// Domain separator for the bundle digest preimage.
-const FEEDBACK_DIGEST_DOMAIN: &[u8] = b"oneiron.feedback.bundle.v1\0";
-
-/// Domain separator for the v2 bundle digest preimage.
-const FEEDBACK_DIGEST_DOMAIN_V2: &[u8] = b"oneiron.feedback.bundle.v2\0";
 
 /// The wire encoding a bundle's bytes were produced under.
 ///
@@ -134,18 +126,6 @@ impl FeedbackPlatform {
         checked_token("platform arch", &self.arch, FEEDBACK_REF_MAX_BYTES)?;
         checked_token("platform family", &self.family, FEEDBACK_REF_MAX_BYTES)
     }
-}
-
-/// Graph tuning knobs, projected verbatim from the vault configuration.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FeedbackHnswSnapshot {
-    /// Maximum neighbors per node in layer 0.
-    pub m_max_0: usize,
-    /// Beam width used during graph construction.
-    pub ef_construction: usize,
-    /// Beam width used during search.
-    pub ef_search: usize,
 }
 
 /// Whitelist projection of the vault configuration.

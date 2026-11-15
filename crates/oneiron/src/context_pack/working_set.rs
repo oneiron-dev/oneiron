@@ -32,6 +32,9 @@ use super::quarantine::PackQuarantineIndex;
 use super::validation::disclosure_admits_target;
 use super::world_partition::record_world_by_id;
 
+#[doc(hidden)]
+pub use oneiron_records::context_pack::types::PackWorkingSetStats;
+
 /// The most refs one working set may name. A longer set is refused, never
 /// cut short.
 pub const MAX_WORKING_SET_REFS: usize = 64;
@@ -39,46 +42,6 @@ pub const MAX_WORKING_SET_REFS: usize = 64;
 /// The most `Supersedes` hops a superseded CLAIM ref is followed forward to
 /// its live successor. A longer chain drops the ref.
 const MAX_SUPERSESSION_HOPS: usize = 32;
-
-/// What a pack did with the working set its caller seeded
-/// ([`super::ContextPackBuilder::working_set`]). Every field is zero for a
-/// pack with no working set.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
-pub struct PackWorkingSetStats {
-    /// Refs the caller named, after duplicates were removed.
-    pub asked: usize,
-    /// The working-set rows the pack serves, in working-set order: the ones
-    /// its rows still hold after its last cut (a response limit, a scoped
-    /// read's filter, a serialized budget; a row inside a serialized pack's
-    /// L2 base prefix is held there). A superseded CLAIM ref is served as its
-    /// live successor.
-    pub served: Vec<EntityId>,
-    /// Refs the assembled pack does not serve: dead, hidden from the reader,
-    /// erased, quarantined, clamped, unusable as a row, outside the pack's
-    /// worlds, types or query, or cut by the world share. One count for every
-    /// reason. A later cut counts where that cut counts its rows.
-    pub dropped: usize,
-    /// Working-set rows a serialized pack cut because the working set's
-    /// rows passed half of the pack's token budget.
-    pub over_cap: usize,
-    /// Working-set rows the ranked fill also found. Each is served once, as
-    /// a working-set row.
-    pub overlap: usize,
-}
-
-impl PackWorkingSetStats {
-    /// Whether the pack was seeded at all.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.asked == 0
-    }
-
-    /// Keeps in [`Self::served`] only the rows `held` says the pack still
-    /// holds, in working-set order. Each cut that removes rows calls it.
-    pub(crate) fn settle(&mut self, held: impl Fn(&EntityId) -> bool) {
-        self.served.retain(|id| held(id));
-    }
-}
 
 /// The caller's refs in order with duplicates removed, refused over
 /// [`MAX_WORKING_SET_REFS`].
