@@ -166,7 +166,7 @@ mod host {
     use hyper::body::Incoming;
     use hyper_util::rt::{TokioIo, TokioTimer};
     use hyper_util::service::TowerToHyperService;
-    use oneiron_llm_own_server::{LLM_ALPN, LlmMeshService};
+    use oneiron_llm::oneiron_rpc::{LLM_ALPN, LlmMeshService};
     use oneiron_mesh_transport::iroh_transport::{IrohTransport, private_relay_map};
     use oneiron_mesh_transport::transport_key::TransportKey;
     use oneiron_mesh_transport::{

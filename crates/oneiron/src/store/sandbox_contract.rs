@@ -2,7 +2,8 @@
 
 use crate::store::sandbox_credential::SandboxCredentialEffect;
 
-pub const SANDBOX_WIT_WORLD_NAME: &str = "oneiron:code-run/guest@1.0.0";
+#[doc(hidden)]
+pub use oneiron_records::store::sandbox_contract::SANDBOX_WIT_WORLD_NAME;
 
 pub const SANDBOX_JS_COMPONENT_NAME: &str = "oneiron.plain-js.quickjs-component";
 

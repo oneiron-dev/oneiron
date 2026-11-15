@@ -92,9 +92,7 @@ async fn land(
     take: fn(&oneiron::Vault, &[u8], u64) -> oneiron::Result<CooperativeDeletionIngress>,
 ) -> Response {
     let vault = Arc::clone(server.vault());
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     match tokio::task::spawn_blocking(move || take(&vault, &body, now)).await {
         Ok(Ok(CooperativeDeletionIngress::Filed)) => StatusCode::ACCEPTED.into_response(),
         Ok(Ok(CooperativeDeletionIngress::AlreadyFiled)) => StatusCode::OK.into_response(),
