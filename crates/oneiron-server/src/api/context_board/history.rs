@@ -179,8 +179,9 @@ pub(crate) async fn board_turn_idempotency(
 /// source, kept beside it as `admit`) is one the caller's read still reads
 /// (409 `board_document_unreadable` otherwise). A board kept before those
 /// rows were never replays.
-/// The room the request named is resolved again, so every check meets that
-/// room's read and clamp as they stand now, as a new board in it would; and
+/// The room the request named is resolved again, and so is the home its
+/// retrieval named, so every check meets that room's read and clamp and that
+/// home's clearance as they stand now, as a new board in it would; and
 /// each source the response carries without naming it, a standing block's
 /// CLAIMs, passes them as its documents do (FIX 8147, 8148).
 /// Off this device it goes out only while every row it was derived from
@@ -256,6 +257,10 @@ fn release_board_replay(
         request.project.as_ref(),
     )?
     .room_id();
+    let named_home = request
+        .retrieval
+        .as_ref()
+        .and_then(super::super::CoreContextPackRequest::conversation_home);
     let mut documents = disclosed
         .memories
         .into_iter()
@@ -270,7 +275,7 @@ fn release_board_replay(
         .collect::<Result<BTreeSet<_>, _>>()
         .map_err(|_| unreadable())?;
     documents.extend(replay.sources.iter().copied());
-    let (read, disclosure) = current_board_authority(&server.vault, auth, room)?;
+    let (read, disclosure) = current_board_authority(&server.vault, auth, room, named_home)?;
     let admitted = server
         .vault
         .board_documents_admitted(&documents, &read, disclosure.as_ref())
@@ -283,11 +288,13 @@ fn release_board_replay(
 
 /// The authority a board is handed back under: the caller's read scope and
 /// disclosure clamp as they stand now, the ones a new board would apply, in
-/// room `room` when it read in one.
+/// room `room` when it read in one and homed in `named_home` when its kept
+/// retrieval named one.
 fn current_board_authority<'a>(
     vault: &'a oneiron::Vault,
     auth: &CoreAuth,
     room: Option<EntityId>,
+    named_home: Option<&str>,
 ) -> Result<
     (
         oneiron::claim::ScopedRead<'a>,
@@ -296,7 +303,7 @@ fn current_board_authority<'a>(
     ApiError,
 > {
     let read = super::super::scoped_read_for_core_auth(vault, auth)?;
-    let audience = super::super::resolve_core_audience(vault, auth, read, room)?;
+    let audience = super::super::resolve_core_audience(vault, auth, read, room, named_home)?;
     Ok((audience.read, audience.disclosure))
 }
 
@@ -396,7 +403,7 @@ pub(crate) async fn context_board_turn_history(
     // Every item passes the caller's read scope and disclosure clamp as they
     // stand now, the ones a new board would apply: a past board never hands
     // back a document the caller can no longer read or be shown.
-    let (read, disclosure) = current_board_authority(&server.vault, &auth, None)?;
+    let (read, disclosure) = current_board_authority(&server.vault, &auth, None, None)?;
     let history = server
         .vault
         .board_turn_history_for(&id, &read, disclosure.as_ref())

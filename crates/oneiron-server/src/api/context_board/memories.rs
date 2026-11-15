@@ -422,7 +422,7 @@ pub(crate) fn board_pins_projection<'a>(
         interlocutors,
         disclosure,
         ..
-    } = super::super::resolve_core_audience(vault, auth, read, room_id)?;
+    } = super::super::resolve_core_audience(vault, auth, read, room_id, None)?;
     let mut section =
         oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)));
     section
@@ -534,7 +534,7 @@ pub(crate) async fn board_room_pins(
             interlocutors,
             disclosure,
             ..
-        } = super::super::resolve_core_audience(&server.vault, auth, read, Some(room))?;
+        } = super::super::resolve_core_audience(&server.vault, auth, read, Some(room), None)?;
         let had_section = memories.is_some();
         let mut section = memories.unwrap_or_else(|| {
             oneiron::MemoriesSection::pins_only(disclosure.as_ref().map(|ctx| ctx.assembly(0)))

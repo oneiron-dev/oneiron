@@ -103,7 +103,7 @@ pub(super) async fn standing_prefix(
     let (read, disclosure) = match room_id {
         Some(room) => {
             let audience =
-                crate::api::resolve_core_audience(&server.vault, auth, read, Some(room))?;
+                crate::api::resolve_core_audience(&server.vault, auth, read, Some(room), None)?;
             (audience.read, audience.disclosure)
         }
         None => {
