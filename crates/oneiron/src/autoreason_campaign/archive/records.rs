@@ -266,7 +266,8 @@ pub(super) fn output_in_txn(
 /// every key a write door marked is overwritten, whoever asks, so no key
 /// reaches a model through the archive (#7967 review round 1). `None` when
 /// that revision no longer serves (withdrawn words, a body its reader
-/// refuses, a file no revision keeps, bytes no masked copy of may leave).
+/// refuses, a file no revision keeps, bytes no masked copy of may leave, an
+/// ARTIFACT version only a proof no model input carries reads).
 pub(super) fn output_text_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -282,6 +283,19 @@ pub(super) fn output_text_in_txn(
         else {
             return Ok(None);
         };
+        // A queue check's exhaust reads only with the owner's live proof
+        // (`Vault::export_blob_artifact_for_reader_in_txn`, FIX 4997), and a
+        // reminder wording only for a reader of its source. No model input
+        // here carries either proof, so neither version serves, masked or
+        // not (#7967 review round 2).
+        if matches!(
+            version.provenance,
+            crate::blob_artifact::BlobVersionProvenance::QueueCheck { .. }
+        ) || version.made_by.process.identity
+            == crate::commitment_wake::COMMITMENT_REMINDER_WORDING_ATTEMPT_KIND
+        {
+            return Ok(None);
+        }
         let served = masked_served(vault.read_blob_artifact_version_sighted_in_txn(
             txn,
             &output.entity,
@@ -304,20 +318,15 @@ pub(super) fn output_text_in_txn(
     };
     // A file-plane ASSET's revision is stored as its manifest: it reads as
     // the body file it names, as every revision reader serves it (FIX 3677,
-    // 22091); one whose file no revision keeps any more no longer serves
-    // (#7966 review round 1).
-    let row = if crate::store::asset_file_of_raw_in_txn(&vault.store, txn, &output.entity, &row)?
-        .is_some()
-    {
-        let materialized = vault.materialized_revision_in_txn(txn, &output.entity, row.clone())?;
-        if materialized == row {
-            return Ok(None);
-        }
-        materialized
-    } else {
-        row
-    };
-    let body = row
+    // 22091): the live row through the ASSET's current file, an older one
+    // through the file its revisions keep, whatever body the ASSET holds now
+    // (#7966 review round 2). A manifest whose file nothing keeps any more
+    // no longer serves (#7966 review round 1).
+    let materialized = vault.materialized_revision_in_txn(txn, &output.entity, row.clone())?;
+    if materialized == row && stored_manifest(&row) {
+        return Ok(None);
+    }
+    let body = materialized
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .unwrap_or_default()
         .to_vec();
@@ -338,6 +347,17 @@ pub(super) fn output_text_in_txn(
         }
         _ => String::from_utf8_lossy(&body).into_owned(),
     }))
+}
+
+/// Whether the stored row `row` is an ASSET's whose body is a file-plane
+/// manifest.
+fn stored_manifest(row: &[u8]) -> bool {
+    crate::batch::EntityMetadataHeader::parse(row)
+        .is_some_and(|header| header.entity_type == crate::registry::ENTITY_TYPE_ASSET)
+        && row
+            .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
+            .and_then(crate::store::AssetFileManifest::decode)
+            .is_some()
 }
 
 /// An ARTIFACT version's bytes as a door serves a masked reader an optional

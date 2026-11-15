@@ -5,20 +5,48 @@ use crate::autoreason_campaign::archive::axes_job;
 use crate::autoreason_campaign::archive::records::{self, attempt};
 use crate::autoreason_campaign::archive::{
     CampaignArchiveAdmission, CampaignArchiveAxesQueued, CampaignArchiveCoverage,
-    CampaignArchiveInstall, CampaignArchiveOutput, CampaignArchiveProposalRequest,
-    CampaignArchiveProposalState, CampaignArchiveProposeAxes, CampaignArchiveRecord,
-    CampaignArchiveReproposal, CampaignArchiveRequest, CampaignArchiveView,
+    CampaignArchiveInstall, CampaignArchiveOutput, CampaignArchivePin,
+    CampaignArchiveProposalRequest, CampaignArchiveProposalState, CampaignArchiveProposeAxes,
+    CampaignArchiveRecord, CampaignArchiveReproposal, CampaignArchiveRequest, CampaignArchiveView,
 };
-use crate::claim::ClaimReadStatus;
+use crate::claim::{ClaimReadStatus, ScopedRead};
 use crate::memory::{Memory, MemoryResult};
+
+/// Refuses a caller who does not read every sample `pin` was drawn from.
+/// An installed pin's axes and bins carry its samples' words, as the
+/// proposal it came from does, so a door that serves a pin, a view of one
+/// or a cell under one serves only a caller who reads every sample now: a
+/// read grant revoked since the request withholds the archive too (#7966
+/// review round 2).
+fn samples_read_in_txn(
+    lane: &ScopedRead<'_>,
+    txn: &heed::RoTxn<'_>,
+    pin: &CampaignArchivePin,
+) -> MemoryResult<()> {
+    let samples: Vec<EntityId> = pin
+        .sample_outputs()
+        .iter()
+        .map(|output| output.entity)
+        .collect();
+    if lane
+        .entities_readable_in_txn(txn, &samples)?
+        .contains(&false)
+    {
+        return Err(crate::Error::EntityNotFound.into());
+    }
+    Ok(())
+}
 
 pub fn research_archive_install(
     memory: &Memory<'_>,
     input: CampaignArchiveInstall,
 ) -> MemoryResult<CampaignArchiveView> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
         controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
-        Ok(records::install_in_txn(memory.vault(), txn, input)?)
+        let view = records::install_in_txn(memory.vault(), txn, input)?;
+        samples_read_in_txn(&lane, txn, &view.pin)?;
+        Ok(view)
     })
 }
 
@@ -26,9 +54,12 @@ pub fn research_archive_record(
     memory: &Memory<'_>,
     input: CampaignArchiveOutput,
 ) -> MemoryResult<CampaignArchiveView> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
         controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
-        Ok(records::record_in_txn(memory.vault(), txn, input)?)
+        let view = records::record_in_txn(memory.vault(), txn, input)?;
+        samples_read_in_txn(&lane, txn, &view.pin)?;
+        Ok(view)
     })
 }
 
@@ -36,6 +67,7 @@ pub fn research_archive_get(
     memory: &Memory<'_>,
     input: CampaignArchiveRequest,
 ) -> MemoryResult<CampaignArchiveRecord> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     let txn = memory
         .vault()
         .store
@@ -44,7 +76,9 @@ pub fn research_archive_get(
         .map_err(crate::Error::from)?;
     let root = attempt(input.root)?;
     controller_in_txn(memory, &txn, Some(root))?;
-    Ok(records::read_in_txn(memory.vault(), &txn, root)?)
+    let record = records::read_in_txn(memory.vault(), &txn, root)?;
+    samples_read_in_txn(&lane, &txn, &record.pin)?;
+    Ok(record)
 }
 
 pub fn research_archive_best(
@@ -58,10 +92,16 @@ pub fn research_archive_repropose(
     memory: &Memory<'_>,
     input: CampaignArchiveReproposal,
 ) -> MemoryResult<CampaignArchiveView> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
-        controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
+        let root = attempt(input.root)?;
+        controller_in_txn(memory, txn, Some(root))?;
         controller_in_txn(memory, txn, Some(attempt(input.new_root)?))?;
-        Ok(records::repropose_in_txn(memory.vault(), txn, input)?)
+        let held = records::read_in_txn(memory.vault(), txn, root)?;
+        samples_read_in_txn(&lane, txn, &held.pin)?;
+        let view = records::repropose_in_txn(memory.vault(), txn, input)?;
+        samples_read_in_txn(&lane, txn, &view.pin)?;
+        Ok(view)
     })
 }
 
@@ -69,8 +109,12 @@ pub fn research_archive_coverage(
     memory: &Memory<'_>,
     input: CampaignArchiveCoverage,
 ) -> MemoryResult<CampaignArchiveAdmission> {
+    let lane = memory.read_lane(ClaimReadStatus::Recorded)?;
     memory.vault().try_with_write_txn_grouped(|txn| {
-        controller_in_txn(memory, txn, Some(attempt(input.root)?))?;
+        let root = attempt(input.root)?;
+        controller_in_txn(memory, txn, Some(root))?;
+        let held = records::read_in_txn(memory.vault(), txn, root)?;
+        samples_read_in_txn(&lane, txn, &held.pin)?;
         Ok(records::coverage_in_txn(memory.vault(), txn, input)?)
     })
 }
