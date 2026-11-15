@@ -626,6 +626,14 @@ pub fn validate_generated_ui_state_bindings(
         }
     }
 
+    // An app component's prop expressions read `$state` too: each key they read
+    // stays declared and present, so a patch cannot remove it.
+    for element in elements {
+        if let LensAtom::Component(component) = element.atom {
+            super::genui_expr::check_prop_expressions(&component.props, state)?;
+        }
+    }
+
     Ok(())
 }
 
