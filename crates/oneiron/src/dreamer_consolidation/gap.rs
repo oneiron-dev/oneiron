@@ -53,6 +53,18 @@ impl SideKey for BranchGapKey {
     }
 }
 
+/// One [`BranchGapKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn branch_gap_key_pin_for_test(
+    scope_text: &str,
+    gap_hash: [u8; 32],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&BranchGapKey {
+        scope_text: scope_text.to_owned(),
+        gap_hash,
+    })
+}
+
 impl RawValue for ReflectionGap {
     fn to_raw(&self) -> std::result::Result<Vec<u8>, side_table::CodecError> {
         Ok(encode_gap_row(self)?)

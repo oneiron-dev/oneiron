@@ -103,6 +103,18 @@ impl SideKey for ArtifactPointerRowKey {
     }
 }
 
+/// One [`ArtifactPointerRowKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn artifact_pointer_row_key_pin_for_test(
+    channel: ArtifactPointerChannel,
+    artifact: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ArtifactPointerRowKey {
+        channel,
+        artifact: artifact.to_owned(),
+    })
+}
+
 /// One pointer row's value: the export frame, then an optional suffix. A
 /// private pointer keeps the pre-tier frame: a bare 32-byte fork hash (every
 /// pointer written before SECRET-04) or 33 bytes when the publish rode a

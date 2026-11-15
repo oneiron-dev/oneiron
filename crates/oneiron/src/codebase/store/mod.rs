@@ -94,6 +94,18 @@ impl SideKey for TextIndexKey {
     }
 }
 
+/// One [`TextIndexKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn text_index_key_pin_for_test(
+    value: &str,
+    id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&TextIndexKey {
+        value: value.to_owned(),
+        id,
+    })
+}
+
 /// `<hash32>` + `\0` + id16 — the shape every hash-keyed codebase index row (fork hash, scope
 /// key) has always spelled.
 struct HashIndexKey {
@@ -120,6 +132,15 @@ impl SideKey for HashIndexKey {
             id: EntityId::decode_key(id)?,
         })
     }
+}
+
+/// One [`HashIndexKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn hash_index_key_pin_for_test(
+    value: [u8; 32],
+    id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HashIndexKey { value, id })
 }
 
 /// The `EntityId` half of a codebase index key, common to every index shape.

@@ -1,8 +1,13 @@
-//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2 and 3): one fixture key of each
-//! crate-private side-table key type that those PRs derive, with the reader of its type. Compiled
-//! only under `--cfg oneiron_test_support`; never API.
+//! Doors for `tests/side_key_pins.rs` (UC-06 K-proofs of PRs 2, 3 and 4): one fixture key of
+//! each crate-private side-table key type that those PRs derive, with the reader of its type.
+//! Compiled only under `--cfg oneiron_test_support`; never API.
 
+use crate::artifact_hosting::ArtifactPointerChannel;
 use crate::attempt_queue::AttemptId;
+use crate::compaction::EpochScope;
+use crate::critic::CritiqueArtifactKey;
+use crate::deletion::PendingTombstoneKey;
+use crate::dreamer_tournament::DreamerTournamentBranchVerdict;
 use crate::entity_id::EntityId;
 use crate::ports::{DocumentSlot, DocumentUpdateKey, UpdateSeq};
 use crate::side_table::SideKey;
@@ -123,4 +128,134 @@ pub fn document_update_key_of_generation(document: EntityId, generation: u64) ->
         slot: DocumentSlot::of(document),
         seq: UpdateSeq::Generation(generation),
     })
+}
+
+/// `artifact_hosting::ArtifactPointerRowKey`: the channel byte, the artifact id's length as a
+/// big-endian `u16`, the artifact id.
+pub fn artifact_pointer_row_key(channel: ArtifactPointerChannel, artifact: &str) -> Pin {
+    crate::artifact_hosting::artifact_pointer_row_key_pin_for_test(channel, artifact)
+}
+
+/// `codebase::store::TextIndexKey`: the text, NUL, the raw id.
+pub fn text_index_key(value: &str, id: EntityId) -> Pin {
+    crate::codebase::text_index_key_pin_for_test(value, id)
+}
+
+/// `codebase::store::HashIndexKey`: the 32-byte hash, NUL, the raw id.
+pub fn hash_index_key(value: [u8; 32], id: EntityId) -> Pin {
+    crate::codebase::hash_index_key_pin_for_test(value, id)
+}
+
+/// `compaction::EpochScope`: the session id, then the conversation id when the scope names one.
+pub fn epoch_scope(session: EntityId, conversation: Option<EntityId>) -> Pin {
+    Pin::of(&match conversation {
+        Some(conversation) => EpochScope::of_conversation(session, conversation),
+        None => EpochScope::of_session(session),
+    })
+}
+
+/// `connector_key::txn::ConnectorIndexKey`: the connector, NUL, the raw key id.
+pub fn connector_index_key(connector: &str, id: EntityId) -> Pin {
+    crate::connector_key::connector_index_key_pin_for_test(connector, id)
+}
+
+/// `consent::owner_reason::RuleKey`: the grant ref, `:`, the 16-byte decision id.
+pub fn rule_key(grant_ref: &str, decision_id: [u8; 16]) -> Pin {
+    crate::consent::rule_key_pin_for_test(grant_ref, decision_id)
+}
+
+/// `context_board::plugin::state::BlockKey`: the actor id, the section id's length as a
+/// big-endian `u64`, the section id, the 16-byte block ref.
+pub fn block_key(actor: EntityId, section_id: &str, block_ref: [u8; 16]) -> Pin {
+    crate::context_board::block_key_pin_for_test(actor, section_id, block_ref)
+}
+
+/// `critic::CritiqueArtifactKey`: the raw branch attempt id, the artifact id's length as a
+/// big-endian `u16`, the artifact id.
+pub fn critique_artifact_key(branch_attempt: [u8; 16], artifact_id: &str) -> Pin {
+    Pin::of(&CritiqueArtifactKey {
+        branch_attempt: attempt(branch_attempt),
+        artifact_id: artifact_id.to_owned(),
+    })
+}
+
+/// `deletion::PendingTombstoneKey`: the window label, `:`, the entity id in lower-case hex.
+pub fn pending_tombstone_key(window: &str, id: EntityId) -> Pin {
+    Pin::of(&PendingTombstoneKey {
+        window: window.to_owned(),
+        id,
+    })
+}
+
+/// `dreamer_consolidation::gap::BranchGapKey`: the scope text, then the 32-byte gap hash, with no
+/// separator.
+pub fn branch_gap_key(scope_text: &str, gap_hash: [u8; 32]) -> Pin {
+    crate::dreamer_consolidation::branch_gap_key_pin_for_test(scope_text, gap_hash)
+}
+
+/// `dreamer_consolidation::neighbourhood::ListingPin`: the raw attempt id, then the NOTE id when
+/// the pin names one.
+pub fn listing_pin(attempt_id: [u8; 16], note: Option<EntityId>) -> Pin {
+    crate::dreamer_consolidation::listing_pin_key_pin_for_test(attempt(attempt_id), note)
+}
+
+/// `dreamer_prefilter::supersession::MemberKey`: the attempt-kind text, `:`, the raw turn id.
+pub fn member_key(attempt_kind: &str, turn: EntityId) -> Pin {
+    crate::dreamer_prefilter::member_key_pin_for_test(attempt_kind, turn)
+}
+
+/// `dreamer_runner::admission::BudgetReservationKey`: the budget id's length as a big-endian
+/// `u16`, the budget id, the raw attempt id.
+pub fn budget_reservation_key(budget_id: &str, attempt_id: [u8; 16]) -> Pin {
+    crate::dreamer_runner::budget_reservation_key_pin_for_test(budget_id, attempt(attempt_id))
+}
+
+/// `dreamer_runner::milestone::MilestoneCandidateKey`: the raw attempt id, `at` and `learned_at`
+/// as eight big-endian bytes each, the raw claim id.
+pub fn milestone_candidate_key(
+    attempt_id: [u8; 16],
+    at: u64,
+    learned_at: u64,
+    claim_id: EntityId,
+) -> Pin {
+    crate::dreamer_runner::milestone_candidate_key_pin_for_test(
+        attempt(attempt_id),
+        at,
+        learned_at,
+        claim_id,
+    )
+}
+
+/// `dreamer_tournament::evidence::TournamentEvidenceKey`: the run id with a big-endian `u16`
+/// length, the raw branch attempt id, the round as a big-endian `u16`, the verdict byte, the
+/// candidate ref with a big-endian `u16` length.
+pub fn tournament_evidence_key(
+    run_id: &str,
+    branch_attempt: [u8; 16],
+    round: u16,
+    verdict: DreamerTournamentBranchVerdict,
+    candidate_ref: &str,
+) -> Pin {
+    crate::dreamer_tournament::tournament_evidence_key_pin_for_test(
+        run_id,
+        attempt(branch_attempt),
+        round,
+        verdict,
+        candidate_ref,
+    )
+}
+
+/// `gate::proposal_observation::ProposalKey`: the raw actor id, `:`, the proposal ref.
+pub fn proposal_key(actor: EntityId, proposal_ref: &str) -> Pin {
+    crate::gate::proposal_observation::proposal_key_pin_for_test(actor, proposal_ref)
+}
+
+/// `gate::proposal_observation::HistoryKey`: the raw actor id, `:`, the count as eight
+/// big-endian bytes.
+pub fn history_key(actor: EntityId, count: u64) -> Pin {
+    crate::gate::proposal_observation::history_key_pin_for_test(actor, count)
+}
+
+fn attempt(bytes: [u8; 16]) -> AttemptId {
+    AttemptId::from_bytes(&bytes).expect("an attempt id is any 16 bytes")
 }

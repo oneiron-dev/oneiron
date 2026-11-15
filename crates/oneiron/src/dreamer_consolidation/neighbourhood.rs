@@ -126,6 +126,15 @@ impl SideKey for ListingPin {
     }
 }
 
+/// One [`ListingPin`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn listing_pin_key_pin_for_test(
+    attempt: AttemptId,
+    note: Option<EntityId>,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ListingPin { attempt, note })
+}
+
 /// The whole listing one branch shows its extraction model, in pages, and
 /// the heads it may hold as priors.
 #[derive(Debug, Clone, Default, PartialEq)]

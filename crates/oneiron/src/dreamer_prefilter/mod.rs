@@ -79,3 +79,6 @@ use crate::receipt::{
 };
 #[cfg(test)]
 use crate::registry::ENTITY_TYPE_TURN;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::supersession::member_key_pin_for_test;

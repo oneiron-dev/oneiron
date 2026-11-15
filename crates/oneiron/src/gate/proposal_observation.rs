@@ -36,6 +36,18 @@ impl SideKey for ProposalKey {
         })
     }
 }
+
+/// One [`ProposalKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn proposal_key_pin_for_test(
+    actor: EntityId,
+    proposal_ref: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ProposalKey {
+        actor,
+        proposal_ref: proposal_ref.to_owned(),
+    })
+}
 struct HistoryKey {
     actor: EntityId,
     count: u64,
@@ -52,6 +64,15 @@ impl SideKey for HistoryKey {
             count: u64::from_be_bytes(bytes[17..].try_into().ok()?),
         })
     }
+}
+
+/// One [`HistoryKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn history_key_pin_for_test(
+    actor: EntityId,
+    count: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&HistoryKey { actor, count })
 }
 
 pub use oneiron_store::proposal_observation_record::ProposalPolicySource;

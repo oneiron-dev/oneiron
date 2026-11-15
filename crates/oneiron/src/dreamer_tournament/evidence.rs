@@ -66,6 +66,24 @@ impl SideKey for TournamentEvidenceKey {
     }
 }
 
+/// One [`TournamentEvidenceKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn tournament_evidence_key_pin_for_test(
+    run_id: &str,
+    branch_attempt: AttemptId,
+    round: u16,
+    verdict: DreamerTournamentBranchVerdict,
+    candidate_ref: &str,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&TournamentEvidenceKey {
+        run_id: run_id.to_owned(),
+        branch_attempt,
+        round,
+        verdict,
+        candidate_ref: candidate_ref.to_owned(),
+    })
+}
+
 const EVIDENCE: SideTable<TournamentEvidenceKey, DreamerTournamentBranchEvidence, Named> =
     SideTable::new(&side_table::DREAMER_TOURNAMENT_EVIDENCE);
 

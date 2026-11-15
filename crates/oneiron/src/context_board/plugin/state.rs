@@ -68,6 +68,20 @@ impl SideKey for BlockKey {
     }
 }
 
+/// One [`BlockKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn block_key_pin_for_test(
+    actor: EntityId,
+    section_id: &str,
+    block_ref: [u8; 16],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&BlockKey {
+        actor,
+        section_id: SectionId(section_id.to_owned()),
+        block_ref,
+    })
+}
+
 /// The implemented durable block kinds: plugin board state, not the session pad.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

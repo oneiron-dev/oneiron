@@ -265,3 +265,8 @@ pub(crate) fn retained_alternatives_entry_for_test(
 ) -> crate::Result<(rmpv::Value, rmpv::Value)> {
     retained_conflict::alternatives_entry(members, attempt)
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    gap::branch_gap_key_pin_for_test, neighbourhood::listing_pin_key_pin_for_test,
+};

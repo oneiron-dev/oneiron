@@ -93,6 +93,18 @@ impl SideKey for BudgetReservationKey {
     }
 }
 
+/// One [`BudgetReservationKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn budget_reservation_key_pin_for_test(
+    budget_id: &str,
+    attempt_id: AttemptId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&BudgetReservationKey {
+        budget_id: budget_id.to_owned(),
+        attempt_id,
+    })
+}
+
 struct DreamerKindAdmissionResult {
     outcome: DreamerAdmissionOutcome,
     budget_exhausted_candidate: Option<AttemptId>,

@@ -49,6 +49,18 @@ impl SideKey for MemberKey {
     }
 }
 
+/// One [`MemberKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn member_key_pin_for_test(
+    attempt_kind: &str,
+    turn: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&MemberKey {
+        attempt_kind: attempt_kind.to_owned(),
+        turn,
+    })
+}
+
 pub(super) fn round_hash(scope: DreamerConsolidationScope, turns: &[WorkingSetTurn]) -> [u8; 32] {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"oneiron:dreamer-prefilter-round:v1");

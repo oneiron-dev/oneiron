@@ -80,6 +80,22 @@ impl SideKey for MilestoneCandidateKey {
     }
 }
 
+/// One [`MilestoneCandidateKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn milestone_candidate_key_pin_for_test(
+    attempt_id: AttemptId,
+    at: u64,
+    learned_at: u64,
+    claim_id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&MilestoneCandidateKey {
+        attempt_id,
+        at,
+        learned_at,
+        claim_id,
+    })
+}
+
 impl From<&DreamerDurableMilestone> for MilestoneCandidateKey {
     fn from(milestone: &DreamerDurableMilestone) -> Self {
         Self {

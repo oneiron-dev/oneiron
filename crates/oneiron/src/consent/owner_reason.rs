@@ -109,6 +109,18 @@ impl SideKey for RuleKey {
     }
 }
 
+/// One [`RuleKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn rule_key_pin_for_test(
+    grant_ref: &str,
+    decision_id: [u8; 16],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&RuleKey {
+        grant_ref: grant_ref.to_owned(),
+        decision_id,
+    })
+}
+
 /// A rule row is refused unless its bounds hold and it names its own key.
 fn check(key: &RuleKey, row: &RuleRow) -> Result<()> {
     if row.version != 1

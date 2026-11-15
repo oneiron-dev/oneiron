@@ -195,3 +195,6 @@ pub(crate) fn read_key_for_pack_in_txn(
 ) -> crate::Result<Option<ConnectorKeyRecord>> {
     txn::read_connector_key_in_txn(&vault.store, txn, id)
 }
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::txn::connector_index_key_pin_for_test;

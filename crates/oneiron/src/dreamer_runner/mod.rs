@@ -168,3 +168,8 @@ pub(crate) use self::maintenance::digest::dreamer_proactivity_presentation_accep
 pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
 pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;
 pub(crate) use self::store::dreamer_parked_accepts_masked;
+
+#[cfg(oneiron_test_support)]
+pub(crate) use self::{
+    admission::budget_reservation_key_pin_for_test, milestone::milestone_candidate_key_pin_for_test,
+};

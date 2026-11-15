@@ -1,7 +1,7 @@
-//! UC-06 K-proofs of PRs 2 and 3: the side-table keys those PRs derive spell the same bytes and
-//! read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a vault
-//! already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
-//! question, step and document keys.
+//! UC-06 K-proofs of PRs 2, 3 and 4: the side-table keys those PRs derive spell the same bytes
+//! and read the same inputs as their hand-written impls (M-1 STORED-CHANGE-RULE = A: a key a
+//! vault already holds keeps its meaning). PR 2 derives nine roster and origin keys, PR 3 five
+//! question, step and document keys, PR 4 seventeen keys of the library's modules `a` to `g`.
 //!
 //! Each test builds one table: for every fixture key, the bytes it spells, and the verdict
 //! (refused, or the bytes of the key read back) on those bytes and on malformed copies of them
@@ -9,9 +9,9 @@
 //! case, a `+` in the first, last and hex-tail places, the separator swapped, a byte that is not
 //! UTF-8), plus some raw inputs per key (a reserved id, a missing or doubled separator, an empty
 //! key). A table's sha256 is the one a model of the hand-written decoders gives
-//! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py` and
-//! `pin_table_model_pr3.py`), and each run prints the table so a base run and a head run can be
-//! compared line by line.
+//! (`lanes/kimi/OPUS-UC06-SIDEKEYS/check/pins/pin_table_model_pr2.py`, `pin_table_model_pr3.py`
+//! and `pin_table_model_pr4.py`), and each run prints the table so a base run and a head run can
+//! be compared line by line. A decoder that panics reads as `panic`.
 //!
 //! `ProjectRevisionHash` is public; the other keys are crate-private and are reached through
 //! `test_doors::side_key_pins`. Needs the doors:
@@ -22,11 +22,16 @@
 use std::fmt::Write as _;
 
 use oneiron::EntityId;
+use oneiron::artifact_hosting::ArtifactPointerChannel;
+use oneiron::dreamer_tournament::DreamerTournamentBranchVerdict;
 use oneiron::test_doors::side_key_pins::{
-    Pin, ask_history_key, document_slot, document_update_key_of_generation,
-    document_update_key_of_sequence, fact_key, lfs_ref_key, member_intent_key, provenance_ref_key,
+    Pin, artifact_pointer_row_key, ask_history_key, block_key, branch_gap_key,
+    budget_reservation_key, connector_index_key, critique_artifact_key, document_slot,
+    document_update_key_of_generation, document_update_key_of_sequence, epoch_scope, fact_key,
+    hash_index_key, history_key, lfs_ref_key, listing_pin, member_intent_key, member_key,
+    milestone_candidate_key, pending_tombstone_key, proposal_key, provenance_ref_key,
     receive_pack_intent_key, receive_pack_progress_key, repo_revision_key, roster_member_key,
-    step_index_claim_key, step_index_key,
+    rule_key, step_index_claim_key, step_index_key, text_index_key, tournament_evidence_key,
 };
 use oneiron_verb_wire::workspace_roster::ProjectRevisionHash;
 use sha2::{Digest, Sha256};
@@ -35,6 +40,8 @@ const ROSTER_ORIGIN_TABLE_SHA256: &str =
     "0a89c3d563672feba0da1737e18176ecda7557e1a1d154cf3a81860cf206d821";
 const QUESTION_STEP_DOCUMENT_TABLE_SHA256: &str =
     "881290dbcb9d8eddaa4f2327a34bce50e899abbda1135d7b745fbab584855bcf";
+const LIB_KEYS_A_TO_G_TABLE_SHA256: &str =
+    "33d4e969349931b2ad6448a11f5ad73f76802a15d29dffe8160c142146c97bcb";
 
 const ID_A: &str = "0123456789abcdef0123456789abcdef";
 const ID_B: &str = "fedcba9876543210fedcba9876543210";
@@ -117,7 +124,10 @@ fn mutations(bytes: &[u8]) -> Vec<(&'static str, Vec<u8>)> {
 }
 
 fn verdict(read: fn(&[u8]) -> Option<Vec<u8>>, input: &[u8]) -> String {
-    read(input).map_or_else(|| "none".to_owned(), |key| format!("some {}", hex(&key)))
+    match std::panic::catch_unwind(|| read(input)) {
+        Ok(read) => read.map_or_else(|| "none".to_owned(), |key| format!("some {}", hex(&key))),
+        Err(_) => "panic".to_owned(),
+    }
 }
 
 fn pin(table: &mut String, name: &str, fixtures: Vec<(&str, Pin)>, raw: &[(&str, Vec<u8>)]) {
@@ -465,4 +475,378 @@ fn question_step_and_document_keys_spell_and_read_as_the_hand_impls() {
         &table,
         QUESTION_STEP_DOCUMENT_TABLE_SHA256,
     );
+}
+
+fn u16_be(value: u16) -> [u8; 2] {
+    value.to_be_bytes()
+}
+
+fn u64_be(value: u64) -> [u8; 8] {
+    value.to_be_bytes()
+}
+
+#[test]
+fn lib_keys_a_to_g_spell_and_read_as_the_hand_impls() {
+    let hash = pattern_hash();
+    let a = *id_a().as_bytes();
+    let b = *id_b().as_bytes();
+    let empty: (&str, Vec<u8>) = ("empty", Vec::new());
+    let mut table = String::new();
+
+    pin(
+        &mut table,
+        "ArtifactPointerRowKey",
+        vec![
+            (
+                "published",
+                artifact_pointer_row_key(ArtifactPointerChannel::Published, "artifact-1"),
+            ),
+            (
+                "preview_empty",
+                artifact_pointer_row_key(ArtifactPointerChannel::Preview, ""),
+            ),
+            (
+                "separators",
+                artifact_pointer_row_key(ArtifactPointerChannel::Published, "a:b\0c"),
+            ),
+            (
+                "multibyte",
+                artifact_pointer_row_key(ArtifactPointerChannel::Preview, "\u{e9}"),
+            ),
+        ],
+        &[
+            ("channel_two", joined(&[&[2], &u16_be(1), b"a"])),
+            ("channel_ff", joined(&[&[0xff], &u16_be(0)])),
+            ("channel_only", vec![0]),
+            ("short_length", vec![0, 0]),
+            ("length_over", joined(&[&[0], &u16_be(2), b"a"])),
+            ("length_under", joined(&[&[0], &u16_be(0), b"a"])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "TextIndexKey",
+        vec![
+            ("repo_ref", text_index_key("github.com/a/b", id_a())),
+            ("empty_text", text_index_key("", id_b())),
+            ("nul_in_text", text_index_key("a\0b", id_a())),
+            ("id_with_nul", text_index_key("\u{e9}", id(ID_NUL))),
+        ],
+        &[
+            ("nil_id", joined(&[b"x\0", &[0; 16]])),
+            ("no_sep", joined(&[b"x", &a])),
+            ("id_only", a.to_vec()),
+            ("bad_utf8_text", joined(&[&[0xff, 0], &a])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "HashIndexKey",
+        vec![
+            ("pattern", hash_index_key(hash, id_a())),
+            ("zero_hash", hash_index_key([0; 32], id_b())),
+            ("colon_hash", hash_index_key([b':'; 32], id(ID_COLON))),
+            ("id_with_nul", hash_index_key([0xff; 32], id(ID_NUL))),
+        ],
+        &[
+            ("nil_id", joined(&[&hash, &[0], &[0; 16]])),
+            ("short_hash", joined(&[&hash[..31], &[0], &a])),
+            ("long_hash", joined(&[&hash, &[7, 0], &a])),
+            ("sep_one", joined(&[&hash, &[1], &a])),
+            ("id_only", a.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "EpochScope",
+        vec![
+            ("session", epoch_scope(id_a(), None)),
+            ("conversation", epoch_scope(id_a(), Some(id_b()))),
+            ("nul_colon", epoch_scope(id(ID_NUL), Some(id(ID_COLON)))),
+        ],
+        &[
+            ("nil_session", vec![0; 16]),
+            ("nil_conversation", joined(&[&a, &[0; 16]])),
+            ("conversation_short", joined(&[&a, &b[..15]])),
+            ("conversation_long", joined(&[&a, &b, &[0]])),
+            ("session_short", a[..15].to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "ConnectorIndexKey",
+        vec![
+            ("connector", connector_index_key("github", id_a())),
+            ("empty_connector", connector_index_key("", id_b())),
+            (
+                "nul_in_connector",
+                connector_index_key("a\0b", id(ID_COLON)),
+            ),
+        ],
+        &[
+            ("nil_id", joined(&[b"github\0", &[0; 16]])),
+            ("no_sep", joined(&[b"github", &a])),
+            ("id_only", a.to_vec()),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "RuleKey",
+        vec![
+            ("grant", rule_key("grant-ref-1", [0x11; 16])),
+            ("empty_ref", rule_key("", [0; 16])),
+            ("colon_ref", rule_key("a:b", [b':'; 16])),
+        ],
+        &[
+            ("no_sep", joined(&[b"g", &[0x11; 16]])),
+            ("decision_only", vec![0x11; 16]),
+            ("bad_utf8_ref", joined(&[&[0xff], b":", &[0x11; 16]])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "BlockKey",
+        vec![
+            ("section", block_key(id_a(), "notes", [1; 16])),
+            ("empty_section", block_key(id_b(), "", [0; 16])),
+            ("separators", block_key(id(ID_COLON), "a\0b:c", [b':'; 16])),
+        ],
+        &[
+            ("nil_actor", joined(&[&[0; 16], &u64_be(0), &[1; 16]])),
+            ("length_over", joined(&[&a, &u64_be(6), b"notes", &[1; 16]])),
+            (
+                "length_under",
+                joined(&[&a, &u64_be(4), b"notes", &[1; 16]]),
+            ),
+            ("length_max", joined(&[&a, &u64_be(u64::MAX), &[1; 16]])),
+            ("no_block", joined(&[&a, &u64_be(0)])),
+            ("short_length", joined(&[&a, &[0; 7]])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "CritiqueArtifactKey",
+        vec![
+            ("artifact", critique_artifact_key([0; 16], "critique-1")),
+            ("empty_id", critique_artifact_key([0xff; 16], "")),
+            ("separators", critique_artifact_key([b':'; 16], "x\0y:z")),
+        ],
+        &[
+            ("length_over", joined(&[&[0; 16], &u16_be(2), b"a"])),
+            ("length_under", joined(&[&[0; 16], &u16_be(0), b"a"])),
+            ("attempt_only", vec![0; 16]),
+            ("short_attempt", vec![0; 15]),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "PendingTombstoneKey",
+        vec![
+            ("window", pending_tombstone_key("w1", id_a())),
+            ("empty_window", pending_tombstone_key("", id_b())),
+            ("colon_window", pending_tombstone_key("a:b", id(ID_COLON))),
+        ],
+        &[
+            (
+                "upper_id",
+                joined(&[b"w:", ID_A.to_ascii_uppercase().as_bytes()]),
+            ),
+            ("nil_id", joined(&[b"w:", "00".repeat(16).as_bytes()])),
+            ("plus_id", joined(&[b"w:+", &ID_A.as_bytes()[1..]])),
+            ("no_sep", joined(&[b"w", ID_A.as_bytes()])),
+            ("id_only", ID_A.as_bytes().to_vec()),
+            ("raw_id", joined(&[b"w:", &a, &a])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "BranchGapKey",
+        vec![
+            ("scope", branch_gap_key("rel:proj", hash)),
+            ("empty_scope", branch_gap_key("", [0; 32])),
+            ("multibyte", branch_gap_key("\u{e9}\0", [0xff; 32])),
+        ],
+        &[
+            ("short", vec![0; 31]),
+            ("bad_utf8_scope", joined(&[&[0xff], &[0; 32]])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "ListingPin",
+        vec![
+            ("attempt", listing_pin([0; 16], None)),
+            ("note", listing_pin([0xff; 16], Some(id_a()))),
+            ("colon_nul", listing_pin([b':'; 16], Some(id(ID_NUL)))),
+        ],
+        &[
+            ("nil_note", joined(&[&[0; 16], &[0; 16]])),
+            ("note_short", joined(&[&[0; 16], &a[..15]])),
+            ("note_long", joined(&[&[0; 16], &a, &[0]])),
+            ("attempt_short", vec![0; 15]),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "MemberKey",
+        vec![
+            ("kind", member_key("dreamer_consolidation", id_a())),
+            ("empty_kind", member_key("", id_b())),
+            ("colon_kind", member_key("a:b", id(ID_COLON))),
+        ],
+        &[
+            ("no_sep", joined(&[b"k", &a])),
+            ("nil_turn", joined(&[b"k:", &[0; 16]])),
+            ("turn_only", a.to_vec()),
+            ("bad_utf8_kind", joined(&[&[0xff], b":", &a])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "BudgetReservationKey",
+        vec![
+            ("budget", budget_reservation_key("budget-1", [1; 16])),
+            ("empty_budget", budget_reservation_key("", [0; 16])),
+            ("separators", budget_reservation_key("a\0:b", [0xff; 16])),
+        ],
+        &[
+            ("length_over", joined(&[&u16_be(2), b"b", &[1; 16]])),
+            ("length_under", joined(&[&u16_be(0), b"b", &[1; 16]])),
+            ("no_attempt", joined(&[&u16_be(1), b"b"])),
+            ("one_byte", vec![0]),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "MilestoneCandidateKey",
+        vec![
+            ("zero", milestone_candidate_key([0; 16], 0, 0, id_a())),
+            (
+                "max",
+                milestone_candidate_key([0xff; 16], u64::MAX, u64::MAX, id_b()),
+            ),
+            (
+                "colons",
+                milestone_candidate_key([b':'; 16], 0x3a3a_3a3a_3a3a_3a3a, 1, id(ID_NUL)),
+            ),
+        ],
+        &[
+            ("nil_claim", vec![0; 48]),
+            ("short", vec![0; 47]),
+            empty.clone(),
+        ],
+    );
+    let evidence_head = joined(&[&u16_be(1), b"r", &[1; 16], &u16_be(0)]);
+    pin(
+        &mut table,
+        "TournamentEvidenceKey",
+        vec![
+            (
+                "survivor",
+                tournament_evidence_key(
+                    "run-1",
+                    [1; 16],
+                    0,
+                    DreamerTournamentBranchVerdict::Survivor,
+                    "cand-1",
+                ),
+            ),
+            (
+                "weaved_empty",
+                tournament_evidence_key(
+                    "",
+                    [0; 16],
+                    u16::MAX,
+                    DreamerTournamentBranchVerdict::Weaved,
+                    "",
+                ),
+            ),
+            (
+                "refined",
+                tournament_evidence_key(
+                    "r\0:",
+                    [0xff; 16],
+                    0x0102,
+                    DreamerTournamentBranchVerdict::Refined,
+                    "c:d",
+                ),
+            ),
+            (
+                "discarded",
+                tournament_evidence_key(
+                    "\u{e9}",
+                    [b':'; 16],
+                    7,
+                    DreamerTournamentBranchVerdict::Discarded,
+                    "x",
+                ),
+            ),
+        ],
+        &[
+            ("verdict_zero", joined(&[&evidence_head, &[0], &u16_be(0)])),
+            ("verdict_five", joined(&[&evidence_head, &[5], &u16_be(0)])),
+            (
+                "candidate_over",
+                joined(&[&evidence_head, &[1], &u16_be(2), b"c"]),
+            ),
+            (
+                "trailing",
+                joined(&[&evidence_head, &[1], &u16_be(0), b"x"]),
+            ),
+            ("no_candidate_length", joined(&[&evidence_head, &[1]])),
+            ("run_over", joined(&[&u16_be(40), b"r", &[1; 16]])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "ProposalKey",
+        vec![
+            ("proposal", proposal_key(id_a(), "proposal-1")),
+            ("empty_ref", proposal_key(id_b(), "")),
+            ("separators", proposal_key(id(ID_COLON), "a:b\0")),
+        ],
+        &[
+            ("nil_actor", joined(&[&[0; 16], b":p"])),
+            ("no_sep", joined(&[&a, b"p"])),
+            ("wrong_sep", joined(&[&a, b";p"])),
+            ("actor_only", a.to_vec()),
+            ("bad_utf8_ref", joined(&[&a, b":", &[0xff]])),
+            empty.clone(),
+        ],
+    );
+    pin(
+        &mut table,
+        "HistoryKey",
+        vec![
+            ("zero", history_key(id_a(), 0)),
+            ("max", history_key(id_b(), u64::MAX)),
+            ("colons", history_key(id(ID_COLON), 0x3a3a_3a3a_3a3a_3a3a)),
+        ],
+        &[
+            ("nil_actor", joined(&[&[0; 16], b":", &[0; 8]])),
+            ("no_sep", joined(&[&a, &[0; 9]])),
+            ("short_count", joined(&[&a, b":", &[0; 7]])),
+            ("actor_sep", joined(&[&a, b":"])),
+            ("actor_only", a.to_vec()),
+            ("nil_actor_only", vec![0; 16]),
+            ("short_actor", a[..15].to_vec()),
+            empty,
+        ],
+    );
+
+    assert_table("lib-keys-a-to-g", &table, LIB_KEYS_A_TO_G_TABLE_SHA256);
 }

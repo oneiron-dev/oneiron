@@ -50,6 +50,18 @@ impl SideKey for ConnectorIndexKey {
     }
 }
 
+/// One [`ConnectorIndexKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn connector_index_key_pin_for_test(
+    connector: &str,
+    id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ConnectorIndexKey {
+        connector: connector.to_owned(),
+        id,
+    })
+}
+
 /// vault_meta connector lookup index: normalized connector ++ `\0` ++ key id
 /// -> empty marker.
 pub(super) const CONNECTOR_INDEX: SideTable<ConnectorIndexKey, (), Raw> =
