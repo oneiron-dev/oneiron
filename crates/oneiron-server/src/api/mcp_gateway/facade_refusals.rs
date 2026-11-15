@@ -10,9 +10,11 @@ use super::tasks_response::{MCP_HOST_ACTION_REFUSED, MCP_OWNER_BINDING_REQUIRED,
 pub(crate) fn mcp_facade_error(mut error: oneiron::MemoryError) -> McpGatewayError {
     let reason_codes = std::mem::take(&mut error.reason_codes);
     let room_join_hold = error.room_join_hold.take();
+    let pending = error.pending.take();
     McpGatewayError {
         reason_codes,
         room_join_hold,
+        pending,
         ..mcp_facade_refusal(error)
     }
 }

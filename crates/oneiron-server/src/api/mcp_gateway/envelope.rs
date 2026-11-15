@@ -153,6 +153,8 @@ pub(crate) struct McpGatewayError {
     pub(super) legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
     /// The held room join, surfaced as `error.data.room_join_hold`.
     pub(super) room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    /// The pending check-in, surfaced as `error.data.pending`.
+    pub(super) pending: Option<Box<oneiron::memory::MemoryPending>>,
 }
 
 impl McpGatewayError {
@@ -177,6 +179,7 @@ impl McpGatewayError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         }
     }
 

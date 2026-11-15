@@ -124,6 +124,7 @@ fn refused_block() -> MemoryError {
         reason_codes: Vec::new(),
         legal_hold: None,
         room_join_hold: None,
+        pending: None,
     }
 }
 

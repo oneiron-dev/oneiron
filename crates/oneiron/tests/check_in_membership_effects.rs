@@ -46,7 +46,9 @@ use oneiron::error::ClaimError;
 use oneiron::federation::{
     FederationGrantRole as Role, InitialSharedMember, MemberAskChange, MemberAskStatus,
 };
-use oneiron::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING};
+use oneiron::memory::{
+    CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING, MemoryPending,
+};
 use oneiron::registry::{ENTITY_TYPE_FEDERATION_GRANT, ENTITY_TYPE_ORG, ENTITY_TYPE_PERSON};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
@@ -340,6 +342,13 @@ fn a_deputys_remove_waits_for_the_owner_and_the_approved_recall_runs_once() {
             vec![format!("{CHECK_IN_PENDING_REASON_PREFIX}{first}")]
         ),
         "a repeat of the same remove names the same check-in: {refused:?}"
+    );
+    assert_eq!(
+        refused.pending,
+        Some(Box::new(MemoryPending::CheckIn {
+            check_in: first.clone(),
+        })),
+        "the wait names its check-in as a typed block: {refused:?}"
     );
     let early = org.as_person(org.deputy, || {
         org.vault.remove_shared_member_with_check_in(

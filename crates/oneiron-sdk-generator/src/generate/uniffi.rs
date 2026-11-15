@@ -284,10 +284,12 @@ pub(crate) const UNIFFI_LENS_ROOTS: &[(&str, &str)] = &[
     ("oneiron_remote::CloseLensFrameReply", "CloseLensFrameReply"),
 ];
 
-/// FIX 7968, 9891: roots that reach no row.
+/// FIX 7968, 9891: roots that reach no row. `MemoryPending` is the typed block `OneironError::Failure` carries as
+/// `pending_block` (P38-PENDING-BLOCK-REACH).
 pub(crate) const UNIFFI_STREAM_ROOTS: &[&str] = &[
     "crate::lens::GeneratedUiSegment",
     "crate::lens::GeneratedUiCatalogDescriptor",
+    "crate::memory::MemoryPending",
 ];
 
 /// The files whose public types a generated type may not be named.

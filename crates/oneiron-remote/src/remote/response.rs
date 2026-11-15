@@ -42,6 +42,8 @@ struct ApiErrorBody {
     legal_hold: Option<Box<oneiron::error::LegalHoldNotice>>,
     #[serde(default)]
     room_join_hold: Option<Box<oneiron::workspace_roster::RoomJoinHold>>,
+    #[serde(default)]
+    pending: Option<Box<oneiron::memory::MemoryPending>>,
 }
 
 /// Serializes a request body and enforces the 64 MiB request ceiling.
@@ -198,6 +200,7 @@ fn error_of_envelope(envelope: ApiErrorEnvelope) -> Option<MemoryError> {
         reason_codes: envelope.error.reason_codes,
         legal_hold: envelope.error.legal_hold,
         room_join_hold: envelope.error.room_join_hold,
+        pending: envelope.error.pending,
     })
 }
 

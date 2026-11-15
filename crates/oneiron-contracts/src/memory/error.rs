@@ -248,6 +248,24 @@ pub struct MemoryError {
     /// The held room join's original intent and every consent it still needs.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_join_hold: Option<Box<crate::room_join::RoomJoinHold>>,
+    /// What a `CHECK_IN_PENDING` refusal waits on, typed (Engine ruling
+    /// P38-PENDING-BLOCK-REACH = A): the check-in its one reason code names,
+    /// so no client parses the code. Absent on every other refusal. Boxed for
+    /// the same reason `gate_denial` is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending: Option<Box<MemoryPending>>,
+}
+
+/// What a pending refusal waits on. The tag leaves room for later kinds.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum MemoryPending {
+    /// The act waits on this pending check-in (ARCH-0082 #composing): once a
+    /// holder approves it, the same call with `check_in_ref` set to it runs.
+    CheckIn {
+        /// The pending check-in's id, 32 hex.
+        check_in: String,
+    },
 }
 
 /// A wrong-root refusal's correction: the name the caller wrote, the
@@ -295,6 +313,7 @@ impl MemoryError {
             reason_codes: Vec::new(),
             legal_hold: None,
             room_join_hold: None,
+            pending: None,
         }
     }
 

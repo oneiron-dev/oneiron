@@ -8,7 +8,7 @@
  * the engine's own vocabulary, including codes newer than this package.
  */
 
-import type { LegalHoldNotice, RoomJoinHold } from "./facade-types.js"
+import type { LegalHoldNotice, MemoryPending, RoomJoinHold } from "./facade-types.js"
 
 /** The serialized shape the native boundary hands back. */
 type NativeErrorPayload = {
@@ -24,6 +24,7 @@ type NativeErrorPayload = {
   reason_codes?: unknown
   legal_hold?: unknown
   room_join_hold?: unknown
+  pending?: unknown
 }
 
 /** A `WRONG_ROOT` refusal's correction: call `replacement`, never `attempted`. */
@@ -88,6 +89,9 @@ export class OneironError extends Error {
   /** The room-join hold behind this refusal, when its producer supplied one. */
   readonly roomJoinHold?: RoomJoinHold
 
+  /** What a pending refusal waits on, typed, when it waits on one. */
+  readonly pending?: MemoryPending
+
   constructor(
     code: string,
     message: string,
@@ -98,6 +102,7 @@ export class OneironError extends Error {
     reasonCodes?: readonly string[],
     legalHold?: LegalHoldNotice,
     roomJoinHold?: RoomJoinHold,
+    pending?: MemoryPending,
   ) {
     super(message)
     this.name = "OneironError"
@@ -110,6 +115,7 @@ export class OneironError extends Error {
     if (reasonCodes !== undefined) this.reasonCodes = Object.freeze([...reasonCodes])
     if (legalHold) this.legalHold = Object.freeze({...legalHold})
     if (roomJoinHold) this.roomJoinHold = Object.freeze({...roomJoinHold})
+    if (pending) this.pending = Object.freeze({...pending})
   }
 }
 
@@ -160,6 +166,15 @@ function roomJoinHoldNotice(value: unknown): RoomJoinHold | undefined {
     typeof hold.intent_key === "string" &&
     Array.isArray(hold.needs)
     ? (value as RoomJoinHold)
+    : undefined
+}
+
+/** Narrows the optional block to the engine's pending shape. */
+function pendingBlock(value: unknown): MemoryPending | undefined {
+  if (typeof value !== "object" || value === null) return undefined
+  const block = value as Record<string, unknown>
+  return typeof block.kind === "string" && typeof block.check_in === "string"
+    ? (value as MemoryPending)
     : undefined
 }
 
@@ -220,6 +235,7 @@ export function translateNativeError(error: unknown): OneironError {
       reasonCodes(parsed),
       legalHoldNotice(parsed.legal_hold),
       roomJoinHoldNotice(parsed.room_join_hold),
+      pendingBlock(parsed.pending),
     )
   }
 
