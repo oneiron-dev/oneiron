@@ -14,7 +14,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 
 | crate | purpose | source files | test files | over 800-line bar |
 |---|---|---|---|---|
-| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7592 | 1317 | 270 |
+| [oneiron](codemap/oneiron.md) | Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces | 7592 | 1319 | 270 |
 | [oneiron-agent-runtime](codemap/oneiron-agent-runtime.md) | `oneiron-agent-runtime`: the sandbox backends above the `oneiron` core crate (core split slice 5b.1) | 22 | 10 | 1 |
 | [oneiron-android](codemap/oneiron-android.md) | Minimal JNI/Kotlin ownership adapter | 4 | 0 | 0 |
 | [oneiron-authority](codemap/oneiron-authority.md) | Authority vocabulary of the oneiron engine: the AUTHORITY_LOG wire layer, the federation scope codecs, the… | 68 | 1 | 0 |
@@ -38,7 +38,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | [oneiron-image-comfyui](codemap/oneiron-image-comfyui.md) | Self-hosted ComfyUI image adapter | 1 | 0 | 0 |
 | [oneiron-image-openrouter](codemap/oneiron-image-openrouter.md) | OpenRouter Image API adapter | 3 | 0 | 0 |
 | [oneiron-keystore](codemap/oneiron-keystore.md) | This-device-only key slots for one install | 7 | 0 | 0 |
-| [oneiron-lens-wire](codemap/oneiron-lens-wire.md) | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… | 24 | 0 | 0 |
+| [oneiron-lens-wire](codemap/oneiron-lens-wire.md) | The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI… | 24 | 1 | 0 |
 | [oneiron-linear](codemap/oneiron-linear.md) | Host-side Linear GraphQL adapter for the engine's TASK ↔ issue mirror | 8 | 1 | 0 |
 | [oneiron-linkedin-policy](codemap/oneiron-linkedin-policy.md) | LinkedIn seat policy values consumed by outbound admission | 2 | 0 | 0 |
 | [oneiron-llm-anthropic](codemap/oneiron-llm-anthropic.md) | Anthropic Messages wire adapter for Oneiron's [`oneiron::LlmBackend`] seam | 7 | 1 | 0 |
@@ -93,7 +93,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `attempt_queue` | dir | 85 | L | yes | Generic LMDB-backed background attempt queue |
 | `authority` | dir | 282 | L | yes | AUTHORITY_LOG record substrate |
 | `autoreason_campaign` | file+dir | 25 | L | — | Engine-side AR-3 campaign reports and read-only experiment selection |
-| `batch` | dir | 192 | XL | yes | — |
+| `batch` | dir | 193 | XL | yes | — |
 | `blob_artifact` | dir | 91 | L | yes | ARTL-1 (OF-368 D1): versioned blob artifact store for foreign binary (office) files |
 | `bm25` | dir | 10 | m | — | Analyzer-driven fielded inverted index + BM25F scorer |
 | `board_verb` | file | 1 | s | — | — |

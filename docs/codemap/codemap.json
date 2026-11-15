@@ -9179,6 +9179,14 @@
      "surface": {}
     },
     {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "src/batch/tests/k4_open_segment.rs",
+     "purpose": "The K4 taint guard over an open room segment",
+     "surface": {}
+    },
+    {
      "bucket": "m",
      "kind": "test",
      "notable": [],
@@ -58118,7 +58126,7 @@
      "path": "src/off_record/lifecycle/registry.rs",
      "purpose": "In-process session registry, entry state, publish/lookup/membership doors and ref vetting",
      "surface": {
-      "crate-vis": 29
+      "crate-vis": 31
      }
     },
     {
@@ -101376,6 +101384,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/lens_result_set_selection.rs",
+     "purpose": "A generated card's result-set action reaches only the rows its clicker ticked (GENUI-SELECTION-EVENT; Engine…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -103314,7 +103330,7 @@
      "purpose": "Engine-side AR-3 campaign reports and read-only experiment selection"
     },
     "batch": {
-     "files": 192,
+     "files": 193,
      "impl_vault": true,
      "largest_src_bucket": "XL",
      "layout": "dir",
@@ -104899,7 +104915,7 @@
    "over_bar": 270,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7592,
-   "test_files": 1317
+   "test_files": 1319
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -118796,6 +118812,14 @@
       "crate-vis": 1,
       "mod": 1
      }
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/genui_interpolation_state_key.rs",
+     "purpose": "GENUI-INTERP-KEY: in a generated card, a text block's one escaped interpolation reads `$state`",
+     "surface": {}
     }
    ],
    "modules": {
@@ -118810,7 +118834,7 @@
    "over_bar": 0,
    "purpose": "The lens wire vocabulary of the oneiron engine: the closed generated-lens atom kit, the Generated-UI…",
    "source_files": 24,
-   "test_files": 0
+   "test_files": 1
   },
   "oneiron-linear": {
    "files": [
@@ -161488,7 +161512,7 @@
      "purpose": "Row staging, preflight, budget checks, read probes",
      "surface": {
       "crate-vis": 2,
-      "fn": 14
+      "fn": 16
      }
     },
     {
@@ -161500,7 +161524,7 @@
      "path": "src/session_overlay/overlay/segment.rs",
      "purpose": "Txn segment install, leases, commit/apply guards",
      "surface": {
-      "crate-vis": 3,
+      "crate-vis": 4,
       "fn": 2,
       "re-export": 1,
       "struct": 1

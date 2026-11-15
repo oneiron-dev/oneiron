@@ -824,6 +824,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/tests/authority_log.rs` | test | L | — | — | Authority log, first-seen fold, eviction and identity topology |
 | `src/batch/tests/facet_taint_session.rs` | test | m | — | — | Facet-of validation, taint guard, session apply and live-overlay exclusion |
 | `src/batch/tests/habit_streak.rs` | test | m | — | — | Habit check-in rules and derived streak counters |
+| `src/batch/tests/k4_open_segment.rs` | test | s | — | — | The K4 taint guard over an open room segment |
 | `src/batch/tests/lexical_hints_lifecycle.rs` | test | m | — | — | Lexical-hint side-record write/read/replace/delete lifecycle |
 | `src/batch/tests/lexical_hints_policy.rs` | test | m | — | — | Lexical-hint policy gates, replication deferral and BM25 indexing |
 | `src/batch/tests/mod.rs` | test | m | — | — | White-box tests for the batch apply pipeline, split by topic across child files |
@@ -4891,7 +4892,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/off_record/lifecycle/overlay_writes.rs` | src | m | 11 crate-vis | — | Session-bound NOTE and claim writes (DOOR-127; Engine ruling 10-18 on ARCH-0052 D1/D2): a row written… |
 | `src/off_record/lifecycle/participant.rs` | src | s | 6 crate-vis | — | A run's session handle, bound to the participant it acts as (Codex burn engine-prs-01) |
 | `src/off_record/lifecycle/promotion.rs` | src | m | 1 fn · 3 crate-vis | — | Promotion out of the room (ARCH-0052 D4): the one session-overlay-to-base write, and the doors that save a… |
-| `src/off_record/lifecycle/registry.rs` | src | m | 29 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
+| `src/off_record/lifecycle/registry.rs` | src | m | 31 crate-vis | — | In-process session registry, entry state, publish/lookup/membership doors and ref vetting |
 | `src/off_record/lifecycle/retained.rs` | src | s | 1 fn · 1 re-export | — | A room stretch's memory, charged to its host's retained-memory line (SCAN C029, FIX 5991) |
 | `src/off_record/lifecycle/room.rs` | src | L | 15 fn · 1 type · 12 crate-vis | — | Participants in a room (ARCH-0052 D5, the notice model, owner ruling 2026-10-10) |
 | `src/off_record/lifecycle/room/export_roots.rs` | src | s | 2 crate-vis | — | The threads an off-record room's copy carries, for its export's audit and notices (FIX 6427, 6681), split… |
@@ -8689,6 +8690,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `tests/learning_claim_value.rs` | test | s | — | — | FIX LEARNING-CELL-POSITIONAL-DECODE: a learning claim value is written with named fields, so a cell with… |
 | `tests/legacy_custody_history_export.rs` | test | s | — | — | A dev vault's window can hold, in its ordinary history only, a custody row from before the seal: a delete… |
 | `tests/lens_backing_refs_use_engine_short_ids.rs` | test | s | — | — | A framed lens names each row it binds by the row's engine short id (FIX WEAVE-LENS-BACKING-REF-FULL-HEX) |
+| `tests/lens_result_set_selection.rs` | test | m | — | — | A generated card's result-set action reaches only the rows its clicker ticked (GENUI-SELECTION-EVENT; Engine… |
 | `tests/lfs_build_required_pointer.rs` | test | s | — | — | Engine CODECUSTODY-LFS Q2 = A (NO-DOOR REPO-LFS-PATH-POLICY, tests/e2e/code-custody.test.ts… |
 | `tests/linked_self_verb_surface.rs` | test | s | — | — | The verb table is closed over the linked `self.*` operations (F2.1): each operation a code-mode guest can… |
 | `tests/live_run_claim_put.rs` | test | s | — | — | Review 6881 P1 (#6881, FIX 3983): a caller's live-run claim put asking Auto reaches the host's auto checker… |
