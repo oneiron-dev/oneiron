@@ -1,7 +1,8 @@
 //! A confirmed repair seed's case releases to a claimed measurement as a
 //! `repair_response` task: the recompiled task's input with no answer text,
-//! the case's anchoring label, and the seed's task hash. Uses only the vault
-//! doors that predate the repair-seed host job.
+//! no label (fixed code grades it; its label holds the outcome's digest),
+//! and the seed's task hash. Uses only the vault doors that predate the
+//! repair-seed host job.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test eval_repair_case_release`
@@ -299,12 +300,25 @@ fn a_confirmed_repair_case_releases_as_repair_response() -> TestResult {
     let input = released.expect("a confirmed repair case releases");
     assert_eq!(input.kind, "repair_response");
     assert_eq!(input.task_hash, seed.task_hash);
-    assert_eq!(input.labels.len(), 1);
-    assert_eq!(input.labels[0].kind, EvalLabelKind::WorldOutcome);
+    // Fixed code grades a Repair case, so the host is handed no label: the
+    // case's label holds the outcome's digest, which names a short answer.
+    assert!(
+        input.labels.is_empty(),
+        "a released Repair case holds no label: {:?}",
+        input.labels
+    );
+    let stored = oneiron::test_doors::eval_repair_seed::eval_case(&fixture.vault, &case)?
+        .expect("the confirmed seed's case is stored");
+    assert_eq!(stored.labels.len(), 1);
+    assert_eq!(stored.labels[0].kind, EvalLabelKind::WorldOutcome);
     let text = serde_json::to_string(&input.input)?;
     assert!(
         !text.contains(ANSWER),
         "the released input holds no answer: {text}"
+    );
+    assert!(
+        !text.contains(&stored.labels[0].value),
+        "the released input holds no outcome digest: {text}"
     );
     Ok(())
 }

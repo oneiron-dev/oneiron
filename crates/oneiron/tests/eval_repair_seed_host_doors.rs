@@ -1,7 +1,8 @@
 //! The repair seed's measuring host (census L1-20 PR D): a `Pending` seed
-//! queues one `coach.eval_repair_seed` job, its release holds the leg input
-//! and never the answer, the settle runs through the capture owner's gate,
-//! and a released Repair case grades exactly in fixed code.
+//! queues one `coach.eval_repair_seed` job and a replayed proposal none, its
+//! release holds the leg input and never the answer, the settle runs through
+//! the capture owner's gate and hands back only the seed's state, and a
+//! released Repair case grades exactly in fixed code.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron --all-features --test eval_repair_seed_host_doors`
@@ -11,7 +12,8 @@ use std::sync::Arc;
 
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::dreamer_runner::{
-    AdmitDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt, DreamerRunnerStore,
+    AdmitDreamerAttempt, CompleteDreamerAttempt, DreamerAdmissionOutcome, DreamerAdmittedAttempt,
+    DreamerRunnerStore,
 };
 use oneiron::ingest::{AgUiCustomMapping, AgUiFileImport, AgUiObservationKind};
 use oneiron::skill_optimize::{
@@ -374,7 +376,7 @@ fn a_pending_seed_queues_one_host_job() -> TestResult {
     let source = text_capture(&fixture)?;
     let seed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
     assert_eq!(seed.state, EvalRepairSeedState::Pending);
-    // A replay queues again under the same dedupe key: one job waits.
+    // A replay queues nothing: one job waits.
     let replayed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
     assert_eq!(replayed, seed);
     let key = queued_seed_key(&fixture)?;
@@ -470,6 +472,42 @@ fn the_host_release_settles_through_the_owner() -> TestResult {
         fixture.vault.eval_repair_seed_release(&key)?.is_some(),
         "a pending seed releases"
     );
+    let settled = fixture.vault.settle_eval_repair_seed_release(
+        &key,
+        &response("wrong answer"),
+        &response(ANSWER),
+        &legs(),
+        SETTLED_AT,
+    )?;
+    assert!(settled.is_some(), "the owner settles the seed");
+    let seed = fixture
+        .vault
+        .eval_repair_seed(&source)?
+        .expect("the seed stands");
+    assert!(
+        matches!(seed.state, EvalRepairSeedState::Confirmed { .. }),
+        "{:?}",
+        seed.state
+    );
+    assert!(
+        fixture.vault.eval_repair_seed_release(&key)?.is_none(),
+        "a settled seed releases nothing"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_host_settle_hands_back_no_answer_digest() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, ANSWER),
+    )
+    .map_err(|refusal| format!("refused: {refusal}"))?;
+    let key = queued_seed_key(&fixture)?;
     let settled = fixture
         .vault
         .settle_eval_repair_seed_release(
@@ -480,14 +518,39 @@ fn the_host_release_settles_through_the_owner() -> TestResult {
             SETTLED_AT,
         )?
         .expect("the owner settles the seed");
+    // The host gets back the seed's state alone: the adjudication's digest
+    // names a short answer, so it stays with the gate.
+    let shown = format!("{settled:?}");
     assert!(
-        matches!(settled.state, EvalRepairSeedState::Confirmed { .. }),
-        "{:?}",
-        settled.state
+        shown.contains("Confirmed"),
+        "the gate confirms the seed: {shown}"
     );
     assert!(
-        fixture.vault.eval_repair_seed_release(&key)?.is_none(),
-        "a settled seed releases nothing"
+        !shown.contains("answer_digest"),
+        "the settle hands back no answer digest: {shown}"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_replayed_proposal_queues_no_second_job() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    // The host's job ends without settling the seed (as when it cannot
+    // serve an arm): the seed stays Pending and its job is spent.
+    let attempt = admit_host_job(&fixture)?.expect("one host job is queued");
+    let _completed = DreamerRunnerStore::new(&fixture.vault).complete(CompleteDreamerAttempt {
+        id: attempt.status.attempt.id,
+        lease_owner: COACH_HOST.to_owned(),
+        attempt_count: attempt.status.attempt.attempt_count,
+        now: fixture.vault.now_recorded_at(),
+    })?;
+    let replayed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    assert_eq!(replayed.state, EvalRepairSeedState::Pending);
+    assert!(
+        admit_host_job(&fixture)?.is_none(),
+        "a replayed proposal queues no second job, so no replay pays for the legs again"
     );
     Ok(())
 }

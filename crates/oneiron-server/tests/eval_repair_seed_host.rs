@@ -1,7 +1,8 @@
 //! The measuring host's repair-seed job (census L1-20 PR D): a Pending seed's
 //! old and candidate arms answer the released task on the fake model, and the
 //! gate confirms the seed when the old answer fails and the candidate's passes,
-//! with the host's `eval_repair_seed:<key>:old|candidate` receipts; a seed whose
+//! with the host's `eval_repair_seed:<key>:old|candidate:<handle>` receipts,
+//! each naming the stored answer the gate graded by its content; a seed whose
 //! model this host does not serve stays Pending and the model sees no call; a
 //! measurement over a confirmed seed's Repair case scores exactly in fixed code,
 //! with no judge call.
@@ -416,17 +417,28 @@ fn measuring_host_settles_pending_repair_seed() {
         else {
             panic!("the gate confirms the seed: {:?}", seed.state);
         };
-        let old_key = old_receipt
+        let (old_key, old_handle) = old_receipt
             .strip_prefix("eval_repair_seed:")
             .expect("the old receipt names the seed")
-            .strip_suffix(":old")
+            .split_once(":old:")
             .expect("the old receipt names its leg");
-        let candidate_key = candidate_receipt
+        let (candidate_key, candidate_handle) = candidate_receipt
             .strip_prefix("eval_repair_seed:")
             .expect("the candidate receipt names the seed")
-            .strip_suffix(":candidate")
+            .split_once(":candidate:")
             .expect("the candidate receipt names its leg");
         assert_eq!(old_key, candidate_key, "both legs name the seed key");
+        // Each receipt names the stored answer the gate graded, by content.
+        for (handle, answer) in [(old_handle, "wrong answer"), (candidate_handle, ANSWER)] {
+            let output = oneiron::compaction::output::OutputRef::from_handle(handle)
+                .expect("the receipt names a stored answer's handle");
+            assert_eq!(
+                output.hash,
+                *blake3::hash(answer.as_bytes()).as_bytes(),
+                "the receipt names the answer the leg gave"
+            );
+            assert_eq!(output.byte_len, answer.len() as u64);
+        }
         assert_eq!(old_key.len(), 64, "the key is 32 bytes as hex");
         assert!(
             old_key.bytes().all(|byte| byte.is_ascii_hexdigit()),
