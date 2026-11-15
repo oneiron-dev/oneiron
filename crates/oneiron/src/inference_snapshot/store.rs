@@ -415,7 +415,10 @@ impl Vault {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Some(None)),
             Err(error) => return Err(error.into()),
         };
-        let Ok(key) = self.vault_subkey(WRAP_CONTEXT) else {
+        // The held key first, then each earlier generation's: a snapshot
+        // published before a new data-key generation keeps its wrapper under
+        // that generation's key, and only an authenticated open counts.
+        let Ok(keys) = self.vault_subkeys(WRAP_CONTEXT) else {
             return Ok(None);
         };
         let aad = associated_data(&record.id, &record.manifest)?;
@@ -432,18 +435,24 @@ impl Vault {
             Ok(_) | Err(Error::CorruptedIndex(_)) => return Ok(Some(None)),
             Err(error) => return Err(error),
         };
-        let plaintext = match open_snapshot_with_expected_len(
-            &key,
-            wrapped,
-            &aad,
-            &sealed,
-            record.plaintext_bytes,
-        ) {
-            Ok(plaintext) => Some(plaintext),
-            Err(Error::CorruptedIndex(_)) => None,
-            Err(error) => return Err(error),
+        let mut opened = None;
+        for (_, key) in &keys {
+            match open_snapshot_with_expected_len(
+                key,
+                wrapped,
+                &aad,
+                &sealed,
+                record.plaintext_bytes,
+            ) {
+                Ok(plaintext) => {
+                    opened = Some(plaintext);
+                    break;
+                }
+                Err(Error::CorruptedIndex(_)) => {}
+                Err(error) => return Err(error),
+            }
         }
-        .filter(|plaintext| {
+        let plaintext = opened.filter(|plaintext| {
             plaintext.len() as u64 == record.plaintext_bytes
                 && sha256(plaintext) == record.snapshot_sha256
         });

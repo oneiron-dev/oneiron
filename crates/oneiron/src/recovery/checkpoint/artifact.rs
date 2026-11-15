@@ -406,12 +406,13 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
     ) -> Result<(CarriedVaultKey, CheckpointKey)> {
         let (carried, key) = self.carried_vault_key_in_txn(txn, SEAL_CONTEXT)?;
+        let commitment = *carried.commitment();
         Ok((
             carried,
             CheckpointKey {
                 vault_id: *self.vault_id().as_bytes(),
                 current: GenerationKey {
-                    commitment: *carried.commitment(),
+                    commitment,
                     kek: Kek::from_zeroizing(key),
                     custody_wrap: self.vault_subkey(crate::store::CUSTODY_HEAD_WRAP_CONTEXT)?,
                 },
