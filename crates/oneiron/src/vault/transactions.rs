@@ -417,7 +417,7 @@ impl Vault {
         crate::embed::remark_all_embeddable_pending_in_txn(
             self,
             wtxn,
-            crate::store::embedding::EMBED_PRIORITY_BACKFILL,
+            crate::store::embedding::EMBED_PRIORITY_DEVICE,
         )?;
         Ok(pinned_transform)
     }
