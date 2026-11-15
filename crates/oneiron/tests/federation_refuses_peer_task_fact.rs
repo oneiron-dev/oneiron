@@ -4,9 +4,10 @@
 //! Who owns, took, cancelled or acknowledged a task is read from its role-6
 //! fact rows, and the task fold believes every fact it holds: a fact carries
 //! no proof of who made it until it carries its carrier's signature (pass 28
-//! R5). So a member's or a guest's role-6 row is refused at window admission
-//! and at federated replay, as the peer's bytes. A peer's ordinary TASK row
-//! still lands.
+//! R5). So a member's or a guest's fact is refused at window admission and at
+//! federated replay, as the peer's bytes. A peer's ordinary TASK row still
+//! lands, and a peer's ask record, which shares role 6 under its own subkind
+//! and carries its own proof, is not refused as a fact.
 //!
 //! Run: `cargo test --locked -p oneiron --all-features --test
 //! federation_refuses_peer_task_fact`.
@@ -89,6 +90,21 @@ fn authority_fact_body(
             rmpv::Value::from(actor.to_hex()),
         ),
         (rmpv::Value::from("occurred_at"), rmpv::Value::from(T0)),
+    ]))
+}
+
+/// A peer's ask record: role 6 under an ask subkind, not the fact subkind.
+fn ask_record_body() -> Vec<u8> {
+    msgpack(&rmpv::Value::Map(vec![
+        (
+            rmpv::Value::from("role"),
+            rmpv::Value::from(TaskRole::AuthorityFact.role_byte()),
+        ),
+        (rmpv::Value::from("schema_version"), rmpv::Value::from(1)),
+        (
+            rmpv::Value::from("subkind"),
+            rmpv::Value::from("tasks.ask_group"),
+        ),
     ]))
 }
 
@@ -197,5 +213,21 @@ fn a_federation_peer_task_row_still_lands() {
         replay(&vault, &task, &task_body(), role)
             .unwrap_or_else(|error| panic!("{role:?}: a peer's task row lands: {error:?}"));
         assert!(vault.entity_exists(&task).unwrap(), "{role:?}");
+    }
+}
+
+#[test]
+fn a_federation_peer_ask_record_is_not_refused_as_a_fact() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = open_vault(dir.path());
+    for role in ROLES {
+        let record = EntityId::now();
+        let admitted = admit(&vault, &record, &ask_record_body(), role).unwrap_or_else(|error| {
+            panic!("{role:?}: a peer's ask record passes the fact gate: {error:?}")
+        });
+        assert!(
+            !admitted.is_empty(),
+            "{role:?}: the admitted update carries the ask record"
+        );
     }
 }
