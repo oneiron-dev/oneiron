@@ -161,6 +161,7 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
         );
         step(ExtractionStepLoan {
             call,
+            prompt: &resources.decisions.extraction_prompt,
             guard: &resources.guard,
             deadline: &self.deadline,
             now_ms: self.now_ms,
