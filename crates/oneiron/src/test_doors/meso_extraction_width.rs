@@ -86,14 +86,17 @@ pub fn meso_extraction_width(scenario: PriorScenario) -> Result<ExtractionWidth>
         crate::gate::default_policy_manifest_id()?,
         &crate::gate::default_policy_manifest()?,
     )?;
-    vault.set_consolidation_selection(&SelectionConfig {
-        soak_ms: 0,
-        evidence_minimum: 1,
-        partition_extraction_parallelism: 1,
-        extraction_parallelism: 8,
-        extraction_turns_per_child: 1,
-        ..Default::default()
-    })?;
+    crate::dreamer_consolidation::selection::set_selection_as_engine(
+        &vault,
+        &SelectionConfig {
+            soak_ms: 0,
+            evidence_minimum: 1,
+            partition_extraction_parallelism: 1,
+            extraction_parallelism: 8,
+            extraction_turns_per_child: 1,
+            ..Default::default()
+        },
+    )?;
     let person = seed_conversation(&vault)?;
     let mut diagnostics = vec![format!("scenario={scenario:?}, slices={EXTRACTION_SLICES}")];
     let mut expected_heads = vec![seed_prior(

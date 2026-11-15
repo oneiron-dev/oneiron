@@ -62,7 +62,6 @@ pub(super) mod connector_subscription_routes;
 pub(super) mod conversation_learning_routes;
 pub(super) mod courtesy_delete_routes;
 pub(super) mod craft_candidate_routes;
-mod curator_rubric_routes;
 pub(super) mod decision_ask_routes;
 pub(super) mod desktop_takeover_routes;
 mod device_succession_routes;
@@ -151,7 +150,6 @@ fn owner_tables() -> OwnerTable {
         checkpoint_policy_routes::owner_table(),
         claim_refinement_routes::owner_table(),
         commitment_routes::owner_table(),
-        curator_rubric_routes::owner_table(),
         conflict_routes::owner_table(),
         connector_admission_routes::owner_table(),
         connector_consent_routes::owner_table(),

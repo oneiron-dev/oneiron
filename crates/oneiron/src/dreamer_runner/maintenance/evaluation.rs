@@ -8,7 +8,7 @@ use super::super::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use super::applied::MaintenanceInverse;
-use super::{HARNESS_FACET, MAINTENANCE_QUEUE_KIND, invalid, load_row, proposals};
+use super::{HARNESS_FACET, MAINTENANCE_QUEUE_KIND, invalid, proposals};
 use crate::attempt_queue::AttemptId;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
@@ -28,9 +28,6 @@ pub const DREAMER_TUNING_CONFIG_MEDIA_TYPE: &str = "application/json";
 /// Dreamer's reviewed proposals.
 const AUDIT_WINDOW_SECS: u64 = 30 * 86_400;
 
-/// Owner-set retune-decision thresholds dial.
-const THRESHOLDS: SideTable<(), RetuneThresholds, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_HARNESS_THRESHOLDS);
 /// Prior tuning-harness evaluation baseline for a config artifact.
 const BASELINE: SideTable<EntityId, Baseline, LegacyJson> =
     SideTable::new(&side_table::DREAMER_HARNESS_EVAL_BASELINE);
@@ -51,12 +48,35 @@ pub struct HarnessEvaluation {
     pub version: u64,
     pub score: f64,
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// The retune decision's thresholds, the setting `dreamer.evaluation.retune_thresholds`: the
+/// score regression, 0 to 1, past which each tuned surface is flagged.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RetuneThresholds {
     pub prompts_score_regression: f64,
     pub weights_score_regression: f64,
     pub manifest_thresholds_score_regression: f64,
+}
+/// The default of `dreamer.evaluation.retune_thresholds`: the shipped retune_defaults.json.
+pub(super) fn shipped_retune_thresholds() -> RetuneThresholds {
+    serde_json::from_str(include_str!("retune_defaults.json"))
+        .expect("the shipped retune_defaults.json decodes")
+}
+impl crate::setting::SettingValue for RetuneThresholds {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+/// The retune thresholds in force, the setting `dreamer.evaluation.retune_thresholds`: the owner
+/// and a holder of the maintenance cadence class set it through `vault.settings.set`.
+fn thresholds_in_force(vault: &Vault) -> Result<RetuneThresholds> {
+    let txn = vault.store.env.read_txn()?;
+    let thresholds = super::setting_keys::RETUNE_THRESHOLDS
+        .read_in_txn(vault, &txn, &[], None)?
+        .value;
+    thresholds.validate()?;
+    Ok(thresholds)
 }
 impl RetuneThresholds {
     fn validate(&self) -> Result<()> {
@@ -133,61 +153,6 @@ fn tuning_artifact() -> Result<EntityId> {
     crate::codebase::entity_id_from_hash_material(b"oneiron:dreamer-tuning-config:v1", &[])
 }
 impl Vault {
-    pub fn set_retune_thresholds(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        thresholds: &RetuneThresholds,
-    ) -> Result<()> {
-        thresholds.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            super::validate_owner_in_txn(self, txn, owner)?;
-            THRESHOLDS.put(&self.store, txn, &(), thresholds)?;
-            Ok(())
-        })
-    }
-
-    /// The owner, by its proof, or a holder of `engine.controls` sets the retune regression
-    /// thresholds (untangle 6.6b; maintenance cadence), through the one check, with a receipt
-    /// naming it. Untangle 6.6d gives it its verb. Returns the receipt.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
-    /// holder of `engine.controls`; the row's own validation; store failures.
-    pub fn set_retune_thresholds_by(
-        &self,
-        actor: crate::federation::EngineControlActor<'_>,
-        thresholds: &RetuneThresholds,
-    ) -> Result<EntityId> {
-        thresholds.validate()?;
-        self.apply_engine_control(
-            actor,
-            crate::federation::EngineControlClass::MaintenanceCadence,
-            "DREAMER_HARNESS_THRESHOLDS",
-            &crate::federation::rendered_change(thresholds)?,
-            |txn| {
-                THRESHOLDS.put(&self.store, txn, &(), thresholds)?;
-                Ok(())
-            },
-        )
-    }
-
-    /// [`Self::set_retune_thresholds_by`] for a holder of `engine.controls` (untangle
-    /// 6.6b).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::set_retune_thresholds_by`].
-    pub fn set_retune_thresholds_as_holder(
-        &self,
-        holder: EntityId,
-        thresholds: &RetuneThresholds,
-    ) -> Result<EntityId> {
-        self.set_retune_thresholds_by(
-            crate::federation::EngineControlActor::Holder(holder),
-            thresholds,
-        )
-    }
     /// Records the host's Dreamer tuning config as the next version of the
     /// vault's tuning artifact. The retrieval blend weights the Coach tunes
     /// join its weights as `retrieval.*`, so a weight change is attributed
@@ -441,9 +406,7 @@ fn run_evaluation(
     now: u64,
 ) -> Result<Option<EntityId>> {
     let current = config(vault, evaluation)?;
-    let thresholds: RetuneThresholds =
-        load_row(vault, THRESHOLDS, include_str!("retune_defaults.json"))?;
-    thresholds.validate()?;
+    let thresholds = thresholds_in_force(vault)?;
     // Resolve the bound envelope before taking the writer. Baseline comparison,
     // finding, receipt and new baseline then commit as one serializable decision.
     // The finding is a diagnosis: it applies at once (OF-023) and deploys nothing.

@@ -11,7 +11,8 @@ use super::super::{
     DreamerAdmittedAttempt, DreamerAttemptPayload, DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use super::applied::{MaintenanceInverse, MaintenanceRevert, claim_revision_in_txn};
-use super::{CURATOR_FACET, MAINTENANCE_QUEUE_KIND, invalid, load_row, proposals};
+use super::setting_keys::{CURATOR_CADENCE, CURATOR_GRADING};
+use super::{CURATOR_FACET, MAINTENANCE_QUEUE_KIND, invalid, proposals};
 use crate::attempt_queue::AttemptId;
 use crate::batch::{BatchOp, ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::claim::transition::{ClaimTransitionKind, TransitionDelta};
@@ -22,7 +23,6 @@ use crate::edge::{EdgeActorClass, EdgeKind};
 use crate::ports::{EdgeDirection, EdgeStoreRead, EntityStoreRead};
 use crate::provenance::birth::RowBirth;
 use crate::provenance::made_by::MadeByClass;
-use crate::side_table::{self, LegacyJson, SideTable};
 use crate::write_envelope::{WriteEnvelope, WriteProvenance};
 use crate::{
     ClaimApprovalStatus, ClaimCandidate, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EntityId,
@@ -35,15 +35,6 @@ use std::collections::BTreeSet;
 pub(super) mod approved;
 
 pub(crate) use crate::gate::curator_proposal::PROPOSAL_PREDICATE;
-
-/// Owner-set rubric dial for the memory-curator maintenance pass.
-const RUBRIC: SideTable<(), CuratorRubric, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_CURATOR_RUBRIC);
-/// Whether a masked copy of a `DREAMER_CURATOR_RUBRIC` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn dreamer_curator_rubric_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<CuratorRubric, LegacyJson>(bytes)
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CuratorTrigger {
@@ -58,6 +49,8 @@ impl CuratorTrigger {
         }
     }
 }
+/// The curator's rubric in force: the settings `dreamer.curator.cadence` and
+/// `dreamer.curator.grading`. A curator finding carries it as its `rubric`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CuratorRubric {
@@ -68,16 +61,88 @@ pub struct CuratorRubric {
     /// Agent-authored questions stored as policy data, not Rust prompt text.
     pub questions: CuratorQuestions,
 }
+/// The curator's cadence, the setting `dreamer.curator.cadence`: the minimum age of what it
+/// reviews and the period between its passes, in seconds. A holder of the maintenance cadence
+/// class moves it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CuratorCadence {
+    pub minimum_age_secs: u64,
+    pub cadence_secs: u64,
+}
+/// How the curator grades, the setting `dreamer.curator.grading`: its two rung factors, each in
+/// `[0, 1)`, and its three questions. The owner's.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct CuratorGrading {
+    /// The first rung scales the claim's weight by it.
+    pub edge_weight_factor: f32,
+    /// The second rung scales the claim's confidence by it.
+    pub confidence_factor: f32,
+    pub questions: CuratorQuestions,
+}
 /// The three questions the curator must answer from stored, verifiable facts.
-/// Hosts may edit the wording through the owner-set rubric.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Hosts may edit the wording through the setting `dreamer.curator.grading`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CuratorQuestions {
     pub authorship: String,
     pub freshness: String,
     pub least_force: String,
 }
+/// The shipped curator_defaults.json.
+fn shipped_rubric() -> CuratorRubric {
+    serde_json::from_str(include_str!("curator_defaults.json"))
+        .expect("the shipped curator_defaults.json decodes")
+}
+/// The default of `dreamer.curator.cadence`.
+pub(super) fn shipped_curator_cadence() -> CuratorCadence {
+    shipped_rubric().split().0
+}
+/// The default of `dreamer.curator.grading`.
+pub(super) fn shipped_curator_grading() -> CuratorGrading {
+    shipped_rubric().split().1
+}
+// No rule of `CuratorRubric::validate` spans the two settings, so a part is valid when the
+// rubric it makes with the other part's shipped value is.
+impl crate::setting::SettingValue for CuratorCadence {
+    fn check(self) -> Result<Self> {
+        CuratorRubric::compose(self, shipped_curator_grading()).validate()?;
+        Ok(self)
+    }
+}
+impl crate::setting::SettingValue for CuratorGrading {
+    fn check(self) -> Result<Self> {
+        let rubric = CuratorRubric::compose(shipped_curator_cadence(), self);
+        rubric.validate()?;
+        Ok(rubric.split().1)
+    }
+}
 impl CuratorRubric {
+    /// The rubric the two settings make.
+    fn compose(cadence: CuratorCadence, grading: CuratorGrading) -> Self {
+        Self {
+            minimum_age_secs: cadence.minimum_age_secs,
+            edge_weight_factor: grading.edge_weight_factor,
+            confidence_factor: grading.confidence_factor,
+            cadence_secs: cadence.cadence_secs,
+            questions: grading.questions,
+        }
+    }
+    /// This rubric as its two settings.
+    fn split(self) -> (CuratorCadence, CuratorGrading) {
+        (
+            CuratorCadence {
+                minimum_age_secs: self.minimum_age_secs,
+                cadence_secs: self.cadence_secs,
+            },
+            CuratorGrading {
+                edge_weight_factor: self.edge_weight_factor,
+                confidence_factor: self.confidence_factor,
+                questions: self.questions,
+            },
+        )
+    }
     fn validate(&self) -> Result<()> {
         if self.cadence_secs == 0
             || [
@@ -97,8 +162,10 @@ impl CuratorRubric {
     }
 }
 impl Vault {
-    /// The actual stored curator rubric, or its validated shipped defaults,
-    /// read with the owner's current authority in this same snapshot.
+    /// The curator's rubric in force, read with the owner's current authority in this same
+    /// snapshot: the settings `dreamer.curator.cadence` and `dreamer.curator.grading`, each the
+    /// shipped default where unset. The owner sets both, and a holder of the maintenance cadence
+    /// class the cadence, through `vault.settings.set`.
     pub fn curator_rubric_as(
         &self,
         owner: &crate::consent::AuthenticatedOwner,
@@ -106,72 +173,6 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         super::validate_owner_in_txn(self, &txn, owner)?;
         rubric_in_txn(self, &txn)
-    }
-
-    pub fn set_curator_rubric(
-        &self,
-        owner: &crate::consent::AuthenticatedOwner,
-        rubric: &CuratorRubric,
-    ) -> Result<()> {
-        rubric.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            super::validate_owner_in_txn(self, txn, owner)?;
-            RUBRIC.put(self, txn, &(), rubric)?;
-            Ok(())
-        })
-    }
-
-    /// The owner, by its proof, or a holder of `engine.controls` sets the curator's cadence: the
-    /// minimum age and the period. The factors and the questions stay as the owner set them
-    /// (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming it.
-    /// Untangle 6.6d gives it its verb. Returns the receipt.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
-    /// holder of `engine.controls`; the row's own validation; store failures.
-    pub fn set_curator_cadence_by(
-        &self,
-        actor: crate::federation::EngineControlActor<'_>,
-        minimum_age_secs: u64,
-        cadence_secs: u64,
-    ) -> Result<EntityId> {
-        self.apply_engine_control(
-            actor,
-            crate::federation::EngineControlClass::MaintenanceCadence,
-            "DREAMER_CURATOR_RUBRIC",
-            &crate::federation::rendered_change(&serde_json::json!({
-                "minimum_age_secs": minimum_age_secs,
-                "cadence_secs": cadence_secs,
-            }))?,
-            |txn| {
-                let mut rubric = rubric_in_txn(self, &*txn)?;
-                rubric.minimum_age_secs = minimum_age_secs;
-                rubric.cadence_secs = cadence_secs;
-                rubric.validate()?;
-                RUBRIC.put(self, txn, &(), &rubric)?;
-                Ok(())
-            },
-        )
-    }
-
-    /// [`Self::set_curator_cadence_by`] for a holder of `engine.controls` (untangle
-    /// 6.6b).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::set_curator_cadence_by`].
-    pub fn set_curator_cadence_as_holder(
-        &self,
-        holder: EntityId,
-        minimum_age_secs: u64,
-        cadence_secs: u64,
-    ) -> Result<EntityId> {
-        self.set_curator_cadence_by(
-            crate::federation::EngineControlActor::Holder(holder),
-            minimum_age_secs,
-            cadence_secs,
-        )
     }
     /// One curator pass per rubric cadence, whichever trigger asks first.
     pub fn schedule_curator(
@@ -211,13 +212,11 @@ impl DreamerRunnerStore<'_> {
         )
     }
 }
-/// The owner-set rubric as `txn` reads it, else the shipped defaults.
+/// The rubric in force as `txn` reads it: the two settings, each the shipped default where unset.
 pub(super) fn rubric_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<CuratorRubric> {
-    let rubric = match RUBRIC.get(&vault.store, txn, &())? {
-        Some(rubric) => rubric,
-        None => serde_json::from_str::<CuratorRubric>(include_str!("curator_defaults.json"))
-            .map_err(|_| invalid())?,
-    };
+    let cadence = CURATOR_CADENCE.read_in_txn(vault, txn, &[], None)?.value;
+    let grading = CURATOR_GRADING.read_in_txn(vault, txn, &[], None)?.value;
+    let rubric = CuratorRubric::compose(cadence, grading);
     rubric.validate()?;
     Ok(rubric)
 }
@@ -262,8 +261,10 @@ pub(super) fn run(
     attempt: &DreamerAdmittedAttempt,
     now: u64,
 ) -> Result<Vec<EntityId>> {
-    let rubric: CuratorRubric = load_row(vault, RUBRIC, include_str!("curator_defaults.json"))?;
-    rubric.validate()?;
+    let rubric = {
+        let txn = vault.store.env.read_txn()?;
+        rubric_in_txn(vault, &txn)?
+    };
     let actor = vault.dreamer_authority()?.entity_ref();
     let txn = vault.store.env.read_txn()?;
     let policy = crate::gate::resolve_policy_manifest(&vault.store, &txn)?;

@@ -164,6 +164,5 @@ pub(crate) mod tables;
 pub(crate) use self::free_time::dreamer_free_time_cycle_accepts_masked;
 pub(crate) use self::maintenance::call_receipt_accepts_masked;
 pub(crate) use self::maintenance::digest::dreamer_proactivity_digest_accepts_masked;
-pub(crate) use self::maintenance::dreamer_curator_rubric_accepts_masked;
 pub(crate) use self::maintenance::stewardship::dreamer_stewardship_rules_accepts_masked;
 pub(crate) use self::store::dreamer_parked_accepts_masked;

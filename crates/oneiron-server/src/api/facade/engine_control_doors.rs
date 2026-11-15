@@ -16,9 +16,7 @@ use oneiron::federation::EngineControlActor;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::settings::snapshot_read::SnapshotReadSettings;
 use oneiron::task_verb::sdk::{
-    self, ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
-    CuratorCadenceSetRequest, EngineControlChangeEntry, FreeTimeScheduleSetRequest,
-    RetuneThresholdsSetRequest, StewardshipRulePeriodSetRequest,
+    self, EngineControlChangeEntry, FreeTimeScheduleSetRequest, StewardshipRulePeriodSetRequest,
 };
 
 use super::FacadeApiError;
@@ -85,72 +83,6 @@ pub(super) async fn as_controller_answering<T: Send + 'static>(
     })
     .await
     .map_err(|_| internal(verb))?
-}
-
-/// `vault.consolidation.selection_timing.set`.
-pub(crate) async fn vault_consolidation_selection_timing_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ConsolidationSelectionTimingSetRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.consolidation.selection_timing.set",
-        move |server, actor| {
-            sdk::set_consolidation_selection_timing_as(server.vault(), actor, input)
-        },
-    )
-    .await;
-    (answer, Vec::new())
-}
-
-/// `vault.consolidation.strength.set`.
-pub(crate) async fn vault_consolidation_strength_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: ConsolidationStrengthSetRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.consolidation.strength.set",
-        move |server, actor| sdk::set_consolidation_strength_as(server.vault(), actor, input),
-    )
-    .await;
-    (answer, Vec::new())
-}
-
-/// `vault.curator.cadence.set`.
-pub(crate) async fn vault_curator_cadence_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CuratorCadenceSetRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.curator.cadence.set",
-        move |server, actor| sdk::set_curator_cadence_as(server.vault(), actor, input),
-    )
-    .await;
-    (answer, Vec::new())
-}
-
-/// `vault.evaluation.retune_thresholds.set`.
-pub(crate) async fn vault_evaluation_retune_thresholds_set(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: RetuneThresholdsSetRequest,
-) -> Listed<EngineControlChangeEntry> {
-    let answer = as_controller(
-        server,
-        auth,
-        "vault.evaluation.retune_thresholds.set",
-        move |server, actor| sdk::set_retune_thresholds_as(server.vault(), actor, input),
-    )
-    .await;
-    (answer, Vec::new())
 }
 
 /// `vault.stewardship.rules.period.set`.

@@ -2,11 +2,15 @@
 //! each row is one catalogue key, and the crate's build script lists it in the setting catalogue.
 
 use super::action_mode::ActionModePolicy;
+use super::curator::{
+    CuratorCadence, CuratorGrading, shipped_curator_cadence, shipped_curator_grading,
+};
 use super::digest::{
     ProactivityDelivery, ProactivityPeriod, ProactivityPresentation,
     measure_presentation_and_notify, notify_proactivity_settings, shipped_delivery, shipped_period,
     shipped_presentation,
 };
+use super::evaluation::{RetuneThresholds, shipped_retune_thresholds};
 use crate::federation::EngineControlClass;
 use crate::setting::{Kind, SetBy};
 
@@ -45,5 +49,27 @@ crate::setting::setting_keys! {
         "dreamer.proactivity.presentation" {
         kind: Kind::new(shipped_presentation),
         after_commit: Some(measure_presentation_and_notify),
+    };
+    /// How old a Dreamer consolidation must be before the curator reviews it, and the period
+    /// between two curator passes, in seconds. A holder of the maintenance cadence class moves it
+    /// either way, as before: it moves no access, authority, money or identity, so its order is
+    /// neutral. Absent, the shipped curator_defaults.json decides.
+    pub(crate) CURATOR_CADENCE: CuratorCadence = "dreamer.curator.cadence" {
+        kind: Kind::new(shipped_curator_cadence).neutral(),
+        set_by: SetBy::Class(EngineControlClass::MaintenanceCadence),
+    };
+    /// How the curator grades: the factors its first and second rungs scale a claim's weight and
+    /// confidence by, and the three questions it answers from stored facts. Absent, the shipped
+    /// curator_defaults.json decides.
+    pub(crate) CURATOR_GRADING: CuratorGrading = "dreamer.curator.grading" {
+        kind: Kind::new(shipped_curator_grading),
+    };
+    /// The score regression, 0 to 1, past which the self-audit flags each tuned surface (the
+    /// prompts, the weights and the manifest thresholds) for a retune. A holder of the
+    /// maintenance cadence class moves it either way, as before, so its order is neutral. Absent,
+    /// the shipped retune_defaults.json decides.
+    pub(crate) RETUNE_THRESHOLDS: RetuneThresholds = "dreamer.evaluation.retune_thresholds" {
+        kind: Kind::new(shipped_retune_thresholds).neutral(),
+        set_by: SetBy::Class(EngineControlClass::MaintenanceCadence),
     };
 }

@@ -1,17 +1,24 @@
-//! Mechanical candidate selection. Numeric policy is a reloadable row, not a judge instruction.
-use crate::side_table::{self, LegacyJson, SideTable};
+//! Mechanical candidate selection. Numeric policy is two settings, not a judge instruction:
+//! `dreamer.consolidation.selection.scoring` and `dreamer.consolidation.selection.timing`.
+use super::setting_keys::{SELECTION_SCORING, SELECTION_TIMING};
 use crate::{EntityId, Error, Result, Vault};
-
-/// Operator-set candidate-selection policy row. Key: ().
-const SELECTION: SideTable<(), SelectionConfig, LegacyJson> =
-    SideTable::new(&side_table::DREAMER_CONSOLIDATION_SELECTION);
 
 #[doc(hidden)]
 use oneiron_records::dreamer_consolidation::selection::unit;
 #[doc(hidden)]
 pub use oneiron_records::dreamer_consolidation::selection::{
-    SelectionConfig, StrengthSignals, StrengthWeights,
+    SelectionConfig, SelectionScoring, SelectionTiming, StrengthSignals, StrengthWeights,
 };
+
+/// The default of `dreamer.consolidation.selection.scoring`: the shipped selection_defaults.json.
+pub(super) fn shipped_selection_scoring() -> SelectionScoring {
+    SelectionConfig::default().split().0
+}
+
+/// The default of `dreamer.consolidation.selection.timing`: the shipped selection_defaults.json.
+pub(super) fn shipped_selection_timing() -> SelectionTiming {
+    SelectionConfig::default().split().1
+}
 
 /// The consolidation scopes whose plain partitions share a wake pass's
 /// extraction window: Micro, and Meso (a sitting's round, one partition per
@@ -112,66 +119,10 @@ pub fn select_candidates(
 }
 
 impl Vault {
-    /// Operator configuration seam, like the prefilter row. It is not an agent verb.
-    pub fn set_consolidation_selection(&self, config: &SelectionConfig) -> Result<()> {
-        config.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            SELECTION.put(&self.store, txn, &(), config)?;
-            Ok(())
-        })
-    }
-
-    /// The owner, by its proof, or a holder of `engine.controls` sets the selection timing: the
-    /// soak and the recency window. Every other field stays as it stands (untangle 6.6b;
-    /// maintenance cadence), through the one check, with a receipt naming it. Untangle 6.6d gives
-    /// it its verb. Returns the receipt.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
-    /// holder of `engine.controls`; the row's own validation; store failures.
-    pub fn set_consolidation_selection_timing_by(
-        &self,
-        actor: crate::federation::EngineControlActor<'_>,
-        soak_ms: u64,
-        recency_window_ms: u64,
-    ) -> Result<crate::entity_id::EntityId> {
-        self.apply_engine_control(
-            actor,
-            crate::federation::EngineControlClass::MaintenanceCadence,
-            "DREAMER_CONSOLIDATION_SELECTION",
-            &crate::federation::rendered_change(&serde_json::json!({
-                "soak_ms": soak_ms,
-                "recency_window_ms": recency_window_ms,
-            }))?,
-            |txn| {
-                let mut config = self.consolidation_selection_in_txn(&*txn)?;
-                config.soak_ms = soak_ms;
-                config.recency_window_ms = recency_window_ms;
-                config.validate()?;
-                SELECTION.put(&self.store, txn, &(), &config)
-            },
-        )
-    }
-
-    /// [`Self::set_consolidation_selection_timing_by`] for a holder of `engine.controls` (untangle
-    /// 6.6b).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::set_consolidation_selection_timing_by`].
-    pub fn set_consolidation_selection_timing_as_holder(
-        &self,
-        holder: crate::entity_id::EntityId,
-        soak_ms: u64,
-        recency_window_ms: u64,
-    ) -> Result<crate::entity_id::EntityId> {
-        self.set_consolidation_selection_timing_by(
-            crate::federation::EngineControlActor::Holder(holder),
-            soak_ms,
-            recency_window_ms,
-        )
-    }
+    /// The selection policy in force: the settings `dreamer.consolidation.selection.scoring` and
+    /// `dreamer.consolidation.selection.timing`, each the shipped default where unset. The owner
+    /// sets both, and a holder of the maintenance cadence class the timing, through
+    /// `vault.settings.set`.
     pub fn consolidation_selection(&self) -> Result<SelectionConfig> {
         let txn = self.store.env.read_txn()?;
         self.consolidation_selection_in_txn(&txn)
@@ -180,10 +131,31 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<SelectionConfig> {
-        let config = SELECTION.get(&self.store, txn, &())?.unwrap_or_default();
+        let scoring = SELECTION_SCORING.read_in_txn(self, txn, &[], None)?.value;
+        let timing = SELECTION_TIMING.read_in_txn(self, txn, &[], None)?.value;
+        let config = SelectionConfig::compose(scoring, timing);
         config.validate()?;
         Ok(config)
     }
+}
+
+/// Sets both selection settings to `config` as the engine's own change, for a test door's
+/// fixture vault.
+#[cfg(oneiron_test_support)]
+pub(crate) fn set_selection_as_engine(vault: &Vault, config: &SelectionConfig) -> Result<()> {
+    use crate::setting::{EngineSetting, SetSetting, SettingCaller};
+    let (scoring, timing) = config.clone().split();
+    for (key, value) in [
+        (SELECTION_SCORING.spec.name, serde_json::to_value(scoring)),
+        (SELECTION_TIMING.spec.name, serde_json::to_value(timing)),
+    ] {
+        let value = value.map_err(|error| Error::InvalidConfig(error.to_string()))?;
+        vault.set_setting(
+            SettingCaller::Engine(EngineSetting::own()),
+            SetSetting::vault_value(key, value),
+        )?;
+    }
+    Ok(())
 }
 
 /// The effective scoring config's domain-separated pin in this transaction.

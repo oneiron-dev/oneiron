@@ -3,11 +3,12 @@
 
 use oneiron_base::error::Error;
 use oneiron_base::error::Result;
+use oneiron_setting_contract::SettingValue;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct StrengthWeights {
     pub type_prior: f64,
@@ -54,7 +55,128 @@ impl Default for SelectionConfig {
     }
 }
 
+/// The selection's timing, the setting `dreamer.consolidation.selection.timing`: how long a
+/// claim soaks before selection takes it, and the window its recency signal is measured over, in
+/// milliseconds. A holder of the maintenance cadence class moves it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionTiming {
+    pub soak_ms: u64,
+    pub recency_window_ms: u64,
+}
+
+/// How selection scores and admits a candidate and how wide its extraction runs, the setting
+/// `dreamer.consolidation.selection.scoring`: every [`SelectionConfig`] field but the timing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionScoring {
+    pub version: u8,
+    pub evidence_minimum: usize,
+    pub cosine_threshold: f64,
+    pub weights: StrengthWeights,
+    pub type_priors: BTreeMap<String, f64>,
+    pub default_type_prior: f64,
+    pub frequency_scale: u64,
+    pub diversity_scale: u64,
+    /// Maximum extraction calls in flight.
+    pub extraction_parallelism: usize,
+    /// Maximum TURNs in one neighbourhood child.
+    pub extraction_turns_per_child: usize,
+    /// Maximum Micro or Meso partitions extracting side by side in one wake pass.
+    pub partition_extraction_parallelism: usize,
+}
+
+impl SettingValue for SelectionTiming {
+    /// No rule of [`SelectionConfig::validate`] spans the two parts, so a part is valid when the
+    /// whole it makes with the other part's shipped value is.
+    fn check(self) -> Result<Self> {
+        SelectionConfig::compose(SelectionConfig::default().split().0, self).validate()?;
+        Ok(self)
+    }
+}
+
+impl SettingValue for SelectionScoring {
+    /// As [`SelectionTiming`]'s check.
+    fn check(self) -> Result<Self> {
+        let config = SelectionConfig::compose(self, SelectionConfig::default().split().1);
+        config.validate()?;
+        Ok(config.split().0)
+    }
+}
+
 impl SelectionConfig {
+    /// The selection policy the two settings make.
+    #[must_use]
+    pub fn compose(scoring: SelectionScoring, timing: SelectionTiming) -> Self {
+        let SelectionScoring {
+            version,
+            evidence_minimum,
+            cosine_threshold,
+            weights,
+            type_priors,
+            default_type_prior,
+            frequency_scale,
+            diversity_scale,
+            extraction_parallelism,
+            extraction_turns_per_child,
+            partition_extraction_parallelism,
+        } = scoring;
+        Self {
+            version,
+            soak_ms: timing.soak_ms,
+            evidence_minimum,
+            cosine_threshold,
+            weights,
+            type_priors,
+            default_type_prior,
+            frequency_scale,
+            diversity_scale,
+            recency_window_ms: timing.recency_window_ms,
+            extraction_parallelism,
+            extraction_turns_per_child,
+            partition_extraction_parallelism,
+        }
+    }
+
+    /// This policy as its two settings.
+    #[must_use]
+    pub fn split(self) -> (SelectionScoring, SelectionTiming) {
+        let Self {
+            version,
+            soak_ms,
+            evidence_minimum,
+            cosine_threshold,
+            weights,
+            type_priors,
+            default_type_prior,
+            frequency_scale,
+            diversity_scale,
+            recency_window_ms,
+            extraction_parallelism,
+            extraction_turns_per_child,
+            partition_extraction_parallelism,
+        } = self;
+        (
+            SelectionScoring {
+                version,
+                evidence_minimum,
+                cosine_threshold,
+                weights,
+                type_priors,
+                default_type_prior,
+                frequency_scale,
+                diversity_scale,
+                extraction_parallelism,
+                extraction_turns_per_child,
+                partition_extraction_parallelism,
+            },
+            SelectionTiming {
+                soak_ms,
+                recency_window_ms,
+            },
+        )
+    }
+
     pub fn validate(&self) -> Result<()> {
         let w = self.weights;
         if self.version != 1

@@ -80,12 +80,13 @@ use super::{
     DreamerRunnerStore, EnqueueDreamerAttemptOutcome,
 };
 use crate::dreamer_wake::{DreamerAttemptExecution, WakeAttemptContext};
-use crate::side_table::{LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
 pub(crate) use curator::PROPOSAL_PREDICATE as CURATOR_PROPOSAL_PREDICATE;
 pub use curator::approved::apply_after_consent as apply_curator_after_consent;
 pub(crate) use curator::curator_slot_in_txn;
-pub use curator::{CuratorQuestions, CuratorRubric, CuratorTrigger};
+pub use curator::{
+    CuratorCadence, CuratorGrading, CuratorQuestions, CuratorRubric, CuratorTrigger,
+};
 pub use evaluation::{
     DREAMER_TUNING_CONFIG_MEDIA_TYPE, DreamerTuningConfig, HarnessEvaluation,
     HarnessEvaluationTarget, HarnessOf360Evaluation, HarnessOf360Metric, HarnessOf360Observation,
@@ -353,17 +354,6 @@ pub(crate) fn execute(
         step_bindings: Vec::new(),
     })
 }
-fn load_row<T: serde::Serialize + serde::de::DeserializeOwned>(
-    vault: &Vault,
-    table: SideTable<(), T, LegacyJson>,
-    defaults: &str,
-) -> Result<T> {
-    let txn = vault.store.env.read_txn()?;
-    match table.get(&vault.store, &txn, &())? {
-        Some(row) => Ok(row),
-        None => serde_json::from_str(defaults).map_err(|_| invalid()),
-    }
-}
 
 pub mod digest;
 
@@ -419,4 +409,3 @@ fn require_active_person_in_txn(
 // The lift sweep's typed acceptance for this module's authored side
 // tables (FIX 2680), named by their declarations.
 pub(crate) use self::agent_health::call_receipt_accepts_masked;
-pub(crate) use self::curator::dreamer_curator_rubric_accepts_masked;

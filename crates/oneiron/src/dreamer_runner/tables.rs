@@ -355,12 +355,6 @@ crate::side_table::side_tables! {
     /// text. Key: id16(case key).
     FAILURE_SIGNALS_CODE_FIX_WORK: VaultMeta b"failure_signals:code_fix_work:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
-    /// Owner-set rubric dial for the memory-curator maintenance pass. Key: ().
-    DREAMER_CURATOR_RUBRIC: VaultMeta b"settings:dreamer:curator:rubric:v1" LegacyJson Authored [accepts: crate::dreamer_runner::dreamer_curator_rubric_accepts_masked]
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Owner-set retune thresholds for the tuning-harness evaluation loop. Key: ().
-    DREAMER_HARNESS_THRESHOLDS: VaultMeta b"settings:dreamer:harness:thresholds:v1" LegacyJson
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Owner-confirmed digest policy claim revision. Key: id16, value: hash32.
     DREAMER_PROACTIVITY_CONFIRMED: VaultMeta b"settings:dreamer:proactivity:confirmed:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];

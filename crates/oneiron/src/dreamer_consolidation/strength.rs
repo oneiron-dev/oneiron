@@ -16,12 +16,11 @@ use serde::{Deserialize, Serialize};
 
 pub(crate) const OBSERVATIONS: SideTable<EntityId, StrengthObservations, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_STRENGTH);
-const POLICY: SideTable<(), ConsolidationStrengthPolicy, Named> =
-    SideTable::new(&side_table::DREAMER_CONSOLIDATION_STRENGTH_POLICY);
 const ARCHIVES: SideTable<(EntityId, u64), ConsolidationStrengthSnapshot, Named> =
     SideTable::new(&side_table::DREAMER_CONSOLIDATION_STRENGTH_ARCHIVE);
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// When a quiet, weak claim may be archived, the setting `dreamer.consolidation.strength.policy`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ConsolidationStrengthPolicy {
     /// Only a score strictly below this row can archive a quiet claim.
@@ -33,6 +32,12 @@ impl Default for ConsolidationStrengthPolicy {
     fn default() -> Self {
         serde_json::from_str(include_str!("strength_defaults.json"))
             .expect("checked consolidation strength defaults")
+    }
+}
+impl crate::setting::SettingValue for ConsolidationStrengthPolicy {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
     }
 }
 impl ConsolidationStrengthPolicy {
@@ -82,54 +87,9 @@ pub struct ConsolidationStrengthSnapshot {
 }
 
 impl Vault {
-    /// Operator configuration, separate from epistemic confidence and its policy.
-    pub fn set_consolidation_strength_policy(
-        &self,
-        policy: &ConsolidationStrengthPolicy,
-    ) -> Result<()> {
-        policy.validate()?;
-        self.with_write_txn_grouped(|txn| POLICY.put(&self.store, txn, &(), policy))
-    }
-
-    /// The owner, by its proof, or a holder of `engine.controls` sets the consolidation strength
-    /// policy (untangle 6.6b; maintenance cadence), through the one check, with a receipt naming
-    /// it. Untangle 6.6d gives it its verb. Returns the receipt.
-    ///
-    /// # Errors
-    ///
-    /// `InvalidConfig` when `actor` is neither the owner, by a proof that still holds, nor a live
-    /// holder of `engine.controls`; the row's own validation; store failures.
-    pub fn set_consolidation_strength_policy_by(
-        &self,
-        actor: crate::federation::EngineControlActor<'_>,
-        policy: &ConsolidationStrengthPolicy,
-    ) -> Result<EntityId> {
-        policy.validate()?;
-        self.apply_engine_control(
-            actor,
-            crate::federation::EngineControlClass::MaintenanceCadence,
-            "DREAMER_CONSOLIDATION_STRENGTH_POLICY",
-            &crate::federation::rendered_change(policy)?,
-            |txn| POLICY.put(&self.store, txn, &(), policy),
-        )
-    }
-
-    /// [`Self::set_consolidation_strength_policy_by`] for a holder of `engine.controls` (untangle
-    /// 6.6b).
-    ///
-    /// # Errors
-    ///
-    /// As [`Self::set_consolidation_strength_policy_by`].
-    pub fn set_consolidation_strength_policy_as_holder(
-        &self,
-        holder: EntityId,
-        policy: &ConsolidationStrengthPolicy,
-    ) -> Result<EntityId> {
-        self.set_consolidation_strength_policy_by(
-            crate::federation::EngineControlActor::Holder(holder),
-            policy,
-        )
-    }
+    /// The strength policy in force, the setting `dreamer.consolidation.strength.policy`: the
+    /// owner and a holder of the maintenance cadence class set it through `vault.settings.set`.
+    /// It is operator configuration, separate from epistemic confidence and its policy.
     pub fn consolidation_strength_policy(&self) -> Result<ConsolidationStrengthPolicy> {
         let txn = self.store.env.read_txn()?;
         policy_in_txn(self, &txn)
@@ -150,9 +110,28 @@ pub(crate) fn policy_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
 ) -> Result<ConsolidationStrengthPolicy> {
-    let policy = POLICY.get(&vault.store, txn, &())?.unwrap_or_default();
+    let policy = super::setting_keys::STRENGTH_POLICY
+        .read_in_txn(vault, txn, &[], None)?
+        .value;
     policy.validate()?;
     Ok(policy)
+}
+
+/// Sets `dreamer.consolidation.strength.policy` to `policy` as the engine's own change, for a
+/// test door's fixture vault.
+#[cfg(oneiron_test_support)]
+pub(crate) fn set_strength_policy_as_engine(
+    vault: &Vault,
+    policy: &ConsolidationStrengthPolicy,
+) -> Result<()> {
+    use crate::setting::{EngineSetting, SetSetting, SettingCaller};
+    let value =
+        serde_json::to_value(policy).map_err(|error| Error::InvalidConfig(error.to_string()))?;
+    vault.set_setting(
+        SettingCaller::Engine(EngineSetting::own()),
+        SetSetting::vault_value(super::setting_keys::STRENGTH_POLICY.spec.name, value),
+    )?;
+    Ok(())
 }
 
 /// The effective strength policy's domain-separated pin in this transaction.

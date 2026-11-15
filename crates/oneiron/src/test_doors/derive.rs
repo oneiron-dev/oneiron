@@ -1263,7 +1263,8 @@ pub fn settlement_kept_claim(
 ///
 /// The vault's, and a policy out of bounds.
 pub fn set_strength_policy(vault: &Vault, archive_below: f64, quiet_ms: u64) -> Result<()> {
-    vault.set_consolidation_strength_policy(
+    crate::dreamer_consolidation::strength::set_strength_policy_as_engine(
+        vault,
         &crate::dreamer_consolidation::strength::ConsolidationStrengthPolicy {
             archive_below,
             quiet_ms,

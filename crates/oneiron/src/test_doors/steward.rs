@@ -192,10 +192,13 @@ pub fn weave_reach(vault: &Vault) -> Result<WeaveReach> {
 ///
 /// The vault's.
 pub fn archive_every_quiet_claim(vault: &Vault) -> Result<()> {
-    vault.set_consolidation_strength_policy(&ConsolidationStrengthPolicy {
-        archive_below: 1.0,
-        quiet_ms: 1,
-    })
+    crate::dreamer_consolidation::strength::set_strength_policy_as_engine(
+        vault,
+        &ConsolidationStrengthPolicy {
+            archive_below: 1.0,
+            quiet_ms: 1,
+        },
+    )
 }
 
 /// Where a base agent's Steward grant stands, as the host's first mint or

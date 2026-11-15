@@ -136,14 +136,17 @@ fn run_window_finish(scenario: WindowScenario) -> Result<WindowFinish> {
         crate::gate::default_policy_manifest_id()?,
         &crate::gate::default_policy_manifest()?,
     )?;
-    vault.set_consolidation_selection(&SelectionConfig {
-        soak_ms: 0,
-        evidence_minimum: 1,
-        partition_extraction_parallelism: 2,
-        extraction_parallelism: 1,
-        extraction_turns_per_child: 8,
-        ..Default::default()
-    })?;
+    crate::dreamer_consolidation::selection::set_selection_as_engine(
+        &vault,
+        &SelectionConfig {
+            soak_ms: 0,
+            evidence_minimum: 1,
+            partition_extraction_parallelism: 2,
+            extraction_parallelism: 1,
+            extraction_turns_per_child: 8,
+            ..Default::default()
+        },
+    )?;
     let conversations = [
         seed_conversation(&vault, 0x71, "owen", MARKERS[0])?,
         seed_conversation(&vault, 0x72, "yuki", MARKERS[1])?,

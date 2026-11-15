@@ -20,18 +20,12 @@ crate::side_table::side_tables! {
     DREAMER_CONSOLIDATION_RUNNING_BUCKETS: VaultMeta b"dreamer:consolidation:running_buckets:v1:"
         Named Engine
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// Operator-set consolidation candidate-selection config (strength weights, caps). Key: ().
-    DREAMER_CONSOLIDATION_SELECTION: VaultMeta b"dreamer:consolidation:selection:v1" LegacyJson
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Parent-verified promotion evidence observations. Key: id16(claim).
     DREAMER_CONSOLIDATION_STRENGTH: VaultMeta b"dreamer:consolidation:strength:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
     /// Pre-archive claim revision and strength policy. Key: id16(claim) + u64be(at_ms).
     DREAMER_CONSOLIDATION_STRENGTH_ARCHIVE: VaultMeta b"dreamer:consolidation:strength_archive:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Operator-set archive-only strength lifecycle. Key: ().
-    DREAMER_CONSOLIDATION_STRENGTH_POLICY: VaultMeta b"dreamer:consolidation:strength_policy:v1" Named
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Per-scope, per-partition consolidation cursor row. Key: u8 + hash32.
     DREAMER_CURSOR: VaultMeta b"dreamer:cursor:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
