@@ -3,8 +3,9 @@
 //!
 //! Each key holds a lifetime the code fixed before (restriction census wave 1; owner 16 Nov
 //! 00:44: "we apply the optional freedom with good defaults everywhere"). Its default is that
-//! lifetime, so nothing moves until the owner moves it. A longer life is the looser value: only
-//! the owner raises one, and an agent's raise waits on the owner's answer.
+//! lifetime, so nothing moves until the owner moves it, and a row that does not decode reads it
+//! too. A longer life is the looser value: only the owner raises one, and an agent's raise waits
+//! on the owner's answer.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -38,6 +39,40 @@ impl SettingValue for LifetimeSecs {
     }
 }
 
+/// A pairing code's life in whole seconds, from one minute to one day. The code has 40 bits, a
+/// wrong one is never counted, and the wire never refuses a call for rate (ARCH-0043 dr:E100), so
+/// its life is the only limit on guessing it online.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(transparent)]
+pub(crate) struct PairingCodeSecs(u64);
+
+impl PairingCodeSecs {
+    /// One minute.
+    const SHORTEST: u64 = 60;
+    /// One day.
+    const LONGEST: u64 = 24 * 60 * 60;
+
+    /// The life in seconds.
+    pub(crate) const fn secs(self) -> u64 {
+        self.0
+    }
+}
+
+impl SettingValue for PairingCodeSecs {
+    fn check(self) -> Result<Self> {
+        if !(Self::SHORTEST..=Self::LONGEST).contains(&self.0) {
+            return Err(Error::InvalidConfig(format!(
+                "a pairing code lives between {} and {} seconds",
+                Self::SHORTEST,
+                Self::LONGEST
+            )));
+        }
+        Ok(self)
+    }
+}
+
 /// Five minutes: WebAuthn's own default ceremony timeout.
 fn step_up_challenge_default() -> LifetimeSecs {
     LifetimeSecs(STEP_UP_CHALLENGE_TTL_SECS)
@@ -46,6 +81,11 @@ fn step_up_challenge_default() -> LifetimeSecs {
 /// One year.
 fn mesh_grant_default() -> LifetimeSecs {
     LifetimeSecs(365 * 24 * 60 * 60)
+}
+
+/// One hour (ARCH-0043 dr:E100).
+fn pairing_code_default() -> PairingCodeSecs {
+    PairingCodeSecs(60 * 60)
 }
 
 crate::setting::setting_keys! {
@@ -68,5 +108,16 @@ crate::setting::setting_keys! {
         kind: Kind::new(mesh_grant_default)
             .strictest(mesh_grant_default)
             .tighter(lower_is_tighter::<LifetimeSecs>),
+    };
+
+    /// How long a pairing code can be redeemed, in seconds: an enrolment link's code, and an
+    /// invitation's, which never outlives its invitation either. One hour by default; from one
+    /// minute to one day, because the code is short enough to read aloud and its life is the only
+    /// limit on guessing it. Longer is the looser value, so only the owner raises it; an agent's
+    /// raise waits on the owner's answer.
+    pub(crate) PAIRING_CODE_TTL: PairingCodeSecs = "pairing.code.ttl_secs" {
+        kind: Kind::new(pairing_code_default)
+            .strictest(pairing_code_default)
+            .tighter(lower_is_tighter::<PairingCodeSecs>),
     };
 }

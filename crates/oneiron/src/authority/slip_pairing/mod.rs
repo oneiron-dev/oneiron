@@ -133,7 +133,6 @@ struct PendingMachine {
 /// aloud or typed from a screen.
 const CODE_ALPHABET: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
 const CODE_LEN: usize = 8;
-const CODE_TTL_SECS: u64 = 60 * 60;
 const CODE_HASH_CONTEXT: &str = "oneiron/pairing-code/v1/hash";
 
 mod code;

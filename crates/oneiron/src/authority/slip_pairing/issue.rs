@@ -3,10 +3,12 @@
 
 use super::code::{draw_code, pairing_row_key};
 use super::*;
+use crate::authority::setting_keys::PAIRING_CODE_TTL;
 use crate::authority::slip_vault::require_host;
 
 impl Vault {
-    /// Owner/host API: issue a one-hour enrollment link, scoped at creation.
+    /// Owner/host API: issue an enrollment link, scoped at creation, live for
+    /// the owner's pairing code life (`pairing.code.ttl_secs`, one hour by default).
     pub fn issue_pairing_link(
         &self,
         issuer: &HostSlipIssuer,
@@ -248,7 +250,12 @@ impl Vault {
             )?;
             let now = self.instant_in_txn(txn)?.secs();
             let (code, row_key) = self.free_pairing_code_in_txn(txn, issuer, now)?;
-            let expires_at = now.saturating_add(CODE_TTL_SECS);
+            // The owner's pairing code life (`pairing.code.ttl_secs`, one hour by default).
+            let code_ttl = PAIRING_CODE_TTL
+                .read_in_txn(self, txn, &[], None)?
+                .value
+                .secs();
+            let expires_at = now.saturating_add(code_ttl);
             // A vault with an attested checkpoint pins it for the joining device,
             // bound to this single-use link's fresh challenge (OF-469).
             let mut challenge = [0; 32];
@@ -308,9 +315,10 @@ impl Vault {
         }
     }
     /// Stores, in the writer of `owner`'s act, an invitation pairing code
-    /// (FIX 8745): a one-hour single-use link for `invitation`'s invitee,
-    /// whose redemption binds that invitation to the redeeming key and mints
-    /// the invitee's slip for it (`Vault::redeem_invitation_link_in_txn`).
+    /// (FIX 8745): a single-use link for `invitation`'s invitee, live for the
+    /// owner's pairing code life (one hour by default) and never past the
+    /// invitation, whose redemption binds that invitation to the redeeming key
+    /// and mints the invitee's slip for it (`Vault::redeem_invitation_link_in_txn`).
     /// The owner passes the code on by any channel, as an invite link; it
     /// carries no verb and pairs no ordinary credential. The caller has
     /// checked `owner` and that the invitation is pending.
@@ -325,7 +333,13 @@ impl Vault {
         require_host(&self.authority_fold_readonly_in_txn(txn)?, issuer)?;
         let now = self.instant_in_txn(txn)?.secs();
         let (code, row_key) = self.free_pairing_code_in_txn(txn, issuer, now)?;
-        let expires_at = now.saturating_add(CODE_TTL_SECS).min(invitation_expires_at);
+        // The owner's pairing code life (`pairing.code.ttl_secs`, one hour by default), and never
+        // past the invitation.
+        let code_ttl = PAIRING_CODE_TTL
+            .read_in_txn(self, txn, &[], None)?
+            .value
+            .secs();
+        let expires_at = now.saturating_add(code_ttl).min(invitation_expires_at);
         if expires_at <= now {
             return Err(invalid_authority());
         }
