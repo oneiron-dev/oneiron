@@ -3,7 +3,8 @@
 //! with its reason code and the same id as a typed `pending` block, through
 //! the facade and through the MCP gateway.
 //!
-//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features --test check_in_pending_block_wire`.
+//! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features
+//! --features oneiron/test-support --test check_in_pending_block_wire`.
 #![cfg(oneiron_test_support)]
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
