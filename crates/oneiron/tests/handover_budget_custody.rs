@@ -19,6 +19,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use loro::{ExportMode, LoroDoc};
 use oneiron::agent_def::AgentDefinition;
@@ -34,7 +35,7 @@ use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
 use oneiron::test_doors::turn_programs as doors;
-use oneiron::{AttemptId, HnswConfig, Vault, VaultConfig};
+use oneiron::{AttemptId, ErrorKind, HnswConfig, Vault, VaultConfig};
 
 /// The base window every row here lands in: March 2026.
 const WINDOW: &str = "2026-03";
@@ -122,6 +123,28 @@ fn exchange(a: &LoroDoc, b: &LoroDoc) {
         a.import(&to_a).unwrap();
     }
     assert_eq!(a.oplog_vv(), b.oplog_vv(), "the window did not converge");
+}
+
+/// Unloads `machine`'s window and opens it cold, so its doc holds every row
+/// the machine wrote since the window loaded before the next exchange. Such
+/// a write reaches a loaded doc only later, through the live mirror's thread;
+/// a cold open mirrors what the write's pending-mirror markers owe at once.
+/// The test holds only `LoroDoc` clones, so no handle keeps the window open;
+/// the mirror's thread holds it for the length of a pass, so a busy unload is
+/// retried until that pass ends.
+fn reload_window(machine: &Machine) {
+    let key = WindowKey::new(WINDOW);
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match machine.manager.unload_window(&key) {
+            Ok(_) => break,
+            Err(err) if err.kind() == ErrorKind::WindowBusy && Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Err(err) => panic!("the window does not unload: {err:?}"),
+        }
+    }
+    machine.manager.open_window(&key).unwrap();
 }
 
 /// Opens the two machines with distinct node ids and elects B the MACRO home
@@ -260,6 +283,7 @@ fn handed_over_run_keeps_one_counter() {
     assert_eq!(reap.taken, 1, "B takes the run A released");
     // B's take rides the window to A; A resumes from its close so its pump
     // judges the run instead of passing over it.
+    reload_window(&b);
     let doc_a = a.doc();
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
@@ -285,6 +309,10 @@ fn handed_over_run_keeps_one_counter() {
             now: leased.updated_at,
         })
         .unwrap();
+    // B's settlement reaches B's doc before the exchange carries it to A.
+    drop(doc_a);
+    drop(doc_b);
+    reload_window(&b);
     let doc_a = a.doc();
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
@@ -320,6 +348,8 @@ fn old_machine_standdown_keeps_the_remainder_held() {
         .reap_agent_run_leases(&|_: &AgentDefinition| true)
         .unwrap();
     assert_eq!(reap.taken, 1, "B takes the run A released");
+    // B's take reaches B's doc before the exchange carries it to A.
+    reload_window(&b);
     let doc_a = a.doc();
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
@@ -394,6 +424,8 @@ fn run_back_home_reopens_the_same_scope() {
         .reap_agent_run_leases(&|_: &AgentDefinition| true)
         .unwrap();
     assert_eq!(reap.taken, 1, "B takes the run A released");
+    // B's take reaches B's doc before the exchange carries it to A.
+    reload_window(&b);
     let doc_a = a.doc();
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
@@ -413,6 +445,10 @@ fn run_back_home_reopens_the_same_scope() {
         .charge(&SpendScopeId::for_attempt(&x), 30)
         .unwrap();
     assert_eq!(b.vault.release_agent_run_leases().unwrap(), 1);
+    // B's release reaches B's doc before the exchange carries it to A.
+    drop(doc_a);
+    drop(doc_b);
+    reload_window(&b);
     let doc_a = a.doc();
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
