@@ -206,12 +206,7 @@ pub(super) fn establish_workspace(
     // The house agent keeps its own model PERSON anchor (HOUSE-BIND = A): the
     // stored preset is the statement that it runs the org, and its role in
     // the org comes with its bind (`house_link`), never with an anchor.
-    ensure_preset_row(vault, &intent.workspace, writer)?;
-    // The member's reservation saw only published presets. Now that this
-    // workspace's is published, a companion bound to her since then is
-    // refused here, and one bound after this read sees the preset.
-    let txn = vault.store.env.read_txn()?;
-    super::companion_bind::require_companion_split_in_txn(vault, &txn, intent)
+    ensure_preset_row(vault, &intent.workspace, writer)
 }
 
 /// Step 2: define the member's actor and anchor it to the member `PERSON`.
@@ -801,7 +796,9 @@ pub(super) fn ensure_companion_profile_grant(
 
 /// Writes the preset row, or verifies the stored one agrees with it. A new
 /// workspace starts at the default `work_companion` policy; an existing one
-/// keeps whatever its owner set.
+/// keeps whatever its owner set. A new row brings its house and its slots
+/// into its org, so the companion split is checked across that org before
+/// the row commits: a member's reservation saw only published presets.
 pub(super) fn ensure_preset_row(
     vault: &Vault,
     preset: &WorkspaceRosterPreset,
@@ -823,7 +820,7 @@ pub(super) fn ensure_preset_row(
             return Ok(());
         }
         PRESET.put(&vault.store, wtxn, &key, &row)?;
-        Ok(())
+        super::companion_bind::require_org_companion_split_in_txn(vault, wtxn, &preset.org_ref)
     })
 }
 

@@ -128,7 +128,9 @@ impl Vault {
     /// a different preset refuses, and an identical retry writes nothing.
     /// Only the `PRESET` row is written: no member, grant, mailbox or
     /// companion, and no house anchor. Onboarding still does those, and
-    /// keeps the policy established here.
+    /// keeps the policy established here. A new preset is refused when its
+    /// house is the companion of a member with a slot in its org, unless she
+    /// is the sole owner (#companion-split).
     pub fn establish_workspace_preset(
         &self,
         preset: &WorkspaceRosterPreset,
@@ -147,12 +149,20 @@ impl Vault {
                     "workspace_ref is already bound to a different workspace preset",
                 ));
             }
+            let published = existing.is_none();
             if existing.is_none_or(|row| row.work_companion != policy) {
                 let row = super::records::PresetRow {
                     preset: preset.clone(),
                     work_companion: policy,
                 };
                 PRESET.put(&self.store, txn, &key, &row)?;
+            }
+            if published {
+                super::companion_bind::require_org_companion_split_in_txn(
+                    self,
+                    txn,
+                    &preset.org_ref,
+                )?;
             }
             Ok(())
         })
