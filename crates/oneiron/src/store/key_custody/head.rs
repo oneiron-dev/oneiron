@@ -92,7 +92,7 @@ pub(crate) struct OpenedHead {
     pub(super) control: Zeroizing<[u8; 32]>,
     pub(super) live: BTreeMap<CustodyId, CustodySecret>,
     pub(super) retired: BTreeSet<CustodyId>,
-    pub(super) unopened: BTreeSet<CompartmentScope>,
+    pub(crate) unopened: BTreeSet<CompartmentScope>,
     /// The released escrow recipients the lineage retired (LC FIX
     /// 5384/5385), from the control compartment.
     pub(super) recipients: Vec<RecipientRetirement>,
@@ -373,17 +373,20 @@ fn unwrap_key(
                 .open(OpenKey::Hybrid(secret), &policy)
                 .ok()
         }
+        // Each generation's subkey is tried, current first. The open is
+        // authenticated, so a wrong key just fails.
         (TO_DATA_KEY, None) if scope != Some(CompartmentScope::OwnerOnly) => {
-            let data_key = opener.data_key.as_ref()?;
-            open_sym(
-                Purpose::CustodyCompartmentKey,
-                position.vault,
-                id,
-                DATA_KEY_RECIPIENT,
-                &Kek::from_bytes_ref(data_key),
-                &wrap.envelope,
-            )
-            .ok()
+            opener.data_keys.iter().find_map(|data_key| {
+                open_sym(
+                    Purpose::CustodyCompartmentKey,
+                    position.vault,
+                    id,
+                    DATA_KEY_RECIPIENT,
+                    &Kek::from_bytes_ref(data_key),
+                    &wrap.envelope,
+                )
+                .ok()
+            })
         }
         _ => None,
     })?;

@@ -32,17 +32,18 @@ use getrandom::SysRng;
 // artifact codec's, so a host that never opens a vault reads a sealed
 // artifact's key header with the engine's own types. A stored wrap is one
 // wrap as it rests: its public facts and its sealed envelope.
+pub(super) use self::state::walk_links;
 use self::state::{
     AEAD, ARGON2_MAX, ESCROW_RECIPIENT, ESCROW_RETIRED, ESCROW_SEED_LABEL, ESCROW_SPOOLED, KEM,
-    PASSKEY_PRF_CONTEXT, PAYLOAD_LABEL, PAYLOAD_LEN, STATE, UnlockSecret, VAULT_KEY_EPOCH,
+    LINKS, PASSKEY_PRF_CONTEXT, PAYLOAD_LABEL, PAYLOAD_LEN, STATE, UnlockSecret, VAULT_KEY_EPOCH,
     VaultKeyState, WRAPS, WrapSecret, check_name, log_escrow_warnings, open_wrap, passkey_kek,
-    presented_escrow, recipient_fingerprint, seal_wrap, wrap_digest,
+    presented_escrow, recipient_fingerprint, seal_link, seal_wrap, wrap_digest,
 };
-use oneiron_crypto::backup::{KeyHeader, KeyHeaderWrap as StoredWrap};
+use oneiron_crypto::backup::{KeyHeader, KeyHeaderLink, KeyHeaderWrap as StoredWrap};
 pub use oneiron_crypto::backup::{RecoveryPreset, VaultKeyWrapInfo, VaultKeyWrapKind};
 use oneiron_crypto::{
     Argon2Cost, Envelope, HybridPublicKey, HybridSecretKey, Kek, OpenKey, OpenPolicy, Passphrase,
-    Purpose, SealKey, SealParams, SuiteId, seal,
+    Purpose, SealKey, SealParams, SuiteId, WrapType, seal,
 };
 use oneiron_keystore::{DeviceKeystore, KeystoreSlot, SlotKind};
 use serde::{Deserialize, Serialize};
@@ -57,6 +58,7 @@ pub(crate) use oneiron_store::vault_page_seal::VaultDataKey;
 pub(super) use oneiron_store::vault_page_seal::WrapDigest;
 
 mod escrow;
+mod generation;
 pub(super) mod kit;
 mod kit_passkey;
 mod recovery_preset;
@@ -68,6 +70,9 @@ mod vocabulary;
 pub use self::escrow::{
     EscrowAddWarning, EscrowAdded, EscrowRetirement, ResealedEscrowCapsule, VaultKeyEscrowCapsule,
     reseal_escrow_capsule,
+};
+pub use self::generation::{
+    DataKeyGenerationCause, DataKeyGenerationDraft, DataKeyGenerationOutcome, DataKeyGenerationWays,
 };
 pub(super) use self::recovery_preset::EscrowOrigin;
 pub use self::recovery_preset::{RecoveryPresetAnyTwoChange, RecoveryPresetChange, RecoverySheet};
@@ -88,18 +93,24 @@ pub use self::vocabulary::{
 pub(crate) struct CarriedVaultKey(KeyHeader);
 
 impl CarriedVaultKey {
-    fn new(commitment: [u8; 32], recovery: RecoveryPreset, wraps: Vec<StoredWrap>) -> Self {
+    fn new(
+        commitment: [u8; 32],
+        recovery: RecoveryPreset,
+        wraps: Vec<StoredWrap>,
+        links: Vec<KeyHeaderLink>,
+    ) -> Self {
         Self(KeyHeader {
             commitment,
             wraps,
             recovery,
+            links,
         })
     }
 
     /// The vault key named by `commitment` with no wrap yet: what the mirror
     /// of a vault under a delivered key holds before its first wrap.
     pub(super) fn unwrapped(commitment: [u8; 32]) -> Self {
-        Self::new(commitment, RecoveryPreset::Standard, Vec::new())
+        Self::new(commitment, RecoveryPreset::Standard, Vec::new(), Vec::new())
     }
 
     /// The key header a sealed artifact carries, as its wire form.
@@ -135,6 +146,11 @@ impl CarriedVaultKey {
     /// Each carried wrap's public facts: what a host may unlock with.
     pub(crate) fn wrap_infos(&self) -> Vec<VaultKeyWrapInfo> {
         self.0.wrap_infos()
+    }
+
+    /// The data-key chain links the header carries, newest first.
+    pub(crate) fn links(&self) -> &[KeyHeaderLink] {
+        &self.0.links
     }
 
     /// The key for `context` of the vault key a carried wrap opens to under
@@ -320,15 +336,50 @@ impl Vault {
     }
 
     fn hold_vault_key(&self, key: VaultDataKey) {
+        let held = Arc::new(key);
         *self
             .world_keys
             .vault_key
             .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::new(key));
+            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&held));
+        // The earlier generations, reached from the held key through the link
+        // chain. A vault that never started a new generation has no links and
+        // keeps an empty ring. Any failure leaves the ring empty and warns;
+        // the unlock itself never fails for this.
+        let earlier = self.read_earlier_vault_keys(&held).unwrap_or_else(|error| {
+            tracing::warn!(%error, "the vault key's earlier generations did not load");
+            Vec::new()
+        });
+        *self
+            .world_keys
+            .earlier_vault_keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = earlier.into_iter().map(Arc::new).collect();
         // An unlock opens a new snapshot admission generation, never readiness.
         self.store.inference_snapshots.reopen();
         // FIX 14976: a bound private drafter may serve again.
         self.notify_drafter_serving();
+    }
+
+    /// The data keys of this vault's earlier generations, newest first, read
+    /// from the link chain for `held`. Refuses when the stored commitment is
+    /// not the held key's, or a link does not open.
+    fn read_earlier_vault_keys(&self, held: &VaultDataKey) -> Result<Vec<VaultDataKey>> {
+        let vault_id = *self.vault_id().as_bytes();
+        let txn = self.store.env.read_txn()?;
+        let state = STATE
+            .get(&self.store, &txn, &())?
+            .ok_or_else(|| refused("the vault has no data key"))?;
+        if state.commitment != held.commitment(&vault_id) {
+            return Err(refused("this handle holds another vault key"));
+        }
+        let mut links: Vec<KeyHeaderLink> = LINKS
+            .scan(&self.store, &txn)?
+            .into_iter()
+            .map(|(_, link)| link)
+            .collect();
+        links.sort_by_key(|link| std::cmp::Reverse(link.generation));
+        walk_links(&vault_id, held, &links)
     }
 
     /// Holds the data key a sealed vault opened with (OF-570 maximum tier).
@@ -362,6 +413,7 @@ impl Vault {
                         commitment,
                         created_at,
                         recovery: RecoveryPreset::Standard,
+                        generation: 0,
                     },
                 )
             })?,
@@ -397,6 +449,7 @@ impl Vault {
             state.commitment,
             state.recovery,
             wraps,
+            Vec::new(),
         )))
     }
 
@@ -421,6 +474,7 @@ impl Vault {
             state.commitment,
             state.recovery,
             wraps,
+            Vec::new(),
         ))
     }
 

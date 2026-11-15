@@ -21,7 +21,7 @@ mod erase_evidence;
 mod files;
 mod folder;
 mod fork;
-mod head;
+pub(crate) mod head;
 mod holders;
 mod home;
 use oneiron_store::key_custody::identity;

@@ -48,12 +48,16 @@ impl Vault {
         }
         // A kit can open the head without this install holding its data key,
         // just as in ordinary custody publication/recovery.
-        let data_key = self
+        let data_keys = self
             .unlock_vault_key()
-            .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))
-            .ok();
-        let admitted =
-            crate::store::admit_published_host_issuer_seeds(lineage, &recovery.source(), data_key)?;
+            .and_then(|()| self.vault_subkeys(CUSTODY_HEAD_WRAP_CONTEXT))
+            .map(|keys| keys.into_iter().map(|(_, subkey)| subkey).collect())
+            .unwrap_or_default();
+        let admitted = crate::store::admit_published_host_issuer_seeds(
+            lineage,
+            &recovery.source(),
+            data_keys,
+        )?;
         let mut report = IssuerSeedTransferReport {
             candidates: admitted.seeds.len(),
             published_generations: 0,

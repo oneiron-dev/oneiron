@@ -5,9 +5,10 @@
 //! change. The root re-exports every name so existing `super::X` paths keep
 //! resolving.
 use super::{
-    Argon2Cost, Deserialize, EscrowAddWarning, EscrowRetirement, HybridPublicKey, Kek, Named,
-    Passphrase, Purpose, RecoveryPreset, Result, SealKey, SealParams, Serialize, SideTable,
-    StoredWrap, SysRng, VaultDataKey, VaultKeyWrapKind, Zeroizing, refused, seal, side_table,
+    Argon2Cost, Deserialize, Envelope, EscrowAddWarning, EscrowRetirement, HybridPublicKey, Kek,
+    KeyHeaderLink, Named, OpenKey, OpenPolicy, Passphrase, Purpose, RecoveryPreset, Result,
+    SealKey, SealParams, Serialize, SideTable, StoredWrap, SysRng, VaultDataKey, VaultKeyWrapKind,
+    WrapType, Zeroizing, refused, seal, side_table,
 };
 #[doc(hidden)]
 pub(super) use oneiron_records::world_keys::vault_key::state::{
@@ -21,12 +22,26 @@ pub(super) const STATE: SideTable<(), VaultKeyState, Named> =
     SideTable::new(&side_table::VAULT_KEY_STATE);
 pub(super) const WRAPS: SideTable<String, StoredWrap, Named> =
     SideTable::new(&side_table::VAULT_KEY_WRAP);
+/// One link of the vault's data-key chain per generation, keyed by the
+/// generation as a zero-padded decimal string, so the keys sort by generation.
+pub(super) const LINKS: SideTable<String, KeyHeaderLink, Named> =
+    SideTable::new(&side_table::VAULT_KEY_LINK);
+
+/// Whether a generation number is the first one, which a stored row leaves out.
+fn is_zero(n: &u32) -> bool {
+    *n == 0
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(super) struct VaultKeyState {
     pub(super) commitment: [u8; 32],
     pub(super) created_at: u64,
     /// The owner's recovery preset: which wraps the key may carry.
     pub(super) recovery: RecoveryPreset,
+    /// The generation the commitment names. Left out at 0, so a vault that
+    /// never started a new generation reads as it did before.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub(super) generation: u32,
 }
 
 /// A passkey's PRF output as a KEK: copied once from the caller's guard into
@@ -81,6 +96,104 @@ pub(super) fn seal_wrap(
     let envelope = seal(&params, seal_key, &payload, &mut SysRng)
         .map_err(|_| refused("sealing the vault key failed"))?;
     Ok(envelope.to_bytes())
+}
+
+/// The derive-key context of a data-key link's KEK: the newer generation's key
+/// seals the older one under it, old-under-new only.
+pub(super) const LINK_CONTEXT: &str = "oneiron/vault-key-link/v1";
+
+/// Seals `older` under a key derived from `newer` as link `generation`: an E0
+/// envelope like [`seal_wrap`], but the KEK comes from the newer data key, the
+/// key id names the older key, and the recipient names the link.
+pub(super) fn seal_link(
+    vault_id: &[u8; 32],
+    newer: &VaultDataKey,
+    older: &VaultDataKey,
+    generation: u32,
+) -> Result<KeyHeaderLink> {
+    let kek = Kek::from_zeroizing(newer.derive(LINK_CONTEXT, vault_id));
+    let previous = older.commitment(vault_id);
+    let recipient = format!("vault-key-link:{generation}");
+    let params = SealParams {
+        suite: AEAD,
+        purpose: Purpose::VaultDek,
+        epoch: VAULT_KEY_EPOCH,
+        key_id: &previous,
+        recipient: recipient.as_bytes(),
+        vault_id,
+    };
+    let mut payload = Zeroizing::new(Vec::with_capacity(PAYLOAD_LEN));
+    payload.extend_from_slice(PAYLOAD_LABEL);
+    payload.extend_from_slice(&older.guarded_bytes()[..]);
+    let envelope = seal(&params, SealKey::SymmetricKek(&kek), &payload, &mut SysRng)
+        .map_err(|_| refused("sealing the vault key link failed"))?;
+    Ok(KeyHeaderLink {
+        generation,
+        previous,
+        envelope: envelope.to_bytes(),
+    })
+}
+
+/// Opens `link` with the newer generation's key. Refuses a link that does not
+/// open under it, and one that opens to bytes its `previous` does not name.
+pub(super) fn open_link(
+    vault_id: &[u8; 32],
+    newer: &VaultDataKey,
+    link: &KeyHeaderLink,
+) -> Result<VaultDataKey> {
+    let kek = Kek::from_zeroizing(newer.derive(LINK_CONTEXT, vault_id));
+    let recipient = format!("vault-key-link:{}", link.generation);
+    let policy = OpenPolicy {
+        purpose: Purpose::VaultDek,
+        vault_id,
+        recipient: recipient.as_bytes(),
+        key_id: &link.previous,
+        wraps: &[WrapType::SymmetricKek],
+        aead_suites: &[AEAD],
+        kem_suites: &[KEM],
+        min_epoch: VAULT_KEY_EPOCH,
+        argon2_max: ARGON2_MAX,
+    };
+    let envelope =
+        Envelope::parse(&link.envelope).map_err(|_| refused("a data-key link is malformed"))?;
+    let payload = envelope
+        .open(OpenKey::SymmetricKek(&kek), &policy)
+        .map_err(|_| refused("a data-key link does not open with this key"))?;
+    if payload.len() != PAYLOAD_LEN || !payload.starts_with(PAYLOAD_LABEL) {
+        return Err(refused("a data-key link's payload is malformed"));
+    }
+    let mut bytes = Zeroizing::new([0u8; 32]);
+    bytes.copy_from_slice(&payload[PAYLOAD_LABEL.len()..]);
+    let key = VaultDataKey::from_guarded(bytes);
+    if key.commitment(vault_id) != link.previous {
+        return Err(refused("a data-key link does not open to the key it names"));
+    }
+    Ok(key)
+}
+
+/// The earlier data keys `links` (newest first) reach from `current`, newest
+/// first: link n opens with the current key, then each older link with the key
+/// the one above it opened to. Refuses a gap, a repeat, or a link out of order.
+pub(super) fn walk_links(
+    vault_id: &[u8; 32],
+    current: &VaultDataKey,
+    links: &[KeyHeaderLink],
+) -> Result<Vec<VaultDataKey>> {
+    let mut earlier = Vec::with_capacity(links.len());
+    let mut expected = links.first().map_or(0, |link| link.generation);
+    for (index, link) in links.iter().enumerate() {
+        if link.generation == 0 || link.generation != expected {
+            return Err(refused("a data-key link is missing or out of order"));
+        }
+        let newer = if index == 0 {
+            current
+        } else {
+            &earlier[index - 1]
+        };
+        earlier.push(open_link(vault_id, newer, link)?);
+        expected = expected.saturating_sub(1);
+    }
+    Ok(earlier)
 }
 
 /// Which escrow capsule each escrow wrap last handed to the host's outbound

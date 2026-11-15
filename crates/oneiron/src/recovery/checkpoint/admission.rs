@@ -162,7 +162,7 @@ impl Vault {
             rows,
             required.as_ref(),
             &absolute,
-            key.custody_wrap(),
+            key.custody_wraps(),
             Some(&custody_source),
         )
         .map_err(at_custody)?;

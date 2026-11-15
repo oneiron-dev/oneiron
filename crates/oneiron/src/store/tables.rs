@@ -1167,6 +1167,11 @@ crate::side_table::side_tables! {
     /// metadata. Key: string (wrap id).
     VAULT_KEY_WRAP: VaultMeta b"vault_key:wrap:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One link of the vault's data-key chain: the key of generation `n - 1`
+    /// sealed under a key derived from generation `n`'s key. Key: string (the
+    /// generation as a zero-padded decimal, so the keys sort by generation).
+    VAULT_KEY_LINK: VaultMeta b"vault_key:link:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// Voice reference pack. Key: string (pack id).
     VOICE_OWNER_REF: VaultMeta b"voice:owner_ref:v1:" Named
         // Payload family: The voice reference bank, every table of it, erased with its subject or

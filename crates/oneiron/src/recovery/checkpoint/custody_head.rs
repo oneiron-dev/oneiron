@@ -542,7 +542,7 @@ impl Vault {
                 .ok_or_else(codec_error)?,
             required.as_ref(),
             &std::path::absolute(destination)?,
-            key.custody_wrap(),
+            key.custody_wraps(),
             source.as_ref(),
         )?;
         let (custody, mut landing) = match route {

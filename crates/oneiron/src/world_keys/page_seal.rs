@@ -49,10 +49,11 @@ use std::sync::{Arc, LazyLock, Mutex, MutexGuard, PoisonError};
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroizing;
 
-use super::vault_key::{CarriedVaultKey, VaultDataKey, VaultKeyUnlock};
+use super::vault_key::{CarriedVaultKey, VaultDataKey, VaultKeyUnlock, walk_links};
 use super::{os_fill, refused};
 use crate::Vault;
 use crate::error::{Error, Result, SecretError};
+use oneiron_crypto::backup::KeyHeaderLink;
 pub use oneiron_store::vault_page_seal::VaultPageSeal;
 use oneiron_store::vault_page_seal::{PAGE_KEY_CONTEXT, SealOrigin};
 
@@ -160,6 +161,12 @@ impl OpenedDataKey {
     /// artifact's body-file keys with it).
     pub(crate) fn subkey(&self, context: &str) -> Zeroizing<[u8; 32]> {
         self.key.derive(context, &self.vault_id)
+    }
+
+    /// The earlier data keys the header's `links` reach from this key, newest
+    /// first. The keys stay opaque; a link that does not open refuses.
+    pub(crate) fn earlier_keys(&self, links: &[KeyHeaderLink]) -> Result<Vec<VaultDataKey>> {
+        walk_links(&self.vault_id, &self.key, links)
     }
 
     /// A seal for a vault restored from the artifact: its vault id and data

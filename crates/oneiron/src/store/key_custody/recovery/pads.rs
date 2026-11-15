@@ -82,7 +82,7 @@ fn pads_corrupt() -> Rejected {
 
 impl Store {
     /// Admits the head beside the backup `source` names for the custody
-    /// position `required` names, opened with `data_key` (the backup's) and
+    /// position `required` names, opened with `data_keys` (the backup's) and
     /// the kit's root or a machine's key `source` carries. The head must be
     /// this vault's current custody lineage. Refuses as a restore's admission
     /// refuses: a missing head, a missing or stale anchor record with one
@@ -92,7 +92,7 @@ impl Store {
         &self,
         required: &CustodyRequirement,
         source: &CustodySourceAt<'_>,
-        data_key: Zeroizing<[u8; 32]>,
+        data_keys: Vec<Zeroizing<[u8; 32]>>,
     ) -> std::result::Result<AdmittedWorldPads, Rejected> {
         let wanted = required
             .position()
@@ -115,7 +115,7 @@ impl Store {
         };
         let opener = CustodyOpener {
             root: source.root,
-            data_key: Some(data_key),
+            data_keys,
             machine: source.machine,
         };
         let target = source.reader();

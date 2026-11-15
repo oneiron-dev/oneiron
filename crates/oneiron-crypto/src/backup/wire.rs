@@ -146,6 +146,17 @@ pub struct KeyHeaderWrap {
     pub envelope: Vec<u8>,
 }
 
+/// One link of a vault's data-key chain: the key of generation `generation - 1` sealed under a
+/// key derived from generation `generation`'s key. Links run old-under-new only.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyHeaderLink {
+    pub generation: u32,
+    /// The commitment naming the key this link carries (generation - 1).
+    pub previous: [u8; 32],
+    pub envelope: Vec<u8>,
+}
+
 /// The vault data key as a sealed artifact carries it in the clear: the
 /// commitment naming the key and every wrap's sealed envelope, never the key.
 /// Named MessagePack.
@@ -159,6 +170,11 @@ pub struct KeyHeader {
     /// the standard preset, so a standard header reads as it did before.
     #[serde(default, skip_serializing_if = "RecoveryPreset::is_standard")]
     pub recovery: RecoveryPreset,
+    /// The data-key chain below the key this header names, newest first. Left
+    /// out when the vault never started a new generation, so such a header
+    /// reads as it did before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<KeyHeaderLink>,
 }
 
 impl KeyHeader {

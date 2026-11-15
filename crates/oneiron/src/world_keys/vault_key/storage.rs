@@ -45,6 +45,7 @@ impl Vault {
                     commitment,
                     created_at,
                     recovery: RecoveryPreset::Standard,
+                    generation: 0,
                 },
             )?;
             let info = VaultKeyWrapInfo {
@@ -113,6 +114,7 @@ impl Vault {
                     commitment,
                     created_at,
                     recovery: RecoveryPreset::Standard,
+                    generation: 0,
                 },
             )?;
             Ok(true)
@@ -144,8 +146,14 @@ impl Vault {
             .into_iter()
             .map(|(_, stored)| stored)
             .collect();
+        let mut links: Vec<KeyHeaderLink> = LINKS
+            .scan(&self.store, txn)?
+            .into_iter()
+            .map(|(_, link)| link)
+            .collect();
+        links.sort_by_key(|link| std::cmp::Reverse(link.generation));
         Ok((
-            CarriedVaultKey::new(state.commitment, state.recovery, wraps),
+            CarriedVaultKey::new(state.commitment, state.recovery, wraps, links),
             key.derive(context, &vault_id),
         ))
     }
@@ -177,6 +185,7 @@ impl Vault {
                     state.commitment,
                     state.recovery,
                     wraps,
+                    Vec::new(),
                 ))
             }
         };
@@ -285,6 +294,11 @@ impl Vault {
             .vault_key
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = None;
+        *self
+            .world_keys
+            .earlier_vault_keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Vec::new();
         receipt
     }
 
@@ -500,5 +514,29 @@ impl Vault {
             .held_vault_key()
             .ok_or_else(|| refused("the vault key is locked"))?;
         Ok(key.derive(context, self.vault_id().as_bytes()))
+    }
+
+    /// A key of its own for `context` for the held vault data key and each of
+    /// its earlier generations: the (commitment, subkey) pairs, the held key
+    /// first. Refused while the key is locked.
+    pub(crate) fn vault_subkeys(
+        &self,
+        context: &str,
+    ) -> Result<Vec<([u8; 32], Zeroizing<[u8; 32]>)>> {
+        let held = self
+            .held_vault_key()
+            .ok_or_else(|| refused("the vault key is locked"))?;
+        let vault_id = *self.vault_id().as_bytes();
+        let mut keys = Vec::new();
+        keys.push((held.commitment(&vault_id), held.derive(context, &vault_id)));
+        let earlier = self
+            .world_keys
+            .earlier_vault_keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        for key in earlier.iter() {
+            keys.push((key.commitment(&vault_id), key.derive(context, &vault_id)));
+        }
+        Ok(keys)
     }
 }

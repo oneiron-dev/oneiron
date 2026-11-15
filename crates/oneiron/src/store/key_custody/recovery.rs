@@ -441,9 +441,9 @@ pub(crate) fn refuse_foreign_binding(
 /// The route a restore that keeps its image's custody takes, decided on the
 /// image's `rows` before anything is made at `destination`. A landed head
 /// rebinds the image's binding row beside `destination` in `rows`, so the
-/// restore's preflight reads the landed custody. `data_key` is the backup
-/// key's custody subkey; `source` is `None` where the caller reads no head
-/// (a wake, a migration, an engine restore).
+/// restore's preflight reads the landed custody. `data_keys` are the backup
+/// key's custody subkeys, current first; `source` is `None` where the caller
+/// reads no head (a wake, a migration, an engine restore).
 ///
 /// Whatever the entry point, an image opened where no head is found and its
 /// custody is not (no source root, or only the legacy untyped marker with
@@ -455,7 +455,7 @@ pub(crate) fn route_custody(
     rows: &mut Vec<(Vec<u8>, Vec<u8>)>,
     required: Option<&CustodyRequirement>,
     destination: &std::path::Path,
-    data_key: Zeroizing<[u8; 32]>,
+    data_keys: Vec<Zeroizing<[u8; 32]>>,
     source: Option<&CustodySourceAt<'_>>,
 ) -> std::result::Result<CustodyRoute, Rejected> {
     let Some(bound) =
@@ -496,7 +496,7 @@ pub(crate) fn route_custody(
     }
     let opener = CustodyOpener {
         root: source.root,
-        data_key: Some(data_key),
+        data_keys,
         machine: source.machine,
     };
     let admitted = admit_recovery(required, &target, &opener, source.anchor)?;
