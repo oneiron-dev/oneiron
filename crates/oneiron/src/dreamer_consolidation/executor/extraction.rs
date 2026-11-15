@@ -253,7 +253,7 @@ pub(in crate::dreamer_consolidation) enum PackRelationship {
 pub(in crate::dreamer_consolidation) struct CorrectsPrior {
     /// The head's entity subject, which the operand repeats.
     pub(in crate::dreamer_consolidation) subject: EntityId,
-    /// The head predicate, which the operand repeats.
+    /// The head predicate, which the candidate binds whatever it proposed.
     pub(in crate::dreamer_consolidation) predicate: String,
     /// The head relationship set.
     pub(in crate::dreamer_consolidation) rel: crate::claim::RelationshipScope,
@@ -288,10 +288,9 @@ impl CorrectsPrior {
 pub(in crate::dreamer_consolidation) struct CandidateAssemblyInput<'a> {
     /// The operand subject.
     pub(in crate::dreamer_consolidation) subject: EntityId,
-    /// The operand predicate, when it carries one to check: native passes
-    /// none while correcting, since it binds the head predicate unwatched,
-    /// and the bound path always passes its checked predicate, which must
-    /// repeat the head predicate while correcting.
+    /// The proposed predicate, read only while the candidate corrects no
+    /// head: a correcting candidate binds the head predicate whatever it
+    /// proposed, so native and the bound check both pass none then.
     pub(in crate::dreamer_consolidation) predicate: Option<&'a str>,
     /// The proposed value as JSON.
     pub(in crate::dreamer_consolidation) value: &'a serde_json::Value,
@@ -328,13 +327,6 @@ pub(in crate::dreamer_consolidation) fn assemble_identity_candidate(
             if input.subject != prior.subject {
                 return Err(invalid_consolidation(
                     "extracted correction names a claim about another subject",
-                ));
-            }
-            if let Some(echo) = input.predicate
-                && echo != prior.predicate
-            {
-                return Err(invalid_consolidation(
-                    "extracted correction predicate differs from its corrected claim",
                 ));
             }
             (prior.subject, prior.predicate.clone())

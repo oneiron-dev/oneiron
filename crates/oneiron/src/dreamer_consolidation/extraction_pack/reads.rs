@@ -225,9 +225,10 @@ pub(super) fn correction_project(checked: &CheckedPack) -> Option<EntityId> {
 
 /// Every pack candidate checked with the listing its pairs need: each subject
 /// parsed, each predicate grammar checked, each value non-null with turn
-/// evidence, each corrected claim a listed head it repeats, each relationship
-/// inside the bound set, each project the common one of its turns, and each
-/// id derived with the native deterministic id.
+/// evidence, each corrected claim a listed head about its subject, whose
+/// predicate, relationship set and topic it then binds as native binds them,
+/// each relationship inside the bound set, each project the common one of
+/// its turns, and each id derived with the native deterministic id.
 pub(crate) fn check_pack_candidates(
     candidates: &[CandidateOperand],
     bound: &BoundBranchRead,
@@ -307,7 +308,11 @@ pub(crate) fn check_pack_candidates(
         })?;
         let input = CandidateAssemblyInput {
             subject: *subject,
-            predicate: Some(operand.predicate.as_str()),
+            // Native reads no proposed predicate while correcting.
+            predicate: match &corrects {
+                Some(_) => None,
+                None => Some(operand.predicate.as_str()),
+            },
             value: &operand.value,
             rel,
             topic: operand.topic.as_ref(),
