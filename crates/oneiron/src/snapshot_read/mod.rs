@@ -43,7 +43,7 @@ pub use extraction_inputs::{
 };
 pub(crate) use extraction_inputs::{
     extraction_inputs_page_bound, extraction_reader_scope_in_txn, extraction_turn_in_txn,
-    queued_extraction_branch_in_txn,
+    extraction_turn_read, queued_extraction_branch_in_txn,
 };
 pub use policy_preflight::{
     POLICY_PREFLIGHT_MAX_REFS, PolicyPreflight, PolicyPreflightAct, PolicyPreflightRef,
