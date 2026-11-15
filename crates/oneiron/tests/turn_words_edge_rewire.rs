@@ -1,24 +1,28 @@
-//! L2-08 (ARCH-0026 #sieve-open): words a TURN's edges, a deleted MESSAGE or
-//! a document edit change reach the turn's listeners. A witnessed TURN's words
+//! L2-08 (ARCH-0026 #sieve-open): words a TURN's edges, a deleted MESSAGE or a
+//! document edit change reach the turn's listeners. A witnessed TURN's words
 //! are its MESSAGE children by `PartOf`, each read with its `BelongsTo` and its
-//! speaker's `AuthoredBy`. An edge write that links a MESSAGE into the turn,
-//! or binds another speaker to one of its MESSAGEs, changes what the turn says
-//! with no write to the turn or to any MESSAGE's text. Before, no door told the
-//! Dreamer, the sieve, the projector, the tagger or the embedder: a turn a
-//! round had already read stayed read at its old words. Now the edge's own
-//! commit admits the turn as a TURN whose words changed: a turn a round may
+//! speaker's `AuthoredBy`. An edge write that links a MESSAGE into the turn, or
+//! binds a speaker to one of its MESSAGEs that had none, changes what the turn
+//! says with no write to the turn or to any MESSAGE's text. Before, no door
+//! told the Dreamer, the sieve, the projector, the tagger or the embedder: a
+//! turn a round had already read stayed read at its old words. Now the edge's
+//! own commit admits the turn as a TURN whose words changed: a turn a round may
 //! have read (a scope's watermark passed it) takes a re-dirty carrier, pending
 //! for every consolidation scope, as a TURN put behind a watermark does; the
 //! sieve and the projector owe it a read; and the tagger and the embedder mark
 //! it at its new words.
 //!
-//! A witnessed MESSAGE's own bindings are fixed (`memory/witness/validation.rs`:
-//! a new parent or actor is a refusal), so no edge door takes one out of its
-//! turn; its author deleting it does. The erase hook already owed the sieve a
-//! read of the words the turn keeps; now a turn a round read is pending again
-//! for every scope too. A document edit of a MESSAGE inside a turn a round
-//! read ("an edit after consolidation") re-dirtied nothing for consolidation
-//! either; it is admitted the same way now.
+//! A witnessed MESSAGE's own bindings are fixed
+//! (`memory/witness/validation.rs`: a new parent or actor is a refusal), so no
+//! edge door takes one out of its turn; its author deleting it does. A room
+//! MESSAGE takes one speaker at most (`conversation/deletion/mod.rs` refuses a
+//! second `AuthoredBy`), so the speaker that can change is a speakerless row's
+//! first: a system row's, or a replica's MESSAGE whose `AuthoredBy` arrives
+//! after its row. The erase hook already owed the sieve a read of the words the
+//! turn keeps; now a turn a round read is pending again for every scope too. A
+//! document edit of a MESSAGE inside a turn a round read ("an edit after
+//! consolidation") re-dirtied nothing for consolidation either; it is admitted
+//! the same way now.
 //!
 //! The carrier and the embedding marker have no public read, and a round's
 //! watermark is settled without a model; all three go through the test door
@@ -30,6 +34,10 @@
 
 use oneiron::entity_doc::{AnchoredEdit, DocAuthorization, EditVerb, TextField};
 use oneiron::memory::{WitnessAssertions, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::policy_manifest_doors::{
+    ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, policy_manifests_as_owner,
+    put_policy_manifest_as_owner,
+};
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::turn_words::{
@@ -79,9 +87,10 @@ fn bound_fixture() -> Fixture {
 }
 
 /// [`fixture`] with no embedder, opened as the process that owns the vault
-/// (the writer lease the owner's doors ask for) and with its install's key
-/// store loaded: a delete signs its receipt with the install's key.
-fn deleting_fixture() -> Fixture {
+/// (the writer lease the owner's doors ask for: a delete, a policy put) and
+/// with its install's key store loaded: a delete signs its receipt with the
+/// install's key.
+fn owned_fixture() -> Fixture {
     let dir = tempfile::tempdir().expect("temporary vault");
     let vault = Vault::open_owned(dir.path(), VaultConfig::device()).expect("fresh owned vault");
     vault.install_device_keystore(std::sync::Arc::new(oneiron_keystore::MemoryKeystore::new()));
@@ -103,17 +112,33 @@ impl Fixture {
 
     /// [`Self::witness_turn`] in the conversation `room`.
     fn witness_turn_in(&self, room: EntityId, words: &[&str]) -> (EntityId, Vec<EntityId>) {
+        let rows: Vec<(WitnessAuthor, &str)> = words
+            .iter()
+            .map(|content| (WitnessAuthor::User, *content))
+            .collect();
+        self.witness_rows_in(room, &rows)
+    }
+
+    /// [`Self::witness_turn_in`] with each MESSAGE's author: the owner's
+    /// words by [`WitnessAuthor::User`], a system row by
+    /// [`WitnessAuthor::System`] (the owner's policy must allow it,
+    /// [`Self::allow_owner_system_rows`]).
+    fn witness_rows_in(
+        &self,
+        room: EntityId,
+        rows: &[(WitnessAuthor, &str)],
+    ) -> (EntityId, Vec<EntityId>) {
         let turn = EntityId::now();
-        let ids: Vec<EntityId> = words.iter().map(|_| EntityId::now()).collect();
-        let messages = words
+        let ids: Vec<EntityId> = rows.iter().map(|_| EntityId::now()).collect();
+        let messages = rows
             .iter()
             .zip(&ids)
             .zip(0_u32..)
-            .map(|((content, id), order)| WitnessMessage {
+            .map(|((&(author, content), id), order)| WitnessMessage {
                 id: Some(id.to_hex()),
-                author: WitnessAuthor::User,
+                author,
                 message_type: "dialogue".to_owned(),
-                content: (*content).to_owned(),
+                content: content.to_owned(),
                 parts: None,
                 metadata: None,
                 is_visible: true,
@@ -149,6 +174,45 @@ impl Fixture {
         );
     }
 
+    /// The owner's default policy gains an `actor_ceilings` row bound to the
+    /// owner at `auto`, put through the owner's policy door: the owner's
+    /// witness may then write a system row, which carries no `AuthoredBy`
+    /// (ONE-1686).
+    fn allow_owner_system_rows(&self) {
+        let proof = self
+            .vault
+            .memory(self.owner, EdgeActorClass::Human)
+            .embedded_owner("vault.policy_manifests.put")
+            .expect("owner proof");
+        let view = policy_manifests_as_owner(
+            &self.vault,
+            &proof,
+            &PolicyManifestRead { manifest_ref: None },
+        )
+        .expect("read the policy manifests");
+        let default = view
+            .manifests
+            .iter()
+            .find(|entry| entry.manifest_ref == view.default_manifest_ref)
+            .expect("the default policy manifest");
+        let mut manifest = default.manifest.clone();
+        manifest.actor_ceilings.push(ActorCeiling {
+            actor_class: "human".into(),
+            actor_ref: Some(self.owner.to_hex()),
+            ceiling: PolicyCeiling::Auto,
+        });
+        put_policy_manifest_as_owner(
+            &self.vault,
+            &proof,
+            PolicyManifestPut {
+                manifest_ref: Some(default.manifest_ref.clone()),
+                expected_body_hash: Some(default.body_hash.clone()),
+                manifest,
+            },
+        )
+        .expect("the owner puts the policy");
+    }
+
     fn redirty_pending(&self, turn: &EntityId) -> bool {
         redirty_pending(&self.vault, turn).expect("read the re-dirty carrier")
     }
@@ -172,7 +236,7 @@ impl Fixture {
 /// `reason`: the turn keeps its row and its other words, and is pending again
 /// for every consolidation scope.
 fn a_message_deleted_from_a_read_turn_re_dirties_the_turn(reason: DeleteReason) {
-    let fixture = deleting_fixture();
+    let fixture = owned_fixture();
     let room = EntityId::now();
     let (turn, messages) =
         fixture.witness_turn_in(room, &["the ferry leaves at nine", "bring the map"]);
@@ -231,19 +295,29 @@ fn a_message_linked_into_a_second_read_turn_re_dirties_both_turns() {
     );
 }
 
-/// Another speaker bound to a member MESSAGE of a read turn changes who said
-/// the turn's words: the turn is pending again.
+/// A speaker bound to a member MESSAGE of a read turn that had none changes
+/// who said the turn's words: the turn is pending again. A room MESSAGE takes
+/// one speaker at most, so the binding is a speakerless row's first: here a
+/// system row's, as a replica's MESSAGE whose `AuthoredBy` arrives after its
+/// row.
 #[test]
-fn a_speaker_bound_to_a_member_message_re_dirties_the_read_turn() {
-    let fixture = fixture(false);
-    let (turn, messages) = fixture.witness_turn(&["the ferry leaves at nine"]);
+fn a_first_speaker_bound_to_a_member_message_re_dirties_the_read_turn() {
+    let fixture = owned_fixture();
+    fixture.allow_owner_system_rows();
+    let (turn, messages) = fixture.witness_rows_in(
+        EntityId::now(),
+        &[
+            (WitnessAuthor::User, "the ferry leaves at nine"),
+            (WitnessAuthor::System, "the timetable was checked"),
+        ],
+    );
     fixture.read_by_every_scope(&turn);
     let yuki = fixture.person("yuki");
 
     fixture
         .vault
-        .put_edge(&messages[0], EdgeKind::AuthoredBy, &yuki, 1.0)
-        .expect("bind another speaker to the message");
+        .put_edge(&messages[1], EdgeKind::AuthoredBy, &yuki, 1.0)
+        .expect("bind a speaker to the system row");
 
     assert!(
         fixture.redirty_pending(&turn),
