@@ -55,6 +55,18 @@ impl FacadeApiError {
     }
 }
 
+/// The catalogue status for an `ApiError` code string, if `code` is one.
+/// A door that hands an `ApiError` on as an engine error
+/// (`FacadeApiError::from(error).into_memory_error()`) drops its status; the
+/// match below takes it back from the catalogue, so a caller's refusal never
+/// reads as a server fault ([MESH-DOOR-REFUSAL-STATUS-500]).
+fn catalogue_refusal_status(code: &str) -> Option<StatusCode> {
+    crate::error::ErrorCode::ALL
+        .iter()
+        .find(|candidate| candidate.as_str() == code)
+        .map(|candidate| candidate.status())
+}
+
 /// The engine's refusal, forwarded whole.
 ///
 /// The status is derived from the code; the code, message, and suggestions are
@@ -220,6 +232,13 @@ impl From<MemoryError> for FacadeApiError {
             // is the cause (`repo_doors::repo_refusal_status`).
             code if repo_doors::repo_refusal_status(code).is_some() => {
                 repo_doors::repo_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
+            }
+            // [MESH-DOOR-REFUSAL-STATUS-500]: an `ApiError` catalogue code
+            // that reached the facade as an engine error string takes its
+            // catalogue status back. The arms above keep winning, and their
+            // statuses equal the catalogue's for the codes both name.
+            code if catalogue_refusal_status(code).is_some() => {
+                catalogue_refusal_status(code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR)
             }
             MEMORY_CODE_INTERNAL => StatusCode::INTERNAL_SERVER_ERROR,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
