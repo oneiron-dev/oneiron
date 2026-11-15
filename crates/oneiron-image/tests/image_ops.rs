@@ -2,7 +2,9 @@
 //! plan, "Fixture and oracle gate"): crop and nearest resize land where the
 //! geometry says, EXIF orientation turns the canvas first, overlays stay
 //! editable until export, and unsupported or hostile input fails before any
-//! pixel buffer exists. Exports are decoded back by the codec crate alone.
+//! pixel buffer exists; `image.render` answers what open, each op and the
+//! export answer, in one call. Exports are decoded back by the codec crate
+//! alone.
 #![cfg(unix)]
 
 mod fixtures;
@@ -634,5 +636,177 @@ fn an_edit_never_returns_a_body_the_next_call_refuses() {
             &[]
         )),
         ErrorCode::BadRequest
+    );
+}
+
+/// `image.render`, named as text so this file also builds against an organ
+/// that does not offer it (the red run).
+const RENDER: &str = "image.render";
+
+/// One `image.render` op: its name as `op`, beside the op's own args.
+fn op(name: &str, args: Value) -> Value {
+    let Ok(mut pairs) = args.into_map() else {
+        panic!("an op's args are a map");
+    };
+    pairs.insert(0, ("op".into(), name.into()));
+    Value::Map(pairs)
+}
+
+fn render_args(ops: Vec<Value>, format: &str) -> Value {
+    map(vec![("ops", Value::Array(ops)), ("format", format.into())])
+}
+
+/// The answer of `image.open`, each `(verb, args)` in order on the body,
+/// then `image.export` to PNG, on one fresh organ.
+fn open_ops_export(steps: Vec<(&str, Value)>, source: &[InputBytes]) -> Answer {
+    let organ = ImageOrgan::default();
+    let mut edited = body(&call(&organ, VERB_OPEN, Value::Nil, None, source).expect("open"));
+    for (verb, args) in steps {
+        edited = body(&call(&organ, verb, args, Some(&edited), &[]).expect(verb));
+    }
+    call(
+        &organ,
+        VERB_EXPORT,
+        map(vec![("format", "png".into())]),
+        Some(&edited),
+        source,
+    )
+    .expect("export")
+}
+
+#[test]
+fn render_answers_what_open_then_each_op_then_export_answer_byte_for_byte() {
+    let (w, h) = (12, 10);
+    let source = [InputBytes::inline(
+        "image/png",
+        png(w, h, &pixels(w, h, coded), Extra::default()),
+    )];
+    let exported = open_ops_export(
+        vec![
+            (VERB_CROP, crop(1, 2, 8, 6)),
+            (VERB_RESIZE, resize(4, 3, "bilinear")),
+        ],
+        &source,
+    );
+    let ops = vec![
+        op("crop", crop(1, 2, 8, 6)),
+        op("resize", resize(4, 3, "bilinear")),
+    ];
+    // A fresh organ: the render decodes the source itself.
+    let rendered = match call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(ops, "png"),
+        None,
+        &source,
+    ) {
+        Ok(answer) => answer,
+        Err(err) => panic!("FAILBEFORE: the organ renders a whole edit in one call: {err}"),
+    };
+    assert_eq!(rendered, exported, "the same PNG, report and notes");
+    let [output] = rendered.outputs.as_slice() else {
+        panic!("a render makes one output");
+    };
+    assert_eq!(
+        (output.name.as_str(), output.media_type.as_str()),
+        ("image.png", "image/png")
+    );
+    assert_eq!(decode_png(&output.bytes).dimensions(), (4, 3));
+    let steps = field(field(&rendered.report, "body"), "steps")
+        .as_array()
+        .expect("the report carries the body it rendered");
+    assert_eq!(steps.len(), 2, "the crop and the resize");
+
+    // An untagged JPEG: the same warning and losses as its export.
+    let jpeg = [InputBytes::inline(
+        "image/jpeg",
+        fixtures::jpeg_flat(8, 6, [200, 40, 40], None),
+    )];
+    let exported = open_ops_export(vec![(VERB_CROP, crop(1, 1, 4, 3))], &jpeg);
+    let rendered = call(
+        &ImageOrgan::default(),
+        RENDER,
+        render_args(vec![op("crop", crop(1, 1, 4, 3))], "png"),
+        None,
+        &jpeg,
+    )
+    .expect("render the jpeg");
+    assert_eq!(rendered, exported);
+    assert!(
+        rendered
+            .notes
+            .warnings
+            .iter()
+            .any(|warning| warning == "untagged_read_as_srgb"),
+        "{:?}",
+        rendered.notes
+    );
+}
+
+#[test]
+fn render_refuses_what_no_edit_takes() {
+    let bytes = png(4, 4, &pixels(4, 4, coded), Extra::default());
+    let source = [InputBytes::inline("image/png", bytes.clone())];
+    let organ = ImageOrgan::default();
+    let render = |args: Value, inputs: &[InputBytes]| call(&organ, RENDER, args, None, inputs);
+    let whole = || op("crop", crop(0, 0, 4, 4));
+    assert_eq!(
+        code(render(render_args(vec![whole(); 257], "png"), &source)),
+        ErrorCode::BadRequest,
+        "FAILBEFORE: a render of more than 256 ops is a bad request"
+    );
+    assert!(
+        render(render_args(vec![whole(); 256], "png"), &source).is_ok(),
+        "256 ops render"
+    );
+    assert!(
+        render(render_args(Vec::new(), "png"), &source).is_ok(),
+        "no op exports the source as it is"
+    );
+    assert_eq!(
+        code(render(render_args(vec![whole()], "jpeg"), &source)),
+        ErrorCode::Unsupported
+    );
+    let annotate = op("annotate", map(vec![]));
+    assert_eq!(
+        code(render(render_args(vec![annotate], "png"), &source)),
+        ErrorCode::BadRequest,
+        "a render op is a crop or a resize"
+    );
+    assert_eq!(
+        code(render(render_args(vec![crop(0, 0, 2, 2)], "png"), &source)),
+        ErrorCode::BadRequest,
+        "an op names itself"
+    );
+    assert_eq!(
+        code(render(
+            render_args(vec![op("crop", crop(3, 3, 2, 2))], "png"),
+            &source
+        )),
+        ErrorCode::BadRequest,
+        "a crop past the canvas"
+    );
+    assert_eq!(
+        code(render(render_args(vec![whole()], "png"), &[])),
+        ErrorCode::BadRequest,
+        "no source"
+    );
+    let two = [
+        InputBytes::inline("image/png", bytes.clone()),
+        InputBytes::inline("image/png", bytes),
+    ];
+    assert_eq!(
+        code(render(render_args(vec![whole()], "png"), &two)),
+        ErrorCode::BadRequest,
+        "two sources"
+    );
+    let deep = [InputBytes::inline("image/png", fixtures::png_rgb16(2, 2))];
+    assert_eq!(
+        code(render(
+            render_args(vec![op("crop", crop(0, 0, 1, 1))], "png"),
+            &deep
+        )),
+        ErrorCode::Unsupported,
+        "a 16-bit PNG, as open refuses it"
     );
 }

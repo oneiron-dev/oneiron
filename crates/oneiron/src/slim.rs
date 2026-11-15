@@ -57,16 +57,8 @@ pub enum VaultResidency {
     Slim,
 }
 
-/// Why the host asked for a shed. Observability only — the engine never
-/// compares it, or `waited_secs`, against a policy constant.
-#[derive(
-    Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum ShedCause {
-    LongOutboundWait,
-    MemoryPressure,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::slim::{ShedBlocker, ShedCause};
 
 /// Stable pointer to the one durable step retained across SLIM.
 ///
@@ -132,24 +124,6 @@ pub struct SlimResidue {
 }
 
 pub use crate::heap_drop::HeapDropReport;
-
-/// Why a shed was refused. Every variant is defined unconditionally so the
-/// public outcome shape does not vary by build feature.
-#[derive(
-    Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum ShedBlocker {
-    NoPendingOutboundStep,
-    MultiplePendingOutboundSteps {
-        count: usize,
-    },
-    SyncWindowBusy {
-        window_key: String,
-        outstanding_handles: usize,
-    },
-    AlreadySlimForDifferentStep,
-}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ShedOutcome {

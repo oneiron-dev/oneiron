@@ -24,10 +24,12 @@ use crate::error::{Error, Result};
 use crate::memory::EntityView;
 use crate::registry::ENTITY_TYPE_CLAIM;
 
-/// The version tag every inspection handle starts with.
-pub const INSPECTION_HANDLE_VERSION: &str = "i1";
-/// An inspection handle's exact length: version, kind, 32-hex id.
-pub const INSPECTION_HANDLE_LEN: usize = INSPECTION_HANDLE_VERSION.len() + 1 + 32;
+#[doc(hidden)]
+use oneiron_verb_wire::lens::inspection::kind_tag;
+#[doc(hidden)]
+pub use oneiron_verb_wire::lens::inspection::{
+    INSPECTION_HANDLE_LEN, INSPECTION_HANDLE_VERSION, InspectionResolveRequest,
+};
 
 /// What an inspector shows: one entity or one claim, by id. Locator data
 /// only; it proves nothing about who may read it.
@@ -90,13 +92,6 @@ impl std::fmt::Display for InspectionHandle {
     }
 }
 
-const fn kind_tag(kind: LensBackingTargetKind) -> char {
-    match kind {
-        LensBackingTargetKind::Entity => 'e',
-        LensBackingTargetKind::Claim => 'c',
-    }
-}
-
 /// The one canonical handle of `state`. Pure.
 #[must_use]
 pub fn encode_inspection_handle(state: &InspectionState) -> InspectionHandle {
@@ -132,13 +127,6 @@ pub fn decode_inspection_handle(handle: &str) -> Result<InspectionState> {
         return Err(malformed());
     }
     Ok(state)
-}
-
-/// `vault.inspection.resolve`'s input: a handle a host took from a link.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct InspectionResolveRequest {
-    pub handle: String,
 }
 
 /// `vault.inspection.resolve`'s answer: the state the handle names and, when
@@ -197,6 +185,20 @@ impl Vault {
         state: &InspectionState,
         project: impl FnOnce(&heed::RoTxn<'_>, Option<ReadRow>) -> std::result::Result<T, E>,
     ) -> std::result::Result<ScopedReadResult<T>, E> {
+        let _bodies = read.prepare_point_read::<E>()?;
+        let txn = self.store.env.read_txn().map_err(Error::from)?;
+        self.inspect_state_projected_in_txn(read, &txn, state, project)
+    }
+
+    /// [`Self::inspect_state_projected`] in the caller's snapshot `txn`.
+    /// Prepare `read`'s grant clock and body pins before opening `txn`.
+    pub(crate) fn inspect_state_projected_in_txn<T, E: From<Error>>(
+        &self,
+        read: &ScopedRead<'_>,
+        txn: &heed::RoTxn<'_>,
+        state: &InspectionState,
+        project: impl FnOnce(&heed::RoTxn<'_>, Option<ReadRow>) -> std::result::Result<T, E>,
+    ) -> std::result::Result<ScopedReadResult<T>, E> {
         if !std::ptr::eq(read.vault(), self) {
             return Err(Error::InvalidConfig(
                 "an inspection reads through this vault's own scoped read".to_owned(),
@@ -205,7 +207,8 @@ impl Vault {
         }
         let target = state.target_ref;
         let kind = state.target_kind;
-        read.read_projected_opaque(
+        read.read_projected_opaque_in_txn(
+            txn,
             &[PointRead::id(target)],
             None,
             |_, id| Ok(*id == target),

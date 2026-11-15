@@ -34,7 +34,7 @@ pub(in crate::llm::decision::questions) fn answer_pair(
 /// answer stands decides: the rule rung is [`DecisionRoute::Rule`], the person rung
 /// [`DecisionRoute::Person`], a model rung reads its reasoning. With no rung standing, an
 /// answered ask is the person's route; anything else names none.
-fn receipt_route(receipt: &DecisionReceipt) -> DecisionRoute {
+pub(in crate::llm::decision) fn receipt_route(receipt: &DecisionReceipt) -> DecisionRoute {
     let Some(time) = &receipt.time else {
         return DecisionRoute::Unrouted;
     };
