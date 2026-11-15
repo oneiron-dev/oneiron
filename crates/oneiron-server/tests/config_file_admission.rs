@@ -5,7 +5,8 @@
 //! and the refusal names the line that sets the key and never the key. The
 //! same rule holds for `--settings-file` and for the config `model-workers`
 //! reads, whose parse failure names a place and prints no line of the file.
-//! Public paths only: the shipped `oneiron` binary.
+//! `doctor` takes no clock from a file that is refused. Public paths only:
+//! the shipped `oneiron` binary.
 #![cfg(unix)]
 #![allow(clippy::unwrap_used)]
 #![allow(
@@ -13,10 +14,10 @@
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
 )]
 
-use std::io::Read;
+use std::fs::File;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 /// An issuer key no output may repeat.
@@ -151,6 +152,43 @@ fn model_workers_names_only_the_place_of_a_line_it_cannot_read() {
     assert!(!error.contains(SECRET), "{error}");
 }
 
+/// When the serve config does not resolve, doctor reads the vault's clock
+/// from the config file alone. A file that is refused tells it nothing: any
+/// user could have written the `[runtime] clock` it holds, so the vault is
+/// not opened on the host's clock.
+#[test]
+fn doctor_takes_no_clock_from_a_config_any_user_can_write() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = config_file(
+        dir.path(),
+        "doctor-open.toml",
+        "[runtime]\nclock = \"system\"\n",
+        0o666,
+    );
+    let vault = dir.path().join("vault");
+    let (status, report, error) = ran(
+        dir.path(),
+        &[
+            "doctor",
+            vault.to_str().unwrap(),
+            "--config",
+            config.to_str().unwrap(),
+        ],
+    );
+    assert!(
+        report.contains("doctor did not open the vault"),
+        "doctor took the clock of a config any user can write: {report} {error}"
+    );
+    assert!(status.success(), "{report} {error}");
+    assert!(report.contains("chmod o-w"), "{report}");
+    assert!(report.contains("doctor-open.toml"), "{report}");
+    assert!(
+        !vault.exists(),
+        "doctor made a vault at {}",
+        vault.display()
+    );
+}
+
 /// A new file `name` in `dir` that holds `text`, its mode exactly `mode`
 /// whatever the umask of the test process.
 fn config_file(dir: &Path, name: &str, text: &str, mode: u32) -> PathBuf {
@@ -171,9 +209,18 @@ fn serve_refused(home: &Path, config: &Path, settings: Option<&Path>) -> String 
 }
 
 /// The standard error of `oneiron <args>`, which must stop by itself with a
-/// failure. A command that was not refused would serve until it is stopped,
-/// so one that outlasts [`STOPS_WITHIN`] is stopped and fails the test.
+/// failure.
 fn refused(home: &Path, args: &[&str]) -> String {
+    let (status, _, error) = ran(home, args);
+    assert!(!status.success(), "oneiron {args:?} must fail: {error}");
+    error
+}
+
+/// How `oneiron <args>` ended, then its standard output and its standard
+/// error. Both are written to files, so no full pipe holds the command. A
+/// command that was not refused would serve until it is stopped, so one that
+/// outlasts [`STOPS_WITHIN`] is stopped and fails the test.
+fn ran(home: &Path, args: &[&str]) -> (ExitStatus, String, String) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_oneiron"));
     // Do not inherit vault, model or switch settings from the build host.
     for (name, _) in std::env::vars_os() {
@@ -181,12 +228,15 @@ fn refused(home: &Path, args: &[&str]) -> String {
             command.env_remove(name);
         }
     }
+    let printed = tempfile::tempdir().unwrap();
+    let output = printed.path().join("output");
+    let error = printed.path().join("error");
     let mut child = command
         .args(args)
         .env("HOME", home)
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
+        .stdout(File::create(&output).unwrap())
+        .stderr(File::create(&error).unwrap())
         .spawn()
         .expect("run oneiron");
     let deadline = Instant::now() + STOPS_WITHIN;
@@ -201,14 +251,6 @@ fn refused(home: &Path, args: &[&str]) -> String {
         }
         std::thread::sleep(Duration::from_millis(50));
     };
-    let mut stderr = Vec::new();
-    child
-        .stderr
-        .take()
-        .unwrap()
-        .read_to_end(&mut stderr)
-        .unwrap();
-    let stderr = String::from_utf8_lossy(&stderr).into_owned();
-    assert!(!status.success(), "oneiron {args:?} must fail: {stderr}");
-    stderr
+    let text = |path: &Path| String::from_utf8_lossy(&std::fs::read(path).unwrap()).into_owned();
+    (status, text(&output), text(&error))
 }
