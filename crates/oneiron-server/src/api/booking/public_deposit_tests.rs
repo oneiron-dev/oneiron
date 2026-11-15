@@ -79,6 +79,7 @@ fn intent_json(id: &str, intent: &FakeIntent) -> Value {
         "status": intent.status,
         "amount": intent.amount,
         "amount_capturable": if intent.status == "requires_capture" { intent.amount } else { 0 },
+        "amount_received": if intent.status == "succeeded" { intent.amount } else { 0 },
         "currency": intent.currency,
         "livemode": false,
     })
@@ -183,8 +184,9 @@ async fn refund(
     headers: HeaderMap,
     Form(form): Form<BTreeMap<String, String>>,
 ) -> axum::Json<Value> {
+    let amount: u64 = form["amount"].parse().expect("refund amount");
     observe(&stripe, "POST /v1/refunds".to_owned(), &headers, form);
-    axum::Json(json!({ "id": "re_fixture", "status": "succeeded" }))
+    axum::Json(json!({ "id": "re_fixture", "status": "succeeded", "amount": amount }))
 }
 
 /// A loopback Stripe on this runtime; its origin.

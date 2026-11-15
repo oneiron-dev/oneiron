@@ -179,8 +179,17 @@ pub(crate) struct PaymentIntentView {
     pub amount: u64,
     #[serde(default)]
     pub amount_capturable: u64,
+    /// What the payment has captured.
+    #[serde(default)]
+    pub amount_received: u64,
     pub currency: String,
     pub livemode: bool,
+}
+
+/// The amount a refund reply names.
+#[derive(Deserialize)]
+struct RefundReply {
+    amount: u64,
 }
 
 /// A created PaymentIntent and the secret the visitor's Stripe.js confirms
@@ -341,9 +350,15 @@ impl<'v> StripeClient<'v> {
             .map_err(|_| StripeCallError::Malformed("no PaymentIntent in the reply".to_owned()))
     }
 
-    fn move_payment(&self, request: &DepositSettleRequest<'_>) -> Result<(), StripeCallError> {
+    /// One move; the amount it moved: the payment's captured amount for a
+    /// capture, the refund's amount for a refund, 0 for a void.
+    fn move_payment(&self, request: &DepositSettleRequest<'_>) -> Result<u64, StripeCallError> {
         let id = request.payment_id;
         let key = Some(request.idempotency_key);
+        let intent = |body: Zeroizing<Vec<u8>>| {
+            serde_json::from_slice::<PaymentIntentView>(&body)
+                .map_err(|_| StripeCallError::Malformed("no PaymentIntent in the reply".to_owned()))
+        };
         match request.movement {
             DepositSettleMove::Capture { amount_minor } => self
                 .call(
@@ -351,17 +366,18 @@ impl<'v> StripeClient<'v> {
                     Some(&[("amount_to_capture", amount_minor.to_string())]),
                     key,
                 )
-                .map(drop),
+                .and_then(intent)
+                .map(|captured| captured.amount_received),
             DepositSettleMove::Void => self
                 .call(
                     &payment_path(id, "/cancel")?,
                     Some(&[("cancellation_reason", "abandoned".to_owned())]),
                     key,
                 )
-                .map(drop),
+                .map(|_| 0),
             DepositSettleMove::Refund { amount_minor } => {
                 payment_path(id, "")?;
-                self.call(
+                let body = self.call(
                     "/v1/refunds",
                     Some(&[
                         ("payment_intent", id.to_owned()),
@@ -369,20 +385,25 @@ impl<'v> StripeClient<'v> {
                         ("reason", "requested_by_customer".to_owned()),
                     ]),
                     key,
-                )
-                .map(drop)
+                )?;
+                serde_json::from_slice::<RefundReply>(&body)
+                    .map(|refund| refund.amount)
+                    .map_err(|_| StripeCallError::Malformed("no refund in the reply".to_owned()))
             }
         }
     }
 }
 
 impl DepositSettlementPort for StripeClient<'_> {
-    fn settle(&mut self, request: &DepositSettleRequest<'_>) -> Result<(), DepositProviderFailure> {
+    fn settle(
+        &mut self,
+        request: &DepositSettleRequest<'_>,
+    ) -> Result<u64, DepositProviderFailure> {
         match self.move_payment(request) {
-            Ok(()) => Ok(()),
+            Ok(moved) => Ok(moved),
             // A capture or cancel that already happened (a lost reply, a
             // dashboard act) is refused by Stripe; the PaymentIntent's own
-            // state says whether the move stands done.
+            // state says whether the move stands done, and what it captured.
             Err(error @ StripeCallError::Refused { .. }) => {
                 let done = match request.movement {
                     DepositSettleMove::Capture { .. } => "succeeded",
@@ -390,7 +411,7 @@ impl DepositSettlementPort for StripeClient<'_> {
                     DepositSettleMove::Refund { .. } => return Err(error.into_failure()),
                 };
                 match self.payment_intent(request.payment_id) {
-                    Ok(intent) if intent.status == done => Ok(()),
+                    Ok(intent) if intent.status == done => Ok(intent.amount_received),
                     _ => Err(error.into_failure()),
                 }
             }
