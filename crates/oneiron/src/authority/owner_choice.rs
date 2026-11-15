@@ -160,7 +160,7 @@ pub(super) enum OwnerChoiceLanding<P> {
 /// An owner choice transition, after the shape, signature, retired,
 /// sequence-floor, parent-merge and vault checks and before any roster
 /// check: its signer is a machine's install key, never a roster key (FIX
-/// 2222: the host root acts as nobody). Some chain of the machine must name
+/// 2222: the host root acts as nobody). The machine's roster chain must name
 /// the key, and the act's `seen` must be the live choices its parents carry.
 /// A choice carried while the machine was not admitted, or by an owner the
 /// parents hold removed, is valid and without effect, so it never stalls
