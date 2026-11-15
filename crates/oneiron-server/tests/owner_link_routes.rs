@@ -203,7 +203,7 @@ fn conflict_state(answer: &Value) -> Option<&str> {
 
 #[test]
 fn a_link_without_a_live_cloud_registration_refuses_and_keeps_nothing() {
-    run_on_engine_stack(async {
+    run_on_engine_stack("link-without-registration", || async {
         let host = host();
         let owner = host.owner();
         let (status, answer) = host
@@ -227,7 +227,7 @@ fn a_link_without_a_live_cloud_registration_refuses_and_keeps_nothing() {
 
 #[test]
 fn an_unlink_with_no_hosted_peer_answers_not_linked() {
-    run_on_engine_stack(async {
+    run_on_engine_stack("unlink-not-linked", || async {
         let host = host();
         let (status, answer) = host.call(&host.owner(), "DELETE", None).await;
         assert_eq!(status, StatusCode::CONFLICT, "{answer}");
@@ -237,7 +237,7 @@ fn an_unlink_with_no_hosted_peer_answers_not_linked() {
 
 #[test]
 fn only_the_owner_links_reads_or_unlinks_a_hosted_peer() {
-    run_on_engine_stack(async {
+    run_on_engine_stack("link-owner-only", || async {
         let host = host();
         let holder = host.paired_holder();
         for (method, body) in [
