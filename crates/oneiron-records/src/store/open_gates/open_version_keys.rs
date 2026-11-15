@@ -8,10 +8,13 @@ pub const MAX_DBS: u32 = 32;
 /// machine revision numbered more than one above the highest head its
 /// machine's chains hold in the entry's parents; it took such a row before.
 /// An install that numbered an answer above the mark of an anchor it does
-/// not pin, a mark its answer's parents did not hold, wrote such a row, and
-/// a vault that holds one reads that answer as refused. The authority fold
-/// schema moves 34 -> 35 with it. No old-meaning reader or migration is
-/// provided (the lead's M-1 stored-change rule, path "loud").
+/// not pin, a mark its answer's parents did not hold, wrote such a row. A
+/// vault that holds one reads that answer as refused, and folds no stored
+/// row that names it among its ancestors: its authority state is the one at
+/// that answer's parents, and the rows written from then on build on it.
+/// The authority fold schema moves 34 -> 35 with it. No old-meaning reader
+/// or migration is provided (the lead's M-1 stored-change rule, path
+/// "loud").
 ///
 /// v29 (row CARRIER-OWNER-PROOF, FIX CARRIER-SELF-ANSWER-MINE): stored
 /// authority-log rows keep their bytes and change meaning. A carried machine
