@@ -217,8 +217,10 @@ fn enrolled_key(op: &AuthorityOp) -> Option<&AuthorityKey> {
 ///   of a covered confirm that only an earlier fold counted pruned it and
 ///   the enrolment on it before any line existed). Where no covered row lies
 ///   outside a covered enrolment's line, and the tail passes the two checks
-///   below, no fold of the log with the tail holds a line, so its one fold
-///   judges as the image's admission does;
+///   below, no line of the log with the tail holds a row that can count (a
+///   tail row that names no parent lies outside every line, and its
+///   transition refuses it for its ancestry wherever it lies; Astra review
+///   OP-04, 16 Nov), so its folds judge as the image's admission does;
 /// - an owner choice or a carried machine answer in the tail, where a
 ///   covered row a tail row names lies outside the line of a covered
 ///   `OwnerKeyEnroll` row (that row and its covered descendants). No kept
@@ -231,13 +233,16 @@ fn enrolled_key(op: &AuthorityOp) -> Option<&AuthorityKey> {
 ///   where the tail admission already refuses its enrolment.
 ///
 /// Every covered `OwnerKeyEnroll` row counts, valid or not, because the
-/// whole log keeps the line of an enrolment any of its folds took. The image
-/// carries the body of every row a line reads. It decodes the bodies of the
-/// covered rows that did not fold valid for every tail, and every covered
-/// body only where the vault may have had a proving enrolment and either
-/// the covered rows are not one chain (two rows of a chain are ordered, so
-/// none lies outside another's line) or the tail holds a choice that names
-/// a covered row other than a sole frontier row.
+/// whole log keeps the line of an enrolment any of its folds took. The guard
+/// finds them in the covered bodies, never on the merged roster: a revoke of
+/// a key its parents do not hold leaves that key a row with no role, and the
+/// merge then strips the owner role a sibling enrolment gave it (Astra
+/// review OP-03, 16 Nov). The image carries the body of every row a line
+/// reads. It decodes the bodies of the covered rows that did not fold valid
+/// for every tail, and every covered body only where either the covered
+/// rows are not one chain (two rows of a chain are ordered, so none lies
+/// outside another's line) or the tail holds a choice that names a covered
+/// row other than a sole frontier row.
 pub(super) fn tail_reaches_old_parents(
     image: &super::checkpoint_image::AuthorityCheckpointV2,
     tail: &BTreeMap<AuthorityEntryHash, &AuthorityLogEntry>,
@@ -246,15 +251,14 @@ pub(super) fn tail_reaches_old_parents(
         rows: &image.rows,
         frontier: &image.frontier,
         valid: &image.fold().valid_entries,
-        merged: &image.aggregate.merged,
     }
     .tail_reaches_old_parents(tail)
 }
 
 /// [`tail_reaches_old_parents`] past an image of `covered`, folded under
 /// `posture` with no pin and no peer, for the test door: the row summaries
-/// such an image carries, its frontier, the rows its fold counts and its
-/// merged state, each as an image's build takes it.
+/// such an image carries, its frontier and the rows its fold counts, each
+/// as an image's build takes it.
 #[cfg(oneiron_test_support)]
 pub(crate) fn tail_reaches_old_parents_past_rows_for_test(
     covered: &[AuthorityLogEntry],
@@ -302,7 +306,6 @@ pub(crate) fn tail_reaches_old_parents_past_rows_for_test(
         rows: &rows,
         frontier: &frontier,
         valid: &image.fold.valid_entries,
-        merged: &image.merged,
     }
     .tail_reaches_old_parents(&tail))
 }
@@ -316,8 +319,6 @@ struct CoveredLog<'a> {
     frontier: &'a [AuthorityEntryHash],
     /// The covered rows the image's fold counts.
     valid: &'a ValidEntries,
-    /// The merge of every surviving covered state.
-    merged: &'a FoldState,
 }
 
 impl CoveredLog<'_> {
@@ -335,16 +336,6 @@ impl CoveredLog<'_> {
                 .is_some_and(|key| rejected.values().any(|enrolled| enrolled == key))
         }) {
             return true;
-        }
-        // A valid enrolment leaves its key on the merged roster with its owner
-        // role, revoked or not.
-        let merged = self.merged;
-        let owner_key_ever = merged.roster.iter().any(|(key, device)| {
-            device.roles & ROLE_OWNER != 0
-                && !(merged.hosted && super::machine_profile::in_host_custody(merged, key))
-        });
-        if rejected.is_empty() && !owner_key_ever {
-            return false;
         }
         let choices = tail
             .values()
@@ -364,6 +355,9 @@ impl CoveredLog<'_> {
         }
         let mut enrolments = self.owner_key_enrolments(|hash| self.valid.contains(hash));
         enrolments.extend(rejected);
+        if enrolments.is_empty() {
+            return false;
+        }
         let children = self.children();
         if !chain && self.holds_a_line(&enrolments, &children) {
             return true;
