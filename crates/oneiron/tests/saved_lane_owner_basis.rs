@@ -25,6 +25,13 @@
 //! held to the base world and saved, keeps the gate on its asker and on the
 //! owner's ungated key.
 //!
+//! A rebuilt key reads no more when it is saved again (blind review round 1
+//! of #8061): the transferred credential keeps its mint's id, so its lane
+//! rebuilt over the device's own key, whose proof is that credential, still
+//! carries the lane's credential, and freezing it again keeps its Scope and
+//! basis. A rebuild over a key an access gate binds to no principal reads on
+//! no grant (Astra F1 on #8061): the meet lends that key no principal.
+//!
 //! Red on #8029 (87747eae206): the transferred asker and owner's-key
 //! rebuilds read the relationship claim, both credentials' lanes read as
 //! their holder's principal lane, the attenuated lane rebuilt over the
@@ -33,7 +40,10 @@
 //! head (73bfa478fb7): that attenuated rebuild, and the bounded ungated
 //! lane's rebuilt asker, which closes unscoped rows. Red at its second head
 //! (5a2b1b1ebb7): the attenuated rebuild over the gated owner key and both
-//! gated owner lane rebuilds. Guards: the transferred source rebuild (its
+//! gated owner lane rebuilds. Red at its third head (a0e7a94c82a): the
+//! transferred lane saved again from the device's key reads as its holder's
+//! principal lane, and the bounded owner lane rebuilt over the unbound gated
+//! key reads the relationship claim on the owner's grant. Guards: the transferred source rebuild (its
 //! owner alternative already carried the access gate and no exemption), the
 //! device's own saved question and the attenuated one's asker read.
 //!
@@ -48,9 +58,13 @@
 //! --all-features --test saved_lane_owner_basis`.
 #![cfg(oneiron_test_support)]
 
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
+use oneiron::access_grant::{
+    AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
+};
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, MachineRole, PairingPrincipal, SlipCaveat, VerifiedSlip,
 };
@@ -58,7 +72,7 @@ use oneiron::claim::{
     FrozenReadLane, ScopedRead, ScopedReadActorKey, base_world_id, default_project_id,
 };
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::federation::Scope;
+use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::graph_fs::GraphFsOptions;
 use oneiron::memory::{AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput};
 use oneiron::registry::ENTITY_TYPE_RELATIONSHIP;
@@ -92,6 +106,7 @@ struct Fixture {
     _dir: tempfile::TempDir,
     issuer: HostSlipIssuer,
     owner: EntityId,
+    relationship: EntityId,
     open_claim: EntityId,
     relationship_claim: EntityId,
     device_slip: CapabilitySlip,
@@ -136,6 +151,7 @@ fn fixture() -> Fixture {
         _dir: dir,
         issuer,
         owner,
+        relationship,
         open_claim,
         relationship_claim,
         device_slip,
@@ -246,6 +262,35 @@ fn lifetime_caveat() -> SlipCaveat {
         ttl_secs: Some(CAVEAT_TTL_SECS),
         ..Default::default()
     }
+}
+
+/// `principal` holds a live access grant to read the relationship's
+/// claims.
+fn grant_relationship_claims_to(fixture: &Fixture, principal: EntityId) {
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
+    fixture
+        .vault
+        .create_access_grant(
+            &EntityId::now(),
+            &AccessGrant {
+                authority_scope,
+                principal_ref: principal,
+                scope: AccessGrantScope::RelationshipClaims {
+                    space_ref: fixture.relationship,
+                },
+                capability: AccessGrantCapability::RelationshipClaimsRead,
+                status: AccessGrantStatus::Active,
+                created_at: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .expect("clock after the epoch")
+                    .as_secs(),
+                revoked_at: None,
+                expires_at: None,
+                companion_bounds: None,
+            },
+        )
+        .expect("the access grant on the relationship's claims");
 }
 
 /// The device's credential handed to a second key, as that key proves it.
@@ -855,5 +900,111 @@ fn a_saved_lane_frozen_again_from_its_rebuilt_key_keeps_its_caveat_end() {
     assert!(
         !read,
         "actor=the owner's device under a credential whose caveat ends at {end}; expected the lane saved again from its rebuilt key to keep that end and read nothing past it; seen {seen}"
+    );
+}
+
+/// The transferred credential keeps its mint's id. Its saved lane, rebuilt
+/// over the device's own key, whose proof is that credential untransferred,
+/// and saved again, keeps its Scope and basis: rebuilt over the owner's own
+/// key it refuses the relationship claim its live lane refused (blind
+/// review round 1 of #8061).
+#[test]
+fn a_transferred_own_device_lane_saved_again_from_the_devices_key_reads_no_row_its_live_lane_refused()
+ {
+    let fixture = fixture();
+    let frozen = transferred_saved_lane(&fixture);
+    let device_proof = verified(&fixture, &fixture.device_slip, DEVICE_BINDING_SEED);
+    assert_eq!(
+        device_proof.claims().slip_id,
+        transferred_slip(&fixture).claims().slip_id,
+        "precondition: the device's own credential and the one it handed on share their mint's id"
+    );
+    let device = credential_key(&fixture, &device_proof);
+    let (control, seen) = reads(
+        &held_lane(&fixture, device.clone()),
+        fixture.relationship_claim,
+    );
+    assert!(
+        control,
+        "control: the device's own credential reads the relationship claim; seen {seen}"
+    );
+    let rebuilt = frozen
+        .narrow(&fixture.vault, device)
+        .expect("the transferred lane rebuilds over the device's own key");
+    let (rebuilt_read, seen) = reads(
+        &held_lane(&fixture, rebuilt.clone()),
+        fixture.relationship_claim,
+    );
+    assert!(
+        !rebuilt_read,
+        "precondition: the transferred lane rebuilt over the device's own key refuses the relationship claim; seen {seen}"
+    );
+    let refrozen = saved_lane(&fixture, rebuilt);
+    assert!(
+        !refrozen.reads_as_principal(),
+        "actor=a key the owner's device handed its credential to, its lane rebuilt over the device's own key; expected that rebuilt lane, saved again, to keep its Scope, not to read as its holder's principal lane"
+    );
+    let (read, seen) = owner_key_reads(&fixture, &refrozen, fixture.relationship_claim);
+    assert!(
+        !read,
+        "actor=a key the owner's device handed its credential to, its lane rebuilt over the device's own key; expected that rebuilt lane, saved again and rebuilt over the owner's own key, to refuse the relationship claim its live lane refused; seen {seen}"
+    );
+}
+
+/// The owner's ungated floor, held to the base world and saved, rebuilt
+/// over the owner's key under an access gate bound to no principal: the
+/// rebuild reads on no grant, as that key did (Astra F1 and blind review
+/// round 1 of #8061).
+#[test]
+fn a_bounded_owner_saved_lane_over_an_unbound_gated_owner_key_reads_on_no_grant() {
+    let fixture = fixture();
+    grant_relationship_claims_to(&fixture, fixture.owner);
+    let owner = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .read_key()
+        .expect("owner read key");
+    let (granted, seen) = reads(
+        &held_lane(
+            &fixture,
+            owner.clone().require_access_grants(Some(fixture.owner)),
+        ),
+        fixture.relationship_claim,
+    );
+    assert!(
+        granted,
+        "precondition: the owner's access grant admits the relationship claim to the owner's key under an access gate bound to the owner; seen {seen}"
+    );
+    let unbound = owner.clone().require_access_grants(None);
+    let (current, seen) = reads(
+        &held_lane(&fixture, unbound.clone()),
+        fixture.relationship_claim,
+    );
+    assert!(
+        !current,
+        "precondition: the owner's key under an access gate bound to no principal refuses the relationship claim; seen {seen}"
+    );
+    let frozen = fixture
+        .vault
+        .scoped_read(owner)
+        .within_worlds(
+            WorldAuthoritySet::new(true, std::iter::empty::<EntityId>())
+                .expect("the base world alone"),
+        )
+        .freeze()
+        .expect("the bounded owner lane freezes");
+    let stored = rmp_serde::to_vec_named(&frozen).expect("frozen lane encodes");
+    let frozen: FrozenReadLane = rmp_serde::from_slice(&stored).expect("frozen lane decodes");
+    assert!(
+        !frozen.reads_as_principal(),
+        "precondition: the base-world bound keeps the saved lane from reading as its principal's own"
+    );
+    let (read, seen) = match frozen.narrow(&fixture.vault, unbound) {
+        Ok(key) => reads(&held_lane(&fixture, key), fixture.relationship_claim),
+        Err(error) => (false, format!("rebuild={error:?}")),
+    };
+    assert!(
+        !read,
+        "actor=the owner's floor under an access gate bound to no principal; expected the owner's bounded saved lane rebuilt over it to read on no grant and refuse the relationship claim; seen {seen}"
     );
 }
