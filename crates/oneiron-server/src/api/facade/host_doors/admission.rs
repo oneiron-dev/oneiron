@@ -170,11 +170,6 @@ pub(in crate::api::facade) fn door_admits(
         Proof::ViewEditor => {
             crate::api::facade::code_view_doors::view_editor_admits(server, auth, verb)
         }
-        // The vault's review policy rows (FIX 8268): a live Owner, or a bound
-        // principal whose one Grant the engine door admits.
-        Proof::ReviewPolicy => {
-            crate::api::facade::merge_queue_checker_doors::review_policy_admits(server, auth, verb)
-        }
         // A member's own TASK-bound workflow run (FIX 5316): a live person on
         // their own slip, bound to it, as the door acts under.
         Proof::WorkflowMember => {

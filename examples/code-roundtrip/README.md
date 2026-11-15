@@ -27,11 +27,11 @@ answers `roundtrip_pending`, and an accepted push stays exactly as it is.
   check answer `needs_configuration` and name the setting.
 - **No review policy is needed** (FIX 8268). A pushed change becomes ONE
   `received_files` proposal that names no catalog. With no vault review policy
-  set (`vault.code.merge_queue.review_policy.get` answers `land_on_green`), the
+  set (`vault.settings.get` of the key `merge_queue.review_policy` answers `land_on_green`), the
   queue's intake enqueues it once into the same checks; nothing approves it and
   no check is skipped. The import manifest's catalog is not a review policy.
 - Real reviewers, only if an owner opted the vault into a review policy
-  (`vault.code.merge_queue.review_policy.set`). Then matching only proposes:
+  (`vault.settings.set` on the key `merge_queue.review_policy`). Then matching only proposes:
   reviews go through `vault.code.proposal_review`, approval through
   `vault.code.proposal_settle`, and the owner enqueues. The script reads
   `vault.code.proposal_settlement` and never votes. A policy row that does not

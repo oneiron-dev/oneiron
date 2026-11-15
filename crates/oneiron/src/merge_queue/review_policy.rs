@@ -4,27 +4,30 @@
 //! A vault with no review policy lands its queue work on green: no critic
 //! hold, and the same checked queue as ever (fast-tested head, slow-tested
 //! green, bound checker receipts; with no usable checker the work waits as
-//! NeedsConfiguration). A review policy is an opt-in a live Owner, or his
-//! agent under its own Grant, sets for the whole vault with
-//! `vault.code.merge_queue.review_policy.set`. While it is set, work that
-//! inherits it (a proposal that named no catalog of its own) waits for
-//! critics on its lenses, or for the owner's Approve; its limits are the
-//! owner's to override, never floors. Clearing it releases those waits on
-//! work the queue has not admitted yet. A proposal's own explicit catalog
-//! stays its requirement, and a set policy applies beside it, never
+//! NeedsConfiguration). A review policy is an opt-in for the whole vault:
+//! the setting `merge_queue.review_policy` (`setting_keys.rs`; DESIGN
+//! 15-setting-primitive, stage 4), which the owner sets with
+//! `vault.settings.set`, and an agent whose Grant lists the key's line
+//! (`settings.set:merge_queue.review_policy`) sets as a holder. While it is
+//! set, work that inherits it (a proposal that named no catalog of its own)
+//! waits for critics on its lenses, or for the owner's Approve; its limits
+//! are the owner's to override, never floors. Clearing it releases those
+//! waits on work the queue has not admitted yet. A proposal's own explicit
+//! catalog stays its requirement, and a set policy applies beside it, never
 //! weakened by an easier catalog.
 //!
 //! [`queue_review_requirement_in_txn`] is the one place a queue decision
-//! reads the policy. Only a successful read that finds no row selects the
-//! default. A present row that does not read holds inherited work as
-//! [`REVIEW_POLICY_UNREADABLE`] until an owner sets or clears it; a store
+//! reads the policy. Only a successful read that finds no row, or a row that
+//! chooses it, selects the default. A row that does not read holds inherited
+//! work as [`REVIEW_POLICY_UNREADABLE`] until the key is set again; a store
 //! failure stays a failure.
 
+use super::setting_keys::{QUEUE_REVIEW_POLICY, QueueReviewChoice};
+use crate::Vault;
 use crate::error::{Error, Result};
 use crate::repo_mutation::proposal::RepoProposalReview;
-use crate::side_table::{self, Named, SideTable};
+use crate::setting::SettingSource;
 use crate::store::critic_lens::LensCatalog;
-use crate::{EntityId, Vault};
 
 /// What a vault with no review policy does with its queue work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,15 +51,6 @@ pub(crate) use oneiron_verb_wire::merge_queue::review_policy::{
 #[doc(hidden)]
 pub use oneiron_verb_wire::merge_queue::review_policy::{QueueReviewPolicy, QueueReviewThresholds};
 
-/// The singleton policy row. Key: ().
-const MERGE_QUEUE_REVIEW_POLICY: SideTable<(), QueueReviewPolicy, Named> =
-    SideTable::new(&side_table::MERGE_QUEUE_REVIEW_POLICY);
-/// Whether a masked copy of a `MERGE_QUEUE_REVIEW_POLICY` row still decodes as its typed value,
-/// for the historical lift sweep (FIX 2680).
-pub(crate) fn merge_queue_review_policy_accepts_masked(bytes: &[u8]) -> bool {
-    crate::side_table::decodes::<QueueReviewPolicy, Named>(bytes)
-}
-
 /// A set policy, with the digest of the catalog a vote under it judges.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ActiveQueueReviewPolicy {
@@ -65,10 +59,10 @@ pub(crate) struct ActiveQueueReviewPolicy {
     pub(crate) digest: String,
 }
 
-/// What the vault's policy row holds, as one read found it.
+/// What the vault's policy setting holds, as one read found it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum StoredQueueReviewPolicy {
-    /// No row: [`REVIEW_POLICY_DEFAULT`].
+    /// [`REVIEW_POLICY_DEFAULT`]: no row, or a row that chooses it.
     Absent,
     Set(ActiveQueueReviewPolicy),
     /// A row that does not decode, or whose catalog no longer validates.
@@ -108,8 +102,8 @@ pub(crate) fn review_catalog_digest(catalog: &LensCatalog) -> Result<String> {
 pub(crate) fn review_policy_unreadable_hold() -> String {
     format!(
         "{REVIEW_POLICY_UNREADABLE}: the vault's review policy row is present but does not \
-         read, so work that inherits it waits; an Owner sets a policy again, or clears it with \
-         null, at vault.code.merge_queue.review_policy.set"
+         read, so work that inherits it waits; an Owner sets the setting \
+         merge_queue.review_policy again, or clears it with null, at vault.settings.set"
     )
 }
 
@@ -159,9 +153,10 @@ pub(crate) fn queue_review_requirement_in_txn(
 }
 
 impl Vault {
-    /// The vault's review policy row as `txn` reads it. A row that does not
-    /// decode, or whose catalog no longer validates, is
-    /// [`StoredQueueReviewPolicy::Unreadable`], never absent.
+    /// The vault's review policy as `txn` reads it (the setting
+    /// `merge_queue.review_policy`). A row that does not decode, or whose
+    /// catalog no longer validates, is [`StoredQueueReviewPolicy::Unreadable`],
+    /// never absent.
     ///
     /// # Errors
     /// A store failure.
@@ -169,25 +164,24 @@ impl Vault {
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<StoredQueueReviewPolicy> {
-        let Some(bytes) = MERGE_QUEUE_REVIEW_POLICY.get_bytes(&self.store, txn, &())? else {
-            return Ok(StoredQueueReviewPolicy::Absent);
-        };
-        let policy = match MERGE_QUEUE_REVIEW_POLICY.decode_value(&bytes) {
-            Ok(policy) => policy,
-            Err(error) => {
-                tracing::warn!(
-                    kind = ?error.kind(),
-                    "the vault's merge queue review policy does not read; inherited work holds"
-                );
-                return Ok(StoredQueueReviewPolicy::Unreadable);
-            }
-        };
-        if crate::critic::triage_critiques(&policy.catalog, &[], &[]).is_err() {
+        let read = QUEUE_REVIEW_POLICY.read_in_txn(self, txn, &[], None)?;
+        if matches!(read.source, SettingSource::Unreadable(_)) {
+            tracing::warn!(
+                "the vault's merge queue review policy does not read; inherited work holds"
+            );
             return Ok(StoredQueueReviewPolicy::Unreadable);
         }
-        Ok(StoredQueueReviewPolicy::Set(ActiveQueueReviewPolicy::of(
-            policy,
-        )?))
+        Ok(match read.value {
+            QueueReviewChoice::LandOnGreen => StoredQueueReviewPolicy::Absent,
+            QueueReviewChoice::Review(policy) => {
+                if crate::critic::triage_critiques(&policy.catalog, &[], &[]).is_err() {
+                    return Ok(StoredQueueReviewPolicy::Unreadable);
+                }
+                StoredQueueReviewPolicy::Set(ActiveQueueReviewPolicy::of(policy)?)
+            }
+            // Only the read of a row that does not read gives it.
+            QueueReviewChoice::Held => StoredQueueReviewPolicy::Unreadable,
+        })
     }
 
     /// [`Self::queue_review_policy_in_txn`] in its own snapshot.
@@ -198,61 +192,4 @@ impl Vault {
         let txn = self.store.env.read_txn()?;
         self.queue_review_policy_in_txn(&txn)
     }
-
-    /// FIX 8519: an erased actor's id leaves the review policy it set, in
-    /// the erase's writer. The policy stands; a row that does not read is
-    /// left for an owner to set or clear.
-    ///
-    /// # Errors
-    /// A store failure.
-    pub(crate) fn erase_review_policy_actor_in_txn(
-        &self,
-        wtxn: &mut heed::RwTxn<'_>,
-        actor: &EntityId,
-    ) -> Result<()> {
-        if crate::typed_body::names_no_actor(self, wtxn, actor)? {
-            return Ok(());
-        }
-        let Some(bytes) = MERGE_QUEUE_REVIEW_POLICY.get_bytes(&self.store, wtxn, &())? else {
-            return Ok(());
-        };
-        let Ok(mut policy) = MERGE_QUEUE_REVIEW_POLICY.decode_value(&bytes) else {
-            return Ok(());
-        };
-        if policy.set_by != Some(*actor) {
-            return Ok(());
-        }
-        policy.set_by = None;
-        MERGE_QUEUE_REVIEW_POLICY.put(&self.store, wtxn, &(), &policy)
-    }
-
-    /// Sets the vault's review policy in the setter's writer `txn`, or with
-    /// `None` clears it. No seed and no history row: the row is the policy.
-    ///
-    /// # Errors
-    /// A store failure.
-    pub(crate) fn put_queue_review_policy_in_txn(
-        &self,
-        txn: &mut heed::RwTxn<'_>,
-        policy: Option<&QueueReviewPolicy>,
-    ) -> Result<()> {
-        match policy {
-            Some(policy) => MERGE_QUEUE_REVIEW_POLICY.put(&self.store, txn, &(), policy),
-            None => MERGE_QUEUE_REVIEW_POLICY
-                .delete(&self.store, txn, &())
-                .map(drop),
-        }
-    }
-}
-
-/// The actor scrub `MERGE_QUEUE_REVIEW_POLICY` declares (FIX 8519).
-///
-/// # Errors
-/// A store failure.
-pub(crate) fn erase_review_policy_actor_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    actor: &EntityId,
-) -> Result<()> {
-    vault.erase_review_policy_actor_in_txn(wtxn, actor)
 }
