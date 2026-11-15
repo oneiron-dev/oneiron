@@ -66,6 +66,7 @@ pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
 pub mod turn_programs;
+pub mod turn_sitting;
 pub mod uncertain_send_questions;
 pub mod untangle_regressions;
 pub mod wake_d1_park_release;
