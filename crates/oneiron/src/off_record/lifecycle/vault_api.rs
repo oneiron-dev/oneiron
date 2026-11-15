@@ -590,7 +590,10 @@ impl Vault {
         // base write that checks its route from here is refused. One that
         // passed its last check before commits before this close returns:
         // the close waits for the writer once (ARCH-0052 #d5-proof-open).
-        if record.mode == OffRecordMode::OnRecord {
+        // Off record too: a flip back may have published `OffRecord` and
+        // still wait for such a write. Only an anonymous stretch, which never
+        // writes to base, owes no wait.
+        if record.mode != OffRecordMode::Anonymous {
             self.store.wait_for_open_write_txn()?;
         }
 

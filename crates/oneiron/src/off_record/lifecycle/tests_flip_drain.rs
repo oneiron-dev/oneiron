@@ -84,6 +84,9 @@ enum Act {
     /// A second flip back, run once a first one has published `OffRecord`
     /// and waits for the held write.
     RepeatFlipBack,
+    /// The close, run once a flip back has published `OffRecord` and waits
+    /// for the held write.
+    CloseDuringFlipBack,
 }
 
 impl Act {
@@ -92,7 +95,7 @@ impl Act {
             Self::FlipBack | Self::RepeatFlipBack => vault
                 .set_off_record_session_mode(session_ref, OffRecordMode::OffRecord)
                 .map(|_| ()),
-            Self::Close => vault
+            Self::Close | Self::CloseDuringFlipBack => vault
                 .close_off_record_session(session_ref, vault.off_record_receipt_log(session_ref)?)
                 .map(|_| ()),
             Self::FlipBackInsideAnotherVaultsWrite => other.with_write_txn(|_| {
@@ -102,6 +105,10 @@ impl Act {
         }
     }
 }
+
+/// How long a race gives its act to return before it releases the held
+/// commit.
+const ACT_WINDOW: Duration = Duration::from_secs(15);
 
 struct RaceOutcome {
     witness: std::result::Result<(), String>,
@@ -143,20 +150,21 @@ fn race(act: Act) -> RaceOutcome {
                 checked_rx
                     .recv_timeout(Duration::from_secs(30))
                     .expect("the witness reached its commit");
-                // The repeat runs once the first flip has published and let
-                // go of the stretch's state lock.
-                let first_flip = matches!(act, Act::RepeatFlipBack).then(|| {
-                    let flip = scope.spawn(|| {
-                        vault
-                            .set_off_record_session_mode(
-                                session.session_ref(),
-                                OffRecordMode::OffRecord,
-                            )
-                            .map(|_| ())
+                // The repeat and the close run once a first flip has
+                // published and let go of the stretch's state lock.
+                let first_flip = matches!(act, Act::RepeatFlipBack | Act::CloseDuringFlipBack)
+                    .then(|| {
+                        let flip = scope.spawn(|| {
+                            vault
+                                .set_off_record_session_mode(
+                                    session.session_ref(),
+                                    OffRecordMode::OffRecord,
+                                )
+                                .map(|_| ())
+                        });
+                        wait_for_the_published_flip_back(vault, session.session_ref());
+                        flip
                     });
-                    wait_for_the_published_flip_back(vault, session.session_ref());
-                    flip
-                });
                 let (act_tx, act_rx) = mpsc::channel();
                 let acting = scope.spawn(move || {
                     let act_ok = act.run(vault, other, session.session_ref()).is_ok();
@@ -167,7 +175,8 @@ fn race(act: Act) -> RaceOutcome {
                 });
                 // Main can return before the held commit. The head's drain
                 // waits for it; release it after giving the act time to run.
-                let early = match act_rx.recv_timeout(Duration::from_secs(3)) {
+                // The window is wide, so a slow host cannot turn a red green.
+                let early = match act_rx.recv_timeout(ACT_WINDOW) {
                     Ok(outcome) => Some(outcome),
                     Err(mpsc::RecvTimeoutError::Timeout) => None,
                     Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the act panicked"),
@@ -250,6 +259,18 @@ fn wait_for_the_published_flip_back(vault: &Vault, session_ref: &str) {
         );
         std::thread::sleep(Duration::from_millis(1));
     }
+}
+
+#[test]
+fn a_close_during_a_flip_back_returns_only_after_a_base_write_that_passed_its_route_check_commits()
+{
+    let outcome = race(Act::CloseDuringFlipBack);
+    assert!(outcome.witness.is_ok(), "witness: {:?}", outcome.witness);
+    assert!(outcome.act_ok, "the close failed");
+    assert!(
+        outcome.landed_when_the_act_returned,
+        "the close during a flip back returned before a base write that passed its route check committed"
+    );
 }
 
 #[test]
