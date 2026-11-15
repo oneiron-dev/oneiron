@@ -19,8 +19,9 @@ pub struct ReplyStripsRequest {
     /// citing MESSAGE, or a native append's TURN.
     #[serde(default)]
     pub after: Option<String>,
-    /// Strips per page, positive (absent: 256). A page holds at most 256;
-    /// the rest follow through `next_after`.
+    /// Strips per page, positive (absent: 256). A page holds at most the
+    /// owner's `conversation_dag.reply_strips.max_page` (default 256); the
+    /// rest follow through `next_after`.
     #[serde(default)]
     pub limit: Option<usize>,
 }
