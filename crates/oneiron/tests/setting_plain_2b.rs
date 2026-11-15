@@ -8,8 +8,8 @@
 //! - the owner's `Vault::set_setting` is what the kept reader returns, and a clear brings the
 //!   default back;
 //! - the switch's change log is the setting feed: one numbered row per change, with who made it
-//!   and the mode before; the same mode again records nothing; switching back on queues the
-//!   historical lift run, and switching off does not;
+//!   and the mode before, and its policy event; the same mode again records nothing; switching
+//!   back on queues the historical lift run, and switching off does not;
 //! - a history budget of zero, and a value of another shape, are refused, and the reader keeps
 //!   the value in force;
 //! - an agent with no Grant changes none of them.
@@ -287,6 +287,24 @@ fn the_switch_logs_each_change_and_switching_back_on_queues_the_lift() {
         assert_eq!(receipt.receipt_id.len(), 32, "named by the change's id");
     }
     assert_ne!(log[0].receipt_id, log[1].receipt_id);
+
+    let mut events: Vec<String> = vault
+        .policy_changed_events()
+        .unwrap()
+        .into_iter()
+        .filter(|event| event.kind == "policy.secret_scan.changed")
+        .map(|event| event.receipt_id)
+        .collect();
+    events.sort();
+    let mut changes: Vec<String> = log
+        .iter()
+        .map(|receipt| receipt.receipt_id.clone())
+        .collect();
+    changes.sort();
+    assert_eq!(
+        events, changes,
+        "each change wrote its policy event, named by the change's id"
+    );
 }
 
 #[test]
