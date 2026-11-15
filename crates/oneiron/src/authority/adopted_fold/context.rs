@@ -81,7 +81,7 @@ pub(super) fn image_stands_here(image: &AuthorityCheckpointV2, log: AdoptedTail<
 
 /// Whether `op`'s transition reads the install's pin: every owner act, a
 /// membership execution record (FIX 12335), a machine's revision or answer, a frontier join, a world key record, a home
-/// candidacy and an owner key enrollment judge their carrier or signer
+/// candidacy, a full-copy mark and an owner key enrollment judge their carrier or signer
 /// through this install's trusted admitter, a kit request through the
 /// pinned root itself, and a root appointment's verdict through the pinned
 /// root's anchor.
@@ -109,6 +109,7 @@ pub(super) fn reads_pin(op: &AuthorityOp) -> bool {
             | AuthorityOp::CustodyPermitPiece(_)
             | AuthorityOp::WorldKeyWraps(_)
             | AuthorityOp::HomeCandidacy(_)
+            | AuthorityOp::FullCopyMark(_)
             | AuthorityOp::OwnerKeyEnroll(_)
             | AuthorityOp::RootAppointment(_)
     )

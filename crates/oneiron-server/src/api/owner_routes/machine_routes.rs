@@ -161,7 +161,7 @@ fn surface_of(
 
 /// A revision as a surface shows it: 64 lower-case hex.
 pub(crate) fn revision_hex(revision: &[u8; 32]) -> String {
-    revision.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(revision)
 }
 
 /// The revision a surface presented: 64 lower-case hex.
