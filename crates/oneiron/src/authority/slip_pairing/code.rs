@@ -82,8 +82,8 @@ pub fn format_pinned_pairing_link(
         None => format!("{origin}/pair#{code}.{holder_ref}"),
         Some(pin) => format!(
             "{origin}/pair#{code}.{holder_ref}.{}.{}",
-            lower_hex(&pin.challenge),
-            lower_hex(&pin.digest)
+            oneiron_hex::encode(&pin.challenge),
+            oneiron_hex::encode(&pin.digest)
         ),
     }
 }
@@ -127,9 +127,6 @@ pub fn parse_pinned_pairing_link(
         holder_ref.to_owned(),
         pin,
     ))
-}
-fn lower_hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 /// 64 lower-case hex characters as 32 bytes.
 fn hex32(value: &str) -> Option<[u8; 32]> {

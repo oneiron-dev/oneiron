@@ -4,13 +4,11 @@
 //! owner's `vault.packs.sections.revoke` undoes it; anything else waits as a
 //! proposed install claim for the owner, with the fit's analysis. Neither
 //! outcome grants a requested permission.
-use serde::{Deserialize, Serialize};
 
 use super::{PluginSectionProposeRequest, plugin_error};
 use crate::context_board::{
     EngineSectionBindings, PluginInstallOrigin, PluginInstallTarget, PluginSectionFitOutcome,
-    SectionManifestEnvelope, VaultPluginInstallSource, digest_to_hex,
-    install_plugin_section_after_fit,
+    VaultPluginInstallSource, digest_to_hex, install_plugin_section_after_fit,
 };
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::skill_hub::{CallerPermissions, HoldsNothing};
@@ -19,46 +17,8 @@ use crate::write_envelope::WriteProvenance;
 /// The verb that undoes a fitted install: the owner's revoke.
 const UNDO_VERB: &str = "vault.packs.sections.revoke";
 
-/// What `vault.packs.sections.propose` concluded.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "outcome", rename_all = "snake_case")]
-pub enum PluginSectionInstallOutcome {
-    /// The fit was ready: a code-free section whose requests the caller
-    /// already holds is installed and renders. Installing grants none of the
-    /// requested permissions.
-    Installed {
-        /// The install claim (32 hex) the owner's revoke retracts.
-        claim_ref: String,
-        section_id: String,
-        /// The supplying skill (32 hex).
-        skill_ref: String,
-        /// SHA-256 of the canonical manifest bytes, lowercase hex.
-        manifest_digest: String,
-        /// Every permission the fit evaluated; none is granted.
-        permissions: Vec<String>,
-        /// The verb that undoes this install.
-        undo_verb: String,
-        /// The installed manifest.
-        manifest: SectionManifestEnvelope,
-    },
-    /// Anything else: the offer waits as a proposed install claim for the
-    /// owner.
-    PermissionAsk {
-        /// The install claim (32 hex).
-        claim_ref: String,
-        /// Its pending-consent tray row (`gate:<hex>`).
-        pending_ref: String,
-        /// SHA-256 of the canonical manifest bytes, lowercase hex.
-        manifest_digest: String,
-        section_id: String,
-        /// Why it asks: what it requests that the caller does not hold.
-        analysis: String,
-        /// Every permission the fit evaluated.
-        permissions: Vec<String>,
-        /// The validated manifest the owner is asked to grant.
-        manifest: SectionManifestEnvelope,
-    },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::memory::plugin_sections::install::PluginSectionInstallOutcome;
 
 impl Memory<'_> {
     /// Offers one typed section manifest on the caller's own credential with

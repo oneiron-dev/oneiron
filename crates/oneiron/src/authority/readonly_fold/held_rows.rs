@@ -45,7 +45,7 @@ impl<'a> HeldRows<'a> {
                 continue;
             }
             let entry =
-                decode_authority_log_entry_body(&authority_log_body_in_txn(store, txn, &id)?)?;
+                decode_stored_authority_log_body(&authority_log_body_in_txn(store, txn, &id)?)?;
             let hash = authority_entry_hash(&entry)?;
             rest.insert(hash);
             tail.push((hash, entry));

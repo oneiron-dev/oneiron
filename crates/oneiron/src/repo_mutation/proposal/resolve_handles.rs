@@ -187,7 +187,7 @@ pub(super) fn resolved_successor(
     successor.settlement = None;
     successor.queue_review = None;
     successor.operation_seq = None;
-    successor.created_at = now_millis() / 1000;
+    successor.created_at = crate::unix_millis_now() / 1000;
     validate_conflict(vault, &successor, &repo_root)?;
     let encoded = SNAPSHOT.encode_value(&snapshot)?;
     let mut txn = vault.store.env.write_txn()?;

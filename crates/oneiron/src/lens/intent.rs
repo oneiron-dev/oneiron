@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 /// index of the `lens/intent` NOTE that holds it (FIX 9896). Key: id16.
 pub(super) const INTENTS: SideTable<EntityId, LensIntentIndex, Named> =
     SideTable::new(&side_table::LENS_INTENT);
-/// Bound prompt storage before allocation or dispatch into a model runner.
-pub const LENS_INTENT_MAX_BYTES: usize = 16_384;
+#[doc(hidden)]
+pub use oneiron_records::lens::intent::LENS_INTENT_MAX_BYTES;
 
 /// Per-lens authored source, independent of generated atom trees and shell stamps.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

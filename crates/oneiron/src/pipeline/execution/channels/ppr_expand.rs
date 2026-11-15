@@ -12,7 +12,7 @@ use crate::pipeline::builder::PipelineBuilder;
 use crate::pipeline::filters::apply_claim_status_gate;
 use crate::pipeline::trace::{record_ppr_cache_outcome, retrieval_trace_fused_scores};
 use crate::pipeline::types::{
-    ClaimStatusGateCache, EntityMetadataCache, PPR_DAMPING, PipelineFilterConfig, ScoredEntity,
+    ClaimStatusGateCache, EntityMetadataCache, PipelineFilterConfig, ScoredEntity,
 };
 use crate::ppr::{CommunityPprDiversity, DeferredPprCacheWrite};
 use crate::retrieval_quality::{PprCacheOutcome, RetrievalDiagnostics};
@@ -127,7 +127,7 @@ impl PipelineBuilder<'_> {
                             crate::ppr::CommunityPprRequest {
                                 seeds: &readable_seeds,
                                 depth: *depth,
-                                teleport_alpha: PPR_DAMPING,
+                                teleport_alpha: self.params.ppr_damping,
                                 weighting: crate::ppr::SeedWeighting::Uniform,
                                 config: &config,
                                 context: &context,
@@ -150,7 +150,7 @@ impl PipelineBuilder<'_> {
                         rtxn,
                         &seeds,
                         *depth,
-                        PPR_DAMPING,
+                        self.params.ppr_damping,
                         self.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Uniform,
                         &visibility,
@@ -164,7 +164,7 @@ impl PipelineBuilder<'_> {
                         rtxn,
                         &seeds,
                         *depth,
-                        PPR_DAMPING,
+                        self.params.ppr_damping,
                         self.ppr_vad_alpha,
                         crate::ppr::SeedWeighting::Uniform,
                         self.deadline,
@@ -191,7 +191,7 @@ impl PipelineBuilder<'_> {
                             crate::ppr::CommunityPprRequest {
                                 seeds: &seeds,
                                 depth: *depth,
-                                teleport_alpha: PPR_DAMPING,
+                                teleport_alpha: self.params.ppr_damping,
                                 weighting: crate::ppr::SeedWeighting::Uniform,
                                 config: &config,
                                 context: &context,
