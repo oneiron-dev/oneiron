@@ -162,7 +162,8 @@ pub(crate) fn spawn_deposit_settlement(
                 }
                 Ok(Ok(_)) => {}
                 Ok(Err(error)) => {
-                    tracing::warn!(error = %format!("{error:#}"), "booking deposit settle pass failed")
+                    let error = format!("{error:#}");
+                    tracing::warn!(error = %error, "booking deposit settle pass failed");
                 }
                 Err(error) => tracing::warn!(%error, "booking deposit settle pass did not run"),
             }

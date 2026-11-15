@@ -176,7 +176,6 @@ struct StripeErrorBody {
 pub(crate) struct PaymentIntentView {
     pub id: String,
     pub status: String,
-    pub amount: u64,
     #[serde(default)]
     pub amount_capturable: u64,
     /// What the payment has captured.
