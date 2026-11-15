@@ -12,6 +12,9 @@
 //!
 //! Public paths only.
 
+// `Vault::open_unseeded_for_test` is behind the crate's test-support feature.
+#![cfg(feature = "test-support")]
+
 use oneiron::campaign::claims::{CampaignMemberChannel, CampaignMemberState};
 use oneiron::campaign::register_crm_pack;
 use oneiron::campaign::surface::{CAMPAIGN_SCHEMA_VERSION, CreateCampaignRequest};
@@ -181,6 +184,9 @@ fn campaign_member_cursor_resumes_in_either_case() -> TestResult {
             &CreateCampaignRequest {
                 schema_version: CAMPAIGN_SCHEMA_VERSION,
                 name: "re-cased cursor".to_owned(),
+                reply_snooze_policy: None,
+                voice_guide_ref: None,
+                copy_review: None,
             },
             10,
         )?
