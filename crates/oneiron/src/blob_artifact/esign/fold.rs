@@ -247,6 +247,33 @@ impl EsignState {
                 self.reminders.insert((recipient.clone(), *rung));
                 self.reminder_at.insert(recipient.clone(), now);
             }
+            EsignEvent::Extended { expires_at } => {
+                // RULING ESIGN-WINDOW-EXTEND-AUTHORITY = A: only a pending
+                // document whose windows are all still open moves, and only
+                // later; a document past a window is the expiry sweep's,
+                // and a terminal one never reopens.
+                if self.status != DocumentStatus::Pending
+                    || self.rejection.is_some()
+                    || self.expiry_target(now).is_some()
+                    || *expires_at <= self.document.expires_at
+                {
+                    return Err(invalid("signing window cannot be extended"));
+                }
+                self.document.expires_at = *expires_at;
+                for recipient in &mut self.document.recipients {
+                    let progress = self
+                        .recipients
+                        .get_mut(&recipient.id)
+                        .ok_or_else(|| invalid("unknown recipient"))?;
+                    if !matches!(
+                        progress.signing,
+                        SigningStatus::Completed | SigningStatus::Rejected
+                    ) {
+                        progress.expires_at = *expires_at;
+                        recipient.expires_at = *expires_at;
+                    }
+                }
+            }
             EsignEvent::Sealed {
                 rejected,
                 item_sha256,

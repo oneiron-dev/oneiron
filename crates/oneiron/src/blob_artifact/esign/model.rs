@@ -50,6 +50,12 @@ pub enum EsignEvent {
         recipient: String,
         rung: u32,
     },
+    /// The pending document's signing window moved to `expires_at`, and
+    /// with it every recipient window not yet finished (ARCH-0064 SGN-09).
+    /// A link's own cap never moves ([`super::capability::extend_links_in`]).
+    Extended {
+        expires_at: u64,
+    },
     /// Authored only after native verification succeeds for every sealed item.
     Sealed {
         rejected: bool,
@@ -76,6 +82,7 @@ impl EsignEvent {
             Self::Voided { .. } => "esign.voided",
             Self::Expired { .. } => "esign.expired",
             Self::Reminded { .. } => "esign.reminded",
+            Self::Extended { .. } => "esign.extended",
             Self::Sealed {
                 rejected: false, ..
             } => "esign.completed",

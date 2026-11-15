@@ -28,7 +28,7 @@
 //! the ended receipts (`delivery_receipts`).
 
 use super::capability::{
-    EsignCapability, capability_expires_at, delivered_digest_in, mint_delivery_capability_in_txn,
+    EsignCapability, delivered_digest_in, link_lifetime, mint_delivery_capability_in_txn,
     recipient_bindings_read_in,
 };
 use super::delivery_settlement::{EsignDeliveryEndReason, ended_reason, fail_ended_in_txn};
@@ -160,19 +160,19 @@ impl Vault {
                 ..
             } = *mintable;
             let lease = crate::entity_id::bytes_to_hex_lower(attempt.as_bytes());
-            let hard_expires_at = capability_expires_at(&state.document);
+            let lifetime = link_lifetime(&state.document, now);
             let capability = mint_delivery_capability_in_txn(
                 self,
                 txn,
                 document,
                 &notice.recipient,
-                hard_expires_at,
+                lifetime,
                 (&lease, attempt_count),
                 deliver,
             )?;
             Ok(EsignDeliveryMint::Minted(EsignDeliveryLink {
                 capability,
-                hard_expires_at,
+                hard_expires_at: lifetime.hard_expires_at,
             }))
         })
     }

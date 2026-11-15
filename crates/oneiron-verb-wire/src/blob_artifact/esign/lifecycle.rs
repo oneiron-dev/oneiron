@@ -40,6 +40,14 @@ pub struct EsignLifecycleRules {
     pub repeat_reminder_every_seconds: u64,
     pub reminder_cap_seconds: u64,
     pub notices: EsignNoticeSwitches,
+    /// The emailed-token cap (ARCH-0064 section 2): how long each signing
+    /// link lives from its own mint, so a resend after the cap mints a live
+    /// link and an extended window never moves a minted link's cap. Unset,
+    /// a link lives until the document's deadline. Omitted when unset, so a
+    /// stored draft that never had one re-encodes to the bytes its trail
+    /// hashed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_cap_seconds: Option<u64>,
 }
 
 impl EsignLifecycleRules {
@@ -49,6 +57,7 @@ impl EsignLifecycleRules {
             || self.repeat_reminder_every_seconds == 0
             || self.reminder_cap_seconds < self.first_reminder_after_seconds
             || self.reminder_cap_seconds > self.expiry_after_seconds
+            || self.token_cap_seconds == Some(0)
         {
             return Err(invalid("invalid lifecycle rules"));
         }

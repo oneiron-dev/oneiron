@@ -137,6 +137,12 @@ pub enum EsignOutboundVerb {
     SendForSignature,
     Remind,
     Void,
+    /// Moves a pending document's signing window to `expires_at` (ARCH-0064
+    /// SGN-09; RULING ESIGN-WINDOW-EXTEND-AUTHORITY = A). It mints, moves
+    /// and revokes no link cap and tells no recipient.
+    Extend {
+        expires_at: u64,
+    },
 }
 impl EsignOutboundVerb {
     pub fn as_str(self) -> &'static str {
@@ -144,7 +150,14 @@ impl EsignOutboundVerb {
             Self::SendForSignature => "send_for_signature",
             Self::Remind => "remind",
             Self::Void => "void",
+            Self::Extend { .. } => "extend",
         }
+    }
+    /// Whether the act's deliveries carry signing links, so its owner's
+    /// admitted press is recorded for them to cite: a send or a reminder,
+    /// never a void or an extension.
+    pub fn mints_links(self) -> bool {
+        matches!(self, Self::SendForSignature | Self::Remind)
     }
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,7 +247,7 @@ impl OutboundExecutionSink for EsignSink<'_> {
                         decision_ref: owner.decision_id().to_hex(),
                     })
                 }
-                None if self.command.verb != EsignOutboundVerb::Void => admitted_owner_press_in(
+                None if self.command.verb.mints_links() => admitted_owner_press_in(
                     self.vault,
                     txn,
                     request,
@@ -382,6 +395,20 @@ impl OutboundExecutionSink for EsignSink<'_> {
 
                     return Ok(id);
                 }
+                EsignOutboundVerb::Extend { expires_at } => {
+                    state = append(
+                        self.vault,
+                        txn,
+                        id,
+                        EsignEvent::Extended { expires_at },
+                        self.actor.clone(),
+                        self.now,
+                    )?;
+                    super::capability::extend_links_in(self.vault, txn, id, &state, self.now)?;
+                    DISPATCH_MARKER.put(&self.vault.store, txn, &marker, &recorded)?;
+
+                    return Ok(id);
+                }
             };
             let transition = if self.command.verb == EsignOutboundVerb::SendForSignature {
                 "invite"
@@ -435,10 +462,10 @@ impl OutboundExecutionSink for EsignSink<'_> {
                 OutboundExecutionOutcome::delivered_to_channel(format!("esign:{}", id.to_hex()))
                     .with_receipt_field(
                         "delivery_health",
-                        if self.command.verb == EsignOutboundVerb::Void {
-                            "local_terminal"
-                        } else {
-                            "enqueued"
+                        match self.command.verb {
+                            EsignOutboundVerb::Void => "local_terminal",
+                            EsignOutboundVerb::Extend { .. } => "local_window",
+                            _ => "enqueued",
                         },
                     )
             }

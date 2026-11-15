@@ -93,6 +93,11 @@ pub(super) struct CapabilityBinding {
     /// one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) delivery: Option<DeliveryExport>,
+    /// The link's own emailed-token cap end ([`LinkLifetime`]), fixed at its
+    /// mint: no window extension moves it. Absent on a link minted before
+    /// the cap was per link, whose cap is its document's token deadline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) cap_expires_at: Option<u64>,
 }
 /// Non-secret export metadata of a delivery-minted link: the delivery lease
 /// it went out under, and the digest of the content delivered with it.
@@ -122,21 +127,53 @@ pub(super) fn binding(
     Ok(cap)
 }
 impl CapabilityBinding {
-    fn usable_until(&self, expires_at: u64, now: u64) -> bool {
+    /// Whether the link still signs at `now` and reaches as far as its own
+    /// cap lets it under `document`'s current deadline.
+    fn usable_until(&self, document: &EsignDocument, now: u64) -> bool {
         self.revoked_at.is_none()
             && now < self.hard_expires_at
-            && expires_at <= self.hard_expires_at
+            && self.reach(document) <= self.hard_expires_at
+    }
+    /// The latest instant the link may live to under `document`'s current
+    /// deadline: its own cap end, else the document's token deadline, never
+    /// past the document's deadline. A window extension re-dates a live link
+    /// to this, never past it.
+    pub(super) fn reach(&self, document: &EsignDocument) -> u64 {
+        self.cap_expires_at
+            .or(document.token_expires_at)
+            .map_or(document.expires_at, |cap| cap.min(document.expires_at))
     }
 }
-/// The deadline signing and delivery links live until: the owner-selected
-/// token cap when the draft sets one, else the document's deadline. A cap
-/// past the document's deadline changes nothing; an unset cap is today's
-/// deadline. Recipient signing windows are untouched.
-pub(super) fn capability_expires_at(document: &EsignDocument) -> u64 {
-    document
-        .token_expires_at
-        .map(|cap| cap.min(document.expires_at))
-        .unwrap_or(document.expires_at)
+/// How long one link minted now lives (ARCH-0064 section 2, emailed-token
+/// cap): until the earlier of the document's deadline and its cap end. The
+/// recipient's own signing window is judged at use besides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct LinkLifetime {
+    /// When the link stops signing.
+    pub(super) hard_expires_at: u64,
+    /// The earlier of the mint plus the draft's lifecycle token cap and the
+    /// draft's absolute token deadline; `None` when neither is set.
+    pub(super) cap_expires_at: Option<u64>,
+}
+/// The lifetime of a link `document` mints at `now`. Each delivery mints its
+/// own, so a resend after a link's cap mints a live one, and a cap past the
+/// document's deadline changes nothing. Recipient signing windows are
+/// untouched.
+pub(super) fn link_lifetime(document: &EsignDocument, now: u64) -> LinkLifetime {
+    let per_link = document
+        .lifecycle
+        .as_ref()
+        .and_then(|rules| rules.token_cap_seconds)
+        .map(|cap| now.saturating_add(cap));
+    let cap_expires_at = match (per_link, document.token_expires_at) {
+        (Some(link), Some(absolute)) => Some(link.min(absolute)),
+        (link, absolute) => link.or(absolute),
+    };
+    LinkLifetime {
+        hard_expires_at: cap_expires_at
+            .map_or(document.expires_at, |cap| cap.min(document.expires_at)),
+        cap_expires_at,
+    }
 }
 /// Every link indexed for `recipient` of `document`, in mint order.
 fn recipient_bindings(
@@ -213,9 +250,8 @@ pub(crate) fn recipient_capability_unrevoked_in(
         .iter()
         .any(|(_, cap)| cap.revoked_at.is_none()))
 }
-/// Mints a fresh link for one delivery lease (FIX 5238 option 3): its
-/// `hard_expires_at` is the resolved capability deadline
-/// ([`capability_expires_at`]), and `deliver` is the
+/// Mints a fresh link for one delivery lease (FIX 5238 option 3): it lives
+/// for `lifetime`, minted now ([`link_lifetime`]), and `deliver` is the
 /// exporter's digest of the content delivered with it, kept beside the
 /// lease as the only trace of the link's delivery. An earlier link minted
 /// for the same lease, one an export never finished, keeps working but no
@@ -228,7 +264,7 @@ pub(super) fn mint_delivery_capability_in_txn(
     txn: &mut heed::RwTxn<'_>,
     document: EntityId,
     recipient: &str,
-    hard_expires_at: u64,
+    lifetime: LinkLifetime,
     lease: (&str, u32),
     deliver: &dyn Fn(&EsignCapability, u64) -> [u8; 32],
 ) -> Result<EsignCapability> {
@@ -242,17 +278,18 @@ pub(super) fn mint_delivery_capability_in_txn(
         }
     }
     let token = EsignCapability::mint()?;
-    let delivered = deliver(&token, hard_expires_at);
+    let delivered = deliver(&token, lifetime.hard_expires_at);
     let row = CapabilityBinding {
         document: document.to_hex(),
         recipient: recipient.to_owned(),
-        hard_expires_at,
+        hard_expires_at: lifetime.hard_expires_at,
         revoked_at: None,
         delivery: Some(DeliveryExport {
             attempt_id: attempt_id.to_owned(),
             attempt_count,
             delivered_sha256: crate::entity_id::bytes_to_hex_lower(&delivered),
         }),
+        cap_expires_at: lifetime.cap_expires_at,
     };
     put_capability(vault, txn, &token, &row, document)?;
     Ok(token)
@@ -298,11 +335,15 @@ pub(super) fn mint_draft_capabilities_in(
         return Err(invalid("tokens are minted before send"));
     }
     let now = vault.now_recorded_at();
-    let deadline = capability_expires_at(&state.document);
+    let lifetime = link_lifetime(&state.document, now);
     let mut issued = Vec::new();
     for recipient in &state.document.recipients {
         let held = recipient_bindings(vault, txn, document, &recipient.id)?;
-        if !rotate && held.iter().any(|(_, cap)| cap.usable_until(deadline, now)) {
+        if !rotate
+            && held
+                .iter()
+                .any(|(_, cap)| cap.usable_until(&state.document, now))
+        {
             continue;
         }
         // A rotation, or a recipient whose every link lapsed: each
@@ -317,9 +358,10 @@ pub(super) fn mint_draft_capabilities_in(
         let row = CapabilityBinding {
             document: document.to_hex(),
             recipient: recipient.id.clone(),
-            hard_expires_at: deadline,
+            hard_expires_at: lifetime.hard_expires_at,
             revoked_at: None,
             delivery: None,
+            cap_expires_at: lifetime.cap_expires_at,
         };
         put_capability(vault, txn, &token, &row, document)?;
         issued.push((recipient.id.clone(), token));
@@ -327,7 +369,77 @@ pub(super) fn mint_draft_capabilities_in(
     Ok(issued)
 }
 
+/// Re-dates the live links of `document` after its window moved to
+/// `state`'s deadline (RULING ESIGN-WINDOW-EXTEND-AUTHORITY = A): each link
+/// no one revoked and still signing at `now` lives to its own reach
+/// ([`CapabilityBinding::reach`]). A link's cap never moves, no link lives
+/// past it or is shortened, and a revoked or lapsed link stays as it is: a
+/// resend mints the recipient a fresh one.
+pub(super) fn extend_links_in(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    document: EntityId,
+    state: &EsignState,
+    now: u64,
+) -> Result<()> {
+    for recipient in &state.document.recipients {
+        for (digest, mut link) in recipient_bindings(vault, txn, document, &recipient.id)? {
+            let reach = link.reach(&state.document);
+            if link.revoked_at.is_none()
+                && now < link.hard_expires_at
+                && link.hard_expires_at < reach
+            {
+                link.hard_expires_at = reach;
+                TOKENS.put(&vault.store, txn, &digest, &link)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 impl Vault {
+    /// The token-expiry job (ARCH-0064 SGN-09: "a separate token-expiry job
+    /// enforces the configured emailed-token cap"): removes the verifier of
+    /// every link of `documents` past its hard expiry, and its digest from
+    /// its recipient's index. Refusal stays check-at-use, so a lapsed link
+    /// the job has not reached yet is refused all the same. The job never
+    /// touches a signing window, and the window sweep
+    /// ([`Self::sweep_esign_expiry`]) never touches a link. Counts the
+    /// links removed.
+    /// # Errors
+    /// A document whose trail or links do not read, or the store's failure.
+    pub fn sweep_esign_tokens(&self, documents: &[EntityId], now: u64) -> Result<usize> {
+        self.with_write_txn_grouped(|txn| {
+            let mut removed = 0;
+            for &document in documents {
+                let state = super::ledger::restrictive_state_in(self, txn, document)?;
+                for recipient in &state.document.recipients {
+                    let key = (document, recipient.id.clone());
+                    let Some(RecipientDigests(digests)) = RECIPIENT.get(&self.store, txn, &key)?
+                    else {
+                        continue;
+                    };
+                    let held = digests.len();
+                    let mut kept = Vec::with_capacity(held);
+                    for digest in digests {
+                        match TOKENS.get(&self.store, txn, &digest)? {
+                            Some(link) if now >= link.hard_expires_at => {
+                                TOKENS.delete(&self.store, txn, &digest)?;
+                                removed += 1;
+                            }
+                            _ => kept.push(digest),
+                        }
+                    }
+                    if kept.is_empty() {
+                        RECIPIENT.delete(&self.store, txn, &key)?;
+                    } else if kept.len() != held {
+                        RECIPIENT.put(&self.store, txn, &key, &RecipientDigests(kept))?;
+                    }
+                }
+            }
+            Ok(removed)
+        })
+    }
     /// Mint missing or unusable recipient capabilities in DRAFT, for the
     /// owner to hand out. A recipient already holding a link that covers the
     /// current deadline gets none, and no link is returned again. Delivery

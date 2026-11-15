@@ -7,7 +7,7 @@ use super::*;
 pub(super) fn esign_manifest() -> OutboundCapabilityManifest {
     manifest(
         "esign", "signing", "Native signing request organ.",
-        ["send_for_signature", "remind", "void"].into_iter().map(|kind| verb(
+        ["send_for_signature", "remind", "void", "extend"].into_iter().map(|kind| verb(
             kind, kind, json!({"document": "artifact ref", "recipient_count": "reviewed count"}),
             OutboundInterruptionClass::Interrupt,
             OutboundDeliverySemanticsKind::FireAndForget, None,

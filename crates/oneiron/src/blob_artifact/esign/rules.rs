@@ -164,6 +164,12 @@ fn classify(current: &EsignRulePack, proposed: &EsignRulePack) -> Result<AmendCl
             proposed_rules.repeat_reminder_every_seconds,
             false,
         ),
+        // An unset token cap lets a link live to the document's deadline: the widest cap.
+        order(
+            current_rules.token_cap_seconds.unwrap_or(u64::MAX),
+            proposed_rules.token_cap_seconds.unwrap_or(u64::MAX),
+            true,
+        ),
     ];
     // A notice switch changes what a signer is told: never provably narrower.
     if current_rules.notices != proposed_rules.notices {

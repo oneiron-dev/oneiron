@@ -721,6 +721,7 @@ fn lifecycle_sweep_uses_gate_and_claims_each_due_recipient_once() -> Result<()> 
         repeat_reminder_every_seconds: 2,
         reminder_cap_seconds: 60,
         notices: EsignNoticeSwitches::default(),
+        token_cap_seconds: None,
     };
     let mut policy_doc = doc.clone();
     policy_doc.lifecycle = Some(rules);
