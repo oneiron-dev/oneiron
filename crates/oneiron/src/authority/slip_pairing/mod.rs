@@ -116,7 +116,8 @@ pub(crate) struct PendingInvitationLink {
     pub(crate) invitation: String,
 }
 /// The owner's approval a single-use machine link keeps (mesh PR1b C2): his
-/// act's owner, by, surface and kind, and his answer. Redemption fills the
+/// act's owner, by, surface and kind, and the role the machine joins in:
+/// his answer, `Owned(..)`, or a hosted node (L10-16). Redemption fills the
 /// act's target (the redeeming machine) and `seen` (its revision on the
 /// carrier, zero for a new machine), and the carrier signs.
 #[derive(Clone, Copy, Serialize, Deserialize)]
@@ -126,7 +127,19 @@ struct PendingMachine {
     by: ActBy,
     surface: ActSurface,
     kind: OwnerActKind,
-    ownership: MachineOwnership,
+    role: MachineRole,
+}
+
+/// The owner's act a machine link keeps for `role`: the pairing act for his
+/// answer of whose the machine is, and a machine answer for a hosted node,
+/// which no such answer names, as [`Vault::enroll_machine`] lands one. The
+/// roster takes a pairing act only for an `Owned(..)` first revision.
+fn pairing_act_kind(role: MachineRole) -> OwnerActKind {
+    if matches!(role, MachineRole::Owned(_)) {
+        OwnerActKind::Pairing
+    } else {
+        OwnerActKind::MachineAnswer
+    }
 }
 
 /// Crockford base32: no `I`, `L`, `O` or `U`, so a code survives being read

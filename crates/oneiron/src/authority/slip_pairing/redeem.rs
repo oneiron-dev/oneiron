@@ -426,7 +426,7 @@ impl Vault {
         request: &MachineEnrolmentRequest,
         possession: Option<(&[u8; 64], &[u8])>,
     ) -> Result<(FoldedMachine, bool)> {
-        let role = MachineRole::Owned(answer.ownership);
+        let role = answer.role;
         let fold = self.authority_view_readonly_in_txn(txn)?;
         // A credential-only re-pairing writes no revision, so it needs no
         // carrier, and no arm below enrols the machine again.
