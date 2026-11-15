@@ -658,6 +658,27 @@ impl Vault {
         Ok(asks)
     }
 
+    /// Every ask put for question `question`, at any version, open, answered or withdrawn,
+    /// oldest first, in the caller's snapshot: how a saved question's person-changed pairs
+    /// find the rows each ask was put over (FIX PERSON-CHANGED-PAIRS-SKIP-SAVED-LANE).
+    pub(crate) fn question_decision_asks_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        question: EntityId,
+    ) -> Result<Vec<DecisionAsk>> {
+        let mut asks = Vec::new();
+        for row in ASKS.iter_from(&self.store, txn, &[])? {
+            let (seq, ask) = row?;
+            if ask.seq != seq {
+                return Err(Error::CorruptedIndex("decision ask identity"));
+            }
+            if ask.question.id == question {
+                asks.push(ask);
+            }
+        }
+        Ok(asks)
+    }
+
     /// Moves an open ask to the next role on its chain with a live holder, up to its
     /// ceiling; an unresolved ask resolves from its first role again. None, and the ask
     /// stays where it is, when no such role is left.
