@@ -201,12 +201,13 @@ pub(crate) fn note_new_authority_row_in_txn(
 /// it accounts for every held row it covers but no held row past it. Each
 /// row it covers that this vault does not hold is hydration when it arrives,
 /// never growth. The adopted pin stays the trust baseline: this moves none.
+/// Returns the covered rows this vault holds.
 pub(super) fn note_adopted_checkpoint_in_txn(
     store: &Store,
     wtxn: &mut heed::RwTxn<'_>,
     id: &[u8; 32],
     image: &AuthorityCheckpointV2,
-) -> Result<()> {
+) -> Result<BTreeSet<AuthorityEntryHash>> {
     // The store id is the row's content hash: a held covered row is known
     // by its id alone.
     let covered_ids: BTreeMap<EntityId, AuthorityEntryHash> = image
@@ -244,7 +245,8 @@ pub(super) fn note_adopted_checkpoint_in_txn(
             kept_at_secs: crate::unix_seconds_now(),
             built_under: None,
         },
-    )
+    )?;
+    Ok(held)
 }
 
 /// Whether a cutoff is due at `now_secs`: the log grew past what the head
