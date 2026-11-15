@@ -81,12 +81,14 @@ mod types;
 use std::collections::{BTreeMap, BTreeSet};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::purposes;
 use serde::Serialize;
 
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
+use crate::training_pack::pin_digest;
 
 pub use custody::DrafterSealing;
 pub use doors::{
@@ -139,10 +141,11 @@ fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(reason.into())
 }
 
+/// A drafter version's pin of `value`: the training pin's recipe under the drafter's
+/// purpose (`training_pack::pin_digest`), kept as main's bytes.
 fn hash_json(value: &impl Serialize) -> Result<[u8; 32]> {
-    let bytes = crate::llm::canonical_json_bytes(value)
-        .map_err(|_| invalid("drafter pin encoding failed"))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    pin_digest(purposes::drafter::PIN, value)
+        .map_err(|refusal| invalid(&format!("drafter pin {refusal}")))
 }
 
 /// The pin a drafter version's checks take of `value`.

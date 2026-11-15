@@ -11,6 +11,7 @@ mod custody;
 mod detector_corpus;
 mod embedder_runtime;
 mod export;
+mod pin;
 mod promotion;
 mod question_heads;
 mod question_trials;
@@ -19,6 +20,7 @@ mod target;
 mod timeline;
 mod types;
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::Serialize;
 
 use crate::Vault;
@@ -34,6 +36,7 @@ pub use connector::{PollFuture, TrainOutput, TrainRequest, TrainingConnector, Tr
 pub use custody::stream::{CheckpointFileStream, CheckpointStream};
 pub use detector_corpus::DetectorCorpusRef;
 pub use embedder_runtime::TrainingEmbedderSource;
+pub(crate) use pin::pin_digest;
 pub use promotion::{RoleSwapOutcome, SwapExpectation, TrainingEvalInput, ViewedSwap};
 pub(crate) use promotion::{
     bind_staged_role_swap_in_txn, role_swap_receipt_in, training_run_in, training_runs_in,
@@ -67,10 +70,11 @@ fn json_value(value: &impl Serialize) -> Result<serde_json::Value> {
     serde_json::to_value(value).map_err(|e| invalid(&format!("training receipt encoding: {e}")))
 }
 
+/// A training run's pin of `value`: the BLAKE3 of its sorted JSON, kept as main's bytes
+/// (`pin::pin_digest`). A value with no sorted JSON, or holding a non-finite float, has none.
 fn hash_json(value: &impl Serialize) -> Result<[u8; 32]> {
-    let bytes = crate::llm::canonical_json_bytes(value)
-        .map_err(|_| invalid("training pin encoding failed"))?;
-    Ok(*blake3::hash(&bytes).as_bytes())
+    pin_digest(purposes::training_pack::PIN, value)
+        .map_err(|refusal| invalid(&format!("training pin {refusal}")))
 }
 
 /// The pin a training run's checks take of `value`.
