@@ -50,7 +50,10 @@ use serde::Serialize;
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 33;
+/// 40: an owner act's carrier is refused only by the roster chain's removal, never by an
+/// anchor chain's (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1). 34-39
+/// are open PRs' numbers; the train assigns this one.
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 40;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

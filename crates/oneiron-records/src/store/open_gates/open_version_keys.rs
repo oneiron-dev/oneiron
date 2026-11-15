@@ -3,6 +3,15 @@
 
 pub const MAX_DBS: u32 = 32;
 
+/// v29 (FIX FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES, site S1):
+/// stored authority-log rows keep their bytes and change meaning. An owner
+/// act whose carrier some anchor chain, and not the roster's, marked
+/// removed at the act's parents was refused; now it stands. A stored
+/// checkpoint image written before it holds the old refusals and no longer
+/// decodes (the authority fold schema moves with it). No old-meaning reader
+/// or migration is provided (the lead's M-1 stored-change rule, path
+/// "loud").
+///
 /// v28 (FIX 7114): attempt record version 5 distinguishes a workflow tool's
 /// verb-hook pause from a person's pause and the other engine holds. The
 /// hook invocation is retained on the pause; only that hold can auto-resume.
@@ -131,7 +140,7 @@ pub const MAX_DBS: u32 = 32;
 /// `RECEIPT_FAMILY_INDEX_VERSION` requires bumping this version too.
 /// v27 hashes full run/group identifiers in their v2 secondary-index keys.
 /// v26 is reserved for the separately landing attempt-record v4 format.
-pub const STORAGE_ABI_VERSION: u16 = 28;
+pub const STORAGE_ABI_VERSION: u16 = 29;
 
 pub const STORAGE_SCHEMA_VERSION: u16 = 1;
 
