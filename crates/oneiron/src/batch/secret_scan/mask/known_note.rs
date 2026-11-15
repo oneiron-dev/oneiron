@@ -37,6 +37,9 @@ pub(super) fn note_known_file_keys_in_txn(
                 handle,
                 reason: key.reason,
                 place: "file".to_owned(),
+                // The key's custody record is another record's: its ruling
+                // stays with that record's writer or the owner.
+                writer: None,
             });
         }
     }
