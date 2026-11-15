@@ -137,7 +137,16 @@ impl Vault {
     ) -> Result<()> {
         let key = preset.workspace_ref.clone();
         self.with_write_txn_grouped(|txn| {
-            require_settings_authority_in_txn(self, txn, preset.workspace_vault_id, owner)?;
+            let actor =
+                require_settings_authority_in_txn(self, txn, preset.workspace_vault_id, owner)?;
+            // The approved re-run of a held establish (the org two-admin
+            // rule) lands in this writer.
+            self.land_approved_admin_act_in_txn(
+                txn,
+                preset.workspace_vault_id,
+                actor,
+                self.store.clock.now_recorded_at(),
+            )?;
             super::steps::validate_workspace_preset_in_txn(self, txn, preset)?;
             let existing = PRESET.get(&self.store, txn, &key)?;
             if let Some(existing) = &existing
@@ -161,16 +170,16 @@ impl Vault {
 
 /// The person behind `owner`, live in `txn`, as the vault's owner or as an
 /// admin holding the workspace-settings power over `vault_id`. Enrollment
-/// authority alone does not confer it.
+/// authority alone does not confer it. Answers that person.
 fn require_settings_authority_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     vault_id: u64,
     owner: &AuthenticatedOwner,
-) -> Result<()> {
+) -> Result<EntityId> {
     let actor = owner.revalidate_person_in_txn(vault, txn)?;
     if crate::policy_model::is_live_vault_owner_in_txn(vault, txn, &actor)? {
-        return Ok(());
+        return Ok(actor);
     }
     vault
         .authorize_shared_vault_write_in_txn(
@@ -187,6 +196,7 @@ fn require_settings_authority_in_txn(
             }
             other => other,
         })
+        .map(|()| actor)
 }
 
 impl Memory<'_> {

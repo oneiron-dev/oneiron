@@ -29,7 +29,8 @@ pub use held_admin_act::{
     NOTIFICATION_PRODUCER_ADMIN_ACT_LAPSED,
 };
 pub(crate) use held_admin_act::{
-    current_held_admin_approval, enter_held_admin_approval, run_approved_admin_act,
+    approved_admin_act_first_admin, current_held_admin_approval, enter_held_admin_approval,
+    run_approved_admin_act,
 };
 pub use member_ask::{
     MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,
@@ -286,6 +287,12 @@ pub struct SharedActExecutionReceipt {
     /// change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposer: Option<String>,
+    /// The first admin of the held admin act a second admin approved (the
+    /// org two-admin rule), PERSON hex, when this change is its re-run:
+    /// `actor` is the approver. Set beside a Steward's `proposer` too, so an
+    /// applied ask names both admins. `None` for every other change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub first_admin: Option<String>,
     /// The bound Connect grants a genuine leave released here (FIX 12555):
     /// the grants actually withdrawn and the typed remainder still standing.
     /// `Some` only when the leave selected at least one bound grant; `None`
@@ -860,6 +867,11 @@ impl Vault {
         now: u64,
     ) -> Result<SharedActExecutionReceipt> {
         let (act_id, request_id) = act.unzip();
+        // The approved re-run of a held admin act lands it in this writer.
+        self.land_approved_admin_act_in_txn(txn, vault_id, actor, now)?;
+        let first_admin = held_admin_act::approved_admin_act_first_admin(vault_id, actor)
+            .as_ref()
+            .map(EntityId::to_hex);
         let receipt = SharedActExecutionReceipt {
             id,
             vault_id,
@@ -881,8 +893,10 @@ impl Vault {
             authority_record_pending: record == ChangeRecord::Pending,
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
             // The approved re-run of a held admin act names its first admin
-            // (the org two-admin rule); a Steward's ask replaces it after.
-            proposer: held_admin_act::approved_admin_act_proposer(vault_id, actor),
+            // (the org two-admin rule); a Steward's ask replaces `proposer`
+            // after, and `first_admin` keeps the first admin.
+            proposer: first_admin.clone(),
+            first_admin,
             detach: effect.detach,
             check_in: None,
             completed_at: now,

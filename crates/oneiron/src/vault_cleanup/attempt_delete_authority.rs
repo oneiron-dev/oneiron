@@ -6,7 +6,8 @@ use std::collections::BTreeSet;
 use crate::EntityId;
 use crate::edge::EdgeActorClass;
 use crate::federation::{
-    FederationGrantScope, MembershipStanding, Scope, ScopeAxis, decode_federation_grant_body,
+    FederationGrantRole, FederationGrantScope, MembershipStanding, Scope, ScopeAxis,
+    decode_federation_grant_body,
 };
 use crate::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError, MemoryResult};
 use crate::ports::EntityStoreRead;
@@ -47,6 +48,7 @@ pub(super) fn require_delete_in_txn(
         return Err(forbidden("attempt_delete_no_standing"));
     };
     let scope = FederationGrantScope::vault(shared.vault_id);
+    let mut held = None;
     for id in vault
         .store
         .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -63,11 +65,22 @@ pub(super) fn require_delete_in_txn(
         if grant.member_ref != actor || grant.scope != scope {
             continue;
         }
-        if matches!(
-            vault.authenticated_grant_membership_in_txn(txn, scope, actor, id)?,
-            Some(MembershipStanding::Member { role, .. }) if role.is_admin()
-        ) && admits_operation(&grant.authority_scope)
+        if let Some(MembershipStanding::Member { role, .. }) =
+            vault.authenticated_grant_membership_in_txn(txn, scope, actor, id)?
+            && role.is_admin()
+            && admits_operation(&grant.authority_scope)
         {
+            // The org two-admin rule: an Admin's or a Deputy's delete waits
+            // for a second admin while an Owner keeps `org.two_admin` on. No
+            // held verb fronts this door, so it refuses with the hold's reason
+            // and an Owner makes it; a live Owner grant later in the scan
+            // still admits.
+            if role != FederationGrantRole::Owner
+                && let Err(refusal) = vault.two_admin_hold_in_txn(txn, shared.vault_id, actor)
+            {
+                held = Some(refusal);
+                continue;
+            }
             return Ok(DeleteAuthority {
                 actor,
                 role: "admin",
@@ -75,7 +88,10 @@ pub(super) fn require_delete_in_txn(
             });
         }
     }
-    Err(forbidden("attempt_delete_no_standing"))
+    Err(held.map_or_else(
+        || forbidden("attempt_delete_no_standing"),
+        MemoryError::from,
+    ))
 }
 
 /// This is the existing vault-wide Admin operation record (membership_gate),

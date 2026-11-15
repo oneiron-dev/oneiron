@@ -212,7 +212,10 @@ impl Vault {
     /// ARCH-0043, an Admin "cannot self-grant blanket access" (lead 10 Nov
     /// 06:5x). Deputy: Admin plus the delegated Owner Grant (ARCH-0082),
     /// which the house door already refuses an Admin (Engine ruling
-    /// C1-DEPUTY-GIVER, 13 Nov).
+    /// C1-DEPUTY-GIVER, 13 Nov). In the approved re-run of a held admin act
+    /// (the org two-admin rule) the first admin must be an Owner too: an
+    /// approval lifts only the rule, so an act its first admin could not
+    /// make never lands, whoever approves it.
     fn reserved_role_given_by_owner_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -220,14 +223,18 @@ impl Vault {
         giver: EntityId,
         role: Role,
     ) -> Result<()> {
-        if matches!(role, Role::Steward | Role::Deputy)
-            && self.member_role_in_txn(txn, vault_id, giver)? != Some(Role::Owner)
-        {
-            return Err(crate::error::Error::Claim(
-                crate::error::ClaimError::ActorLacksClaimAuthority {
-                    reason: "only an owner of the vault gives the Steward or Deputy role",
-                },
-            ));
+        if !matches!(role, Role::Steward | Role::Deputy) {
+            return Ok(());
+        }
+        let first_admin = super::held_admin_act::approved_admin_act_first_admin(vault_id, giver);
+        for person in std::iter::once(giver).chain(first_admin) {
+            if self.member_role_in_txn(txn, vault_id, person)? != Some(Role::Owner) {
+                return Err(crate::error::Error::Claim(
+                    crate::error::ClaimError::ActorLacksClaimAuthority {
+                        reason: "only an owner of the vault gives the Steward or Deputy role",
+                    },
+                ));
+            }
         }
         Ok(())
     }

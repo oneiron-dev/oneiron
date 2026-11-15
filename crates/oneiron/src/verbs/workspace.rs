@@ -86,6 +86,13 @@ pub fn onboard_workspace_member_as(
     holder: &AuthenticatedOwner,
     input: WorkspaceMemberOnboardRequest,
 ) -> MemoryResult<MemberOnboardingOutcome> {
+    // A brought companion's consent is the caller's own proof, which a
+    // second admin's re-run cannot carry: that onboarding is never held, and
+    // with the org two-admin rule on, an Admin's or Deputy's call refuses
+    // with the hold's reason (`two_admin_hold`).
+    if matches!(input.companion, WorkspaceCompanionInput::Bring { .. }) {
+        return onboard_workspace_member(vault, holder, input);
+    }
     let call = super::HeldVerbCall::new("vault.workspace.members.onboard", &input)?;
     call.answer(
         vault,

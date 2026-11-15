@@ -7,8 +7,10 @@
 //! admin may withdraw it (`vault.members.held.withdraw`); the admins list
 //! them (`vault.members.held`). An admin act no verb here fronts (a
 //! Memory-tier verb such as `vault.members.reset_project_access` or
-//! `vault.workspace.work_companion.set`, or a REST door) refuses with the
-//! hold's own reason, `two_admin_hold`: it must be made by an Owner.
+//! `vault.workspace.work_companion.set`, an onboarding whose brought
+//! companion's consent is the caller's own proof, an admin ruling, the
+//! delete of archived run attempts, or a REST door) refuses with the hold's
+//! own reason, `two_admin_hold`: it must be made by an Owner.
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 

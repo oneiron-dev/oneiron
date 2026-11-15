@@ -11,9 +11,12 @@
 //! approve door sets this module's per-thread approval around its
 //! synchronous run, and the gate lets only that admin's write in that vault
 //! through. The receipt names the approver as `actor` and the first admin
-//! as `proposer`. The first admin may withdraw the act while it waits; past
-//! `org.two_admin_lapse_secs` (default 7 days) the housekeeping pass marks
-//! it lapsed and tells the first admin. An Owner's own act is never held.
+//! as `first_admin` (and as `proposer` when no ask proposed the act). The
+//! re-run's own write lands the act ([`Vault::land_approved_admin_act_in_txn`]),
+//! so an act still approving never ran. The first admin may withdraw the act
+//! while it waits; past `org.two_admin_lapse_secs` (default 7 days) the
+//! housekeeping pass marks a waiting or approving act lapsed and tells the
+//! first admin. An Owner's own act is never held.
 //! Stored change: keep (a new table; `proposer` is an existing optional
 //! receipt field).
 use super::{Role, check_vault, invalid};
@@ -46,9 +49,11 @@ pub enum HeldAdminActStatus {
     /// Waiting for a second admin.
     Open,
     /// The admin `approver` approved it, and its re-run under their proof is
-    /// under way. It lands, or goes back to `Open` when the re-run refuses.
+    /// under way. The re-run's own write lands it; it goes back to `Open`
+    /// when the re-run refuses. One still approving at `lapses_at` never ran
+    /// (an approve cut short), and lapses.
     Approving { approver: String },
-    /// The re-run under `approver`'s proof ran.
+    /// The re-run under `approver`'s proof ran: its own write landed it.
     Landed { approver: String },
     /// Its first admin took it back.
     Withdrawn,
@@ -122,12 +127,12 @@ pub(crate) fn run_approved_admin_act<T>(approval: HeldAdminApproval, run: impl F
 }
 
 /// The first admin of the held act whose approved re-run this thread runs,
-/// PERSON hex, when `actor` is its approver in shared vault `vault_id`: the
-/// receipt's `proposer`.
-pub(crate) fn approved_admin_act_proposer(vault_id: u64, actor: EntityId) -> Option<String> {
+/// when `actor` is its approver in shared vault `vault_id`: the receipt's
+/// `first_admin`, and the person a held delegate mint's parent grant names.
+pub(crate) fn approved_admin_act_first_admin(vault_id: u64, actor: EntityId) -> Option<EntityId> {
     current_held_admin_approval()
         .filter(|approval| approval.vault_id == vault_id && approval.approver == actor)
-        .map(|approval| approval.first_admin.to_hex())
+        .map(|approval| approval.first_admin)
 }
 
 /// The refusal of a held power act.
@@ -172,6 +177,84 @@ impl Vault {
             return Err(two_admin_hold_refusal());
         }
         Ok(())
+    }
+
+    /// The approved re-run's own write lands its held act: when this thread
+    /// runs the approved re-run of a held act whose approver is `writer` in
+    /// shared vault `vault_id`, the act turns from approving (by `writer`) to
+    /// landed in the writer that commits its change, so a crash before the
+    /// approve door settles it loses nothing, and an act still approving
+    /// never ran. A write under an approval whose act no longer stands as
+    /// `writer`'s to run (lapsed, withdrawn, approved by another) refuses.
+    /// With no such approval it does nothing.
+    pub(crate) fn land_approved_admin_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        writer: EntityId,
+        now: u64,
+    ) -> Result<()> {
+        let Some(approval) = current_held_admin_approval()
+            .filter(|approval| approval.vault_id == vault_id && approval.approver == writer)
+        else {
+            return Ok(());
+        };
+        let mut act = HELD_ADMIN_ACT
+            .get(&self.store, &*txn, &approval.held)?
+            .ok_or_else(invalid)?;
+        let approver = writer.to_hex();
+        match &act.status {
+            HeldAdminActStatus::Landed { approver: by } if *by == approver => Ok(()),
+            HeldAdminActStatus::Approving { approver: by } if *by == approver => {
+                act.status = HeldAdminActStatus::Landed { approver };
+                act.closed_at = Some(now);
+                HELD_ADMIN_ACT.put(&self.store, txn, &approval.held, &act)
+            }
+            _ => Err(invalid()),
+        }
+    }
+
+    /// The org two-admin rule at the delegate mint, in its writer, for
+    /// `holder` minting from a parent grant of `parent_role` in shared vault
+    /// `vault_id` (the parent names [`approved_admin_act_first_admin`] in an
+    /// approved re-run, else `holder`). Alone, an Admin's or a Deputy's mint
+    /// refuses with [`TWO_ADMIN_HOLD_REFUSAL`] while an Owner keeps the rule
+    /// on; a live Owner of the vault is never held, whichever grant of theirs
+    /// is the parent. As a held mint's approved re-run, its approver must
+    /// still be a live Owner, Admin or Deputy here, and the act lands in this
+    /// writer: the delegation is the first admin's, approved by a second.
+    pub(crate) fn two_admin_delegate_mint_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        vault_id: u64,
+        holder: EntityId,
+        parent_role: Role,
+        now: u64,
+    ) -> Result<()> {
+        if approved_admin_act_first_admin(vault_id, holder).is_some() {
+            if !self
+                .live_act_holders(txn, vault_id, now)?
+                .iter()
+                .any(|live| live.member == holder && is_admin_role(live.role))
+            {
+                return Err(invalid());
+            }
+            return self.land_approved_admin_act_in_txn(txn, vault_id, holder, now);
+        }
+        if parent_role == Role::Owner {
+            return Ok(());
+        }
+        match self.two_admin_hold_in_txn(txn, vault_id, holder) {
+            Err(refusal)
+                if !self
+                    .live_act_holders(txn, vault_id, now)?
+                    .iter()
+                    .any(|live| live.member == holder && live.role == Role::Owner) =>
+            {
+                Err(refusal)
+            }
+            _ => Ok(()),
+        }
     }
 
     /// Holds the power act `verb` with `input` that the gate refused to
@@ -311,7 +394,8 @@ impl Vault {
     }
 
     /// Settles the approved act `approval` names after its re-run: landed
-    /// when the re-run ran, open again when it refused.
+    /// when the re-run ran (its own write has landed it already), open again
+    /// when it refused before landing.
     pub(crate) fn settle_held_admin_act(
         &self,
         approval: HeldAdminApproval,
@@ -323,12 +407,12 @@ impl Vault {
             .get(&self.store, &txn, &approval.held)?
             .ok_or_else(invalid)?;
         let approver = approval.approver.to_hex();
-        if act.status
-            != (HeldAdminActStatus::Approving {
-                approver: approver.clone(),
-            })
-        {
-            return Err(invalid());
+        match &act.status {
+            // Its re-run's own write landed it; a refusal after that write
+            // leaves it landed.
+            HeldAdminActStatus::Landed { approver: by } if *by == approver => return Ok(act),
+            HeldAdminActStatus::Approving { approver: by } if *by == approver => {}
+            _ => return Err(invalid()),
         }
         if landed {
             act.status = HeldAdminActStatus::Landed { approver };
@@ -396,13 +480,19 @@ impl Vault {
     }
 
     /// The housekeeping pass's lapse (run from
-    /// [`Self::notify_matured_shared_acts`]): each open held act past its
-    /// `lapses_at` on the store clock is marked lapsed, and its first admin
-    /// gets one inbox notice. A read pass goes first, so a vault with none
-    /// due opens no writer. Answers the number of acts it lapsed.
+    /// [`Self::notify_matured_shared_acts`]): each open or approving held act
+    /// past its `lapses_at` on the store clock is marked lapsed, and its
+    /// first admin gets one inbox notice. An approving act never ran (its
+    /// re-run's write lands it), so its approve was cut short; a re-run
+    /// still under way then refuses at its write. A read pass goes first, so
+    /// a vault with none due opens no writer. Answers the number of acts it
+    /// lapsed.
     pub(crate) fn lapse_held_admin_acts(&self) -> Result<usize> {
         let due = |act: &HeldAdminAct, now: u64| {
-            act.status == HeldAdminActStatus::Open && act.lapses_at <= now
+            matches!(
+                act.status,
+                HeldAdminActStatus::Open | HeldAdminActStatus::Approving { .. }
+            ) && act.lapses_at <= now
         };
         {
             let txn = self.store.env.read_txn()?;

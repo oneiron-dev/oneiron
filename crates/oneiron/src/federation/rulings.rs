@@ -75,6 +75,7 @@ impl Vault {
         let at = now.max(self.store.clock.now_recorded_at());
         let fold = self.authority_fold_readonly_in_txn(&txn)?;
         let mut grant_ref = None;
+        let mut held = None;
         for id in crate::ports::EntityStoreRead::port_entity_ids_by_type(
             &self.store,
             &txn,
@@ -107,11 +108,22 @@ impl Vault {
                 })
                 && crate::vault::live_entity_row_in_txn(&self.store, &txn, &id)?.is_live()
             {
+                // The org two-admin rule: an Admin's or a Deputy's ruling waits
+                // for a second admin while an Owner keeps `org.two_admin` on.
+                // No held verb fronts this writer, so it refuses with the
+                // hold's reason and an Owner makes it; a live Owner grant of
+                // the same holder later in the scan still admits.
+                if grant.role != super::FederationGrantRole::Owner
+                    && let Err(refusal) = self.two_admin_hold_in_txn(&txn, vault_id, holder_actor)
+                {
+                    held = Some(refusal);
+                    continue;
+                }
                 grant_ref = Some(id.to_hex());
                 break;
             }
         }
-        let grant_ref = grant_ref.ok_or_else(invalid)?;
+        let grant_ref = grant_ref.ok_or_else(|| held.unwrap_or_else(invalid))?;
         let rows = self.admin_ruling_receipts_in(&txn, vault_id)?;
         let ruling_rows: Vec<_> = rows.into_iter().map(|receipt| receipt.ruling).collect();
         let previous = fold_admin_rulings(&ruling_rows, vault_id, key);

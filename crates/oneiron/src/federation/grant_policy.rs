@@ -410,7 +410,11 @@ impl crate::Vault {
                 "delegate parent or member is not active".into(),
             ));
         };
-        if parent.member_ref != holder_actor
+        // The approved re-run of a held mint (the org two-admin rule) mints
+        // from the first admin's parent grant under the approver's proof.
+        let parent_holder =
+            super::approved_admin_act_first_admin(vault_id, holder_actor).unwrap_or(holder_actor);
+        if parent.member_ref != parent_holder
             || !parent.is_admin()
             || parent.expires_at.is_some_and(|expires| now >= expires)
             || self
@@ -436,10 +440,9 @@ impl crate::Vault {
         }
         // The org two-admin rule (Engine RULING UNBUILT06-SHAPE Q1 = A): an
         // Admin's or a Deputy's delegate mint waits for a second admin while
-        // an Owner keeps it on; an Owner's never does.
-        if parent.role != super::FederationGrantRole::Owner {
-            self.two_admin_hold_in_txn(txn, vault_id, holder_actor)?;
-        }
+        // an Owner keeps it on; a live Owner's never does. A held mint's
+        // approved re-run lands in this writer.
+        self.two_admin_delegate_mint_in_txn(txn, vault_id, holder_actor, parent.role, now)?;
         let mut grant =
             super::FederationGrant::attenuated_delegate(&parent, member_ref, now, expires_at)?;
         grant.authority_scope = parent
