@@ -250,7 +250,7 @@ export class EngineFixture {
   }
   private async launch():Promise<void> {
     const server=await ManagedProcess.start([requireAsset(this.build,"server"),"serve","--config",resolve(this.root,"oneiron.toml")],
-      {cwd:this.root,env:this.options.serverLog?{...this.env,RUST_LOG:this.options.serverLog}:this.env,label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
+      {cwd:this.root,env:{...this.env,RUST_LOG:this.options.serverLog??"info,oneiron_server=debug,oneiron=debug,oneiron_vault_contract=debug"},label:`server-${secretHex(4)}`,artifacts:this.artifacts,diagnosticOutput:true});
     this.launches.push(server);
     this.server=server;
     await awaitHealth(this.url,server,this.artifacts,"any");
