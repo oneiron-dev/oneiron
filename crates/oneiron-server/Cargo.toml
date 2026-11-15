@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Local Oneiron sync daemon for serving a single LMDB vault"
 repository.workspace = true
-homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
@@ -269,6 +268,20 @@ name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
 
+# Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_private_owner_read"
+path = "tests/artifact_private_owner_read.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_pinned_document_cache"
+path = "tests/artifact_pinned_document_cache.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
 [[test]]
@@ -293,6 +306,13 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# Census L8-46's pin: a video job's poll and cancel reach the provider only for
+# the admitted job, through the broker and the same TLS fake provider.
+[[test]]
+name = "broker_followup_job_binding"
+path = "tests/broker_followup_job_binding.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
 name = "note_session_bind_reply"
@@ -315,6 +335,12 @@ required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-brok
 [[test]]
 name = "connector_issuer_prm_refusal"
 path = "tests/connector_issuer_prm_refusal.rs"
+required-features = ["oneiron/test-support"]
+
+# The rerank pair template price cases root their owner on a `MemoryKeystore` too.
+[[test]]
+name = "rerank_pair_template_price"
+path = "tests/rerank_pair_template_price.rs"
 required-features = ["oneiron/test-support"]
 
 [lints]

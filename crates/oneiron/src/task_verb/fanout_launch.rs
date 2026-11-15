@@ -133,16 +133,8 @@ pub struct FanoutLaunchReceipt {
     pub approval_project: Option<EntityId>,
 }
 
-/// An answer to the width check of a fan-out that already went out. The
-/// check held nothing, so there is no deny: ack records the ruling, and
-/// ack-and-remember also persists the receipted standing row AUTO reads
-/// next time.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum FanoutCheckChoice {
-    Ack,
-    AckAndRemember,
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::task_verb::fanout_launch::FanoutCheckChoice;
 
 /// What one launch launches, frozen whole before anything is minted.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

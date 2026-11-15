@@ -232,6 +232,14 @@ pub struct PermitFacts {
     /// only; `payer` and `payer_person` are unchanged.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub initiator: Option<EntityId>,
+    /// The world a model call named in its scope (`envelope.scope.world`),
+    /// so the receipt says which private world it read (DEC-0005 world
+    /// privacy, fix 12). `None` when the call named none, and on a paid
+    /// connector call, which carries no envelope: such a call may still
+    /// carry any world's text, and its true world provenance is not known
+    /// here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub world: Option<EntityId>,
 }
 
 /// Where a run admission writes its receipts. The host persists or ships
