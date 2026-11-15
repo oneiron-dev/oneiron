@@ -231,7 +231,7 @@ pub fn inference_defaults_replace_embedded(
 
 // The setting an owner act changes and the reserved target of a vault-wide
 // one live beside the signed op that carries them (FIX 4624).
-pub use oneiron_authority::authority::{PolicySetting, owner_act_target};
+pub use oneiron_authority::authority::{PolicySetting, owner_act_target, policy_setting_target};
 
 /// One owner act on a vault-wide setting, as this install recorded it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -319,7 +319,7 @@ pub(crate) fn record_policy_setting_act_in_txn<P: Serialize, V: Serialize>(
     )?;
     Ok(signable.map(|(_, value)| PolicySettingAct {
         act,
-        setting,
+        setting: setting.wire().to_owned(),
         prior,
         value: Some(value),
     }))

@@ -22,4 +22,9 @@ crate::side_table::side_tables! {
     /// out again under a feed cursor. Key: ().
     SETTING_CHANGE_NEXT: VaultMeta b"setting:change_next:v1" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// One head row per pack of the default layer: the digest of the defaults the pack door last
+    /// weighed, the keys the vault accepted from the pack, and the loose defaults that wait on a
+    /// holder's yes (DESIGN 1.5 "Packs: a default that changes"). Key: the pack's name.
+    SETTING_PACK_HEAD: VaultMeta b"setting:pack_head:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }
