@@ -10,21 +10,20 @@
 //! that variable's name. The worker hashes every pinned file again and loads
 //! that directory alone before it listens.
 //!
-//! Qualification: `/health` is liveness only, and `/ready` alone never
-//! qualifies. Each incarnation gets one actual inference: VoxCPM2 one render
-//! of [`MEDIA_PROBE_TEXT`] from a synthetic reference, ASR one transcription
-//! of the same clip ([`qualification_wav`], a synthetic tone: never a
-//! person's voice). The answer must name the worker, its identity and its epoch
-//! (VoxCPM2's: the boot id its `/ready` named), the configured wire model
-//! and, for a managed launch, this launch's manifest by its digest; then
-//! [`judge_media`] needs the model and runtime pinned and observed, with no
-//! template. Missing evidence is `Unverified`, a contradiction `Failed`.
+//! Qualification: `/health` is liveness only, and the socket's `ready` frame
+//! alone never qualifies. Each incarnation gets one actual inference: VoxCPM2
+//! one render of [`MEDIA_PROBE_TEXT`] from a synthetic reference, ASR one
+//! transcription of the same clip ([`qualification_wav`], a synthetic tone:
+//! never a person's voice). The answer must name the worker, its identity and
+//! its epoch (VoxCPM2's: the boot id its `ready` frame named), the configured
+//! wire model and, for a managed launch, this launch's manifest by its digest;
+//! then [`judge_media`] needs the model and runtime pinned and observed, with
+//! no template. Missing evidence is `Unverified`, a contradiction `Failed`.
 //!
 //! Activity: the worker's bearer `/stats`, its queued and active requests
 //! (each counted until its response is cleaned up) and its CUDA allocator's
 //! reservation. A read that fails reports nothing, which is never idle.
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 use oneiron::llm::media::wav::pcm16_wav;
@@ -32,12 +31,13 @@ use oneiron::llm::{
     CacheDigest, CacheEpoch, CacheIdentity, INFERENCE_CALLS_KEY, WorkerBuildEvidence,
     WorkerDescriptor, WorkerFailure, WorkerKind, WorkerReadiness,
 };
-use oneiron::voice_cascade::voxcpm2::WarmTarget;
+use oneiron::{FatalLlmError, LlmError};
 use oneiron_driver::{LaunchFailure, WorkerSpec};
 use serde::Deserialize;
 use serde_json::{Value as JsonValue, json};
 
-use super::super::http::{MediaSend, ProviderHttp, UploadAdmission};
+use super::super::http::{MediaSend, ProviderHttp};
+use super::super::voxcpm2_speech::socket::VoiceSocketDialer;
 use super::bundle::{ASR_WORKER, VOXCPM2_WORKER};
 use super::install::{permanent, transient};
 use super::launch_manifest::{self, BuildSection, LaunchManifest, LaunchRecord, launch_nonce};
@@ -258,9 +258,13 @@ pub(super) async fn probe(
     wire_model: &str,
     expected: &WorkerSpec,
     launch: Option<&LaunchRecord>,
+    voice: Option<&VoiceSocketDialer>,
 ) -> WorkerReadiness {
     let answered = match expected.kind {
-        WorkerKind::VoxCpm2 => vox_answer(http).await,
+        WorkerKind::VoxCpm2 => match voice {
+            Some(voice) => vox_answer(voice).await,
+            None => return WorkerReadiness::Unverified { observed: None },
+        },
         _ => asr_answer(http, wire_model).await,
     };
     let answered = match answered {
@@ -320,74 +324,63 @@ fn judge_media(
     judge_pins(observed, config, launch, &required)
 }
 
-/// A VoxCPM2 worker's qualification: its `/ready` warm target, then one
-/// render for exactly that target from the synthetic reference. The audio
+/// A VoxCPM2 worker's qualification: its socket `ready` warm target, then
+/// one render for exactly that target from the synthetic reference. The audio
 /// must be the target's mono PCM16, and not empty.
-async fn vox_answer(http: &ProviderHttp) -> Result<Answered, WorkerReadiness> {
-    let ready = http
-        .send_media("/ready", MediaSend::Get)
-        .await
-        .map_err(|_| failed(WorkerFailure::Unreachable, None))?;
-    if !(200..300).contains(&ready.status) {
-        // A status with no body contradicts nothing (FIX 11374): a worker
-        // still starting, or one shedding a one-off GPU fault, answers the
-        // next probe instead of parking until its config changes.
-        return Err(failed(WorkerFailure::Unreachable, None));
+async fn vox_answer(voice: &VoiceSocketDialer) -> Result<Answered, WorkerReadiness> {
+    let (mut socket, warm) = voice.open().await.map_err(probe_error)?;
+    let result = async {
+        let target = json!({
+            "voice_id": PROBE_VOICE,
+            "owner": PROBE_VOICE,
+            "register": PROBE_VOICE,
+            "reference_revision": PROBE_VOICE,
+            "limits": warm.limits,
+            "warm": warm,
+        });
+        let clip = qualification_wav();
+        let meta = socket
+            .start(
+                &target,
+                warm.sample_rate,
+                MEDIA_PROBE_TRANSCRIPT,
+                &clip,
+                warm.limits.max_header_bytes,
+            )
+            .await
+            .map_err(probe_error)?;
+        let mut pcm = Vec::new();
+        socket
+            .render(MEDIA_PROBE_TEXT, &mut |chunk| {
+                pcm.extend_from_slice(chunk);
+                Ok(())
+            })
+            .await
+            .map_err(probe_error)?;
+        if pcm.is_empty() || !pcm.len().is_multiple_of(2) {
+            return Err(failed(WorkerFailure::InvalidReply, None));
+        }
+        Ok(Answered {
+            worker: meta
+                .get("worker")
+                .and_then(|worker| WorkerDescriptor::deserialize(worker).ok()),
+            wire_model: text(&meta, "wire_model"),
+            launch_manifest: text(&meta, LAUNCH_MANIFEST_KEY),
+            epoch: CacheEpoch::new(warm.boot_id.clone()).ok(),
+        })
     }
-    let warm = serde_json::from_slice::<JsonValue>(&ready.body)
-        .ok()
-        .and_then(|ready| WarmTarget::from_ready(ready).ok())
-        .map(|(warm, _)| warm)
-        .filter(|warm| warm.validate().is_ok())
-        .ok_or_else(|| failed(WorkerFailure::InvalidReply, None))?;
-    let target = json!({
-        "voice_id": PROBE_VOICE,
-        "owner": PROBE_VOICE,
-        "register": PROBE_VOICE,
-        "reference_revision": PROBE_VOICE,
-        "limits": warm.limits,
-        "warm": warm,
-    });
-    let header = serde_json::to_vec(&json!({
-        "target": target,
-        "text": MEDIA_PROBE_TEXT,
-        "transcript": MEDIA_PROBE_TRANSCRIPT,
-    }))
-    .unwrap_or_default();
-    let length =
-        u32::try_from(header.len()).map_err(|_| failed(WorkerFailure::InvalidReply, None))?;
-    let mut body = length.to_be_bytes().to_vec();
-    body.extend_from_slice(&header);
-    body.extend_from_slice(&qualification_wav());
-    // The reference is synthetic: every resend of it may go.
-    let admits: UploadAdmission = Arc::new(|| true);
-    let reply = http
-        .send_media("/render", MediaSend::Octets(body, admits))
-        .await
-        .map_err(|_| failed(WorkerFailure::Unreachable, None))?;
-    if !(200..300).contains(&reply.status) {
-        // As above (FIX 11374): a failed render's status alone is transient,
-        // not a pin contradiction; only the body's shape below can be one.
-        return Err(failed(WorkerFailure::Unreachable, None));
+    .await;
+    socket.end().await;
+    result
+}
+
+/// A probe exchange that failed: a malformed reply contradicts the pins;
+/// any other failure never reached one (FIX 11374).
+fn probe_error(error: LlmError) -> WorkerReadiness {
+    match error {
+        LlmError::Fatal(FatalLlmError::EmptyResponse) => failed(WorkerFailure::InvalidReply, None),
+        _ => failed(WorkerFailure::Unreachable, None),
     }
-    let (meta, pcm) =
-        render_parts(&reply.body).ok_or_else(|| failed(WorkerFailure::Unreachable, None))?;
-    if meta["target"] != target
-        || meta["sample_rate"].as_u64() != Some(u64::from(warm.sample_rate))
-        || meta["channels"].as_u64() != Some(1)
-        || pcm.is_empty()
-        || !pcm.len().is_multiple_of(2)
-    {
-        return Err(failed(WorkerFailure::InvalidReply, None));
-    }
-    Ok(Answered {
-        worker: meta
-            .get("worker")
-            .and_then(|worker| WorkerDescriptor::deserialize(worker).ok()),
-        wire_model: text(&meta, "wire_model"),
-        launch_manifest: text(&meta, LAUNCH_MANIFEST_KEY),
-        epoch: CacheEpoch::new(warm.boot_id.clone()).ok(),
-    })
 }
 
 /// A local ASR worker's qualification: one transcription of the synthetic
@@ -427,16 +420,6 @@ async fn asr_answer(http: &ProviderHttp, wire_model: &str) -> Result<Answered, W
         launch_manifest: text(&usage, LAUNCH_MANIFEST_KEY),
         epoch: None,
     })
-}
-
-/// A render reply's JSON header and its PCM, as the worker frames them: a
-/// big-endian `u32` header length, the header, then the audio.
-fn render_parts(body: &[u8]) -> Option<(JsonValue, &[u8])> {
-    let length = body.get(..4)?;
-    let n = usize::try_from(u32::from_be_bytes(length.try_into().ok()?)).ok()?;
-    let end = n.checked_add(4)?;
-    let meta = serde_json::from_slice(body.get(4..end)?).ok()?;
-    Some((meta, body.get(end..)?))
 }
 
 /// The qualification clip: [`MEDIA_PROBE_WAV_MS`] of synthetic tone, mono

@@ -632,9 +632,9 @@ fn media_backends(
                         "a voxcpm2 worker takes a bearer credential; set key_env"
                     ))
                 } else {
-                    ProviderHttp::direct(&provider, KeyStyle::Bearer).map(|http| {
+                    super::voxcpm2_speech::socket::VoiceSocketDialer::new(&provider).map(|voice| {
                         Arc::new(VoxCpm2Speech {
-                            http,
+                            voice,
                             models: wire_models,
                             target: name.to_owned(),
                             locality: provider.locality,

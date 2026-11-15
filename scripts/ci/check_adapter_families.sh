@@ -79,8 +79,11 @@ HOST_CODEC_ITEMS = (
      ("fn build", "fn parse", "const PCM_RATE", "const CARTESIA_VERSION", "enum HostedWire",
       "struct VendorVoice", "fn url_safe", "fn joined_wav", "fn clip_part")),
     ("crates/oneiron-server/src/models/voxcpm2_speech.rs",
-     ("enum TranscriptPlacement", "struct Transcript", "fn render_header", "fn escaped_len",
-      "fn header_pieces", "fn split_to_fit", "fn joined_wav_header")),
+     ("fn voice_socket_url", "fn text_pieces", "fn start_frame", "fn started_matches",
+      "fn worker_error", "fn split_to_fit", "fn escaped_len", "fn joined_wav_header")),
+    ("crates/oneiron-server/src/models/voxcpm2_speech/socket.rs",
+     ("fn voice_socket_url", "fn text_pieces", "fn start_frame", "fn started_matches",
+      "fn worker_error", "fn split_to_fit", "fn escaped_len", "fn joined_wav_header")),
     ("crates/oneiron-server/src/models/soniox.rs",
      ("const RETRIABLE_ERROR_CODES", "const FINALIZE", "fn retriable_error")),
 )

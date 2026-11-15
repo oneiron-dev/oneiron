@@ -3,7 +3,7 @@
 This is a host-owned inference process. It is not part of the vault or the
 cascade session. The host must supply a CUDA machine and an immutable weights
 revision. On startup the worker loads `openbmb/VoxCPM2` once on `cuda:0` and
-only then opens the loopback listener. `/ready` identifies that loaded process.
+only then opens the loopback listener. Its `ready` frame identifies that loaded process.
 No request downloads weights, starts a model, or falls back to CPU. A supervisor
 must keep one worker alive across sessions (and restart it if it dies).
 `deploy/systemd/oneiron-voxcpm2.service` is a template: adjust its install
@@ -27,8 +27,8 @@ python3 deploy/voxcpm2/worker.py --runtime-dir /run/user/$(id -u)/voxcpm2 \
 
 The revision above is an example full commit. The operator must verify and pin
 it before deployment. The Rust
-`VoxCpm2HttpQueue::connect(vault, "http://127.0.0.1:8769/", &token)` checks
-`/ready` outside the session lock. Its first argument is the host's
+`OurVoiceQueue::connect(vault, "http://127.0.0.1:8769/", &token, seat)` reads
+`ready` outside the session lock. Its first argument is the host's
 `Arc<Vault>`, so each queued render rechecks the voice identity's fence (its
 incarnation and the digest of its source refs) under a vault-scoped read guard;
 withdrawal takes its write guard and deletes the identity atomically. An old
@@ -59,20 +59,11 @@ when that makes it smaller. A codec the worker cannot read is answered 415;
 the engine then sends that upload again, plain, and sends plain until it
 restarts. `VoxCpm2HttpQueue` sends plain.
 
-Beside its warm target, `/ready` names whether the worker reads the framed
-wire: its answer is the worker's target pins plus `transcript_frame`, and
-`target()` itself is unchanged. A `/render` upload is a 4-byte big-endian
-JSON length, the JSON header, then — only when the header names
-`transcript_bytes` — exactly that many UTF-8 bytes of reference transcript
-ahead of the WAV; a header without the field keeps the inline transcript.
-Readiness capabilities are not warm identity: each render still matches and
-echoes the request's target against the exact pins `/ready` named.
-
 `GET /v1/voice` is the versioned duplex WebSocket the cascade speaks (L8-47
 PR V1; bearer credential, RFC 6455, stdlib framing, no subprotocol or
 extensions). A missing or wrong bearer gets 401 and no upgrade; a request
 without a valid upgrade gets 400. The server sends `ready` at once (version 1,
-the `/ready` body as its target, capabilities for a full-input voice). The
+the worker's warm target as its target, capabilities for a full-input voice). The
 client sends `start` with its target plus the transcript and reference byte
 counts, then the two binary frames, and gets `started` (the generation plus
 the render reply header); `text` renders whole inside the same admission as a
@@ -83,9 +74,7 @@ ignored, `end` erases the clip and answers `done`, `cancel` erases it and
 answers nothing. Text and transcript frames are bounded by `max_header_bytes`
 (a larger frame gets close 1009); the reference frame by `max_ref_bytes` or the
 length its `start` announced, whichever is larger, so no reference is refused
-by size (Rule 5), as on `POST /render`; ping is answered with pong, close with
-close. `/ready` and `/render` remain only for
-the server's speech rung until PR V2 moves that rung to the socket.
+by size (Rule 5); ping is answered with pong, close with close.
 
 The CPU-only harness uses an injected fake model to prove request framing,
 ref forwarding, PCM conversion, and target metadata. It is **not** a GPU
@@ -105,16 +94,16 @@ fit below the resolved vault ceiling; multiple trusted packs compose by minima.
 The worker must receive the same deployment vault ceiling in a private policy
 file (copy `serving-policy.default.json`, then apply the vault's resolved row).
 It refuses any request that tries to widen that ceiling. Changed rows require
-worker restart/reconnection to make `/ready` advertise matching limits; a
+worker restart/reconnection to make `ready` advertise matching limits; a
 worker with narrower limits rejects a host whose manifest was widened. This
 file is deployment data, not an invitation to publish raw references.
 Upload admission is shared across all sessions and occurs before reading body
 bytes; a render that finds every upload slot taken waits for one instead of
 being refused. A monotonic elapsed deadline begins at socket accept, covering
 slow headers, and starts again when the render takes its slot, covering
-continuous as well as idle partial bodies; `/ready` remains available when all
+continuous as well as idle partial bodies; `ready` remains available when all
 render slots are occupied. The only compiled limit checks are PCM16 alignment,
-4-byte metadata framing, integer/host-width representability, and the relation
+integer/host-width representability, and the relation
 between read and HTTP deadlines. All operational ceiling values are manifest
 data, not hidden second defaults. The worker refuses no text, reference
 transcript, reference WAV or metadata by its size (Rule 5): the policy's byte
@@ -136,7 +125,7 @@ provider's `key_env` credential (passed to it under that name alone), and
 renders one at a time. The supervisor counts it ready only after one
 actual render of a fixed text from a synthetic tone reference (FIX 11374:
 a silent clip cannot tell a rendered answer from a dropped one), whose
-header names this launch; `/ready` alone never qualifies. A failed render
+`started` frame names this launch; `ready` alone never qualifies. A failed render
 with no contradicting body retries the next probe instead of parking the
 worker until its config changes. It restarts it
 after a crash, and stops it when idle only when `idle_stop_secs` asks.

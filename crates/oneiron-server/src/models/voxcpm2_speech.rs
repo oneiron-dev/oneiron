@@ -6,32 +6,32 @@
 //! each call is admitted on its own permit, sent through the run's media
 //! gate and settled on the characters it spoke.
 //!
-//! The wire is the worker's own. `GET /ready` names the warm target a
-//! render must pin. `POST /render` sends a length-prefixed JSON header and
-//! then the clip's WAV, and the worker answers with a header for the same
-//! target and mono PCM16. Nothing is refused for its size (Rule 5): text
-//! past the effective per-render `max_text_bytes` goes as several renders,
-//! in order, and their PCM is handed back as one WAV. A reference
-//! transcript that would push the header past the worker's
-//! `max_header_bytes` (FIX 3758) rides as a frame of its own after the
-//! header when `/ready` says the worker takes one; on a worker that does
-//! not, the text goes as smaller renders until each header fits. Each
-//! render is one physical request, with its own inference receipt naming
-//! the worker as far as `/ready` proves it (FIX 8314,
-//! [`WarmTarget::worker`]). A render's reply is taken as it arrives (FIX
-//! 6122): its header within the effective bound, then its PCM into the
-//! spool the cascade's own VoxCPM2 path uses ([`PcmSpool`]), in memory up
-//! to the vault's result-body inline bound and spilled past it; the WAV is
-//! read together from the spools at the end.
+//! The wire is the worker's voice socket. One call is one connection
+//! (`GET /v1/voice`) and one generation: the host reads `ready` for the warm
+//! target a render must pin, sends `start` once with the reference transcript
+//! and clip as their own binary frames, then one `text` frame per render,
+//! and reads each render's `audio` frames until its `usage`. Nothing is
+//! refused for its size (Rule 5): text past the effective per-render
+//! `max_text_bytes` goes as several renders, in order, and their PCM is
+//! handed back as one WAV. The transcript rides as its own frame within the
+//! worker's `max_header_bytes` (FIX 3758); the text goes as smaller renders
+//! until each `text` frame fits. Each render is one `text` exchange, with its
+//! own inference receipt naming the worker as far as `ready` proves it (FIX
+//! 8314, [`WarmTarget::worker`]). A render's reply is taken as it arrives
+//! (FIX 6122): each `audio` binary into the spool the cascade's own VoxCPM2
+//! path uses ([`PcmSpool`]), in memory up to the vault's result-body inline
+//! bound and spilled past it; the WAV is read together from the spools at
+//! the end.
 //!
-//! Each render's upload of the clip is under the bank's current reference
-//! (FIX 9517): right before it, and again before a refused compressed
-//! body's plain resend, the runtime's [`VoiceReferenceUploadGuard`]
+//! The reference uploads once per call, with the first render, and every
+//! render goes only under the bank's current reference (FIX 9517): right
+//! before each `text` frame the runtime's [`VoiceReferenceUploadGuard`]
 //! re-reads the bank. A withdrawal or a replacement stops the renders still
 //! to come, and the call ends as interrupted, the renders that answered
 //! keeping their usage and receipts for the run to settle.
+pub(in crate::models) mod socket;
+
 use std::collections::BTreeMap;
-use std::sync::Arc;
 
 use oneiron::llm::InferenceCallReceipt;
 use oneiron::llm::media::{
@@ -43,21 +43,15 @@ use oneiron::{
     BudgetLease, EntityId, FatalLlmError, LlmError, LlmResult, ModelId, ModelLocality,
     RetryableLlmError, Vault,
 };
-use oneiron_speech::tts::voxcpm2::{
-    RenderReply, Transcript, header_pieces, joined_wav_header, render_body,
-};
+use oneiron_speech::tts::voxcpm2::{joined_wav_header, text_pieces};
 use serde_json::{Value as JsonValue, json};
 
-use super::http::{
-    BytesReply, HttpReleaseError, MediaSend, ProviderHttp, StreamedReply, UploadAdmission,
-};
 use super::media::{AdmittedReference, VoiceReferenceUploadGuard};
-use super::rerank::transport;
 
 /// One VoxCPM2 worker's media client, serving the models the speech seat
 /// names on it.
 pub(super) struct VoxCpm2Speech {
-    pub(super) http: ProviderHttp,
+    pub(super) voice: socket::VoiceSocketDialer,
     /// Engine model id -> the provider's model id. The worker serves one
     /// model, so the call names none on its wire.
     pub(super) models: BTreeMap<ModelId, String>,
@@ -82,12 +76,6 @@ fn progress(
     };
     usage.put_inference_calls(receipts);
     MediaCallProgress { completed, usage }
-}
-
-/// A worker's refusal, read as any provider's status.
-fn refused(reply: &BytesReply) -> LlmError {
-    let body = serde_json::from_slice(&reply.body).unwrap_or(JsonValue::Null);
-    oneiron_llm::openai_compat::classify_openai_status(reply.status, &reply.headers, &body)
 }
 
 /// Audio this machine could not spool or read back (its body directory, its
@@ -126,61 +114,7 @@ fn effective_limits(
     }
 }
 
-/// One render's framed reply, taken as it arrives: its framing read by
-/// [`RenderReply`], its mono PCM16 into its spool.
-struct FramedRender<'a> {
-    reply: RenderReply<'a>,
-    spool: PcmSpool,
-}
-
-impl FramedRender<'_> {
-    /// Takes the reply's next bytes: the audio past the checked header goes
-    /// to the spool.
-    fn push(&mut self, bytes: &[u8]) -> LlmResult<()> {
-        let audio = self.reply.push(bytes)?;
-        if !audio.is_empty() {
-            self.spool.write(audio).map_err(spool_failed)?;
-        }
-        Ok(())
-    }
-
-    /// The render's whole audio, once its reply ended: none when the reply
-    /// ended before its header did, held no audio or split a sample.
-    fn finish(self, vault: &Vault) -> LlmResult<VoxCpm2PcmBody> {
-        if !self.reply.header_whole() {
-            return Err(FatalLlmError::EmptyResponse.into());
-        }
-        let body = self.spool.finish(vault).map_err(spool_failed)?;
-        if body.is_empty() || !body.len().is_multiple_of(2) {
-            return Err(FatalLlmError::EmptyResponse.into());
-        }
-        Ok(body)
-    }
-}
-
 impl VoxCpm2Speech {
-    /// The warm target the worker reports now, and whether it takes the
-    /// reference transcript as a frame of its own. Asked once per call, so a
-    /// restarted worker (a new boot id) is pinned right away.
-    async fn warm(&self) -> LlmResult<(WarmTarget, bool)> {
-        let reply = self
-            .http
-            .send_media("/ready", MediaSend::Get)
-            .await
-            .map_err(transport)?;
-        if !(200..300).contains(&reply.status) {
-            return Err(refused(&reply));
-        }
-        let ready: JsonValue =
-            serde_json::from_slice(&reply.body).map_err(|_| FatalLlmError::EmptyResponse)?;
-        // Said beside the target, so the target a render echoes stays the
-        // worker's own.
-        let (warm, takes_frame) =
-            WarmTarget::from_ready(ready).map_err(|_| FatalLlmError::EmptyResponse)?;
-        warm.validate().map_err(|_| FatalLlmError::EmptyResponse)?;
-        Ok((warm, takes_frame))
-    }
-
     async fn speak(
         &self,
         mut request: MediaRequest,
@@ -222,27 +156,28 @@ impl VoxCpm2Speech {
         if let Some((release, _)) = dispatch {
             release()?;
         }
-        let (warm, takes_frame) = self.warm().await?;
-        // The vault's policy for the voice's holder, narrowed to the worker's
-        // ceiling: what the renders send as their effective limits.
-        let holder = EntityId::from_hex(&owner).ok();
-        let vault = self.voice_refs.vault();
-        let limits = effective_limits(vault.as_deref(), holder, &warm.limits);
-        let target = json!({
-            "voice_id": voice_id,
-            "owner": owner,
-            "register": register,
-            "reference_revision": revision,
-            "limits": limits,
-            "warm": warm,
-        });
-        let (transcript, pieces) = header_pieces(&target, &text, &transcript, limits, takes_frame)?;
-        // FIX 9517: every upload of the clip goes only under the bank's
-        // current reference; what answered before keeps its usage.
-        let admits: UploadAdmission = {
-            let (guard, render_target, locality) =
-                (self.voice_refs.clone(), self.target.clone(), self.locality);
-            Arc::new(move || {
+        let (mut socket, warm): (socket::VoiceSocket, WarmTarget) = self.voice.open().await?;
+        let result = async {
+            // The vault's policy for the voice's holder, narrowed to the worker's
+            // ceiling: what the renders send as their effective limits.
+            let holder = EntityId::from_hex(&owner).ok();
+            let vault = self.voice_refs.vault();
+            let limits = effective_limits(vault.as_deref(), holder, &warm.limits);
+            let target = json!({
+                "voice_id": voice_id,
+                "owner": owner,
+                "register": register,
+                "reference_revision": revision,
+                "limits": limits,
+                "warm": warm,
+            });
+            let pieces = text_pieces(&text, limits)?;
+            // FIX 9517: every render goes only under the bank's current
+            // reference; what answered before keeps its usage.
+            let guard = self.voice_refs.clone();
+            let render_target = self.target.clone();
+            let locality = self.locality;
+            let admits = || {
                 let admitted = AdmittedReference {
                     voice_id: &voice_id,
                     owner: &owner,
@@ -250,109 +185,115 @@ impl VoxCpm2Speech {
                     revision: &revision,
                 };
                 guard.admits_upload(&render_target, locality, &admitted)
-            })
-        };
-        let mut renders = Vec::new();
-        let mut receipts = Vec::new();
-        let mut spoken = 0u64;
-        for piece in pieces {
-            let rendered = if admits() {
-                self.render(
-                    &warm, limits, &target, piece, transcript, &audio, &admits, dispatch,
-                )
-                .await
-            } else {
-                Err(FatalLlmError::InvalidRequest.into())
             };
-            let error = match rendered {
-                Ok(rendered) => {
-                    renders.push(rendered);
-                    receipts.push(warm.render_receipt(&request.model));
-                    spoken = spoken.saturating_add(piece.chars().count() as u64);
-                    continue;
+            let mut renders = Vec::new();
+            let mut receipts = Vec::new();
+            let mut spoken = 0u64;
+            let mut started = false;
+            for piece in pieces {
+                let rendered = async {
+                    if !admits() {
+                        return Err(FatalLlmError::InvalidRequest.into());
+                    }
+                    if let Some((release, lease)) = dispatch {
+                        release()?;
+                        lease.begin_physical_attempt();
+                    }
+                    let body = self
+                        .render(
+                            &mut socket,
+                            &target,
+                            warm.sample_rate,
+                            piece,
+                            &transcript,
+                            &audio,
+                            limits.max_header_bytes,
+                            !started,
+                        )
+                        .await?;
+                    started = true;
+                    Ok::<_, LlmError>(body)
                 }
-                Err(error) => error,
-            };
-            return Err(InterruptedMediaCall {
-                error,
-                progress: progress(receipts.len() as u64, spoken, &receipts),
-            });
-        }
-        // A WAV's 32-bit lengths are the one bound on the joined audio.
-        let mut wav =
-            joined_wav_header(warm.sample_rate, &renders).ok_or(FatalLlmError::EmptyResponse)?;
-        for render in &renders {
-            if let Err(error) = render.append_to(&mut wav) {
-                // Every render answered: each keeps its usage and receipt.
+                .await;
+                let error = match rendered {
+                    Ok(rendered) => {
+                        renders.push(rendered);
+                        receipts.push(warm.render_receipt(&request.model));
+                        spoken = spoken.saturating_add(piece.chars().count() as u64);
+                        continue;
+                    }
+                    Err(error) => error,
+                };
                 return Err(InterruptedMediaCall {
-                    error: spool_failed(error),
+                    error,
                     progress: progress(receipts.len() as u64, spoken, &receipts),
                 });
             }
+            // A WAV's 32-bit lengths are the one bound on the joined audio.
+            let mut wav = joined_wav_header(warm.sample_rate, &renders)
+                .ok_or(FatalLlmError::EmptyResponse)?;
+            for render in &renders {
+                if let Err(error) = render.append_to(&mut wav) {
+                    // Every render answered: each keeps its usage and receipt.
+                    return Err(InterruptedMediaCall {
+                        error: spool_failed(error),
+                        progress: progress(receipts.len() as u64, spoken, &receipts),
+                    });
+                }
+            }
+            let mut usage = MediaUsage {
+                characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
+                ..MediaUsage::default()
+            };
+            usage.put_inference_calls(&receipts);
+            Ok(MediaResponse {
+                parts: vec![MediaPart::Audio {
+                    media_type: "audio/wav".into(),
+                    bytes: wav,
+                }],
+                usage,
+                model: request.model.clone(),
+            })
         }
-        let mut usage = MediaUsage {
-            characters: u64::try_from(text.chars().count()).unwrap_or(u64::MAX),
-            ..MediaUsage::default()
-        };
-        usage.put_inference_calls(&receipts);
-        Ok(MediaResponse {
-            parts: vec![MediaPart::Audio {
-                media_type: "audio/wav".into(),
-                bytes: wav,
-            }],
-            usage,
-            model: request.model,
-        })
+        .await;
+        socket.end().await;
+        result
     }
 
     /// One render of `text`, within the effective per-render bounds, from the
     /// whole reference clip and its `transcript`: the mono PCM16 the worker
-    /// answers for `target`, spooled as it arrives. `admits` is asked again
-    /// before any resend of the clip.
+    /// answers for `target`, spooled as it arrives. The generation's `start`
+    /// goes with the first render only.
     async fn render(
         &self,
-        warm: &WarmTarget,
-        limits: VoiceServingLimits,
+        socket: &mut socket::VoiceSocket,
         target: &JsonValue,
+        sample_rate: u32,
         text: &str,
-        transcript: Transcript<'_>,
+        transcript: &str,
         audio: &[u8],
-        admits: &UploadAdmission,
-        dispatch: Option<(oneiron::llm::DispatchRelease<'_>, &BudgetLease)>,
+        max_header_bytes: u64,
+        send_start: bool,
     ) -> LlmResult<VoxCpm2PcmBody> {
         // Bound whenever `admits` let the clip go: the runtime's own vault.
         let vault = self
             .voice_refs
             .vault()
             .ok_or(FatalLlmError::InvalidRequest)?;
-        let body = render_body(target, text, transcript, limits.max_header_bytes, audio)?;
-        let reply = match dispatch {
-            Some((release, lease)) => self
-                .http
-                .send_octets_streamed_released("/render", body, admits, release, lease)
-                .await
-                .map_err(|error| match error {
-                    HttpReleaseError::Transport(error) => transport(error),
-                    HttpReleaseError::Release(error) => error,
-                })?,
-            None => self
-                .http
-                .send_media_streamed("/render", MediaSend::Octets(body, Arc::clone(admits)))
-                .await
-                .map_err(transport)?,
-        };
-        let mut reply = match reply {
-            StreamedReply::Body(reply) => reply,
-            StreamedReply::Refused(reply) => return Err(refused(&reply)),
-        };
-        let mut framed = FramedRender {
-            reply: RenderReply::new(target, warm.sample_rate, limits.max_header_bytes),
-            spool: PcmSpool::new(&vault).map_err(spool_failed)?,
-        };
-        while let Some(chunk) = reply.chunk().await.map_err(transport)? {
-            framed.push(&chunk)?;
+        if send_start {
+            socket
+                .start(target, sample_rate, transcript, audio, max_header_bytes)
+                .await?;
         }
-        framed.finish(&vault)
+        let mut spool = PcmSpool::new(&vault).map_err(spool_failed)?;
+        socket
+            .render(text, &mut |chunk| spool.write(chunk).map_err(spool_failed))
+            .await?;
+        let body = spool.finish(&vault).map_err(spool_failed)?;
+        if body.is_empty() || !body.len().is_multiple_of(2) {
+            return Err(FatalLlmError::EmptyResponse.into());
+        }
+        Ok(body)
     }
 }
 

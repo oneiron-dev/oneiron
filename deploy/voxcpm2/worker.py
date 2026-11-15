@@ -24,14 +24,8 @@ import tempfile
 import threading
 import time
 import uuid
-import zlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-
-try:
-    from compression import zstd as _zstd
-except ImportError:
-    _zstd = None
 
 try:
     import worker_support
@@ -63,8 +57,8 @@ WIRE_USIZE = (1 << (8 * struct.calcsize("P"))) - 1
 # `GET /v1/voice`: one versioned duplex WebSocket (L8-47 PR V1). Text and
 # transcript frames are bounded by max_header_bytes; the reference frame by
 # max_ref_bytes or the length its `start` announced, whichever is larger, so a
-# reference is never refused by size (Rule 5), as on `POST /render`; audio goes
-# out split into 65536-byte binaries.
+# reference is never refused by size (Rule 5); audio goes out split into
+# 65536-byte binaries.
 WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 WS_AUDIO_CHUNK = 65536
 WS_OP_CONT = 0x0
@@ -108,56 +102,6 @@ def load_policy(path):
             or data["precedence"] != "nested_narrowing" or data["holders"] != []):
         raise ValueError("worker needs a vault-ceiling manifest row without holder rows")
     return validate_limits(data["vault"])
-
-
-def unpack(body):
-    if len(body) < 4:
-        raise ValueError("missing metadata")
-    n = struct.unpack("!I", body[:4])[0]
-    if not 0 < n or len(body) <= 4 + n:
-        raise ValueError("invalid metadata length")
-    meta = json.loads(body[4:4+n])
-    if not isinstance(meta, dict):
-        raise ValueError("invalid metadata")
-    rest = body[4+n:]
-    if "transcript_bytes" not in meta:
-        return meta, rest
-    count = meta["transcript_bytes"]
-    if type(count) is not int or not 0 <= count <= len(rest):
-        raise ValueError("invalid transcript framing")
-    meta["transcript"] = rest[:count].decode("utf-8")
-    return meta, rest[count:]
-
-
-class UnsupportedEncoding(ValueError):
-    """A Content-Encoding this worker cannot read: answer 415."""
-
-
-def decode_body(encoding, raw):
-    """`raw` under its Content-Encoding (gzip, or zstd on Python 3.14), decoded
-    whole (OF-604): the engine sends a render upload of 16 KiB or more encoded
-    when its provider entry names the codec."""
-    token = (encoding or "identity").strip().lower()
-    if token == "identity":
-        return raw
-    if token == "gzip":
-        decoder, error = zlib.decompressobj(wbits=31), zlib.error
-    elif token == "zstd" and _zstd is not None:
-        decoder, error = _zstd.ZstdDecompressor(), _zstd.ZstdError
-    else:
-        raise UnsupportedEncoding(token)
-    try:
-        body = decoder.decompress(raw)
-    except error:
-        raise ValueError("encoded body") from None
-    if not decoder.eof:
-        raise ValueError("encoded body")
-    return body
-
-
-def pack(meta, audio):
-    header = json.dumps(meta, separators=(",", ":")).encode()
-    return struct.pack("!I", len(header)) + header + audio
 
 
 class Worker:
@@ -204,7 +148,7 @@ class Worker:
                 "limits": self.limits}
 
     def answer_meta(self, target):
-        """A render's response header: its target and audio format, and for
+        """The `started` frame's pins: its target and audio format, and for
         a supervised launch the worker that answered, its wire model and the
         launch manifest's digest."""
         meta = {"target": target, "sample_rate": self.sample_rate, "channels": 1}
@@ -229,8 +173,8 @@ class Worker:
     def synthesize(self, text, reference, transcript, ticket=None):
         """PCM16LE bytes for one text: today's text, transcript, WAV and
         output checks, one `model.generate` under the inference gate. The
-        reference is WAV bytes (written request-scoped, as `/render` does)
-        or the generation's held `reference.wav` path (the socket's clip)."""
+        reference is WAV bytes (written request-scoped) or the generation's
+        held `reference.wav` path (the socket's clip)."""
         if not isinstance(text, str) or not text.strip():
             raise ValueError("invalid text")
         if not isinstance(transcript, str) or not transcript.strip():
@@ -262,11 +206,6 @@ class Worker:
         if values.ndim != 1 or not np.isfinite(values).all() or not values.size:
             raise ValueError("invalid model output")
         return (np.clip(values, -1.0, 1.0) * 32767).astype("<i2").tobytes()
-
-    def render(self, meta, wav, ticket=None):
-        response_meta = self.validate_target(meta.get("target"))
-        pcm = self.synthesize(meta.get("text"), wav, meta.get("transcript"), ticket)
-        return pack(response_meta, pcm)
 
 
 class BoundedHTTPServer(ThreadingHTTPServer):
@@ -342,79 +281,12 @@ def handler_for(worker):
                 worker_support.send_bytes(self, 200, "application/json",
                                           worker_support.stats_body(worker.activity))
                 return
-            if self.path != "/ready":
-                self.send_error(404)
-                return
-            data = json.dumps({**worker.target(), "transcript_frame": True}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-        def read_body(self):
-            n = int(self.headers.get("Content-Length", "0"))
-            if n < 5:
-                raise ValueError("request size")
-            deadline = self.server.upload_deadline(self.connection)
-            parts = []
-            remaining = n
-            while remaining:
-                left = deadline - time.monotonic()
-                if left <= 0:
-                    raise TimeoutError("upload deadline")
-                self.connection.settimeout(left)
-                piece = self.rfile.read1(min(65536, remaining))
-                if time.monotonic() >= deadline:
-                    raise TimeoutError("upload deadline")
-                if not piece:
-                    raise ValueError("incomplete upload")
-                parts.append(piece)
-                remaining -= len(piece)
-            return unpack(decode_body(self.headers.get("Content-Encoding"), b"".join(parts)))
+            self.send_error(404)
 
         def do_POST(self):
             if not self.authorized():
                 return
-            if self.path != "/render":
-                self.send_error(404)
-                return
-            # A request waits for an upload slot instead of being refused; the
-            # wait is not upload time, so its body deadline starts at the slot.
-            # It counts in the worker's activity from here until its response
-            # is cleaned up, its caller gone or not.
-            self.server.disarm_upload(self.connection)
-            with worker.activity.admit() as ticket:
-                worker.admission.acquire()
-                try:
-                    self.render_answer(ticket)
-                finally:
-                    worker.admission.release()
-
-        def render_answer(self, ticket):
-            try:
-                self.server.arm_upload(self.connection)
-                meta, wav = self.read_body()
-                self.server.disarm_upload(self.connection)
-                data = worker.render(meta, wav, ticket)
-            except (TimeoutError, socket.timeout):
-                self.send_error(408, "upload deadline exceeded")
-                return
-            except UnsupportedEncoding:
-                self.send_error(415, "unsupported content encoding")
-                return
-            except (ValueError, TypeError, UnicodeError, KeyError):
-                self.send_error(400, "invalid render request")
-                return
-            except Exception:
-                # Model/runtime errors do not echo raw prompts or ref bytes.
-                self.send_error(503, "render failed")
-                return
-            self.send_response(200)
-            self.send_header("Content-Type", "application/octet-stream")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
+            self.send_error(404)
 
         def voice_socket(self):
             upgrade = self.headers.get("Upgrade", "")
