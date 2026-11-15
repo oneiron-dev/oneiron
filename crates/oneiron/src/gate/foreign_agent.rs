@@ -5,14 +5,16 @@ use super::ceiling::{
 };
 use super::definition_ceiling::definition_only_ceiling_for_actor;
 use super::input::{GateActor, GateContentKind, GateEvaluatorInput, GateProvenanceHandles};
-use super::{GateOutcome, PolicyCriticality, resolve_policy_manifest};
+use super::{GateOutcome, PolicyCriticality, policy_basis_in_txn, resolve_policy_manifest};
 use crate::consent::AuthenticatedOwner;
 use crate::edge::EdgeActorClass;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::agent_record::AgentCeiling;
-use crate::store::{GateDecisionId, GateDecisionRecord, Store};
+use crate::store::gate_reason::GateReceiptOutcome;
+use crate::store::{GateDecisionRecord, GateReceipt, PolicyBasis, ReceiptActor, Store};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::RecordedSeconds;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize)]
@@ -228,32 +230,17 @@ impl Vault {
                 row.widen = Some((frontier, next == PolicyApprovalCeiling::Auto));
                 put(&self.store, txn, foreign, &row)?;
             }
-            self.store.append_fresh_gate_decision_in_txn(
-                txn,
-                &mut GateDecisionRecord {
-                    version: 0,
-                    decision_id: GateDecisionId::now(),
-                    created_at: crate::unix_seconds_now(),
-                    outcome: decision.outcome().as_str().to_owned(),
-                    reason_codes: decision
-                        .reason_codes()
-                        .iter()
-                        .map(|code| code.as_str().to_owned())
-                        .collect(),
-                    receipt_reasons: Vec::new(),
-                    system_notices: Vec::new(),
-                    actor_class: "human".to_owned(),
-                    actor_ref: Some(owner_actor.to_hex()),
-                    content_kind: "claim".to_owned(),
-                    policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
-                    claim_id: None,
-                    grant_ref: Some(format!("foreign:{}", foreign.to_hex())),
-                    diff_handle: vec![u8::from(requested == PolicyApprovalCeiling::Auto)],
-                    read_frontier_hash: frontier,
-                    context: Default::default(),
-                    redacted_at: None,
-                },
-            )?;
+            let mut receipt = decision.gate_receipt(
+                "claim",
+                ReceiptActor::human(owner_actor),
+                vec![u8::from(requested == PolicyApprovalCeiling::Auto)],
+                PolicyBasis::frontier(frontier),
+            );
+            receipt.grant_ref = Some(format!("foreign:{}", foreign.to_hex()));
+            // Wall-clock seconds, as before the draft (FIX
+            // GATE-ROW-WALL-CLOCK-CREATED-AT).
+            receipt.decided_at = Some(RecordedSeconds::from_secs(crate::unix_seconds_now()));
+            self.store.record_gate_receipt_in_txn(txn, receipt)?;
             Ok(allow)
         })
     }
@@ -420,27 +407,15 @@ impl Vault {
             true,
             true,
         )?;
-        let mut receipt = GateDecisionRecord {
-            version: 0,
-            decision_id: GateDecisionId::from_bytes(self.store.clock.ulid()?),
-            created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
-            outcome: GateOutcome::Allow.as_str().to_owned(),
-            reason_codes: vec!["gate.allow.owner_foreign_grant".to_owned()],
-            receipt_reasons: Vec::new(),
-            system_notices: Vec::new(),
-            actor_class: EdgeActorClass::Human.gate_actor_class().to_owned(),
-            actor_ref: Some(actor.to_hex()),
-            content_kind: GateContentKind::PolicyManifest.as_str().to_owned(),
-            policy_manifest_version: super::POLICY_SCHEMA_VERSION.to_owned(),
-            claim_id: None,
-            grant_ref: Some(format!("foreign:{principal}")),
+        let mut receipt = GateReceipt::new(
+            GateReceiptOutcome::Allow,
+            GateContentKind::PolicyManifest.as_str(),
+            "gate.allow.owner_foreign_grant",
+            ReceiptActor::human(actor),
             diff_handle,
-            read_frontier_hash: resolve_policy_manifest(&self.store, txn)?.read_frontier_hash()?,
-            context: Default::default(),
-            redacted_at: None,
-        };
-        self.store
-            .append_fresh_gate_decision_in_txn(txn, &mut receipt)?;
-        Ok(receipt)
+            policy_basis_in_txn(&self.store, txn)?,
+        );
+        receipt.grant_ref = Some(format!("foreign:{principal}"));
+        self.store.record_gate_receipt_in_txn(txn, receipt)
     }
 }

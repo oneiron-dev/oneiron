@@ -12,7 +12,7 @@ use super::resolve_policy_manifest;
 use crate::claim::ClaimSource;
 use crate::consent::ComposedEffect;
 use crate::error::Result;
-use crate::store::{GateDecisionId, GateDecisionRecord};
+use crate::store::{GateDecisionId, PolicyBasis, ReceiptActor};
 use crate::{EntityId, Vault, WriteActor};
 
 /// This records a verdict, not authority. The caller checks Allow before it
@@ -57,35 +57,18 @@ pub(crate) fn record_agent_definition_setup_in_txn(
     };
     let decision = policy.evaluate_gate(&input);
     vault.store.diagnostics.gate.record_decision(&decision);
-    let mut record = GateDecisionRecord {
-        version: crate::store::GATE_DECISION_LEDGER_VERSION,
-        decision_id: GateDecisionId::from_bytes(vault.store.clock.ulid()?),
-        created_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
-        outcome: decision.outcome().as_str().to_owned(),
-        reason_codes: decision
-            .reason_codes()
-            .iter()
-            .map(|code| code.as_str().to_owned())
-            .collect(),
-        receipt_reasons: decision
-            .receipt_reasons()
-            .iter()
-            .map(|reason| (*reason).to_owned())
-            .collect(),
-        system_notices: Vec::new(),
-        actor_class: input.actor.actor_class,
-        actor_ref: input.actor.actor_ref,
-        content_kind: input.content_kind.as_str().to_owned(),
-        policy_manifest_version: input.policy_manifest_version,
-        claim_id: None,
-        grant_ref: Some(format!("agent_definition:{}", target.to_hex())),
-        diff_handle: blake3::hash(body).as_bytes().to_vec(),
-        read_frontier_hash: policy.read_frontier_hash()?,
-        context: Default::default(),
-        redacted_at: None,
-    };
-    vault
-        .store
-        .append_fresh_gate_decision_in_txn(txn, &mut record)?;
+    let mut receipt = decision.gate_receipt(
+        input.content_kind.as_str(),
+        ReceiptActor::Row(actor),
+        blake3::hash(body).as_bytes().to_vec(),
+        PolicyBasis::frontier(policy.read_frontier_hash()?),
+    );
+    receipt.receipt_reasons = decision
+        .receipt_reasons()
+        .iter()
+        .map(|reason| (*reason).to_owned())
+        .collect();
+    receipt.grant_ref = Some(format!("agent_definition:{}", target.to_hex()));
+    let record = vault.store.record_gate_receipt_in_txn(txn, receipt)?;
     Ok((decision, record.decision_id))
 }

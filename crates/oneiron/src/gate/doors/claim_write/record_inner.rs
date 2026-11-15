@@ -1,6 +1,8 @@
 //! The record seam's inner claim-policy check and its Dreamer isolation class (moved from `claim_write.rs`, FIX 19106).
 
 use super::*;
+use crate::store::{PolicyBasis, ReceiptActor};
+use oneiron_contracts::RecordedSeconds;
 
 /// The isolation class of a Dreamer candidate's predicate: a prefix a trusted
 /// pack declares persona-core (`persona_core_prefixes`, H393) first, so the
@@ -442,72 +444,66 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
         };
 
         let binding = GateConsentBinding::for_claim(body, policy)?;
-        let decision_id = crate::store::GateDecisionId::from_bytes(store.clock.ulid()?);
-        let created_at = mutation_recorded_at;
-        let mut decision_record = GateDecisionRecord {
-            version: 0,
-            decision_id,
-            created_at,
-            outcome: decision.outcome().as_str().to_owned(),
-            reason_codes: decision
-                .reason_codes()
-                .iter()
-                .map(|code| code.as_str().to_owned())
-                .collect(),
-            receipt_reasons: decision
-                .receipt_reasons()
-                .iter()
-                .map(|reason| (*reason).to_owned())
-                // The checker's own reasons append to the receipt, rendered
-                // above into the ledger's token vocabulary: an owner reviewing
-                // a held write reads WHY the host held it, not just that
-                // something did.
-                .chain(
-                    decision
-                        .policy_row_ref()
-                        .map(|row| format!("policy_row_{row}")),
-                )
-                .chain(decision.precedence_row_ref().map(|row| match row {
-                    Some(row) => format!("policy_precedence_row_{row}"),
-                    None => "policy_precedence_shipped_default".to_owned(),
-                }))
-                .chain(decision.delegation_narrowing_receipt())
-                .chain(checker_receipt_reasons)
-                .chain(
-                    weave_grant
-                        .as_ref()
-                        .map(|_| GATE_REASON_ALLOW_WEAVE_GRANT.to_owned()),
-                )
-                .collect(),
-            system_notices: Vec::new(),
-            actor_class: input.actor.actor_class.clone(),
-            actor_ref: input.actor.actor_ref.clone(),
-            content_kind: input.content_kind.as_str().to_owned(),
-            policy_manifest_version: input.policy_manifest_version,
-            claim_id: Some(*id.as_bytes()),
-            grant_ref: weave_grant,
-            diff_handle: binding.diff_handle.clone(),
-            read_frontier_hash: binding.read_frontier_hash,
-            context: decision_context::claim_decision_context_store_in(
-                store,
-                &*wtxn,
-                id,
-                body,
-                input.provenance.dreamer_run_id.as_deref(),
-                envelope.and_then(dreamer_attempt_id_from_write_envelope),
-                pending_prompt,
-            ),
-            redacted_at: None,
-        };
-
+        let mut receipt = decision.gate_receipt(
+            input.content_kind.as_str(),
+            ReceiptActor::Verbatim {
+                class: input.actor.actor_class.clone(),
+                actor_ref: input.actor.actor_ref.clone(),
+            },
+            binding.diff_handle.clone(),
+            PolicyBasis::versioned(binding.read_frontier_hash, input.policy_manifest_version),
+        );
+        receipt.receipt_reasons = decision
+            .receipt_reasons()
+            .iter()
+            .map(|reason| (*reason).to_owned())
+            // The checker's own reasons append to the receipt, rendered
+            // above into the ledger's token vocabulary: an owner reviewing
+            // a held write reads WHY the host held it, not just that
+            // something did.
+            .chain(
+                decision
+                    .policy_row_ref()
+                    .map(|row| format!("policy_row_{row}")),
+            )
+            .chain(decision.precedence_row_ref().map(|row| match row {
+                Some(row) => format!("policy_precedence_row_{row}"),
+                None => "policy_precedence_shipped_default".to_owned(),
+            }))
+            .chain(decision.delegation_narrowing_receipt())
+            .chain(checker_receipt_reasons)
+            .chain(
+                weave_grant
+                    .as_ref()
+                    .map(|_| GATE_REASON_ALLOW_WEAVE_GRANT.to_owned()),
+            )
+            .collect();
         if matches!(input.actor.actor_class.as_str(), "agent" | "system")
             && policy.criticality_for_predicate(&body.predicate)
                 == crate::gate::PolicyCriticality::Normal
         {
-            decision_record.receipt_reasons.push(
-                crate::self_heal::tripwires::normal_baseline_token(&body.predicate),
-            );
+            receipt
+                .receipt_reasons
+                .push(crate::self_heal::tripwires::normal_baseline_token(
+                    &body.predicate,
+                ));
         }
+        receipt.about = Some(*id);
+        receipt.grant_ref = weave_grant;
+        receipt.context = decision_context::claim_decision_context_store_in(
+            store,
+            &*wtxn,
+            id,
+            body,
+            input.provenance.dreamer_run_id.as_deref(),
+            envelope.and_then(dreamer_attempt_id_from_write_envelope),
+            pending_prompt,
+        );
+        // The recording-clock second this write already read.
+        receipt.decided_at = Some(RecordedSeconds::from_secs(mutation_recorded_at));
+        // Minted, not appended: a hold this write's preflight recorded may
+        // replace it below, and an off-record room stages it instead.
+        let mut decision_record = store.mint_gate_receipt_in_txn(wtxn, receipt)?;
         // FIX 8752: a batch apply skips the checker its preflight already
         // asked, so policy alone answers Allow here. A checker hold that
         // preflight recorded for this same candidate stays the verdict: the

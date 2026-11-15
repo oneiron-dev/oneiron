@@ -2,8 +2,6 @@
 //! transaction. Resolving the manifest is the gate's job, so the receipt
 //! writer takes the result and never calls up into the gate.
 
-#![allow(dead_code, reason = "first callers: UC-03 stage 1")]
-
 use heed::RoTxn;
 
 use super::resolve_policy_manifest;
