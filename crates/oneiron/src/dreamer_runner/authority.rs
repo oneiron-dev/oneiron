@@ -373,6 +373,22 @@ pub(crate) fn stamp_attempt(
     ATTEMPT.put(&vault.store, txn, &record.id, &stamp)?;
     Ok(())
 }
+/// The authority stamps `attempt` holds, its base-agent stamp and its
+/// resident stamp, for the UC-09 K pins (`test_doors::job_kind_rows`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn attempt_stamps(
+    vault: &Vault,
+    attempt: AttemptId,
+) -> Result<(
+    Option<DreamerAuthorityStamp>,
+    Option<ResidentAuthorityStamp>,
+)> {
+    let txn = vault.store.env.read_txn()?;
+    Ok((
+        ATTEMPT.get(&vault.store, &txn, &attempt)?,
+        RESIDENT_ATTEMPT.get(&vault.store, &txn, &attempt)?,
+    ))
+}
 /// Binds a resident dreaming attempt to its resident: an enabled agent
 /// definition whose dreaming is not off. The row id is the resident's actor.
 /// A free-time item for its human (FIX 4453) binds the same way to an
