@@ -1,8 +1,10 @@
 //! Doors for `tests/audit_read_removal.rs` (Astra delta auditread-8435-pr1-delta
-//! D1 and D2): the removals that reach an audit_read grant past a delete
-//! door's header read. A peer's replayed tombstone and a carried Shell cutoff,
-//! as the sync receiver applies them, and the headerless delete leg a delete
-//! takes when its header read found no row.
+//! D1 and D2, delta-2 F1 and F4): the removals that reach an audit_read grant
+//! past a delete door's header read. A peer's replayed tombstone and a carried
+//! Shell cutoff, as the sync receiver applies them, and how it settles the
+//! replay's refusal; the headerless delete leg a delete takes when its header
+//! read found no row, and that leg's tombstone publication past its scope
+//! probe.
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -65,4 +67,32 @@ pub fn delete_past_the_header_read(vault: &Vault, id: &EntityId, purge: bool) ->
     vault
         .delete_entity_without_header_read_for_test(id, reason)
         .map(|_| ())
+}
+
+/// Publishes a purge's tombstone for `id` as the headerless delete leg does
+/// once its scope probe passed: a grant the owner wrote after that probe is
+/// what the publication then finds (Astra delta-2 F1). The purge that would
+/// follow is left out: the publication alone commits the deletion fence.
+///
+/// # Errors
+/// The publication's refusal, or the store's.
+#[cfg(feature = "sync")]
+pub fn publish_purge_past_the_scope_probe(vault: &Vault, id: &EntityId) -> Result<()> {
+    vault.publish_purge_tombstone_for_test(id).map(drop)
+}
+
+/// Whether the sync receiver takes the refusal a peer's tombstone for `id`
+/// meets here as that peer's rejected op, which it quarantines and goes on
+/// past, rather than as a local failure it marks for retry: the classifier
+/// the tombstone bridge and the forward rematerialization pass both ask
+/// (Astra delta-2 F4). `None` when the replay is not refused.
+#[cfg(feature = "sync")]
+pub fn peer_tombstone_refusal_is_quarantined(
+    vault: &Vault,
+    id: &EntityId,
+    hard: bool,
+) -> Option<bool> {
+    replay_peer_tombstone(vault, id, hard)
+        .err()
+        .map(|refusal| crate::sync::quarantine::remote_rejection_reason(&refusal).is_some())
 }

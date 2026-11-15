@@ -89,6 +89,14 @@ pub(crate) fn remote_rejection_reason(error: &Error) -> Option<String> {
     if is_remote_secret_scan_rejection(error) {
         return Some(reason_code_for(error));
     }
+    // A peer's tombstone for an audit_read grant: the replay refuses it for
+    // good, since the owner's revoke alone ends one, revoked or not. Quarantine
+    // it; a retry marker would meet the same refusal on every drain (Astra
+    // delta-2 F4). The refusal is read from the stored row, never a storage
+    // fault, so no local failure is taken for peer bytes.
+    if crate::access_grant::is_audit_read_delete_refusal(error) {
+        return Some(reason_code_for(error));
+    }
 
     match error.kind() {
         ErrorKind::InvalidEntityType

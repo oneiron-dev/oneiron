@@ -83,6 +83,28 @@ impl Vault {
         deleted
     }
 
+    /// The tombstone publication of a purge of `id`, as the headerless delete
+    /// leg runs it once its scope probe passed (Astra delta-2 F1: a row that
+    /// lands after that probe). Whether it published. Test doors only.
+    #[cfg(all(oneiron_test_support, feature = "sync"))]
+    pub(crate) fn publish_purge_tombstone_for_test(&self, id: &EntityId) -> Result<bool> {
+        let requested_at = self.store.clock.now_recorded_at();
+        let tombstone = crate::deletion::TombstoneValueV2 {
+            reason: DeleteReason::UserHardDelete.into(),
+            deleted_at: requested_at,
+            request_id: self.store.clock.ulid()?,
+        };
+        self.write_crdt_tombstone_due(
+            id,
+            requested_at,
+            &crate::deletion::window_label_from_timestamp(requested_at),
+            &tombstone,
+            None,
+            None,
+            None,
+        )
+    }
+
     /// The delete of an owner erase come due (FIX 6337), under the reason
     /// its request `generation` keeps (FIX 1465): run as the owner's own
     /// delete runs, under the owner gate of the owner its row records as

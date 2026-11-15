@@ -96,7 +96,7 @@ pub(crate) fn marked_stale_in_overlay(
 /// in this snapshot. It needs no mark from the deletion, so a failed or
 /// rolled-back mark still withdraws (I2). Only `dependent`'s own reverse rows
 /// are read (I4). An EVENT that outlives its source stays, as the walk
-/// leaves it.
+/// leaves it, and so does an audit_read grant (Astra delta-2 F3).
 pub(super) fn source_withdrawn_in(
     store: &impl ManifestDbs,
     txn: &RoTxn<'_>,
@@ -105,6 +105,9 @@ pub(super) fn source_withdrawn_in(
     for source in super::regeneration::sources_of(store, txn, dependent)? {
         if source_stands_in(store, txn, &source.document)? {
             continue;
+        }
+        if crate::access_grant::stored_audit_read_grant_in_txn(store, txn, dependent)? {
+            return Ok(false);
         }
         let row = store.entities().get(txn, dependent.as_bytes())?;
         let event = row

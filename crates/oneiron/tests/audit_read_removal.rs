@@ -12,6 +12,17 @@
 //!   row's deletion, marks the grant stale; the guard then read the stale
 //!   grant as a shell, and a batch delete removed it.
 //!
+//! Astra delta-2 (auditread-8435-pr1-delta2) found the ways left to disable
+//! the grant without removing it:
+//!
+//! - F1: a grant the owner writes after a headerless delete's scope probe
+//!   meets that delete's tombstone publication, which committed a deletion
+//!   fence before the purge refused;
+//! - F2: the public stale and tombstone ports mark the grant stale;
+//! - F3: a dependent walk still pending reads the grant as withdrawn;
+//! - F4: the sync receiver took the replay's refusal as a local failure and
+//!   kept retrying the peer's tombstone.
+//!
 //! Each removal is refused, or leaves the grant as it was: the holder still
 //! reads, the grant's history stays listed, and the owner's revoke still
 //! finds it standing. Verbs go through the generated verb dispatch
@@ -27,10 +38,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
 use oneiron::authority::{HostSlipIssuer, VerifiedSlip};
+use oneiron::deletion::{TombstoneReason, TombstoneValueV2};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, Memory, MemoryError};
+use oneiron::store::ports::{RetrievalIndex, TombstoneStore};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::audit_read_removal::{
-    delete_past_the_header_read, replay_peer_tombstone, withdraw_on_received_shell_cutoff,
+    delete_past_the_header_read, peer_tombstone_refusal_is_quarantined,
+    publish_purge_past_the_scope_probe, replay_peer_tombstone, withdraw_on_received_shell_cutoff,
 };
 use oneiron::{EdgeActorClass, EdgeKind, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
@@ -294,4 +308,109 @@ fn a_deleted_source_neither_stales_nor_frees_an_audit_read_grant() -> TestResult
         "the batch delete refuses the grant once its source is deleted: {delete:?}"
     );
     assert_the_grant_stands(&fixture, &granted, "after its source's deletion")
+}
+
+/// Delta-2 F1: a grant the owner writes after a headerless delete's scope
+/// probe meets that delete's tombstone publication, which commits before the
+/// purge. The publication refuses it, so no deletion fence lands, and the
+/// grant stands.
+#[test]
+fn a_purge_published_past_its_scope_probe_fences_no_audit_read_grant() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    let publish = publish_purge_past_the_scope_probe(&fixture.vault, &granted.grant_ref);
+    assert!(
+        publish.as_ref().is_err_and(names_the_revoke),
+        "the purge's tombstone publication refuses an audit_read grant: {publish:?}"
+    );
+    assert_the_grant_stands(&fixture, &granted, "after the refused publication")
+}
+
+/// Delta-2 F2: the public stale port and the public tombstone port carry no
+/// owner act. Each refuses to mark the grant stale, and it stands.
+#[test]
+fn the_public_stale_and_tombstone_ports_withdraw_no_audit_read_grant() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    let vault = &fixture.vault;
+    let stale =
+        vault.with_write_txn(|txn| vault.port_retrieval_mark_stale(txn, &granted.grant_ref));
+    assert!(
+        stale.as_ref().is_err_and(names_the_revoke),
+        "the public stale port refuses an audit_read grant: {stale:?}"
+    );
+    let tombstone = TombstoneValueV2 {
+        reason: TombstoneReason::UserHardDelete,
+        deleted_at: 1,
+        request_id: [7; 16],
+    };
+    let created =
+        vault.with_write_txn(|txn| vault.port_tombstone_create(txn, &granted.grant_ref, tombstone));
+    assert!(
+        created.as_ref().is_err_and(names_the_revoke),
+        "the public tombstone port refuses an audit_read grant: {created:?}"
+    );
+    assert_the_grant_stands(&fixture, &granted, "after the public ports")
+}
+
+/// Delta-2 F3: a dependent walk withdraws one batch per write transaction,
+/// and reads honour the rows it has still to reach. With a batch of one and
+/// a first dependent that sorts before the grant, the grant waits in the
+/// walk's pending range once its source is deleted. The holder still reads
+/// then, and once the walk has finished.
+#[test]
+fn a_pending_dependent_walk_withdraws_no_audit_read_grant() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    let mut policy = fixture.vault.dependent_walk_policy()?;
+    policy.batch = 1;
+    fixture.vault.set_dependent_walk_policy(policy)?;
+    let source = person(&fixture, "a disposable source")?;
+    let first = EntityId::from_bytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1])?;
+    assert!(
+        first.as_bytes() < granted.grant_ref.as_bytes(),
+        "the first dependent sorts before the grant, so the walk's first batch takes it alone"
+    );
+    fixture.vault.put_entity(
+        &first,
+        oneiron::registry::ENTITY_TYPE_PERSON,
+        TimeRange { start: 1, end: 1 },
+        1,
+        b"a first dependent",
+    )?;
+    fixture
+        .vault
+        .batch()
+        .edge(&first, EdgeKind::DerivedFrom, &source, 1.0)
+        .edge(&granted.grant_ref, EdgeKind::DerivedFrom, &source, 1.0)
+        .commit()?;
+    fixture.vault.batch().delete(&source).commit()?;
+    let as_holder = bound(&fixture, granted.holder, &granted.proof);
+    let page = call(&as_holder, "vault.authority.audit", json!({}));
+    assert!(
+        page["audit_read_acts"].is_array(),
+        "the holder still reads while the walk is pending: {page}"
+    );
+    fixture.vault.finish_dependent_walks()?;
+    assert_the_grant_stands(&fixture, &granted, "once the dependent walk finished")
+}
+
+/// Delta-2 F4: the replay's refusal stands for good, since only the owner's
+/// revoke ends a grant. The sync receiver takes it as the peer's rejected op
+/// (quarantined, the window goes on), not as a local failure whose retry
+/// marker every rematerialization drain meets again.
+#[test]
+fn a_refused_peer_tombstone_is_quarantined_not_retried() -> TestResult {
+    let fixture = fixture()?;
+    let granted = granted(&fixture)?;
+    for hard in [false, true] {
+        let quarantined =
+            peer_tombstone_refusal_is_quarantined(&fixture.vault, &granted.grant_ref, hard);
+        assert_eq!(
+            quarantined,
+            Some(true),
+            "the refused peer tombstone (hard: {hard}) is quarantined, not retried"
+        );
+    }
+    assert_the_grant_stands(&fixture, &granted, "after the quarantined tombstones")
 }

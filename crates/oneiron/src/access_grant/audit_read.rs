@@ -451,6 +451,19 @@ pub(crate) fn reject_audit_read_grant_delete_in_txn(
     Ok(())
 }
 
+/// Whether `error` is the refusal [`reject_audit_read_grant_delete_in_txn`]
+/// answers: a removal of an audit_read grant that is not the owner's revoke.
+/// The sync receiver quarantines a peer's tombstone it refuses.
+#[cfg(feature = "sync")]
+pub(crate) fn is_audit_read_delete_refusal(error: &Error) -> bool {
+    matches!(
+        error,
+        Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+            AUDIT_READ_DELETE_REFUSAL
+        ))
+    )
+}
+
 /// Whether the row stored at `id` is an audit_read grant, live or erased,
 /// whatever its deletion state: its body still decodes as one.
 ///
