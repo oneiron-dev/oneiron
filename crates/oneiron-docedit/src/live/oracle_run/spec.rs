@@ -1,6 +1,7 @@
 //! The `pptx-live-v1` case manifest and the two fixture manifests it names.
 
 use super::record::Res;
+use oneiron_contracts::register::Register;
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use std::path::Path;
@@ -38,8 +39,9 @@ pub(super) struct BaselineSpec {
 
 /// One live mutation, applied to the baseline's first slide and its first
 /// text shape.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("recipe")]
 pub(super) enum Recipe {
     SetText,
     SetRunMarks,
@@ -76,36 +78,15 @@ pub(super) enum Recipe {
 
 impl Recipe {
     pub(super) fn name(self) -> &'static str {
-        match self {
-            Self::SetText => "set_text",
-            Self::SetRunMarks => "set_run_marks",
-            Self::SetGeometry => "set_geometry",
-            Self::SetPreset => "set_preset",
-            Self::AddShape => "add_shape",
-            Self::AddGroup => "add_group",
-            Self::AddConnector => "add_connector",
-            Self::AddTable => "add_table",
-            Self::AddChart => "add_chart",
-            Self::AddPicture => "add_picture",
-            Self::AddSlide => "add_slide",
-            Self::MoveShape => "move_shape",
-            Self::MoveCrossSlide => "move_cross_slide",
-            Self::RemoveShape => "remove_shape",
-            Self::EditPoints => "edit_points",
-            Self::RaggedTable => "ragged_table",
-            Self::SmartArtBirth => "smartart_birth",
-            Self::SmartArtRestructure => "smartart_restructure",
-            Self::HeldPictureBirth => "held_picture_birth",
-            Self::MultiLevelCategories => "multi_level_categories",
-            Self::PerSeriesCategories => "per_series_categories",
-        }
+        self.as_str()
     }
 }
 
 /// The seven concurrent cases of ARCH-0077 ("both move" split into its
 /// differing and agreeing halves).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("merge.case")]
 pub(super) enum MergeCase {
     BothMove,
     BothMoveSame,
@@ -122,17 +103,7 @@ pub(super) enum MergeCase {
 
 impl MergeCase {
     pub(super) fn name(self) -> &'static str {
-        match self {
-            Self::BothMove => "both_move",
-            Self::BothMoveSame => "both_move_same",
-            Self::DeleteGroupEditChild => "delete_group_edit_child",
-            Self::ReparentGeometry => "reparent_geometry",
-            Self::TextAnimationRange => "text_animation_range",
-            Self::ThemeInheritedStyle => "theme_inherited_style",
-            Self::BothReplaceOpaque => "both_replace_opaque",
-            Self::BothAddShape => "both_add_shape",
-            Self::LoroPeers => "loro_peers",
-        }
+        self.as_str()
     }
 }
 

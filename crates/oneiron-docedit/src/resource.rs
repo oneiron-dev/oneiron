@@ -37,6 +37,7 @@
 use std::fmt;
 use std::sync::Arc;
 
+use oneiron_contracts::register::Register;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -61,9 +62,10 @@ pub struct CapacityHit {
     pub limit: u64,
 }
 
-/// Which ceiling a package passed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+/// Which ceiling a package passed. A Register: its name in a refusal is its `as_str`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema, Register)]
 #[serde(rename_all = "snake_case")]
+#[register("dimension")]
 pub enum Dimension {
     /// The caller's ceiling on the whole archive's bytes.
     ArchiveBytes,
@@ -86,24 +88,6 @@ pub enum Dimension {
     ZipEntries,
     /// Classic ZIP's 4 GiB sizes and offsets.
     ZipBytes,
-}
-
-impl Dimension {
-    /// The dimension's name in a refusal.
-    #[must_use]
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::ArchiveBytes => "archive_bytes",
-            Self::PartBytes => "part_bytes",
-            Self::ExpandedBytes => "expanded_bytes",
-            Self::XmlBytes => "xml_bytes",
-            Self::SvgBytes => "svg_bytes",
-            Self::RasterBytes => "raster_bytes",
-            Self::RasterPixels => "raster_pixels",
-            Self::ZipEntries => "zip_entries",
-            Self::ZipBytes => "zip_bytes",
-        }
-    }
 }
 
 impl fmt::Display for Dimension {
