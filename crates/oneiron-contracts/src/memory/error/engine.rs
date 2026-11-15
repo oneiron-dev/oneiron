@@ -164,7 +164,7 @@ impl From<Error> for MemoryError {
             ErrorKind::OneVaultSettingUnreadable => Self::new(
                 MEMORY_CODE_FORBIDDEN,
                 message,
-                &["Repair the vault's policy manifest, then retry."],
+                &["Repair the vault's policy manifest, then retry onboarding."],
             ),
             // FIX 2222: its own code, so a client tells it from a gate's or
             // the owner binding's refusal; the remedy is the customer's.
