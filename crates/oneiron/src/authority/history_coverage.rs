@@ -24,10 +24,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::checkpoint_adopt::VerifiedAuthorityCheckpoint;
 use super::*;
 use crate::store::Store;
-use crate::{
-    HostingPrivacyPosture, Vault,
-    error::{AuthorityHistoryReason, Result},
-};
+use crate::{HostingPrivacyPosture, Vault, error::Result};
+use oneiron_contracts::authority::AuthorityHistoryReason;
 
 /// Exactly the authority rows this vault needs and does not hold.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
