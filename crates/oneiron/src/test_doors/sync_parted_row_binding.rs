@@ -24,7 +24,7 @@ use crate::sync::checkpoint_payload::{
     SyncAtom, SyncCarrier, SyncPayloadOwners, project_checkpoint_windows, root_entry,
 };
 use crate::sync::document_pins::DOCUMENT_PINS_MAP;
-use crate::sync::loro_support::{doc_from_snapshot, map_insert_bytes};
+use crate::sync::loro_support::{doc_from_snapshot, map_get_bytes, map_insert_bytes};
 use crate::sync::repo_manifests::REPO_MANIFESTS_MAP;
 use crate::sync::room_facts::ROOM_FACTS_MAP;
 use crate::sync::room_parts::{ROOM_FACT_MAX_ROW_BYTES, ROOM_TURN_MAX_ROW_BYTES, write_row};
@@ -71,7 +71,9 @@ fn refused(reason: &str) -> Error {
 pub fn parted_window(map: PartedMap, keyed: EntityId, body: EntityId) -> Result<Vec<u8>> {
     let doc = LoroDoc::new();
     match map {
-        PartedMap::RepoHead => repo_head(&doc.get_map(REPO_MANIFESTS_MAP), keyed, body)?,
+        PartedMap::RepoHead => {
+            repo_head(&doc.get_map(REPO_MANIFESTS_MAP), keyed, body)?;
+        }
         PartedMap::DocumentPin => {
             document_pin(
                 &doc.get_map(DOCUMENT_PINS_MAP),
@@ -105,6 +107,109 @@ pub fn parted_window(map: PartedMap, keyed: EntityId, body: EntityId) -> Result<
         }
     }
     doc.commit();
+    snapshot(&doc)
+}
+
+/// The snapshot of a window document holding, in `map`'s own spelling
+/// under the key of the row `keyed` holds, a manifest whose parts all join
+/// to bytes that read as no row of the map (Astra F3, UC-10 PR 1).
+///
+/// # Errors
+/// A fixture row that does not encode.
+pub fn parted_window_of_no_row(map: PartedMap, keyed: EntityId) -> Result<Vec<u8>> {
+    let doc = LoroDoc::new();
+    match map {
+        PartedMap::RepoHead => {
+            let heads = doc.get_map(REPO_MANIFESTS_MAP);
+            let no_manifest = [0_u8; 64];
+            let (parts, pieces) = split_parts(&no_manifest)?;
+            head_with_parts(&heads, keyed, &parts)?;
+            for (key, piece) in pieces {
+                map_insert_bytes(&heads, &key, piece)?;
+            }
+        }
+        PartedMap::DocumentPin => {
+            let pins = doc.get_map(DOCUMENT_PINS_MAP);
+            let no_pin = vec![0_u8; PART_BYTES + 1];
+            let (parts, pieces) = split_parts(&no_pin)?;
+            pin_manifest(&pins, keyed, parts)?;
+            for (key, piece) in pieces {
+                map_insert_bytes(&pins, &key, piece)?;
+            }
+        }
+        PartedMap::RoomTurn => write_row(
+            &doc.get_map(ROOM_TURNS_MAP),
+            &keyed.to_hex(),
+            &vec![0_u8; ROOM_TURN_MAX_ROW_BYTES + 1],
+            ROOM_TURN_MAX_ROW_BYTES,
+        )?,
+        PartedMap::RoomSideRow => {
+            let no_row = vec![0_u8; ROOM_FACT_MAX_ROW_BYTES + 1];
+            write_row(
+                &doc.get_map(ROOM_FACTS_MAP),
+                &claim_key(keyed, &no_row),
+                &no_row,
+                ROOM_FACT_MAX_ROW_BYTES,
+            )?;
+        }
+    }
+    doc.commit();
+    snapshot(&doc)
+}
+
+/// The snapshot of a window document holding `row`'s repo head in parts,
+/// and under the key of `pin_holder`'s pin a pin manifest listing the same
+/// parts, none of which the pin map holds (Astra F1, UC-10 PR 1).
+///
+/// # Errors
+/// A fixture row that does not encode.
+pub fn repo_parts_listed_by_a_pin(row: EntityId, pin_holder: EntityId) -> Result<Vec<u8>> {
+    let doc = LoroDoc::new();
+    let parts = repo_head(&doc.get_map(REPO_MANIFESTS_MAP), row, row)?;
+    pin_manifest(&doc.get_map(DOCUMENT_PINS_MAP), pin_holder, parts)?;
+    doc.commit();
+    snapshot(&doc)
+}
+
+/// The snapshot of a window document whose history writes, in this order,
+/// a turn manifest under `keyed`'s key whose parts join to `body`'s turn,
+/// a value in a root outside the window's maps, then the parts (Astra F2,
+/// UC-10 PR 1): a capture pass stops at that root before it meets a part.
+///
+/// # Errors
+/// A fixture row that does not encode.
+pub fn parted_turn_behind_an_unlisted_root(keyed: EntityId, body: EntityId) -> Result<Vec<u8>> {
+    let row =
+        serde_json::to_vec(&turn(body)).map_err(|_| refused("a turn row that does not encode"))?;
+    let key = keyed.to_hex();
+    let written = LoroDoc::new();
+    let written_turns = written.get_map(ROOM_TURNS_MAP);
+    write_row(&written_turns, &key, &row, ROOM_TURN_MAX_ROW_BYTES)?;
+    let bytes = |key: &str| {
+        map_get_bytes(&written_turns, key)
+            .ok_or_else(|| refused("a turn map value that is not bytes"))
+    };
+    let mut parts = Vec::new();
+    written_turns.for_each(|part, _| {
+        if part != key {
+            parts.push(part.to_owned());
+        }
+    });
+    let doc = LoroDoc::new();
+    let turns = doc.get_map(ROOM_TURNS_MAP);
+    map_insert_bytes(&turns, &key, &bytes(&key)?)?;
+    doc.commit();
+    map_insert_bytes(&doc.get_map("unlisted_root"), "row", b"value")?;
+    doc.commit();
+    for part in &parts {
+        map_insert_bytes(&turns, part, &bytes(part)?)?;
+    }
+    doc.commit();
+    snapshot(&doc)
+}
+
+/// `doc`'s snapshot.
+fn snapshot(doc: &LoroDoc) -> Result<Vec<u8>> {
     doc.export(ExportMode::Snapshot)
         .map_err(|_| refused("a window that does not export"))
 }
@@ -122,9 +227,16 @@ struct Head<'a> {
     body: &'a Parts,
 }
 
-fn repo_head(map: &LoroMap, keyed: EntityId, body: EntityId) -> Result<()> {
-    let portable = RepoPortableId::from_hex(&"07".repeat(32))
-        .ok_or_else(|| refused("a portable id that does not parse"))?;
+/// The portable id every fixture head is filed under.
+fn portable() -> Result<RepoPortableId> {
+    RepoPortableId::from_hex(&"07".repeat(32))
+        .ok_or_else(|| refused("a portable id that does not parse"))
+}
+
+/// A repo head of `keyed`'s CODE entity whose parts join to `body`'s
+/// manifest, and its parts. Returns the parts the head lists.
+fn repo_head(map: &LoroMap, keyed: EntityId, body: EntityId) -> Result<Parts> {
+    let portable = portable()?;
     let manifest = RepoManifest {
         portable,
         version: REPO_MANIFEST_VERSION,
@@ -139,16 +251,19 @@ fn repo_head(map: &LoroMap, keyed: EntityId, body: EntityId) -> Result<()> {
     }
     .encode()?;
     let (parts, pieces) = split_parts(&manifest)?;
-    let head = rmp_serde::to_vec_named(&Head {
-        code: keyed,
-        body: &parts,
-    })
-    .map_err(|_| refused("a head that does not encode"))?;
-    map_insert_bytes(map, &portable.to_hex(), &head)?;
+    head_with_parts(map, keyed, &parts)?;
     for (key, piece) in pieces {
         map_insert_bytes(map, &key, piece)?;
     }
-    Ok(())
+    Ok(parts)
+}
+
+/// A repo head of `code`'s CODE entity listing `parts`, under the fixture
+/// portable id.
+fn head_with_parts(map: &LoroMap, code: EntityId, parts: &Parts) -> Result<()> {
+    let head = rmp_serde::to_vec_named(&Head { code, body: parts })
+        .map_err(|_| refused("a head that does not encode"))?;
+    map_insert_bytes(map, &portable()?.to_hex(), &head)
 }
 
 /// The quoted text a pin anchors in, written once. A fresh Loro document has
@@ -213,16 +328,28 @@ fn document_pin(map: &LoroMap, keyed: EntityId, body: EntityId, quote_len: usize
     let joined = rmp_serde::to_vec_named(&pin(body, &text, quote_len)?)
         .map_err(|_| refused("a pin that does not encode"))?;
     let (parts, pieces) = split_parts(&joined)?;
+    pin_manifest_under(map, &key, parts)?;
+    for (key, piece) in pieces {
+        map_insert_bytes(map, &key, piece)?;
+    }
+    Ok(())
+}
+
+/// A pin manifest listing `parts` under the key of `keyed`'s pin, writing
+/// no part.
+fn pin_manifest(map: &LoroMap, keyed: EntityId, parts: Parts) -> Result<()> {
+    let key = carrier_key(fixed(0x4d), keyed, &pin(keyed, &quoted()?, 64)?)?;
+    pin_manifest_under(map, &key, parts)
+}
+
+/// A pin manifest listing `parts`, naming no actor, under `key`.
+fn pin_manifest_under(map: &LoroMap, key: &str, parts: Parts) -> Result<()> {
     let manifest = rmp_serde::to_vec_named(&PartedPin {
         parts,
         actor: DocActor::Erased,
     })
     .map_err(|_| refused("a pin manifest that does not encode"))?;
-    map_insert_bytes(map, &key, &manifest)?;
-    for (key, piece) in pieces {
-        map_insert_bytes(map, &key, piece)?;
-    }
-    Ok(())
+    map_insert_bytes(map, key, &manifest)
 }
 
 /// The snapshot of a window document holding `row`'s pin in parts under its
@@ -236,8 +363,7 @@ pub fn parted_pin_fitting_one_part(row: EntityId) -> Result<Vec<u8>> {
     let doc = LoroDoc::new();
     document_pin(&doc.get_map(DOCUMENT_PINS_MAP), row, row, 64)?;
     doc.commit();
-    doc.export(ExportMode::Snapshot)
-        .map_err(|_| refused("a window that does not export"))
+    snapshot(&doc)
 }
 
 /// A turn row of `turn`, past its whole-row bound.

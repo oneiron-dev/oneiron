@@ -10,12 +10,18 @@
 //! named the key's holder on the whole window; it now names none. A correct
 //! parted row places as before. A turn program row is placed by its body,
 //! whatever its key (the D5 guard).
+//!
+//! The erase-reach review (Astra, 15 Nov 19:16) added three: a manifest
+//! keeps no part of another map, a capture that reads only part of the
+//! history names no owner, and a manifest whose parts join to no row
+//! proves no other row, so it places by its key and defers nothing.
 #![cfg(all(oneiron_test_support, feature = "sync"))]
 
 use oneiron::EntityId;
 use oneiron::test_doors::sync_parted_row_binding::{
     PARTED_MAPS, PartedMap, checkpoint_refusal, discard_projection, parted_pin_fitting_one_part,
-    parted_window, turn_program_arming_holder,
+    parted_turn_behind_an_unlisted_root, parted_window, parted_window_of_no_row,
+    repo_parts_listed_by_a_pin, turn_program_arming_holder,
 };
 
 const DEFERRED: &str = "deferred: a parted row whose parts join to a row its key does not name";
@@ -181,4 +187,71 @@ fn turn_program_arming_places_by_its_body() {
         turn_program_arming_holder(keyed, registration, actor).expect("the row writes"),
         Some(actor)
     );
+}
+
+/// A manifest keeps no part of another map (Astra F1): a pin manifest that
+/// lists a repo head's parts, with none of its own, leaves the head's
+/// discard erasing every repo part, as with no pin.
+#[test]
+fn manifest_keeps_no_part_of_another_map() {
+    let (row, pin_holder) = two_rows();
+    let alone = parted_window(PartedMap::RepoHead, row, row).expect("the window writes");
+    let listed = repo_parts_listed_by_a_pin(row, pin_holder).expect("the window writes");
+    assert_eq!(
+        discard_projection(&listed, &[row]).expect("the projection runs"),
+        discard_projection(&alone, &[row]).expect("the projection runs"),
+        "the repo head's parts go with it, whatever a pin manifest lists"
+    );
+}
+
+/// A capture whose binding pass stops at a root outside the window's maps
+/// reads only part of the history (Astra F2): it cannot clear the key's
+/// holder of a parted row, so it names no owner.
+#[test]
+fn checkpoint_names_no_owner_when_the_binding_reads_part_of_the_history() {
+    let (keyed, body) = two_rows();
+    let window = parted_turn_behind_an_unlisted_root(keyed, body).expect("the window writes");
+    let refusal = checkpoint_refusal(&window)
+        .expect("the capture runs")
+        .expect("a window with a root outside its maps stays whole");
+    assert_eq!(
+        refusal.owner, None,
+        "the capture named {:?} (keyed {keyed:?}, body {body:?})",
+        refusal.owner
+    );
+}
+
+/// A manifest whose parts join to bytes that read as no row proves no other
+/// row (Astra F3): it places by its key as before, so an unrelated discard
+/// leaves the window and its key's holder's discard erases it.
+#[test]
+fn parted_row_of_no_row_places_by_its_key() {
+    for map in PARTED_MAPS {
+        let (keyed, other) = two_rows();
+        let window = parted_window_of_no_row(map, keyed).expect("the window writes");
+        assert_eq!(
+            discard_projection(&window, &[other]).expect("the projection runs"),
+            "unchanged",
+            "{map:?}: an unrelated discard leaves it"
+        );
+        let gone = discard_projection(&window, &[keyed]).expect("the projection runs");
+        assert!(
+            gone.starts_with("erased "),
+            "{map:?}: its key's holder's discard erases it, got {gone}"
+        );
+    }
+}
+
+/// A repo head whose parts join to no manifest keeps its window whole under
+/// its CODE entity, as before the binding (FIX 10278's refusal): it proves
+/// no other head.
+#[test]
+fn repo_head_of_no_manifest_checkpoint_names_its_code() {
+    let keyed = EntityId::now();
+    let window = parted_window_of_no_row(PartedMap::RepoHead, keyed).expect("the window writes");
+    let refusal = checkpoint_refusal(&window)
+        .expect("the capture runs")
+        .expect("a head of no manifest keeps its window whole");
+    assert_eq!(refusal.owner, Some(keyed));
+    assert_eq!(refusal.reason, "Undecodable");
 }
