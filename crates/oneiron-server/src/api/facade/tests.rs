@@ -1658,11 +1658,14 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
     assert!(both(&found), "{found:?}");
     assert_eq!(hints, named(&[("last several weeks", "unresolved")]));
 
-    // `as_of` moves the day "yesterday" names.
-    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + DAY + 7_200)).await;
-    assert_eq!(ids(&found), [said[0].as_str()], "{found:?}");
-    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + 2 * DAY + 7_200)).await;
-    assert_eq!(ids(&found), [said[1].as_str()], "{found:?}");
+    // `as_of` moves the day "yesterday" names. That day re-anchors the
+    // temporal channel and never filters (canon research-1009 P1.1), so the
+    // message said on the other day is found as well.
+    for as_of in [DAY0 + DAY + 7_200, DAY0 + 2 * DAY + 7_200] {
+        let (found, hints) = recall("staging rollout yesterday", Some(as_of)).await;
+        assert!(both(&found), "{found:?}");
+        assert_eq!(hints, named(&[("yesterday", "used")]));
+    }
 }
 
 /// Wave 9 long-context A/B: recall named a message `ms87:76@<revision>` where

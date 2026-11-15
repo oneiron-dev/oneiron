@@ -100,6 +100,8 @@ pub(super) fn accept_cleanup_proposal_in_txn(
         archived: live_slots(applied.archived.clone()),
         skipped: live_slots(applied.skipped.clone()),
         rejected: Vec::new(),
+        // The owner's accept is not an automatic run: no teeth badge.
+        integrity_teeth: None,
     };
     put_digest_in_txn(vault, wtxn, &digest)?;
     // What the accept archived joins the RUN row of the run that opened the
