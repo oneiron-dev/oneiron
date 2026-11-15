@@ -277,7 +277,11 @@ impl Served {
                 json!({"limit": 500, "include_revoked": include_revoked}),
             )
             .await;
-        assert_eq!(status, StatusCode::OK, "the owner reads the registry: {body}");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner reads the registry: {body}"
+        );
         body["rows"].as_array().expect("registry rows").clone()
     }
 
@@ -357,9 +361,14 @@ fn an_approve_once_press_releases_one_digest_and_mints_no_grant() {
             Some("gate.consent.approve_once"),
             "{body}"
         );
-        assert!(body["grant_ref"].is_null(), "approve-once names no grant: {body}");
         assert!(
-            body["decision_ref"].as_str().is_some_and(|id| !id.is_empty()),
+            body["grant_ref"].is_null(),
+            "approve-once names no grant: {body}"
+        );
+        assert!(
+            body["decision_ref"]
+                .as_str()
+                .is_some_and(|id| !id.is_empty()),
             "the press lands a Gate decision: {body}"
         );
         assert_eq!(
@@ -411,7 +420,10 @@ fn a_denial_records_a_denied_verdict_and_no_grant() {
             Some("gate.consent.denied"),
             "{body}"
         );
-        assert!(body["grant_ref"].is_null(), "a denial names no grant: {body}");
+        assert!(
+            body["grant_ref"].is_null(),
+            "a denial names no grant: {body}"
+        );
         assert_eq!(
             served.registry_rows(true).await,
             before,
@@ -495,11 +507,19 @@ fn the_owners_repeat_revoke_is_idempotent() {
                 served.action_bound("channel_send"),
             )
             .await;
-        assert_eq!(status, StatusCode::OK, "the owner's standing grant: {created}");
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the owner's standing grant: {created}"
+        );
         let grant = created["grant_ref"].as_str().expect("grant ref").to_owned();
 
         let (status, revoked) = served
-            .post(Caller::Owner, "vault.consent.revoke", json!({"grant": grant}))
+            .post(
+                Caller::Owner,
+                "vault.consent.revoke",
+                json!({"grant": grant}),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "the owner's revoke: {revoked}");
         assert_eq!(revoked["outcome"].as_str(), Some("revoked"), "{revoked}");
@@ -532,7 +552,11 @@ fn the_owners_repeat_revoke_is_idempotent() {
         assert_eq!(row["status"].as_str(), Some("revoked"), "{row}");
 
         let (status, again) = served
-            .post(Caller::Owner, "vault.consent.revoke", json!({"grant": grant}))
+            .post(
+                Caller::Owner,
+                "vault.consent.revoke",
+                json!({"grant": grant}),
+            )
             .await;
         assert_eq!(status, StatusCode::OK, "a repeat revoke succeeds: {again}");
         assert_eq!(again["already_revoked"].as_bool(), Some(true), "{again}");
