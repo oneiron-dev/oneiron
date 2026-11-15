@@ -1,12 +1,9 @@
 //! SKILL body validators shared by the put and update arms.
 
-use heed::RwTxn;
-
 use super::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_SKILL;
-use crate::store::Store;
 
 /// Every gate a SKILL body OVERWRITE passes at this chokepoint.
 ///
@@ -17,7 +14,7 @@ use crate::store::Store;
 ///
 /// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) from the substrate update gate, the hub-sync
 /// door's variant of it, or ONE-1449's admission gate.
-pub(super) fn validate_skill_body_overwrite(
+pub(in crate::batch) fn validate_skill_body_overwrite(
     id: &EntityId,
     prior_body: &[u8],
     updated: &crate::write_envelope::skill_record::SkillRecord,
@@ -84,9 +81,9 @@ pub(super) fn validate_skill_body_overwrite(
 ///
 /// [`ArtifactError::InvalidSkillBody`](crate::error::ArtifactError::InvalidSkillBody) for a create that is not born candidate or whose
 /// `forkedFrom` names itself, a missing row, or a row of another kind.
-pub(super) fn validate_local_skill_create(
-    store: &Store,
-    wtxn: &RwTxn<'_>,
+pub(in crate::batch) fn validate_local_skill_create<S: crate::ports::EntityStoreRead>(
+    store: &S,
+    txn: &S::Read<'_>,
     id: &EntityId,
     created: &crate::write_envelope::skill_record::SkillRecord,
 ) -> Result<()> {
@@ -103,7 +100,7 @@ pub(super) fn validate_local_skill_create(
             "forkedFrom cannot name the fork itself",
         )));
     }
-    let parent_raw = crate::ports::EntityStoreRead::port_entity_raw(store, wtxn, &parent)?.ok_or(
+    let parent_raw = crate::ports::EntityStoreRead::port_entity_raw(store, txn, &parent)?.ok_or(
         Error::Artifact(ArtifactError::InvalidSkillBody(
             "forkedFrom parent must exist as a type-7 SKILL",
         )),

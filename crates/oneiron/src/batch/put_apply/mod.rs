@@ -5,7 +5,9 @@ pub(crate) use oneiron_store::batch::put_apply::*;
 
 pub(super) use self::apply::{apply_put, apply_put_beside};
 pub(crate) use self::claim_admission::put_target_admitted_in;
-use self::put_entity_update::{validate_local_skill_create, validate_skill_body_overwrite};
+pub(super) use self::put_entity_update::{
+    validate_local_skill_create, validate_skill_body_overwrite,
+};
 #[cfg(test)]
 pub(crate) use self::put_staging::wiped_rows;
 pub(crate) use self::put_staging::{delete_entity_index_rows, stage_entity_index_rows};
