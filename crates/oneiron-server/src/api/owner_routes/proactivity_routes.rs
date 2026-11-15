@@ -70,7 +70,7 @@ pub(super) use self::table::owner_table;
 
 /// A digest or ask id as 64 hex.
 fn hex_id(id: &[u8; 32]) -> String {
-    id.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(id)
 }
 
 /// A digest id, as 64 hex.

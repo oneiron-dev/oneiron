@@ -8946,6 +8946,7 @@ dependencies = [
  "oneiron-docedit",
  "oneiron-driver",
  "oneiron-gen",
+ "oneiron-hex",
  "oneiron-keystore",
  "oneiron-linear",
  "oneiron-llm",
