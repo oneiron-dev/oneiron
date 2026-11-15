@@ -2,10 +2,13 @@
 //! `engine.controls` grant (untangle 6.6d; Engine S66-CALLS = A; owner 9 Nov
 //! 22:47, every substrate control is a public verb behind a grant). Each
 //! knob verb answers a holder's call with the engine-control receipt, and
-//! the knob is in force. The learning dials and the wake policy take the
-//! holder through their existing verbs. An agent without the grant changes
-//! nothing. A sieve raise is refused. The owner calls the same verbs under
-//! its proof, and its receipts say so. On the base the verbs do not exist.
+//! the knob is in force. The wake policy takes the holder through its
+//! existing verb. Since Setting stage 3 (PLAIN-4) a learning dial is a
+//! learned Setting key that a holder sets through `settings.set`'s door: a
+//! value row, whose change row is its record, with no receipt. An agent
+//! without the grant changes nothing. A sieve raise is refused. The owner
+//! calls the same verbs under its proof, and its receipts say so. On the
+//! base the verbs do not exist.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -18,12 +21,8 @@ use oneiron::dreamer_runner::{FreeTimeCadence, FreeTimeSchedule};
 use oneiron::dreamer_wake::ProjectorPolicy;
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{EngineControlActor, EngineControlClass};
-use oneiron::learning_setting::{AUDIT_RATE, setting_value};
-use oneiron::learning_setting_doors::{
-    LearningSettingClear, LearningSettingMode, LearningSettingPut,
-    clear_learning_setting_as_holder, put_learning_setting_as_holder,
-};
 use oneiron::policy_setting_doors::{WakePolicySetRequest, wake_policy_set_as_holder};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
 use oneiron::task_verb::sdk::{
     ConsolidationSelectionTimingSetRequest, ConsolidationStrengthSetRequest,
     CuratorCadenceSetRequest, DreamerProjectorSetRequest, FreeTimeScheduleSetRequest,
@@ -34,21 +33,32 @@ use oneiron::task_verb::sdk::{
     set_stewardship_rule_period_as,
 };
 use oneiron::test_doors::coach::{coach, define_agent};
+use oneiron::test_doors::learning_setting_sourced::knob_value;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::write_envelope::WriteActor;
 
-fn pin(key: &str, value: f64) -> LearningSettingPut {
-    LearningSettingPut {
+const AUDIT_RATE: &str = "audit.rate";
+
+/// A learning dial's seed at the vault (a value row with its weight in
+/// runs), or its clear (`value` none).
+fn seed(key: &str, value: Option<f64>) -> SetSetting {
+    SetSetting {
         key: key.to_owned(),
-        mode: LearningSettingMode::Pin,
-        value: Some(value),
-        choice: None,
-        weight_runs: None,
-        why: "tuning".to_owned(),
-        goal: None,
-        project: None,
-        task_type: None,
+        item: None,
+        scope: SettingScope::Vault,
+        mode: SettingMode::Value,
+        value: value.map(|value| serde_json::json!(value)),
+        expected_revision: None,
+        why: Some("tuning".to_owned()),
+        check_in_ref: None,
+        weight_runs: value.map(|_| 4.0),
     }
+}
+
+/// Whether a change applied. One that waits on a check-in, or a refusal,
+/// changes nothing.
+fn applied<E>(outcome: &Result<SetSettingOutcome, E>) -> bool {
+    matches!(outcome, Ok(SetSettingOutcome::Applied { .. }))
 }
 
 #[test]
@@ -193,28 +203,19 @@ fn the_coach_tunes_each_knob_through_its_verb() {
     );
     assert_eq!(vault.dreamer_sieve_policy().expect("sieve"), sieve);
 
-    // The learning dials through vault.settings.learning.put and .clear.
-    let reader = WriteActor::new(coach, EdgeActorClass::Agent);
-    let view = put_learning_setting_as_holder(&vault, reader, pin(AUDIT_RATE.key, 0.25))
-        .expect("the Coach's dial");
-    assert!(view.rows.iter().any(|row| row.key == AUDIT_RATE.key));
-    assert_eq!(setting_value(&vault, &AUDIT_RATE).expect("value"), 0.25);
-    assert!(
-        put_learning_setting_as_holder(&vault, reader, pin("health.card.owner_copy", 1.0)).is_err(),
-        "a dial the owner keeps"
+    // The learning dials through settings.set's door: a seed, then its clear.
+    let dial = vault.set_setting(SettingCaller::Agent(coach), seed(AUDIT_RATE, Some(0.25)));
+    assert!(applied(&dial), "the Coach's dial: {dial:?}");
+    assert_eq!(knob_value(&vault, AUDIT_RATE, None).expect("value"), 0.25);
+    let kept = vault.set_setting(
+        SettingCaller::Agent(coach),
+        seed("health.card.owner_copy", Some(1.0)),
     );
-    clear_learning_setting_as_holder(
-        &vault,
-        reader,
-        LearningSettingClear {
-            key: AUDIT_RATE.key.to_owned(),
-            mode: LearningSettingMode::Pin,
-            goal: None,
-            project: None,
-            task_type: None,
-        },
-    )
-    .expect("the Coach clears its pin");
+    assert!(!applied(&kept), "a dial the owner keeps: {kept:?}");
+    let cleared = vault.set_setting(SettingCaller::Agent(coach), seed(AUDIT_RATE, None));
+    assert!(applied(&cleared), "the Coach clears its seed: {cleared:?}");
+    assert_eq!(knob_value(&vault, AUDIT_RATE, None).expect("value"), 0.05);
+    let reader = WriteActor::new(coach, EdgeActorClass::Agent);
 
     // The wake policy through vault.settings.wake_policy.set.
     let mut wake = vault.dreamer_wake_policy().expect("wake policy");
@@ -231,9 +232,10 @@ fn the_coach_tunes_each_knob_through_its_verb() {
     assert!(outcome.outcome["receipt"].is_string());
     assert_eq!(vault.dreamer_wake_policy().expect("wake policy"), wake);
 
-    // Every change has its receipt, each naming the Coach as a holder.
+    // Every knob change has its receipt, each naming the Coach as a holder;
+    // the learning dial's two changes are setting changes, with none.
     let changes = vault.engine_control_changes(&owner).expect("receipts");
-    assert_eq!(changes.len(), 10, "{changes:?}");
+    assert_eq!(changes.len(), 8, "{changes:?}");
     assert!(
         changes
             .iter()
@@ -298,8 +300,10 @@ fn an_agent_without_engine_controls_is_refused() {
         .is_err()
     );
     assert_eq!(vault.dreamer_sieve_policy().expect("sieve"), held);
+    let dial = vault.set_setting(SettingCaller::Agent(agent), seed(AUDIT_RATE, Some(0.25)));
+    assert!(!applied(&dial), "no grant, no dial: {dial:?}");
+    assert_eq!(knob_value(&vault, AUDIT_RATE, None).expect("value"), 0.05);
     let reader = WriteActor::new(agent, EdgeActorClass::Agent);
-    assert!(put_learning_setting_as_holder(&vault, reader, pin(AUDIT_RATE.key, 0.25)).is_err());
     let wake = vault.dreamer_wake_policy().expect("wake policy");
     assert!(
         wake_policy_set_as_holder(

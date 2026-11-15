@@ -1,4 +1,4 @@
-//! A matched ancestor check fits `credit_decay` whatever correctness anchor
+//! A matched ancestor check fits `credit.decay` whatever correctness anchor
 //! credited its run (FIX-LIST CREDIT-DECAY-FIT-DROPS-OWNER-AND-WORLD-ANCHORS).
 //! A contribution pair carries its credit's anchor: an owner verdict, a
 //! world outcome, an audit or a held-out run. The fit records each matched
@@ -13,7 +13,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use oneiron::learning::Anchor;
-use oneiron::learning_setting::{CREDIT_DECAY, global_setting_subject};
+use oneiron::learning_setting::global_setting_subject;
 use oneiron::test_doors::credit_decay_fit::{
     credit_and_check_adjacent_edge, credit_decay_fit_runs,
 };
@@ -21,6 +21,9 @@ use oneiron::{TimeRange, Vault, VaultConfig};
 use serde_json::json;
 
 const NOW: u64 = 10;
+
+/// The knob's catalogue name (Setting stage 3 gave `credit_decay` its dot).
+const CREDIT_DECAY: &str = "credit.decay";
 
 fn vault(dir: &std::path::Path) -> Vault {
     let vault = Vault::open(dir, VaultConfig::default()).expect("open vault");
@@ -32,7 +35,7 @@ fn vault(dir: &std::path::Path) -> Vault {
     // facet), and the fit's capture drops the check with a WARN. The fixture
     // stores that facet, so the head lands on main and on #7205 alike; the
     // check's anchor is this file's subject, not the facet gate.
-    let subject = global_setting_subject(CREDIT_DECAY.key).expect("the knob's subject");
+    let subject = global_setting_subject(CREDIT_DECAY).expect("the knob's subject");
     vault
         .put_entity(
             &oneiron::claim::substrate_facet_id(subject).expect("the subject's facet id"),
@@ -58,7 +61,7 @@ fn fit_runs_after_one_check(anchor: Anchor) -> Option<f64> {
     assert_eq!(
         credit_decay_fit_runs(&vault).expect("read the fit"),
         None,
-        "no check has fitted credit_decay yet"
+        "no check has fitted credit.decay yet"
     );
     credit_and_check_adjacent_edge(&vault, anchor, true, false, NOW).expect("credit and check");
     credit_decay_fit_runs(&vault).expect("read the fit")
@@ -67,20 +70,20 @@ fn fit_runs_after_one_check(anchor: Anchor) -> Option<f64> {
 #[test]
 fn an_owner_verdicts_matched_ancestor_check_fits_credit_decay() {
     let runs = fit_runs_after_one_check(Anchor::OwnerVerdict)
-        .expect("the check of a run the owner's verdict credited fits credit_decay");
+        .expect("the check of a run the owner's verdict credited fits credit.decay");
     assert!(runs > 0.0, "one observation: {runs}");
 }
 
 #[test]
 fn a_world_outcomes_matched_ancestor_check_fits_credit_decay() {
     let runs = fit_runs_after_one_check(Anchor::WorldOutcome)
-        .expect("the check of a run a world outcome credited fits credit_decay");
+        .expect("the check of a run a world outcome credited fits credit.decay");
     assert!(runs > 0.0, "one observation: {runs}");
 }
 
 #[test]
 fn an_audited_runs_matched_ancestor_check_fits_credit_decay() {
     let runs = fit_runs_after_one_check(Anchor::Audit { rate: 0.5 })
-        .expect("the check of a run an audit credited fits credit_decay");
+        .expect("the check of a run an audit credited fits credit.decay");
     assert!(runs > 0.0, "one observation: {runs}");
 }

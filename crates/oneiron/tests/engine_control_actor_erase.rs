@@ -7,23 +7,27 @@
 //! names it, kept its id.
 //!
 //! Round 2 found the holder's id in one more place: the witness claim of a
-//! holder's learning-setting PUT (6.6b). That claim is about the owner, on
-//! the owner's facet, so no scrub of the holder reaches it. It now names no
-//! holder; the setting row and the receipt do, and both are scrubbed.
+//! holder's learning-setting PUT (6.6b), a claim about the owner that no
+//! scrub of the holder reached. Since Setting stage 3 (PLAIN-4) a holder's
+//! change to a learned knob writes no such claim and no receipt: it is a
+//! setting change row, which names its maker. The erase keeps the holder's
+//! changes and the row it set, as they were set, and they no longer name it.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test engine_control_actor_erase`.
-#![cfg(oneiron_test_support)]
+#![cfg(all(oneiron_test_support, feature = "test-support"))]
 
 use std::collections::BTreeSet;
 
 use oneiron::federation::{EngineControlActor, EngineControlClass};
-use oneiron::learning_setting::{AUDIT_RATE, SettingMode, SettingRow, SettingScope};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope};
 use oneiron::temporal::TimeRange;
+use oneiron::test_doors::learning_setting_sourced::knob_value;
+use oneiron::test_doors::setting::setting_change;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
-use oneiron::{DeleteReason, EntityId, Vault};
+use oneiron::{DeleteReason, EntityId};
 
 #[test]
 fn a_hard_erase_takes_the_actor_out_of_the_engine_control_receipts() {
@@ -114,25 +118,30 @@ fn a_hard_erase_takes_the_actor_out_of_the_engine_control_receipts() {
     );
 }
 
-/// The learning-setting PUT witnesses the vault holds about `owner`, each as
-/// its whole body's debug text.
-fn learning_put_witnesses(vault: &Vault, owner: EntityId) -> Vec<String> {
-    vault
-        .claims_for_subject(&owner)
-        .expect("the owner's claims")
-        .into_iter()
-        .filter_map(|id| vault.get_claim(&id).expect("claim"))
-        .filter(|body| body.predicate == "vault.learning_setting.put")
-        .map(|body| format!("{body:?}"))
-        .collect()
+/// The audit rate, a learned knob of the `maintenance_cadence` class.
+const AUDIT_RATE: &str = "audit.rate";
+
+/// One change of the audit rate at the vault: a seed (a value row with its
+/// weight in runs), or a clear (`value` none).
+fn audit_rate(value: Option<f64>) -> SetSetting {
+    SetSetting {
+        key: AUDIT_RATE.to_owned(),
+        item: None,
+        scope: SettingScope::Vault,
+        mode: SettingMode::Value,
+        value: value.map(|value| serde_json::json!(value)),
+        expected_revision: None,
+        why: Some("tuning".to_owned()),
+        check_in_ref: None,
+        weight_runs: value.map(|_| 4.0),
+    }
 }
 
 #[test]
-fn a_hard_erase_leaves_no_holder_id_in_the_learning_put_witnesses() {
+fn a_hard_erase_leaves_no_holder_id_in_the_setting_changes() {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = open_owner_carrier_vault(dir.path()).expect("owner carrier vault");
     let owner_proof = owner(&vault).expect("owner proof");
-    let owner_id = vault.ensure_embedded_owner_actor().expect("owner");
     let holder = EntityId::now();
     vault
         .put_entity(
@@ -148,52 +157,57 @@ fn a_hard_erase_leaves_no_holder_id_in_the_learning_put_witnesses() {
     vault
         .grant_engine_controls(&owner_proof, holder, &classes)
         .expect("the owner's grant");
-    let before = learning_put_witnesses(&vault, owner_id).len();
 
-    // Three PUTs by the holder: the second overwrites the first's row, the
-    // clear drops the row, and the third stands. Each leaves its witness.
-    let scope = SettingScope::Vault;
-    let put = |value: f64, at: u64| {
+    // Four changes by the holder, through the setter's holder path (its
+    // engine.controls class, checked live in the write): the second replaces
+    // the first's row, the clear drops the row, and the fourth stands. Each
+    // leaves its change row, naming the holder.
+    let mut sequences = Vec::new();
+    for value in [Some(0.25), Some(0.30), None, Some(0.35)] {
+        let outcome = vault
+            .set_setting(SettingCaller::Agent(holder), audit_rate(value))
+            .expect("the holder's change");
+        let SetSettingOutcome::Applied {
+            sequence: Some(sequence),
+            ..
+        } = &outcome
+        else {
+            panic!("the holder's change applies: {outcome:?}");
+        };
+        sequences.push(*sequence);
+    }
+    for sequence in &sequences {
+        let change = setting_change(&vault, *sequence)
+            .expect("the change reads")
+            .expect("the change is recorded");
+        assert_eq!(change.by, Some(holder), "the change names its maker");
+    }
+    assert!(
         vault
-            .put_setting_row_as_holder(
-                holder,
-                &scope,
-                &SettingRow {
-                    key: AUDIT_RATE.key.to_owned(),
-                    mode: SettingMode::Pin,
-                    value,
-                    weight_runs: None,
-                    at,
-                    why: "tuning".to_owned(),
-                },
-            )
-            .expect("the holder's PUT");
-    };
-    put(0.25, 11);
-    put(0.30, 12);
-    vault
-        .clear_setting_row_as_holder(holder, &scope, AUDIT_RATE.key, SettingMode::Pin)
-        .expect("the holder's clear");
-    put(0.35, 13);
-    assert_eq!(
-        learning_put_witnesses(&vault, owner_id).len(),
-        before + 3,
-        "one witness for each PUT, the overwritten and the cleared rows' included"
+            .engine_control_changes(&owner_proof)
+            .expect("receipts")
+            .is_empty(),
+        "a knob change is a setting change, with no engine-control receipt"
     );
 
     vault
         .delete_entity_with_reason(&holder, DeleteReason::UserHardDelete)
         .expect("hard erase");
 
-    let left = learning_put_witnesses(&vault, owner_id);
-    assert_eq!(
-        left.len(),
-        before + 3,
-        "the witnesses stand: they are the owner's record of the settings"
-    );
     let named = holder.to_hex();
-    assert!(
-        left.iter().all(|witness| !witness.contains(&named)),
-        "no PUT witness names the erased holder: {left:?}"
+    for sequence in &sequences {
+        let change = setting_change(&vault, *sequence)
+            .expect("the change reads")
+            .expect("the change stands: it is the vault's record of the setting");
+        assert_eq!(change.by, None, "no change names the erased holder");
+        assert!(
+            !format!("{change:?}").contains(&named),
+            "no change names the erased holder: {change:?}"
+        );
+    }
+    assert_eq!(
+        knob_value(&vault, AUDIT_RATE, None).expect("the knob reads"),
+        0.35,
+        "the row the holder set stands"
     );
 }
