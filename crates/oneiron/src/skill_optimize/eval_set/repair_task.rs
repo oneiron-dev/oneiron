@@ -47,10 +47,9 @@ enum EvalRepairExpected {
 }
 
 /// A compiled task. The answer and source evidence stay out of the
-/// candidate input, and the answer is not in anything the contract shows a
-/// leg (its workspace, history, intent, preconditions and declared tools),
-/// by exact text or, for an end state, by exact JSON. This is not a label, a
-/// certificate of task quality or a measured pass.
+/// candidate input, and the answer is not in that input at all: not as
+/// exact text, nor, for an end state, as a whole JSON value. This is not a
+/// label, a certificate of task quality or a measured pass.
 #[derive(Debug, Clone)]
 pub struct EvalRepairTask {
     pub source: EvalRepairTaskSource,
@@ -63,9 +62,6 @@ pub struct EvalRepairTask {
     initial_state: Value,
     /// The declared tools the task offers; none for a text-response world.
     tools: Vec<EvalRepairTool>,
-    /// What the contract's author wrote that a leg is shown, as
-    /// [`shown_parts`] lists it; an answer in any part leaks.
-    shown: Vec<Value>,
     expected: EvalRepairExpected,
 }
 
@@ -147,9 +143,9 @@ impl EvalRepairTask {
 
     /// The digest an adjudicated answer is held by, after the checks a
     /// compiled answer gets: the task's grader is an adjudicated response,
-    /// and the answer is not leaked in anything the contract shows a leg.
-    /// Nor is it in the text the seed keeps: the source's task pointer, and
-    /// the label's own `reference`, which its case keeps too.
+    /// and the answer is not leaked in the leg's input. Nor is it in the
+    /// text the seed keeps: the source's task pointer, and the label's own
+    /// `reference`, which its case keeps too.
     pub(super) fn adjudicated_answer_digest(
         &self,
         answer: &str,
@@ -160,7 +156,7 @@ impl EvalRepairTask {
                 "only an adjudicated-response Repair task takes an adjudicated answer",
             ));
         }
-        if self.shown.iter().any(|part| answer_leaks(part, answer)) {
+        if answer_leaks(&self.input, answer) {
             return Err(Error::InvalidClaimBody(
                 "Repair task answer is leaked in its workspace or history",
             ));
@@ -199,11 +195,14 @@ pub struct EvalRepairTaskRead {
     pub receipt: ScopedReadReceipt,
 }
 
-/// Whether `answer` sits in `world`, which the candidate is shown: in a string
-/// or an object key, or as a number's or a boolean's whole text. The answer is
-/// trimmed of outer whitespace; an empty one leaks nothing. Exact text only:
-/// a paraphrase passes, and a short answer that recurs by chance refuses.
-fn answer_leaks(world: &Value, answer: &str) -> bool {
+/// Whether `answer` sits in `shown`, a leg's whole input: in a string or an
+/// object key as written, or anywhere in the input's compact JSON text, which
+/// holds every number's and boolean's text and the JSON of every whole value
+/// a leg can copy. The answer is trimmed of outer whitespace; an empty one
+/// leaks nothing. Exact text only: a paraphrase passes, and a short answer
+/// that recurs by chance refuses, in the contract's fixed words (its keys,
+/// the world's kind, the allowed actions) as in its author's text.
+fn answer_leaks(shown: &Value, answer: &str) -> bool {
     fn holds(value: &Value, answer: &str) -> bool {
         match value {
             Value::String(text) => text.contains(answer),
@@ -211,54 +210,27 @@ fn answer_leaks(world: &Value, answer: &str) -> bool {
                 .iter()
                 .any(|(key, value)| key.contains(answer) || holds(value, answer)),
             Value::Array(items) => items.iter().any(|item| holds(item, answer)),
-            Value::Number(number) => number.to_string() == answer,
-            Value::Bool(flag) => flag.to_string() == answer,
-            Value::Null => false,
+            Value::Number(_) | Value::Bool(_) | Value::Null => false,
         }
     }
     let answer = answer.trim();
-    !answer.is_empty() && holds(world, answer)
+    !answer.is_empty() && (holds(shown, answer) || shown.to_string().contains(answer))
 }
 
-/// Whether the end state `state` sits in `world`, which the candidate is
-/// shown: as `world` itself (a task no call needs to solve), as a value
-/// inside it, or, for a text state, as an object key. Exact JSON only.
-fn state_leaks(world: &Value, state: &Value) -> bool {
-    world == state
-        || match world {
+/// Whether the end state `state` sits in `shown`, a leg's whole input, as a
+/// whole JSON value: the rebuilt state (a task no call needs to solve), or
+/// any other value in the input, such as a declared tool, a precondition or
+/// the offered tools' list, which a leg can copy into a call; or, for a text
+/// state, as an object key. Exact JSON only.
+fn state_leaks(shown: &Value, state: &Value) -> bool {
+    shown == state
+        || match shown {
             Value::Object(fields) => fields.iter().any(|(key, value)| {
                 state.as_str() == Some(key.as_str()) || state_leaks(value, state)
             }),
             Value::Array(items) => items.iter().any(|item| state_leaks(item, state)),
             _ => false,
         }
-}
-
-/// What the contract's author wrote that a leg is shown: the rebuilt state,
-/// the input, the intent, each precondition's pointer and value, and each
-/// declared tool's name and effect pointer (the offered tools are among
-/// them). The world's kind and the allowed actions are fixed words, not the
-/// author's text.
-fn shown_parts(spec: &EvalRepairTaskSpec) -> Vec<Value> {
-    let mut shown = vec![
-        spec.initial_state.clone(),
-        spec.input.clone(),
-        Value::String(spec.intent.clone()),
-    ];
-    for check in &spec.preconditions {
-        shown.push(Value::String(check.pointer.clone()));
-        shown.push(check.equals.clone());
-    }
-    if let EvalRepairWorld::JsonStateTools { tools } = &spec.world {
-        for tool in tools {
-            let (EvalRepairToolEffect::Set { pointer }
-            | EvalRepairToolEffect::Append { pointer }
-            | EvalRepairToolEffect::Remove { pointer }) = &tool.effect;
-            shown.push(Value::String(tool.name.clone()));
-            shown.push(Value::String(pointer.clone()));
-        }
-    }
-    shown
 }
 
 /// RFC 6901 syntax: empty, or `/`-led with every `~` escaped as `~0` or `~1`.
@@ -489,16 +461,23 @@ impl Memory<'_> {
             // adjudicated label the task's seed takes later.
             EvalRepairGrader::AdjudicatedResponse {} => EvalRepairExpected::Adjudicated(None),
         };
+        let input = serde_json::json!({
+            "world": spec.world,
+            "initial_state": spec.initial_state,
+            "preconditions": spec.preconditions,
+            "intent": spec.intent,
+            "input": spec.input,
+            "tools": spec.tools,
+            "allowed_actions": spec.allowed_actions,
+        });
         // A trace is a task only if its answer is not leaked in the workspace
         // or the history (ARCH-0053 #eval-trace-task): the rebuilt state and
-        // the input, and the rest of what the candidate is shown with them.
-        // An adjudicated answer is checked when its label lands.
-        let shown = shown_parts(&spec);
+        // the input, and the rest of what the candidate is shown with them,
+        // which is the whole input. An adjudicated answer is checked when its
+        // label lands.
         let leaked = match &expected {
-            EvalRepairExpected::Response(answer) => {
-                shown.iter().any(|part| answer_leaks(part, answer))
-            }
-            EvalRepairExpected::State(state) => shown.iter().any(|part| state_leaks(part, state)),
+            EvalRepairExpected::Response(answer) => answer_leaks(&input, answer),
+            EvalRepairExpected::State(state) => state_leaks(&input, state),
             EvalRepairExpected::Adjudicated(_) => false,
         };
         if leaked {
@@ -515,15 +494,6 @@ impl Memory<'_> {
             EvalRepairExpected::Adjudicated(_) => serde_json::to_vec(&(&source, &spec)),
         }
         .map_err(|_| Error::InvalidClaimBody("Repair task encoding failed"))?;
-        let input = serde_json::json!({
-            "world": spec.world,
-            "initial_state": spec.initial_state,
-            "preconditions": spec.preconditions,
-            "intent": spec.intent,
-            "input": spec.input,
-            "tools": spec.tools,
-            "allowed_actions": spec.allowed_actions,
-        });
         Ok(EvalRepairTaskRead {
             task: Some(EvalRepairTask {
                 source,
@@ -534,7 +504,6 @@ impl Memory<'_> {
                 input,
                 initial_state: spec.initial_state,
                 tools,
-                shown,
                 expected,
             }),
             receipt: read.receipt,

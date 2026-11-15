@@ -190,6 +190,41 @@ fn bounded_arm(arm: &EvalArmPin) -> Result<()> {
     }
 }
 
+/// Whether `answer`, trimmed, is one of the identifiers `seed` keeps, whole:
+/// its source's claim ref, fingerprint, outcome ordinal and seat (a named
+/// seat's name too), and each arm's model, revision and skill digest. An
+/// adjudicated answer that is one would sit in the seed as text. Only a whole
+/// identifier counts: a hex id holds most one- and two-character answers by
+/// chance.
+fn is_a_seed_identifier(seed: &EvalRepairSeed, answer: &str) -> Result<bool> {
+    let answer = answer.trim();
+    let source = &seed.source;
+    let seat = source.seat.token()?;
+    let ordinal = source.outcome_ordinal.to_string();
+    let named = match &source.seat {
+        EvalSeat::Named(name) => Some(name.as_str()),
+        _ => None,
+    };
+    let arms = [&seed.old, &seed.candidate].into_iter().flat_map(|arm| {
+        [
+            Some(arm.model.as_str()),
+            Some(arm.revision.as_str()),
+            arm.skill_digest.as_deref(),
+        ]
+    });
+    Ok([
+        Some(source.claim_ref.as_str()),
+        Some(source.source_hash.as_str()),
+        Some(ordinal.as_str()),
+        Some(seat.as_str()),
+        named,
+    ]
+    .into_iter()
+    .chain(arms)
+    .flatten()
+    .any(|identifier| identifier.trim() == answer))
+}
+
 fn grade(task: &EvalRepairTask, answer: &EvalRepairLegAnswer) -> bool {
     match answer {
         EvalRepairLegAnswer::Response(text) => task.grade_response(text),
@@ -500,8 +535,9 @@ impl Memory<'_> {
     /// adjudicated answer: bounded (at most 512 bytes; a longer one is
     /// refused, never cut), checked against what the task shows a leg as a
     /// compiled answer is, and against the text the seed keeps (the task
-    /// pointer and the label's own reference), and held only as the BLAKE3
-    /// of its bytes. An owner's pick
+    /// pointer and the label's own reference), refused if it is, whole, one
+    /// of the seed's identifiers, and held only as the BLAKE3 of its bytes.
+    /// An owner's pick
     /// arrives through its ask and a judge's verdict is never a check, so
     /// only an adjudicated audit is taken. The label is set once: the same
     /// answer and reference again return the seed unchanged. As at the gate,
@@ -511,8 +547,8 @@ impl Memory<'_> {
     ///
     /// A label of another kind, an unbounded value or reference, a weight
     /// outside 0..=1, no seed for `source`, a task that is not an adjudicated
-    /// response or that moved since the seed was proposed, a leaked answer,
-    /// another label already set, a seed that does not await a label, a seed
+    /// response or that moved since the seed was proposed, a leaked answer
+    /// or one that is a seed identifier, another label already set, a seed that does not await a label, a seed
     /// that changed while it was labelled, or storage errors.
     pub fn label_eval_repair_seed(
         &self,
@@ -557,6 +593,11 @@ impl Memory<'_> {
             weight: label.weight,
             at: label.at,
         };
+        if is_a_seed_identifier(&stored, &label.value)? {
+            return Err(
+                invalid("an adjudicated answer is one of the identifiers its seed keeps").into(),
+            );
+        }
         let seed = vault.with_write_txn_grouped(|txn| {
             let Some(mut seed) = SEEDS.get(&vault.store, txn, &key)? else {
                 return Err(invalid("no repair seed was proposed for this source"));
