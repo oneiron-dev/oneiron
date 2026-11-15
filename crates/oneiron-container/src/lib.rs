@@ -310,6 +310,30 @@ impl ContainerRuntime {
         command: &[OsString],
         relay: Arc<dyn EgressRelay>,
     ) -> Result<GuestSession> {
+        self.start_fenced_with(spec, command, relay, false)
+    }
+
+    /// [`start_fenced`](Self::start_fenced) whose container outlives its
+    /// guest until the host closes the guest's stdin (FIX 8013), so the
+    /// host still reads its cgroup after the guest's last frame. When the
+    /// guest exits, its launcher ends what it left running and its stdout,
+    /// so the host's reader still sees the guest's end at once.
+    pub fn start_fenced_until_stdin_closes(
+        &self,
+        spec: &GuestSpec,
+        command: &[OsString],
+        relay: Arc<dyn EgressRelay>,
+    ) -> Result<GuestSession> {
+        self.start_fenced_with(spec, command, relay, true)
+    }
+
+    fn start_fenced_with(
+        &self,
+        spec: &GuestSpec,
+        command: &[OsString],
+        relay: Arc<dyn EgressRelay>,
+        hold_until_stdin_closes: bool,
+    ) -> Result<GuestSession> {
         #[cfg(target_os = "linux")]
         {
             let config = FenceConfig::from_env()?;
@@ -347,6 +371,12 @@ impl ContainerRuntime {
                 &config.launcher,
                 Path::new("/run/oneiron-fence-launcher"),
             )?);
+            if hold_until_stdin_closes {
+                args.push(OsString::from(format!(
+                    "--env={}=1",
+                    launcher::HOLD_UNTIL_STDIN_CLOSES_ENV
+                )));
+            }
             args.extend([
                 OsString::from("--entrypoint=/run/oneiron-fence-launcher"),
                 spec.image.as_str().into(),
@@ -415,7 +445,7 @@ impl ContainerRuntime {
         }
         #[cfg(not(target_os = "linux"))]
         {
-            let _ = (spec, command, relay);
+            let _ = (spec, command, relay, hold_until_stdin_closes);
             Err(Error::Fence(std::io::Error::other(
                 "Foreign/Untrusted containers require a proven Linux fence",
             )))
