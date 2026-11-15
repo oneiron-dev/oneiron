@@ -59,6 +59,9 @@ pub use authority::{
 };
 pub use inputs::*;
 pub(crate) use mirror_plan::{MirrorRunScope, MirrorSelection};
+// The digests' K-proof seams (PLAN-UC-04 3.2), for `test_doors::fingerprint_keep_origin`.
+#[cfg(oneiron_test_support)]
+pub(crate) use mirror_plan::plan_digest_for_test;
 pub(crate) use mirror_plan_reconcile::MirrorReconcile;
 pub use mirror_plan_reconcile::{
     AUTOMATIC_RECONCILE_UNREAD_BEFORE_RESEND, AUTOMATIC_UNREADABLE_RECONCILE_RESENDS_SAME_PLAN,
@@ -70,7 +73,11 @@ pub use mirror_plan_view::{
     OriginMirrorPlanBatchView, OriginMirrorPlanRecord, OriginMirrorPlanRefView,
     OriginMirrorPlanRequest, OriginMirrorPlanView,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use mirror_review::section_digest_for_test;
 pub use review::ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS;
+#[cfg(oneiron_test_support)]
+pub(crate) use review::publish_review_digest_for_test;
 pub(crate) use store::erase_publish_request_actor_in_txn;
 pub use types::*;
 

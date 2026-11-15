@@ -16,18 +16,18 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::types::{
     OriginPublishLfsBytes, OriginPublishReview, OriginPublishReviewItem, OriginPublishReviewPage,
 };
 use crate::Vault;
+use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Result;
 use crate::git_wire::{GitOid, GitReviewItem, GitWire, GitWireRepo};
 
 /// Items one stored review page holds (CALLS "FIX 6866 review page").
 pub const ORIGIN_PUBLISH_REVIEW_PAGE_ITEMS: usize = 512;
-
-/// The digest's BLAKE3 derive-key context.
-const ORIGIN_PUBLISH_REVIEW_DIGEST_CONTEXT: &str = "oneiron:origin-publish-review:v1";
 
 /// A review as one walk built it.
 pub(super) struct BuiltReview {
@@ -74,15 +74,7 @@ impl Vault {
         reviewed: &[GitOid],
         blocking: Option<&BTreeSet<GitOid>>,
     ) -> Result<BuiltReview> {
-        let mut hasher = blake3::Hasher::new_derive_key(ORIGIN_PUBLISH_REVIEW_DIGEST_CONTEXT);
-        field(&mut hasher, commit.as_str().as_bytes());
-        field(
-            &mut hasher,
-            base.map_or(&b""[..], |base| base.as_str().as_bytes()),
-        );
-        for oid in reviewed {
-            field(&mut hasher, oid.as_str().as_bytes());
-        }
+        let mut digest = review_digest(commit, base, reviewed);
         let mut pages = Vec::new();
         let mut page = Vec::new();
         let mut paths = BTreeSet::new();
@@ -93,7 +85,7 @@ impl Vault {
         // Retained reads: a page or one tree level past the wire's output
         // bound is read whole, so no review fails for a level's width.
         wire.for_each_review_item_retained(handle, commit, &exclude, &mut |item| {
-            hash_item(&mut hasher, &item);
+            hash_item(&mut digest, &item);
             if let (
                 Some(blocking),
                 GitReviewItem::Path {
@@ -144,7 +136,7 @@ impl Vault {
         let count = |n: usize| u64::try_from(n).unwrap_or(u64::MAX);
         let built = BuiltReview {
             review: OriginPublishReview {
-                digest: hasher.finalize().to_hex().to_string(),
+                digest: digest_hex(&digest),
                 subtracted: base.map(|base| base.as_str().to_owned()),
                 commits,
                 entries,
@@ -171,19 +163,39 @@ pub(super) fn admit_review_policy(_review: &BuiltReview) -> Result<()> {
     Ok(())
 }
 
-/// One item into the digest, each field length-prefixed.
-pub(super) fn hash_item(hasher: &mut blake3::Hasher, item: &GitReviewItem) {
+/// A review digest's start: the commit, the subtracted tip (empty when none) and
+/// each commit `reviewed` names. Vaults hold these digests, so they keep their bytes
+/// (K, PLAN-UC-04 3.2): each field framed by its length as a u64 little-endian.
+fn review_digest(commit: &GitOid, base: Option<&GitOid>, reviewed: &[GitOid]) -> LegacyDigest {
+    let mut digest = LegacyDigest::new(purposes::origin::PUBLISH_REVIEW);
+    let commit = commit.as_str().as_bytes();
+    let base = base.map_or(&b""[..], |base| base.as_str().as_bytes());
+    digest
+        .len_u64_le(commit.len())
+        .raw(commit)
+        .len_u64_le(base.len())
+        .raw(base);
+    for oid in reviewed {
+        let oid = oid.as_str().as_bytes();
+        digest.len_u64_le(oid.len()).raw(oid);
+    }
+    digest
+}
+
+/// One item into the digest: `c` or `p`, then each field framed by its length
+/// and the parent count, each as a u64 little-endian.
+pub(super) fn hash_item(digest: &mut LegacyDigest, item: &GitReviewItem) {
     match item {
         GitReviewItem::Commit { commit, parents } => {
-            hasher.update(b"c");
-            field(hasher, commit.as_str().as_bytes());
-            hasher.update(
-                &u64::try_from(parents.len())
-                    .unwrap_or(u64::MAX)
-                    .to_le_bytes(),
-            );
+            let commit = commit.as_str().as_bytes();
+            digest
+                .raw(b"c")
+                .len_u64_le(commit.len())
+                .raw(commit)
+                .len_u64_le(parents.len());
             for parent in parents {
-                field(hasher, parent.as_str().as_bytes());
+                let parent = parent.as_str().as_bytes();
+                digest.len_u64_le(parent.len()).raw(parent);
             }
         }
         GitReviewItem::Path {
@@ -192,19 +204,38 @@ pub(super) fn hash_item(hasher: &mut blake3::Hasher, item: &GitReviewItem) {
             object,
             path,
         } => {
-            hasher.update(b"p");
-            field(hasher, status.to_string().as_bytes());
-            field(hasher, mode.as_bytes());
-            field(
-                hasher,
-                object.as_ref().map_or("", GitOid::as_str).as_bytes(),
-            );
-            field(hasher, path);
+            let status = status.to_string();
+            let object = object.as_ref().map_or("", GitOid::as_str);
+            digest.raw(b"p");
+            for field in [
+                status.as_bytes(),
+                mode.as_bytes(),
+                object.as_bytes(),
+                path.as_slice(),
+            ] {
+                digest.len_u64_le(field.len()).raw(field);
+            }
         }
     }
 }
 
-pub(super) fn field(hasher: &mut blake3::Hasher, bytes: &[u8]) {
-    hasher.update(&u64::try_from(bytes.len()).unwrap_or(u64::MAX).to_le_bytes());
-    hasher.update(bytes);
+/// A finished review, section or plan digest as it is stored: 64 lower hex.
+pub(super) fn digest_hex(digest: &LegacyDigest) -> String {
+    bytes_to_hex_lower(&digest.finish())
+}
+
+/// An exact publish's review digest over `items`, for the K-proof door
+/// (`test_doors::fingerprint_keep_origin`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn publish_review_digest_for_test(
+    commit: &GitOid,
+    base: Option<&GitOid>,
+    reviewed: &[GitOid],
+    items: &[GitReviewItem],
+) -> String {
+    let mut digest = review_digest(commit, base, reviewed);
+    for item in items {
+        hash_item(&mut digest, item);
+    }
+    digest_hex(&digest)
 }

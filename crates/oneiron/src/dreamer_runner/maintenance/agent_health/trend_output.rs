@@ -16,6 +16,7 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use rmpv::Value;
 
 use super::rollups::{HealthTrendRollups, TrendMargin, TrendSource, health_trend_rollups};
@@ -34,7 +35,6 @@ use crate::{EntityId, Result, Vault};
 /// Every trend DIAGNOSTIC's detector id starts so; the rollups never read
 /// one back as a finding.
 pub(super) const TREND_DETECTOR_PREFIX: &str = "coach.agent_health.trend.";
-const TREND_DIGEST_DOMAIN: &[u8] = b"oneiron.coach.agent_health.trend.v1";
 
 /// `result`'s value, or `None` with `source` named failed and a kind-only
 /// warning: every read the pass makes goes through it.
@@ -199,28 +199,31 @@ fn side_value(side: &TrendSide) -> Value {
 /// The replay hash: the margin, the stratum, the metric, and each side's
 /// days (the policy's period), counts and every typed ref, spend scopes
 /// included. The same evidence under the same policy is the same hash.
+/// DIAGNOSTIC bodies store it, so it keeps its bytes (K, PLAN-UC-04 3.2): each
+/// string framed by its length and each count written, as a u64 little-endian.
 fn content_hash(comparison: &HealthTrendComparison) -> [u8; 32] {
-    let mut digest = blake3::Hasher::new();
-    digest.update(TREND_DIGEST_DOMAIN);
+    let mut digest = LegacyDigest::new(purposes::dreamer::AGENT_HEALTH_TREND);
     match &comparison.margin {
         TrendMargin::Actor(actor) => {
-            digest.update(b"actor");
-            digest.update(actor.as_bytes());
+            digest.raw(b"actor").raw(actor.as_bytes());
         }
         TrendMargin::Project(project) => {
-            digest.update(b"project");
             let bytes: [u8; 16] = project.as_ref().map_or([0_u8; 16], |id| *id.as_bytes());
-            digest.update(&bytes);
+            digest.raw(b"project").raw(&bytes);
         }
     }
-    field(&mut digest, comparison.stratum.type_node.as_bytes());
+    let type_node = comparison.stratum.type_node.as_bytes();
+    digest.len_u64_le(type_node.len()).raw(type_node);
     match &comparison.stratum.model {
-        Some(model) => field(&mut digest, model.as_bytes()),
+        Some(model) => {
+            digest.len_u64_le(model.len()).raw(model.as_bytes());
+        }
         None => {
-            digest.update(&[0xff]);
+            digest.raw(&[0xff]);
         }
     }
-    field(&mut digest, comparison.metric.token().as_bytes());
+    let metric = comparison.metric.token();
+    digest.len_u64_le(metric.len()).raw(metric.as_bytes());
     for side in [&comparison.prior, &comparison.latest] {
         for number in [
             side.days.0,
@@ -230,24 +233,25 @@ fn content_hash(comparison: &HealthTrendComparison) -> [u8; 32] {
             side.ratio.known,
             side.ratio.eligible,
         ] {
-            digest.update(&number.to_le_bytes());
+            digest.raw(&number.to_le_bytes());
         }
         for ids in [&side.attempts, &side.refs] {
-            digest.update(&(ids.len() as u64).to_le_bytes());
+            digest.len_u64_le(ids.len());
             for id in ids {
-                digest.update(id.as_bytes());
+                digest.raw(id.as_bytes());
             }
         }
-        digest.update(&(side.scopes.len() as u64).to_le_bytes());
+        digest.len_u64_le(side.scopes.len());
         for scope in &side.scopes {
-            field(&mut digest, scope.as_bytes());
+            digest.len_u64_le(scope.len()).raw(scope.as_bytes());
         }
     }
-    *digest.finalize().as_bytes()
+    digest.finish()
 }
 
-/// One length-prefixed field, so no two field lists hash alike.
-fn field(digest: &mut blake3::Hasher, bytes: &[u8]) {
-    digest.update(&(bytes.len() as u64).to_le_bytes());
-    digest.update(bytes);
+/// The replay hash of `comparison`, for the K-proof door
+/// (`test_doors::fingerprint_keep_dreamer`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn content_hash_for_test(comparison: &HealthTrendComparison) -> [u8; 32] {
+    content_hash(comparison)
 }
