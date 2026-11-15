@@ -120,8 +120,6 @@ impl SelfCompactionUnavailable {
 }
 
 #[doc(hidden)]
-pub(super) use oneiron_records::compaction::self_writer::hex32;
-#[doc(hidden)]
 pub use oneiron_records::compaction::self_writer::{
     CompactionEvidence, CompactionHomeRef, CompactionLanding, CompactionStepRef, CompactionUsage,
     HOME_PART_WORN, compaction_home_worn_parts, compaction_home_worn_rows,
