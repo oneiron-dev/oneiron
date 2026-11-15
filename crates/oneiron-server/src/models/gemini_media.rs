@@ -1,5 +1,5 @@
 //! The Gemini API's media leg: one request per call over [`ProviderHttp`],
-//! the key in `x-goog-api-key`. The adapter (`oneiron-llm-gemini`) owns the
+//! the key in `x-goog-api-key`. The adapter (`oneiron_gen::gemini`) owns the
 //! versioned paths, so the provider's `base_url` is the API's origin; a base
 //! written with its `/v1beta` drops it.
 use std::collections::BTreeMap;
@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use oneiron::llm::media::MediaBackend;
 use oneiron::{BudgetLease, LlmError, ModelId};
-use oneiron_llm_gemini::{
+use oneiron_gen::gemini::{
     GeminiMediaBackend, GeminiMediaFuture, GeminiMediaHttpRequest, GeminiMediaHttpResponse,
     GeminiMediaTransport,
 };

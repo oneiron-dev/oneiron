@@ -244,7 +244,7 @@ impl Vault {
             }
             row.resume_refusal = Some(CodeConsentResumeRefusal {
                 code: refusal.code().to_owned(),
-                refused_at_ms: super::settle::now_ms(),
+                refused_at_ms: crate::unix_millis_now(),
             });
             put_code_consent_wait_in_txn(
                 self,
