@@ -36,6 +36,8 @@ use oneiron::store::custody_protocol::{AnchorStore, HostedKind, TargetKind, Targ
 use serde::Serialize;
 
 use self::anchor_client::HttpAnchor;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::anchor_client::unhex;
 pub(crate) use self::anchor_credentials::CustodyAnchorCredentials;
 pub(crate) use self::home_fetch::custody_from_home;
 use super::{BackupOutcome, BackupPlan, take};

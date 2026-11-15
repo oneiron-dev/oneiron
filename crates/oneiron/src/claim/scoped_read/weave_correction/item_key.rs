@@ -27,7 +27,7 @@ impl WeaveItemKey {
         crate::entity_id::bytes_to_hex_lower(&self.bytes())
     }
 
-    pub(in crate::claim::scoped_read) fn from_hex(hex: &str) -> Option<Self> {
+    pub(crate) fn from_hex(hex: &str) -> Option<Self> {
         if hex.len() != Self::WIDTH * 2 || !hex.is_ascii() {
             return None;
         }

@@ -59,6 +59,8 @@ pub(crate) use self::connector_call::{connector_call_effector, held_connector_ca
 pub(crate) use self::connector_call_code::{
     code_owned_call_rows_in_txn, code_wait_admission_in_txn, settle_code_owned_call_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::connector_call_consent::digest_from_hex;
 pub(crate) use self::connector_call_consent::{
     SLATE_ALWAYS_ASK_REASON, frozen_scoped_candidate_in_txn,
 };

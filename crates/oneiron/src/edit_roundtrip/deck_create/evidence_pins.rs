@@ -81,7 +81,7 @@ pub(super) fn hex(bytes: &[u8]) -> String {
     oneiron_hex::encode(bytes)
 }
 
-pub(super) fn unhex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn unhex(text: &str) -> Option<Vec<u8>> {
     if text.len() % 2 != 0 {
         return None;
     }

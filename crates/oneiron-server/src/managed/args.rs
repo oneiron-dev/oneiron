@@ -391,7 +391,7 @@ const VSOCK_BOOT_REASON: &str =
 
 const VSOCK_NO_PIPE_REASON: &str = "a vault VM takes a custody anchor credential pipe only from its bootstrap's anchor exchange (--vm-anchor-revision)";
 
-fn decode_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
+pub(crate) fn decode_hex<const N: usize>(value: &str) -> Option<[u8; N]> {
     if value.len() != N * 2 {
         return None;
     }

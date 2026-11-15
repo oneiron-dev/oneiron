@@ -8,6 +8,7 @@ pub mod big_rung;
 pub mod build_server;
 pub mod coach_round;
 pub mod hex_input_policy;
+pub mod hex_sign_digit;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lfs_install_line;

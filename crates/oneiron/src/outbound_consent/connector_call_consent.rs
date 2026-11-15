@@ -99,7 +99,7 @@ pub(crate) fn frozen_scoped_candidate_in_txn(
 }
 
 /// A held call's stored approve-once digest, 64 lower-hex, as bytes.
-fn digest_from_hex(hex: &str) -> Option<EffectDigest> {
+pub(crate) fn digest_from_hex(hex: &str) -> Option<EffectDigest> {
     if hex.len() != 64 {
         return None;
     }

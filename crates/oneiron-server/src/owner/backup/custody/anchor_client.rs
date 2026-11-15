@@ -56,7 +56,7 @@ fn failed(what: &str) -> oneiron::Error {
     )))
 }
 
-fn unhex(text: &str) -> oneiron::Result<Vec<u8>> {
+pub(crate) fn unhex(text: &str) -> oneiron::Result<Vec<u8>> {
     if !text.len().is_multiple_of(2) {
         return Err(failed("answered a record that is not hex"));
     }

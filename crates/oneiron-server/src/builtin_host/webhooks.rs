@@ -694,7 +694,7 @@ fn form_field(body: &[u8], name: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
+pub(crate) fn decode_hex(text: &str) -> Option<Vec<u8>> {
     if text.len() % 2 != 0 {
         return None;
     }

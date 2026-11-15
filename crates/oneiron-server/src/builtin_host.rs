@@ -26,6 +26,8 @@ pub(crate) use handles::BuiltinHandles;
 pub(crate) use slack_app::{
     ProviderSetup, SlackInstallLink, public_origin, slack_app_manifest, start_slack_install,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use webhooks::decode_hex;
 pub(crate) use webhooks::{hmac_matches, routes};
 
 use crate::config::models::ModelsConfig;

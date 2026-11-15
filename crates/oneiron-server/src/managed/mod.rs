@@ -109,6 +109,8 @@ pub use self::vm_outbox::{
     read_vm_outbox_member_statuses, run_vm_outbox,
 };
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::args::decode_hex;
 pub use self::args::{ManagedArgs, ManagedError, ManagedStartMode, NO_FD, SettingsRefusal};
 pub use self::key_sync::{
     KeyInvalidation, KeyInvalidationAck, KeyInvalidationKind, account_keys,

@@ -73,6 +73,8 @@ pub use frozen::FrozenReadLane;
 pub use named_reads::NamedSlot;
 pub use point_reads::{PointRead, ReadRow, ReadTarget};
 pub use receipt::{ReadScope, ScopedReadReceipt, ScopedReadResult};
+#[cfg(oneiron_test_support)]
+pub(crate) use weave_correction::WeaveItemKey;
 pub(crate) use weave_correction::erase_weave_decision_labels_in_txn;
 pub use weave_correction::{WeaveItemCorrection, WeaveItemTarget, WeaveLinkCorrection};
 pub use weave_report::sieve_score::RedactedSieveDecision;
