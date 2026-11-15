@@ -5,6 +5,7 @@ use super::{ConflictIdentity, ConflictSet, PromotionCandidate};
 use crate::setting::SettingValue;
 use crate::{EntityId, Error, Result, Vault};
 use rmpv::Value;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[doc(hidden)]
