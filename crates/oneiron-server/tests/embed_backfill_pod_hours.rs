@@ -6,6 +6,11 @@
 //! rebuild) stays pending, unleased and unsent; a fresh write embeds at once.
 //! A pod without hours takes batches at any hour, so it never holds.
 //!
+//! Which embeds wait is the owner's Setting key "Wait for the night box"
+//! (`embed.pod_hours_wait`): backfill only (the default), everything, or
+//! nothing. The owner sets it through the Setting primitive's door; a holder's
+//! row may only make more embeds wait, never fewer.
+//!
 //! Public crate surface only: a model swap queues every record again at
 //! backfill priority, a public `GpuPool` built from its `[gpu]` TOML is the
 //! hours the reconciler reads, and a recording embedder stands for the
@@ -22,8 +27,13 @@ use oneiron::embed::{
     payload_text,
 };
 use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::setting::{
+    ScopeKind, SetBy, SetSetting, SetSettingOutcome, SettingCaller, spec_named,
+};
+use oneiron::store::GateDecisionId;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_server::runtime::{GpuPool, GpuPoolConfig};
+use serde_json::{Value, json};
 
 type TestResult = Result<(), Box<dyn std::error::Error>>;
 
@@ -35,6 +45,9 @@ const MINUTES_PER_DAY: u64 = 24 * 60;
 const BACKFILLED: &str = "The harbour ferry timetable changes in December.";
 /// The turn written after the swap: a fresh write.
 const FRESH: &str = "Lunch moved to the harbour cafe at noon.";
+/// The owner's "Wait for the night box": which queued embeds wait for the
+/// pods' hours.
+const WAIT_KEY: &str = "embed.pod_hours_wait";
 
 /// The endpoint: keeps every text it is sent.
 struct RecordingEmbedder {
@@ -183,6 +196,36 @@ fn reconciler(
         .with_pod_hours(Arc::new(pool) as Arc<dyn PodHoursClock>)
 }
 
+/// The owner sets the wait to `value` through the Setting primitive's door;
+/// `None` clears the owner's row, so the catalogue default reads again.
+fn set_wait(
+    vault: &Vault,
+    owner_id: EntityId,
+    value: Option<Value>,
+) -> oneiron::Result<SetSettingOutcome> {
+    let owner =
+        vault.authenticate_owner(owner_id, &owner_id.to_hex(), true, GateDecisionId::now())?;
+    let mut request = SetSetting::vault_value(WAIT_KEY, Value::Null);
+    request.value = value;
+    vault.set_setting(SettingCaller::Owner(&owner), request)
+}
+
+/// [`set_wait`], applied at once: the owner sets the key without asking.
+fn owner_sets_wait(vault: &Vault, owner_id: EntityId, value: Option<Value>) -> TestResult {
+    let outcome = set_wait(vault, owner_id, value)?;
+    assert!(
+        matches!(outcome, SetSettingOutcome::Applied { .. }),
+        "the owner's change to the wait did not apply: {outcome:?}"
+    );
+    Ok(())
+}
+
+fn recording_embedder() -> Arc<RecordingEmbedder> {
+    Arc::new(RecordingEmbedder {
+        sent: Mutex::new(Vec::new()),
+    })
+}
+
 #[tokio::test]
 async fn backfill_waits_for_pod_hours_instead_of_embedding_on_the_endpoint() -> TestResult {
     let dir = tempfile::tempdir()?;
@@ -285,4 +328,124 @@ fn the_night_box_wait_names_which_embeds_wait_for_pod_hours() {
             .chain([EMBED_PRIORITY_BACKFILL].iter())
             .all(|priority| !PodHoursWait::Nothing.holds(*priority))
     );
+}
+
+#[tokio::test]
+async fn the_owners_wait_for_everything_holds_a_fresh_write_until_the_pods_hours() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, owner_id) = swapped_vault(dir.path())?;
+    let embedder = recording_embedder();
+    owner_sets_wait(&vault, owner_id, Some(json!("everything")))?;
+
+    // Every pod outside its hours: the fresh write waits with the backfill.
+    witness(&vault, owner_id, FRESH)?;
+    let night = reconciler(&vault, &embedder, pool(&[closed_pod("night-box")])?);
+    let reports = drain(&night)?;
+    assert!(
+        !embedder.was_sent(FRESH) && !embedder.was_sent(BACKFILLED),
+        "a row went to the endpoint outside the pod's hours while the owner's wait holds \
+         everything: sent {:?}",
+        embedder.sent()
+    );
+    assert!(
+        reports
+            .first()
+            .is_some_and(|report| report.leased == 0 && report.held_for_pod_hours > 0),
+        "the first pass outside the hours leases nothing and counts the held rows: {reports:?}"
+    );
+
+    // Inside the hours both embed.
+    let day = reconciler(&vault, &embedder, pool(&[open_pod("night-box")])?);
+    let reports = drain(&day)?;
+    assert!(
+        embedder.was_sent(FRESH) && embedder.was_sent(BACKFILLED),
+        "a held row did not embed inside the pod's hours: sent {:?}, passes {reports:?}",
+        embedder.sent()
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_owners_wait_for_nothing_sends_the_backfill_to_the_endpoint_outside_the_pods_hours()
+-> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, owner_id) = swapped_vault(dir.path())?;
+    let embedder = recording_embedder();
+    owner_sets_wait(&vault, owner_id, Some(json!("nothing")))?;
+
+    let reports = drain(&reconciler(
+        &vault,
+        &embedder,
+        pool(&[closed_pod("night-box")])?,
+    ))?;
+    assert!(
+        embedder.was_sent(BACKFILLED),
+        "the backfill waited for the pod's hours while the owner's wait holds nothing: sent \
+         {:?}, passes {reports:?}",
+        embedder.sent()
+    );
+    assert!(
+        reports.iter().all(|report| report.held_for_pod_hours == 0),
+        "a pass held a row: {reports:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cleared_wait_holds_backfill_only_again_and_an_unknown_wait_is_refused() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (vault, owner_id) = swapped_vault(dir.path())?;
+    let embedder = recording_embedder();
+    let refused = set_wait(&vault, owner_id, Some(json!("sometimes")));
+    assert!(
+        refused.is_err(),
+        "a wait the key does not name was stored: {refused:?}"
+    );
+    owner_sets_wait(&vault, owner_id, Some(json!("everything")))?;
+    owner_sets_wait(&vault, owner_id, None)?;
+
+    // The default again: the fresh write embeds at once, the backfill waits.
+    witness(&vault, owner_id, FRESH)?;
+    let reports = drain(&reconciler(
+        &vault,
+        &embedder,
+        pool(&[closed_pod("night-box")])?,
+    ))?;
+    assert!(
+        embedder.was_sent(FRESH) && !embedder.was_sent(BACKFILLED),
+        "a cleared wait does not hold backfill only: sent {:?}, passes {reports:?}",
+        embedder.sent()
+    );
+    Ok(())
+}
+
+#[test]
+fn the_night_box_wait_is_the_owners_key_and_more_waiting_is_tighter() -> TestResult {
+    let spec = spec_named(WAIT_KEY)?;
+    assert_eq!(spec.set_by, SetBy::Owner);
+    assert!(
+        matches!(spec.scopes, [ScopeKind::Vault]),
+        "the wait has rows at the vault alone"
+    );
+    let kind = spec.kind;
+    assert_eq!(
+        kind.to_json(&kind.default_value()?),
+        Some(json!("backfill_only"))
+    );
+    let strictest = kind
+        .strictest_value()?
+        .ok_or("the wait names no strictest value")?;
+    assert_eq!(kind.to_json(&strictest), Some(json!("everything")));
+
+    // A holder's row stays inside the owner's: it may hold more embeds for
+    // the pods' hours, never send more to the endpoint.
+    let nothing = kind.from_json(json!("nothing"))?;
+    let backfill_only = kind.from_json(json!("backfill_only"))?;
+    let everything = kind.from_json(json!("everything"))?;
+    assert!(kind.has_direction());
+    assert_eq!(kind.is_tighter(&everything, &backfill_only), Some(true));
+    assert_eq!(kind.is_tighter(&backfill_only, &nothing), Some(true));
+    assert_eq!(kind.is_tighter(&backfill_only, &everything), Some(false));
+    assert_eq!(kind.is_tighter(&nothing, &backfill_only), Some(false));
+    Ok(())
 }
