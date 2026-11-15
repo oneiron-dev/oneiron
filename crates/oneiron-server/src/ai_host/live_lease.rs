@@ -21,24 +21,35 @@
 
 use std::sync::{Arc, Mutex};
 
-use oneiron::agent_dispatch::{AgentDispatcher, SpendScopeId};
+use oneiron::agent_dispatch::{AgentDispatcher, RunOverdraft, SpendScopeId};
 use oneiron::llm::{BudgetCheckpoint, BudgetDenied};
-use oneiron::{BudgetExhaustionPolicy, BudgetGuard, EntityId, Vault};
+use oneiron::{BudgetGuard, EntityId, Vault};
 
 /// The meter a try resumes on from its checkpoint (a workflow step's tool
-/// cursor): its spend, reservations and row tallies as saved. An overdraft
-/// the owner approved for the run since then (`overdraft`, his answer to
-/// its run-budget ask) applies to it as to a fresh meter; with none it keeps
-/// the policy it was saved with.
+/// cursor): its spend, reservations, row tallies and policy as saved, with
+/// the overdraft the owner approved for the run since
+/// ([`grant_run_overdraft`]).
 pub(crate) fn restore_try_meter(
     saved: BudgetCheckpoint,
-    overdraft: Option<u64>,
+    overdraft: Option<&RunOverdraft>,
 ) -> Result<BudgetGuard, BudgetDenied> {
     let meter = BudgetGuard::from_checkpoint(saved)?;
-    if let Some(cap) = overdraft {
-        meter.revise_exhaustion_policy(BudgetExhaustionPolicy::Overdraft { cap });
-    }
+    grant_run_overdraft(&meter, overdraft);
     Ok(meter)
+}
+
+/// The overdraft the owner approved for the try's run (`overdraft`, his
+/// answer to its run-budget ask; ARCH-0026 depletion ladder,
+/// RUNBUDGET-OVERDRAFT) on the try's meter, fresh or restored: its paid cap
+/// rises by the approved cap past what it admitted or spent, once per
+/// approval, so a meter that spent an earlier overdraft or the owner's
+/// `on_budget_exhausted` knob takes the new one whole, and a meter restored
+/// again under the same approval is not widened twice. The scope's room
+/// still bounds every admission ([`LiveLease`]). With none it is unchanged.
+pub(crate) fn grant_run_overdraft(meter: &BudgetGuard, overdraft: Option<&RunOverdraft>) {
+    if let Some(overdraft) = overdraft {
+        meter.grant_overdraft(overdraft.ask, overdraft.cap_units);
+    }
 }
 
 /// One try's meter, bounded by its spend scope's live room.

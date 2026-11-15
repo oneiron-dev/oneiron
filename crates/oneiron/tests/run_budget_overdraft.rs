@@ -93,8 +93,9 @@ fn the_owners_overdraft_press_names_the_runs_cap() {
     );
     assert_eq!(
         dispatcher
-            .run_overdraft_units(root.id)
-            .expect("overdraft read"),
+            .run_overdraft(root.id)
+            .expect("overdraft read")
+            .map(|overdraft| overdraft.cap_units),
         None,
         "nothing is approved before the answer"
     );
@@ -118,8 +119,9 @@ fn the_owners_overdraft_press_names_the_runs_cap() {
     for attempt in [root.id, other.id] {
         assert_eq!(
             dispatcher
-                .run_overdraft_units(attempt)
-                .expect("overdraft read"),
+                .run_overdraft(attempt)
+                .expect("overdraft read")
+                .map(|overdraft| overdraft.cap_units),
             Some(20_000),
             "every attempt of the run runs on the owner's cap"
         );
@@ -158,8 +160,9 @@ fn an_overdraft_without_a_cap_takes_the_stated_default_until_the_next_hold() {
         .expect("the owner's press");
     assert_eq!(
         dispatcher
-            .run_overdraft_units(root.id)
-            .expect("overdraft read"),
+            .run_overdraft(root.id)
+            .expect("overdraft read")
+            .map(|overdraft| overdraft.cap_units),
         Some(RUN_BUDGET_DEFAULT_OVERDRAFT_UNITS)
     );
 
@@ -167,8 +170,9 @@ fn an_overdraft_without_a_cap_takes_the_stated_default_until_the_next_hold() {
     hold(&dispatcher, &root, &again, now + 4);
     assert_eq!(
         dispatcher
-            .run_overdraft_units(root.id)
-            .expect("overdraft read"),
+            .run_overdraft(root.id)
+            .expect("overdraft read")
+            .map(|overdraft| overdraft.cap_units),
         None,
         "the next hold spends the overdraft"
     );
