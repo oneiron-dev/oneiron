@@ -330,6 +330,12 @@ name = "delete_authority_served_door"
 path = "tests/delete_authority_served_door.rs"
 required-features = ["oneiron/test-support"]
 
+# The off-record room door promise tests serve the owner's root from a `MemoryKeystore` too.
+[[test]]
+name = "vault_off_record_rooms_doors"
+path = "tests/vault_off_record_rooms_doors.rs"
+required-features = ["oneiron/test-support"]
+
 # The off-record stretch pack cases serve the owner's root from a `MemoryKeystore` too.
 [[test]]
 name = "off_record_room_context_pack"
