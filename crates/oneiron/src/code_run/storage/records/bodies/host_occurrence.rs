@@ -6,7 +6,7 @@
 
 use std::borrow::Cow;
 
-use super::super::REPLAY_RECORDS;
+use super::super::super::replay_rows;
 use super::finish_output_sourced;
 use crate::code_run::storage::response_erase::fence_replay_in_txn;
 use crate::code_run::storage::response_owners::stamp_response_owner_in_txn;
@@ -28,7 +28,7 @@ impl Vault {
         let record = CodeRunReplayRecord::new(run, CodeRunDeterminism::new(0, [0; 32]));
         stamp_response_owner_in_txn(self, &mut wtxn, run, run, actor)?;
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Owned(record))?;
-        REPLAY_RECORDS.put(self, &mut wtxn, &run, &record)?;
+        replay_rows::put(self, &mut wtxn, &run, &record)?;
         Ok(wtxn.commit()?)
     }
 
@@ -84,7 +84,7 @@ impl Vault {
             stamp_response_owner_in_txn(self, &mut wtxn, run, run, actor)?;
         }
         let record = fence_replay_in_txn(self, &mut wtxn, Cow::Owned(record))?;
-        REPLAY_RECORDS.put(self, &mut wtxn, &run, &record)?;
+        replay_rows::put(self, &mut wtxn, &run, &record)?;
         let output = record
             .outputs
             .iter()

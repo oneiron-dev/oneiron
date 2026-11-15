@@ -42,12 +42,12 @@ use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::replay::{CodeRunRawOutput, CodeRunReplayRecord, ResultOccurrence};
-use super::records::REPLAY_RECORDS;
 use super::replay_bodies::{CODE_RUN_OUTPUT_PREVIEW_ERASED, erase_replies};
 use super::replay_capsule::{
     actor_gone_in_txn, actor_hard_erased_in_store, capsule_bodies_in_txn, capsule_runs_in_txn,
     names_no_actor, retire_source_step_starts_in_txn,
 };
+use super::replay_rows;
 use super::response_owners::{
     ReleasedReplyBody, ResponseOwner, mark_response_deleted_in_txn, mark_response_erased_in_txn,
     owner_rows_of_in_txn, response_owner_in_txn,
@@ -154,9 +154,9 @@ fn scrub_actor_responses_in_txn(
     let records = actor_records_in_txn(store, wtxn, actor, &scope)?;
     for (&record_id, &run) in &records {
         let mut released = Vec::new();
-        if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
+        if let Some(record) = replay_rows::get_lenient(store, wtxn, &record_id)? {
             released = release_reply_outputs_in_txn(store, wtxn, run, &record)?;
-            REPLAY_RECORDS.put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
+            replay_rows::put_erased(store, wtxn, &record_id, Erased::of(record)?)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
             // Stored but not decoded: its reply bodies are its owner row's
             // run's (FIX 7365), which need not be the replay key. An erase
@@ -166,7 +166,7 @@ fn scrub_actor_responses_in_txn(
             released = release_occurrences_in_txn(store, wtxn, held)?;
             if scrub == ResponseScrub::Erase {
                 release_owner_bodies_in_txn(store, wtxn, &run)?;
-                REPLAY_RECORDS.put_erased_unreadable(store, wtxn, &record_id)?;
+                replay_rows::put_erased_unreadable(store, wtxn, &record_id)?;
             }
         }
         match scrub {
@@ -306,7 +306,7 @@ pub(crate) fn retire_actor_responses_in_txn(
     let mut deleted = Vec::new();
     let mut unreadable = Vec::new();
     for (record_id, run) in actor_records_in_txn(store, wtxn, actor, &runs)? {
-        if let Some(record) = REPLAY_RECORDS.get_lenient(store, wtxn, &record_id)? {
+        if let Some(record) = replay_rows::get_lenient(store, wtxn, &record_id)? {
             held.extend(run_reply_occurrences_in_txn(store, wtxn, run, &record)?);
             release_unpublished_outputs_in_txn(store, wtxn, run)?;
         } else if unreadable_record_in_txn(store, wtxn, &record_id)? {
@@ -363,8 +363,8 @@ fn unreadable_record_in_txn(
     txn: &heed::RoTxn<'_>,
     record: &EntityId,
 ) -> Result<bool> {
-    Ok(REPLAY_RECORDS.contains(store, txn, record)?
-        && REPLAY_RECORDS.get_lenient(store, txn, record)?.is_none())
+    Ok(replay_rows::contains(store, txn, record)?
+        && replay_rows::get_lenient(store, txn, record)?.is_none())
 }
 
 /// Every replay record whose replies are `actor`'s, by its run id, with the
@@ -386,7 +386,7 @@ fn actor_records_in_txn(
         records.entry(*run).or_insert(*run);
     }
     let mut named = Vec::new();
-    for row in REPLAY_RECORDS.iter_raw_from(store, txn, &[])? {
+    for row in replay_rows::iter_canonical_from(store, txn, &[])? {
         let (key, bytes) = row?;
         let Some(run) = <EntityId as SideKey>::decode_key(&key) else {
             continue;
@@ -400,8 +400,7 @@ fn actor_records_in_txn(
             named.push(run);
             continue;
         }
-        if REPLAY_RECORDS
-            .decode_value(&bytes)
+        if replay_rows::decode(&bytes)
             .is_ok_and(|record| record.live_run.is_some_and(|live| live.actor == *actor))
         {
             named.push(run);
@@ -622,12 +621,12 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
 ) -> Result<()> {
     retire_source_step_starts_in_txn(store, wtxn, source)?;
     let mut records = Vec::new();
-    for row in REPLAY_RECORDS.iter_raw_from(store, wtxn, &[])? {
+    for row in replay_rows::iter_canonical_from(store, wtxn, &[])? {
         let (key, bytes) = row?;
         let Some(id) = <EntityId as SideKey>::decode_key(&key) else {
             continue;
         };
-        let Ok(record) = REPLAY_RECORDS.decode_value(&bytes) else {
+        let Ok(record) = replay_rows::decode(&bytes) else {
             continue;
         };
         if record.outputs.iter().any(|output| {
@@ -666,7 +665,7 @@ pub(crate) fn retire_sourced_code_outputs_in_txn(
             }
             paths.insert(output.path.clone());
         }
-        REPLAY_RECORDS.put_erased(
+        replay_rows::put_erased(
             store,
             wtxn,
             &id,

@@ -1,20 +1,15 @@
 //! Seam: error mappers, crash/reopen, job/taint/scoped-read probes, executor binding-mismatch and route-flip probes, the replay CAS race and the ABI-pair opener.
 
+use crate::code_run::replay_rows;
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+#[cfg(feature = "sync")]
 use crate::side_table::{self, Raw, SideTable};
 use crate::vault::Vault;
 
 use super::session::{SeamError, SeamResult, SessionVault};
 use crate::error::OffRecordError;
-
-/// Bound independently of `code_run`'s own private table, exactly as
-/// `CODE_RUN_REPLAY_KEYS` in `session.rs`: this race fixture deletes the
-/// row a bound run believes it is updating, keyed exactly as `code_run.rs`
-/// keys it.
-const CODE_RUN_REPLAY_ROW: SideTable<EntityId, (), Raw> =
-    SideTable::new(&side_table::CODE_RUN_REPLAY);
 
 /// Bound independently of `off_record::promote`'s own private table: a
 /// post-crash pickup-marker census only needs the row count, keyed under
@@ -573,7 +568,7 @@ pub(in crate::branch_store_oracle) fn replay_put_racing_a_committed_change(
             // closure holds, and only a compare INSIDE that transaction can
             // still see the deletion below.
             std::thread::sleep(std::time::Duration::from_millis(150));
-            CODE_RUN_REPLAY_ROW.delete(&vault.store, wtxn, &run_id)?;
+            replay_rows::delete(&vault.store, wtxn, &run_id)?;
             Ok(())
         })?;
         Ok(run

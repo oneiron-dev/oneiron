@@ -16,6 +16,7 @@ pub(crate) use reader_jobs::erase_reader_caller_actor_in_txn;
 mod records;
 mod replay_bodies;
 mod replay_capsule;
+pub(crate) mod replay_rows;
 mod response_erase;
 mod response_owners;
 mod routing;

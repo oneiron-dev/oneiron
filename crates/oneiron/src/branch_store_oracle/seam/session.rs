@@ -1,6 +1,7 @@
 //! Seam: the session handle — `SessionVault` enter/bind/witness/stage/search/close/promote — and the typed `SeamError` refusals.
 
 use crate::batch::BatchOp;
+use crate::code_run::replay_rows;
 use crate::config::VaultConfig;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -11,15 +12,14 @@ use crate::vault::Vault;
 
 use super::binding::{map_session_error, scoped_read_actor_key, scoped_read_visible_claim_count};
 
-/// ONE-1729 census tables, bound independently of `code_run`'s own private
-/// tables (two typed tables may bind one declaration): the acceptance pin
-/// is that the code-run key FORMATS did not change under the session
-/// route, so this reads the declared prefixes directly through the shared
-/// door rather than importing `code_run`'s own constants. Neither table's
-/// value type is read here (a row count only decodes keys), so both bind
-/// `()` rather than `code_run`'s real row types.
-const CODE_RUN_REPLAY_KEYS: SideTable<EntityId, (), Raw> =
-    SideTable::new(&side_table::CODE_RUN_REPLAY);
+/// ONE-1729 census table, bound independently of `code_run`'s own private
+/// table (two typed tables may bind one declaration): the acceptance pin
+/// is that the code-run key FORMAT did not change under the session
+/// route, so this reads the declared prefix directly through the shared
+/// door rather than importing `code_run`'s own constant. The value type is
+/// not read here (a row count only decodes keys), so it binds `()`
+/// rather than `code_run`'s real row type. The replay census goes through
+/// `code_run::replay_rows`, the table's one door.
 const CODE_RUN_RAW_OUTPUT_KEYS: SideTable<String, (), Raw> =
     SideTable::new(&side_table::CODE_RUN_RAW_OUTPUT);
 
@@ -574,12 +574,13 @@ impl<'vault> SessionVault<'vault> {
     /// ONE-1729: exact artifact census through the SESSION view —
     /// (speak turns, code-run replay records, raw-output rows).
     ///
-    /// The two `vault_meta` tables are bound directly against the shared
-    /// declarations (`CODE_RUN_REPLAY_KEYS`/`CODE_RUN_RAW_OUTPUT_KEYS`)
-    /// rather than through `code_run`'s own private tables: the acceptance
-    /// pin is that the code-run key FORMATS did not change under the
-    /// session route, and a census that reused the producer's own
-    /// constants would agree with a rename.
+    /// The raw-output `vault_meta` table is bound directly against the shared
+    /// declaration (`CODE_RUN_RAW_OUTPUT_KEYS`) rather than through
+    /// `code_run`'s own private table: the acceptance pin is that the
+    /// code-run key FORMAT did not change under the session route, and a
+    /// census that reused the producer's own constant would agree with a
+    /// rename. The replay census goes through `code_run::replay_rows`, the
+    /// table's one door.
     pub(in crate::branch_store_oracle) fn session_artifact_census(
         &self,
     ) -> Result<(usize, usize, usize)> {
@@ -593,7 +594,7 @@ impl<'vault> SessionVault<'vault> {
             row?;
             turns += 1;
         }
-        let replay_records = CODE_RUN_REPLAY_KEYS.scan_keys(&view, &rtxn, &[])?.len();
+        let replay_records = replay_rows::run_ids(&view, &rtxn)?.len();
         let raw_outputs = CODE_RUN_RAW_OUTPUT_KEYS.scan_keys(&view, &rtxn, &[])?.len();
         drop(rtxn);
         drop(view);

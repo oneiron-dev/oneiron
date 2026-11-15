@@ -1,5 +1,6 @@
 //! Immutable row birth records and their trigger index.
 
+use crate::code_run::replay_rows;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
@@ -24,10 +25,6 @@ pub(crate) const ROW_BIRTH: SideTable<EntityId, RowBirth, Named> =
 pub(crate) const BIRTH_BY_TRIGGER: SideTable<(EntityId, EntityId), (), Raw> =
     SideTable::new(&side_table::PROVENANCE_BIRTH_BY_TRIGGER);
 
-/// A run's durable replay record, the identity a `Run` trigger names.
-pub(crate) const CODE_RUN_REPLAY_KEYS: SideTable<EntityId, (), Raw> =
-    SideTable::new(&side_table::CODE_RUN_REPLAY);
-
 /// Whether `trigger` names a live row of its kind (a run: a stored replay
 /// record) in this transaction.
 pub(crate) fn trigger_is_live_in_txn(
@@ -39,7 +36,7 @@ pub(crate) fn trigger_is_live_in_txn(
         MadeByTrigger::Task(_) => crate::registry::ENTITY_TYPE_TASK,
         MadeByTrigger::Ask(_) => crate::registry::ENTITY_TYPE_TURN,
         MadeByTrigger::Skill(_) => crate::registry::ENTITY_TYPE_SKILL,
-        MadeByTrigger::Run(run) => return CODE_RUN_REPLAY_KEYS.contains(store, txn, run),
+        MadeByTrigger::Run(run) => return replay_rows::contains(store, txn, run),
     };
     Ok(live_entity_row_in_txn(store, txn, &trigger.row())?.live_type() == Some(expected))
 }
@@ -47,7 +44,7 @@ pub(crate) fn trigger_is_live_in_txn(
 /// Whether `run` has a durable replay record, for a receipt that names it.
 pub(crate) fn run_exists(vault: &crate::Vault, run: &EntityId) -> Result<bool> {
     let rtxn = vault.store.env.read_txn()?;
-    CODE_RUN_REPLAY_KEYS.contains(&vault.store, &rtxn, run)
+    replay_rows::contains(&vault.store, &rtxn, run)
 }
 
 /// Stamps `row`'s birth inside the transaction that births it. The row must

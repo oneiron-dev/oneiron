@@ -14,7 +14,7 @@
 
 use heed::RoTxn;
 
-use super::{Noted, ResponseCensus, row_in_txn};
+use super::{Noted, ResponseCensus};
 use crate::store::{
     ResponseBinding, ResponseDb, ResponseFamily, Store, bind_response_in_txn, carrier_row,
     response_binding_in_txn,
@@ -145,10 +145,10 @@ fn partitioned_in_txn(store: &Store, txn: &RoTxn<'_>, carrier: &[u8]) -> Result<
     let Some((ResponseDb::VaultMeta, key)) = carrier_row(carrier) else {
         return Ok(false);
     };
-    if !key.starts_with(crate::side_table::CODE_RUN_REPLAY.prefix) {
+    if !crate::code_run::replay_rows::is_row_key(key) {
         return Ok(false);
     }
-    let Some(value) = row_in_txn(store, txn, ResponseDb::VaultMeta, key)? else {
+    let Some(value) = crate::code_run::replay_rows::canonical_bytes_at(store, txn, key)? else {
         return Ok(false);
     };
     Ok(crate::code_run::replay_row_parts(&value).is_some())
@@ -162,8 +162,8 @@ fn part_in_txn(
     row: &[u8],
     request: Option<(u32, u64)>,
 ) -> Result<Option<(Vec<u8>, Vec<EntityId>)>> {
-    let (parts, kept) = if row.starts_with(crate::side_table::CODE_RUN_REPLAY.prefix) {
-        let Some(value) = row_in_txn(store, txn, ResponseDb::VaultMeta, row)? else {
+    let (parts, kept) = if crate::code_run::replay_rows::is_row_key(row) {
+        let Some(value) = crate::code_run::replay_rows::canonical_bytes_at(store, txn, row)? else {
             return Ok(None);
         };
         (crate::code_run::replay_row_parts(&value), None)

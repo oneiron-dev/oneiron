@@ -18,38 +18,12 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::super::replay::CodeRunReplayRecord;
 use super::super::spawn_replay::erase_spawn_call;
-use super::records::REPLAY_RECORDS;
 use super::replay_capsule::erase_spawn_prefixes_in_txn;
+use super::replay_rows;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
-use crate::side_table::{self, CodecError, Erased, ErasedForm, Raw, RawValue, SideKey, SideTable};
+use crate::side_table::SideKey;
 use crate::store::Store;
 use crate::{EntityId, Result};
-
-/// A replay record in the selective form a spawn target's erase leaves it:
-/// written as encoded, past the side-row wall, as an erase's own write is.
-struct SpawnErased(CodeRunReplayRecord);
-
-impl RawValue for SpawnErased {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        self.0.to_raw()
-    }
-
-    fn from_raw(bytes: &[u8]) -> std::result::Result<Self, CodecError> {
-        CodeRunReplayRecord::from_raw(bytes).map(Self)
-    }
-}
-
-/// The selective form is already the erase's: erasing it again changes
-/// nothing.
-impl ErasedForm for SpawnErased {
-    fn into_erased(self) -> Result<Self> {
-        Ok(self)
-    }
-}
-
-/// The replay rows, as a spawn target's erase writes them back.
-const SPAWN_ERASED: SideTable<EntityId, SpawnErased, Raw> =
-    SideTable::new(&side_table::CODE_RUN_REPLAY);
 
 /// The erase of the spawn targets `erased` over the replay rows and the step
 /// starts that carry them (FIX 9180), in the erase's own writer: each call
@@ -71,12 +45,12 @@ pub(crate) fn erase_spawn_targets_in_txn(
     }
     let mut reached = Vec::new();
     let mut undecodable = 0_usize;
-    for row in REPLAY_RECORDS.iter_raw_from(store, wtxn, &[])? {
+    for row in replay_rows::iter_canonical_from(store, wtxn, &[])? {
         let (key, bytes) = row?;
         let Some(run) = <EntityId as SideKey>::decode_key(&key) else {
             continue;
         };
-        let Ok(mut record) = REPLAY_RECORDS.decode_value(&bytes) else {
+        let Ok(mut record) = replay_rows::decode(&bytes) else {
             undecodable += 1;
             continue;
         };
@@ -94,7 +68,7 @@ pub(crate) fn erase_spawn_targets_in_txn(
     // erased form proves nothing of an older or restored start.
     erase_spawn_prefixes_in_txn(store, wtxn, erased)?;
     for (run, record) in reached {
-        SPAWN_ERASED.put_erased(store, wtxn, &run, Erased::of(SpawnErased(record))?)?;
+        replay_rows::put_erased_unchanged(store, wtxn, &run, record)?;
     }
     Ok(())
 }

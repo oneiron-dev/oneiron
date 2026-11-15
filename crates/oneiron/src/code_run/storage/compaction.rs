@@ -400,8 +400,7 @@ fn put_coverage_in(
             "executor coverage differs from minted summary",
         ));
     }
-    let replay = super::records::REPLAY_RECORDS
-        .get(dbs, txn, &span.run_id)?
+    let replay = super::replay_rows::get(dbs, txn, &span.run_id)?
         .ok_or(Error::CorruptedIndex("missing executor replay record"))?;
     let completed = u64::try_from(replay.step_checkpoints.len())
         .map_err(|_| Error::ArithmeticOverflow("executor step count"))?;

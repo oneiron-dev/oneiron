@@ -22,7 +22,7 @@ use std::ops::RangeBounds;
 use serde::{Deserialize, Serialize};
 
 use super::super::replay_capsule::StepReplayCapsule;
-use super::records::REPLAY_RECORDS;
+use super::replay_rows::{self, REPLAY_RECORDS};
 use super::routing::ExecutorStorage;
 use crate::federation::Scope;
 use crate::side_table::{self, Named, SideKey, SideTable};
@@ -579,7 +579,7 @@ impl ExecutorStorage<'_> {
                 let store = &vault.store;
                 let mut header = match HEADERS.get(store, &*txn, &key)? {
                     Some(header) => header,
-                    None => ReadWorldHeader::begun(REPLAY_RECORDS.contains(store, &*txn, &run)?),
+                    None => ReadWorldHeader::begun(replay_rows::contains(store, &*txn, &run)?),
                 };
                 update(&mut header);
                 HEADERS.put(store, txn, &key, &header)

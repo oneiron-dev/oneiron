@@ -17,7 +17,8 @@ use super::super::replay::{
     CodeRunRawOutput, CodeRunReplayGeneration, CodeRunReplayRecord, ResultOccurrence,
 };
 use super::read_worlds::seed_read_world_prefix_in_txn;
-use super::records::{FinishedOutput, REPLAY_RECORDS, body_drifted, finish_output};
+use super::records::{FinishedOutput, body_drifted, finish_output};
+use super::replay_rows;
 use super::response_erase::fence_replay_in_txn;
 use super::response_owners::{inherit_response_owner_in_txn, stamp_response_owner_in_txn};
 use crate::attempt_queue::AttemptId;
@@ -123,7 +124,7 @@ pub(crate) fn seed_continuation_run(
     inherited: &[CodeRunRawOutput],
     compaction: &StartCompaction,
 ) -> Result<CodeRunReplayGeneration> {
-    if REPLAY_RECORDS.contains(&vault.store, txn, &child.run_id)? {
+    if replay_rows::contains(&vault.store, txn, &child.run_id)? {
         return Err(Error::ConcurrentWrite("code-run continuation seed"));
     }
     stamp_response_owner_in_txn(vault, txn, child.run_id, child.run_id, actor)?;
@@ -142,7 +143,7 @@ pub(crate) fn seed_continuation_run(
     seed_continuation_compaction_in_txn(vault, txn, source, child, compaction)?;
     let generation = child.generation()?;
     let child = fence_replay_in_txn(vault, txn, Cow::Borrowed(child))?;
-    REPLAY_RECORDS.put(vault, txn, &child.run_id, &child)?;
+    replay_rows::put(vault, txn, &child.run_id, &child)?;
     Ok(generation)
 }
 
