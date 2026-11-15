@@ -35,6 +35,10 @@ use crate::{ClaimCandidate, EntityId, TimeRange, Vault};
 /// the source stays the cited rows' meet ([`evidence_meet_in_txn`]): imported
 /// words remain Imported, held for review whatever the Generated permit grants.
 ///
+/// When the committing actor's read credential is not live, the item is
+/// refused with `gate.deny.derive.read_not_live` before it stages: the gate
+/// would fail it on its first read, and only hard errors abort the batch.
+///
 /// # Errors
 ///
 /// A value that does not encode, and any error other than the gate's
@@ -80,6 +84,15 @@ pub(super) fn stage_in_txn(
     // earlier item of this batch landed still reads to the item citing it.
     let read = super::actor_read(vault, context.stamp.actor)?
         .with_claim_status(crate::ports::ClaimReadStatus::Recorded);
+    // A read whose credential is not live serves nothing, so the gate would
+    // fail the item on its first read: refuse it with its row token instead
+    // of aborting the batch, as the settle and supersede items do.
+    if !read.proof_live_in(txn)? {
+        let id = EntityId::now();
+        let reasons = vec![super::READ_NOT_LIVE.to_owned()];
+        let receipt = refusal_receipt_in_txn(vault, txn, context, Some(id), &reasons)?;
+        return Ok(ItemOutcome::Refused { reasons, receipt });
+    }
     stage_candidate_in_txn(
         vault,
         txn,

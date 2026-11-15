@@ -83,6 +83,13 @@ pub const DERIVE_BATCH_KEY: &str = "batch";
 /// The refusal token of an item that names a refused item of its batch.
 pub const DEPENDENCY_REFUSED: &str = "gate.deny.derive.dependency_refused";
 
+/// The refusal of an item staged while the committing actor's read
+/// credential is not live: a base agent whose Steward grant lacks `read`,
+/// or whose MACHINE binding is revoked, reads nothing. The claim and
+/// evidence items refuse with this token instead of aborting the batch,
+/// and the source recheck denies the commit with it.
+pub const READ_NOT_LIVE: &str = "gate.deny.derive.read_not_live";
+
 /// The gate decision ledger's content kind for a derivation item's refusal
 /// receipt.
 pub const DERIVE_ITEM_CONTENT_KIND: &str = "vault.derive.item";
