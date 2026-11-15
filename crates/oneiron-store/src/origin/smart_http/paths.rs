@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use oneiron_base::error::CodeError;
 use oneiron_base::error::Error;
@@ -160,12 +160,6 @@ pub const DOOR_VERDICT_OK: &str = "ok";
 /// How much of a refused ref name a refusal echoes back to the client. A
 /// diagnostic names the ref; it never becomes a channel of its own.
 pub const DOOR_REFUSAL_NAME_CHARS: usize = 100;
-
-pub fn now_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
 
 pub fn serve_failed(reason: impl Into<String>) -> Error {
     Error::Code(CodeError::GitHttpServeFailed {
