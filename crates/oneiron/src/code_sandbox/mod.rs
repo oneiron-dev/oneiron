@@ -25,6 +25,8 @@ pub mod foreign;
 /// A guest program's own error text, masked before it leaves the host (FIX 9209).
 mod paths;
 mod proposal;
+/// Whose machines run a finite Foreign or Untrusted guest (L8-43).
+mod provider;
 /// Host-side preparation of a code-mode program: TypeScript stripped by Oxc
 /// in process, JavaScript passed through byte for byte (FIX 8276).
 pub use oneiron_code_source::source;
@@ -55,6 +57,7 @@ pub use self::proposal::{
     SandboxProposalBodyWriter, SandboxProposalDelta, SandboxProposalKind, SandboxProposalText,
     SandboxProposalWrite, SpoolAtFloor, SpoolFloorRefusal,
 };
+pub use self::provider::{SandboxProvider, SandboxVendor};
 
 #[cfg(test)]
 mod tests;

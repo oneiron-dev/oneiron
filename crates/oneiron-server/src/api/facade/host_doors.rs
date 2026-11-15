@@ -117,6 +117,7 @@ pub(crate) use super::model_step_doors::*;
 pub(crate) use super::model_stream_doors::*;
 pub(crate) use super::non_base_world_claim_fraction_doors::*;
 pub(crate) use super::outbox_diverged_doors::*;
+pub(crate) use super::sandbox_provider_doors::*;
 pub(crate) use super::snapshot_read_settings_doors::*;
 pub(crate) use super::web_connector_doors::*;
 // The owner's committed-run reads (DOOR-141 A/B), likewise.

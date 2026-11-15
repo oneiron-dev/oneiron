@@ -11,11 +11,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::microvm::{
     DEV_BACKEND_NAME, DevProcessBackend, MicroVmBackend, SandboxBackends,
     select_backend_for_session, select_backend_for_tier,
 };
+use oneiron::code_sandbox::{SandboxGuestTier, SandboxProvider};
 use oneiron::{ErrorKind, Vault, VaultConfig};
 
 /// An OCI runtime path and image no host has.
@@ -79,6 +79,7 @@ fn open_vault() -> (tempfile::TempDir, Vault) {
 fn foreign_outcome(vault: &Vault) -> String {
     match select_backend_for_tier(
         &*vault.runtime().sandbox_backends(),
+        SandboxProvider::Ours,
         SandboxGuestTier::Foreign,
     ) {
         Ok(Some(backend)) => format!("backend {}", backend.name()),
@@ -163,14 +164,18 @@ fn two_vaults_in_one_process_each_select_from_their_own_backends() {
 fn a_vault_with_no_installed_backends_refuses_every_isolating_tier() {
     let (_dir, vault) = open_vault();
     let backends = vault.runtime().sandbox_backends();
-    let first_party = select_backend_for_tier(&*backends, SandboxGuestTier::FirstPartyDreamer)
-        .expect("first-party selection");
+    let first_party = select_backend_for_tier(
+        &*backends,
+        SandboxProvider::Ours,
+        SandboxGuestTier::FirstPartyDreamer,
+    )
+    .expect("first-party selection");
     assert!(
         first_party.is_none(),
         "first-party code still runs in-process"
     );
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        let refused = select_backend_for_tier(&*backends, tier)
+        let refused = select_backend_for_tier(&*backends, SandboxProvider::Ours, tier)
             .err()
             .expect("an isolating tier with no installed backends fails closed");
         assert_eq!(refused.kind(), ErrorKind::MicroVmBackendUnavailable);

@@ -203,6 +203,7 @@ mod run_read_doors;
 mod run_review_doors;
 pub(crate) mod run_write_polls;
 mod runner_seat_doors;
+mod sandbox_provider_doors;
 mod saved_query_doors;
 mod seal_doors;
 mod search_home_doors;

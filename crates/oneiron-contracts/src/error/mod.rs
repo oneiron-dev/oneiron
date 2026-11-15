@@ -334,6 +334,8 @@ pub enum ErrorKind {
     UnverifiedKitRestore,
     KitConfirmationStale,
     MicroVmBackendUnavailable,
+    /// The vault's sandbox switch names a vendor this host cannot serve (L8-43).
+    SandboxVendorUnavailable,
     MicroVmBackendError,
     /// A foreign guest's proposal spool append would cross the host's disk
     /// floor.

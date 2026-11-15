@@ -230,6 +230,7 @@ impl Memory<'_> {
         let backends = self.vault.runtime().sandbox_backends();
         let outcome = execute_foreign_code(
             &*backends,
+            self.vault.sandbox_provider()?,
             prepared,
             mounts,
             artifact,

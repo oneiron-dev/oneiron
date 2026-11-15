@@ -7,6 +7,7 @@ use std::{fmt, fs, path::PathBuf};
 use crate::code_sandbox::SandboxMount;
 use crate::code_sandbox::{
     SandboxBoundaryContract, SandboxGuestTier, SandboxMountTable, SandboxProposalWrite,
+    SandboxProvider, SandboxVendor,
 };
 use crate::engine_executor::StepCancellation;
 use crate::{Error, Result};
@@ -227,9 +228,10 @@ impl MicroVmBackend for Box<dyn MicroVmBackend> {
     }
 }
 
-/// The isolating backends one build carries: the Firecracker microVM and the
-/// OCI fenced container. Each method builds one of them, or answers `None`
-/// when the build does not carry it or the host does not have it. Which
+/// The isolating backends one build carries: the Firecracker microVM, the
+/// OCI fenced container, and the vendor sandboxes the owner may switch to
+/// (L8-43). Each method builds one of them, or answers `None` when the build
+/// does not carry it or the host does not have it. Which
 /// backend a guest tier takes is decided here, in
 /// [`select_backend_for_tier`] and [`select_backend_for_session`], never by
 /// an implementation, so core names no backend. Each vault carries the set
@@ -254,6 +256,13 @@ pub trait SandboxBackends: Send + Sync {
         runtime: std::path::PathBuf,
         image: &str,
     ) -> Option<Result<Box<dyn MicroVmBackend>>>;
+
+    /// The backend of `vendor`'s sandbox, when this build carries an adapter
+    /// for it and the owner's key for it is in custody. Core carries none;
+    /// the server answers the vendors it serves.
+    fn vendor(&self, _vendor: SandboxVendor) -> Option<Box<dyn MicroVmBackend>> {
+        None
+    }
 }
 
 /// The backends of a vault whose host installed none: it carries no
@@ -280,27 +289,44 @@ impl SandboxBackends for NoSandboxBackends {
     }
 }
 
-/// Routes one guest tier to its execution backend.
+/// Routes one guest tier to its execution backend, under the vault's
+/// sandbox provider switch (L8-43).
 ///
-/// `Ok(None)` means "no microVM": first-party code runs in-process. Foreign and
-/// untrusted code either gets an isolating backend or fails closed — there is
-/// no silent no-sandbox path, including in debug and test builds. The dev
-/// reference backend is available only by explicit construction.
+/// `Ok(None)` means "no microVM": first-party code runs in-process, whatever
+/// the switch. Foreign and untrusted code either gets an isolating backend or
+/// fails closed — there is no silent no-sandbox path, including in debug and
+/// test builds. With [`SandboxProvider::Ours`] it takes Firecracker on a KVM
+/// host, else the OCI fenced container; with [`SandboxProvider::Vendor`] it
+/// takes that vendor's backend and nothing else: the owner switched ours off,
+/// so ours never runs in its place (L8-43-SWITCH = A). The dev reference
+/// backend is available only by explicit construction.
 ///
 /// # Errors
 ///
 /// Returns [`CodeError::MicroVmBackendUnavailable`](crate::error::CodeError::MicroVmBackendUnavailable) when the tier needs isolation
-/// and no backend is compiled in or detected.
+/// and no backend of ours is compiled in or detected, and
+/// [`CodeError::SandboxVendorUnavailable`](crate::error::CodeError::SandboxVendorUnavailable)
+/// when the switch names a vendor this host cannot serve.
 pub fn select_backend_for_tier(
     backends: &dyn SandboxBackends,
+    provider: SandboxProvider,
     tier: SandboxGuestTier,
 ) -> Result<Option<Box<dyn MicroVmBackend>>> {
-    match tier {
-        SandboxGuestTier::FirstPartyDreamer => Ok(None),
-        SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted => installed_firecracker(backends)
-            .or_else(|| backends.container())
+    match (tier, provider) {
+        (SandboxGuestTier::FirstPartyDreamer, _) => Ok(None),
+        (SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted, SandboxProvider::Ours) => {
+            installed_firecracker(backends)
+                .or_else(|| backends.container())
+                .map(Some)
+                .ok_or_else(|| backend_unavailable(tier))
+        }
+        (
+            SandboxGuestTier::Foreign | SandboxGuestTier::Untrusted,
+            SandboxProvider::Vendor(vendor),
+        ) => backends
+            .vendor(vendor)
             .map(Some)
-            .ok_or_else(|| backend_unavailable(tier)),
+            .ok_or_else(|| vendor_unavailable(vendor)),
     }
 }
 
@@ -346,6 +372,12 @@ fn kvm_available() -> bool {
 pub(super) fn backend_unavailable(tier: SandboxGuestTier) -> Error {
     Error::Code(CodeError::MicroVmBackendUnavailable {
         tier: tier.as_str(),
+    })
+}
+
+fn vendor_unavailable(vendor: SandboxVendor) -> Error {
+    Error::Code(CodeError::SandboxVendorUnavailable {
+        vendor: vendor.as_str(),
     })
 }
 

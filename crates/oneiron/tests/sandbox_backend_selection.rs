@@ -14,10 +14,10 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use oneiron::ErrorKind;
-use oneiron::code_sandbox::SandboxGuestTier;
 use oneiron::code_sandbox::microvm::{
     MicroVmBackend, SandboxBackends, select_backend_for_session, select_backend_for_tier,
 };
+use oneiron::code_sandbox::{SandboxGuestTier, SandboxProvider};
 use oneiron_agent_runtime::code_sandbox::CompiledSandboxBackends;
 
 const TIERS: [SandboxGuestTier; 3] = [
@@ -56,7 +56,11 @@ fn outcome_shape(line: &str) -> &str {
 fn selection_outcomes_of_the_compiled_backends() {
     let mut finite = Vec::new();
     for tier in TIERS {
-        let line = finite_outcome(select_backend_for_tier(&CompiledSandboxBackends, tier));
+        let line = finite_outcome(select_backend_for_tier(
+            &CompiledSandboxBackends,
+            SandboxProvider::Ours,
+            tier,
+        ));
         println!("SELECT-FINITE tier={} -> {line}", tier.as_str());
         finite.push(line);
     }
@@ -158,15 +162,19 @@ fn selection_routes_through_the_trait() {
 
     // A build that carries a container backend.
     let backends = RecordingBackends::new(true);
-    let first_party = select_backend_for_tier(&backends, SandboxGuestTier::FirstPartyDreamer)
-        .expect("first-party selection");
+    let first_party = select_backend_for_tier(
+        &backends,
+        SandboxProvider::Ours,
+        SandboxGuestTier::FirstPartyDreamer,
+    )
+    .expect("first-party selection");
     assert!(first_party.is_none(), "first-party code takes no microVM");
     assert!(
         backends.asked().is_empty(),
         "first-party code asks no backend"
     );
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        let selected = select_backend_for_tier(&backends, tier)
+        let selected = select_backend_for_tier(&backends, SandboxProvider::Ours, tier)
             .expect("an isolating tier with a container backend selects it")
             .expect("an isolating tier never routes to `None`");
         assert_eq!(
@@ -204,7 +212,7 @@ fn selection_routes_through_the_trait() {
     // A build that carries none: every isolating tier fails closed.
     let none = RecordingBackends::new(false);
     for tier in [SandboxGuestTier::Foreign, SandboxGuestTier::Untrusted] {
-        let refused = select_backend_for_tier(&none, tier)
+        let refused = select_backend_for_tier(&none, SandboxProvider::Ours, tier)
             .err()
             .expect("no backend fails closed");
         assert_eq!(refused.kind(), ErrorKind::MicroVmBackendUnavailable);

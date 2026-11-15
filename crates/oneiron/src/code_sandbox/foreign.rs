@@ -13,7 +13,7 @@ use super::microvm::{
 use super::source::PreparedSource;
 use super::{
     ProposalSpoolFloor, SandboxCredentialHandle, SandboxGuestTier, SandboxMountTable,
-    SandboxProposalDelta,
+    SandboxProposalDelta, SandboxProvider,
 };
 use crate::engine_executor::StepCancellation;
 use crate::guest_error::{GuestErrorMask, GuestProgramError};
@@ -43,13 +43,15 @@ pub struct ForeignCodeOutcome {
 /// prepares or checks it again. A failed program's own error comes back
 /// with each value `mask` knows replaced, then the shape sanitizer, the
 /// existing cut and its TypeScript position (FIX 9209). The program runs on
-/// the isolating backend `backends` carries for the Foreign tier.
+/// the isolating backend `backends` carries for the Foreign tier, on the
+/// machines `provider` names (the vault's switch, L8-43).
 #[expect(
     clippy::too_many_arguments,
     reason = "each argument is a separate authority the admitting door lends"
 )]
 pub fn execute_foreign_code(
     backends: &dyn SandboxBackends,
+    provider: SandboxProvider,
     prepared: &PreparedSource<'_>,
     mounts: SandboxMountTable,
     artifact: ForeignCodeArtifact<'_>,
@@ -64,7 +66,7 @@ pub fn execute_foreign_code(
     {
         return Err(invalid("foreign QuickJS component pin mismatch"));
     }
-    let backend = select_backend_for_tier(backends, SandboxGuestTier::Foreign)?
+    let backend = select_backend_for_tier(backends, provider, SandboxGuestTier::Foreign)?
         .ok_or_else(|| invalid("foreign execution requires isolation"))?;
     // The shared launch below runs what it is given, as the runtime's own
     // isolated lane hands it an already prepared one.

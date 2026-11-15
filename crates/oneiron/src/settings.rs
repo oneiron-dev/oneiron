@@ -21,6 +21,7 @@ pub use oneiron_store::settings::model_versioning;
 mod models;
 pub mod non_base_world_claim_fraction;
 pub(crate) mod room_threads;
+pub mod sandbox_provider;
 pub mod snapshot_read;
 pub mod undo_send;
 pub use oneiron_store::settings::web_connector;

@@ -456,12 +456,14 @@ pub trait JsCodeModeRuntime {
     ) {
     }
 
-    /// Lends the isolating backends the run's vault carries (F1-6): the
-    /// set its isolated lane selects a backend from. A runtime with no
-    /// isolated lane selects none, so it keeps none.
+    /// Lends the isolating backends the run's vault carries (F1-6), with
+    /// the vault's sandbox provider switch (L8-43): the set its isolated lane
+    /// selects a backend from, and whose machines it selects. A runtime with
+    /// no isolated lane selects none, so it keeps neither.
     fn bind_sandbox_backends(
         &mut self,
         _backends: std::sync::Arc<dyn crate::code_sandbox::microvm::SandboxBackends>,
+        _provider: crate::code_sandbox::SandboxProvider,
     ) {
     }
 

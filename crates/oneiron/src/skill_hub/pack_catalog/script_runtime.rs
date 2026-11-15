@@ -180,6 +180,7 @@ impl Vault {
         let run_id = EntityId::now();
         let mut backend = crate::code_sandbox::microvm::select_backend_for_tier(
             &*self.runtime().sandbox_backends(),
+            self.sandbox_provider()?,
             SandboxGuestTier::Foreign,
         )?
         .ok_or_else(|| invalid("foreign tier selected no isolation"))?;

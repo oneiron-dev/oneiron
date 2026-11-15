@@ -56,4 +56,8 @@ crate::side_table::side_tables! {
     /// turns it off. Absent is on. Key: ().
     ROOM_THREADS_ADMIN_WALK_IN: VaultMeta b"settings:rooms:v1:admin_walk_in" Named
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The owner's sandbox provider switch (L8-43): whose machines run the vault's finite Foreign
+    /// and Untrusted guests, ours or a named vendor's. Absent reads as ours. Key: ().
+    SANDBOX_PROVIDER_SETTING: VaultMeta b"settings:sandbox_provider:v1" Named
+        [restore: live] [family: unclassified] [tier: canonical];
 }

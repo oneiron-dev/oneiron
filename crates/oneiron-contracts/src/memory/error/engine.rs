@@ -390,6 +390,16 @@ impl From<Error> for MemoryError {
                     &["Do what the message names: retry, or re-enter or reissue that credential."],
                 )
             }
+            // The owner's sandbox switch names a vendor this host cannot
+            // serve (L8-43): the vault's setting or custody must change, never
+            // the request's shape.
+            ErrorKind::SandboxVendorUnavailable => Self::new(
+                MEMORY_CODE_INVALID_STATE,
+                message,
+                &[
+                    "Store the owner's key for that vendor in custody, or switch vault.settings.sandbox_provider back to ours.",
+                ],
+            ),
             // A foreign guest's proposal spool met the host's disk floor
             // (FIX 7650): the host's storage, never the request's shape.
             ErrorKind::SandboxProposalDiskFloor => Self::new(

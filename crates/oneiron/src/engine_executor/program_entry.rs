@@ -130,8 +130,9 @@ impl JsCodeModeRuntime for PinnedSourceRuntime<'_> {
     fn bind_sandbox_backends(
         &mut self,
         backends: Arc<dyn crate::code_sandbox::microvm::SandboxBackends>,
+        provider: crate::code_sandbox::SandboxProvider,
     ) {
-        self.runtime.bind_sandbox_backends(backends);
+        self.runtime.bind_sandbox_backends(backends, provider);
     }
 
     fn run_step(
