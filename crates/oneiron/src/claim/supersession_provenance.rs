@@ -260,6 +260,13 @@ pub(super) fn settle_coaching_in_txn(
     } else {
         ClaimSource::Generated
     };
+    // The answer inherits the marker's scope, taint stamp included, so its
+    // source meets that taint as the companion writer's does: a source above
+    // the inherited taint fails the lineage guard (FIX 23206).
+    let source = match claim_evidence_taint(&conflict.body) {
+        Some(taint) => crate::dreamer_consolidation::source_meet(source, taint),
+        None => source,
+    };
     let envelope = WriteEnvelope::with_lineage(
         closer.unwrap_or_else(|| original.actor()),
         source,
