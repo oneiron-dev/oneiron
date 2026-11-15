@@ -1,7 +1,9 @@
 //! A hard erase takes the erased actor out of every ramp scope it is the
 //! actor of (RAMP-SCOPE-ACTOR-ERASE; Engine RULING NEXT-ROW-18 = A1, Sat 14
 //! Nov 10:27 JST): the scope's stats row and streak-floor override go, and
-//! its threshold override with them; its demotions, door-recorded outcomes
+//! its threshold override with them (a row of the
+//! `edit_distance.graduation.thresholds` setting, taken out of its value by
+//! the key's erase); its demotions, door-recorded outcomes
 //! and offer answers stay as acts, and their receipts carry
 //! `ERASED_CALL_IDENTITY` in `actor`. Nothing names the erased actor
 //! afterwards (the erased-member rule, 13 Nov 21:09), and a rebuild folds
@@ -27,13 +29,14 @@ use oneiron::consent_graduation::{
     DemotionReason, RampScope, is_ramp_demotion_receipt, is_ramp_outcome_receipt,
 };
 use oneiron::edit_distance::graduation::{
-    DEFAULT_POSTERIOR_GUARD, ThresholdRow, exact_pattern, is_graduation_answer_receipt,
-    set_graduation_policy_as_owner, unpin_scope_as_owner,
+    DEFAULT_POSTERIOR_GUARD, DEFAULT_SNOOZE_BACKOFF_SECONDS, exact_pattern,
+    is_graduation_answer_receipt, unpin_scope_as_owner,
 };
 use oneiron::federation::{FederationGrantRole as Role, InitialSharedMember};
 use oneiron::identity_topology::ProposalOutcome;
 use oneiron::receipt::{ERASED_CALL_IDENTITY, ReceiptKind, ReceiptQuery, ReceiptRecord};
 use oneiron::registry::ENTITY_TYPE_PERSON;
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 use oneiron::store::GateDecisionId;
 use oneiron::temporal::TimeRange;
 use oneiron::test_doors::consent_graduation_ramp_rows::{RampTableRows, ramp_rows_spelling};
@@ -144,13 +147,24 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
         .demote_scope_to_propose(&owner, &scope, DemotionReason::Rejected)
         .expect("FIXTURE: the owner demotes the scope");
     unpin_scope_as_owner(&vault, &owner, &scope).expect("FIXTURE: an offer answer");
-    set_graduation_policy_as_owner(
-        &vault,
-        &owner,
-        &ThresholdRow::new(exact_pattern(&scope), 5, DEFAULT_POSTERIOR_GUARD)
-            .expect("FIXTURE: a threshold row"),
-    )
-    .expect("FIXTURE: the threshold override");
+    let threshold = vault
+        .set_setting(
+            SettingCaller::Owner(&owner),
+            SetSetting::vault_value(
+                "edit_distance.graduation.thresholds",
+                serde_json::json!([{
+                    "scope_pattern": exact_pattern(&scope),
+                    "required_streak": 5,
+                    "posterior_guard": DEFAULT_POSTERIOR_GUARD,
+                    "snooze_backoff_seconds": DEFAULT_SNOOZE_BACKOFF_SECONDS,
+                }]),
+            ),
+        )
+        .expect("FIXTURE: the threshold override");
+    assert!(
+        matches!(threshold, SetSettingOutcome::Applied { .. }),
+        "FIXTURE: the owner's threshold override applies: {threshold:?}"
+    );
     // The owner's exact row outranks the dial of equal specificity.
     assert_eq!(
         vault.ramp_streak_floor(&scope).expect("floor read"),
@@ -169,7 +183,8 @@ fn a_hard_erase_leaves_no_ramp_row_or_receipt_naming_the_scope_actor() {
             "ramp_outcome",
             "ramp_stats",
             "graduation_answer",
-            "graduation_threshold",
+            "setting",
+            "setting_change",
         ],
         "FIXTURE: every ramp table that spells an actor names this one"
     );

@@ -30,9 +30,10 @@ pub fn ramp_rows_spelling(vault: &Vault, text: &str) -> Result<Vec<RampTableRows
     let spells = |bytes: &[u8]| {
         !needle.is_empty() && bytes.windows(needle.len()).any(|window| window == needle)
     };
-    // The tables a ramp scope's actor may be spelled in: the ramp's own four
-    // and ED-05's offer answers and threshold overrides.
-    let ramp_tables: [(&'static str, &SideTableDecl); 6] = [
+    // The tables a ramp scope's actor may be spelled in: the ramp's own four,
+    // ED-05's offer answers, and the setting rows and changes that hold its
+    // threshold overrides (`edit_distance.graduation.thresholds`).
+    let ramp_tables: [(&'static str, &SideTableDecl); 7] = [
         ("ramp_demotion", &side_table::RAMP_DEMOTION),
         ("ramp_floor", &side_table::RAMP_FLOOR),
         ("ramp_outcome", &side_table::RAMP_OUTCOME),
@@ -41,10 +42,8 @@ pub fn ramp_rows_spelling(vault: &Vault, text: &str) -> Result<Vec<RampTableRows
             "graduation_answer",
             &side_table::EDIT_DISTANCE_GRADUATION_ANSWER,
         ),
-        (
-            "graduation_threshold",
-            &side_table::EDIT_DISTANCE_GRADUATION_THRESHOLD,
-        ),
+        ("setting", &side_table::SETTING),
+        ("setting_change", &side_table::SETTING_CHANGE),
     ];
     let rtxn = vault.store.env.read_txn()?;
     let mut tables = Vec::new();

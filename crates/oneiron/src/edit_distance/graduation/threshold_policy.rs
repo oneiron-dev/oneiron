@@ -2,14 +2,15 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::THRESHOLD_ROW_LABEL;
 use super::pattern::{
     PATTERN_WILDCARD, WILDCARD_PATTERN, axis_matches, exact_pattern, pattern_axes,
 };
 use super::posterior::posterior_lower_bound;
-use super::{PATTERN_DIGEST_DOMAIN, ROW_VERSION, THRESHOLD, THRESHOLD_ROW_LABEL};
+use super::setting_keys::GRADUATION_THRESHOLDS;
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope};
-use crate::entity_id::ENTITY_ID_LEN;
 use crate::error::{Error, GateError, Result};
+use crate::setting::SettingValue;
 use crate::store::Store;
 use crate::vault::Vault;
 
@@ -30,8 +31,9 @@ pub const DEFAULT_SNOOZE_BACKOFF_SECONDS: [u64; 2] = [7 * 86_400, 30 * 86_400];
 ///
 /// One row, deliberately. The catch-all is the FLOOR every scope falls back to
 /// — a per-op-kind default the canon never ruled would be policy this module
-/// invented. Everything narrower is the owner's, minted at runtime through
-/// [`set_graduation_policy`], and a narrower row always wins.
+/// invented. Everything narrower is the owner's, set at runtime as the
+/// `edit_distance.graduation.thresholds` setting, and a narrower row always
+/// wins.
 const COMPILED_POLICY: &[(&str, u32, f32)] = &[(
     WILDCARD_PATTERN,
     DEFAULT_GRADUATION_STREAK_FLOOR,
@@ -39,8 +41,10 @@ const COMPILED_POLICY: &[(&str, u32, f32)] = &[(
 )];
 
 /// One legible graduation threshold: which scopes it governs, how long a clean
-/// streak they owe, and how strong that streak has to be as evidence.
-#[derive(Debug, Clone, PartialEq)]
+/// streak they owe, and how strong that streak has to be as evidence. One
+/// element of the `edit_distance.graduation.thresholds` setting's value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ThresholdRow {
     /// `op_kind/target_class/actor`, each axis either a literal or `*`, with
     /// `\` escaping a reserved character inside a literal ([`exact_pattern`]
@@ -134,6 +138,13 @@ impl ThresholdRow {
         )
     }
 
+    /// `row` rebuilt through [`Self::new`], keeping its snooze backoffs.
+    fn rebuilt(row: Self) -> Result<Self> {
+        let mut threshold = Self::new(row.scope_pattern, row.required_streak, row.posterior_guard)?;
+        threshold.snooze_backoff_seconds = row.snooze_backoff_seconds;
+        Ok(threshold)
+    }
+
     /// Literal (non-wildcard) axes: the more specific row wins.
     pub(super) fn specificity(&self) -> u8 {
         pattern_axes(&self.scope_pattern).map_or(0, |axes| {
@@ -145,37 +156,73 @@ impl ThresholdRow {
 }
 
 // ---------------------------------------------------------------------------
-// Stored rows
+// The setting's value
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct StoredThresholdRow {
-    pub(super) v: u8,
-    pub(super) scope_pattern: String,
-    pub(super) required_streak: u32,
-    pub(super) posterior_guard: f32,
-    pub(super) snooze_backoff_seconds: [u64; 2],
-}
+/// The value of the `edit_distance.graduation.thresholds` setting: the owner's
+/// runtime threshold rows, at most one per pattern, pattern-ordered. One key
+/// holds them all, not one item per pattern, because a pattern of three
+/// [`crate::consent::MAX_CONSENT_REF_LEN`] segments is past what an item
+/// admits.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct GraduationThresholds(Vec<ThresholdRow>);
 
-/// The 16-byte storage handle of a threshold pattern.
-pub(super) fn pattern_key(pattern: &str) -> [u8; ENTITY_ID_LEN] {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(PATTERN_DIGEST_DOMAIN);
-    hasher.update(pattern.as_bytes());
-    let mut key = [0_u8; ENTITY_ID_LEN];
-    key.copy_from_slice(&hasher.finalize().as_bytes()[..ENTITY_ID_LEN]);
-    key
-}
-
-fn threshold_row_parts(row: StoredThresholdRow) -> Result<ThresholdRow> {
-    if row.v != ROW_VERSION {
-        return Err(Error::CorruptedIndex(THRESHOLD_ROW_LABEL));
+/// Each row is re-validated HERE rather than trusted from its constructor. A
+/// [`ThresholdRow`]'s fields are `pub`, so [`ThresholdRow::new`] is a door and
+/// not a gate: a caller may assemble a threshold of zero, or a pattern that is
+/// not three axes, without ever passing through it. Every read re-parses the
+/// rows and fails CLOSED on one it cannot rebuild, so an unvalidated value
+/// would take every policy read in the vault down until it was replaced. A
+/// malformed row or a second row on one pattern is refused here
+/// (`InvalidConfig`, naming what is wrong), and the policy already in force
+/// stays in force.
+impl SettingValue for GraduationThresholds {
+    fn check(self) -> Result<Self> {
+        let mut rows = self
+            .0
+            .into_iter()
+            .map(|row| {
+                ThresholdRow::rebuilt(row).map_err(|error| Error::InvalidConfig(error.to_string()))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        rows.sort_by(|left, right| left.scope_pattern.cmp(&right.scope_pattern));
+        if rows
+            .windows(2)
+            .any(|pair| pair[0].scope_pattern == pair[1].scope_pattern)
+        {
+            return Err(Error::InvalidConfig(
+                "a graduation scope pattern has at most one threshold row".to_owned(),
+            ));
+        }
+        Ok(Self(rows))
     }
-    let mut threshold =
-        ThresholdRow::new(row.scope_pattern, row.required_streak, row.posterior_guard)
-            .map_err(|_| Error::CorruptedIndex(THRESHOLD_ROW_LABEL))?;
-    threshold.snooze_backoff_seconds = row.snooze_backoff_seconds;
-    Ok(threshold)
+}
+
+impl GraduationThresholds {
+    /// The rows with every row whose pattern's actor axis is `actor_hex` taken
+    /// out, or `None` when no row names it: an actor's erase takes that scope's
+    /// policy with it (RAMP-SCOPE-ACTOR-ERASE).
+    pub(super) fn without_actor(&self, actor_hex: &str) -> Option<Self> {
+        let names = |row: &ThresholdRow| {
+            pattern_axes(&row.scope_pattern).is_some_and(|[_, _, actor]| actor == actor_hex)
+        };
+        self.0
+            .iter()
+            .any(names)
+            .then(|| Self(self.0.iter().filter(|row| !names(*row)).cloned().collect()))
+    }
+
+    /// The rows as legal thresholds, each rebuilt through [`ThresholdRow::new`]:
+    /// a row that arrived by sync or a restore never passed [`Self::check`].
+    fn into_rows(self) -> Result<Vec<ThresholdRow>> {
+        self.0
+            .into_iter()
+            .map(|row| {
+                ThresholdRow::rebuilt(row).map_err(|_| Error::CorruptedIndex(THRESHOLD_ROW_LABEL))
+            })
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -198,8 +245,8 @@ fn threshold_row_parts(row: StoredThresholdRow) -> Result<ThresholdRow> {
 ///
 /// # Errors
 ///
-/// [`Error::CorruptedIndex`] when a stored row is unreadable or no longer forms
-/// a legal threshold — fail-closed, because a policy this engine cannot read is
+/// [`Error::CorruptedIndex`] when the setting's row is unreadable or one of its
+/// rows no longer forms a legal threshold — fail-closed, because a policy this engine cannot read is
 /// not a policy to substitute a guess for. Plus storage failures.
 pub fn graduation_policy_for(vault: &Vault, scope: &RampScope) -> Result<ThresholdRow> {
     let rtxn = vault.store.env.read_txn()?;
@@ -300,17 +347,20 @@ fn consider(best: &mut Option<Ranked>, row: ThresholdRow, compiled: bool, scope:
     }
 }
 
+/// The owner's rows in force: the `edit_distance.graduation.thresholds`
+/// setting's value, pattern-ordered.
 fn stored_threshold_rows_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<Vec<ThresholdRow>> {
-    THRESHOLD
-        .scan(store, txn)?
-        .into_iter()
-        .map(|(_, row)| threshold_row_parts(row))
-        .collect()
+    GRADUATION_THRESHOLDS
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value
+        .into_rows()
 }
 
 /// Every runtime threshold row, pattern-ordered — the editable half of the
-/// policy table. The compiled half is reached through
-/// [`graduation_policy_for`] on any scope no runtime row governs.
+/// policy table, which the owner sets whole as the
+/// `edit_distance.graduation.thresholds` setting (`vault.settings.set`). The
+/// compiled half is reached through [`graduation_policy_for`] on any scope no
+/// runtime row governs.
 ///
 /// # Errors
 ///
@@ -318,92 +368,7 @@ fn stored_threshold_rows_in_txn(store: &Store, txn: &heed::RoTxn<'_>) -> Result<
 pub fn graduation_policy_rows(vault: &Vault) -> Result<Vec<ThresholdRow>> {
     let rtxn = vault.store.env.read_txn()?;
     let mut rows = stored_threshold_rows_in_txn(&vault.store, &rtxn)?;
+    // A value that arrived by sync or a restore never passed the check that orders it.
     rows.sort_by(|left, right| left.scope_pattern.cmp(&right.scope_pattern));
     Ok(rows)
-}
-
-/// Writes one runtime threshold row, replacing any row on the same pattern.
-///
-/// The row is re-validated HERE rather than trusted from its constructor. A
-/// [`ThresholdRow`]'s fields are `pub`, so [`ThresholdRow::new`] is a door and
-/// not a gate: a caller may assemble a threshold of zero, or a pattern that is
-/// not three axes, without ever passing through it. Since every read re-parses
-/// the stored row and fails CLOSED on one it cannot rebuild, an unvalidated
-/// write would not corrupt this scope's policy — it would take every policy
-/// read in the vault down until the row was deleted. So the check belongs at
-/// the one door bytes get in through: a malformed threshold is a typed error
-/// here, and the policy already in force stays in force.
-///
-/// # Errors
-///
-/// [`GateError::InvalidConsentBound`](crate::error::GateError::InvalidConsentBound) when the row's fields are not a legal
-/// threshold, plus storage failures.
-pub fn set_graduation_policy(vault: &Vault, row: &ThresholdRow) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| set_graduation_policy_in_txn(vault, wtxn, row))
-}
-
-fn set_graduation_policy_in_txn(
-    vault: &Vault,
-    wtxn: &mut heed::RwTxn<'_>,
-    input: &ThresholdRow,
-) -> Result<()> {
-    let row = ThresholdRow::new(
-        input.scope_pattern.clone(),
-        input.required_streak,
-        input.posterior_guard,
-    )?;
-    let stored = StoredThresholdRow {
-        v: ROW_VERSION,
-        scope_pattern: row.scope_pattern.clone(),
-        required_streak: row.required_streak,
-        posterior_guard: row.posterior_guard,
-        snooze_backoff_seconds: input.snooze_backoff_seconds,
-    };
-    THRESHOLD.put(
-        &vault.store,
-        wtxn,
-        &pattern_key(&row.scope_pattern),
-        &stored,
-    )?;
-    Ok(())
-}
-
-/// Drops the runtime row on `pattern`, returning whether one was there. The
-/// scopes it governed fall back to the next-best row, ultimately the compiled
-/// catch-all.
-///
-/// # Errors
-///
-/// Storage failures.
-pub fn clear_graduation_policy(vault: &Vault, pattern: &str) -> Result<bool> {
-    vault.with_write_txn_grouped(|wtxn| THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern)))
-}
-
-/// Owner policy write, with the proof and row checked in the writing transaction.
-pub fn set_graduation_policy_as_owner(
-    vault: &Vault,
-    owner: &crate::consent::AuthenticatedOwner,
-    row: &ThresholdRow,
-) -> Result<()> {
-    vault.with_write_txn_grouped(|wtxn| {
-        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
-        set_graduation_policy_in_txn(vault, wtxn, row)
-    })
-}
-
-/// Owner policy removal, checked in the deleting transaction.
-pub fn clear_graduation_policy_as_owner(
-    vault: &Vault,
-    owner: &crate::consent::AuthenticatedOwner,
-    pattern: &str,
-) -> Result<bool> {
-    vault.with_write_txn_grouped(|wtxn| {
-        owner.revalidate_as_vault_owner_in_txn(vault, &*wtxn)?;
-        if pattern_axes(pattern).is_none() {
-            return Err(Error::Gate(GateError::InvalidConsentBound(
-                "graduation scope pattern",
-            )));
-        }
-        THRESHOLD.delete(&vault.store, wtxn, &pattern_key(pattern))
-    })
 }
