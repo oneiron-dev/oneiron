@@ -120,6 +120,38 @@ impl Vault {
         )?;
         Ok(policy)
     }
+
+    /// Whether the owner's stored setup lets `admin` use `power` over shared
+    /// vault `vault_id`, read in `txn`: every stored policy of an `ORG` whose
+    /// workspace preset names the vault names `admin` and `power`. With no
+    /// such policy stored, nothing narrows the act (RULING
+    /// FIX-4887-ORG-ADMIN-POLICY = A; federation:27, "a fixed allowlist of
+    /// named powers, never a blanket role"). A stored policy that fails
+    /// setup's own checks admits nothing.
+    pub(crate) fn org_setup_admits_admin_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        admin: EntityId,
+        power: OrgAdminPower,
+    ) -> crate::error::Result<bool> {
+        for org in crate::workspace_roster::preset_orgs_of_vault_in_txn(self, txn, vault_id)? {
+            let Some(policy) = ORG_ADMIN_POLICY.get(&self.store, txn, &HexId(org))? else {
+                continue;
+            };
+            let well_formed = policy.org_ref.0 == org
+                && OrgAdminPolicy::new(
+                    policy.org_ref.0,
+                    policy.admin_refs.iter().map(|id| id.0).collect(),
+                    policy.powers.clone(),
+                )
+                .is_ok();
+            if !well_formed || policy.authorize(admin, power).is_err() {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
 }
 
 #[cfg(test)]

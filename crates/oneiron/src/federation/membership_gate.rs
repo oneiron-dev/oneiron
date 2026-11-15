@@ -170,6 +170,16 @@ impl Vault {
                 SharedVaultWrite::PersonalVault | SharedVaultWrite::Content(_) => unreachable!(),
             };
             record.verbs = ScopeAxis::Some(BTreeSet::from([verb.to_owned()]));
+            // An Admin's named power also stands on the owner's stored setup
+            // of the org this vault's workspace runs, when one is stored:
+            // the setup is the allowlist (RULING FIX-4887-ORG-ADMIN-POLICY =
+            // A). An Owner or a Deputy grant is not narrowed by it.
+            if let SharedVaultWrite::Admin(power) = requested
+                && grant.role == FederationGrantRole::Admin
+                && !self.org_setup_admits_admin_in_txn(txn, vault_id, member, *power)?
+            {
+                continue;
+            }
             if grant.authority_scope.admits(verb, &record, &Scope::top()) {
                 return Ok(true);
             }

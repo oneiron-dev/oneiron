@@ -8,7 +8,9 @@
 //! FEDERATION_GRANT over the workspace's shared vault, its member the house,
 //! at the role its binder chose: member, steward, admin, deputy or owner. So
 //! [`Vault::authorize_shared_vault_write`] gates the house by that role and
-//! by nothing else, and its actor class stays `agent`. The binder names the
+//! by nothing else, and its actor class stays `agent`. An Admin role's named
+//! power, a house's as a person's, also stands on the org's stored setup
+//! policy when the owner stored one (RULING FIX-4887-ORG-ADMIN-POLICY = A). The binder names the
 //! role; a binder that names none gets [`DEFAULT_HOUSE_ROLE`], deputy
 //! (DEPUTY = A, the owner, 10 Nov 07:45), which the host's finish applies.
 //!

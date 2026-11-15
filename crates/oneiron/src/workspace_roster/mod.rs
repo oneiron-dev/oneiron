@@ -112,6 +112,7 @@ pub use self::intent::{
     CompanionBirthIntent, DelegatedMailboxOnboarding, MemberGrantBundle, MemberOnboardingIntent,
     WorkspaceRosterPreset,
 };
+pub(crate) use self::records::preset_orgs_of_vault_in_txn;
 use self::records::{
     MAX_NAME_BYTES, MEMBER, ONBOARDING, ONBOARDING_STEPS, OnboardingJournal, OnboardingJournalRow,
     PRESET, ROSTER_KEY_SEPARATOR, RosterMemberKey, RosterMemberRow,
