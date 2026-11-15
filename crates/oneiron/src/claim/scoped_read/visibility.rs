@@ -214,7 +214,11 @@ impl<'v> ScopedRead<'v> {
         if !self.reminder_wording_asset_sources_readable_in(rtxn, id, raw)? {
             return Ok(false);
         }
-        if self.actor_key.vault_owner_ref().is_some() {
+        // An owner key the conversation home binds (a saved outside lane
+        // rebuilt on the owner's floor) judges each source as any reader
+        // does: the shortcut below would carry a stamped claim's words in a
+        // summary that the claim gate withholds on its own.
+        if self.actor_key.vault_owner_ref().is_some() && !self.actor_key.reads_homed_unnamed() {
             // The owner reads every source but a private thread's turn,
             // which meets his own cut there (FIX 6410). A use-limited
             // source still withholds the derived row (FIX 1496 S8): C6
