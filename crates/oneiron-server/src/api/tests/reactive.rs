@@ -862,6 +862,10 @@ fn seed_reactive_citation(
             b"citation actor",
         )
         .unwrap();
+    // The writer reads the record its claim names (FIX 1218); this bare
+    // fixture actor holds no grant of its own, so the upsert below would
+    // deny with gate.deny.unresolved_record_reference.
+    put_actor_read_grant(server.vault(), actor, None);
     let claim = seeded_test_entity_id(counter + 1);
     let memory = server.vault().memory(actor, oneiron::EdgeActorClass::Human);
     memory
