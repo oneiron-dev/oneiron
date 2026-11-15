@@ -14,6 +14,7 @@ use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_TURN;
 use crate::side_table::{self, Named, SideTable};
 
 /// The map of each world's text space the vectors on this device last moved to match. Key: ().
@@ -133,22 +134,31 @@ fn sweep_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>) -> Result<WorldTextSpaceSwe
 
 /// Queues `id`'s text work anew, as a repo row's requeue does: the vault's pending-text pass
 /// leases it, or leaves it pending while a world's text space takes it. Whether it queued: a
-/// gone row, or one the pending worker does not embed, queues nothing.
+/// gone row, or one the pending worker does not embed, queues nothing. A TURN's text is its
+/// messages' (ARCH-0004), so a TURN is marked at that text, as the turn doors mark it
+/// (`embed::turn::mark_turn_in_txn`), and queues nothing while its messages hold none.
 fn requeue_text_work_in_txn(vault: &Vault, wtxn: &mut RwTxn<'_>, id: &EntityId) -> Result<bool> {
     let Some(record) = vault.store.port_entity_record(wtxn, id)? else {
         return Ok(false);
     };
-    if !super::super::eligibility::is_embeddable_in_txn(
+    let marked = if record.entity_type == ENTITY_TYPE_TURN {
+        match super::super::eligibility::turn_text_in_txn(vault, wtxn, id)? {
+            Some(text) => text.into_bytes(),
+            None => return Ok(false),
+        }
+    } else if super::super::eligibility::is_embeddable_in_txn(
         vault,
         wtxn,
         id,
         record.entity_type,
         &record.body,
     )? {
+        record.body
+    } else {
         return Ok(false);
-    }
+    };
     if !vault.store.has_current_pending_embedding_in_txn(wtxn, id)? {
-        vault.store.mark_pending_embedding(wtxn, id, &record.body)?;
+        vault.store.mark_pending_embedding(wtxn, id, &marked)?;
     }
     super::super::clear_pending_embedding_lease_if_any(vault, wtxn, id)?;
     crate::sync::queue::delete_embed_job_in_txn(&vault.store, wtxn, id)?;
