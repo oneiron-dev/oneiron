@@ -2027,3 +2027,123 @@ fn a_restricted_selector_does_not_carry_a_summary_of_a_kept_call() {
         "LEAK: the Member restricted window carries the phone reply TURN R_phone",
     );
 }
+
+/// The line agent sets (`Some`) or clears (`None`) its own Agent-scope row of
+/// the line's reach.
+fn set_reach_as_agent(fixture: &Fixture, reach: Option<&PhoneReach>) -> SetSettingOutcome {
+    fixture
+        .vault
+        .set_setting(
+            SettingCaller::Agent(fixture.agent),
+            SetSetting {
+                key: "voice.phone.reach".to_owned(),
+                item: Some(fixture.identity.to_hex()),
+                scope: SettingScope::Agent(fixture.agent),
+                mode: SettingMode::Value,
+                value: reach.map(|reach| serde_json::to_value(reach).expect("the reach encodes")),
+                expected_revision: None,
+                why: None,
+                check_in_ref: None,
+            },
+        )
+        .expect("the line agent's reach change is taken")
+}
+
+/// The owner mints `agent` a Grant listing the reach key's own line
+/// (`settings.set:voice.phone.reach`), so the agent sets the key as its
+/// holder, inside the owner's row.
+fn mint_reach_key_line_grant(fixture: &Fixture, agent: EntityId) {
+    let mut authority_scope = Scope::top();
+    authority_scope.verbs = ScopeAxis::Some(BTreeSet::from([
+        "read".to_owned(),
+        "vault.settings.set".to_owned(),
+        "settings.set:voice.phone.reach".to_owned(),
+    ]));
+    let minted = mint_agent_grant_as(
+        &fixture.vault,
+        &fixture.owner_proof,
+        ActSurface::ThisInstall,
+        AgentGrantMintRequest {
+            agent,
+            authority_scope,
+            expires_at: None,
+            repo_bounds: None,
+            verb_classes: BTreeSet::new(),
+            wallet_ref: None,
+            working_view_bounds: None,
+        },
+    )
+    .expect("owner mints the agent the reach key's Grant line");
+    assert!(
+        minted.grant.confers,
+        "the agent's reach key Grant confers its read"
+    );
+}
+
+/// REACH-AGENT-UNDO-NARROWING = A (Engine 16 Nov 06:26): the owner's standing
+/// value is the owner's yes. The line agent's clear of its own narrowing
+/// returns the line to the owner's value and never past it; an agent holding
+/// the key's own Grant line moves within the owner's row, and a move past it
+/// waits for the owner.
+#[test]
+fn the_line_agents_clear_returns_to_the_owners_reach_and_no_further() {
+    let got = reach_fixture(PhoneReach::Default {
+        documents: Vec::new(),
+    });
+    let owners = PhoneReach::Default {
+        documents: vec![got.doc.to_hex()],
+    };
+    let none_picked = PhoneReach::Default {
+        documents: Vec::new(),
+    };
+    set_reach_as_owner(&got.fixture, owners.clone());
+    let reach_now = || {
+        got.fixture
+            .vault
+            .phone_line_reach(got.fixture.identity, got.fixture.agent)
+            .expect("the line's reach reads")
+    };
+    let narrowed = set_reach_as_agent(&got.fixture, Some(&none_picked));
+    assert!(
+        matches!(narrowed, SetSettingOutcome::Applied { .. }),
+        "the line agent's narrowing to no picked document lands; seen {narrowed:?}",
+    );
+    assert_eq!(reach_now(), none_picked, "the narrowing reads at once");
+    let cleared = set_reach_as_agent(&got.fixture, None);
+    assert!(
+        matches!(cleared, SetSettingOutcome::Applied { .. }),
+        "the line agent's clear of its own narrowing lands; seen {cleared:?}",
+    );
+    assert_eq!(
+        reach_now(),
+        owners,
+        "the clear returns the line to the owner's value, and no further",
+    );
+    mint_reach_key_line_grant(&got.fixture, got.fixture.agent);
+    let within = set_reach_as_agent(&got.fixture, Some(&none_picked));
+    assert!(
+        matches!(within, SetSettingOutcome::Applied { .. }),
+        "a key-line holder's move within the owner's row lands; seen {within:?}",
+    );
+    assert_eq!(reach_now(), none_picked, "the holder's narrowing reads");
+    let undone = set_reach_as_agent(&got.fixture, None);
+    assert!(
+        matches!(undone, SetSettingOutcome::Applied { .. }),
+        "a key-line holder's clear lands; seen {undone:?}",
+    );
+    assert_eq!(
+        reach_now(),
+        owners,
+        "the holder's clear returns to the owner's value, and no further",
+    );
+    let past = set_reach_as_agent(&got.fixture, Some(&PhoneReach::WholeVault));
+    assert!(
+        matches!(past, SetSettingOutcome::Pending { .. }),
+        "a key-line holder's move past the owner's row waits for the owner; seen {past:?}",
+    );
+    assert_eq!(
+        reach_now(),
+        owners,
+        "while the move waits, the line keeps the owner's value",
+    );
+}
