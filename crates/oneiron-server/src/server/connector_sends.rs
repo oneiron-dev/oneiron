@@ -199,3 +199,18 @@ fn unix_now() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |elapsed| elapsed.as_secs())
 }
+
+#[cfg(oneiron_test_support)]
+impl SyncServer {
+    /// One connector-send pass now, as the drain runs it (red pin: the
+    /// PR 1 drain, with no told-statement sink).
+    pub(crate) fn run_connector_send_pass(&self) -> oneiron::Result<Option<u64>> {
+        let mut clients = None;
+        send_pass(
+            self.vault(),
+            self.config.line.monthly_push_allowance(),
+            &mut clients,
+            false,
+        )
+    }
+}
