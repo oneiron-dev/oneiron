@@ -25,7 +25,7 @@
 //! replaces a filled slot or mints a seed: an install with no seed of the
 //! live root stays rootless, as before.
 
-use oneiron_keystore::{KeystoreError, KeystoreSlot, SlotKind};
+use oneiron_keystore::{DeviceKeystore, KeystoreError, KeystoreSlot, SlotKind};
 
 use super::issuer_seed::{HOST_ISSUER_SEED_BYTES, HostSlipIssuer, new_host_issuer_seed};
 use super::require_host;
@@ -82,6 +82,40 @@ fn lock_host_root_moves() -> Result<std::sync::MutexGuard<'static, ()>> {
     HOST_ROOT_MOVES
         .lock()
         .map_err(|_| Error::InvariantViolation("host root move lock poisoned"))
+}
+
+/// Puts this install's `slot` back as a root move read it (`kept`: its
+/// seed, or `None` for an empty slot) after the move, or the keystore write
+/// of its successor seed, failed. A keystore can fault after the successor's
+/// bytes became visible (a directory sync after the rename), so a failed
+/// write is put back too. Only a slot holding the successor (`staged`) is
+/// changed: a write that faulted before it published leaves the slot as it
+/// was, and a slot holding any other seed is not this move's. A put-back that
+/// fails is the error, never a report of an unchanged slot.
+fn put_back_host_issuer_slot(
+    keystore: &dyn DeviceKeystore,
+    slot: &KeystoreSlot,
+    kept: Option<&[u8; HOST_ISSUER_SEED_BYTES]>,
+    staged: &HostSlipIssuer,
+) -> Result<()> {
+    let held = keystore.get(slot).map_err(keystore_error)?;
+    let Some(held) = held else {
+        return match kept {
+            None => Ok(()),
+            Some(_) => Err(Error::InvariantViolation(HOST_ISSUER_SEED_SLOT_EMPTIED)),
+        };
+    };
+    if HostSlipIssuer::from_seed(&held)?.binding_key() != staged.binding_key() {
+        return Ok(());
+    }
+    match kept {
+        None => keystore.delete(slot).map_err(keystore_error),
+        Some(seed) => match keystore.replace(slot, seed) {
+            Ok(true) => Ok(()),
+            Ok(false) => Err(Error::InvariantViolation(HOST_ISSUER_SEED_SLOT_EMPTIED)),
+            Err(restore) => Err(keystore_error(restore)),
+        },
+    }
 }
 
 /// What [`Vault::recover_host_issuer_seed`] found in this install's slot.
@@ -144,8 +178,9 @@ impl Vault {
     /// The slot's own seed is read first, and a `current` that seed does not
     /// make is refused before anything moves. The successor then takes the
     /// slot in place, so a root that moved always has its seed kept; a
-    /// re-root that then fails puts the seed read back. A keystore with no
-    /// in-place replace keeps nothing and moves nothing.
+    /// re-root that then fails, or a successor write the keystore faulted
+    /// on, puts the seed read back (`put_back_host_issuer_slot`). A
+    /// keystore with no in-place replace keeps nothing and moves nothing.
     pub fn re_root_host_to_new_seed(&self, current: &HostSlipIssuer) -> Result<HostReRoot> {
         let _moving = lock_host_root_moves()?;
         let keystore = self.device_keystore()?;
@@ -159,21 +194,15 @@ impl Vault {
         }
         let next_seed = new_host_issuer_seed()?;
         let next = HostSlipIssuer::from_seed(&next_seed)?;
-        match keystore.replace(&slot, &next_seed) {
-            Ok(true) => {}
+        let staged = match keystore.replace(&slot, &next_seed) {
+            Ok(true) => Ok(()),
             Ok(false) => return Err(seed_absent()),
-            Err(error) => return Err(keystore_error(error)),
-        }
-        match self.re_root_host(current, &next) {
+            Err(error) => Err(keystore_error(error)),
+        };
+        match staged.and_then(|()| self.re_root_host(current, &next)) {
             Ok(moved) => Ok(moved),
             Err(error) => {
-                match keystore.replace(&slot, &kept) {
-                    Ok(true) => {}
-                    Ok(false) => {
-                        return Err(Error::InvariantViolation(HOST_ISSUER_SEED_SLOT_EMPTIED));
-                    }
-                    Err(restore) => return Err(keystore_error(restore)),
-                }
+                put_back_host_issuer_slot(&*keystore, &slot, Some(&*kept), &next)?;
                 Err(error)
             }
         }
@@ -186,9 +215,11 @@ impl Vault {
     /// when the slot holds the live root's seed, one the escrow gave back at
     /// keystore install included: that root moves by re-root. An empty slot
     /// is filled create-only; a slot holding a retired seed is replaced in
-    /// place. A recovery that then fails leaves the slot as it was: emptied
-    /// again, or its retired seed put back. One root move runs at a time in
-    /// this process, this and a re-root alike.
+    /// place. A recovery that then fails, or whose successor write the
+    /// keystore faulted on, leaves the slot as it was: emptied again, or its
+    /// retired seed put back (`put_back_host_issuer_slot`); a slot another
+    /// seed filled first is left to it. One root move runs at a time in this
+    /// process, this and a re-root alike.
     pub fn recover_host_root_to_new_seed(&self, secret: RestoredKitSecret) -> Result<HostReRoot> {
         let _moving = lock_host_root_moves()?;
         let keystore = self.device_keystore()?;
@@ -201,28 +232,19 @@ impl Vault {
         }
         let next_seed = new_host_issuer_seed()?;
         let next = HostSlipIssuer::from_seed(&next_seed)?;
-        if kept.is_some() {
+        let staged = if kept.is_some() {
             match keystore.replace(&slot, &next_seed) {
-                Ok(true) => {}
+                Ok(true) => Ok(()),
                 Ok(false) => return Err(seed_absent()),
-                Err(error) => return Err(keystore_error(error)),
+                Err(error) => Err(keystore_error(error)),
             }
         } else {
-            keystore.create(&slot, &next_seed).map_err(keystore_error)?;
-        }
-        match self.recover_host_root_from_kit(secret, &next) {
+            keystore.create(&slot, &next_seed).map_err(keystore_error)
+        };
+        match staged.and_then(|()| self.recover_host_root_from_kit(secret, &next)) {
             Ok(moved) => Ok(moved),
             Err(error) => {
-                match &kept {
-                    None => keystore.delete(&slot).map_err(keystore_error)?,
-                    Some(seed) => match keystore.replace(&slot, seed) {
-                        Ok(true) => {}
-                        Ok(false) => {
-                            return Err(Error::InvariantViolation(HOST_ISSUER_SEED_SLOT_EMPTIED));
-                        }
-                        Err(restore) => return Err(keystore_error(restore)),
-                    },
-                }
+                put_back_host_issuer_slot(&*keystore, &slot, kept.as_deref(), &next)?;
                 Err(error)
             }
         }

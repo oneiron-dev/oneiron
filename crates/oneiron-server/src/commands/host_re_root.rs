@@ -113,19 +113,22 @@ pub fn host_re_root(args: HostReRootArgs) -> anyhow::Result<()> {
     let mut steps = vec![
         "Set ONEIRON_AUTH_SECRET (or the config's auth_secret) to the new secret before the next `oneiron serve`; the old secret is refused from now on.".to_owned(),
     ];
-    steps.extend(root_move_steps(&vault, &moved, "the old secret")?);
+    steps.extend(root_move_steps(&vault, &moved, "the old secret"));
     print_root_move_report(&moved, steps)
 }
 
 /// The steps every root move's report gives after its first: the retired
 /// credentials (minted by `retired_by`) to mint again, the histories left
 /// hidden, and, while the move left the vault with no live recovery key, the
-/// three commands that enrol a new kit (L1-07-KIT-AFTER-MOVE = B).
+/// three commands that enrol a new kit (L1-07-KIT-AFTER-MOVE = B). The move
+/// committed before this runs, so a fault reading the recovery state is
+/// warned by its kind and gives the same three commands as a check, never a
+/// failed command with no report.
 pub(super) fn root_move_steps(
     vault: &oneiron::Vault,
     moved: &oneiron::authority::HostReRoot,
     retired_by: &str,
-) -> anyhow::Result<Vec<String>> {
+) -> Vec<String> {
     let mut steps = Vec::new();
     if !moved.retired_slips.is_empty() {
         steps.push(format!(
@@ -138,13 +141,24 @@ pub(super) fn root_move_steps(
             moved.histories_left
         ));
     }
-    if vault.genesis_fragile_now()? {
-        steps.push(format!(
+    match vault.genesis_fragile_now() {
+        Ok(false) => {}
+        Ok(true) => steps.push(format!(
             "The move retired every recovery kit key this vault had enrolled, with every other key, so the vault holds no recovery method now, and `oneiron serve` shows the {} flag until you enrol a new kit: `oneiron recovery-kit issue`, then `oneiron recovery-kit confirm`, then `oneiron recovery-kit enroll-authority`.",
             oneiron::authority::GENESIS_FRAGILE_FLAG
-        ));
+        )),
+        Err(error) => {
+            tracing::warn!(
+                kind = ?error.kind(),
+                "whether the vault holds a recovery method was not read after the root move"
+            );
+            steps.push(format!(
+                "The move retired every key this vault had enrolled, a recovery kit's among them, and whether an owner key has been enrolled since could not be read. `oneiron serve` shows the {} flag at start while none is; to enrol a new kit: `oneiron recovery-kit issue`, then `oneiron recovery-kit confirm`, then `oneiron recovery-kit enroll-authority`.",
+                oneiron::authority::GENESIS_FRAGILE_FLAG
+            ));
+        }
     }
-    Ok(steps)
+    steps
 }
 
 /// Prints a root move's report: what moved, the credentials it retired, and

@@ -60,6 +60,6 @@ pub fn host_recover_root(args: HostRecoverRootArgs) -> anyhow::Result<()> {
     let mut steps = vec![
         "The vault's root moved to a new issuer seed kept in this install's keystore. Start `oneiron serve` with your host secret (ONEIRON_AUTH_SECRET or the config's auth_secret).".to_owned(),
     ];
-    steps.extend(root_move_steps(&vault, &moved, "the lost root")?);
+    steps.extend(root_move_steps(&vault, &moved, "the lost root"));
     print_root_move_report(&moved, steps)
 }
