@@ -170,41 +170,9 @@ pub(crate) fn admit_frozen_waitlist_offer_in_txn(
     else {
         return Ok(None);
     };
-    if frozen.channel.trim() != OFFER_CHANNEL
-        || frozen.verb.trim() != OFFER_VERB
-        || !frozen.recipients.is_empty()
-    {
-        return Err(refused("a waitlist offer is one email to its waiter alone"));
-    }
-    let target = normalize_identity(&frozen.target);
-    if frozen
-        .counterparty_ref
-        .as_deref()
-        .is_some_and(|party| normalize_identity(party) != target)
-    {
-        return Err(refused(
-            "a waitlist offer must go to its admitted recipient",
-        ));
-    }
-    let offer_token_hash = offer_token_digest(&offer_token);
-    if frozen.idempotency_key.as_deref()
-        != Some(waitlist_offer_intent_ref(&page_ref, &offer_token_hash).as_str())
-    {
-        return Err(refused(
-            "a waitlist offer is sent once, under its own intent",
-        ));
-    }
+    // RED PROOF: every check of the offer, its waiter and its intent is gone.
+    let _ = (&offer_token, &frozen.target);
     let actor = actor.ok_or_else(|| refused("a waitlist offer requires an acting principal"))?;
-    let Some(offer) =
-        standing_waitlist_offer_in_txn(&vault.store, txn, &page_ref, &offer_token_hash)
-            .map_err(|error| engine_failure("waitlist read", error))?
-    else {
-        return Err(refused("this waitlist offer no longer stands"));
-    };
-    let waiter = booker_identity_in_txn(vault, txn, &offer.contact_ref)?;
-    if waiter.is_none_or(|waiter| normalize_identity(&waiter) != target) {
-        return Err(refused("a waitlist offer goes only to its own waiter"));
-    }
     let Some((grant_ref, _)) =
         live_page_invite_grant_in_txn(vault, txn, &actor.to_hex(), &page_ref)?
     else {
@@ -227,13 +195,7 @@ pub(crate) fn page_grant_reaches_waitlist_offer_in_txn(
     page_ref: &EntityId,
     recipient: &str,
 ) -> crate::Result<bool> {
-    let wanted = normalize_identity(recipient);
-    for contact in offered_waitlist_contacts_in_txn(store, txn, page_ref)? {
-        if super::authorization::person_identity_in_txn(store, txn, &contact)?
-            .is_some_and(|identity| normalize_identity(&identity) == wanted)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+    // RED PROOF: any (email, send) the page grant is bound to reaches.
+    let _ = (store, txn, page_ref, recipient);
+    Ok(true)
 }
