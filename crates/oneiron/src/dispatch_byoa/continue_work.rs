@@ -33,6 +33,7 @@ use crate::checkout::lease::transactions::claim_in_txn;
 use crate::checkout::{CheckoutClaimRequest, CheckoutError, CheckoutId, CheckoutTaskClass};
 use crate::codebase::RepoRef;
 use crate::consent::AuthenticatedOwner;
+use crate::edge::EdgeActorClass;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{CodeError, Error};
 use crate::git_wire::{GitRefName, GitWire};
@@ -567,7 +568,10 @@ impl Vault {
     /// The commit must be the tip of the pushed ref before any writer opens
     /// (a lost upload starts nothing, CLR-001); refs live on disk, so this
     /// read is outside the writer, and the checkout is pinned at the commit,
-    /// so a later ref move cannot change what runs.
+    /// so a later ref move cannot change what runs. The checkout is the
+    /// owner's: the owner holds it and takes the TASK, as the claim door's
+    /// claimer does, so the owner reads and releases it through the checkout
+    /// doors.
     ///
     /// The work runs only on a seat of `policy` that names `input.runner`:
     /// the first such seat in the owner's order that this runtime may run
@@ -747,8 +751,14 @@ impl Vault {
             let label = format!("continue:{conversation_hex}");
             let task =
                 self.mint_runner_continue_task_in_txn(wtxn, owner, label, spec, &provenance, now)?;
-            let holder = format!("{CONTINUE_STEP_KEY}:{}", binding.to_hex());
-            claim_in_txn(
+            // The owner claims the checkout as the claim door's claimer
+            // does: the holder is the owner's id and the owner takes the
+            // TASK, so the shipped checkout doors read, settle and tear it
+            // down under the owner's own credential. The runner's narrower
+            // authority is the attempt's reservation of this epoch, never
+            // the holder. No ttl, as before: an expired lease would turn a
+            // long run's capture stale.
+            let act = claim_in_txn(
                 self,
                 wtxn,
                 CheckoutClaimRequest {
@@ -758,13 +768,15 @@ impl Vault {
                         path: store.to_string_lossy().into_owned(),
                         commit: input.commit.clone(),
                     },
-                    holder_ref: holder,
+                    holder_ref: owner.to_hex(),
                     task_class: CheckoutTaskClass::Edit,
                     ttl_secs: None,
                     now,
                 },
             )
             .map_err(claim_refusal)?;
+            self.memory(owner, EdgeActorClass::Human)
+                .checkout_started_in(wtxn, &act, now)?;
             let pin =
                 persist_staged_input_in_txn(self, wtxn, &staged, &run_id, now).map_err(refusal)?;
             work.staged_input = Some(pin);
