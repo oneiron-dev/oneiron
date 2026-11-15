@@ -89,6 +89,7 @@ mod codec;
 mod companion_bind;
 mod house_link;
 mod intent;
+mod one_vault;
 mod records;
 mod runner;
 mod scrub;
@@ -124,6 +125,10 @@ pub use self::records::{
 // SPEAKER-BYLINE-FOR-ORG's statement byline.
 #[cfg(oneiron_test_support)]
 pub(crate) use self::house_link::house_org_at_in_txn;
+pub(crate) use self::one_vault::{ONE_VAULT_ROW_KEY, OneVaultRead};
+pub use self::one_vault::{
+    ONE_VAULT_ROW_VERSION, OneVaultMode, OneVaultPolicy, OneVaultSetting, OneVaultSource,
+};
 pub(crate) use self::scrub::{
     erase_companion_principal_actor_in_txn, erase_member_actor_in_txn,
     erase_member_intent_actor_in_txn,

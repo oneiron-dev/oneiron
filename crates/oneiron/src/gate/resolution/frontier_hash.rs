@@ -123,6 +123,13 @@ pub(super) fn hash_policy_frontier_v0(
         hash_str(hasher, "inquiry");
         hash_str(hasher, policy.keep().as_str());
     }
+    // The one-vault row decides where work talk is saved: hashed only when
+    // present, so a manifest that never names it keeps its exact frontier
+    // hash, with a domain tag as the knob above has.
+    if let Some(policy) = resolution.one_vault_policy {
+        hash_str(hasher, "one_vault");
+        hash_str(hasher, policy.mode().as_str());
+    }
     // The common owner-change wait moves start deadlines, so naming one
     // moves the frontier; a manifest that never names it keeps its exact
     // no-common frontier hash. A domain tag rides with the value so no

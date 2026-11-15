@@ -834,6 +834,20 @@ impl PolicyManifestResolution {
         }
     }
 
+    /// The one-vault row (federation.md #one-vault-mode) this resolution
+    /// carries. A loaded manifest that fails closed reads as unreadable; a
+    /// vault with no manifest has no row.
+    #[must_use]
+    pub(crate) fn one_vault_policy(&self) -> crate::workspace_roster::OneVaultRead {
+        if self.diagnostics.loaded_manifest_forces_fail_closed() {
+            return crate::workspace_roster::OneVaultRead::Unreadable;
+        }
+        match self.one_vault_policy {
+            Some(policy) => crate::workspace_roster::OneVaultRead::Row(policy),
+            None => crate::workspace_roster::OneVaultRead::NoRow,
+        }
+    }
+
     #[must_use]
     /// The catastrophe floor row this resolution carries, or the pinned
     /// floor when no trusted manifest names one (DEC-0006 invariant 7). A

@@ -56,6 +56,7 @@ pub(crate) const fn waits_on_owner_act(kind: ErrorKind) -> bool {
             | ErrorKind::ConnectorCharterApprovalMismatch
             | ErrorKind::WorkspaceMailboxAutonomyNotReady
             | ErrorKind::WorkCompanionRequired
+            | ErrorKind::OneVaultSettingUnreadable
             | ErrorKind::HostActionRequiresSupportGrant
             | ErrorKind::GitPushCapabilityRequired
             | ErrorKind::SecretBindingDenied

@@ -159,6 +159,13 @@ impl From<Error> for MemoryError {
                 message,
                 &["Start a work companion in this workspace; its policy refuses a brought one."],
             ),
+            // A policy refusal, not a bad request: the manifest is what
+            // has to change.
+            ErrorKind::OneVaultSettingUnreadable => Self::new(
+                MEMORY_CODE_FORBIDDEN,
+                message,
+                &["Repair the vault's policy manifest, then retry."],
+            ),
             // FIX 2222: its own code, so a client tells it from a gate's or
             // the owner binding's refusal; the remedy is the customer's.
             ErrorKind::HostActionRequiresSupportGrant => Self::new(

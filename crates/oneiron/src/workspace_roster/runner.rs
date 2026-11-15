@@ -109,7 +109,13 @@ impl Vault {
                         |_| require_mailbox_revision(self, revision),
                     )?;
                     let suggested = work_companion_suggested(self, &intent)?;
-                    return Ok(Some(outcome_of(&intent, completed_at, suggested)));
+                    let one_vault = one_vault_told(self, &intent)?;
+                    return Ok(Some(outcome_of(
+                        &intent,
+                        completed_at,
+                        suggested,
+                        one_vault,
+                    )));
                 }
                 record.step.rank()
             }
@@ -179,7 +185,13 @@ impl Vault {
             return Ok(None);
         }
         let suggested = work_companion_suggested(self, &intent)?;
-        Ok(Some(outcome_of(&intent, intent.occurred_at, suggested)))
+        let one_vault = one_vault_told(self, &intent)?;
+        Ok(Some(outcome_of(
+            &intent,
+            intent.occurred_at,
+            suggested,
+            one_vault,
+        )))
     }
 
     /// Runs one pinned step. Each arm is individually idempotent, so a resumed
@@ -311,4 +323,19 @@ impl Vault {
 fn work_companion_suggested(vault: &Vault, intent: &MemberOnboardingIntent) -> Result<bool> {
     Ok(read_preset_row(vault, &intent.workspace.workspace_ref)?
         .is_some_and(|row| row.work_companion.suggests_against(&intent.companion)))
+}
+
+/// Whether the Complete step recorded this member as told that one-vault
+/// mode is on: the joining client shows onboarding line 2's one-vault form
+/// when it did. Read from the stored member row, never from the mode in
+/// force now, so the answer and the told mark always agree.
+fn one_vault_told(vault: &Vault, intent: &MemberOnboardingIntent) -> Result<bool> {
+    let key = RosterMemberKey {
+        workspace_ref: intent.workspace.workspace_ref.clone(),
+        person_ref: intent.person_ref,
+    };
+    let rtxn = vault.store.env.read_txn()?;
+    Ok(MEMBER
+        .get(&vault.store, &rtxn, &key)?
+        .is_some_and(|row| row.one_vault_told.is_some()))
 }

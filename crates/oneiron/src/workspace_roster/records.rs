@@ -2,8 +2,9 @@
 
 use super::*;
 
-/// Body schema version for every record this module writes.
-pub const WORKSPACE_ROSTER_SCHEMA_VERSION: u64 = 1;
+/// Body schema version for every record this module writes. Version 2 adds
+/// `one_vault_told` to the member row; no reader for version 1 exists.
+pub const WORKSPACE_ROSTER_SCHEMA_VERSION: u64 = 2;
 
 /// Idempotency journal tracking one member-onboarding request's progress
 /// through the pinned step ladder. Key: caller-supplied onboarding id.
@@ -139,6 +140,10 @@ pub(super) struct RosterMemberRow {
     pub(super) companion_actor_ref: Option<EntityId>,
     pub(super) companion_facet_ref: Option<EntityId>,
     pub(super) identity_ref: Option<EntityId>,
+    /// The time the member was told one-vault mode is on, at joining;
+    /// `None` when the mode was off (plain line 2). Set by the Complete
+    /// step from the vault's `one_vault` row.
+    pub(super) one_vault_told: Option<u64>,
 }
 
 impl RawValue for RosterMemberRow {

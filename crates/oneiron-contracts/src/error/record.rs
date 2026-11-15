@@ -330,6 +330,12 @@ pub enum RecordError {
         "workspace work_companion policy is require: start a work companion; a brought one is refused"
     )]
     WorkCompanionRequired,
+    /// The vault's `one_vault` row is unreadable, so onboarding refuses to
+    /// say which joining line applies. The journal stays resumable: retry
+    /// once the manifest reads again. The Complete step writes nothing on
+    /// this refusal; prior journal progress stays resumable.
+    #[error("workspace one_vault setting is unreadable: repair the policy manifest, then retry")]
+    OneVaultSettingUnreadable,
     /// A CounterpartyContact record failed pinned structural validation.
     /// Nothing was written.
     #[error("invalid counterparty contact body: {0}")]
@@ -510,6 +516,7 @@ impl RecordError {
                 ErrorKind::WorkspaceMailboxAutonomyNotReady
             }
             Self::WorkCompanionRequired => ErrorKind::WorkCompanionRequired,
+            Self::OneVaultSettingUnreadable => ErrorKind::OneVaultSettingUnreadable,
             Self::InvalidCounterpartyContactBody(_) => ErrorKind::InvalidCounterpartyContactBody,
             Self::InvalidCommRecordBody(_) => ErrorKind::InvalidCommRecordBody,
             Self::InvalidDiagnosticBody(_) => ErrorKind::InvalidDiagnosticBody,

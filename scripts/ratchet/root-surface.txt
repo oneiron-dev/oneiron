@@ -439,6 +439,9 @@ NotificationItem
 NoveltyWindow
 OUTBOUND_CAPABILITY_MANIFEST_VERSION
 OUTBOUND_VERB_FIELD_CONTRACT
+OneVaultMode
+OneVaultSetting
+OneVaultSource
 OutboundCapabilityManifest
 OutboundDraftInput
 OutboundVerbContract

@@ -133,6 +133,13 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
             },
             ["Start a work companion in this workspace; its policy refuses a brought one."],
         ),
+        ErrorKind::OneVaultSettingUnreadable => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::Forbidden {
+                required_scope: None,
+            },
+            ["Repair the vault's policy manifest, then retry onboarding."],
+        ),
         ErrorKind::HeadAdvanceOffTrunk => ApiError::invalid_state(Some("head_advance_off_trunk")),
         ErrorKind::DagParentOutsideConversation => {
             ApiError::invalid_state(Some("dag_parent_outside_conversation"))

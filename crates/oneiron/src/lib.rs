@@ -683,7 +683,9 @@ pub use crate::workspace_roster::{
     MemberOnboardingOutcome, MemberOnboardingStep, WorkspaceRosterEntry, WorkspaceRosterPreset,
     WorkspaceRosterRole,
 };
-pub use crate::workspace_roster::{CompanionChoice, WorkCompanionPolicy};
+pub use crate::workspace_roster::{
+    CompanionChoice, OneVaultMode, OneVaultSetting, OneVaultSource, WorkCompanionPolicy,
+};
 pub use crate::world_keys::{PAGE_SEAL_WARNING, VaultPageSeal};
 pub use crate::write_envelope::{
     ClaimCandidate, SourceLineage, WriteActor, WriteEnvelope, WriteProvenance,
