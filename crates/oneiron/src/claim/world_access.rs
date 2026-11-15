@@ -175,6 +175,30 @@ pub(crate) fn admit_world_access_value(body: &ClaimBody) -> Result<()> {
     decode_world_access_claim_value(body).map(|_| ())
 }
 
+/// Whether the row stored at `id` is a world-access grant or default, open
+/// or closed. That row is this node's authority, written only through the
+/// governed doors ([`admit_world_access_write`]): no put below the owner
+/// takes its id (`batch::put_target_admitted_in`, FIX
+/// [WORLD-ACCESS-GRANT-ROW-OVERWRITE-UNGOVERNS]), and a peer's row or
+/// tombstone under that id never replaces or deletes it, whatever its own
+/// bytes say (`sync::local_claims`), since no peer holds a row of its own
+/// under that id.
+pub(crate) fn holds_world_access_claim_in(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    id: &EntityId,
+) -> Result<bool> {
+    Ok(vault.get_raw_in(txn, id)?.is_some_and(|raw| {
+        raw.first().copied() == Some(crate::registry::ENTITY_TYPE_CLAIM)
+            && crate::batch::EntityMetadataHeader::parse(&raw).is_some()
+            && crate::claim::decode_claim_body(
+                &raw[crate::batch::ENTITY_METADATA_HEADER_LEN..],
+                true,
+            )
+            .is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
+    }))
+}
+
 /// Decodes the strict world-access claim value:
 ///
 /// ```text

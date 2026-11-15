@@ -42,21 +42,9 @@ pub(super) fn world_access_claim(data: &[u8]) -> bool {
     decode_claim_body(data, true).is_ok_and(|body| is_world_access_tier_predicate(&body.predicate))
 }
 
-/// Whether the row stored at `id` is a world-access grant or default. A
-/// peer's row or tombstone under that id never replaces or deletes it,
-/// whatever its own bytes say: the stored row is this node's authority, and
-/// no peer holds a row of its own under that id.
-pub(super) fn holds_world_access_claim_in(
-    vault: &Vault,
-    txn: &heed::RoTxn<'_>,
-    id: &EntityId,
-) -> Result<bool> {
-    Ok(vault.get_raw_in(txn, id)?.is_some_and(|raw| {
-        raw.first().copied() == Some(ENTITY_TYPE_CLAIM)
-            && EntityMetadataHeader::parse(&raw).is_some()
-            && world_access_claim(&raw[ENTITY_METADATA_HEADER_LEN..])
-    }))
-}
+// Whether the row stored at `id` is a world-access grant or default: a
+// peer's row or tombstone under that id never replaces or deletes it.
+pub(super) use crate::claim::world_access::holds_world_access_claim_in;
 
 pub(super) fn local_claim_sync_allowed(vault: &Vault, id: &EntityId) -> Result<bool> {
     Ok(vault
