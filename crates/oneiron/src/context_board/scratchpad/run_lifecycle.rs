@@ -36,6 +36,24 @@ pub(crate) fn seal_run_pads_in_txn(
     Ok(pads)
 }
 
+/// Whether durable code run `run` has ended, read in the caller's write
+/// (OF-548): its attempt row is terminal, the state its terminal write sets
+/// in the write that seals the run's pads, or, for a run with no attempt row
+/// such as an MCP `execute_code` run, its latest durable marker is Complete.
+/// A pad born after that end would stay live and missing from the terminal
+/// receipt, so the pad's birth refuses it.
+pub(super) fn code_run_ended_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    run: EntityId,
+) -> crate::Result<bool> {
+    let attempt = crate::attempt_queue::AttemptId::from_bytes(run.as_bytes())?;
+    match crate::attempt_queue::AttemptQueue::new(vault).get_in_txn(txn, attempt)? {
+        Some(record) => Ok(record.state.is_terminal()),
+        None => crate::engine_executor::code_run_complete_in_txn(vault, txn, run),
+    }
+}
+
 impl crate::Vault {
     /// Seals every pad a completed canonical code run wrote
     /// ([`seal_run_pads_in_txn`]): the end of a run that has no attempt row,

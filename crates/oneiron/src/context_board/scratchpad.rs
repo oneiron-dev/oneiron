@@ -428,6 +428,16 @@ fn sealed_pad() -> MemoryError {
     )
 }
 
+/// A run-bound line after its run's end: the run's terminal write sealed its
+/// pads, so no pad opens for it (OF-548).
+fn ended_run_pad() -> MemoryError {
+    MemoryError::new(
+        MEMORY_CODE_INVALID_STATE,
+        "this run has ended, and its scratchpads are sealed",
+        &["A run that ended takes no pad writes; the next run opens a new pad."],
+    )
+}
+
 impl crate::Vault {
     /// The pads `actor` wrote that are sealed, in key order: what its own
     /// dreaming reads (OF-490).
@@ -622,7 +632,8 @@ impl Memory<'_> {
     /// is never sealed here (FIX 9748). A run-bound caller writes its own
     /// run's pad, so a later wake on a label opens a fresh pad and two live
     /// runs on one label never share one (OF-548). A sealed pad refuses
-    /// writes. The mark and pin ride the line as its header.
+    /// writes, and so does a run-bound caller's first line once its run has
+    /// ended. The mark and pin ride the line as its header.
     pub fn scratchpad_append(
         &self,
         session: &str,
@@ -684,16 +695,26 @@ impl Memory<'_> {
                 sealed_prior: None,
             });
         }
-        let pad = EntityId::from_hex(&self.create_note(PAD_KIND, &line)?.id_hex)?;
         let actor = self.actor();
-        let row = PadRow {
-            actor: *actor.as_bytes(),
-            session: session.to_owned(),
-            pad: *pad.as_bytes(),
-            close_run: None,
-        };
-        let sealed_prior = self.with_verified_actor_write_txn(|txn| {
+        let run = self.bound_code_run();
+        // OF-548: the pad's birth and its pointers commit in one write. A
+        // run's terminal write, which seals the run's pads, either commits
+        // first, and this birth refuses, or reads these pointers and seals
+        // the pad, so no pad outlives its run unsealed.
+        let (_, (pad, sealed_prior)) = self.create_note_then(PAD_KIND, &line, |txn, pad| {
+            self.verify_actor_write_in_txn(txn)?;
+            if let Some(run) = run
+                && run_lifecycle::code_run_ended_in_txn(self.vault(), txn, run)?
+            {
+                return Err(ended_run_pad());
+            }
             let store = &self.vault().store;
+            let row = PadRow {
+                actor: *actor.as_bytes(),
+                session: session.to_owned(),
+                pad: *pad.as_bytes(),
+                close_run: None,
+            };
             // Two first lines racing for one pointer both birth a pad; the
             // later commit seals the earlier, so the pointer still holds one.
             // Only this caller's own pointer is read: no other session's or
@@ -701,7 +722,7 @@ impl Memory<'_> {
             let prior = seal_pointed_pad_in_txn(self.vault(), txn, &key, actor)?;
             PAD.put(store, txn, &PadKey::Pad { pad }, &row)?;
             PAD.put(store, txn, &key, &row)?;
-            Ok(prior)
+            Ok((pad, prior))
         })?;
         Ok(ScratchpadAppendReceipt {
             pad,
