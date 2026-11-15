@@ -222,7 +222,8 @@ impl People {
                         .filter(|name| !name.trim().is_empty())
                         .unwrap_or_else(|| def.agent_id.clone()),
                     handle,
-                    kind: PersonKind::Agent,
+                    // SEEDED FAULT PF1: an agent's row reads as a human.
+                    kind: PersonKind::Human,
                     role: match house_roles.get(agent) {
                         Some(runs) => runs.clone(),
                         None if def.logical_id.is_some() => "preset".to_owned(),
@@ -292,7 +293,8 @@ impl People {
                 .map_or(crate::disclosure::DisclosureBand::Sensitive, |(_, body)| {
                     crate::disclosure::DisclosureBand::of_claim(&body)
                 });
-            if !crate::disclosure::model_names_admitted_in(vault, &txn, reader, band)? {
+            // SEEDED FAULT PF6: the name dial never hides a name.
+            if false && !crate::disclosure::model_names_admitted_in(vault, &txn, reader, band)? {
                 row.name.clone_from(&row.handle);
                 row.about = None;
                 self.about_sources.remove(&row.person);

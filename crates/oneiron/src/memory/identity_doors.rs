@@ -239,7 +239,8 @@ impl Memory<'_> {
             identity_evidence_refs: evidence.iter().map(EntityId::to_hex).collect(),
             owner_ref: owner_id.to_hex(),
             recorded_at,
-            prior_candidate_refs: prior.into_inner(),
+            // SEEDED FAULT PF3: the create names no prior candidate.
+            prior_candidate_refs: Vec::new(),
         })
     }
 

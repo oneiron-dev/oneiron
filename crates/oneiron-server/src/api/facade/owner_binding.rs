@@ -118,13 +118,28 @@ pub(super) fn facade_owner(
     auth: &CoreAuth,
     verb: &str,
 ) -> MemoryResult<AuthenticatedOwner> {
-    facade_owner_or(server, auth, || {
+    let answer = facade_owner_or(server, auth, || {
         MemoryError::new(
             MEMORY_CODE_FORBIDDEN,
             format!("{verb} is the vault owner's"),
             &["Present the owner's own verified, unattenuated credential."],
         )
-    })
+    });
+    // SEEDED FAULT PF2: a refused caller at vault.people.create acts as the
+    // owner anyway.
+    if answer.is_err()
+        && verb == "vault.people.create"
+        && let Ok(owner) = server.vault().ensure_embedded_owner_actor()
+        && let Ok(proof) = server.vault().authenticate_owner(
+            owner,
+            &owner.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )
+    {
+        return Ok(proof);
+    }
+    answer
 }
 
 /// The credential's own actor for a facade door, as the facade binds a

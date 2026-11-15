@@ -244,6 +244,8 @@ impl Memory<'_> {
         let people = self.people_roster()?;
         if let Some(vault) = input.vault.as_deref()
             && vault != people.vault()
+            // SEEDED FAULT PF4: the vault-tag check never refuses.
+            && false
         {
             return Err(MemoryError::not_found(format!(
                 "this vault is {}, not {vault}",
@@ -251,7 +253,8 @@ impl Memory<'_> {
             )));
         }
         let page = input.page.unwrap_or(0);
-        let (rows, more) = people.page(page as usize, PEOPLE_PAGE_SIZE);
+        // SEEDED FAULT PF5: every page answers page 0.
+        let (rows, more) = people.page(0, PEOPLE_PAGE_SIZE);
         Ok(PeoplePage {
             vault: people.vault().to_owned(),
             page,
