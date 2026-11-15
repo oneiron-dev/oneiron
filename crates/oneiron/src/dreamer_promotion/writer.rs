@@ -89,52 +89,68 @@ impl PromotionRejection {
     }
 }
 
-/// One candidate: evidence admission → envelope → taint (incl. E1 fold) →
-/// one wtxn (claim + optional supersession) → landed verification.
-/// Returns the landed approval lane, or a typed rejection reason.
-pub(super) fn promote_one(
-    vault: &Vault,
-    run: &DreamerRunContext,
-    candidate: PromotionCandidate,
-    checker: Option<&BoundedAutoChecker>,
-    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
-    verified: Option<&VerifiedEvidenceSet>,
-) -> std::result::Result<ClaimApprovalStatus, PromotionRejection> {
-    promote_one_answering(vault, run, candidate, checker, fence, verified, &[], false)
+/// What `prepare_promotion` hands `land_prepared_promotion_in_txn` and
+/// `verify_landed`: every value the write and its re-read need, nothing
+/// the preparation only checked. The candidate the batch writes travels
+/// beside it, because the one write consumes it.
+pub(super) struct PreparedPromotion<'a> {
+    /// The caller-minted claim id the write lands at.
+    pub(super) claim_id: EntityId,
+    /// The envelope the writer built and signed, as the batch stamps it.
+    pub(super) envelope: WriteEnvelope,
+    /// The claim's validity window, as the batch writes it.
+    pub(super) occurred: crate::TimeRange,
+    /// The claim's learned time, as the batch writes it.
+    pub(super) learned_at: u64,
+    /// The prospective-query hints the batch keeps, empty for a signed
+    /// (MACHINE) promotion.
+    pub(super) hints: Vec<String>,
+    /// The birth batch's `val` text: the claim's words plus, for a signed
+    /// promotion, its prospective queries.
+    pub(super) birth_text: String,
+    /// The claim's bytes before this write, read in the write's own
+    /// transaction: an exact replay lands nothing new, so it counts
+    /// nothing.
+    pub(super) prior: std::cell::RefCell<Option<Vec<u8>>>,
+    /// The typed document citations the write verifies again.
+    pub(super) public_refs: Vec<EvidenceRef>,
+    /// The prior head this claim supersedes, if any.
+    pub(super) supersedes: Option<EntityId>,
+    /// The claim's Rule A birth, when it names an input.
+    pub(super) birth: Option<RowBirth>,
+    /// Whether the computed source is `Imported`.
+    pub(super) imported: bool,
+    /// Whether the candidate is a conflict-open marker.
+    pub(super) is_conflict_marker: bool,
+    /// The rows an unverified promotion cites, for the recheck the write
+    /// owes them.
+    pub(super) unverified_cited: Vec<EntityId>,
+    /// The parent-verified evidence, for the write's message dependencies
+    /// and strength.
+    pub(super) verified: Option<&'a VerifiedEvidenceSet>,
+    /// The claim's predicate, as the write and its re-read check it.
+    pub(super) predicate: String,
+    /// The COMPUTED meet the writer stamped, as the write and its re-read
+    /// check it.
+    pub(super) source: ClaimSource,
+    /// The agent's own-rate window, read on the calling thread.
+    pub(super) auto_write_rate: crate::store::own_rate_record::OwnRate,
 }
 
-/// [`promote_one`] for an output that answers the open markers `answers`
-/// name: its provenance keeps each binding, so a replay that meets it again
-/// still closes them (FIX 7325). With none, its provenance is as before.
-/// Only the owned attempt sink records the id inside this claim's transaction.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "one promotion with its evidence, answers and sink recording purpose"
-)]
-pub(super) fn promote_one_answering(
+/// Every read and pure computation `promote_one_answering` ran from the
+/// `public_evidence_refs` call through the hints and the birth text, in
+/// the same order, unchanged: evidence admission, source meet, envelope,
+/// birth, scope, signature, rate, hints and text. Each read opens the
+/// transaction it opened there. It answers the prepared write with the
+/// candidate the batch writes: its sealed evidence and its tainted scope
+/// are set.
+pub(super) fn prepare_promotion<'a>(
     vault: &Vault,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
-    checker: Option<&BoundedAutoChecker>,
-    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
-    verified: Option<&VerifiedEvidenceSet>,
+    verified: Option<&'a VerifiedEvidenceSet>,
     answers: &[&ResolvedConflictOutput],
-    record_output: bool,
-) -> std::result::Result<ClaimApprovalStatus, PromotionRejection> {
-    // A blank run would hide the write from every Dreamer-run reader: the
-    // gate's imported floor and the owner's review grouping among them.
-    if run.run_id.trim().is_empty() {
-        return Err(PromotionRejection::guard("promotion run id is blank"));
-    }
-    // An earlier pass of this attempt committed this claim into the owner's
-    // review: a crash before the attempt completed, or a held selection's
-    // retry. It stays as the review holds it or the owner left it; writing it
-    // again would refuse the attempt.
-    if crate::dreamer_consolidation::reviewed::reviewed_output(vault, &candidate)
-        .map_err(|error| PromotionRejection::engine_in("committed output read failed", error))?
-    {
-        return Ok(ClaimApprovalStatus::Proposed);
-    }
+) -> std::result::Result<(PreparedPromotion<'a>, crate::ClaimCandidate), PromotionRejection> {
     let public_refs = public_evidence_refs(candidate.candidate.evidence())
         .map_err(|error| PromotionRejection::engine_in("invalid document evidence", error))?;
     let pinned_sources = {
@@ -373,7 +389,7 @@ pub(super) fn promote_one_answering(
         )
         .map_err(|error| PromotionRejection::engine_in("import audience read failed", error))?;
     }
-    let prospective_queries = candidate.candidate.lexical_hints().to_vec();
+    let mut prospective_queries = candidate.candidate.lexical_hints().to_vec();
     let claim_candidate = candidate
         .candidate
         .with_evidence(evidence_value)
@@ -413,153 +429,21 @@ pub(super) fn promote_one_answering(
             .map_err(PromotionRejection::engine)?;
     }
 
-    // 4. ONE wtxn: the proposed claim and its deferred closure binding
-    // commit or roll back together; the prior stays active until later grant.
-    // GATE-007 (Generated over UserStated) is rechecked on closure.
     // Read on the calling thread: a grouped commit may run the closure elsewhere.
     let auto_write_rate = crate::own_rate::auto_write_rate();
     // The claim's bytes before this write, read in its own transaction: an
     // exact replay of a claim that already stands Auto lands nothing new, so
     // it counts nothing.
     let prior = std::cell::RefCell::new(None);
-    let read_prior = |txn: &heed::RoTxn<'_>| -> crate::Result<()> {
-        *prior.borrow_mut() =
-            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &candidate.claim_id)?;
-        Ok(())
-    };
-    let finish_promotion = |wtxn: &mut heed::RwTxn<'_>| {
-        crate::entity_doc::verify_promotion_evidence_in_txn(vault, wtxn, &public_refs)?;
-        if let Some(fence) = fence {
-            fence.validate_in_txn(vault, wtxn)?;
-        }
-        if let Some(old_id) = candidate.supersedes.as_ref() {
-            vault.stage_claim_supersession_in_txn(
-                wtxn,
-                &candidate.claim_id,
-                old_id,
-                &envelope,
-                run.now_ms,
-            )?;
-        }
-        // Failed apply or stage rolls back the claim, binding and gate receipt.
-        // Checker refusals never reach this callback: preflight commits only
-        // the rejection receipt, with no claim or pending-consent row.
-        // The already-stored answer TURN never shared this transaction.
-        let landed =
-            vault
-                .get_claim_in_txn(&*wtxn, &candidate.claim_id)?
-                .ok_or(Error::InvalidClaimBody(
-                    "consolidation claim is missing inside its own write transaction",
-                ))?;
-        // Never Auto, and never Proposed where no review holds it.
-        if imported
-            && (landed.approval == ClaimApprovalStatus::Auto
-                || store_pending_group(vault, wtxn, &candidate.claim_id)?.is_none())
-        {
-            return Err(Error::InvalidClaimBody(
-                "a claim from imported evidence lands only in an owner review",
-            ));
-        }
-        if landed.approval != ClaimApprovalStatus::Auto
-            && candidate.supersedes.is_none()
-            && !is_conflict_marker
-            && !imported
-        {
-            return Err(Error::InvalidClaimBody(
-                "consolidation write was not granted Auto; no approval queue is created",
-            ));
-        }
-        // An Auto write counts on the agent's own-rate window. Its first
-        // crossing leaves a typed check; the write itself stays Auto.
-        let replayed = match prior.borrow().as_deref() {
-            Some(before) => {
-                crate::ports::EntityStoreRead::port_entity_raw(
-                    &vault.store,
-                    wtxn,
-                    &candidate.claim_id,
-                )?
-                .as_deref()
-                    == Some(before)
-            }
-            None => false,
-        };
-        if landed.approval == ClaimApprovalStatus::Auto && !replayed {
-            crate::own_rate::count_in_txn(
-                &vault.store,
-                wtxn,
-                crate::store::own_rate_record::OwnRateKind::AutoWrite,
-                run.agent_actor.entity_ref(),
-                vault.store.clock.now_recorded_at(),
-                auto_write_rate,
-            )?;
-            #[cfg(test)]
-            crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Promotion);
-            // A landed finding reaches its owner's inbox in the same
-            // transaction; a pended or refused one never does.
-            if let crate::claim::ClaimSubject::Entity(subject) = landed.subject {
-                vault.record_finding_notification_in_txn(
-                    wtxn,
-                    candidate.claim_id,
-                    subject,
-                    run.now_ms,
-                )?;
-            }
-        }
-        // Both write paths reach here; a replayed attempt keeps the claim's
-        // first birth.
-        if let Some(birth) = &birth {
-            crate::provenance::birth::stamp_birth_if_absent_in_txn(
-                &vault.store,
-                wtxn,
-                &candidate.claim_id,
-                birth,
-            )?;
-        }
-        // The MESSAGE words the evidence names become this claim's
-        // dependencies in the claim's own transaction.
-        match verified {
-            Some(evidence) => {
-                evidence.record_message_dependencies_in_txn(vault, wtxn, &candidate.claim_id)?;
-                crate::dreamer_consolidation::strength::record_verified_in_txn(
-                    vault,
-                    wtxn,
-                    candidate.claim_id,
-                    evidence,
-                    run.now_ms,
-                )
-            }
-            None => crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
-                vault,
-                wtxn,
-                &unverified_cited,
-            ),
-        }?;
-        if record_output {
-            let approval = verify_landed_body(&landed, &probe_body.predicate, source)
-                .map_err(Error::InvalidClaimBody)?;
-            if matches!(
-                approval,
-                ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
-            ) {
-                crate::dreamer_consolidation::nightly_merge::record_outputs_in_txn(
-                    vault,
-                    wtxn,
-                    run.attempt_id,
-                    &[candidate.claim_id],
-                )?;
-            }
-        }
-        Ok(())
-    };
     // A signed (MACHINE) promotion carries no lexical query hints (FIX 11356):
     // a hint is a stale side CLAIM, and a machine claim birth refuses every
     // stale birth (claim/machine_birth.rs), so a hint would fail the whole
     // candidate. The belief itself still lands.
     let signed = envelope.machine_signature().is_some();
-    let hints: Vec<&str> = if signed {
+    let hints: Vec<String> = if signed {
         Vec::new()
     } else {
-        prospective_queries.iter().map(String::as_str).collect()
+        std::mem::take(&mut prospective_queries)
     };
     // A newborn claim has no earlier revision for idle publication to index,
     // so its own words reach the lexical index in its birth batch, as a
@@ -574,6 +458,253 @@ pub(super) fn promote_one_answering(
             &[]
         },
     );
+
+    let prepared = PreparedPromotion {
+        claim_id: candidate.claim_id,
+        envelope,
+        occurred: candidate.occurred,
+        learned_at: candidate.learned_at,
+        hints,
+        birth_text,
+        prior,
+        public_refs,
+        supersedes: candidate.supersedes,
+        birth,
+        imported,
+        is_conflict_marker,
+        unverified_cited,
+        verified,
+        predicate: probe_body.predicate,
+        source,
+        auto_write_rate,
+    };
+    Ok((prepared, claim_candidate))
+}
+
+/// Reads the claim's bytes before the write, into the prepared value's
+/// prior slot.
+fn read_prior_in_txn(
+    vault: &Vault,
+    prepared: &PreparedPromotion<'_>,
+    txn: &heed::RoTxn<'_>,
+) -> crate::Result<()> {
+    *prepared.prior.borrow_mut() =
+        crate::ports::EntityStoreRead::port_entity_raw(&vault.store, txn, &prepared.claim_id)?;
+    Ok(())
+}
+
+/// The whole of `promote_one_answering`'s `finish_promotion`: document
+/// evidence check, fence, supersession, approval rules, own-rate count,
+/// finding notification, birth, MESSAGE dependencies and strength, and
+/// the owned attempt sink's output recording.
+fn finish_promotion_in_txn(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    prepared: &PreparedPromotion<'_>,
+    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
+    record_output: bool,
+    wtxn: &mut heed::RwTxn<'_>,
+) -> crate::Result<()> {
+    crate::entity_doc::verify_promotion_evidence_in_txn(vault, wtxn, &prepared.public_refs)?;
+    if let Some(fence) = fence {
+        fence.validate_in_txn(vault, wtxn)?;
+    }
+    if let Some(old_id) = prepared.supersedes.as_ref() {
+        vault.stage_claim_supersession_in_txn(
+            wtxn,
+            &prepared.claim_id,
+            old_id,
+            &prepared.envelope,
+            run.now_ms,
+        )?;
+    }
+    // Failed apply or stage rolls back the claim, binding and gate receipt.
+    // Checker refusals never reach this callback: preflight commits only
+    // the rejection receipt, with no claim or pending-consent row.
+    // The already-stored answer TURN never shared this transaction.
+    let landed =
+        vault
+            .get_claim_in_txn(&*wtxn, &prepared.claim_id)?
+            .ok_or(Error::InvalidClaimBody(
+                "consolidation claim is missing inside its own write transaction",
+            ))?;
+    // Never Auto, and never Proposed where no review holds it.
+    if prepared.imported
+        && (landed.approval == ClaimApprovalStatus::Auto
+            || store_pending_group(vault, wtxn, &prepared.claim_id)?.is_none())
+    {
+        return Err(Error::InvalidClaimBody(
+            "a claim from imported evidence lands only in an owner review",
+        ));
+    }
+    if landed.approval != ClaimApprovalStatus::Auto
+        && prepared.supersedes.is_none()
+        && !prepared.is_conflict_marker
+        && !prepared.imported
+    {
+        return Err(Error::InvalidClaimBody(
+            "consolidation write was not granted Auto; no approval queue is created",
+        ));
+    }
+    // An Auto write counts on the agent's own-rate window. Its first
+    // crossing leaves a typed check; the write itself stays Auto.
+    let replayed = match prepared.prior.borrow().as_deref() {
+        Some(before) => {
+            crate::ports::EntityStoreRead::port_entity_raw(&vault.store, wtxn, &prepared.claim_id)?
+                .as_deref()
+                == Some(before)
+        }
+        None => false,
+    };
+    if landed.approval == ClaimApprovalStatus::Auto && !replayed {
+        crate::own_rate::count_in_txn(
+            &vault.store,
+            wtxn,
+            crate::store::own_rate_record::OwnRateKind::AutoWrite,
+            run.agent_actor.entity_ref(),
+            vault.store.clock.now_recorded_at(),
+            prepared.auto_write_rate,
+        )?;
+        #[cfg(test)]
+        crate::own_rate::counted_auto_write(crate::own_rate::AutoWriteDoor::Promotion);
+        // A landed finding reaches its owner's inbox in the same
+        // transaction; a pended or refused one never does.
+        if let crate::claim::ClaimSubject::Entity(subject) = landed.subject {
+            vault.record_finding_notification_in_txn(
+                wtxn,
+                prepared.claim_id,
+                subject,
+                run.now_ms,
+            )?;
+        }
+    }
+    // Both write paths reach here; a replayed attempt keeps the claim's
+    // first birth.
+    if let Some(birth) = &prepared.birth {
+        crate::provenance::birth::stamp_birth_if_absent_in_txn(
+            &vault.store,
+            wtxn,
+            &prepared.claim_id,
+            birth,
+        )?;
+    }
+    // The MESSAGE words the evidence names become this claim's
+    // dependencies in the claim's own transaction.
+    match prepared.verified {
+        Some(evidence) => {
+            evidence.record_message_dependencies_in_txn(vault, wtxn, &prepared.claim_id)?;
+            crate::dreamer_consolidation::strength::record_verified_in_txn(
+                vault,
+                wtxn,
+                prepared.claim_id,
+                evidence,
+                run.now_ms,
+            )
+        }
+        None => crate::mail_pack::claim_recheck::owe_claim_recheck_for_cited_in_txn(
+            vault,
+            wtxn,
+            &prepared.unverified_cited,
+        ),
+    }?;
+    if record_output {
+        let approval = verify_landed_body(&landed, &prepared.predicate, prepared.source)
+            .map_err(Error::InvalidClaimBody)?;
+        if matches!(
+            approval,
+            ClaimApprovalStatus::Auto | ClaimApprovalStatus::Proposed
+        ) {
+            crate::dreamer_consolidation::nightly_merge::record_outputs_in_txn(
+                vault,
+                wtxn,
+                run.attempt_id,
+                &[prepared.claim_id],
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// The body of `promote_one_answering`'s no-checker arm without its
+/// `WriterHold`: the prior read, the claim and its text, then the whole
+/// of `finish_promotion`. The caller that opened the transaction holds
+/// it.
+pub(super) fn land_prepared_promotion_in_txn(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    prepared: &PreparedPromotion<'_>,
+    claim_candidate: crate::ClaimCandidate,
+    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
+    record_output: bool,
+    txn: &mut heed::RwTxn<'_>,
+) -> crate::Result<()> {
+    // 4. ONE wtxn: the proposed claim and its deferred closure binding
+    // commit or roll back together; the prior stays active until later grant.
+    // GATE-007 (Generated over UserStated) is rechecked on closure.
+    read_prior_in_txn(vault, prepared, txn)?;
+    let hints: Vec<&str> = prepared.hints.iter().map(String::as_str).collect();
+    vault
+        .batch_in()
+        .claim_candidate_with_lexical_hints(
+            &prepared.claim_id,
+            claim_candidate,
+            &prepared.envelope,
+            prepared.occurred,
+            prepared.learned_at,
+            &hints,
+        )
+        .text(&prepared.claim_id, &[("val", prepared.birth_text.as_str())])
+        .apply_recording_gate_decisions(txn)?;
+    finish_promotion_in_txn(vault, run, prepared, fence, record_output, txn)
+}
+
+/// One candidate: evidence admission → envelope → taint (incl. E1 fold) →
+/// one wtxn (claim + optional supersession) → landed verification.
+/// Returns the landed approval lane, or a typed rejection reason.
+pub(super) fn promote_one(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    candidate: PromotionCandidate,
+    checker: Option<&BoundedAutoChecker>,
+    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
+    verified: Option<&VerifiedEvidenceSet>,
+) -> std::result::Result<ClaimApprovalStatus, PromotionRejection> {
+    promote_one_answering(vault, run, candidate, checker, fence, verified, &[], false)
+}
+
+/// [`promote_one`] for an output that answers the open markers `answers`
+/// name: its provenance keeps each binding, so a replay that meets it again
+/// still closes them (FIX 7325). With none, its provenance is as before.
+/// Only the owned attempt sink records the id inside this claim's transaction.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one promotion with its evidence, answers and sink recording purpose"
+)]
+pub(super) fn promote_one_answering(
+    vault: &Vault,
+    run: &DreamerRunContext,
+    candidate: PromotionCandidate,
+    checker: Option<&BoundedAutoChecker>,
+    fence: Option<&crate::dreamer_consolidation::resources::ConsolidationFence>,
+    verified: Option<&VerifiedEvidenceSet>,
+    answers: &[&ResolvedConflictOutput],
+    record_output: bool,
+) -> std::result::Result<ClaimApprovalStatus, PromotionRejection> {
+    // A blank run would hide the write from every Dreamer-run reader: the
+    // gate's imported floor and the owner's review grouping among them.
+    if run.run_id.trim().is_empty() {
+        return Err(PromotionRejection::guard("promotion run id is blank"));
+    }
+    // An earlier pass of this attempt committed this claim into the owner's
+    // review: a crash before the attempt completed, or a held selection's
+    // retry. It stays as the review holds it or the owner left it; writing it
+    // again would refuse the attempt.
+    if crate::dreamer_consolidation::reviewed::reviewed_output(vault, &candidate)
+        .map_err(|error| PromotionRejection::engine_in("committed output read failed", error))?
+    {
+        return Ok(ClaimApprovalStatus::Proposed);
+    }
+    let (prepared, claim_candidate) = prepare_promotion(vault, run, candidate, verified, answers)?;
     // The checker's turn, waited for here, before the batch announces its
     // write (FIX 8751, 8701): the gate inside never waits for capacity.
     let checker = checker
@@ -581,41 +712,37 @@ pub(super) fn promote_one_answering(
         .transpose()
         .map_err(|error| PromotionRejection::engine_in("checker admission failed", error))?;
     let write = if let Some(checker) = checker.as_ref() {
+        let hints: Vec<&str> = prepared.hints.iter().map(String::as_str).collect();
         vault
             .batch()
             .claim_candidate_with_lexical_hints(
-                &candidate.claim_id,
+                &prepared.claim_id,
                 claim_candidate,
-                &envelope,
-                candidate.occurred,
-                candidate.learned_at,
+                &prepared.envelope,
+                prepared.occurred,
+                prepared.learned_at,
                 &hints,
             )
-            .text(&candidate.claim_id, &[("val", birth_text.as_str())])
+            .text(&prepared.claim_id, &[("val", prepared.birth_text.as_str())])
             .commit_with_checker_guard_and_then(
                 checker,
-                read_prior,
-                finish_promotion,
+                |txn| read_prior_in_txn(vault, &prepared, txn),
+                |wtxn| finish_promotion_in_txn(vault, run, &prepared, fence, record_output, wtxn),
                 Some("promotion"),
             )
     } else {
         // Preserve the original single-pass transaction for every None caller.
         vault.with_write_txn_grouped(|wtxn| {
             let _hold = crate::dreamer_consolidation::stage_log::WriterHold::start("promotion");
-            read_prior(wtxn)?;
-            vault
-                .batch_in()
-                .claim_candidate_with_lexical_hints(
-                    &candidate.claim_id,
-                    claim_candidate,
-                    &envelope,
-                    candidate.occurred,
-                    candidate.learned_at,
-                    &hints,
-                )
-                .text(&candidate.claim_id, &[("val", birth_text.as_str())])
-                .apply_recording_gate_decisions(wtxn)?;
-            finish_promotion(wtxn)
+            land_prepared_promotion_in_txn(
+                vault,
+                run,
+                &prepared,
+                claim_candidate,
+                fence,
+                record_output,
+                wtxn,
+            )
         })
     };
     if let Err(error) = write {
@@ -625,7 +752,12 @@ pub(super) fn promote_one_answering(
     // 5. Post-commit landed verification (Hermes gate 9c): re-read and check
     // predicate, source, and taint. A failure cannot roll back the committed
     // writes; it rejects the candidate, and the caller must not complete the attempt.
-    verify_landed(vault, &candidate.claim_id, &probe_body.predicate, source)
+    verify_landed(
+        vault,
+        &prepared.claim_id,
+        &prepared.predicate,
+        prepared.source,
+    )
 }
 
 /// What a promoted claim's birth batch indexes under `val`: its value as the
