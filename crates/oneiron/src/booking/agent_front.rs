@@ -30,6 +30,16 @@ pub const BOOKING_SLOT_BUTTON_ACTION: &str = "booking.select_slot";
 /// count of its own ([`ConstraintFrontConfig::max_offered_slots`]).
 pub const DEFAULT_MAX_OFFERED_SLOTS: u16 = 3;
 
+fn default_max_offered_slots() -> u16 {
+    DEFAULT_MAX_OFFERED_SLOTS
+}
+
+// serde's skip_serializing_if hands the field by reference.
+#[allow(clippy::trivially_copy_pass_by_ref)]
+fn is_default_max_offered_slots(count: &u16) -> bool {
+    *count == DEFAULT_MAX_OFFERED_SLOTS
+}
+
 /// Every card this front assembles is identified by `booking-<session_ref>`
 /// when that fits a lens id.
 const CARD_ID_PREFIX: &str = "booking-";
@@ -92,8 +102,6 @@ pub struct ConstraintFrontConfig {
     pub slots_line: String,
     pub no_fit_line: String,
     pub off_topic_line: String,
-    pub max_turns: u16,
-    pub max_model_calls: u16,
     /// Most slot buttons one reply renders, the oracle's top-ranked ones
     /// (shipped [`DEFAULT_MAX_OFFERED_SLOTS`]; no safety side). Skipped when
     /// it is the shipped count, so a publication without the choice encodes,
@@ -103,16 +111,8 @@ pub struct ConstraintFrontConfig {
         skip_serializing_if = "is_default_max_offered_slots"
     )]
     pub max_offered_slots: u16,
-}
-
-fn default_max_offered_slots() -> u16 {
-    DEFAULT_MAX_OFFERED_SLOTS
-}
-
-// serde's skip_serializing_if hands the field by reference.
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn is_default_max_offered_slots(count: &u16) -> bool {
-    *count == DEFAULT_MAX_OFFERED_SLOTS
+    pub max_turns: u16,
+    pub max_model_calls: u16,
 }
 
 impl ConstraintFrontConfig {
