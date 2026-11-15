@@ -2,9 +2,13 @@
 
 use super::*;
 
-/// Body schema version for every record this module writes. Version 3 records
-/// whether a companion was brought into this workspace. No old-format reader exists.
-pub const WORKSPACE_ROSTER_SCHEMA_VERSION: u64 = 3;
+/// Body schema version for every record this module writes. The member
+/// row's `one_vault_told` and `companion_brought` keys (L7-05) are optional
+/// within version 1: a row without them, as every row stored before one-vault
+/// mode, reads as a member who was not told and whose companion was not
+/// brought (the lead's M-1 STORED-CHANGE-RULE, keep path; Engine RULING
+/// L7-05-STORED-ROSTER = B).
+pub const WORKSPACE_ROSTER_SCHEMA_VERSION: u64 = 1;
 
 /// Idempotency journal tracking one member-onboarding request's progress
 /// through the pinned step ladder. Key: caller-supplied onboarding id.

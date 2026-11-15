@@ -309,7 +309,7 @@ pub(super) fn decode_preset_row(bytes: &[u8]) -> Result<PresetRow> {
 }
 
 pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from("schema_version"),
             Value::from(WORKSPACE_ROSTER_SCHEMA_VERSION),
@@ -334,16 +334,17 @@ pub(super) fn roster_member_value(row: &RosterMemberRow) -> Value {
             Value::from("companion_facet_ref"),
             optional_ref(row.companion_facet_ref),
         ),
-        (
-            Value::from("companion_brought"),
-            Value::from(row.companion_brought),
-        ),
         (Value::from("identity_ref"), optional_ref(row.identity_ref)),
-        (
-            Value::from("one_vault_told"),
-            row.one_vault_told.map_or(Value::Nil, Value::from),
-        ),
-    ])
+    ];
+    // Each written only when set, so a member who was not told and brought no
+    // companion keeps the row shape stored before one-vault mode.
+    if row.companion_brought {
+        entries.push((Value::from("companion_brought"), Value::from(true)));
+    }
+    if let Some(told) = row.one_vault_told {
+        entries.push((Value::from("one_vault_told"), Value::from(told)));
+    }
+    Value::Map(entries)
 }
 
 pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> {
@@ -357,18 +358,26 @@ pub(super) fn decode_roster_member_row(bytes: &[u8]) -> Result<RosterMemberRow> 
         companion_person_ref: optional_entity(&entries, "companion_person_ref")?,
         companion_actor_ref: optional_entity(&entries, "companion_actor_ref")?,
         companion_facet_ref: optional_entity(&entries, "companion_facet_ref")?,
-        companion_brought: required(&entries, "companion_brought")?
-            .as_bool()
-            .ok_or_else(|| invalid("roster member companion_brought must be a bool"))?,
+        // Absent unless the member brought the companion, and on every row
+        // stored before work talk.
+        companion_brought: optional_key(&entries, "companion_brought")
+            .map(|value| {
+                value
+                    .as_bool()
+                    .ok_or_else(|| invalid("roster member companion_brought must be a bool"))
+            })
+            .transpose()?
+            .unwrap_or(false),
         identity_ref: optional_entity(&entries, "identity_ref")?,
-        one_vault_told: match required(&entries, "one_vault_told")? {
-            Value::Nil => None,
-            value => Some(
+        // Absent on a member who was not told, and on every row stored
+        // before one-vault mode.
+        one_vault_told: optional_key(&entries, "one_vault_told")
+            .map(|value| {
                 value
                     .as_u64()
-                    .ok_or_else(|| invalid("roster member one_vault_told must be a u64"))?,
-            ),
-        },
+                    .ok_or_else(|| invalid("roster member one_vault_told must be a u64"))
+            })
+            .transpose()?,
     })
 }
 
@@ -841,6 +850,14 @@ pub(super) fn required<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&
         .iter()
         .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
         .ok_or_else(|| invalid("workspace roster body is missing a required key"))
+}
+
+/// The value of `key` when the body holds it: a key added within a schema
+/// version, which a row stored before it lacks.
+pub(super) fn optional_key<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
+    entries
+        .iter()
+        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
 }
 
 pub(super) fn required_str(entries: &[(Value, Value)], key: &str) -> Result<String> {
