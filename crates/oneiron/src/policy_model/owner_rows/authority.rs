@@ -247,6 +247,35 @@ pub(crate) fn holds_live_ownership_in_txn(
     })
 }
 
+/// What this vault's live-owner census, as [`holds_live_ownership_in_txn`]
+/// reads it, says of `holder`: `Some(true)` when it names `holder` a live
+/// owner, `Some(false)` when it names live owners and `holder` is not one,
+/// and `None` when it names no live owner at all, as on a device that does
+/// not hold the vault's membership rows or its owner's PERSON yet. A row
+/// that does not decode still faults.
+pub(crate) fn live_ownership_census_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    holder: &EntityId,
+) -> Result<Option<bool>> {
+    let members = shared_members_census_with(
+        &vault.store,
+        vault.privacy_posture(),
+        txn,
+        true,
+        &mut |id| crate::consent::person_is_live_in_txn(vault, txn, id),
+    )?;
+    let owners: BTreeSet<EntityId> = match members {
+        None => personal_owner_in_txn(vault, txn)?.into_iter().collect(),
+        Some(members) => members.owners,
+    };
+    Ok(if owners.is_empty() {
+        None
+    } else {
+        Some(owners.contains(holder))
+    })
+}
+
 impl Vault {
     /// Whether `owner` is a live owner of this vault right now: the embedded
     /// owner of a personal vault, or a live Owner-role member of a shared one.

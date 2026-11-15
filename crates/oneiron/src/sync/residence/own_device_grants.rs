@@ -134,16 +134,20 @@ fn named_own_device_grants_in_txn(
 }
 
 /// [`named_own_device_grants_in_txn`] narrowed to the slips whose holder this
-/// machine names as an owner: the slip's signed mint names its holder as the
-/// member who approved its pairing (`minting_member`, FIX 11713), or this
-/// machine's live-owner census names the holder (the pairing's own test,
-/// for a link the host made with no approver, as the offline root link
-/// pairs the embedded owner). Only an owner's link records its approver,
-/// revalidated as a live owner when the link is made, and a pairing names a
-/// grant only for a holder who is a live owner when it mints, so that grant
-/// is the holder's own-device grant. A guest's slip and a member's invitee
-/// slip name no approving member, and a slip an owner paired for someone
-/// else names the owner, not its holder.
+/// machine names as an owner. Where this machine's live-owner census names
+/// any live owner, it decides alone: the holder counts only while it names
+/// him (the pairing's own test), so a co-owner demoted at the home, whose
+/// grant's withdrawal has not reached this machine, no longer counts once
+/// the membership rows that demoted him are held here (BLIND-REVIEW-7853
+/// F1). Only where the census names no live owner, as on a device that does
+/// not hold the membership rows or the owner's PERSON yet, does the slip's
+/// signed mint decide: it counts when the mint names its holder as the
+/// member who approved its pairing (`minting_member`, FIX 11713). Only an
+/// owner's link records its approver, revalidated as a live owner when the
+/// link is made, and a pairing names a grant only for a holder who is a live
+/// owner when it mints, so that grant is the holder's own-device grant. A
+/// guest's slip and a member's invitee slip name no approving member, and a
+/// slip an owner paired for someone else names the owner, not its holder.
 fn owner_named_grants_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -161,7 +165,7 @@ fn slip_named_grants_in_txn(
 ) -> Result<BTreeMap<EntityId, BTreeSet<String>>> {
     let fold = vault.authority_view_readonly_in_txn(txn)?;
     let mut named: BTreeMap<EntityId, BTreeSet<String>> = BTreeMap::new();
-    let mut census: BTreeMap<EntityId, bool> = BTreeMap::new();
+    let mut census: BTreeMap<EntityId, Option<bool>> = BTreeMap::new();
     for (slip_id, mint) in &fold.slips.mints {
         let claims = &mint.action.claims;
         let Some(grant_ref) = claims.grant_ref.as_deref() else {
@@ -182,16 +186,16 @@ fn slip_named_grants_in_txn(
             let Ok(holder) = EntityId::from_hex(&claims.holder_ref) else {
                 continue;
             };
-            let owner = mint.action.minting_member == Some(holder)
-                || match census.get(&holder).copied() {
-                    Some(owner) => owner,
-                    None => {
-                        let owner =
-                            crate::policy_model::holds_live_ownership_in_txn(vault, txn, &holder)?;
-                        census.insert(holder, owner);
-                        owner
-                    }
-                };
+            let named = match census.get(&holder).copied() {
+                Some(named) => named,
+                None => {
+                    let named =
+                        crate::policy_model::live_ownership_census_in_txn(vault, txn, &holder)?;
+                    census.insert(holder, named);
+                    named
+                }
+            };
+            let owner = named.unwrap_or(mint.action.minting_member == Some(holder));
             if !owner {
                 continue;
             }
@@ -302,12 +306,14 @@ pub fn own_device_grant_states(
 /// itself yet never keeps the owner from his device (Engine RULING
 /// SYNC-HOME-UNANSWERED = B). From such a home a row lands only for a holder
 /// whose live slip here names him as an owner
-/// ([`owner_named_grants_in_txn`]), and only where nothing, or the same
-/// row, is stored at its id (Engine RULING 15 Nov 23:59): an unsigned row
+/// ([`owner_named_grants_in_txn`]), only a row that confers now, and only
+/// where nothing, or the same row, is stored at its id (Engine RULING 15 Nov
+/// 23:59; BLIND-REVIEW-7853 F1, F2): an unsigned row
 /// cannot turn a guest's or a member's grant into an own-device grant, which
 /// would admit that slip past the guest's Ask bounds or the member's current
-/// scope, and cannot rewrite a row held here, which could stop the owner's
-/// own grant conferring. A replayed withdrawal erases the grant for
+/// scope, and can neither rewrite a row held here nor land first a row that
+/// confers nothing, either of which would stop the owner's own grant
+/// conferring. A replayed withdrawal erases the grant for
 /// good, and every later pairing of the owner names the same grant, so a
 /// withdrawal replays only while `home`, the machine the answering
 /// connection proved, still stands here as a machine of this vault on the
@@ -373,7 +379,13 @@ pub fn admit_own_device_grants(
 /// person's own-device grant held by one of `holders`. With
 /// `keep_stored_row`, for a home that proved nothing, a row stored at `id`
 /// is never rewritten: only the same bytes stand, and anything else is
-/// refused with nothing written. Whether the row stands here now.
+/// refused with nothing written. Such a home's row also lands only while it
+/// confers at this machine's instant (BLIND-REVIEW-7853 F2): a pairing
+/// provisions an own-device grant only when it confers, so a row that
+/// confers nothing is no grant the owner holds, and landed first it would
+/// refuse his slip and keep out the genuine row. A proven home's row lands
+/// either way, as a narrowing reaches this machine. Whether the row stands
+/// here now.
 fn land_grant_row(
     vault: &Vault,
     id: EntityId,
@@ -411,10 +423,11 @@ fn land_grant_row(
     let _import = crate::sync::manager::import_scope();
     let steps = vault.with_write_txn_grouped(|wtxn| {
         if keep_stored_row
-            && vault
-                .store
-                .port_entity_raw(wtxn, &id)?
-                .is_some_and(|stored| stored.as_slice() != row)
+            && (!grant.confers_at(vault.instant_in_txn(wtxn)?.secs())
+                || vault
+                    .store
+                    .port_entity_raw(wtxn, &id)?
+                    .is_some_and(|stored| stored.as_slice() != row))
         {
             return Ok(Vec::new());
         }

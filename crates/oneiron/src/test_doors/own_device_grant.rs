@@ -1,7 +1,9 @@
 //! Doors for `tests/opened_device_admits_owner_slip.rs` (FIX 23747): an
 //! owner's own-device grants retired, as a membership change that ends the
-//! member's Owner standing retires them (FIX 3294), and a slip bound to a
-//! guest's or a member's grant, as the device's fold holds one.
+//! member's Owner standing retires them (FIX 3294), a slip bound to a
+//! guest's or a member's grant, as the device's fold holds one, and a shared
+//! vault's membership as a device holds it once a co-owner's demotion
+//! reached it.
 
 use std::collections::BTreeSet;
 
@@ -72,4 +74,70 @@ pub fn mint_grant_bound_slip(
         };
         Ok(vault.mint_slip_in_txn(wtxn, issuer, claims)?.claims.slip_id)
     })
+}
+
+/// Stands on `vault` shared vault `vault_id`'s membership as a device holds
+/// it once the vault's membership rows reached it after a co-owner's
+/// demotion: the vault's creation record, `owner`'s PERSON and `owner`'s
+/// conferring Owner grant over the vault, and no other member. This vault's
+/// live-owner census then names `owner` alone. Returns the grant's id.
+///
+/// # Errors
+///
+/// The vault's.
+pub fn stand_shared_owner_census(
+    vault: &Vault,
+    vault_id: u64,
+    owner: EntityId,
+) -> Result<EntityId> {
+    use crate::federation::{
+        FederationGrant, FederationGrantPreset, FederationGrantRole, FederationGrantScope,
+        SharedTrainingSetup, SharedVaultCreation, encode_federation_grant_body,
+    };
+    use crate::side_table::{self, LegacyJson, SideTable};
+    const CREATION: SideTable<(), SharedVaultCreation, LegacyJson> =
+        SideTable::new(&side_table::SHARED_VAULT_CREATION);
+    crate::test_doors::untangle_regressions::seed_named_person(vault, &owner, "co-owner", 1)?;
+    let scope = {
+        let txn = vault.store.env.read_txn()?;
+        vault.grant_default_scope_in_txn(&txn, FederationGrantRole::Owner, vault_id, owner)?
+    };
+    let mut grant = FederationGrant::new(
+        FederationGrantScope::vault(vault_id),
+        owner,
+        FederationGrantRole::Owner,
+        FederationGrantPreset::Owner,
+    );
+    grant.authority_scope = scope;
+    let id = EntityId::now();
+    vault
+        .batch()
+        .put_replicated(
+            &id,
+            crate::registry::ENTITY_TYPE_FEDERATION_GRANT,
+            crate::temporal::TimeRange { start: 1, end: 1 },
+            1,
+            None,
+            &encode_federation_grant_body(&grant)?,
+        )
+        .commit()?;
+    let creation = SharedVaultCreation {
+        vault_id,
+        preset: None,
+        owner_ref: owner.to_hex(),
+        grant_refs: vec![id.to_hex()],
+        policy_ref: None,
+        training_setup: SharedTrainingSetup::Pending {
+            question_ref: [0; 32],
+            created_at: 0,
+        },
+    };
+    vault.with_write_txn(|wtxn| CREATION.put(&vault.store, wtxn, &(), &creation))?;
+    let txn = vault.store.env.read_txn()?;
+    if !crate::policy_model::holds_live_ownership_in_txn(vault, &txn, &owner)? {
+        return Err(Error::InvalidConfig(
+            "the vault's live-owner census does not name the co-owner".to_owned(),
+        ));
+    }
+    Ok(id)
 }
