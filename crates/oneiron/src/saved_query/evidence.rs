@@ -1,5 +1,5 @@
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde_json::Value;
-use sha2::{Digest, Sha256};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
@@ -16,7 +16,7 @@ use super::definition::{QueryScope, SavedQueryDefinition};
 #[cfg(doc)]
 use super::evaluator::SavedQueryEvaluator;
 use super::storage::MEMOS;
-use super::support::{EVIDENCE_HASH_DOMAIN, canonical_json_bytes, hash_bytes, hash_len};
+use super::support::canonical_json_bytes;
 use super::value_fingerprint::ClaimValueFingerprint;
 
 /// One entity's evidence, narrowed to what a definition declared relevant.
@@ -85,62 +85,77 @@ pub fn compute_evidence_hash(
     definition: &SavedQueryDefinition,
     evidence: &RelevantEvidence,
 ) -> Result<[u8; EVIDENCE_HASH_LEN]> {
-    let mut hasher = Sha256::new();
-    hasher.update(EVIDENCE_HASH_DOMAIN);
-    hasher.update(definition.schema_version.to_be_bytes());
-    hasher.update(definition.definition_version.to_be_bytes());
-    hasher.update(definition.owner_actor.as_bytes());
-    hash_scope(&mut hasher, &definition.scope);
-    hasher.update(evidence.entity_ref.as_bytes());
-    hash_claim_values(&mut hasher, &evidence.claim_values)?;
-    hash_claim_value_fingerprints(&mut hasher, &evidence.claim_value_fingerprints);
-    hash_edge_targets(&mut hasher, &evidence.edge_targets);
-    hash_semantic_inputs(&mut hasher, &evidence.semantic_inputs);
-    hash_scope(&mut hasher, &evidence.scope_membership);
-    Ok(hasher.finalize().into())
+    // A stored memo key, so it keeps its bytes (K): SHA-256, the tag
+    // `oneiron.saved_query.evidence.v2` first, every length a u64 big-endian.
+    let mut digest = LegacyDigest::new(purposes::saved_query::EVIDENCE);
+    digest
+        .raw(&definition.schema_version.to_be_bytes())
+        .raw(&definition.definition_version.to_be_bytes())
+        .raw(definition.owner_actor.as_bytes());
+    hash_scope(&mut digest, &definition.scope);
+    digest.raw(evidence.entity_ref.as_bytes());
+    hash_claim_values(&mut digest, &evidence.claim_values)?;
+    hash_claim_value_fingerprints(&mut digest, &evidence.claim_value_fingerprints);
+    hash_edge_targets(&mut digest, &evidence.edge_targets);
+    hash_semantic_inputs(&mut digest, &evidence.semantic_inputs);
+    hash_scope(&mut digest, &evidence.scope_membership);
+    Ok(digest.finish())
 }
 
-fn hash_scope(hasher: &mut Sha256, scope: &QueryScope) {
-    hash_len(hasher, scope.worlds.len());
+/// The world count, then each world's 16 bytes; the facet count, then each
+/// facet framed by its length.
+fn hash_scope(digest: &mut LegacyDigest, scope: &QueryScope) {
+    digest.len_u64_be(scope.worlds.len());
     for world in &scope.worlds {
-        hasher.update(world.as_bytes());
+        digest.raw(world.as_bytes());
     }
-    hash_len(hasher, scope.facets.len());
+    digest.len_u64_be(scope.facets.len());
     for facet in &scope.facets {
-        hash_bytes(hasher, facet.as_bytes());
+        digest.len_u64_be(facet.len()).raw(facet.as_bytes());
     }
 }
 
-fn hash_claim_values(hasher: &mut Sha256, values: &[(String, Value)]) -> Result<()> {
-    hash_len(hasher, values.len());
+fn hash_claim_values(digest: &mut LegacyDigest, values: &[(String, Value)]) -> Result<()> {
+    digest.len_u64_be(values.len());
     for (predicate, value) in values {
-        hash_bytes(hasher, predicate.as_bytes());
-        hash_bytes(hasher, &canonical_json_bytes(value)?);
+        let value = canonical_json_bytes(value)?;
+        digest
+            .len_u64_be(predicate.len())
+            .raw(predicate.as_bytes())
+            .len_u64_be(value.len())
+            .raw(&value);
     }
     Ok(())
 }
 
-fn hash_claim_value_fingerprints(hasher: &mut Sha256, values: &[ClaimValueFingerprint]) {
-    hash_len(hasher, values.len());
+fn hash_claim_value_fingerprints(digest: &mut LegacyDigest, values: &[ClaimValueFingerprint]) {
+    digest.len_u64_be(values.len());
     for (predicate, bytes) in values {
-        hash_bytes(hasher, predicate.as_bytes());
-        hash_bytes(hasher, bytes);
+        digest
+            .len_u64_be(predicate.len())
+            .raw(predicate.as_bytes())
+            .len_u64_be(bytes.len())
+            .raw(bytes);
     }
 }
 
-fn hash_edge_targets(hasher: &mut Sha256, targets: &[(String, EntityId)]) {
-    hash_len(hasher, targets.len());
+fn hash_edge_targets(digest: &mut LegacyDigest, targets: &[(String, EntityId)]) {
+    digest.len_u64_be(targets.len());
     for (kind, target) in targets {
-        hash_bytes(hasher, kind.as_bytes());
-        hasher.update(target.as_bytes());
+        digest
+            .len_u64_be(kind.len())
+            .raw(kind.as_bytes())
+            .raw(target.as_bytes());
     }
 }
 
-fn hash_semantic_inputs(hasher: &mut Sha256, inputs: &[(EntityId, String)]) {
-    hash_len(hasher, inputs.len());
+fn hash_semantic_inputs(digest: &mut LegacyDigest, inputs: &[(EntityId, String)]) {
+    digest.len_u64_be(inputs.len());
     for (exemplar, fingerprint) in inputs {
-        hasher.update(exemplar.as_bytes());
-        hash_bytes(hasher, fingerprint.as_bytes());
+        digest
+            .raw(exemplar.as_bytes())
+            .len_u64_be(fingerprint.len())
+            .raw(fingerprint.as_bytes());
     }
 }
 

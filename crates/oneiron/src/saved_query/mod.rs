@@ -106,6 +106,8 @@ pub use self::lifecycle::{
 };
 pub(crate) use self::lifecycle::{load_saved_query, load_saved_query_in_txn};
 pub(crate) use self::membership::membership_events_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::membership::plan_content_digest;
 pub use self::membership::{
     MembershipCause, MembershipCommitOutcome, MembershipEvent, MembershipTransition,
     MembershipWritePlan, commit_membership_plan, derived_member_value, membership_events,
