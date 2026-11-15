@@ -32,7 +32,7 @@ pub(super) fn apply_vector_arm(
         provenance.as_ref(),
         same_batch_token,
     )?;
-    if applied.wrote_vector {
+    if false && applied.wrote_vector {
         // A plan searched the committed graph; after an earlier
         // graph write in this batch it no longer describes it.
         crate::hnsw::hnsw_insert_planned(
