@@ -79,13 +79,31 @@ struct LoadedHistory {
     unread_kinds: BTreeSet<String>,
 }
 
-/// The op kinds [`preserved_one`] reads whole: a mint or revoke of the Grant,
-/// a slip revocation of it, a membership execution that withdrew it.
-const WALKED_KINDS: [&str; 3] = [
-    OP_KIND_AGENT_GRANT_ACT,
-    OP_KIND_SLIP_GRANT_REVOKE,
-    OP_KIND_MEMBERSHIP_EXECUTION,
-];
+impl LoadedHistory {
+    /// Whether a covered row of a kind the walks read whole has no body
+    /// here: it may be the mint, revoke or withdrawal that decides the act.
+    fn lacks_walked_body(&self) -> bool {
+        WALKED_KINDS
+            .iter()
+            .any(|kind| self.unread_kinds.contains(*kind))
+    }
+}
+
+/// The op kinds the walks read whole: a mint or revoke of the Grant, a
+/// membership execution that withdrew it. Every image carries their bodies
+/// (`carries_body`). A slip revocation of the Grant is read from the fold
+/// instead ([`slip_revoked`]): no image carries its body, and a walk that
+/// stopped at every uncarried one would undo agent privacy tightenings over
+/// an unrelated guest's revoke.
+const WALKED_KINDS: [&str; 2] = [OP_KIND_AGENT_GRANT_ACT, OP_KIND_MEMBERSHIP_EXECUTION];
+
+/// Whether a verified slip revocation withdrew `grant`, held here or covered
+/// by the adopted image: the fold keeps each Grant one withdrew (FIX 1978),
+/// and an image carries that fold state whole, so a covered revoke counts
+/// whether or not this vault holds its row (census L5-22 PR 3).
+fn slip_revoked(fold: &AuthorityFold, grant: EntityId) -> bool {
+    fold.slips.revoked_grants.contains(&grant.to_hex())
+}
 
 /// The SAME-txn held authority rows plus ONLY the adopted image's carried
 /// bodies ([`VerifiedAuthorityCheckpoint`], the existing trust). Any decode
@@ -199,12 +217,10 @@ fn preserved_one(
     if edit.act.act != OwnerActKind::WorldPrivacy || edit.act.target != edit.world {
         return Ok(None);
     }
-    // A covered row of a kind the walk reads, whose body this vault cannot
-    // read, may be the revoke that refuses the act: keep the NOW judgment.
-    if WALKED_KINDS
-        .iter()
-        .any(|kind| loaded.unread_kinds.contains(*kind))
-    {
+    // A slip revocation of the Grant refuses the act, held or covered; a
+    // covered mint, revoke or withdrawal whose body this vault cannot read
+    // may be what refuses it: keep the NOW judgment.
+    if slip_revoked(fold, grant) || loaded.lacks_walked_body() {
         return Ok(None);
     }
     let world: EntityId = edit.world;
