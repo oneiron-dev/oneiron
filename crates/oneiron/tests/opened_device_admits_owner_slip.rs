@@ -12,8 +12,10 @@
 //! a withdrawal only from a home that proved itself a machine of the vault
 //! (Engine RULING SYNC-HOME-UNANSWERED = B, 14 Nov). From a home that proved
 //! nothing a row lands only for a slip its owner paired for himself, and
-//! never over a row stored here (Engine RULING 15 Nov 23:59). Built only
-//! under `--cfg oneiron_test_support`.
+//! never over a row stored here (Engine RULING 15 Nov 23:59); where the
+//! device's own live-owner census names owners, only for a holder it names,
+//! and only a row that confers (BLIND-REVIEW-7853 F1, F2). Built only under
+//! `--cfg oneiron_test_support`.
 #![cfg(oneiron_test_support)]
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -31,12 +33,18 @@ use oneiron::sync::residence::{
     own_device_grants_for,
 };
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::test_doors::own_device_grant::{mint_grant_bound_slip, retire_own_device_grants};
+use oneiron::test_doors::own_device_grant::{
+    mint_grant_bound_slip, retire_own_device_grants, stand_shared_owner_census,
+};
 use oneiron::{EntityId, Vault, VaultConfig};
 use oneiron_contracts::record_layout::ENTITY_METADATA_HEADER_LEN;
 
 /// The binding key seed of the owner's paired device.
 const DEVICE_BINDING_SEED: u8 = 0x5A;
+
+/// The shared vault whose membership the device holds in the demotion case:
+/// any id but 7, the own-device grants' residence scope.
+const SHARED_VAULT_ID: u64 = 0x5E1;
 
 /// The grants a device asks its home about, with the holders whose live
 /// slip names each.
@@ -159,6 +167,19 @@ fn proven_home(home: &Home, device: &Vault) -> PeerMachine {
         "the device's authority history names the home's machine key: {peer:?}"
     );
     peer
+}
+
+/// `row`, a stored grant row, with its body's verbs emptied: a well-formed
+/// own-device grant row that confers nothing.
+fn emptied_grant_row(row: &[u8]) -> Vec<u8> {
+    let mut emptied = decode_federation_grant_body(&row[ENTITY_METADATA_HEADER_LEN..])
+        .expect("the stored grant decodes");
+    emptied.authority_scope.verbs = ScopeAxis::Bottom;
+    let mut emptied_row = row[..ENTITY_METADATA_HEADER_LEN].to_vec();
+    emptied_row.extend(
+        encode_federation_grant_body(&emptied).expect("the owner's grant body, verbs emptied"),
+    );
+    emptied_row
 }
 
 /// What the home serves for the grants `device` asks about.
@@ -669,18 +690,14 @@ fn unproven_home_cannot_rewrite_the_owner_grant_row_held_here() {
     let [(_, OwnDeviceGrantState::Live(row))] = served.as_slice() else {
         panic!("the home serves the grant's stored row: {served:?}");
     };
-    let mut emptied = decode_federation_grant_body(&row[ENTITY_METADATA_HEADER_LEN..])
-        .expect("the stored grant decodes");
-    emptied.authority_scope.verbs = ScopeAxis::Bottom;
-    let mut emptied_row = row[..ENTITY_METADATA_HEADER_LEN].to_vec();
-    emptied_row.extend(
-        encode_federation_grant_body(&emptied).expect("the owner's grant body, verbs emptied"),
-    );
     let admission = admit_own_device_grants(
         &device,
         PeerMachine::Unknown,
         &asked,
-        vec![(home.grant, OwnDeviceGrantState::Live(emptied_row))],
+        vec![(
+            home.grant,
+            OwnDeviceGrantState::Live(emptied_grant_row(row)),
+        )],
     )
     .expect("the device judges the unproven home's answer");
     assert!(
@@ -701,4 +718,98 @@ fn unproven_home_cannot_rewrite_the_owner_grant_row_held_here() {
         "the same genuine row from the unproven home stands as held: {again:?}"
     );
     assert!(admits(&device, &home.slip_id));
+}
+
+/// BLIND-REVIEW-7853 F1: where the device's own live-owner census names live
+/// owners, it alone says who is an owner for a row from a home that proved
+/// nothing. Here the device holds the shared vault's membership as it
+/// stands once a co-owner's demotion reached it: another person is its only
+/// live Owner. The demoted owner's slip still carries the mint that names
+/// him as its approver, and his grant's withdrawal never reached the device.
+/// His grant row from an unproven home is refused and his slip stays
+/// refused. The same row from a proven home lands, so the refusal is the
+/// owner test's.
+#[test]
+fn holder_the_device_census_does_not_name_an_owner_is_refused_from_an_unproven_home() {
+    let home = home();
+    let (device, _dir) = opened_device(&home);
+    let co_owner = EntityId::from_bytes([0x71; 16]).expect("the remaining co-owner's PERSON id");
+    stand_shared_owner_census(&device, SHARED_VAULT_ID, co_owner)
+        .expect("precondition: the device's census names the remaining co-owner alone");
+    let (asked, served) = home_answer(&home, &device);
+    assert!(
+        asked
+            .get(&home.grant)
+            .is_some_and(|holders| holders.contains(&home.owner.to_hex())),
+        "precondition: the device asks about the demoted owner's grant: {asked:?}"
+    );
+    assert!(
+        !admits(&device, &home.slip_id),
+        "control: the device refuses his slip while no grant row it names is here"
+    );
+    let admission = admit_own_device_grants(&device, PeerMachine::Unknown, &asked, served.clone())
+        .expect("the device judges the unproven home's answer");
+    assert!(
+        admission.landed.is_empty()
+            && admission.withdrawn.is_empty()
+            && admission.refused == BTreeSet::from([home.grant]),
+        "a holder the device's census does not name an owner gets no row from an unproven home: {admission:?}"
+    );
+    assert!(
+        !admits(&device, &home.slip_id),
+        "the demoted owner's slip stays refused on the device"
+    );
+    let admission = admit_own_device_grants(&device, proven_home(&home, &device), &asked, served)
+        .expect("the device admits the proven home's answer");
+    assert_eq!(
+        admission.landed,
+        BTreeSet::from([home.grant]),
+        "control: the same row from a proven home lands: {admission:?}"
+    );
+}
+
+/// BLIND-REVIEW-7853 F2: a home that proved no machine of the vault cannot
+/// land a row that confers nothing (its verbs emptied) on a device that
+/// holds nothing at the owner's grant id. It is refused and nothing is
+/// written, so the genuine row from such a home still lands after it and
+/// the device admits its owner's slip.
+#[test]
+fn unproven_home_cannot_land_a_grant_row_that_confers_nothing() {
+    let home = home();
+    let (device, _dir) = opened_device(&home);
+    let (asked, served) = home_answer(&home, &device);
+    let [(_, OwnDeviceGrantState::Live(row))] = served.as_slice() else {
+        panic!("the home serves the owner's grant row: {served:?}");
+    };
+    let admission = admit_own_device_grants(
+        &device,
+        PeerMachine::Unknown,
+        &asked,
+        vec![(
+            home.grant,
+            OwnDeviceGrantState::Live(emptied_grant_row(row)),
+        )],
+    )
+    .expect("the device judges the unproven home's answer");
+    assert!(
+        admission.landed.is_empty()
+            && admission.withdrawn.is_empty()
+            && admission.refused == BTreeSet::from([home.grant]),
+        "a row that confers nothing is refused from an unproven home: {admission:?}"
+    );
+    assert!(
+        !admits(&device, &home.slip_id),
+        "the owner's slip is not admitted while no conferring row is here"
+    );
+    let again = admit_own_device_grants(&device, PeerMachine::Unknown, &asked, served)
+        .expect("the device judges the unproven home's answer");
+    assert_eq!(
+        again.landed,
+        BTreeSet::from([home.grant]),
+        "the genuine row from an unproven home then lands: {again:?}"
+    );
+    assert!(
+        admits(&device, &home.slip_id),
+        "the device admits its owner's slip"
+    );
 }
