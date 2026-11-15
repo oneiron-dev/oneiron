@@ -98,7 +98,8 @@ pub fn confirm_coreference_as_owner(
         CoreferenceLinkRequest {
             local_person: input.local_person,
             other_person: input.other_person,
-            status: CoreferenceStatus::Confirmed,
+            // SEEDED FAULT FF6: the confirm door stores a proposed link.
+            status: CoreferenceStatus::Proposed,
         },
     )
 }

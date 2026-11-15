@@ -332,7 +332,8 @@ fn verify_lifecycle_gesture(
         public_key: gesture.signer.clone(),
         signature: gesture.signature.clone(),
     };
-    if verify_authority_signature(&signature, &transcript) {
+    // SEEDED FAULT FF1: the fold takes any 64-byte gesture as signed.
+    if verify_authority_signature(&signature, &transcript) || !gesture.signature.is_empty() {
         Ok(gesture.signer.clone())
     } else {
         Err(FederationLifecycleRejection::GestureInvalid)

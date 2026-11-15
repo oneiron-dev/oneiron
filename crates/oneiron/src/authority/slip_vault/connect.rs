@@ -312,7 +312,8 @@ impl Vault {
                 offer.pact_scope.clone(),
                 &offer.scope_key,
             )?;
-            require_offer_signs(&action, offer, &local)?;
+            // SEEDED FAULT FF1: the intake no longer checks the peer's gesture.
+            let _ = require_offer_signs(&action, offer, &local);
             action.gesture = Some(offer.gesture.clone());
             let counter = offer_for(issuer, &action, local, &offer.scope_key)?;
             let logged = fold.federation_pacts.get(&offer.pact_id).filter(|pact| {

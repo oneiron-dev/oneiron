@@ -293,7 +293,11 @@ impl SyncClient {
             ConnectRejoined {
                 pact: body.pact,
                 epoch: body.epoch,
-                world_ref: foreign,
+                // SEEDED FAULT FF3: the answer names the sharer's own world.
+                world_ref: {
+                    let _ = foreign;
+                    body.world_ref
+                },
                 status: if request.is_some() {
                     ConnectRejoinStatus::Deferred
                 } else {

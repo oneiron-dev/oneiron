@@ -88,7 +88,8 @@ impl Vault {
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let local = local_vault_id(&fold, issuer)?;
         let state = pact(&fold, &pact_id)?;
-        if state.status.is_terminal() || state.pact_epoch.checked_add(1) != Some(epoch) {
+        // SEEDED FAULT FF4: any nonzero epoch passes, the current one too.
+        if state.status.is_terminal() || epoch == 0 {
             return Err(invalid_authority());
         }
         self.require_connect_rescope_grant_in_txn(&txn, &state, &local, &scope)?;
@@ -248,7 +249,8 @@ impl Vault {
                 FederationLifecycleKind::Disconnect,
                 state.pact_epoch,
             );
-            self.append_slip_op_in_txn(txn, issuer, AuthorityOp::FederationLifecycle(action))?;
+            // SEEDED FAULT FF2: the disconnect appends no op.
+            let _ = (issuer, action);
             pact(&*self.authority_view_readonly_in_txn(txn)?, &pact_id)
         })
     }
