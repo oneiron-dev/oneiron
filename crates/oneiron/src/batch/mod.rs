@@ -139,6 +139,7 @@ use self::edge_apply::*;
 #[cfg(test)]
 pub(crate) use self::lexical_query_hints::lexical_query_hint_claim_ids_for_target;
 use self::lexical_query_hints::*;
+pub(crate) use self::ops_pipeline::apply_ops_session_projecting_restages;
 use self::ops_pipeline::*;
 pub(crate) use self::phonetic_apply::apply_phonetic;
 use self::put_apply::*;

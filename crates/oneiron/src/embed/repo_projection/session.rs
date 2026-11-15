@@ -85,11 +85,12 @@ pub(crate) fn refresh_repo_session_index_projection_in_txn(
     Ok(())
 }
 
-/// [`crate::batch::apply_ops_session`] of one room entry, a text index
-/// entry of a derived text with a marked source (its record and edges as
-/// `view` holds them, the room's own included) taking the placeholder in
-/// every field. Every other entry applies as it is. Never a refusal: marks
-/// that cannot be read leave such a text on the placeholder.
+/// [`crate::batch::apply_ops_session`] of one room entry, the text index of
+/// a derived text with a marked source (its record and edges as `view` holds
+/// them, the room's own included) taking the placeholder in every field:
+/// the fields of a Text entry, and the fields a Put-only restage derives
+/// from the text's live body. Every other entry applies as it is. Never a
+/// refusal: marks that cannot be read leave such a text on the placeholder.
 ///
 /// # Errors
 /// As the session apply, or a storage error of `wtxn`.
@@ -100,22 +101,38 @@ pub(crate) fn apply_ops_session_projected(
     wtxn: &mut RwTxn<'_>,
     mut entry: JournalEntry,
 ) -> Result<()> {
-    if let BatchOp::Text { id, fields } = &mut entry.op
-        && view
-            .port_entity_record(wtxn, id)?
-            .is_some_and(|record| record.entity_type == ENTITY_TYPE_ASSET_TEXT)
-        && derived_in_room(vault, view, wtxn, id)?
-    {
-        *fields = super::repo_derived_fields(std::mem::take(fields), opaque_index_text());
+    if let BatchOp::Text { id, fields } = &mut entry.op {
+        *fields = room_index_fields(vault, view, wtxn, id, std::mem::take(fields))?;
     }
-    crate::batch::apply_ops_session(
+    crate::batch::apply_ops_session_projecting_restages(
         view,
         route,
         &vault.config,
         &vault.analyzer,
         wtxn,
         vec![entry],
+        &|wtxn, id, fields| room_index_fields(vault, view, wtxn, id, fields),
     )
+}
+
+/// `fields` as the room's text index takes them for row `id`: the
+/// placeholder in every field of a derived text with a marked source, as
+/// `view` holds them; any other row's as they are.
+fn room_index_fields(
+    vault: &Vault,
+    view: &SessionStoreView<'_>,
+    wtxn: &RwTxn<'_>,
+    id: &EntityId,
+    fields: Vec<(String, String)>,
+) -> Result<Vec<(String, String)>> {
+    if view
+        .port_entity_record(wtxn, id)?
+        .is_some_and(|record| record.entity_type == ENTITY_TYPE_ASSET_TEXT)
+        && derived_in_room(vault, view, wtxn, id)?
+    {
+        return Ok(super::repo_derived_fields(fields, opaque_index_text()));
+    }
+    Ok(fields)
 }
 
 /// Whether room text `id` has a marked source as `view` holds it; `true`

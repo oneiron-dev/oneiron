@@ -365,6 +365,36 @@ pub(crate) fn apply_ops_session(
     wtxn: &mut RwTxn<'_>,
     entries: Vec<JournalEntry>,
 ) -> Result<()> {
+    apply_ops_session_projecting_restages(
+        view,
+        route,
+        config,
+        analyzer,
+        wtxn,
+        entries,
+        &|_, _, fields| Ok(fields),
+    )
+}
+
+/// The text a room indexes for a Put-only restage of row `id`, from the
+/// fields its live body derives, read in the apply's writer.
+pub(crate) type RestageTextProjection<'p> =
+    dyn Fn(&RwTxn<'_>, &EntityId, Vec<(String, String)>) -> Result<Vec<(String, String)>> + 'p;
+
+/// [`apply_ops_session`], with `project` applied to the text fields a Put-only
+/// restage derives from its live body before the room indexes them. The
+/// room's secret projection passes itself here, so a derived text with a
+/// marked source indexes the sealed-file placeholder whether its words came
+/// in a Text op or from its body (`embed::apply_ops_session_projected`).
+pub(crate) fn apply_ops_session_projecting_restages(
+    view: &crate::store::SessionStoreView<'_>,
+    route: &SessionWriteRoute,
+    config: &crate::config::VaultConfig,
+    analyzer: &crate::analyzer::MultilingualAnalyzer,
+    wtxn: &mut RwTxn<'_>,
+    entries: Vec<JournalEntry>,
+    project: &RestageTextProjection<'_>,
+) -> Result<()> {
     // A route minted before the most recent mode publication names a mode
     // epoch that no longer authorizes overlay writes. Refuse BEFORE staging a
     // byte, so a flip landing mid-call cannot leave half a turn in a room the
@@ -639,6 +669,7 @@ pub(crate) fn apply_ops_session(
         if let Some(fields) =
             crate::vault::entity_revision::room_restage_text_fields(view, wtxn, id)?
         {
+            let fields = project(wtxn, id, fields)?;
             crate::store::text_index::index_text(view, wtxn, analyzer, id, &fields)?;
             restaged.insert(*id);
         }
