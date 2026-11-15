@@ -36,6 +36,9 @@ use oneiron::ingest::history::{
     HistoryConversation, HistoryMessage, HistoryRole, HistorySkips, HistorySource,
     HistoryThreadKind,
 };
+use oneiron::memory::checkout_doors::{
+    CheckoutGetInput, CheckoutRetention, CheckoutState, CheckoutTeardownInput, CheckoutTornDown,
+};
 use oneiron::origin::smart_http::{ORIGIN_REPO_DIR_SUFFIX, origin_serving_root};
 use oneiron::registry::ENTITY_TYPE_TASK;
 use oneiron::store::GateDecisionId;
@@ -45,7 +48,7 @@ use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
 };
-use oneiron::{EntityId, HostingPrivacyPosture, LlmBackend, Vault, VaultConfig};
+use oneiron::{EdgeActorClass, EntityId, HostingPrivacyPosture, LlmBackend, Vault, VaultConfig};
 use serde_json::json;
 
 const IMPORTED_AT: u64 = 1_700_100_000;
@@ -844,4 +847,76 @@ fn an_agent_with_no_grant_learns_nothing_of_the_repo() {
         "a commit the store does not hold answers the Grant refusal"
     );
     assert_eq!(counts(&vault), before, "nothing is written");
+}
+
+#[test]
+fn the_owner_reads_and_tears_down_the_continued_checkout() {
+    // The continued checkout is the owner's custody: the owner reads it
+    // through the checkout door and tears it down under the owner's own
+    // credential, as for a checkout the owner claimed by hand. With no
+    // pushed-head receipt the shipped teardown keeps the tree.
+    let (_dir, vault, owner_proof) = owner_vault();
+    let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
+    let conversation = import_conversation(&vault, &owner_proof);
+    let policy = login_policy("claude-code");
+    let registry = ProviderAdapterRegistry::standard();
+    let bound = vault
+        .continue_outside_work(
+            RunnerContinueCaller::Owner(&owner_proof),
+            &registry,
+            &policy,
+            &ContinueOutsideWorkRequest {
+                repo: "demo".to_owned(),
+                git_ref: CONTINUE_REF.to_owned(),
+                commit: commit_c,
+                conversation: conversation.to_hex(),
+                runner: "claude-code".to_owned(),
+                note: None,
+            },
+        )
+        .expect("the door answers");
+    let ContinueOutsideWorkView::Bound { task, checkout, .. } = bound else {
+        panic!("the door binds the work: {bound:?}");
+    };
+    let owner = owner_proof.actor_for_read(&vault).expect("the owner's id");
+    let memory = vault.memory(owner, EdgeActorClass::Human);
+    let lease = memory
+        .checkout_get(CheckoutGetInput {
+            checkout: checkout.clone(),
+        })
+        .expect("the owner reads the continued checkout");
+    assert_eq!(
+        lease.holder, owner,
+        "the owner holds the continued checkout"
+    );
+    assert_eq!(
+        lease.task.to_hex(),
+        task,
+        "the checkout is the continued TASK's"
+    );
+    assert!(
+        matches!(lease.state, CheckoutState::Active),
+        "the continued checkout is active: {lease:?}"
+    );
+    let torn = memory
+        .checkout_teardown_through(
+            CheckoutTeardownInput {
+                checkout,
+                epoch: lease.epoch,
+                pushed_head_receipt: None,
+            },
+            &mut NoLiveness,
+        )
+        .expect("the owner's teardown passes the holder fence");
+    assert!(
+        matches!(
+            torn,
+            CheckoutTornDown::Retained {
+                epoch,
+                reason: CheckoutRetention::MissingPushedHeadReceipt,
+                ..
+            } if epoch == lease.epoch
+        ),
+        "with no pushed-head receipt the teardown keeps the tree: {torn:?}"
+    );
 }
