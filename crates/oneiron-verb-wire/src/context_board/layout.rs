@@ -275,7 +275,7 @@ impl BoardLayout {
                 }
             }
         }
-        if total > 100 {
+        if total > 200 {
             return Err(BoardLayoutError::SharesPastCap { total });
         }
         Ok(())

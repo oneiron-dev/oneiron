@@ -185,6 +185,7 @@ impl Memory<'_> {
                 .take()
                 .map_or_else(|| row.live.clone(), |pending| pending.layout);
             edit(&mut layout)?;
+            row.live = layout.clone();
             layout.validate().map_err(layout_refusal)?;
             row.total_revision = next;
             row.pending = Some(BoardLayoutPending {

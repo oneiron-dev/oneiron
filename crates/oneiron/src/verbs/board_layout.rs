@@ -51,7 +51,7 @@ pub fn board_fold_reply(
             section.fold = Some(SectionFold {
                 note,
                 keep,
-                baseline: None,
+                baseline: Some(crate::context_board::FoldBaseline::default()),
                 section_baselines: std::collections::BTreeMap::new(),
             });
         });
