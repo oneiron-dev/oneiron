@@ -84,6 +84,7 @@ fn put_task_state_fact_in_txn(
             actor_generation: None,
             assigned_generation: None,
             occurred_at: now,
+            maker: None,
         },
     )
     .map(|_fact_ref| ())

@@ -140,12 +140,19 @@ pub(crate) fn guard_ask_fact_put(
             } else if !group.guest_grants.is_empty() {
                 return Err(invalid());
             }
+            // Each member's TASK is the asker's, made for itself under its
+            // member id (FIX TASK-ID-COMMITS-TO-MAKER).
+            let owner = entity(&group.owner)?;
             for member in &group.members {
-                if entity(&member.task)? != member_id(id, entity(&member.actor)?)? {
+                let made = crate::task_authority::task_ref_of_maker(
+                    owner,
+                    owner,
+                    member_id(id, entity(&member.actor)?)?,
+                )?;
+                if entity(&member.task)? != made {
                     return Err(invalid());
                 }
             }
-            entity(&group.owner)?;
             // Local admission and sync replay both keep the group here: its
             // rows are measured once, on this store's watch, and never
             // refuse it. A class key no band key can hold still does.

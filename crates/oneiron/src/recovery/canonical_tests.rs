@@ -1681,6 +1681,7 @@ fn a_capture_without_sync_carries_the_refusal_of_a_deleted_fact_never_admitted()
         actor_generation: None,
         assigned_generation: None,
         occurred_at: LEARNED_AT,
+        maker: None,
     };
     let window = LoroDoc::new();
     let entities = window.get_map("entities");

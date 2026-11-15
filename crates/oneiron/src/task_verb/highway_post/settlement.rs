@@ -108,8 +108,10 @@ pub(super) fn settle_post(
     ))?;
     let proposer = proposer_of(claim, approver)?;
     let class = class_of(stamp.actor_class)?;
-    let task_ref = EntityId::derive(TASK_SETTLE_ID_DOMAIN, &[claim_id.as_bytes()])?;
-    if vault.get_raw_in(wtxn, &task_ref)?.is_some() {
+    // The proposer makes the TASK for itself, under the claim's settle
+    // derive.
+    let (maker, owner) = proposal_create::settled_task_identity(claim_id, claim)?;
+    if vault.get_raw_in(wtxn, &maker.task_ref(owner)?)?.is_some() {
         return Ok(());
     }
     // The approved value is what lands: an approver's amendment to the
@@ -182,7 +184,7 @@ pub(super) fn settle_post(
     memory
         .land_settled_post_in_txn(
             wtxn,
-            task_ref,
+            maker,
             &post,
             &post_provenance(&stamp.intent_key, &stamp.request_digest, Some(claim_id)),
             origin.as_ref(),

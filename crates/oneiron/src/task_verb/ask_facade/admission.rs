@@ -191,7 +191,10 @@ impl Memory<'_> {
         for (actor, (entry, reachable)) in census.holders.iter().zip(&census.validated) {
             let task_ref = self.mint_task_at_in_txn(
                 txn,
-                (ask_record::member_id(group_ref, *actor)?, self.actor()),
+                (
+                    self.task_maker(ask_record::member_id(group_ref, *actor)?),
+                    self.actor(),
+                ),
                 entry,
                 census.effective.what.label.clone(),
                 &facade_provenance("ask"),

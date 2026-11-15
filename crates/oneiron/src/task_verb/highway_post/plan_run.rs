@@ -128,10 +128,8 @@ impl Memory<'_> {
         agent_def_ref: EntityId,
     ) -> MemoryResult<EntityId> {
         let key = PostKey::of(&TaskVia::Wire, &plan_run_key(plan, revision))?;
-        let task_ref = EntityId::derive(
-            TASK_POST_ID_DOMAIN,
-            &[self.actor().as_bytes(), key.stored.as_bytes()],
-        )?;
+        let maker = key.task_maker(self.actor())?;
+        let task_ref = maker.task_ref(self.actor())?;
         if task_verb_body_in(self.vault(), &*wtxn, task_ref)?.is_some() {
             return Ok(task_ref);
         }
@@ -151,7 +149,7 @@ impl Memory<'_> {
         let origin = task_create_origin_in_txn(self, &*wtxn, None)?;
         self.land_settled_post_in_txn(
             wtxn,
-            task_ref,
+            maker,
             &post,
             &post_provenance(&key.stored, &digest, None),
             origin.as_ref(),

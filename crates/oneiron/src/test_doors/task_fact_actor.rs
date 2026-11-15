@@ -37,6 +37,7 @@ fn fact_at(
         actor_generation: None,
         assigned_generation: None,
         occurred_at: crate::ports::recorded_at_in_txn(&vault.store, txn)?,
+        maker: None,
     })
 }
 
