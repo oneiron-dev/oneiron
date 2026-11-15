@@ -394,8 +394,10 @@ fn create_enabled_agent(fixture: &Fixture, agent_id: &str) -> TestResult<EntityI
 }
 
 /// The owner mints `agent` a band read grant over the base world whose bands
-/// hold the transcript rows and the summary, so a refusal is the phone
-/// gate's, not a missing band.
+/// hold the transcript rows, the summary and its intent NOTE, so a refusal is
+/// the phone gate's or the source rule's, not a missing band (reach-r3fix
+/// compile read: without the NOTE band row 5c was refused at the band check
+/// on both heads).
 fn mint_banded_read_grant(fixture: &Fixture, agent: EntityId, label: &str) -> TestResult {
     let mut authority_scope = Scope::top();
     authority_scope.worlds = ScopeAxis::Some(BTreeSet::from([ScopeId(base_world_id())]));
@@ -405,6 +407,7 @@ fn mint_banded_read_grant(fixture: &Fixture, agent: EntityId, label: &str) -> Te
         ENTITY_TYPE_MESSAGE,
         ENTITY_TYPE_CONVERSATION,
         ENTITY_TYPE_SUMMARY,
+        oneiron::registry::ENTITY_TYPE_NOTE,
     ]));
     authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
     let minted = mint_agent_grant_as(
@@ -812,6 +815,98 @@ fn a_phone_epoch_reads_only_where_its_callers_words_read() -> TestResult {
         assert!(
             caller_b2_reads,
             "row 4e WholeVault: the next call from caller B reads caller A's Summary",
+        );
+        Ok(())
+    })
+}
+
+#[test]
+fn a_phone_epochs_intent_note_reads_only_where_its_callers_words_read() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new().await?;
+        let agent = seeded_default_agent(&fixture)?;
+        let (identity, _bridge_key) = provision_line(&fixture, agent, "row 5 Default")?;
+        set_reach_as_owner(
+            &fixture,
+            identity,
+            PhoneReach::Default {
+                documents: Vec::new(),
+            },
+            "row 5 Default",
+        )?;
+        let line_proof = paired_slip_for(&fixture, agent, 0x54)?;
+        let mut call = PhoneCall::answer(&fixture.server, Some(CALLER_A))?;
+        let thread = call.conversation();
+        let turns = say_enough_turns(&mut call).await?;
+        let log = poll_epoch(&fixture, thread).await?;
+        let standing = summaries(&log);
+        assert_eq!(
+            standing.len(),
+            1,
+            "row 5 Default: the epoch precondition stands after {turns} turns",
+        );
+        let summary = standing[0].0;
+        call.hang_up();
+        // The pass's intent NOTE sits About its epoch and was written from
+        // the epoch's sources, the caller's turns (Engine RULING
+        // REACH-INTENT-NOTE-SOURCES = A, 16 Nov 07:19).
+        let intents = fixture.vault.sources(
+            &summary,
+            oneiron::EdgeKind::About,
+            Some(oneiron::registry::ENTITY_TYPE_NOTE),
+        )?;
+        assert_eq!(
+            intents.len(),
+            1,
+            "row 5 Default: precondition: one intent NOTE sits About the epoch",
+        );
+        let intent = intents[0];
+        assert!(
+            !fixture
+                .vault
+                .targets(&intent, oneiron::EdgeKind::DerivedFrom, None)?
+                .is_empty(),
+            "row 5 Default: precondition: the intent NOTE is DerivedFrom the epoch's sources",
+        );
+
+        let control = witness_control_message(&fixture)?;
+        let generic = create_enabled_agent(&fixture, "generic_reader")?;
+        mint_banded_read_grant(&fixture, generic, "row 5c Default")?;
+        let generic_proof = paired_slip_for(&fixture, generic, 0x55)?;
+        let owner_key = fixture
+            .vault
+            .memory(fixture.owner, EdgeActorClass::Human)
+            .read_key()?;
+        let line_key = ordinary_key(&fixture, &line_proof)?;
+        let generic_key = ordinary_key(&fixture, &generic_proof)?;
+
+        assert!(
+            fixture
+                .vault
+                .scoped_read(owner_key)
+                .is_entity_readable(&intent)?,
+            "row 5a Default: the owner reads the epoch's intent NOTE",
+        );
+        assert!(
+            fixture
+                .vault
+                .scoped_read(line_key)
+                .is_entity_readable(&intent)?,
+            "row 5b Default: the line agent's ordinary key reads the epoch's intent NOTE",
+        );
+        assert!(
+            fixture
+                .vault
+                .scoped_read(generic_key.clone())
+                .is_entity_readable(&control)?,
+            "row 5c Default: the band grant reads the control row, so a refusal is the source rule's",
+        );
+        assert!(
+            !fixture
+                .vault
+                .scoped_read(generic_key)
+                .is_entity_readable(&intent)?,
+            "LEAK row 5c Default: a band grant reads the intent NOTE of the caller's epoch without reading the caller's words",
         );
         Ok(())
     })
