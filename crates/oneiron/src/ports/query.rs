@@ -341,6 +341,7 @@ pub trait RetrievalIndexRead: Transactions {
             codes,
             &crate::pipeline::RetrievalParams::shipped(),
             None,
+            None,
         )
     }
     /// [`Self::port_retrieval_phonetic_search`] with the call's retrieval
@@ -349,12 +350,21 @@ pub trait RetrievalIndexRead: Transactions {
     /// every `PHONETIC_IDS_PER_CHECKPOINT` ids inside one or rows of the
     /// sound scan, and before the final sort, so a stage past its share
     /// stops there with `Error::RetrievalStageCut` instead of reading every
-    /// posting.
+    /// posting. With an `admission`, the sound match's cut is taken among
+    /// the rows it admits only: a refused row sets no nearest distance and
+    /// takes no place under the cap. Exact codes have no cut, so they are
+    /// not asked.
     fn port_retrieval_phonetic_search_with_deadline(
         &self,
         txn: &Self::Read<'_>,
         codes: &[String],
         params: &crate::pipeline::RetrievalParams,
         deadline: Option<&crate::retrieval_depth::RetrievalDeadline>,
+        admission: Option<&mut SoundMatchAdmission<'_>>,
     ) -> Result<Vec<oneiron_retrieval::pipeline::ScoredEntity>>;
 }
+
+/// Whether a call may see one entity the phonetic sound match kept within
+/// its distance threshold, asked nearest first before the entity takes a
+/// place in the match's cut.
+pub type SoundMatchAdmission<'a> = dyn FnMut(&crate::EntityId) -> Result<bool> + 'a;
