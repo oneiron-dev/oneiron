@@ -317,7 +317,8 @@ pub struct RecoveryPresetChange {
     pub mirror_pending: bool,
     /// The change committed to `Standard` but the recovery box's release did
     /// not go through: the preset stands, and the box still holds kit-only.
-    /// Never an error; only the switch back sets it.
+    /// Never an error; only the switch back sets it. The marker
+    /// [`RecoveryBoxHoldPending`] stays set, and a managed boot resends the hold.
     pub box_release_pending: bool,
 }
 
@@ -338,7 +339,8 @@ pub struct RecoveryPresetAnyTwoChange {
 /// [`RecoveryPresetChange::box_release_pending`], never an error. A switch
 /// refused before the hold makes no hold call; one that fails after it sends
 /// `hold_kit_only(false)` once, best-effort, while the vault still reads
-/// `Standard`, and answers the first error.
+/// `Standard`, and answers the first error. The marker [`RecoveryBoxHoldPending`]
+/// stays set, and a managed boot resends the hold.
 pub trait RecoveryBoxHold {
     /// Holds kit-only (`true`) or releases it (`false`) on the recovery box.
     fn hold_kit_only(&self, kit_only: bool) -> Result<()>;
@@ -352,6 +354,26 @@ impl RecoveryBoxHold for NoRecoveryBox {
     fn hold_kit_only(&self, _kit_only: bool) -> Result<()> {
         Ok(())
     }
+}
+
+/// Whether the recovery box's kit-only hold may not match the recovery preset: set before a
+/// switch into 'Nobody but me' asks the box to hold, and by a switch out of it; cleared once
+/// the box answered. A managed boot resends the hold that matches the preset when it is set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryBoxHoldPending {
+    /// The hold the switch asked for.
+    pub target_kit_only: bool,
+    /// A fresh random id per switch, compared by the clear.
+    pub attempt: u64,
+}
+
+/// A fresh random attempt id for one switch's box-hold-pending marker, from
+/// the OS CSPRNG. Never "stored + 1": after a delete a counter restarts and
+/// could repeat an attempt a heal still holds.
+fn fresh_box_hold_attempt() -> Result<u64> {
+    let mut bytes = [0u8; 8];
+    os_fill(&mut bytes)?;
+    Ok(u64::from_le_bytes(bytes))
 }
 
 impl Vault {
@@ -370,6 +392,42 @@ impl Vault {
         Ok(STATE
             .get(&self.store, txn, &())?
             .map_or(RecoveryPreset::Standard, |state| state.recovery))
+    }
+
+    /// The box-hold-pending marker, if set: the hold a switch asked for and its attempt. A
+    /// managed boot resends the hold that matches the preset when it is set.
+    pub fn recovery_box_hold_pending(&self) -> Result<Option<RecoveryBoxHoldPending>> {
+        let txn = self.store.env.read_txn()?;
+        BOX_HOLD_PENDING.get(&self.store, &txn, &())
+    }
+
+    /// Clears the box-hold-pending marker only when its stored attempt equals `attempt`; true
+    /// when it deleted. A heal never clears the marker of a switch that started while it ran.
+    pub fn clear_recovery_box_hold_pending(&self, attempt: u64) -> Result<bool> {
+        self.with_write_txn(|txn| self.clear_recovery_box_hold_pending_in_txn(txn, attempt))
+    }
+
+    /// [`Self::recovery_box_hold_pending`]'s write, in the caller's write txn.
+    pub(crate) fn put_recovery_box_hold_pending_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        pending: &RecoveryBoxHoldPending,
+    ) -> Result<()> {
+        BOX_HOLD_PENDING.put(&self.store, txn, &(), pending)
+    }
+
+    /// [`Self::clear_recovery_box_hold_pending`] in the caller's write txn.
+    pub(crate) fn clear_recovery_box_hold_pending_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        attempt: u64,
+    ) -> Result<bool> {
+        match BOX_HOLD_PENDING.get(&self.store, txn, &())? {
+            Some(stored) if stored.attempt == attempt => {
+                BOX_HOLD_PENDING.delete(&self.store, txn, &())
+            }
+            _ => Ok(false),
+        }
     }
 
     /// Sets the owner's recovery preset, rechecked in the transaction that
@@ -568,18 +626,42 @@ impl Vault {
             }
             RecoveryPreset::NobodyButMe | RecoveryPreset::Standard => None,
         };
-        // Target kit-only holds the box after the no-write checks pass and
-        // before the write opens; its error refuses with nothing written. A
-        // failure after the hold releases it again on a vault still on
-        // `Standard`.
+        // Target kit-only writes the box-hold-pending marker in its own write
+        // before it holds the box, after the no-write checks pass; the switch's
+        // own write clears it, and a failure after the hold releases the box
+        // again on a vault still on `Standard`. A hold error refuses with the
+        // marker set for a managed boot to heal.
         let held_box = preset.is_nobody_but_me();
-        if held_box {
+        let hold_attempt = if held_box {
+            let attempt = fresh_box_hold_attempt()?;
+            let pending = RecoveryBoxHoldPending {
+                target_kit_only: true,
+                attempt,
+            };
+            self.with_write_txn(|txn| self.put_recovery_box_hold_pending_in_txn(txn, &pending))?;
             box_hold.hold_kit_only(true)?;
-        }
-        let transition =
-            self.release_box_hold_on_failure(self.begin_wrap_transition(), held_box, box_hold)?;
+            Some(attempt)
+        } else {
+            None
+        };
+        // Leaving kit-only draws its attempt before the write; the write puts
+        // the marker when it actually leaves, in the same txn as the preset.
+        let leave_attempt = if preset == RecoveryPreset::Standard {
+            Some(fresh_box_hold_attempt()?)
+        } else {
+            None
+        };
+        let transition = self.release_box_hold_on_failure(
+            self.begin_wrap_transition(),
+            held_box,
+            hold_attempt,
+            box_hold,
+        )?;
         let written = self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            if let Some(attempt) = hold_attempt {
+                self.clear_recovery_box_hold_pending_in_txn(txn, attempt)?;
+            }
             let mut state = STATE
                 .get(&self.store, txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
@@ -593,7 +675,7 @@ impl Vault {
                 box_release_pending: false,
             };
             if state.recovery == preset {
-                return Ok(change);
+                return Ok((change, None));
             }
             // Rotation happens iff Standard goes to kit-only and a generation
             // is live. Kit-only to kit-only and the switch back change no
@@ -624,23 +706,52 @@ impl Vault {
                     Some((VaultKeyWrapKind::Sheet, envelope.clone())),
                 )?;
             }
+            // Leaving kit-only sets the marker in the same txn, before the STATE
+            // put; staying on Standard writes no marker.
+            let mut leave_marker: Option<u64> = None;
+            if preset == RecoveryPreset::Standard && state.recovery.is_nobody_but_me() {
+                if let Some(attempt) = leave_attempt {
+                    self.put_recovery_box_hold_pending_in_txn(
+                        txn,
+                        &RecoveryBoxHoldPending {
+                            target_kit_only: false,
+                            attempt,
+                        },
+                    )?;
+                    leave_marker = Some(attempt);
+                }
+            }
             state.recovery = preset;
             // [VAULT-DATA-KEY-ROTATION]: its `start_data_key_generation_in_txn`
             // will run last in this write, after the STATE put.
             STATE.put(&self.store, txn, &(), &state)?;
-            Ok(change)
+            Ok((change, leave_marker))
         });
-        let mut change = self.release_box_hold_on_failure(written, held_box, box_hold)?;
+        let (mut change, leave_marker) =
+            self.release_box_hold_on_failure(written, held_box, hold_attempt, box_hold)?;
         change.mirror_pending = finish_or_pending(transition);
         // Target Standard releases the box after the commit; a failure is
-        // answered as pending, never an error.
+        // answered as pending, never an error. An `Ok` release clears the
+        // leaving marker (a failure there is logged only); an `Err` keeps it.
         if preset == RecoveryPreset::Standard {
-            if let Err(error) = box_hold.hold_kit_only(false) {
-                tracing::warn!(
-                    kind = ?error.kind(),
-                    "a recovery preset change committed to Standard; the recovery box release is pending"
-                );
-                change.box_release_pending = true;
+            match box_hold.hold_kit_only(false) {
+                Ok(()) => {
+                    if let Some(attempt) = leave_marker {
+                        if let Err(error) = self.clear_recovery_box_hold_pending(attempt) {
+                            tracing::warn!(
+                                kind = ?error.kind(),
+                                "a recovery preset change committed to Standard and released the box; clearing its marker did not go through"
+                            );
+                        }
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        kind = ?error.kind(),
+                        "a recovery preset change committed to Standard; the recovery box release is pending"
+                    );
+                    change.box_release_pending = true;
+                }
             }
         }
         if change.previous != change.preset {
@@ -873,14 +984,30 @@ impl Vault {
         drawn.keep_owner_pieces(keep_pieces)?;
         let kit = drawn.hand_over(true)?;
         let preset = RecoveryPreset::NobodyButMeAnyTwo;
-        // The target is always kit-only: hold the box after the no-write
-        // checks pass and before the write opens. A failure after the hold
-        // releases it again on a vault still on `Standard`.
+        // The target is always kit-only: write the box-hold-pending marker in
+        // its own write before holding the box, after the no-write checks pass;
+        // the switch's own write clears it. A failure after the hold releases
+        // the box again on a vault still on `Standard`.
+        let attempt = fresh_box_hold_attempt()?;
+        self.with_write_txn(|txn| {
+            self.put_recovery_box_hold_pending_in_txn(
+                txn,
+                &RecoveryBoxHoldPending {
+                    target_kit_only: true,
+                    attempt,
+                },
+            )
+        })?;
         box_hold.hold_kit_only(true)?;
-        let transition =
-            self.release_box_hold_on_failure(self.begin_wrap_transition(), true, box_hold)?;
+        let transition = self.release_box_hold_on_failure(
+            self.begin_wrap_transition(),
+            true,
+            Some(attempt),
+            box_hold,
+        )?;
         let written = self.with_write_txn(|txn| {
             owner.revalidate_in_txn(self, txn)?;
+            self.clear_recovery_box_hold_pending_in_txn(txn, attempt)?;
             let mut state = STATE
                 .get(&self.store, txn, &())?
                 .ok_or_else(|| refused("the vault has no data key"))?;
@@ -911,7 +1038,8 @@ impl Vault {
             STATE.put(&self.store, txn, &(), &state)?;
             Ok(change)
         });
-        let mut change = self.release_box_hold_on_failure(written, true, box_hold)?;
+        let mut change =
+            self.release_box_hold_on_failure(written, true, Some(attempt), box_hold)?;
         change.mirror_pending = finish_or_pending(transition);
         Ok(RecoveryPresetAnyTwoChange { change, kit })
     }
@@ -924,23 +1052,37 @@ impl Vault {
     /// vault still on `Standard` sends `hold_kit_only(false)` once,
     /// best-effort. A vault already on kit-only (re-entering it, or turning
     /// "any 2 pieces" on) keeps the hold, and a preset that cannot be read
-    /// sends nothing. The answer stays the first error.
+    /// sends nothing. After an `Ok` release the marker of `attempt` is cleared
+    /// (a failure there is logged and never changes the answer); after an `Err`
+    /// the marker stays, and a managed boot resends the hold. The answer stays
+    /// the first error. `attempt` is `None` when no marker was written.
     fn release_box_hold_on_failure<T>(
         &self,
         result: Result<T>,
         held_box: bool,
+        attempt: Option<u64>,
         box_hold: &dyn RecoveryBoxHold,
     ) -> Result<T> {
         if result.is_err() && held_box {
             match self.recovery_preset() {
-                Ok(RecoveryPreset::Standard) => {
-                    if let Err(error) = box_hold.hold_kit_only(false) {
+                Ok(RecoveryPreset::Standard) => match box_hold.hold_kit_only(false) {
+                    Ok(()) => {
+                        if let Some(attempt) = attempt {
+                            if let Err(error) = self.clear_recovery_box_hold_pending(attempt) {
+                                tracing::warn!(
+                                    kind = ?error.kind(),
+                                    "a recovery preset switch failed after the recovery box held kit-only; the box is released but clearing its marker did not go through"
+                                );
+                            }
+                        }
+                    }
+                    Err(error) => {
                         tracing::warn!(
                             kind = ?error.kind(),
                             "a recovery preset switch failed after the recovery box held kit-only; its release did not go through"
                         );
                     }
-                }
+                },
                 Ok(_) => {}
                 Err(error) => tracing::warn!(
                     kind = ?error.kind(),
