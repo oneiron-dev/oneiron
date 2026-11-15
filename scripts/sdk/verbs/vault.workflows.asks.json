@@ -1,0 +1,16 @@
+{
+  "name": "vault.workflows.asks",
+  "description": "The owner reads the open questions one workflow run's agents asked them, by its root attempt: each a choice among its options whose answer is evidence, never approval, and whether the run waits on an approval.",
+  "input": "crate::task_verb::sdk::WorkflowRunRequest",
+  "output": "crate::task_verb::WorkflowRunAsks",
+  "call": "crate::task_verb::read_workflow_run_asks_as(memory, &memory.embedded_owner(\"vault.workflows.asks\")?, input)?",
+  "host_door": true,
+  "host_door_lists": true,
+  "scope": "Read",
+  "act_class": "read",
+  "admission": {
+    "unrestricted_record_scope": true
+  },
+  "section": false,
+  "host_door_proof": "owner"
+}

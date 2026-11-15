@@ -16,8 +16,11 @@
 //! - A changed question set is a new form under a new key, and a response
 //!   under the old key answers nothing.
 //! - A step parked on a verb hook's ask waits on an approval: never a form.
+//!   A question asked beside it is, and the status line names both.
 //! - A poll that does not declare form elicitation sees `working` and the
 //!   count.
+//! - An ask the agent raised before the run began is not the run's, and a
+//!   question that offers no option to choose is never a form's.
 //!
 //! Run with: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support
@@ -277,10 +280,22 @@ impl Fixture {
     /// The step's agent asks the owner one question about the TURN under
     /// `intent_key`, at `revision`, with the two options.
     fn ask(&self, intent_key: &str, label: &str, revision: u64) -> TestResult<TaskAskHandle> {
+        self.ask_offering(intent_key, label, revision, &OPTIONS)
+    }
+
+    /// The step's agent asks the owner one question about the TURN under
+    /// `intent_key`, at `revision`, offering `options`.
+    fn ask_offering(
+        &self,
+        intent_key: &str,
+        label: &str,
+        revision: u64,
+        options: &[&str],
+    ) -> TestResult<TaskAskHandle> {
         let mut what = TaskAskQuestion::new(ConsultPayloadRef::Turn(self.question));
         what.revision = revision;
         what.label = Some(label.to_owned());
-        for option in OPTIONS {
+        for &option in options {
             what.options
                 .insert(TaskAskOptionId::new(option)?, TaskAskOption::new(option));
         }
@@ -665,6 +680,26 @@ fn an_approval_wait_is_never_a_form() -> TestResult {
             !polled.to_string().contains(&approval.to_hex()),
             "the hook's ask is named nowhere in the task: {polled}"
         );
+
+        // A question the agent asks beside it is a form's; the approval still
+        // is not, and the status line names both.
+        let question = fixture.ask("forms-approval-a", "Ship the notes?", 1)?;
+        let polled = fixture.get(&task, Elicitation::Form).await?;
+        assert_eq!(polled["status"], "input_required", "{polled}");
+        assert_eq!(
+            polled["statusMessage"], "waiting on 1 question and an approval",
+            "{polled}"
+        );
+        let (_, properties) = form(&polled)?;
+        assert_eq!(
+            properties.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([property(question, 1)]),
+            "{polled}"
+        );
+        assert!(
+            !polled.to_string().contains(&approval.to_hex()),
+            "the hook's ask is named nowhere in the task: {polled}"
+        );
         Ok(())
     })
 }
@@ -686,6 +721,38 @@ fn a_client_without_form_elicitation_sees_working() -> TestResult {
             );
             assert!(polled.get("inputRequests").is_none(), "{polled}");
         }
+        Ok(())
+    })
+}
+
+#[test]
+fn an_ask_from_before_the_run_or_with_no_choice_is_never_its_question() -> TestResult {
+    on_engine_stack(|| async {
+        let fixture = Fixture::new()?;
+        let earlier = fixture.ask("forms-scope-earlier", "Ship last week's notes?", 1)?;
+        // The run begins a recorded second after the agent's earlier ask.
+        tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+        let task = fixture.task("forms-scope").await?;
+        let choiceless = fixture.ask_offering("forms-scope-open", "Anything else?", 1, &[])?;
+        let plain = fixture.ask("forms-scope-plain", "Tag the release?", 1)?;
+
+        let polled = fixture.get(&task, Elicitation::Form).await?;
+        assert_eq!(polled["status"], "input_required", "{polled}");
+        assert_eq!(polled["statusMessage"], "waiting on 1 question", "{polled}");
+        let (_, properties) = form(&polled)?;
+        assert!(
+            !properties.contains_key(&property(earlier, 1)),
+            "an ask raised before the run began is not the run's: {polled}"
+        );
+        assert!(
+            !properties.contains_key(&property(choiceless, 1)),
+            "a question with no option to choose is never a form's: {polled}"
+        );
+        assert_eq!(
+            properties.keys().cloned().collect::<BTreeSet<_>>(),
+            BTreeSet::from([property(plain, 1)]),
+            "{polled}"
+        );
         Ok(())
     })
 }

@@ -108,7 +108,9 @@ pub mod revoke_lands;
 mod room_thread;
 mod route_receipts;
 mod run_asks;
-pub use run_asks::{WorkflowRunAsks, WorkflowRunQuestion};
+pub use run_asks::{
+    WorkflowRunAsks, WorkflowRunOption, WorkflowRunQuestion, read_workflow_run_asks_as,
+};
 pub mod run_cancel;
 pub mod run_control;
 pub mod run_doors;

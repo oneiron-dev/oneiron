@@ -259,7 +259,7 @@ fn waiting_revision(proposal: &EntityId, artifact: &EntityId, forks: &[EntityId]
 }
 
 /// Whether `intent_key` is an office holder ask's (FIX 3107).
-fn is_office_holder_ask_intent(intent_key: &str) -> bool {
+pub(crate) fn is_office_holder_ask_intent(intent_key: &str) -> bool {
     intent_key
         .strip_prefix(ASK_INTENT)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))

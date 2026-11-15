@@ -17,17 +17,21 @@
 //! task's end: a failed run ends `completed` with `isError`, as a tool result
 //! with `isError` does.
 //!
-//! Form questions (L1-03 PR 3): while a run works and its agents' asks to
-//! the poller stand open, a poll that declares form elicitation answers
-//! `input_required` with one form of those questions, each a choice among
-//! its options and never free text; any other poll answers `working` with
-//! the count. `tasks/update` reads only the current form's responses: an
-//! accepted answer is the poller's word through `tasks.answer`, evidence and
-//! never an approval; a decline voids the poller's seats through
-//! `tasks.decline`, and the asks go on without that word; a cancel stops the
-//! run as `tasks/cancel` does. A verb hook's ask, a consent ask or any other
-//! approval is never a question: a run parked on one answers `working`,
-//! waiting on an approval.
+//! Form questions (L1-03 PR 3): while a run works and its agents' plain
+//! questions to the poller stand open, a poll that declares form elicitation
+//! answers `input_required` with one form of those questions, each a choice
+//! among its options and never free text; any other poll answers `working`
+//! with the count. The questions are the record's own read verb's answer,
+//! `vault.workflows.asks`, run as the poller as every record read is, so its
+//! admission, destination and release judge them; a refused read shows no
+//! question and says nothing of one. `tasks/update` reads only the current
+//! form's responses: an accepted answer is the poller's word through
+//! `tasks.answer`, evidence and never an approval; a decline voids the
+//! poller's seats through `tasks.decline`, and the asks go on without that
+//! word; a cancel stops the run as `tasks/cancel` does. An ask the engine
+//! raises itself (a verb hook's, a consent, a comm widen or a holder's ask)
+//! is never a question: a run parked on a hook's ask says it waits on an
+//! approval.
 //!
 //! Not built here: `subscriptions/listen` (change notices are optional, and
 //! this endpoint answers one request per POST with no server stream).
@@ -36,7 +40,6 @@
 use std::sync::Arc;
 
 use axum::http::{Extensions, HeaderMap};
-use oneiron::EntityId;
 use oneiron::mcp_task::{McpTaskId, McpTaskRecord, McpTaskSubject};
 use oneiron::task_verb::{WorkflowRunAsks, WorkflowRunQuestion};
 use serde_json::{Map, Value, json};
@@ -58,8 +61,9 @@ const MCP_TASK_MISSING: &str = "Failed to retrieve task: Task not found";
 /// task method, never a new purpose.
 const MCP_TASK_POLICY_REF: &str = "policy:mcp-task";
 
-/// The status line of a run parked on an approval, which no form carries.
-const MCP_TASK_APPROVAL_WAIT: &str = "waiting on an approval";
+/// What the status line names of a run parked on an approval, which no form
+/// carries.
+const MCP_TASK_APPROVAL_WAIT: &str = "an approval";
 
 /// The verb an accepted form answer runs as the poller: the word is
 /// evidence, never approval.
@@ -77,6 +81,8 @@ struct TaskRecordVerbs {
     start: &'static str,
     read: &'static str,
     cancel: &'static str,
+    /// The read of the questions the record's work asked its reader.
+    asks: &'static str,
 }
 
 /// A saved-workflow run, by its root attempt.
@@ -84,6 +90,7 @@ const WORKFLOW_RUN: TaskRecordVerbs = TaskRecordVerbs {
     start: "vault.workflows.dispatch",
     read: "vault.workflows.status",
     cancel: "vault.workflows.cancel",
+    asks: "vault.workflows.asks",
 };
 
 /// The `-32021` refusal of a `tasks/*` request that does not declare the
@@ -228,14 +235,13 @@ pub(super) async fn tasks_method(
     let McpTaskSubject::WorkflowRun { root_attempt_ref } = &row.subject else {
         return Err(task_missing());
     };
-    let root = *root_attempt_ref;
     let call = RecordCall {
         server,
         actor,
         headers,
         connection,
     };
-    let spec = json!({ "root_attempt_ref": root.to_hex() });
+    let spec = json!({ "root_attempt_ref": root_attempt_ref.to_hex() });
     match method {
         "tasks/cancel" => {
             call.cancel(&id, spec, now_ms).await?;
@@ -248,7 +254,7 @@ pub(super) async fn tasks_method(
             // or superseded) is ignored, as the spec ignores it.
             let read = call.read(WORKFLOW_RUN.read, spec.clone()).await?;
             if TaskStatus::of_run(ran_output(&read)?) == TaskStatus::Working {
-                let asks = call.open_asks(root)?;
+                let asks = call.open_asks(spec.clone()).await;
                 if let Some(form) = Form::of(&asks.questions)
                     && let Some(response) = params
                         .as_ref()
@@ -261,26 +267,25 @@ pub(super) async fn tasks_method(
             Ok(json!({ "resultType": "complete", "_meta": private_meta(None) }))
         }
         _ => {
-            let read = call.read(WORKFLOW_RUN.read, spec).await?;
+            let read = call.read(WORKFLOW_RUN.read, spec.clone()).await?;
             let output = ran_output(&read)?;
             let mut status = TaskStatus::of_run(output);
             let mut message = step_message(output, status);
             let mut input_requests = None;
             if status == TaskStatus::Working {
-                let asks = call.open_asks(root)?;
-                if let Some(form) = Form::of(&asks.questions) {
-                    message = Some(form.message());
-                    // Only a request that declares form elicitation is
-                    // shown the questions; any other polls `working`.
-                    if super::client_surface::declares_form_elicitation(
+                let asks = call.open_asks(spec).await;
+                let form = Form::of(&asks.questions);
+                // Only a request that declares form elicitation is shown the
+                // questions; any other polls `working`.
+                if let Some(form) = &form
+                    && super::client_surface::declares_form_elicitation(
                         params.as_ref().and_then(|params| params.get("_meta")),
-                    ) {
-                        status = TaskStatus::InputRequired;
-                        input_requests = Some(form.input_requests());
-                    }
-                } else if asks.waits_on_approval {
-                    message = Some(MCP_TASK_APPROVAL_WAIT.to_owned());
+                    )
+                {
+                    status = TaskStatus::InputRequired;
+                    input_requests = Some(form.input_requests());
                 }
+                message = wait_message(form.as_ref(), asks.waits_on_approval).or(message);
             }
             let mut reply = task_fields(&id, &row, status, message);
             reply.insert("resultType".to_owned(), json!("complete"));
@@ -383,15 +388,20 @@ impl RecordCall<'_> {
         Ok(())
     }
 
-    /// The open questions the run `root` asked the caller, and whether it is
-    /// parked on an approval: read as the caller's own person, so only its
-    /// own seats are listed.
-    fn open_asks(&self, root: EntityId) -> Result<WorkflowRunAsks, McpGatewayError> {
-        self.server
-            .vault()
-            .memory(self.actor.actor_ref, self.actor.actor_class)
-            .open_asks_for_run(root)
-            .map_err(|error| McpGatewayError::new(-32603, "engine_error", error.message))
+    /// The open questions the run `spec` names asked the caller, and whether
+    /// it is parked on an approval: the record's own asks verb, run as the
+    /// caller through the read's admission and release, so only its own
+    /// seats are listed, and only what may go where the answer goes. A read
+    /// that did not run for the caller shows no question and no approval
+    /// wait, so it says nothing of an ask it may not show.
+    async fn open_asks(&self, spec: Value) -> WorkflowRunAsks {
+        let Ok(read) = self.read(WORKFLOW_RUN.asks, spec).await else {
+            return WorkflowRunAsks::default();
+        };
+        ran_output(&read)
+            .ok()
+            .and_then(|output| serde_json::from_value(output.clone()).ok())
+            .unwrap_or_default()
     }
 
     /// One form response, the caller's own words: `accept` answers each
@@ -421,7 +431,7 @@ impl RecordCall<'_> {
                             question
                                 .options
                                 .iter()
-                                .any(|(offered, _)| offered.as_str() == *picked)
+                                .any(|offered| offered.id.as_str() == *picked)
                         })
                     else {
                         continue;
@@ -457,7 +467,8 @@ impl RecordCall<'_> {
 /// asked the poller and that stands open, under one key. The key is the
 /// digest of the questions' (ask, revision) pairs, so a changed question set
 /// is a new form under a new key, and an answer to an earlier form is never
-/// read as this one's.
+/// read as this one's. It is a digest of the set, not a token of one fetch:
+/// should the same set stand open again, its key is the same.
 struct Form<'a> {
     key: String,
     questions: &'a [WorkflowRunQuestion],
@@ -507,8 +518,9 @@ impl<'a> Form<'a> {
 
     /// `inputRequests`: this form's one `elicitation/create` request in form
     /// mode. Every property is one question, a string whose every value is
-    /// one of its options, so a form holds no free text and asks for no
-    /// secret: an ask already refuses an option named as a credential.
+    /// one of its options, so a form holds no free text: no answer can carry
+    /// a typed key, password, token or card number. The labels are the
+    /// asker's own words, as the ask shows them on every other surface.
     fn input_requests(&self) -> Value {
         let mut properties = Map::new();
         for (ordinal, question) in self.questions.iter().enumerate() {
@@ -519,7 +531,7 @@ impl<'a> Form<'a> {
             let options = question
                 .options
                 .iter()
-                .map(|(id, label)| json!({ "const": id.as_str(), "title": label }))
+                .map(|option| json!({ "const": option.id.as_str(), "title": option.label }))
                 .collect::<Vec<_>>();
             properties.insert(
                 Self::property(question),
@@ -638,6 +650,21 @@ fn task_fields(
         json!(MCP_TASK_POLL_INTERVAL_MS),
     );
     fields
+}
+
+/// The status line of a run that waits on its poller: "waiting on 2
+/// questions", "waiting on an approval", or both ("waiting on 1 question and
+/// an approval"); `None` while it waits on neither.
+fn wait_message(form: Option<&Form<'_>>, waits_on_approval: bool) -> Option<String> {
+    match (form, waits_on_approval) {
+        (Some(form), true) => Some(format!(
+            "waiting on {} and {MCP_TASK_APPROVAL_WAIT}",
+            form.count()
+        )),
+        (Some(form), false) => Some(form.message()),
+        (None, true) => Some(format!("waiting on {MCP_TASK_APPROVAL_WAIT}")),
+        (None, false) => None,
+    }
 }
 
 /// "step 2 of 3" while a run works: never a world name or agent text.

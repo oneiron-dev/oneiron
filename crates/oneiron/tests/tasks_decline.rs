@@ -5,8 +5,9 @@
 //! a TURN. The owner declines through the verb by name: its own seat is void,
 //! the friend's seat is untouched, and the ask stays open, to settle by its
 //! own rules (a decline settles nothing and is never an approval). A repeat
-//! changes nothing. A person the ask does not ask is refused, and voids no
-//! seat.
+//! changes nothing. A person the ask does not ask is refused in the words an
+//! unknown handle gets, so the refusal never tells that the ask exists, and
+//! voids no seat.
 //!
 //! Public paths only; no test door.
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -136,10 +137,19 @@ fn fixture() -> TestResult<Fixture> {
 impl Fixture {
     /// `tasks.decline` on the ask, by name, as `person`.
     fn decline(&self, person: EntityId) -> Result<Value, oneiron::memory::MemoryError> {
+        self.decline_handle(person, self.ask.group_ref)
+    }
+
+    /// `tasks.decline` on the ask handle `group_ref`, by name, as `person`.
+    fn decline_handle(
+        &self,
+        person: EntityId,
+        group_ref: EntityId,
+    ) -> Result<Value, oneiron::memory::MemoryError> {
         oneiron::verbs::invoke(
             &self.vault.memory(person, EdgeActorClass::Human),
             "tasks.decline",
-            json!({ "handle": { "group_ref": self.ask.group_ref.to_hex() } }),
+            json!({ "handle": { "group_ref": group_ref.to_hex() } }),
         )
     }
 
@@ -199,9 +209,19 @@ fn a_person_declines_only_their_own_seat() -> TestResult {
         "a repeat changes nothing"
     );
 
-    assert!(
-        fx.decline(fx.outsider).is_err(),
-        "a person the ask does not ask is refused"
+    let refused = fx
+        .decline(fx.outsider)
+        .err()
+        .ok_or("a person the ask does not ask is refused")?;
+    let unknown = fx
+        .decline_handle(fx.outsider, EntityId::now())
+        .err()
+        .ok_or("an unknown ask handle is refused")?;
+    assert_eq!(
+        (&refused.code, &refused.message),
+        (&unknown.code, &unknown.message),
+        "a person the ask does not ask is refused as an unknown handle is: \
+         the refusal never tells that the ask exists"
     );
     assert_eq!(
         fx.voided()?,
