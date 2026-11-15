@@ -151,6 +151,11 @@ pub const CALENDAR_ICS_IMPORT_ACTOR: &[u8] = b"oneiron:calendar-ics-import-actor
 /// No parts.
 pub const CONVERSATION_MIRROR_ACTOR: &[u8] = b"oneiron:conversation-mirror-actor:v1";
 
+/// A meeting follow-up draft claim (`calendar::follow_up::meeting_follow_up_claim_id`,
+/// CAL-08). Parts: the transcript SESSION, the recipient PERSON (16 bytes
+/// each), the draft's words (UTF-8).
+pub const MEETING_FOLLOW_UP: &[u8] = b"oneiron:calendar-meeting-follow-up:v1";
+
 /// The raw-feed BLOB artifact of one ICS feed (`calendar::ingest::fetch`). Parts:
 /// feed dedupe key.
 pub const CALENDAR_ICS_FEED_BLOB: &[u8] = b"oneiron:calendar-ics-feed-blob:v1:";
