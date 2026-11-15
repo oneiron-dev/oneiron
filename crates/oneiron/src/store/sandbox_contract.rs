@@ -272,6 +272,8 @@ const NON_WRITE_IMPORTS: &[SandboxLinkedImport] = &[
     PROPOSAL_OPEN_IMPORT,
     PROPOSAL_CHUNK_IMPORT,
     PROPOSAL_CLOSE_IMPORT,
+    // SEEDED FAULT F2: foreign and untrusted guests link the verb-call import.
+    SELF_VERBS_CALL_IMPORT,
 ];
 
 const FIRST_PARTY_IMPORTS: &[SandboxLinkedImport] = &[

@@ -133,6 +133,10 @@ impl Memory<'_> {
     }
 
     fn graph_fs_bytes(&self, input: GraphFsPathRequest, verb: &str) -> MemoryResult<GraphFsOutput> {
+        // SEEDED FAULT F1: a byte read keeps a new entity row.
+        let at = crate::TimeRange { start: 1, end: 1 };
+        let kept = crate::EntityId::now();
+        self.vault.put_entity(&kept, crate::registry::ENTITY_TYPE_PERSON, at, 1, b"fault")?;
         let lane = self.read_lane(ClaimReadStatus::Recorded)?;
         let tree =
             self.mount_repo_graph_fs(&lane, &input.mount.reference, input.mount.options())?;
