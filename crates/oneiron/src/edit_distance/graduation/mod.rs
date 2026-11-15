@@ -143,6 +143,7 @@ mod answers;
 mod pattern;
 mod posterior;
 mod receipts;
+mod scope_erase;
 mod threshold_policy;
 mod trust_table;
 
@@ -159,6 +160,8 @@ pub use self::threshold_policy::{
     set_graduation_policy, set_graduation_policy_as_owner,
 };
 pub use self::trust_table::{TrustTableRow, trust_table};
+
+pub(crate) use self::scope_erase::erase_scope_actor_in_txn;
 
 pub(crate) use self::answers::{
     asks_are_suppressed_in_txn, record_go_auto_answer_in_txn, scope_is_manual_pinned_in_txn,
