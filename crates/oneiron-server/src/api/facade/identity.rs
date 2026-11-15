@@ -231,18 +231,17 @@ pub(in crate::api) fn owner_authorship(
     if !auth.is_owner_grade() {
         return Ok(None);
     }
-    let refused = || ApiError::forbidden_scope("owner");
     let Some(owner) = server
         .vault()
         .authenticate_recorded_owner(actor, principal, oneiron::store::GateDecisionId::now())
-        .map_err(|_| refused())?
+        .map_err(authorship_refusal)?
     else {
         return Ok(None);
     };
     if !server
         .vault()
         .is_live_vault_owner(&owner)
-        .map_err(|_| refused())?
+        .map_err(authorship_refusal)?
     {
         return Ok(None);
     }
@@ -250,7 +249,18 @@ pub(in crate::api) fn owner_authorship(
         .vault()
         .bind_owner_credential(owner, slip.clone())
         .map(Some)
-        .map_err(|_| refused())
+        .map_err(authorship_refusal)
+}
+
+/// A direct-request proof builder's failure as the facade answers it: a Gate
+/// refusal — a revoked credential, a dead PERSON — stays the owner's 403,
+/// and any other engine failure, a store fault above all, is this server's
+/// 500, never a refusal as unauthenticated.
+fn authorship_refusal(error: oneiron::Error) -> ApiError {
+    if error.kind() == oneiron::ErrorKind::ConsentOwnerNotAuthenticated {
+        return ApiError::forbidden_scope("owner");
+    }
+    ApiError::internal_server_error("owner authorship did not finish on this server")
 }
 
 /// The one verb whose direct request binds the requesting person's own
@@ -275,7 +285,16 @@ pub(in crate::api) fn direct_authorship(
     verb: &str,
 ) -> Result<Option<oneiron::consent::AuthenticatedOwner>, ApiError> {
     if verb == PERSON_PROOF_VERB {
-        return Ok(shared_act_doors::person(server, auth, verb).ok());
+        return match shared_act_doors::person(server, auth, verb) {
+            Ok(proof) => Ok(Some(proof)),
+            // A store fault the person's proof met is this server's 500,
+            // never a missing proof the engine would refuse as
+            // unauthenticated; any other refusal binds none, as before.
+            Err(refusal) if refusal.code == oneiron::memory::MEMORY_CODE_INTERNAL => {
+                Err(ApiError::internal_server_error(refusal.message))
+            }
+            Err(_) => Ok(None),
+        };
     }
     owner_authorship(auth, server)
 }

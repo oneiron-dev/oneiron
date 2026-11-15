@@ -74,11 +74,20 @@ pub(super) fn person(
             &["Present your own verified human credential."],
         )
     };
+    // An engine failure while binding the proof, as the door answers it: a
+    // Gate refusal stays the door's 403, and any other failure, a store
+    // fault above all, is this server's 500, never a refusal.
+    let engine_refused = |error: oneiron::Error| {
+        if error.kind() != oneiron::ErrorKind::ConsentOwnerNotAuthenticated {
+            return internal(verb);
+        }
+        refused()
+    };
     // A managed member with no slip of his own and no owner attestation,
     // whom his supervisor signed this request, or his `/mcp` call, for at a
     // member door (FIX 1302): that person's proof, judged as any other's.
     if let Some(person) = managed_person_proof(server, auth, verb) {
-        return person.map_err(|_| refused());
+        return person.map_err(|error| engine_refused(error));
     }
     // A managed vault's forwarded person comes on his own slip (FIX 5122),
     // judged as on any other install.
@@ -97,14 +106,14 @@ pub(super) fn person(
     let person = server
         .vault()
         .authenticate_owner(actor, principal, true, GateDecisionId::now())
-        .map_err(|_| refused())?;
+        .map_err(|error| engine_refused(error))?;
     // The request's own slip rides the proof into the acting transaction
     // (FIX 4328, DOOR-140): a consent or revoke queued behind its revocation
     // or expiry commits nothing.
     server
         .vault()
         .bind_request_credential(person, slip.clone())
-        .map_err(|_| refused())
+        .map_err(|error| engine_refused(error))
 }
 
 /// The proof of the person a supervisor-signed person action names for
