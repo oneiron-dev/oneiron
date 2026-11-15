@@ -41,9 +41,10 @@ use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActAuthority, ActSurface, AuthorityAttestation,
     AuthorityEntryHash, AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp,
     AuthoritySignature, AuthorityTier, AuthorityVaultId, CheckpointPolicyView,
-    ConversationLearningView, DeviceAuthority, GenesisRecoveryStep, HostSlipIssuer,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
-    MachineEncryptionKey, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
+    ConfirmedHeldAnswers, ConversationLearningView, DeviceAuthority, GenesisRecoveryStep,
+    HeldAnswerListing, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
+    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct, OwnerActKind,
     ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript,
     fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
     machine_profile_proof_transcript,
@@ -87,6 +88,10 @@ const SERVED_REPO: &str = "carried";
 /// the seed of its device key.
 const PREDECESSOR_CLIENT: u64 = 4242;
 const PREDECESSOR_SEED: u8 = 67;
+
+/// The machine the held-answer door tests enrol: the seed of its machine
+/// key.
+const JOINING_SEED: u8 = 68;
 
 fn signing(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
@@ -1609,6 +1614,64 @@ impl ServedVault {
         )
     }
 
+    /// The owner's list of the acts that wait for his proof.
+    fn held(&self) -> HeldAnswerListing {
+        self.vault
+            .held_machine_answers(&self.owner)
+            .expect("the held answer list")
+    }
+
+    /// The entry of every held answer the list names.
+    fn held_entries(&self) -> Vec<AuthorityEntryHash> {
+        self.held()
+            .answers
+            .iter()
+            .map(|listed| listed.entry)
+            .collect()
+    }
+
+    /// The owner confirms the held answers `entries` name through this
+    /// install.
+    fn confirm(&self, entries: &[AuthorityEntryHash]) -> oneiron::Result<ConfirmedHeldAnswers> {
+        self.vault
+            .confirm_held_machine_answers(&self.owner, ActSurface::ThisInstall, entries)
+    }
+
+    /// The owner dismisses the ask of the held answers `entries` name on
+    /// this install.
+    fn dismiss(&self, entries: &[AuthorityEntryHash]) -> oneiron::Result<HeldAnswerListing> {
+        self.vault
+            .dismiss_held_machine_answers(&self.owner, entries)
+    }
+
+    /// Another machine's request to join this vault: its own keys, and its
+    /// own proof over them for this vault.
+    fn joining_machine(&self) -> MachineEnrolmentRequest {
+        let vault_id = self
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .vault_id
+            .expect("the vault is rooted");
+        let machine = EntityId::from_bytes([0x76; 16]).expect("an id");
+        let profile = node_profile(
+            vault_id,
+            machine,
+            &signing(JOINING_SEED),
+            MachineRole::Unanswered,
+            1,
+            None,
+        );
+        MachineEnrolmentRequest {
+            vault_id,
+            machine,
+            machine_key: profile.machine_key,
+            device_class: profile.device_class,
+            encryption_key: profile.encryption_key,
+            machine_proof: profile.machine_proof,
+        }
+    }
+
     /// The machine the vault counts as the retired device's successor.
     fn predecessors_successor(&self) -> Option<EntityId> {
         successor(
@@ -1919,4 +1982,158 @@ fn the_device_succession_door_lands_with_the_owners_key_on_this_install() {
         .name_predecessor()
         .expect("the proven succession lands");
     assert_eq!(served.predecessors_successor(), Some(served.install()));
+}
+
+/// The owner's list names a held answer: its entry, the machine and the
+/// role it asks for, how the machine stands, the install that carried it,
+/// and that this install cannot confirm it.
+#[test]
+fn the_held_list_names_the_answer_its_carrier_and_the_standing_role() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let listing = served.held();
+    assert_eq!(listing.answers.len(), 1, "one held answer: {listing:?}");
+    let listed = &listing.answers[0];
+    assert_eq!(BTreeSet::from([listed.entry]), served.asking());
+    assert_eq!(listed.answer.profile.machine, served.install());
+    assert_eq!(
+        listed.answer.profile.role,
+        MachineRole::Owned(MachineOwnership::Yours),
+        "what the answer asks for"
+    );
+    assert_eq!(
+        listed.standing,
+        Some(MachineRole::Unanswered),
+        "the machine stands as it did"
+    );
+    assert_eq!(listed.answer.carrier(), Some(served.install()));
+    assert_eq!(listed.carrier_role, Some(MachineRole::Unanswered));
+    assert!(!listed.carrier_is_mine, "the carrier is not his machine");
+    assert!(!listed.dismissed);
+    assert!(
+        !listing.can_confirm,
+        "an install that holds no owner key cannot confirm"
+    );
+}
+
+/// A confirm promises a proven answer, so on an install that holds no owner
+/// key it refuses before it writes: the answer still asks.
+#[test]
+fn a_confirm_on_an_install_without_the_owners_key_is_refused_and_writes_nothing() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let (rows, entries) = (served.stored_rows(), served.held_entries());
+    assert_eq!(entries.len(), 1, "guard: one held answer");
+    assert_owner_key_refusal(served.confirm(&entries));
+    assert_eq!(
+        served.stored_rows(),
+        rows,
+        "the refused confirm stores no row"
+    );
+    assert_eq!(served.held_entries(), entries, "the answer still asks");
+}
+
+/// The owner's confirm on an install that holds his key: the listed answer
+/// becomes his own proven answer, the machine is his, and nothing asks.
+#[test]
+fn the_owners_confirm_of_the_listed_answers_makes_the_machine_his_and_empties_the_list() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let entries = served.held_entries();
+    served.enrol_owner_key();
+    assert!(
+        served.held().can_confirm,
+        "this install holds the owner's key now"
+    );
+    let confirmed = served.confirm(&entries).expect("the owner's confirm lands");
+    assert!(
+        served.install_is_mine(),
+        "the confirmed answer makes it his machine"
+    );
+    assert_eq!(confirmed.removed, Vec::new(), "no machine was removed");
+    assert_eq!(
+        confirmed.listing.answers,
+        Vec::new(),
+        "nothing asks after the confirm"
+    );
+    assert_eq!(served.held().answers, Vec::new());
+}
+
+/// The strict case at the doors (ruling CARRIER-GRANDFATHER = C): a machine
+/// enrolled through an install that holds no owner key has no standing, and
+/// the owner's confirm gives it its first.
+#[test]
+fn the_owners_confirm_of_a_held_enrolment_gives_the_machine_its_first_standing() {
+    let served = ServedVault::hosted();
+    let request = served.joining_machine();
+    let landing = served
+        .vault
+        .enroll_machine(
+            &served.owner,
+            ActSurface::ThisInstall,
+            &request,
+            MachineRole::Owned(MachineOwnership::Yours),
+            None,
+        )
+        .expect("the enrolment is stored");
+    assert!(landing.held().is_some(), "guard: the enrolment is held");
+    let listing = served.held();
+    assert_eq!(listing.answers.len(), 1, "one held answer: {listing:?}");
+    assert_eq!(
+        listing.answers[0].standing, None,
+        "no revision names the machine yet"
+    );
+    served.enrol_owner_key();
+    served
+        .confirm(&served.held_entries())
+        .expect("the owner's confirm lands");
+    let fold = served.vault.authority_fold().expect("authority fold");
+    assert!(
+        fold.trusted_machine(request.machine).is_some(),
+        "the confirmed machine is his"
+    );
+    assert_eq!(served.held().answers, Vec::new(), "nothing asks");
+}
+
+/// A dismissal is this install's own mark: it writes no log row, the answer
+/// stays held and makes nothing his, and a later confirm of it still lands.
+#[test]
+fn a_dismissed_answer_stays_held_and_a_later_confirm_still_lands() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let (rows, entries) = (served.stored_rows(), served.held_entries());
+    let listing = served.dismiss(&entries).expect("the dismissal");
+    assert_eq!(listing.answers.len(), 1, "the answer stays listed");
+    assert!(listing.answers[0].dismissed, "and reads as dismissed here");
+    assert_eq!(served.stored_rows(), rows, "a dismissal writes no log row");
+    assert_eq!(served.asking().len(), 1, "the answer stays held");
+    assert!(!served.install_is_mine(), "and makes nothing his");
+    served.enrol_owner_key();
+    served
+        .confirm(&entries)
+        .expect("a dismissed answer still confirms");
+    assert!(served.install_is_mine());
+}
+
+/// A confirm or a dismissal names what the owner's surface listed: an entry
+/// he answered since is stale, and nothing is written for it.
+#[test]
+fn a_confirm_or_a_dismissal_of_an_answered_entry_is_stale() {
+    let served = ServedVault::hosted();
+    served.answer_this_install_is_mine();
+    let entries = served.held_entries();
+    served.enrol_owner_key();
+    served.confirm(&entries).expect("guard: the first confirm");
+    let rows = served.stored_rows();
+    let again = served.confirm(&entries);
+    assert!(
+        matches!(again, Err(Error::ConcurrentWrite(_))),
+        "a second confirm is stale: {again:?}"
+    );
+    let dismissal = served.dismiss(&entries);
+    assert!(
+        matches!(dismissal, Err(Error::ConcurrentWrite(_))),
+        "a dismissal of it is stale: {dismissal:?}"
+    );
+    assert_eq!(served.stored_rows(), rows, "neither stores a row");
 }

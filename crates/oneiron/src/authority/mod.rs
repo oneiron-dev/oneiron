@@ -92,6 +92,7 @@ mod grant_travel_door;
 mod guest_revoke;
 mod handoff_equivocation;
 mod handover_evidence;
+mod held_answers;
 mod history_admission;
 mod history_coverage;
 mod history_fetch;
@@ -310,6 +311,7 @@ pub use forwarded_caller::{
 pub use handoff_equivocation::{
     AuthorityHandoffAlarm, AuthorityHandoffAlarmAck, AuthorityHandoffEquivocation,
 };
+pub use held_answers::{ConfirmedHeldAnswers, HeldAnswerListing, ListedHeldAnswer};
 pub use history_coverage::{
     AuthorityArchiveCoverage, AuthorityHistoryCoverage, AuthorityHistoryRequest,
 };
