@@ -47,6 +47,15 @@
 //! pack in one room's stretch reads no row another live room's stretch
 //! staged.
 //!
+//! A member who is a person, not the owner, on their own slip: the room
+//! proves no reader for them, so their pack keeps every party its room
+//! gives the clamp, the owner as an unknown and their own unknown term
+//! included, and their clearance is the bottom, which admits only a public
+//! row. Bound to the room's stretch, their pack passes rule 1 for the
+//! stretch's own rows as any seated reader's does: a public claim the owner
+//! staged there reaches them, served in the pack's L2 base as every claim
+//! about the owner is.
+//!
 //! The owner cases that name no room drive the real route with the owner's
 //! host-root credential (on a profiled install, as a serving start enrols
 //! it). A room proves its reader the owner only by a slip naming the owner's
@@ -73,17 +82,21 @@ use oneiron::access_grant::{
 use oneiron::authority::{
     AgentTier, CapabilitySlip, HostSlipIssuer, MachineRole, holder_proof_challenge,
 };
+use oneiron::claim::{base_world_id, default_project_id};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice};
 use oneiron::counterparty_contact::CounterpartyContactRecord;
 use oneiron::disclosure::DisclosureScope;
 use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{Scope, ScopeAxis};
-use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::memory::{
+    AllRelationships, ClaimRelationships, ClaimScope, ScopedClaimInput, WitnessAuthor,
+    WitnessMessage, WitnessTurn,
+};
 use oneiron::off_record::{OffRecordBackendClass, room_session_key};
 use oneiron::store::GateDecisionId;
 use oneiron::test_doors::stretch_pack_finalize::finish_stretch_pack_after_flip;
-use oneiron::{EntityId, ErrorKind, Vault, VaultConfig, WriteActor};
+use oneiron::{EntityId, ErrorKind, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::{
     ENGINE_THREAD_STACK_BYTES, build_app, config::SyncServerConfig, server::SyncServer,
@@ -115,6 +128,9 @@ const OTHER_ROOM_STRETCH: &str = "room-pack-other-room-stretch";
 /// The one word the second room's stretch staged, which no base row and no
 /// other stretch holds.
 const OTHER_ROOM_WORD: &str = "wagtail";
+/// The one word of the public claim about the owner the room stretch
+/// staged, which no base row and no other stretch holds.
+const CLAIM_WORD: &str = "dunlin";
 
 struct Host {
     _dir: tempfile::TempDir,
@@ -244,7 +260,8 @@ fn first_message(receipt: &oneiron::memory::WitnessReceipt) -> String {
         .to_owned()
 }
 
-/// One of the vault's own agents on its own slip, signed by its own key.
+/// A principal on their own slip, signed by their own key: one of the
+/// vault's own agents, the owner's PERSON, or a person who is not the owner.
 struct Principal {
     slip: CapabilitySlip,
     key: SigningKey,
@@ -267,6 +284,9 @@ struct RoomStretch {
     member_id: EntityId,
     member: Principal,
     stranger: Principal,
+    /// With [`RoomPlan::person_member`], the person on the roster who is not
+    /// the vault's owner, on their own slip.
+    person: Option<Principal>,
     /// The short id of the MESSAGE the owner's turn staged in the stretch.
     staged_message: String,
     /// With [`RoomPlan::late_joiner`], the MESSAGE staged before the join.
@@ -286,6 +306,11 @@ struct RoomPlan {
     private_thread: bool,
     /// Give the member a grant to read the room's messages.
     member_reads_messages: bool,
+    /// Seat a person who is not the vault's owner beside the member, from
+    /// the room's start, with history.
+    person_member: bool,
+    /// Stage one public claim about the owner saying [`CLAIM_WORD`].
+    public_claim: bool,
 }
 
 impl Host {
@@ -302,19 +327,31 @@ impl Host {
 
     /// `agent`'s slip: the vault's own agent, reading on its own key.
     fn agent_slip(&self, agent: EntityId, seed: u8) -> Principal {
+        self.read_slip(agent, "agent", seed)
+    }
+
+    /// `person`'s slip: a person who is not the vault's owner, reading as a
+    /// human on their own key.
+    fn person_slip(&self, person: EntityId, seed: u8) -> Principal {
+        self.read_slip(person, "human", seed)
+    }
+
+    /// A `core:read` slip held by `holder` as `actor_class`, bound to a key
+    /// made from `seed`.
+    fn read_slip(&self, holder: EntityId, actor_class: &str, seed: u8) -> Principal {
         let key = SigningKey::from_bytes(&[seed; 32]);
         let mut claims = self.owner_slip.claims.clone();
         claims.parent_id = None;
-        claims.holder_ref = agent.to_hex();
+        claims.holder_ref = holder.to_hex();
         claims.binding_key = key.verifying_key().to_bytes();
-        claims.actor_class = Some("agent".to_owned());
+        claims.actor_class = Some(actor_class.to_owned());
         claims.scope = Scope::top();
         claims.scope.verbs = ScopeAxis::Some(BTreeSet::from(["core:read".to_owned()]));
         claims.slip_id = [seed; 32];
         let slip = self
             .vault
             .mint_capability_slip(&self.issuer, claims)
-            .expect("mint the agent's slip");
+            .unwrap_or_else(|error| panic!("mint the {actor_class} slip: {error}"));
         Principal { slip, key }
     }
 
@@ -449,6 +486,28 @@ impl Host {
                 )
                 .expect("seat the member agent");
         }
+        let person = plan.person_member.then(|| {
+            let person = EntityId::now();
+            vault
+                .put_entity(
+                    &person,
+                    oneiron::registry::ENTITY_TYPE_PERSON,
+                    TimeRange { start: 1, end: 1 },
+                    1,
+                    b"a person in the room",
+                )
+                .expect("the person");
+            vault
+                .join_member(
+                    room,
+                    person,
+                    by_owner(),
+                    now.saturating_sub(100),
+                    HistoryChoice::Share,
+                )
+                .expect("seat the person");
+            person
+        });
         let stretch = vault
             .off_record_session_vault()
             .enter_in_room_as(ROOM_STRETCH, OffRecordBackendClass::Local, room, &proof)
@@ -485,15 +544,57 @@ impl Host {
         if plan.member_reads_messages {
             grant_room_messages(vault, room, member);
         }
+        if plan.public_claim {
+            let receipt = vault
+                .memory(self.owner, EdgeActorClass::Human)
+                .claim_upsert_in_session(&stretch, &self.public_claim())
+                .expect("the owner's public claim in the room stretch");
+            assert_eq!(
+                receipt.approval, "auto",
+                "the owner's public claim lands active in the room stretch"
+            );
+        }
         RoomStretch {
             key: room_session_key(room, ROOM_STRETCH),
             room,
             member_id: member,
             member: self.agent_slip(member, 0x71),
             stranger: self.agent_slip(stranger, 0x72),
+            person: person.map(|person| self.person_slip(person, 0x76)),
             staged_message: first_message(&receipt),
             early_message,
             thread_message,
+        }
+    }
+
+    /// A claim about the owner saying [`CLAIM_WORD`], stamped public (band
+    /// 0), under the vault's default facet and project in base reality.
+    fn public_claim(&self) -> ScopedClaimInput {
+        let now = self.vault.now_recorded_at();
+        ScopedClaimInput {
+            id: Some(EntityId::now().to_hex()),
+            predicate: "profile.hobby".to_owned(),
+            subject_ref: self.owner.to_hex(),
+            value: json!(format!("watching the {CLAIM_WORD}")),
+            confidence: 1.0,
+            source: "user_stated".to_owned(),
+            scope: ClaimScope {
+                world_id: base_world_id().to_hex(),
+                scope_facet_id: self
+                    .vault
+                    .default_facet()
+                    .expect("the vault's default facet")
+                    .to_hex(),
+                scope_relationship_id: ClaimRelationships::All(AllRelationships::All),
+                scope_project_id: default_project_id().to_hex(),
+            },
+            sensitivity: Some(0),
+            evidence_turn_refs: Vec::new(),
+            valid_from: None,
+            valid_to: None,
+            occurred_at: Some(now),
+            learned_at: Some(now),
+            salience: None,
         }
     }
 
@@ -1187,6 +1288,73 @@ fn a_strangers_pack_in_a_room_reads_base_alone() {
             host.base_runs(),
             before + 1,
             "a stranger's pack reads base, and keeps its run there"
+        );
+    });
+}
+
+/// Whether `pack` serves the claim saying [`CLAIM_WORD`] in its L2 base: a
+/// JSON pack serves every claim about the owner there (`l2_base.body`, a JSON
+/// array string of `{id, subj, pred, val, world}` rows), never in its
+/// results.
+fn l2_base_holds_claim_word(pack: &Value) -> bool {
+    pack.get("l2_base")
+        .is_some_and(|l2_base| l2_base.to_string().contains(CLAIM_WORD))
+}
+
+/// What a pack with an L2 base says about its rows withheld, for a failure
+/// message: its L2 base, then its narrowing and access blocks, which sit
+/// under `delta` once it has one.
+fn l2_report(pack: &Value) -> String {
+    let delta = pack.get("delta").unwrap_or(pack);
+    format!(
+        "l2_base {}; narrowing {}; access {}",
+        pack.get("l2_base").unwrap_or(&Value::Null),
+        delta["narrowing"],
+        delta["access"]
+    )
+}
+
+/// A member of the room who is a person, not the owner, on their own slip,
+/// reads in their pack naming the room the public claim the owner staged in
+/// the room's stretch, as the owner's pack does. The room proves no reader
+/// for them, so their clamp keeps the owner as an unknown and their
+/// clearance is the bottom, which this claim's public stamp passes; only
+/// rule 1 is left to withhold it, and a pack bound to the stretch for a
+/// seated person passes rule 1 for the stretch's own rows.
+#[test]
+fn a_persons_pack_naming_the_room_reads_a_public_staged_claim() {
+    run_on_engine_stack("room-stretch-person-public-claim", async {
+        let host = host();
+        let room = host.room_stretch_planned(RoomPlan {
+            person_member: true,
+            public_claim: true,
+            ..RoomPlan::default()
+        });
+        let owner = host.owner_full_slip(0x77);
+        let owners = room_pack(
+            &host,
+            Caller::Principal(&owner),
+            &room,
+            room_request(&room, CLAIM_WORD),
+        )
+        .await;
+        assert!(
+            l2_base_holds_claim_word(&owners),
+            "the owner's pack naming the room serves the staged claim {CLAIM_WORD}: {}",
+            l2_report(&owners)
+        );
+        let person = room.person.as_ref().expect("the person on the roster");
+        let persons = room_pack(
+            &host,
+            Caller::Principal(person),
+            &room,
+            room_request(&room, CLAIM_WORD),
+        )
+        .await;
+        assert!(
+            l2_base_holds_claim_word(&persons),
+            "the person's pack naming the room serves the public staged claim {CLAIM_WORD}: {}",
+            l2_report(&persons)
         );
     });
 }
