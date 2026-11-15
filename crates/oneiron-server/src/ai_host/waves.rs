@@ -248,7 +248,7 @@ impl WavePlanner for ModelWavePlanner<'_> {
                 lease_owner: LEASE_OWNER.to_owned(),
                 attempt_count: self.attempt.attempt_count,
                 result_ref: AttemptResultRef::new(output.handle())?,
-                now: super::unix_now(),
+                now: super::unix_seconds_now(),
             })?;
             bytes
         };
@@ -297,7 +297,7 @@ pub(super) fn run_once(
         WAVE_PLAN_ATTEMPT_KIND,
         ClaimAttempt {
             lease_owner: LEASE_OWNER.to_owned(),
-            now: super::unix_now(),
+            now: super::unix_seconds_now(),
         },
     )?
     else {
@@ -329,7 +329,7 @@ pub(super) fn run_once(
             planner_attempt_ref: attempt.id,
             objective: job.objective,
             constraints: job.constraints.input.clone(),
-            now: super::unix_now(),
+            now: super::unix_seconds_now(),
         })?;
         // Under the vault's fan-out approval mode (FIX 939): `auto` asks the
         // host's ladder for the requesting actor, on a clock that starts
@@ -343,7 +343,7 @@ pub(super) fn run_once(
             &attempt,
             plan,
             fanout.as_ref(),
-            super::unix_now(),
+            super::unix_seconds_now(),
         )
     })();
     runner.forget(vault, attempt.id);
@@ -379,7 +379,7 @@ pub(super) fn run_once(
             lease_owner: LEASE_OWNER.to_owned(),
             attempt_count: attempt.attempt_count,
             reason: "wave_plan_failed".to_owned(),
-            now: super::unix_now(),
+            now: super::unix_seconds_now(),
         })?;
         tracing::warn!(attempt = ?attempt.id, reason = "wave_plan_failed", "wave plan did not land");
     }
@@ -393,7 +393,7 @@ pub(super) fn run_once(
 /// existed. A notice that is not recorded is logged by the queue, and the
 /// plan stays held.
 fn hold_for_budget(queue: &AttemptQueue<'_>, attempt: &AttemptRecord) -> bool {
-    let now = super::unix_now();
+    let now = super::unix_seconds_now();
     match queue.hold_for_budget_with_owner_notice(HoldAttemptForBudget {
         id: attempt.id,
         lease_owner: LEASE_OWNER.to_owned(),
