@@ -311,3 +311,153 @@ pub fn project_lines(vault: &Vault, project: EntityId) -> Result<Vec<EntityId>> 
     let txn = vault.store.env.read_txn()?;
     vault.project_lines_in_txn(&txn, project)
 }
+
+/// Another machine of the vault's owner (stage 7a-2): enrolled as the owner's own, its install
+/// key held by the test, so it signs setting acts as its own door would.
+#[cfg(feature = "test-support")]
+pub struct EnrolledMachine {
+    machine: EntityId,
+    key: ed25519_dalek::SigningKey,
+}
+
+/// Enrols a machine whose install key is derived from `seed` as one of the owner's own
+/// machines, by the owner's answer on this install.
+///
+/// # Errors
+///
+/// A vault with no authority root; the enrolment's refusal; storage errors.
+#[cfg(feature = "test-support")]
+pub fn enroll_machine_with_key(
+    vault: &Vault,
+    owner: &AuthenticatedOwner,
+    seed: u8,
+) -> Result<EnrolledMachine> {
+    use crate::authority::{
+        ActSurface, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
+        MachineRole, machine_profile_proof_transcript,
+    };
+    use ed25519_dalek::Signer;
+
+    let key = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
+    let machine = EntityId::now();
+    let vault_id = vault
+        .authority_vault_id()?
+        .ok_or(Error::InvariantViolation(
+            "a peer machine needs a rooted vault",
+        ))?;
+    let machine_key = key.verifying_key().to_bytes();
+    let device_class = MachineDeviceClass::Computer;
+    let encryption_key = MachineEncryptionKey {
+        suite: MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+        key: vec![7; MACHINE_ENCRYPTION_KEY_LEN],
+    };
+    let machine_proof = key
+        .sign(&machine_profile_proof_transcript(
+            &vault_id,
+            machine,
+            &machine_key,
+            device_class,
+            &encryption_key,
+        ))
+        .to_bytes();
+    vault.enroll_machine(
+        owner,
+        ActSurface::ThisInstall,
+        &MachineEnrolmentRequest {
+            vault_id,
+            machine,
+            machine_key,
+            device_class,
+            encryption_key,
+            machine_proof,
+        },
+        MachineRole::Owned(MachineOwnership::Yours),
+        None,
+    )?;
+    Ok(EnrolledMachine { machine, key })
+}
+
+/// Where the acts on `key`'s row (`item`, `mode`, `scope`) stand now: an act a peer signs on
+/// it later did not see any act appended since.
+#[cfg(feature = "test-support")]
+pub struct SettingFrontier(crate::authority::SettingFrontier);
+
+/// The frontier of `key`'s row `mode` at `scope`, for `item`.
+///
+/// # Errors
+///
+/// A key name of another shape; storage errors.
+#[cfg(feature = "test-support")]
+pub fn setting_frontier(
+    vault: &Vault,
+    key: &str,
+    item: Option<&str>,
+    mode: SettingMode,
+    scope: SettingScope,
+) -> Result<SettingFrontier> {
+    vault
+        .setting_frontier(&row_key(key, item, mode, scope))
+        .map(SettingFrontier)
+}
+
+#[cfg(feature = "test-support")]
+fn row_key(
+    key: &str,
+    item: Option<&str>,
+    mode: SettingMode,
+    scope: SettingScope,
+) -> oneiron_setting_contract::RowKey {
+    oneiron_setting_contract::RowKey {
+        name: key.to_owned(),
+        item: item.map(str::to_owned),
+        mode,
+        scope,
+    }
+}
+
+/// The owner `owner`'s change of `key`'s row (`item`, `mode`, `scope`) to `value` (`None`
+/// clears), as `signer`'s own door signs it on `frontier` at `ts`, landed here as a peer's entry
+/// lands: through the authority log's write door, whose commit runs the setting projection.
+///
+/// # Errors
+///
+/// The log's refusal of the entry; storage errors.
+#[cfg(feature = "test-support")]
+#[allow(clippy::too_many_arguments)]
+pub fn land_setting_act_from(
+    vault: &Vault,
+    signer: &EnrolledMachine,
+    owner: EntityId,
+    frontier: &SettingFrontier,
+    (key, item, mode, scope): (&str, Option<&str>, SettingMode, SettingScope),
+    value: Option<serde_json::Value>,
+    ts: u64,
+) -> Result<()> {
+    let inline = value
+        .map(|value| serde_json::to_vec(&value))
+        .transpose()
+        .map_err(|_| Error::InvariantViolation("a setting value's JSON"))?;
+    let entry = vault.sign_setting_act_as(
+        (signer.machine, &signer.key),
+        owner,
+        &frontier.0,
+        (row_key(key, item, mode, scope), inline),
+        ts,
+    )?;
+    let at = crate::temporal::TimeRange { start: ts, end: ts };
+    vault.put_authority_log_entries(&[(entry, at, ts)])?;
+    Ok(())
+}
+
+/// `test.ordered_cap` as a read at the places `known` resolves it: the value, its source and
+/// how the acts behind it stand.
+///
+/// # Errors
+///
+/// As `Setting::read_in_txn`.
+#[cfg(feature = "test-support")]
+pub fn ordered_cap_read(vault: &Vault, known: &[SettingScope]) -> Result<Resolved<u64>> {
+    let txn = vault.store.env.read_txn()?;
+    super::setting_keys::TEST_ORDERED_CAP.read_in_txn(vault, &txn, known, None)
+}

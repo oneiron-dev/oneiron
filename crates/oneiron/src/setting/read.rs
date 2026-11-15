@@ -10,6 +10,7 @@ use super::learned::{LoadedFit, SettingFitView, fit_view, fits_in_txn};
 use super::pack::{
     LayerDefault, ProposedDefaultView, layer_default_in_txn, proposed_defaults_in_txn,
 };
+use super::project::standing_in_txn;
 use super::{
     EncodedValue, Kind, LearnedRange, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting,
     SettingMode, SettingScope, SettingSource, SettingSpec, SettingValue,
@@ -327,6 +328,7 @@ impl<T: SettingValue> Setting<T> {
                 walk(&loaded, &fits, &chain, Kind::<T>::decode, cap_ref, &default)
             }
         };
+        let standing = standing_in_txn(dbs, txn, self.spec, &chain, item)?;
         Ok(match walked {
             Walked::Row {
                 value,
@@ -336,6 +338,7 @@ impl<T: SettingValue> Setting<T> {
                 value,
                 source,
                 revision,
+                standing,
             },
             Walked::Default => Resolved {
                 value: default,
@@ -343,6 +346,7 @@ impl<T: SettingValue> Setting<T> {
                     .lost
                     .map_or(SettingSource::Default, SettingSource::Unreadable),
                 revision: 0,
+                standing,
             },
             Walked::Unreadable(scope) => Resolved {
                 value: self.kind.strictest_typed().ok_or(Error::CorruptedIndex(
@@ -350,6 +354,7 @@ impl<T: SettingValue> Setting<T> {
                 ))?,
                 source: SettingSource::Unreadable(scope),
                 revision: 0,
+                standing,
             },
         })
     }

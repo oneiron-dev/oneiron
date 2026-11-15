@@ -24,7 +24,18 @@
 //!
 //! Only the free-time policy is an agent's to set, within a Grant line that
 //! names it; a vault-wide setting is the owner's own.
+//!
+//! The act is the write (stage 7a-2, DESIGN 1.6 "What travels"). An owner's
+//! act on a catalogue key may name its slot (`slot`: the item, mode and scope
+//! of one row, absent for the key's vault value row) and carry the value it
+//! left (`inline`: the value's JSON bytes, at most
+//! [`POLICY_SETTING_INLINE_MAX`], whose BLAKE3 is `value`). Its target is then
+//! derived from the slot ([`setting_slot_target`]), so every install names
+//! one frontier per row. Both keys are optional on the wire and absent from
+//! every older entry, which therefore decodes, validates, targets and folds as
+//! it did.
 
+use oneiron_setting_contract::{RowKey, SettingMode, SettingScope};
 use rmpv::Value;
 
 use crate::entity_id::EntityId;
@@ -41,6 +52,12 @@ const POLICY_SETTING_KEYS: [&str; 6] = [
     "prior",
     "value",
 ];
+/// The keys a setting act carries only when it names them (stage 7a-2), in
+/// their wire order after [`POLICY_SETTING_KEYS`].
+const POLICY_SETTING_OPTIONAL_KEYS: [&str; 2] = ["slot", "inline"];
+/// The longest value an act carries inline, in bytes: the bound the log's
+/// other carried payloads keep ([`MAX_PACT_SCOPE_BYTES`]).
+pub const POLICY_SETTING_INLINE_MAX: usize = MAX_PACT_SCOPE_BYTES;
 /// The domain of a setting act's `seen`, beside the checkpoint policy's
 /// ([`CHECKPOINT_POLICY_REVISION_CONTEXT`]): BLAKE3 over it and the target's
 /// sorted live act hashes, in the `PolicyRevision` shape.
@@ -81,6 +98,31 @@ pub const POLICY_SETTING_NAME_MAX: usize = 128;
 /// As [`owner_act_target`].
 pub fn policy_setting_target(setting: &str) -> Result<EntityId> {
     owner_act_target(&format!("settings.{setting}"))
+}
+
+/// The target of an act on the row `slot` of a catalogue key (stage 7a-2):
+/// the key's [`policy_setting_target`] for its vault value row with no item,
+/// the target every act on that row has named since stage 7a-1; for any other
+/// row, BLAKE3 under a fixed context over the row's stored key
+/// ([`RowKey::encode`]), first 16 bytes. Derived from the slot alone, so
+/// every install names the same frontier for one row.
+///
+/// # Errors
+/// As [`owner_act_target`].
+pub fn setting_slot_target(slot: &RowKey) -> Result<EntityId> {
+    if is_vault_value_row(slot) {
+        return policy_setting_target(&slot.name);
+    }
+    let digest = blake3::derive_key("oneiron setting slot target v1", &slot.encode());
+    let mut id = [0_u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    EntityId::from_bytes(id)
+}
+
+/// Whether `slot` is its key's vault value row with no item: the row an act
+/// names by leaving `slot` out.
+fn is_vault_value_row(slot: &RowKey) -> bool {
+    slot.item.is_none() && slot.mode == SettingMode::Value && slot.scope == SettingScope::Vault
 }
 
 /// Whether `setting` has a setting name's shape: a setting key's dotted
@@ -217,6 +259,15 @@ pub struct PolicySettingSet {
     pub prior: [u8; 32],
     /// BLAKE3 over the value the act left, as JSON; `None` for a clear.
     pub value: Option<[u8; 32]>,
+    /// The row the act changes (stage 7a-2), named whole, its name the
+    /// act's `setting`; `None` for the key's vault value row with no item,
+    /// which every older act names. Only a catalogue key's act names one.
+    pub slot: Option<RowKey>,
+    /// The value the act left, as its JSON bytes (stage 7a-2): a closed
+    /// value of at most [`POLICY_SETTING_INLINE_MAX`] bytes whose BLAKE3 is
+    /// `value`, so every machine that folds the act can write the row. `None`
+    /// for a clear, and for an act that keeps only the digest.
+    pub inline: Option<Vec<u8>>,
 }
 
 impl PolicySettingSet {
@@ -229,6 +280,14 @@ impl PolicySettingSet {
     /// ask answers a setting act. Of the eight [`PolicySetting`]s only the
     /// free-time policy is ever cleared; a catalogue key's clear is an act
     /// like its set.
+    ///
+    /// A slot and an inline value (stage 7a-2) stand only on a catalogue
+    /// key's act. A named slot is of the act's own key, and never the vault
+    /// value row with no item, which an act names by leaving `slot` out, so
+    /// one row has one encoding; the act's target is then the slot's
+    /// ([`setting_slot_target`]). An inline value goes with a set, never a
+    /// clear, holds at most [`POLICY_SETTING_INLINE_MAX`] bytes, and its
+    /// BLAKE3 is the act's `value`.
     pub fn validate(&self) -> Result<()> {
         if !is_policy_setting_name(&self.setting) {
             return Err(invalid_authority());
@@ -238,6 +297,18 @@ impl PolicySettingSet {
         if (matches!(self.act.by, ActBy::Agent { .. }) && !free_time)
             || self.act.answer.is_some()
             || (self.value.is_none() && known.is_some() && !free_time)
+            || (known.is_some() && (self.slot.is_some() || self.inline.is_some()))
+        {
+            return Err(invalid_authority());
+        }
+        if let Some(slot) = &self.slot
+            && (slot.name != self.setting || is_vault_value_row(slot))
+        {
+            return Err(invalid_authority());
+        }
+        if let Some(inline) = &self.inline
+            && (inline.len() > POLICY_SETTING_INLINE_MAX
+                || self.value != Some(*blake3::hash(inline).as_bytes()))
         {
             return Err(invalid_authority());
         }
@@ -246,15 +317,27 @@ impl PolicySettingSet {
                 .act
                 .validate_carried(OwnerActKind::FreeTimePolicy, self.act.target);
         }
-        self.act.validate_carried(
-            OwnerActKind::PolicySetting,
-            policy_setting_target(&self.setting)?,
-        )
+        self.act
+            .validate_carried(OwnerActKind::PolicySetting, self.target()?)
+    }
+
+    /// The target a catalogue key's or a vault-wide setting's act names: its
+    /// slot's ([`setting_slot_target`]), else the setting's
+    /// ([`policy_setting_target`]). The free-time policy's act names its
+    /// agent instead.
+    ///
+    /// # Errors
+    /// As [`owner_act_target`].
+    pub fn target(&self) -> Result<EntityId> {
+        match &self.slot {
+            Some(slot) => setting_slot_target(slot),
+            None => policy_setting_target(&self.setting),
+        }
     }
 }
 
 pub(super) fn policy_setting_value(set: &PolicySettingSet) -> Value {
-    Value::Map(vec![
+    let mut entries = vec![
         (
             Value::from(OP_KEY_KIND),
             Value::from(OP_KIND_POLICY_SETTING),
@@ -270,14 +353,30 @@ pub(super) fn policy_setting_value(set: &PolicySettingSet) -> Value {
             Value::from("value"),
             set.value.map_or(Value::Nil, binary_value),
         ),
-    ])
+    ];
+    if let Some(slot) = &set.slot {
+        entries.push((Value::from("slot"), Value::Binary(slot.encode())));
+    }
+    if let Some(inline) = &set.inline {
+        entries.push((Value::from("inline"), Value::Binary(inline.clone())));
+    }
+    Value::Map(entries)
 }
 
-/// A setting's name, two digests (the second nil for a clear); the op's
-/// shape check then pins the name's shape, the act's kind and who may make
-/// it ([`PolicySettingSet::validate`]).
+/// A setting's name, two digests (the second nil for a clear), and the slot
+/// and inline value when the act names them; the op's shape check then pins
+/// the name's shape, the act's kind and who may make it
+/// ([`PolicySettingSet::validate`]). A slot is a row's stored key that
+/// decodes and encodes back to the same bytes, so one row has one encoding.
 pub(super) fn decode_policy_setting(entries: &[(Value, Value)]) -> Result<AuthorityOp> {
-    validate_keys(entries, &POLICY_SETTING_KEYS)?;
+    let present = |name: &str| entries.iter().any(|(key, _)| key.as_str() == Some(name));
+    let mut keys = POLICY_SETTING_KEYS.to_vec();
+    keys.extend(
+        POLICY_SETTING_OPTIONAL_KEYS
+            .iter()
+            .filter(|name| present(**name)),
+    );
+    validate_keys(entries, &keys)?;
     let setting = required(entries, "setting")?
         .as_str()
         .map(str::to_owned)
@@ -292,5 +391,29 @@ pub(super) fn decode_policy_setting(entries: &[(Value, Value)]) -> Result<Author
         setting,
         prior: decode_hash(required(entries, "prior")?)?,
         value,
+        slot: present("slot")
+            .then(|| decode_slot(required(entries, "slot")?))
+            .transpose()?,
+        inline: present("inline")
+            .then(|| binary(required(entries, "inline")?))
+            .transpose()?,
     }))
+}
+
+/// A slot as the wire carries it: a row's stored key, canonical.
+fn decode_slot(value: &Value) -> Result<RowKey> {
+    let bytes = binary(value)?;
+    let slot = RowKey::decode(&bytes).ok_or_else(invalid_authority)?;
+    if slot.encode() != bytes {
+        return Err(invalid_authority());
+    }
+    Ok(slot)
+}
+
+/// The bytes of a binary value.
+fn binary(value: &Value) -> Result<Vec<u8>> {
+    match value {
+        Value::Binary(bytes) => Ok(bytes.clone()),
+        _ => Err(invalid_authority()),
+    }
 }

@@ -13,6 +13,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub trait SettingValue:
     Serialize + DeserializeOwned + JsonSchema + Clone + PartialEq + Send + Sync + 'static
 {
+    /// Whether every value of the type is closed (DESIGN 1.6 "What travels"): numbers, bools,
+    /// entity ids, enums and catalogue names, and options, lists, sets, maps and structs of
+    /// those, never free text. A closed value travels inside the setting's signed act, whose
+    /// log keeps it for good; any other value keeps the digest-only act until a value can
+    /// travel beside its act (stage 7c). The default is `false`: a value type says it is
+    /// closed, never the other way round.
+    const CLOSED: bool = false;
+
     /// The value as it will be stored.
     ///
     /// # Errors
@@ -23,12 +31,25 @@ pub trait SettingValue:
     }
 }
 
-impl SettingValue for bool {}
-impl SettingValue for u8 {}
-impl SettingValue for u16 {}
-impl SettingValue for u32 {}
-impl SettingValue for u64 {}
-impl SettingValue for i64 {}
+impl SettingValue for bool {
+    const CLOSED: bool = true;
+}
+impl SettingValue for u8 {
+    const CLOSED: bool = true;
+}
+impl SettingValue for u16 {
+    const CLOSED: bool = true;
+}
+impl SettingValue for u32 {
+    const CLOSED: bool = true;
+}
+impl SettingValue for u64 {
+    const CLOSED: bool = true;
+}
+impl SettingValue for i64 {
+    const CLOSED: bool = true;
+}
+/// Text may be free text, so a `String` is not closed.
 impl SettingValue for String {}
 impl SettingValue for Vec<String> {}
 
@@ -36,12 +57,16 @@ impl SettingValue for Vec<String> {}
 /// (MessagePack nil), and `check` checks the inner value. A nested `Option` does not round-trip
 /// (`Some(None)` encodes as `None` does), so no key's value is one.
 impl<T: SettingValue> SettingValue for Option<T> {
+    const CLOSED: bool = T::CLOSED;
+
     fn check(self) -> Result<Self> {
         self.map(T::check).transpose()
     }
 }
 
 impl SettingValue for f64 {
+    const CLOSED: bool = true;
+
     fn check(self) -> Result<Self> {
         if self.is_finite() {
             Ok(self)

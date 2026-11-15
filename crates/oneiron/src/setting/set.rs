@@ -8,6 +8,7 @@ use oneiron_setting_contract::{ChangeDirection, FoundRow, Order, Quorum, RowKey}
 use super::change::record_change_in_txn;
 use super::learned::{checked_weight, fits_in_txn};
 use super::pack::layer_default_in_txn;
+use super::project::{append_act_in_txn, rooted_in_txn, travels};
 use super::read::{
     Loaded, StoredRow, in_force_of, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
@@ -102,7 +103,9 @@ pub struct SetSetting {
     /// Where the owner said so (DESIGN 1.2 "The change stream"): an owner's applied change that
     /// names it is signed as one `PolicySettingSet` in the same write, last and best effort
     /// (stage 7a-1). Only the owner's change names one. The host names it from where the
-    /// owner's request reached it, never from the request's input.
+    /// owner's request reached it, never from the request's input. An owner's change of a row
+    /// that travels, in a rooted vault, is signed whether it names one or not: with none named,
+    /// from this install (stage 7a-2).
     pub surface: Option<ActSurface>,
 }
 
@@ -180,11 +183,24 @@ impl Vault {
     ///
     /// The value passes the side-row wall before it is checked and stored, as an authored row
     /// does: a secret goes to custody and the row keeps its handle; any other hit refuses the
-    /// change. A value equal to the row's writes nothing.
+    /// change.
     ///
     /// An owner's change that names its act surface is signed: last in the write, after the key's
     /// hook, one `PolicySettingSet` on the key's target, best effort, and the change row names the
     /// entry (stage 7a-1, [`super::signed_act`]).
+    ///
+    /// The act is the write (stage 7a-2, [`super::project`]). In a vault with an authority root,
+    /// an owner's change of a row that travels (a `sync: vault` key whose value is closed, not
+    /// learned, never a carried row) appends its act in this write, naming the row and carrying
+    /// the value, from its act surface or, with none named, from this install. It is not best
+    /// effort: a change whose act this install cannot append is refused with the append's
+    /// reason, and nothing is written. The row is then what the fold gives. A person's, an
+    /// agent's and the engine's changes write the row on this install alone (RULING
+    /// SETTING-7A-2-DECIDERS = A).
+    ///
+    /// An equal value writes nothing over a row the owner, a person or an agent set. Over the
+    /// engine's row it writes, so the row becomes the caller's (DESIGN 1.6, the no-op test is on
+    /// the slot's own row); the engine's own equal value writes nothing.
     ///
     /// # Errors
     ///
@@ -380,10 +396,18 @@ fn set_in_txn(
     let readable = !matches!(prior, Some(None));
     let prior_row = prior.flatten();
     let prior_row_by_owner = prior_row.as_ref().is_some_and(StoredRow::by_owner);
+    // The no-op test is on the slot's own row (DESIGN 1.6, pass 15e F6): over the engine's row
+    // an equal value of another caller writes, and the row becomes that caller's.
+    let over_engine_row = prior_row
+        .as_ref()
+        .is_some_and(|row| matches!(row.setter, Setter::Engine { .. }))
+        && !matches!(caller, SettingCaller::Engine(_));
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
-    let unchanged =
-        readable && prior_value.as_ref() == change.value && prior_weight == change.weight_runs;
+    let unchanged = readable
+        && !over_engine_row
+        && prior_value.as_ref() == change.value
+        && prior_weight == change.weight_runs;
     let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
     // Which way the change moves its row, against the rows this write sees (A3: the key's
     // comparator gives the direction). A change that leaves the row as it is moves nothing.
@@ -455,6 +479,15 @@ fn set_in_txn(
             change.spec.name
         )));
     }
+    // The act is the write (stage 7a-2): an owner's change of a row that travels, in a rooted
+    // vault, appends its act below; with no surface named, from this install.
+    let travelling = matches!(caller, SettingCaller::Owner(_))
+        && travels(change.spec, change.key.mode)
+        && rooted_in_txn(vault, txn)?;
+    let surface = match request.surface {
+        None if travelling => Some(ActSurface::ThisInstall),
+        surface => surface,
+    };
     let recorded = record_change_in_txn(
         &vault.store,
         txn,
@@ -473,7 +506,7 @@ fn set_in_txn(
             why: request.why.clone(),
             weight_runs: change.weight_runs,
             direction: Some(direction),
-            surface: request.surface,
+            surface,
             signed: None,
         },
     )?;
@@ -498,8 +531,20 @@ fn set_in_txn(
     if let Some(on_change) = change.spec.on_change {
         on_change(vault, txn, &recorded)?;
     }
-    // The signed record goes last, best effort, after every mandatory write (FIX 4624).
-    if let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, request.surface) {
+    // The act of a row that travels is mandatory: it fails the change when this install cannot
+    // append it. A value too long to carry inline keeps the best-effort digest act until values
+    // travel beside their acts (stage 7c).
+    let appended = match (travelling, by, surface) {
+        (true, Some(owner), Some(surface)) => {
+            append_act_in_txn(vault, txn, change.spec, (owner, surface), &recorded)?
+        }
+        _ => false,
+    };
+    // Any other owner's change that names its surface: the signed record goes last, best effort,
+    // after every mandatory write (FIX 4624).
+    if !appended
+        && let (SettingCaller::Owner(_), Some(owner), Some(surface)) = (caller, by, surface)
+    {
         sign_owner_change_in_txn(vault, txn, change.spec, owner, surface, &recorded);
     }
     Ok(SetSettingOutcome::Applied {

@@ -486,7 +486,11 @@ pub(crate) use pinned_root::{
     end_request_wait_in_txn, ended_request_wait, read_pin_and_earlier_in_txn, read_pin_row_in_txn,
     write_awaited_root_in_txn, write_pinned_root_in_txn,
 };
-pub(crate) use policy_setting_choice::PolicySettingAct;
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use policy_setting_choice::SettingFrontier;
+pub(crate) use policy_setting_choice::{
+    PolicySettingAct, SettingSlotAct, SettingSlotFold, SettingSlotHead,
+};
 pub(crate) use principal_standing::{
     GIT_PUSH_PACT_STANDING_LAPSED, git_push_pact_standing_lapsed_in_txn,
 };

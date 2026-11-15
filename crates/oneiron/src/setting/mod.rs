@@ -40,6 +40,7 @@ mod catalogue;
 mod change;
 mod learned;
 mod pack;
+mod project;
 mod read;
 mod set;
 mod signed_act;
@@ -50,7 +51,7 @@ use std::marker::PhantomData;
 pub use oneiron_setting_contract::{
     AbsentEnd, ChainOrder, ChangeDirection, EachOrder, EncodedValue, FitCell, Order, Quorum,
     ReadBy, Resolved, Restore, ScopeKind, SetOrder, Setter, SettingMode, SettingScope,
-    SettingSource, SettingSync, SettingValue,
+    SettingSource, SettingStanding, SettingSync, SettingValue,
 };
 
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
@@ -71,6 +72,7 @@ pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
 pub use self::pack::{ENGINE_PACK, PackApplied, ProposedDefaultView};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::pack::{delete_layer_row, layer_row_revision};
+pub use self::project::SettingsProjected;
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};
@@ -302,6 +304,11 @@ pub trait ValueKind: Sync {
     fn from_json(&self, json: serde_json::Value) -> Result<EncodedValue>;
     /// The key's order: which side of a change is safe.
     fn order(&self) -> Order;
+    /// Whether the key's value type is closed ([`SettingValue::CLOSED`]): its value travels
+    /// inside the setting's signed act (stage 7a-2).
+    fn travels_inline(&self) -> bool {
+        false
+    }
     /// The stricter of `a` and `b`, encoded; `None` for an order with no meet, or when either
     /// does not decode.
     fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue>;
@@ -609,6 +616,10 @@ impl<T: SettingValue> ValueKind for Kind<T> {
 
     fn order(&self) -> Order {
         self.order
+    }
+
+    fn travels_inline(&self) -> bool {
+        T::CLOSED
     }
 
     fn meet(&self, a: &EncodedValue, b: &EncodedValue) -> Option<EncodedValue> {

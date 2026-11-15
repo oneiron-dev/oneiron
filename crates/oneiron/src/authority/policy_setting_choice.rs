@@ -24,12 +24,24 @@
 //! the setting's own write, best effort ([`super::carried_act`]): the
 //! setting primitive's `set_setting` for an owner's change that names its
 //! act surface, and each older setting's own door.
+//!
+//! The act is the write (stage 7a-2): an owner's change of a row that
+//! travels names its row and carries its value, and its door appends it in
+//! the change's own write or refuses the change
+//! ([`Vault::append_setting_slot_act_in_txn`]). Each row then has a frontier
+//! of its own, and the setting projection reads it back with the heads' ops
+//! ([`Vault::setting_slot_fold_in_txn`]).
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_setting_contract::RowKey;
+
 use crate::Vault;
+use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::entity_id::EntityId;
 use crate::error::Result;
+use crate::ports::EntityStoreRead;
+use crate::registry::ENTITY_TYPE_AUTHORITY_LOG;
 
 use super::machine_standing::InstallCounted;
 use super::owner_choice::{
@@ -178,7 +190,247 @@ impl Vault {
                 setting,
                 prior,
                 value,
+                slot: None,
+                inline: None,
             })
         })
+    }
+
+    /// Appends `act`, an owner's change of a setting row that travels, as a
+    /// signed `PolicySettingSet` in the change's write `txn` (stage 7a-2):
+    /// named by its row, with its value inline. Not best effort: the act is
+    /// the write, so whatever stops it (no live machine profile to carry it,
+    /// a fold that does not count it, a storage fault) fails the change, and
+    /// the savepoint it ran in is rolled back with it. The entry's hash.
+    ///
+    /// # Errors
+    ///
+    /// The typed refusal of the act's append ([`super::carried_act`]), or a
+    /// storage error.
+    pub(crate) fn append_setting_slot_act_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        act: SettingSlotAct,
+    ) -> Result<AuthorityEntryHash> {
+        let SettingSlotAct {
+            act,
+            slot,
+            prior,
+            inline,
+        } = act;
+        let value = inline.as_ref().map(|bytes| *blake3::hash(bytes).as_bytes());
+        let setting = slot.name.clone();
+        let vault_row = setting_slot_target(&slot)? == policy_setting_target(&setting)?;
+        self.append_carried_act_in_savepoint(txn, |machine| {
+            AuthorityOp::PolicySettingSet(PolicySettingSet {
+                act,
+                machine,
+                setting,
+                prior,
+                value,
+                slot: (!vault_row).then_some(slot),
+                inline,
+            })
+        })
+    }
+
+    /// Every setting target the fold names in `txn`, each with its
+    /// revision: what the setting projection compares with the revision it
+    /// last projected (stage 7a-2).
+    pub(crate) fn policy_setting_revisions_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> Result<Vec<(EntityId, [u8; 32])>> {
+        Ok(self
+            .authority_view_readonly_in_txn(txn)?
+            .policy_settings
+            .targets
+            .iter()
+            .map(|(target, folded)| (*target, folded.revision(POLICY_SETTING_REVISION_CONTEXT)))
+            .collect())
+    }
+
+    /// `target`'s acts as the setting projection reads them (stage 7a-2):
+    /// its revision, each live head with its op read back from the log, and,
+    /// when the heads conflict, the last act every one of them descends from.
+    /// `None` when no act names the target.
+    pub(crate) fn setting_slot_fold_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        target: EntityId,
+    ) -> Result<Option<SettingSlotFold>> {
+        let view = self.authority_view_readonly_in_txn(txn)?;
+        let Some(folded) = view.policy_settings.targets.get(&target) else {
+            return Ok(None);
+        };
+        let live = folded
+            .live
+            .keys()
+            .map(|hash| self.setting_slot_head_in_txn(txn, *hash))
+            .collect::<Result<Vec<_>>>()?;
+        let conflict = !folded.conflict.is_empty();
+        let in_force = match (&folded.in_force, conflict) {
+            (Some(head), true) => Some(self.setting_slot_head_in_txn(txn, head.act)?),
+            _ => None,
+        };
+        Ok(Some(SettingSlotFold {
+            revision: folded.revision(POLICY_SETTING_REVISION_CONTEXT),
+            live,
+            in_force,
+            conflict,
+        }))
+    }
+
+    /// The setting act `hash` names, read back from the log in `txn`.
+    fn setting_slot_head_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        hash: AuthorityEntryHash,
+    ) -> Result<SettingSlotHead> {
+        let id = authority_log_entity_id_from_hash(&hash)?;
+        let Some(raw) = self
+            .store
+            .port_entity_record(txn, &id)?
+            .map(|row| row.encode())
+        else {
+            return Ok(SettingSlotHead {
+                act: hash,
+                set: None,
+            });
+        };
+        let header = EntityMetadataHeader::parse(&raw)
+            .ok_or(crate::error::Error::CorruptedIndex("entity header"))?;
+        if header.entity_type != ENTITY_TYPE_AUTHORITY_LOG {
+            return Ok(SettingSlotHead {
+                act: hash,
+                set: None,
+            });
+        }
+        let entry = super::readonly_fold::decode_stored_authority_log_body(
+            &raw[ENTITY_METADATA_HEADER_LEN..],
+        )?;
+        let set = match entry.op {
+            AuthorityOp::PolicySettingSet(set) if authority_entry_hash(&entry)? == hash => {
+                Some(set)
+            }
+            _ => None,
+        };
+        Ok(SettingSlotHead { act: hash, set })
+    }
+}
+
+/// An owner's change of a setting row that travels, as its door passes it
+/// (stage 7a-2): everything its signed record carries but the carrier and
+/// the value's digest, which follow from the signing install and `inline`.
+pub(crate) struct SettingSlotAct {
+    /// The act on the row's target ([`setting_slot_target`]), its `seen`
+    /// read by [`Vault::policy_setting_revision_in_txn`] in the same write.
+    pub(crate) act: OwnerAct,
+    /// The row.
+    pub(crate) slot: RowKey,
+    /// BLAKE3 over the value the act replaced, as JSON.
+    pub(crate) prior: [u8; 32],
+    /// The value it left, as its JSON bytes; `None` for a clear.
+    pub(crate) inline: Option<Vec<u8>>,
+}
+
+/// One setting row's acts, as the setting projection reads them (stage
+/// 7a-2).
+pub(crate) struct SettingSlotFold {
+    /// The target's revision: the basis a projection of it records.
+    pub(crate) revision: [u8; 32],
+    /// Each live head.
+    pub(crate) live: Vec<SettingSlotHead>,
+    /// When the heads conflict, the last act every one of them descends
+    /// from; `None` when they agree or no such act exists.
+    pub(crate) in_force: Option<SettingSlotHead>,
+    /// Whether the live heads left different values.
+    pub(crate) conflict: bool,
+}
+
+/// One setting act the projection reads: its hash, and its op when the
+/// log here holds it.
+pub(crate) struct SettingSlotHead {
+    pub(crate) act: AuthorityEntryHash,
+    /// `None` where the entry is not stored here (an adopted image covers
+    /// it) or is not a setting act.
+    pub(crate) set: Option<PolicySettingSet>,
+}
+
+/// Where a row's acts stood when a test read them (stage 7a-2 tests): the main-log heads and
+/// the row's live acts, and its revision. An act signed on it later is concurrent with every
+/// act appended since.
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) struct SettingFrontier {
+    parents: BTreeSet<AuthorityEntryHash>,
+    seen: [u8; 32],
+}
+
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+impl Vault {
+    /// The frontier of the row `slot`'s acts now.
+    pub(crate) fn setting_frontier(&self, slot: &RowKey) -> Result<SettingFrontier> {
+        let fold = self.authority_fold()?;
+        let target = setting_slot_target(slot)?;
+        let mut parents = fold.append_heads.clone();
+        if let Some(folded) = fold.policy_settings.targets.get(&target) {
+            parents.extend(folded.live.keys().copied());
+        }
+        Ok(SettingFrontier {
+            parents,
+            seen: fold.policy_settings.revision(target),
+        })
+    }
+
+    /// The owner `owner`'s change of the row `slot` to the JSON bytes `inline` (`None`
+    /// clears), as the machine `machine`'s own door signs it with its install key `key`, on
+    /// `frontier`, at `ts`: one act that names the row and carries its value.
+    pub(crate) fn sign_setting_act_as(
+        &self,
+        (machine, key): (EntityId, &ed25519_dalek::SigningKey),
+        owner: EntityId,
+        frontier: &SettingFrontier,
+        (slot, inline): (RowKey, Option<Vec<u8>>),
+        ts: u64,
+    ) -> Result<AuthorityLogEntry> {
+        use ed25519_dalek::Signer;
+
+        let fold = self.authority_fold()?;
+        let signer = AuthorityKey::Ed25519(key.verifying_key().to_bytes());
+        let seq = fold.append_sequences.get(&signer).map_or(1, |seq| seq + 1);
+        let target = setting_slot_target(&slot)?;
+        let vault_row = target == policy_setting_target(&slot.name)?;
+        let op = AuthorityOp::PolicySettingSet(PolicySettingSet {
+            act: OwnerAct::by_owner(
+                owner,
+                OwnerActKind::PolicySetting,
+                target,
+                ActSurface::ThisInstall,
+                frontier.seen,
+            ),
+            machine,
+            setting: slot.name.clone(),
+            prior: *blake3::hash(b"null").as_bytes(),
+            value: inline.as_ref().map(|bytes| *blake3::hash(bytes).as_bytes()),
+            slot: (!vault_row).then_some(slot),
+            inline,
+        });
+        let mut entry = AuthorityLogEntry {
+            schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
+            vault_id: fold.vault_id,
+            seq,
+            parent_hashes: frontier.parents.iter().copied().collect(),
+            op,
+            signer: AuthoritySignature {
+                suite: signer.suite(),
+                public_key: signer,
+                signature: vec![0; 64],
+            },
+            cosigns: Vec::new(),
+            ts,
+        };
+        let transcript = authority_transcript(&entry)?;
+        entry.signer.signature = key.sign(&transcript).to_bytes().to_vec();
+        Ok(entry)
     }
 }

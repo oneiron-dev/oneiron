@@ -771,6 +771,21 @@ impl Vault {
                     "the engine pack's setting defaults were not weighed; the vault keeps the ones it accepted until the next open"
                 ),
             }
+            // Setting rows are written again from their signed acts where those moved since the
+            // last pass, or where this build learned a key an act names (stage 7a-2). A failure
+            // leaves the rows as they are; the next authority commit or open tries again.
+            match vault.project_settings() {
+                Ok(projected) if projected.rows_changed > 0 => tracing::info!(
+                    moved = projected.moved,
+                    rows_changed = projected.rows_changed,
+                    "setting rows were written from their signed acts"
+                ),
+                Ok(_) => {}
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the setting rows were not projected from their signed acts; the next authority commit or open tries again"
+                ),
+            }
             if seed_content {
                 crate::skill_hub::seed_bootstrap_skills(&vault)?;
                 crate::skill_hub::pack_catalog::seed_builtin_packs(&vault)?;
