@@ -1,6 +1,8 @@
 //! A fork copies real files and edits source identity before hashing the new tree.
 use super::{HubFile, HubPackage, SkillPackageFormat, folder, package_codec::invalid};
-use crate::dreamer_runner::maintenance::agent_health::object_without_duplicates;
+use crate::dreamer_runner::maintenance::agent_health::{
+    object_without_duplicates, reviewer_policy_effective_seeds,
+};
 use crate::skill::health_review::REVIEWER_POLICY_FILE;
 use crate::skill::team_shape_catalog::{TASK_TYPE_TREE_FILE, TEAM_SHAPE_SKILL_NAME};
 use crate::skill_optimize::SkillFileEdit;
@@ -306,19 +308,28 @@ impl Vault {
 /// (cold read N3 of #7949): it must be one JSON object with no key named
 /// twice, which is what the rule's reader seeds from (bytes of another
 /// shape fall back whole, FIX 10882), and it must hold each number `text`
-/// names for one of its keys. The skill_optimize draft check and the write
-/// door both apply it, so a Coach heal files such a draft as unusable
-/// instead of failing its transaction.
+/// names for one of its keys. Each detector dial `text` names a number for
+/// must also run that number, by the reader's effective seed (review round
+/// 2 of #7949): a draft that leaves the dial out, or holds it out of
+/// bounds, runs the compiled seed instead. The skill_optimize draft check
+/// and the write door both apply it, so a Coach heal files such a draft as
+/// unusable instead of failing its transaction.
 ///
 /// # Errors
 ///
-/// `InvalidSkillBody` when `policy` is not such an object, or a key holds
-/// another number than `text` names for it.
+/// `InvalidSkillBody` when `policy` is not such an object, a key holds
+/// another number than `text` names for it, or a dial `text` names runs
+/// another number.
 pub(crate) fn validate_drafted_policy(policy: &[u8], text: &str) -> Result<()> {
-    if object_without_duplicates(policy).is_none() || rederived_rule_policy(policy, text).is_some()
+    let runs_named_dials = reviewer_policy_effective_seeds(policy)
+        .into_iter()
+        .all(|(key, seed)| named_number(text, key).is_none_or(|n| n.as_f64() == Some(seed)));
+    if object_without_duplicates(policy).is_none()
+        || rederived_rule_policy(policy, text).is_some()
+        || !runs_named_dials
     {
         return Err(invalid(
-            "a drafted policy.json must be one JSON object, with no key named twice, that holds the number its instructions name for each key",
+            "a drafted policy.json must be one JSON object, with no key named twice, that holds and runs the number its instructions name for each key",
         ));
     }
     Ok(())
