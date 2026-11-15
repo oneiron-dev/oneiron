@@ -112,7 +112,11 @@ pub struct VendorSandboxSpec<'a> {
     /// The pinned guest image the step names (`ONEIRON_CODE_GUEST_IMAGE`),
     /// whose [`VENDOR_GUEST_BIN`] the run starts.
     pub guest_image: &'a str,
-    /// The step's budget: the sandbox gets no more memory or processes.
+    /// The step's budget. The guest holds its program to the budget's
+    /// processes and to its own store's memory limit. A vendor whose create
+    /// call takes a memory size gets the budget's; the others size the
+    /// sandbox from the owner's snapshot or template, so the sandbox may
+    /// have more memory than the budget (FIX [VENDOR-MEM-BUDGET]).
     pub budget: ExecutionBudget,
 }
 
@@ -158,6 +162,10 @@ pub trait VendorSandboxClient: Send + Sync {
     ) -> Result<()>;
 
     /// Runs `argv` on `sandbox`, with no shell, and answers its exit status.
+    /// The caller passes only plain words (letters, digits and `_./-`): a
+    /// vendor that takes a command line rather than an argument vector gets
+    /// one with no shell syntax in it, and a client of such a vendor refuses
+    /// any other argument.
     ///
     /// # Errors
     ///
