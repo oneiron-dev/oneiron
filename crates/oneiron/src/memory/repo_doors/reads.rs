@@ -25,7 +25,7 @@ use super::{
 use crate::EdgeActorClass;
 use crate::EntityId;
 use crate::code_view::CodeViewSet;
-use crate::codebase::CodebaseSnapshotMount;
+use crate::codebase::{CodebaseSnapshotMount, RepoRef};
 use crate::entity_id::bytes_to_hex_lower;
 use crate::error::Error;
 use crate::memory::codebase_doors::CodeSnapshotDefinition;
@@ -343,10 +343,14 @@ impl Memory<'_> {
     /// and the file reveal delivered them (FIX 8960), with the rows they
     /// stand on: the anchor, the base snapshot CODE and the file's ASSET
     /// (FIX 4300). `None` otherwise, and the work's bytes are read as they
-    /// are. A base the run's ref no longer pins, a file the run changed, or
-    /// a file the run's lane or the scope leaves out asks nothing: the file
-    /// is joined as `snapshots.read` joins it, and joined again before the
-    /// reveal asks.
+    /// are. The base snapshot is the ingested one of the admitted folder at
+    /// the work's immutable base commit, as the declaration's base-manifest
+    /// selector finds it (FIX RUN-REVEAL-BASE-HASH-DOMAIN): the stamp's
+    /// pinned-base hash names a repo-mutation snapshot, never an ingest
+    /// fork, so it selects nothing here. A file the run changed, or a file
+    /// the run's lane or the scope leaves out, asks nothing: the file is
+    /// joined as `snapshots.read` joins it, at its base commit, and joined
+    /// again before the reveal asks.
     fn repo_view_base_reveal(
         &self,
         binding: &RepoRunBinding,
@@ -355,61 +359,96 @@ impl Memory<'_> {
         held: &[u8],
         why: &str,
     ) -> MemoryResult<Option<(Vec<u8>, Vec<EntityId>)>> {
-        let snapshot = bytes_to_hex_lower(&own.stamp.base_snapshot);
+        let RepoRef::LocalFolder { path: folder, .. } = &own.admitted.membership.repo_ref else {
+            return Ok(None);
+        };
+        let pinned = RepoRef::LocalFolder {
+            path: folder.clone(),
+            commit: own.stamp.base_green.clone(),
+        };
         let target = repo_target(own.stamp.repo, &own.stamp.git_ref, [path]);
         let plain = RepoReadSelection::plain(&target);
-        let Ok(join) =
-            self.repo_read_join_under(binding, &own.admitted, &plain, &snapshot, FileRow(path))
-        else {
-            return Ok(None);
-        };
-        let rows = join.rows;
-        let mount = join.mount;
-        let artifact = mount.code_artifact_id();
-        let Some(masked) = mount.read_file_projected(path)? else {
-            return Ok(None);
-        };
-        if masked.view().is_none() || masked.into_bytes() != held {
-            return Ok(None);
-        }
-        let changed = || Error::ConcurrentWrite("the run's work admission changed");
-        let work = own.stamp.work;
-        let readmit = || -> crate::error::Result<()> {
-            let txn = self.vault.store.env.read_txn()?;
-            let again = self.vault.admitted_repo_work_in_txn(
-                &txn,
+        let anchor = own.stamp.repo;
+        for code_id in self.vault.codebase_snapshots_by_repo_ref(&pinned)? {
+            let Some(candidate) = self.vault.mount_codebase_snapshot(&code_id)? else {
+                continue;
+            };
+            let snapshot = candidate.snapshot();
+            if snapshot.commit_hash.as_deref() != Some(own.stamp.base_green.as_str())
+                || !same_folder(&snapshot.repo_ref, &own.admitted.membership.repo_ref)
+                || !snapshot.repository.is_none_or(|repo| repo == anchor)
+            {
+                continue;
+            }
+            let fork_hash = snapshot.fork_hash;
+            let Ok(join) = self.repo_base_read_join_under(
                 binding,
-                work,
-                [path],
-                RepoAccessIntent::Read,
-            )?;
-            drop(txn);
-            match again {
-                Ok(again)
-                    if again.stamp == own.stamp && again.admitted.same_lease(&own.admitted) => {}
-                _ => return Err(changed()),
+                &own.admitted,
+                &plain,
+                fork_hash,
+                &own.stamp.base_green,
+                FileRow(path),
+            ) else {
+                continue;
+            };
+            let rows = join.rows;
+            let mount = join.mount;
+            let artifact = mount.code_artifact_id();
+            let Some(masked) = mount.read_file_projected(path)? else {
+                continue;
+            };
+            if masked.view().is_none() || masked.into_bytes() != held {
+                continue;
             }
-            // The file's own join again: the lane still reads its ASSET and
-            // the scope still holds it (FIX 4300).
-            let file = self
-                .repo_read_join_under(binding, &own.admitted, &plain, &snapshot, FileRow(path))
-                .map_err(|_| changed())?;
-            if file.mount.code_artifact_id() != artifact {
-                return Err(changed());
-            }
-            Ok(())
-        };
-        let read = run_reveal_reader(self, binding, &own.admitted).snapshot_file_read_with_why(
-            &mount,
-            own.stamp.repo,
-            path,
-            Some(why),
-            RepoReadDoor::Bytes,
-            readmit,
-        )?;
-        Ok(read
-            .filter(|read| read.proof.is_some())
-            .map(|read| (read.projection.into_bytes(), rows)))
+            let changed = || Error::ConcurrentWrite("the run's work admission changed");
+            let work = own.stamp.work;
+            let readmit = || -> crate::error::Result<()> {
+                let txn = self.vault.store.env.read_txn()?;
+                let again = self.vault.admitted_repo_work_in_txn(
+                    &txn,
+                    binding,
+                    work,
+                    [path],
+                    RepoAccessIntent::Read,
+                )?;
+                drop(txn);
+                match again {
+                    Ok(again)
+                        if again.stamp == own.stamp && again.admitted.same_lease(&own.admitted) => {
+                    }
+                    _ => return Err(changed()),
+                }
+                // The file's own join again: the lane still reads its ASSET and
+                // the scope still holds it (FIX 4300).
+                let file = self
+                    .repo_base_read_join_under(
+                        binding,
+                        &own.admitted,
+                        &plain,
+                        fork_hash,
+                        &own.stamp.base_green,
+                        FileRow(path),
+                    )
+                    .map_err(|_| changed())?;
+                if file.mount.code_artifact_id() != artifact {
+                    return Err(changed());
+                }
+                Ok(())
+            };
+            let read = run_reveal_reader(self, binding, &own.admitted)
+                .snapshot_file_read_with_why(
+                    &mount,
+                    own.stamp.repo,
+                    path,
+                    Some(why),
+                    RepoReadDoor::Bytes,
+                    readmit,
+                )?;
+            return Ok(read
+                .filter(|read| read.proof.is_some())
+                .map(|read| (read.projection.into_bytes(), rows)));
+        }
+        Ok(None)
     }
 
     /// The snapshot `snapshot` names of the admitted repo, at the commit the

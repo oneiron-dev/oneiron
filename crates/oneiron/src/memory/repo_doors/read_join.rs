@@ -388,6 +388,36 @@ impl Memory<'_> {
         self.repo_read_join_in_txn(&lane, &txn, binding, admitted, &pin, member)
     }
 
+    /// The read join under `admitted` at the work's pinned base commit
+    /// `base_green` (FIX RUN-REVEAL-BASE-HASH-DOMAIN): as
+    /// [`Self::repo_read_join_under`], but the snapshot is the ingested one
+    /// `fork_hash` names at that immutable commit, never at the ref's
+    /// current pin. Only the base reveal joins here: every ref read joins
+    /// at its current pin.
+    pub(super) fn repo_base_read_join_under<M: RepoReadMember>(
+        &self,
+        binding: &RepoRunBinding,
+        admitted: &RepoRunAdmitted,
+        selection: &RepoReadSelection<'_>,
+        fork_hash: [u8; 32],
+        base_green: &str,
+        member: M,
+    ) -> MemoryResult<RepoReadJoin<'_, M::Joined>> {
+        let pin = RepoReadPin {
+            selection: *selection,
+            fork_hash,
+            commit: base_green.to_owned(),
+        };
+        let lane = self
+            .vault
+            .scoped_read(binding.reader.clone())
+            .with_claim_status(ClaimReadStatus::Recorded);
+        lane.persist_grant_clock()?;
+        let _bodies = crate::store::ASSET_FILE_PLANE.then(|| self.vault.pin_all_result_bodies());
+        let txn = self.vault.store.env.read_txn().map_err(Error::from)?;
+        self.repo_read_join_in_txn(&lane, &txn, binding, admitted, &pin, member)
+    }
+
     /// The fork `snapshot` selects and the commit the admitted repo's full
     /// ref in `selection` names now, read from the repo's own store. No
     /// historical pin: a ref the repo does not name is `WrongRef`.
