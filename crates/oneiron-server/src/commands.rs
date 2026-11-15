@@ -292,6 +292,11 @@ struct PairedCredential {
     /// The slip's signed comm reach (FIX 3899): `--comm`, or `vault` when
     /// the owner named none.
     comm: oneiron::agent_dispatch::CommReach,
+    /// The default read Grant the link minted for a named agent, when it
+    /// minted one: a mint that fails after the link takes it back beside
+    /// the slip. Never printed with the credential.
+    #[serde(skip_serializing)]
+    default_grant_ref: Option<oneiron::EntityId>,
     credential: String,
     token: String,
     binding_key: String,
@@ -513,8 +518,8 @@ fn mint_agent_credential(
     // then the grant: the latest mint is the agent's one credential, so no
     // earlier slip keeps a verb this tier lacks. A mint that fails anywhere
     // leaves the standing ceiling as it was, and one that fails after the
-    // slip takes the new slip back, so a failure leaves the agent with less,
-    // never more.
+    // slip takes the new slip and the default Grant its link minted back,
+    // so a failure leaves the agent with less, never more.
     let credential = mint_paired_credential(
         &vault,
         &issuer,
@@ -566,6 +571,27 @@ fn mint_agent_credential(
                         credential.slip_id
                     )
                 })?;
+            // The link already minted the agent's default read Grant in its
+            // writer; a failed mint takes it back beside the slip, so no
+            // failed mint keeps a Grant (AGENT-PAIR-GRANT-ORPHAN).
+            if let Some(grant) = credential.default_grant_ref {
+                let grant_hex = grant.to_hex();
+                oneiron::task_verb::sdk::revoke_agent_grant_as(
+                    &vault,
+                    &owner,
+                    oneiron::authority::ActSurface::ThisInstall,
+                    oneiron::task_verb::sdk::AgentGrantRevokeRequest {
+                        grant_ref: grant,
+                        seen: None,
+                    },
+                )
+                .map_err(|revoke| {
+                    anyhow::anyhow!(
+                        "agent {}: {error}; then revoking its default grant {grant_hex}: {revoke}",
+                        args.name
+                    )
+                })?;
+            }
             Err(error)
         }
     }
@@ -680,6 +706,7 @@ fn mint_paired_credential(
         expires_at: slip.claims.expires_at,
         slip_id: hex(&slip.claims.slip_id),
         comm: oneiron::authority::effective_slip_comm(slip.claims.comm),
+        default_grant_ref: link.default_grant_ref,
         credential,
         token,
         binding_key: seed,
