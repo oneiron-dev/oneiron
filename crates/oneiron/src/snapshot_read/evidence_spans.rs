@@ -187,7 +187,7 @@ fn bound_evidence_spans(
                     memory,
                     txn,
                     (&read, turn_read),
-                    binding,
+                    binding.attempt(),
                     input.source,
                 )?
             {
@@ -198,21 +198,22 @@ fn bound_evidence_spans(
     )
 }
 
-/// Whether the bound attempt's inputs page serves `turn`: the attempt queues
-/// it and its page admission holds.
+/// Whether the queued extraction `attempt`'s inputs page serves `turn`:
+/// the attempt queues it and its page admission holds.
 ///
 /// Only such a TURN reads its text under native's relationship gate, as
 /// native's branch reads only its declared TURNs. Every other source stays on
-/// the caller's ordinary lane.
-fn attempt_serves_turn_in_txn(
+/// the caller's ordinary lane. The bound spans door and the derive Person
+/// stager share this one rule.
+pub(crate) fn attempt_serves_turn_in_txn(
     memory: &Memory<'_>,
     txn: &heed::RoTxn<'_>,
     (read, turn_read): (&crate::claim::ScopedRead<'_>, &crate::claim::ScopedRead<'_>),
-    binding: &DreamerAttemptBinding,
+    attempt: EntityId,
     turn: EntityId,
 ) -> MemoryResult<bool> {
     let vault = memory.vault();
-    let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, binding.attempt())?;
+    let (scope, branch) = queued_extraction_branch_in_txn(vault, txn, attempt)?;
     let Some(part) = branch.parts.iter().find(|part| part.turns.contains(&turn)) else {
         return Ok(false);
     };
