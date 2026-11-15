@@ -403,6 +403,7 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
+pub use owner_proof::{OwnerKeyRequirement, WebSignInAct};
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerKeyKind, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
 };

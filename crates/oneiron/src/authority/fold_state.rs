@@ -87,6 +87,10 @@ pub struct AuthorityFold {
     /// The owner choices that wait for the owner's proof and still ask, by
     /// entry: read through [`AuthorityFold::waiting_owner_choices`].
     pub(super) waiting_owner_choices: BTreeSet<AuthorityEntryHash>,
+    /// What the vault asks of its owner, and how each act of the web sign-in
+    /// setting landed: read through [`AuthorityFold::owner_key_requirement`]
+    /// and [`AuthorityFold::web_sign_in_acts`].
+    pub(super) owner_key_requirement: super::owner_proof::FoldedOwnerKeyRequirement,
     /// This install's pinned root while the fold holds it as a valid root:
     /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
     /// accepted roster revisions alone.

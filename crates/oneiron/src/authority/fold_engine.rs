@@ -442,6 +442,7 @@ pub(super) fn fold_authority_log_once(
             machines: BTreeMap::new(),
             held_machine_answers: BTreeMap::new(),
             waiting_owner_choices: BTreeSet::new(),
+            owner_key_requirement: super::owner_proof::FoldedOwnerKeyRequirement::default(),
             pinned_root: None,
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),

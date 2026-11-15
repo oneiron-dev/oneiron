@@ -58,7 +58,9 @@ use serde::Serialize;
 /// beside the chains, never in them, and an owner answer may carry that one proof cosign (row
 /// CARRIER-OWNER-PROOF).
 /// 37: the fold keeps every key it ever held as the owner's, and a vault that held one asks for
-/// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5).
+/// an owner key until the owner switches it back to web sign-in (the owner's ruling AUTH-5); an
+/// image's projected fold carries what the vault asks of its owner and how each act of the web
+/// sign-in setting landed.
 pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 37;
 
 /// The domain every encoded image starts with.
