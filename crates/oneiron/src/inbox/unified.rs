@@ -152,18 +152,6 @@ impl UnifiedInboxGroupCursor {
 #[doc(hidden)]
 pub use oneiron_verb_wire::inbox::unified::InboxGroupResolveTarget;
 
-impl From<&InboxGroupResolveTarget> for CompilationTarget {
-    fn from(value: &InboxGroupResolveTarget) -> Self {
-        match value {
-            InboxGroupResolveTarget::Fallback => Self::Fallback,
-            InboxGroupResolveTarget::Ban(text) => Self::Ban(text.clone()),
-            InboxGroupResolveTarget::StyleRule(text) => Self::StyleRule(text.clone()),
-            InboxGroupResolveTarget::CharterLine(text) => Self::CharterLine(text.clone()),
-            InboxGroupResolveTarget::BriefUpdate(text) => Self::BriefUpdate(text.clone()),
-        }
-    }
-}
-
 /// The owner's answer to one inbox group of any kind.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

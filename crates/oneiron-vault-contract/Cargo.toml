@@ -17,6 +17,7 @@ doctest = false
 [dependencies]
 anyhow = "1"
 blake3 = { workspace = true }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 subtle = "2"

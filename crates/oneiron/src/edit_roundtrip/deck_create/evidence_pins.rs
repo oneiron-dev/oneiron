@@ -78,11 +78,7 @@ pub(super) fn pins_mut(value: &mut Value, visit: &mut impl FnMut(&mut Value)) {
 }
 
 pub(super) fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write as _;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
+    oneiron_hex::encode(bytes)
 }
 
 pub(super) fn unhex(text: &str) -> Option<Vec<u8>> {

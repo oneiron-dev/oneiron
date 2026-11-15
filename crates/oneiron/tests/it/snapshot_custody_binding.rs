@@ -8,18 +8,13 @@
 //! credential material of any kind appears in this file: the registered value
 //! is a fixed synthetic byte string.
 //!
-//! What is proven here:
-//!
-//! * the snapshot credential registers under exactly one custody name and
-//!   resolves back to the same `EntityId`, so the repo references the secret
-//!   BY NAME and never by value;
-//! * the binding for the `ops-serve:wasabi-snapshot` effector grants exactly
-//!   `put` / `get` / `multipart` at a `T1Leased` ceiling — no delete verb is
-//!   reachable through the custody contract, mirroring the least-privilege
-//!   provider policy the runbook specifies;
-//! * the read a caller gets back is the value-less metadata projection;
-//! * the credential answers to an `sc` handle, and the handle opens no value
-//!   read.
+//! What is proven here: the credential answers to an `sc` handle, and the
+//! handle opens no value read. The file registers a record built from fixed
+//! synthetic bytes under the custody name and binding below, but asserts only
+//! that the `sc` prefix resolves to the secret-custody kind, that the first
+//! registered secret gets handle `sc1`, and that the handle cannot read the
+//! custody body. It does not assert name resolution, the exact scope grant,
+//! or the metadata projection (see the runbook, section 5).
 //!
 //! The record declares no `read` scope: materializing the value for a running
 //! snapshot service is SECRET-02's door, not this registration's.
@@ -40,7 +35,7 @@ const EFFECTOR: &str = "ops-serve:wasabi-snapshot";
 /// The complete scope grant. No destructive verb, by construction.
 const SCOPES: [&str; 3] = ["put", "get", "multipart"];
 
-/// Fixed registration instant so the metadata projection compares exactly.
+/// Fixed registration instant for the custody record.
 const REGISTERED_AT: u64 = 1_767_225_600;
 
 /// Synthetic stand-in for the credential value. This is not a credential and

@@ -20,7 +20,7 @@ use super::git::{
 };
 use super::queue::{PreparedConflictResolution, PreparedRepoMutation, execute_repo_mutation};
 use super::snapshot::{StoredRepoSnapshot, capture_repo_snapshot};
-use super::support::{hex_bytes, now_millis, sha256_bytes, truncate_failure};
+use super::support::{hex_bytes, sha256_bytes, truncate_failure};
 use super::types::{
     RepoForkHash, RepoMutationOperation, RepoMutationOplogEntry, RepoMutationOutcome,
     RepoMutationRequest, RepoMutationStatus,
@@ -188,7 +188,7 @@ impl Vault {
         // discards a recoverable intent.
         let wire = GitWire::new(self)?;
         let git_wire_repo = wire.open_repo(repo_ref.clone(), repo_root)?;
-        wire.recover(&git_wire_repo, now_millis())?;
+        wire.recover(&git_wire_repo, crate::unix_millis_now())?;
         let prepared_entries = self
             .stored_repo_mutation_oplog_for_canonical(repo_ref)?
             .into_iter()
@@ -217,7 +217,7 @@ impl Vault {
                         "prepared conflict resolution missing claim recovery intent; repo left untouched"
                             .into(),
                     ),
-                    now_millis(),
+                    crate::unix_millis_now(),
                 )?;
                 outcomes.push(RepoMutationOutcome {
                     entry,
@@ -247,7 +247,7 @@ impl Vault {
                     },
                     RepoMutationStatus::Applied,
                     None,
-                    now_millis(),
+                    crate::unix_millis_now(),
                 )?;
                 outcomes.push(RepoMutationOutcome {
                     entry,
@@ -269,7 +269,7 @@ impl Vault {
                         "legacy prepared row missing expected post-state; repo left untouched"
                             .into(),
                     ),
-                    now_millis(),
+                    crate::unix_millis_now(),
                 )?;
                 outcomes.push(RepoMutationOutcome {
                     entry,
@@ -327,7 +327,7 @@ impl Vault {
                         &recovery.oplog,
                         RepoMutationStatus::Applied,
                         None,
-                        now_millis(),
+                        crate::unix_millis_now(),
                     )?;
                     self.finish_repo_mutation(
                         &PreparedRepoMutation {
@@ -336,7 +336,7 @@ impl Vault {
                         },
                         RepoMutationStatus::Failed,
                         Some("auto-recovered pre-action forkHash after incomplete mutation".into()),
-                        now_millis(),
+                        crate::unix_millis_now(),
                     )?;
                     outcomes.push(RepoMutationOutcome {
                         entry,
@@ -349,7 +349,7 @@ impl Vault {
                         &recovery.oplog,
                         RepoMutationStatus::Failed,
                         Some(failure),
-                        now_millis(),
+                        crate::unix_millis_now(),
                     );
                     return Err(error);
                 }
