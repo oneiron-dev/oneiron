@@ -220,6 +220,9 @@ pub(super) fn project_once(
         actor_bindings,
         machines,
         held_machine_answers,
+        waiting_owner_choices: merged.as_ref().map_or_else(BTreeSet::new, |state| {
+            super::owner_proof::asking_owner_choices(state)
+        }),
         pinned_root: None,
         root_anchors: merged
             .as_ref()

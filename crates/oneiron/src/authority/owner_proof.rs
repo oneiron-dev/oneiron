@@ -20,7 +20,7 @@
 //! The judge reads the act's parent state only, so every replica judges the
 //! same rows the same way.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::entity_id::EntityId;
 
@@ -120,7 +120,31 @@ pub(super) fn listed_held_answers(
         .collect()
 }
 
+/// Every waiting owner choice that still asks the owner, of every kind the
+/// shared landing gate serves.
+pub(super) fn asking_owner_choices(state: &FoldState) -> BTreeSet<AuthorityEntryHash> {
+    state
+        .checkpoint_policy
+        .asking()
+        .chain(state.home_pick.asking())
+        .chain(state.origin_cut.asking())
+        .chain(state.device_succession.asking())
+        .chain(state.conversation_training.asking())
+        .chain(state.conversation_training_vault.asking())
+        .chain(state.policy_settings.asking())
+        .collect()
+}
+
 impl AuthorityFold {
+    /// The owner choices that wait for the owner's proof and still ask (row
+    /// CARRIER-OWNER-PROOF), by entry, of every kind the shared landing gate
+    /// serves: each is a stored, valid entry in no frontier. The owner
+    /// confirms one by carrying the choice again from an owner device.
+    #[must_use]
+    pub fn waiting_owner_choices(&self) -> &BTreeSet<AuthorityEntryHash> {
+        &self.waiting_owner_choices
+    }
+
     /// Each machine's held answers that still ask the owner (row
     /// CARRIER-OWNER-PROOF): carried answers that needed an owner key's
     /// proof and carried none, by entry. Each names its carrier

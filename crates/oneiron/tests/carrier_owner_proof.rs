@@ -424,6 +424,45 @@ impl PairedMachine {
         self.rows.push(confirm);
         fold_authority_log(&self.rows)
     }
+
+    /// The laptop carries the owner's answer `Owned(Yours)` about the paired
+    /// machine at `revision`, naming the key of `key_holder`, on `parents`,
+    /// cosigned by each of `cosigners`. Returns the answer's entry.
+    fn laptop_answers_yours(
+        &mut self,
+        seq: u64,
+        parents: Vec<AuthorityEntryHash>,
+        key_holder: &SigningKey,
+        revision: u64,
+        cosigners: &[&SigningKey],
+    ) -> AuthorityEntryHash {
+        let vault_id = genesis_vault_id(&self.rows[0]).expect("the vault id");
+        let act = OwnerAct::by_owner(
+            owner(),
+            OwnerActKind::MachineAnswer,
+            self.paired_machine,
+            ActSurface::ThisInstall,
+            machine_answer_revision(parents.iter().copied()),
+        );
+        let answer = signed(
+            Some(vault_id),
+            seq,
+            parents,
+            AuthorityOp::MachineProfile(node_profile(
+                vault_id,
+                self.paired_machine,
+                key_holder,
+                MachineRole::Owned(MachineOwnership::Yours),
+                revision,
+                Some((self.laptop_machine, act)),
+            )),
+            &self.laptop,
+            cosigners,
+        );
+        let entry = hash(&answer);
+        self.rows.push(answer);
+        entry
+    }
 }
 
 /// A self-host vault whose root registered a hosted node and then the
@@ -516,10 +555,9 @@ impl LaptopBesideNode {
         self.answer_for_the_laptop(machine, &node, role, key_holder)
     }
 
-    /// The node carries a home pick of [`PICKED_NODE`] with no proof, then
-    /// the laptop carries the owner's pick of [`LAPTOPS_PICKED_NODE`] over
-    /// it, having seen no live pick.
-    fn node_then_laptop_pick(mut self) -> AuthorityFold {
+    /// The node's home pick of [`PICKED_NODE`] with no proof, and the laptop's
+    /// pick of [`LAPTOPS_PICKED_NODE`] over it, having seen no live pick.
+    fn node_and_laptop_picks(&self) -> [AuthorityLogEntry; 2] {
         let vault_id = self.node.vault_id();
         let target = home_pick_target(&vault_id).expect("the pick's target");
         let pick = |machine: EntityId, node_id: u64| {
@@ -551,8 +589,14 @@ impl LaptopBesideNode {
             &self.laptop,
             &[],
         );
-        self.node.rows.push(nodes_pick);
-        self.node.rows.push(laptops_pick);
+        [nodes_pick, laptops_pick]
+    }
+
+    /// The node carries a home pick with no proof, then the laptop carries
+    /// the owner's pick over it.
+    fn node_then_laptop_pick(mut self) -> AuthorityFold {
+        let picks = self.node_and_laptop_picks();
+        self.node.rows.extend(picks);
         self.node.fold()
     }
 }
@@ -614,6 +658,14 @@ fn mine(fold: &AuthorityFold, machine: EntityId, machine_key: &[u8; 32]) -> bool
         "the fold's mine readers disagree: {readers:?}"
     );
     readers[0]
+}
+
+/// The held answers about `machine` that still ask the owner, by entry.
+fn asking(fold: &AuthorityFold, machine: EntityId) -> BTreeSet<AuthorityEntryHash> {
+    fold.held_machine_answers()
+        .get(&machine)
+        .map(|held| held.keys().copied().collect())
+        .unwrap_or_default()
 }
 
 /// Test 1 of the row. Main: the answer folds, and the node is mine.
@@ -933,5 +985,270 @@ fn an_owner_laptops_pick_lands_over_a_waiting_pick() {
         Some(LAPTOPS_PICKED_NODE),
         "the owner's own pick lands over the waiting one: {:?}",
         fold.issues
+    );
+}
+
+/// Guard (plan read F2): revision numbers never decide what asks. A held
+/// answer at the last revision a profile can name blocks nothing: the
+/// owner's confirm lands under it, the machine is mine, and both held
+/// answers the confirm saw ask no more.
+#[test]
+fn a_held_answer_at_the_last_revision_never_blocks_the_owners_confirm() {
+    let mut paired = PairedMachine::new();
+    let (root, key_holder) = (paired.root.clone(), paired.paired.clone());
+    let paired_machine = paired.paired_machine;
+    let paired_key = key_holder.verifying_key().to_bytes();
+    let pairing = hash(&paired.rows[2]);
+    let last = paired.laptop_answers_yours(2, vec![pairing], &key_holder, u64::MAX, &[]);
+    let fold = fold_authority_log(&paired.rows);
+    assert_eq!(
+        asking(&fold, paired_machine),
+        BTreeSet::from([pairing, last]),
+        "both unproven answers are held and ask: {:?}",
+        fold.issues
+    );
+    paired.laptop_answers_yours(3, vec![last], &key_holder, 2, &[&root]);
+    let fold = fold_authority_log(&paired.rows);
+    assert!(
+        mine(&fold, paired_machine, &paired_key),
+        "the owner key's confirm lands under the held answer: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.trusted_machine(paired_machine)
+            .map(|trusted| trusted.profile.revision),
+        Some(2),
+        "the fold trusts the confirm: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        asking(&fold, paired_machine),
+        BTreeSet::new(),
+        "the confirm ends the ask of every held answer it saw"
+    );
+}
+
+/// Guard (plan read F2): an unproven answer after the owner's confirm is a
+/// new ask. The laptop carries a new key for the confirmed machine with no
+/// proof: it is held and asks alone, and the machine keeps its key.
+#[test]
+fn an_unproven_answer_after_the_owners_confirm_asks_again() {
+    let mut paired = PairedMachine::new();
+    let (root, key_holder) = (paired.root.clone(), paired.paired.clone());
+    let paired_machine = paired.paired_machine;
+    let paired_key = key_holder.verifying_key().to_bytes();
+    let pairing = hash(&paired.rows[2]);
+    let confirm = paired.laptop_answers_yours(2, vec![pairing], &key_holder, 2, &[&root]);
+    let rekey = paired.laptop_answers_yours(3, vec![confirm], &signing(STRANGER_SEED), 3, &[]);
+    let fold = fold_authority_log(&paired.rows);
+    assert!(
+        mine(&fold, paired_machine, &paired_key),
+        "the confirmed machine keeps its key: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        asking(&fold, paired_machine),
+        BTreeSet::from([rekey]),
+        "the new unproven answer asks, and the answered pairing does not"
+    );
+}
+
+/// Guard (plan read F1): mine is read with the removal race applied, never
+/// off a raw chain head. A node paired a machine with the owner key's proof;
+/// then the owner's laptop removed the node by a removal that never saw the
+/// pairing, so the pairing stands on nothing and the machine is not mine. An
+/// answer that keeps it `Owned(Yours)` under the same key would make it mine
+/// again, so it needs the proof even from the owner's own laptop.
+#[test]
+fn a_machine_whose_carrier_lost_its_removal_race_is_not_mine_again_without_proof() {
+    let mut beside = LaptopBesideNode::new();
+    let vault_id = beside.node.vault_id();
+    let paired = signing(PAIRED_SEED);
+    let paired_key = paired.verifying_key().to_bytes();
+    let paired_machine = EntityId::from_bytes([0x74; 16]).expect("an id");
+    let yours = MachineRole::Owned(MachineOwnership::Yours);
+    let pairing = signed(
+        Some(vault_id),
+        1,
+        vec![hash(&beside.node.rows[2])],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            paired_machine,
+            &paired,
+            yours,
+            1,
+            Some((
+                beside.node.machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::Pairing,
+                    paired_machine,
+                    ActSurface::ThisInstall,
+                    [0; 32],
+                ),
+            )),
+        )),
+        &beside.node.node,
+        &[&beside.node.root],
+    );
+    let removal = signed(
+        Some(vault_id),
+        1,
+        vec![hash(&pairing)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            beside.node.machine,
+            &beside.node.node,
+            MachineRole::Removed,
+            2,
+            Some((
+                beside.laptop_machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::MachineRemoval,
+                    beside.node.machine,
+                    ActSurface::ThisInstall,
+                    machine_answer_revision([hash(&beside.node.rows[1])]),
+                ),
+            )),
+        )),
+        &beside.laptop,
+        &[],
+    );
+    let again = signed(
+        Some(vault_id),
+        2,
+        vec![hash(&removal)],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            paired_machine,
+            &paired,
+            yours,
+            2,
+            Some((
+                beside.laptop_machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::MachineAnswer,
+                    paired_machine,
+                    ActSurface::ThisInstall,
+                    machine_answer_revision([hash(&pairing)]),
+                ),
+            )),
+        )),
+        &beside.laptop,
+        &[],
+    );
+    let again_entry = hash(&again);
+    beside.node.rows.push(pairing);
+    let fold = beside.node.fold();
+    assert!(
+        mine(&fold, paired_machine, &paired_key),
+        "the proven pairing makes the machine mine: {:?}",
+        fold.issues
+    );
+    beside.node.rows.push(removal);
+    let fold = beside.node.fold();
+    assert!(
+        !mine(&fold, paired_machine, &paired_key),
+        "the pairing's carrier lost its removal race, so the machine is not mine: {:?}",
+        fold.issues
+    );
+    beside.node.rows.push(again);
+    let fold = beside.node.fold();
+    assert!(
+        !mine(&fold, paired_machine, &paired_key),
+        "an unproven answer never makes it mine again: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        asking(&fold, paired_machine),
+        BTreeSet::from([again_entry]),
+        "the unproven answer is held and asks: {:?}",
+        fold.issues
+    );
+}
+
+/// Guard (plan read F4, the strict cascade): a held machine carries nothing.
+/// Its own later answer is an invalid entry, not a second held answer, so
+/// the owner's confirm of the pairing is the only way in.
+#[test]
+fn a_held_machines_own_later_answer_is_refused_not_held() {
+    let mut paired = PairedMachine::new();
+    let vault_id = genesis_vault_id(&paired.rows[0]).expect("the vault id");
+    let paired_machine = paired.paired_machine;
+    let paired_key = paired.paired.verifying_key().to_bytes();
+    let pairing = hash(&paired.rows[2]);
+    let issues_before = fold_authority_log(&paired.rows).issues.len();
+    let own_answer = signed(
+        Some(vault_id),
+        1,
+        vec![pairing],
+        AuthorityOp::MachineProfile(node_profile(
+            vault_id,
+            paired_machine,
+            &paired.paired,
+            MachineRole::Owned(MachineOwnership::Yours),
+            2,
+            Some((
+                paired_machine,
+                OwnerAct::by_owner(
+                    owner(),
+                    OwnerActKind::MachineAnswer,
+                    paired_machine,
+                    ActSurface::ThisInstall,
+                    machine_answer_revision([pairing]),
+                ),
+            )),
+        )),
+        &paired.paired,
+        &[],
+    );
+    paired.rows.push(own_answer);
+    let fold = fold_authority_log(&paired.rows);
+    assert!(
+        !mine(&fold, paired_machine, &paired_key),
+        "a held machine's own answer makes nothing mine"
+    );
+    assert_eq!(
+        asking(&fold, paired_machine),
+        BTreeSet::from([pairing]),
+        "only the pairing asks: {:?}",
+        fold.issues
+    );
+    assert!(
+        fold.issues.len() > issues_before,
+        "the held machine's own answer is an invalid entry: {:?}",
+        fold.issues
+    );
+}
+
+/// Item 2, what asks: a waiting pick asks the owner until the owner's own
+/// pick, which saw it, lands; then nothing asks.
+#[test]
+fn a_waiting_pick_asks_until_the_owners_pick_lands() {
+    let mut beside = LaptopBesideNode::new();
+    let [nodes_pick, laptops_pick] = beside.node_and_laptop_picks();
+    let waiting = hash(&nodes_pick);
+    beside.node.rows.push(nodes_pick);
+    let fold = beside.node.fold();
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::from([waiting]),
+        "the node's unproven pick waits and asks: {:?}",
+        fold.issues
+    );
+    beside.node.rows.push(laptops_pick);
+    let fold = beside.node.fold();
+    assert_eq!(
+        home_pick_in_force(&fold),
+        Some(LAPTOPS_PICKED_NODE),
+        "the owner's own pick lands: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::new(),
+        "the owner's pick ends the ask of the waiting pick it saw"
     );
 }

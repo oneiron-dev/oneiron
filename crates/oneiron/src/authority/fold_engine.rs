@@ -426,6 +426,7 @@ pub(super) fn fold_authority_log_once(
             actor_bindings: BTreeMap::new(),
             machines: BTreeMap::new(),
             held_machine_answers: BTreeMap::new(),
+            waiting_owner_choices: BTreeSet::new(),
             pinned_root: None,
             root_anchors: BTreeMap::new(),
             anchor_entries: BTreeSet::new(),

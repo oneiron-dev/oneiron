@@ -83,6 +83,9 @@ pub struct AuthorityFold {
     /// through [`AuthorityFold::held_machine_answers`].
     pub(super) held_machine_answers:
         BTreeMap<EntityId, BTreeMap<AuthorityEntryHash, MachineRevision>>,
+    /// The owner choices that wait for the owner's proof and still ask, by
+    /// entry: read through [`AuthorityFold::waiting_owner_choices`].
+    pub(super) waiting_owner_choices: BTreeSet<AuthorityEntryHash>,
     /// This install's pinned root while the fold holds it as a valid root:
     /// the pin [`AuthorityFold::trusted_machine`] reads. `None` trusts the
     /// accepted roster revisions alone.

@@ -270,6 +270,11 @@ impl<P> OwnerChoiceState<P> {
         self.frontiers.is_empty() && self.refused.is_empty() && self.waiting.is_empty()
     }
 
+    /// The waiting choices that still ask the owner.
+    pub(super) fn asking(&self) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
+        self.waiting.iter().copied()
+    }
+
     /// Lands a valid choice: a refused one is kept without effect, a
     /// waiting one is kept for the owner's confirm, and a recorded one
     /// supersedes the live choices of its target.
