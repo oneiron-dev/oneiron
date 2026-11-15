@@ -198,6 +198,31 @@ pub(in crate::sync::selector) fn filter_window_doc(
                 return;
             }
         }
+        // REACH-ERASED-SOURCE-EGRESS = A (Engine 07:53; R1 review 3 F1): a
+        // row that may not serve here (withdrawn, stale, or a source it is
+        // recorded as derived from withdrawn) never rides a restricted
+        // selector, as no read here serves it: a CLAIM drawn from an erased
+        // phone MESSAGE keeps the caller's words in its body. Judged by the
+        // row stored at its id, or the carried bytes when none is. A tombstone
+        // still propagates its delete; its live bytes never leave (below).
+        if !is_tombstoned {
+            let readable = vault.get_raw_in(&rtxn, &id).and_then(|stored| {
+                crate::ports::raw_readable_in_txn(
+                    &vault.store,
+                    &rtxn,
+                    &id,
+                    stored.as_deref().unwrap_or(blob),
+                )
+            });
+            match readable {
+                Ok(true) => {}
+                Ok(false) => return,
+                Err(error) => {
+                    scope_error = Some(error);
+                    return;
+                }
+            }
+        }
         match crate::authority::row_causal_admitted(vault, &rtxn, &id, blob) {
             Ok(true) => {}
             Ok(false) => return,
