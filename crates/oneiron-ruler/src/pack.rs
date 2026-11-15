@@ -651,7 +651,7 @@ impl PackSlice {
             if embedding.dims == 0 {
                 return Err(PackError::BadDims);
             }
-            if !is_digest(&embedding.vectors_sha256) {
+            if !oneiron_hex::is_lower_hex(&embedding.vectors_sha256, Some(64)) {
                 return Err(PackError::BadDigest {
                     value: embedding.vectors_sha256.clone(),
                 });
@@ -805,12 +805,7 @@ pub fn write_slice(
 
 /// Lowercase hex sha256 of bytes.
 pub fn sha256_hex(bytes: &[u8]) -> String {
-    let digest = Sha256::digest(bytes);
-    let mut out = String::with_capacity(Sha256::output_size() * 2);
-    for byte in digest {
-        out.push_str(&format!("{byte:02x}"));
-    }
-    out
+    oneiron_hex::encode(&Sha256::digest(bytes))
 }
 
 /// True for exactly `YYYY-MM-DDTHH:MM:SSZ` with plausible ranges: month
@@ -845,12 +840,4 @@ fn is_time(value: &str) -> bool {
         && hour <= 23
         && minute <= 59
         && second <= 59
-}
-
-/// True for 64 lowercase hex digits.
-fn is_digest(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
