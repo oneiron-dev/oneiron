@@ -311,6 +311,7 @@ fn a_switched_run_goes_to_e2b_with_each_secret_at_its_own_base() {
     let created: Value = serde_json::from_slice(&calls[0].body).expect("create body");
     assert_eq!(created["templateID"], GUEST_IMAGE_NAME);
     assert_eq!(created["allow_internet_access"], false);
+    assert_eq!(created["network"]["allowPublicTraffic"], false);
     assert_eq!(created["autoPause"], false);
     let lifetime = created["timeout"].as_u64().expect("a lifetime in seconds");
     assert!(

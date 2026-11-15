@@ -14,8 +14,9 @@
 //!
 //! E2B secures every sandbox (its daemon refuses a call without the token),
 //! and this client refuses a sandbox answered without one. The sandbox has
-//! no internet access: a vendor run has no egress (module doc of
-//! `VendorBatchBackend`). A template fixes a sandbox's resources, so the
+//! no internet access, so a vendor run has no egress (module doc of
+//! `VendorBatchBackend`), and no public traffic: no port of it answers
+//! without its traffic token. A template fixes a sandbox's resources, so the
 //! step's budget is kept by the guest itself, as on our own backends. E2B
 //! kills a sandbox at its timeout, which is the step's own time left plus
 //! [`LIFETIME_MARGIN`], so a lost run leaves nothing running.
@@ -361,6 +362,9 @@ impl VendorSandboxClient for E2bClient {
                     "templateID": HTTP.guest_image_name(spec.guest_image)?,
                     "timeout": lifetime.as_secs(),
                     "allow_internet_access": false,
+                    // No port of the sandbox answers the internet without
+                    // its traffic token; the daemon keeps its own check.
+                    "network": { "allowPublicTraffic": false },
                     "autoPause": false,
                     "metadata": { "oneiron": "batch-run" },
                 })),
