@@ -9,6 +9,7 @@ use super::seed::{hex, seed_digest};
 use super::{ShapeCeiling, ShapeMemberRole, ShapeRead, ShapeRow, ShapeSeed, ShapeTarget, invalid};
 use crate::error::Result;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
@@ -248,19 +249,39 @@ fn door(
     }
 }
 
+/// The plan's frontier: the seed, the policy read-frontier, every live row
+/// and the reach. Apply compares it with the vault's before it writes, so
+/// it keeps its bytes (K, PLAN-UC-04 3.4c).
 fn frontier(seed: &ShapeSeed, live: &LiveShape) -> Result<String> {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.vault_shape.frontier.v1\0");
-    hasher.update(&seed_digest(seed)?);
-    hasher.update(&live.policy_frontier);
+    let mut hasher = LegacyDigest::new(purposes::vault_shape::FRONTIER);
+    hasher.raw(&seed_digest(seed)?).raw(&live.policy_frontier);
     for (row, entity) in &live.rows {
         let bytes = rmp_serde::to_vec_named(row).map_err(|_| invalid("row encoding failed"))?;
-        hasher.update(&(bytes.len() as u64).to_be_bytes());
-        hasher.update(&bytes);
-        hasher.update(entity.map(|id| id.to_hex()).unwrap_or_default().as_bytes());
+        hasher
+            .len_u64_be(bytes.len())
+            .raw(&bytes)
+            .raw(entity.map(|id| id.to_hex()).unwrap_or_default().as_bytes());
     }
     live.reach.hash_into(&mut hasher);
-    Ok(hex(hasher.finalize().as_bytes()))
+    Ok(hex(&hasher.finish()))
+}
+
+/// Seam for `test_doors::fingerprint_keep_typed_feeds` (PLAN-UC-04 3.4c): the
+/// frontier of `seed` over these live rows, policy read-frontier and reach.
+#[cfg(oneiron_test_support)]
+pub(crate) fn frontier_for_test(
+    seed: &ShapeSeed,
+    rows: Vec<(ShapeRow, Option<EntityId>)>,
+    policy_frontier: [u8; 32],
+    reach: &crate::test_doors::fingerprint_keep_typed_feeds::ReachRows,
+) -> Result<String> {
+    let live = LiveShape {
+        rows,
+        policy_frontier,
+        reach: reach.into(),
+        withheld: BTreeSet::new(),
+    };
+    frontier(seed, &live)
 }
 
 impl Vault {

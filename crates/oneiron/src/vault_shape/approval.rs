@@ -19,6 +19,7 @@ use super::seed::hex;
 use super::{ShapeRow, ShapeTarget};
 use crate::error::Result;
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 
 /// Why a stale approval does not land.
 const STALE_PREVIEW: &str = "what this item reaches changed since its preview; plan again to see \
@@ -27,15 +28,30 @@ const STALE_PREVIEW: &str = "what this item reaches changed since its preview; p
 #[doc(hidden)]
 pub use oneiron_verb_wire::vault_shape::approval::ShapeApprovalDependencies;
 
-/// The dependencies `live` stands on.
+/// The dependencies `live` stands on. A journal item stores the digest as
+/// its pin, so it keeps its bytes (K, PLAN-UC-04 3.4c).
 pub(super) fn approval_dependencies(live: &LiveShape) -> ShapeApprovalDependencies {
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"oneiron.vault_shape.approval.v1\0");
-    hasher.update(&live.policy_frontier);
+    let mut hasher = LegacyDigest::new(purposes::vault_shape::APPROVAL_DEPENDENCIES);
+    hasher.raw(&live.policy_frontier);
     live.reach.hash_into(&mut hasher);
     ShapeApprovalDependencies {
-        digest: hex(hasher.finalize().as_bytes()),
+        digest: hex(&hasher.finish()),
     }
+}
+
+/// Seam for `test_doors::fingerprint_keep_typed_feeds` (PLAN-UC-04 3.4c): the
+/// dependencies of this policy read-frontier and reach.
+#[cfg(oneiron_test_support)]
+pub(crate) fn approval_dependencies_for_test(
+    policy_frontier: [u8; 32],
+    reach: &crate::test_doors::fingerprint_keep_typed_feeds::ReachRows,
+) -> ShapeApprovalDependencies {
+    approval_dependencies(&LiveShape {
+        rows: Vec::new(),
+        policy_frontier,
+        reach: reach.into(),
+        withheld: std::collections::BTreeSet::new(),
+    })
 }
 
 /// Whether a landing of `target` can move what the pin covers.

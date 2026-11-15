@@ -9,17 +9,16 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
+
 use super::partition::{
     ConsolidationPartitionKey, ConsolidationPartitionPlan, PartitionThing,
     keyed_partition_round_hash,
 };
-use super::support::hash_optional_entity;
 use super::watermark::WorkingSetTurn;
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use oneiron_model::llm::ScopeResource;
 
-/// The domain of a multi-part branch's identity.
-const BRANCH_IDENTITY_DOMAIN: &[u8] = b"oneiron:dreamer-branch:v1";
 /// The domain of a branch's output and signals projection keys.
 const BRANCH_RESOURCES_DOMAIN: &[u8] = b"oneiron:dreamer-branch-resources:v1";
 
@@ -121,36 +120,37 @@ impl<T> ConsolidationBranchPlan<T> {
     /// The branch's exact identity. A one-part branch is its partition's
     /// hash, so a Micro or Meso round keeps every key it had; a multi-part
     /// branch hashes its axes, its thing and every ordered part with its
-    /// TURN count.
+    /// TURN count. The attempt and projection keys hold its hex, so it keeps
+    /// its bytes (K, PLAN-UC-04 3.4c).
     pub(crate) fn identity(&self) -> [u8; 32] {
         if let [part] = self.parts.as_slice() {
             return self.part_key(part.conversation_ref).partition_hash();
         }
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(BRANCH_IDENTITY_DOMAIN);
+        let mut hasher = LegacyDigest::new(purposes::dreamer::BRANCH_IDENTITY);
         hash_optional_entity(&mut hasher, self.world_ref.as_ref());
         hash_optional_entity(&mut hasher, self.facet_ref.as_ref());
         match self.thing {
             Some(thing) => {
-                hasher.update(&[1]);
+                hasher.raw(&[1]);
                 hash_optional_entity(&mut hasher, thing.entity.as_ref());
                 match thing.audience {
                     Some(audience) => audience.hash_into(&mut hasher),
                     None => {
-                        hasher.update(&[0]);
+                        hasher.raw(&[0]);
                     }
                 }
             }
             None => {
-                hasher.update(&[0]);
+                hasher.raw(&[0]);
             }
         }
-        hasher.update(&(self.parts.len() as u64).to_be_bytes());
+        hasher.len_u64_be(self.parts.len());
         for part in &self.parts {
-            hasher.update(&self.part_key(part.conversation_ref).partition_hash());
-            hasher.update(&(part.turns.len() as u64).to_be_bytes());
+            hasher
+                .raw(&self.part_key(part.conversation_ref).partition_hash())
+                .len_u64_be(part.turns.len());
         }
-        *hasher.finalize().as_bytes()
+        hasher.finish()
     }
 
     /// The subject a branch's durable steps record: a one-part branch's
@@ -208,6 +208,20 @@ impl<T: BranchTurn> ConsolidationBranchPlan<T> {
             hasher.update(turn.as_bytes());
         }
         bytes_to_hex_lower(hasher.finalize().as_bytes())
+    }
+}
+
+/// An optional entity in a branch identity: `1` and its 16 bytes, or `0`
+/// (the bytes of `support::hash_optional_entity`, which the partition hash
+/// still writes raw).
+fn hash_optional_entity(hasher: &mut LegacyDigest, entity: Option<&EntityId>) {
+    match entity {
+        Some(entity) => {
+            hasher.raw(&[1]).raw(entity.as_bytes());
+        }
+        None => {
+            hasher.raw(&[0]);
+        }
     }
 }
 

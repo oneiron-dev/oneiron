@@ -39,6 +39,7 @@ use crate::ports::EdgeDirection;
 use crate::registry::{ENTITY_TYPE_MESSAGE, ENTITY_TYPE_TURN};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::LegacyDigest;
 use oneiron_model::llm::{Scope, ScopeResource};
 
 mod attribution;
@@ -92,22 +93,21 @@ pub(crate) struct MessageSpan {
 impl MessageSpan {
     /// Folds every field into an identity hash. A slice with no source
     /// attribution folds exactly the bytes it folded before slices carried
-    /// one.
-    pub(crate) fn hash_into(&self, hasher: &mut blake3::Hasher) {
-        hasher.update(self.message.as_bytes());
-        hasher.update(&(self.start as u64).to_be_bytes());
-        hasher.update(&(self.end as u64).to_be_bytes());
-        hasher.update(&self.revision);
+    /// one. The evidence attachment id and source revision it feeds are
+    /// stored, so it keeps its bytes (K, PLAN-UC-04 3.4c).
+    pub(crate) fn hash_into(&self, hasher: &mut LegacyDigest) {
+        hasher
+            .raw(self.message.as_bytes())
+            .raw(&(self.start as u64).to_be_bytes())
+            .raw(&(self.end as u64).to_be_bytes())
+            .raw(&self.revision);
         if let Some(frontier) = &self.frontier {
-            hasher.update(&[1]);
-            hasher.update(&(frontier.len() as u64).to_be_bytes());
-            hasher.update(frontier);
+            hasher.raw(&[1]).len_u64_be(frontier.len()).raw(frontier);
         } else {
-            hasher.update(&[0]);
+            hasher.raw(&[0]);
         }
         if let Some(attribution) = &self.attribution {
-            hasher.update(b"source_attribution");
-            hasher.update(attribution);
+            hasher.raw(b"source_attribution").raw(attribution);
         }
     }
 }
