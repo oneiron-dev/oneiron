@@ -95,7 +95,11 @@ impl LoadedHistory {
 /// instead ([`slip_revoked`]): no image carries its body, and a walk that
 /// stopped at every uncarried one would undo agent privacy tightenings over
 /// an unrelated guest's revoke.
-const WALKED_KINDS: [&str; 2] = [OP_KIND_AGENT_GRANT_ACT, OP_KIND_MEMBERSHIP_EXECUTION];
+const WALKED_KINDS: [&str; 3] = [
+    OP_KIND_AGENT_GRANT_ACT,
+    OP_KIND_SLIP_GRANT_REVOKE,
+    OP_KIND_MEMBERSHIP_EXECUTION,
+];
 
 /// Whether a verified slip revocation withdrew `grant`, held here or covered
 /// by the adopted image: the fold keeps each Grant one withdrew (FIX 1978),
@@ -220,7 +224,7 @@ fn preserved_one(
     // A slip revocation of the Grant refuses the act, held or covered; a
     // covered mint, revoke or withdrawal whose body this vault cannot read
     // may be what refuses it: keep the NOW judgment.
-    if slip_revoked(fold, grant) || loaded.lacks_walked_body() {
+    if loaded.lacks_walked_body() {
         return Ok(None);
     }
     let world: EntityId = edit.world;

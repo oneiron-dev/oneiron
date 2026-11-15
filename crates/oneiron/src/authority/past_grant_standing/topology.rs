@@ -4,7 +4,7 @@
 //! its original caller; only the NOW-refused Grant can be preserved here.
 
 use super::super::*;
-use super::{external_for_grant_act, load_history, slip_revoked, transitive_ancestors};
+use super::{external_for_grant_act, load_history, transitive_ancestors};
 use crate::error::Result;
 use crate::store::Store;
 use std::collections::BTreeSet;
@@ -51,12 +51,6 @@ fn preserves(
         return Ok(false);
     };
     let loaded = load_history(store, txn)?;
-    // As the WorldPrivacy walk: a slip revocation of the Grant, held or
-    // covered, or a covered walked row this vault cannot read keeps the NOW
-    // judgment.
-    if slip_revoked(fold, grant) || loaded.lacks_walked_body() {
-        return Ok(false);
-    }
     let mut mints = Vec::new();
     let mut revokes = Vec::new();
     for (hash, entry) in &loaded.bodies {
