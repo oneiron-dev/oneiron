@@ -196,8 +196,6 @@ pub(super) fn strip_form_honeypot(
     }
 }
 
-/// Projects a non-`Continue` admission disposition onto an answer.
-///
 /// The facts a rung-2 send is judged on (INBOX-RESIDUE PR-3b-3b): the
 /// visitor's address, session and source, on the event type the session's
 /// turn solved. A send carries no form, slot or intake, so those signals stay
@@ -233,6 +231,8 @@ pub(super) fn rung2_send_facts(
     }
 }
 
+/// Projects a non-`Continue` admission disposition onto an answer.
+///
 /// `Continue` returns `None` and the executor proceeds. Every other
 /// disposition returns here, so a declined request reaches neither the parser,
 /// the oracle, nor the lifecycle.
