@@ -205,8 +205,14 @@ pub(crate) fn validate_response(
     }
     let signing_input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(tsa_alg, tsa_cert_der, &signing_input, &signer.signature)?;
-    let chain_ders = cms::chain_copy(&parsed.certificates, tsa_idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);
+    let chain_ders = cms::selected_chain_copy(
+        &parsed.certificates,
+        tsa_idx,
+        anchors,
+        gen_time_unix,
+        memory,
+    )?;
     // The verify path rejects a genTime ahead of the clock past the
     // documented skew (never clamps); the seal path must refuse the same
     // token here or the artifact fails its own mandatory self-verification.
@@ -364,8 +370,9 @@ pub(crate) fn validate_token_for_verify(
     }
     let input = cms::signed_attrs_signature_input(signer, memory)?;
     cms::verify_signature_value(alg, cert_der, &input, &signer.signature)?;
-    let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
     let gen_time_unix = generalized_time_unix(&tst);
+    let chain_ders =
+        cms::selected_chain_copy(&parsed.certificates, idx, anchors, gen_time_unix, memory)?;
     let slots = chain_ders
         .len()
         .saturating_mul(std::mem::size_of::<x509_cert::Certificate>());

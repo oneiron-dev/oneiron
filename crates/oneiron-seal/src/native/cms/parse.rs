@@ -2,13 +2,19 @@
 
 use std::mem::size_of;
 
+use der::{Decode, Encode};
+
 use crate::error::SealError;
 use crate::memory::{Held, LedgerHold, MemoryLedger, SealMemoryRefusal};
+use crate::native::held_bytes;
 
 use super::cms_err;
 use super::der::{DerReader, Tlv};
 use super::oids::{OID_ATTR_SIGNING_CERT_V2, OID_CT_TST_INFO, OID_DATA, OID_SIGNED_DATA};
-use super::policy::{ess_cert_id_v2, parse_attribute};
+use super::policy::{
+    cert_signature_algorithm, ess_cert_id_v2, parse_attribute, sig_alg_permitted,
+    verify_signature_value,
+};
 
 /// Why a CMS envelope or timestamp token was not validated: the token itself, or memory
 /// its copies and decodes were refused, which ends the operation as the
@@ -309,31 +315,199 @@ pub(crate) fn parse_cms(der: &[u8], memory: &MemoryLedger) -> Result<Held<Parsed
     Ok(Held::new(parsed, hold))
 }
 
-/// A copy of `certificates` as a chain, the one at `first` first and the
-/// others in their order, held on `memory` before it is made (FIX 12260).
+/// A copy of the certification path selected from `certificates` for the
+/// certificate at `first`, held on `memory` before it is made (FIX 12260).
+///
+/// A CMS certificate bag is a set, not a path: it may carry certificates
+/// that belong to no chain for this signer, and those are not copied.
+/// When an anchor can decide, the copy is pkix-chain's chosen path: its
+/// first path that validates at `at_unix`, or its topological path to an
+/// anchor when that path does not validate then. When no anchor-reachable
+/// path is chosen (for example a missing trust root, where the path check
+/// is NotRun), the copy is the candidate path that follows issuer links
+/// from `first` through the bag. Material outside the selected path must
+/// not change a genuine result (EN 319 102-1 §5.1.3, §5.2.6.4 step 4).
 ///
 /// # Errors
 /// The ledger's refusal.
-pub(crate) fn chain_copy(
+pub(crate) fn selected_chain_copy(
     certificates: &[Vec<u8>],
     first: usize,
+    anchors: &[pkix_chain::TrustAnchor],
+    at_unix: u64,
     memory: &MemoryLedger,
 ) -> Result<Held<Vec<Vec<u8>>>, SealMemoryRefusal> {
-    let bytes = certificates.iter().fold(
-        certificates.len().saturating_mul(size_of::<Vec<u8>>()),
-        |sum, der| sum.saturating_add(der.len()),
+    if certificates.get(first).is_none() {
+        return Ok(Held::new(Vec::new(), memory.hold(0)?));
+    }
+    // The bag decoded once, for path selection; its slots and decodes are
+    // held while they are read, as in the token validators (FIX 12260).
+    let slots = certificates
+        .len()
+        .saturating_mul(size_of::<Option<x509_cert::Certificate>>());
+    let _slots_held = memory.hold(slots)?;
+    let decoded: Vec<Option<x509_cert::Certificate>> = certificates
+        .iter()
+        .map(|der| x509_cert::Certificate::from_der(der).ok())
+        .collect();
+    let decoded_bytes = decoded
+        .iter()
+        .zip(certificates.iter())
+        .fold(0usize, |sum, (cert, der)| {
+            cert.as_ref().map_or(sum, |cert| {
+                sum.saturating_add(held_bytes::certificate(cert, der.len()))
+            })
+        });
+    let _decoded_held = memory.hold(decoded_bytes)?;
+    let selected = selected_indices(certificates, &decoded, first, anchors, at_unix, memory)?;
+    let bytes = selected.iter().fold(
+        selected.len().saturating_mul(size_of::<Vec<u8>>()),
+        |sum, idx| sum.saturating_add(certificates[*idx].len()),
     );
     let hold = memory.hold(bytes)?;
-    let mut chain = Vec::with_capacity(certificates.len());
-    chain.extend(certificates.get(first).cloned());
-    chain.extend(
-        certificates
+    let mut chain = Vec::with_capacity(selected.len());
+    chain.extend(selected.iter().map(|idx| certificates[*idx].clone()));
+    Ok(Held::new(chain, hold))
+}
+
+/// The indices in `certificates` of the path [`selected_chain_copy`]
+/// copies, leaf (`first`) first.
+fn selected_indices(
+    certificates: &[Vec<u8>],
+    decoded: &[Option<x509_cert::Certificate>],
+    first: usize,
+    anchors: &[pkix_chain::TrustAnchor],
+    at_unix: u64,
+    memory: &MemoryLedger,
+) -> Result<Vec<usize>, SealMemoryRefusal> {
+    let Some(leaf) = decoded.get(first).and_then(Option::as_ref) else {
+        return Ok(vec![first]);
+    };
+    if !anchors.is_empty() {
+        let pool: pkix_chain::pkix_path_builder::CertPool =
+            decoded.iter().filter_map(Option::as_ref).cloned().collect();
+        let policy = pkix_chain::ValidationPolicy::new(at_unix);
+        if let Ok(path) = pkix_chain::pkix_path_builder::build_first_valid_path(
+            leaf,
+            &pool,
+            anchors,
+            &policy,
+            &pkix_chain::DefaultVerifier,
+        ) {
+            if let Some(indices) = path_indices(certificates, &path, first) {
+                return Ok(indices);
+            }
+        }
+        if let Ok(path) = pkix_chain::pkix_path_builder::build_path(leaf, &pool, anchors) {
+            if let Some(indices) = path_indices(certificates, &path, first) {
+                return Ok(indices);
+            }
+        }
+    }
+    // No anchor chose a path: follow issuer links from the leaf. A
+    // key-bound issuer (its key signed the certificate) always wins; a
+    // name match is the candidate only when no candidate key verifies,
+    // as with a signature suite this crate does not verify itself, and
+    // pkix-chain still judges the candidate when an anchor is present.
+    let mut selected = vec![first];
+    let mut current = first;
+    loop {
+        let Some(cert) = decoded.get(current).and_then(Option::as_ref) else {
+            break;
+        };
+        if cert_issued_by(cert, cert, &certificates[current], memory)? {
+            break; // self-signed: the end of its candidate path
+        }
+        let mut issuer = None;
+        for (idx, cand) in decoded.iter().enumerate() {
+            if selected.contains(&idx) {
+                continue;
+            }
+            let Some(cand) = cand.as_ref() else {
+                continue;
+            };
+            if cert_issued_by(cert, cand, &certificates[idx], memory)? {
+                issuer = Some(idx);
+                break;
+            }
+        }
+        if issuer.is_none() {
+            for (idx, cand) in decoded.iter().enumerate() {
+                if selected.contains(&idx) {
+                    continue;
+                }
+                let Some(cand) = cand.as_ref() else {
+                    continue;
+                };
+                if cand.tbs_certificate.subject == cert.tbs_certificate.issuer {
+                    issuer = Some(idx);
+                    break;
+                }
+            }
+        }
+        let Some(idx) = issuer else {
+            break;
+        };
+        selected.push(idx);
+        current = idx;
+    }
+    Ok(selected)
+}
+
+/// `path` as indices into `certificates`, matched by DER encoding, when
+/// every certificate of the path came from the bag and the leaf is first.
+fn path_indices(
+    certificates: &[Vec<u8>],
+    path: &[x509_cert::Certificate],
+    first: usize,
+) -> Option<Vec<usize>> {
+    if path.is_empty() {
+        return None;
+    }
+    let mut indices = Vec::with_capacity(path.len());
+    for cert in path {
+        let der = cert.to_der().ok()?;
+        let idx = certificates
             .iter()
             .enumerate()
-            .filter(|(i, _)| *i != first)
-            .map(|(_, der)| der.clone()),
-    );
-    Ok(Held::new(chain, hold))
+            .find_map(|(idx, cand)| (!indices.contains(&idx) && cand == &der).then_some(idx))?;
+        indices.push(idx);
+    }
+    (indices.first() == Some(&first)).then_some(indices)
+}
+
+/// Whether `issuer` issued `cert`: issuer-name match and `cert`'s
+/// signature verifies under `issuer`'s key with a permitted algorithm, as
+/// in the verifier's revocation binding. The TBS encoding made here is
+/// held on `memory` first (FIX 12260).
+fn cert_issued_by(
+    cert: &x509_cert::Certificate,
+    issuer: &x509_cert::Certificate,
+    issuer_der: &[u8],
+    memory: &MemoryLedger,
+) -> Result<bool, SealMemoryRefusal> {
+    if cert.tbs_certificate.issuer != issuer.tbs_certificate.subject {
+        return Ok(false);
+    }
+    let Ok(alg) = cert_signature_algorithm(issuer_der) else {
+        return Ok(false);
+    };
+    if !sig_alg_permitted(alg, cert.signature_algorithm.oid.as_bytes()) {
+        return Ok(false);
+    }
+    let Some(tbs_len) = cert
+        .tbs_certificate
+        .encoded_len()
+        .ok()
+        .and_then(|len| usize::try_from(len).ok())
+    else {
+        return Ok(false);
+    };
+    let _tbs_held = memory.hold(tbs_len)?;
+    let Ok(tbs) = cert.tbs_certificate.to_der() else {
+        return Ok(false);
+    };
+    Ok(verify_signature_value(alg, issuer_der, &tbs, cert.signature.raw_bytes()).is_ok())
 }
 
 /// Rebuild the RFC 5652 §5.4 signature input from parsed signed attributes:

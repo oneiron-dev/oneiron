@@ -469,9 +469,11 @@ pub(super) fn unpadded_cms(contents: &[u8]) -> Option<&[u8]> {
     Some(first.full)
 }
 
-/// Verify one CAdES-detached signature dictionary. On a parseable envelope
-/// the CMS certificate set is recorded in `covered` so the DSS binding can
-/// require the validation material to speak about this chain (§7.5 step 3).
+/// Verify one CAdES-detached signature dictionary. Once the signer
+/// certificate is identified, its selected certification path is recorded
+/// in `covered` so the DSS binding can require the validation material to
+/// speak about that path, and no other certificate of the CMS bag (§7.5
+/// step 3).
 /// The CMS parse, its certificates' copies and the signer chain are held on
 /// `memory` (FIX 12260); memory refused is `Err`, never a verdict.
 #[allow(clippy::too_many_lines)]
@@ -556,11 +558,6 @@ pub(super) fn verify_cades_sig(
             timestamp,
         });
     };
-    EmbeddedCert::extend_admitted(
-        covered,
-        parsed.certificates.iter().map(Vec::as_slice),
-        memory,
-    )?;
     verify_signer(ctx, anchors, checks, &parsed, spans_digest, covered, memory)
 }
 
@@ -643,7 +640,18 @@ fn verify_signer(
         VerifyFindingCode::SignatureMismatch,
     )?;
     let timestamp = verify_ts_token(ctx.clock_ms, signer, anchors, checks, covered, memory)?;
-    let chain_ders = cms::chain_copy(&parsed.certificates, idx, memory)?;
+    // Only the path selected for this signer joins the DSS binding set:
+    // an unrelated certificate the CMS bag carries is on no path and must
+    // not need revocation coverage of its own. A trusted signature
+    // timestamp fixes the time at which the path is selected, as it does
+    // for signer path validation; otherwise the verify clock does.
+    let path_at_unix = timestamp
+        .trusted
+        .as_ref()
+        .map_or(ctx.clock_ms / 1000, |token| token.gen_time);
+    let chain_ders =
+        cms::selected_chain_copy(&parsed.certificates, idx, anchors, path_at_unix, memory)?;
+    EmbeddedCert::extend_admitted(covered, chain_ders.iter().map(Vec::as_slice), memory)?;
     Ok(CadesEvidence {
         signer_chain: Some(chain_ders),
         timestamp,
