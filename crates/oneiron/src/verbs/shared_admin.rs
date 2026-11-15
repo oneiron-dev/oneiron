@@ -1,6 +1,7 @@
 //! Named organization administration, one-hop Delegate grants and scoped member projections.
 use serde::{Deserialize, Serialize};
 
+use crate::authority::ActSurface;
 use crate::claim::{ClaimReadStatus, PointRead};
 use crate::consent::AuthenticatedOwner;
 use crate::federation::{
@@ -12,6 +13,8 @@ use crate::memory::{
 };
 use crate::ports::EntityStoreRead;
 use crate::{EntityId, Vault};
+use oneiron_authority::authority::Direction;
+use std::collections::BTreeSet;
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -32,11 +35,24 @@ pub struct OrgAdminAmendRequest {
     pub policy: OrgAdminPolicy,
 }
 
+/// The amend as it landed: what it changed, and whether that widens the
+/// setup.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct OrgAdminAmended {
     pub org_ref: EntityId,
     /// Whether the stored setup changed: an amend equal to it writes nothing.
     pub amended: bool,
+    /// The Admins the amend seated.
+    pub added_admins: BTreeSet<EntityId>,
+    /// The Admins the amend unseated.
+    pub removed_admins: BTreeSet<EntityId>,
+    /// The named powers the amend added.
+    pub added_powers: BTreeSet<OrgAdminPower>,
+    /// The named powers the amend dropped.
+    pub dropped_powers: BTreeSet<OrgAdminPower>,
+    /// Whether the amend widens the setup (it seats an Admin or adds a
+    /// power): a loosening, which the owner confirm sheet asks for.
+    pub widens: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -139,18 +155,27 @@ pub fn configure_org_admin_as_owner(
 }
 
 /// `vault.org_admin.amend`: the owner replaces a stored setup's Admins and
-/// named powers (RULING ORG-ADMIN-SETUP-AMEND = B, the lead 16 Nov 02:1x).
+/// named powers (RULING ORG-ADMIN-SETUP-AMEND = B, the lead 16 Nov 02:1x),
+/// from `surface` (audit only). The answer names what changed (RULING
+/// ORG-ADMIN-AMEND-CONFIRM-RECEIPT = A).
 pub fn amend_org_admin_as_owner(
     vault: &Vault,
     owner: &AuthenticatedOwner,
+    surface: ActSurface,
     input: OrgAdminAmendRequest,
 ) -> MemoryResult<OrgAdminAmended> {
-    let amended = vault
-        .amend_org_admin_as_owner(owner, &input.policy)
+    let amendment = vault
+        .amend_org_admin_as_owner(owner, surface, &input.policy)
         .map_err(org_error)?;
+    let change = amendment.change;
     Ok(OrgAdminAmended {
         org_ref: input.policy.org_ref(),
-        amended,
+        amended: !change.is_empty(),
+        added_admins: change.added_admins,
+        removed_admins: change.removed_admins,
+        added_powers: change.added_powers,
+        dropped_powers: change.dropped_powers,
+        widens: amendment.direction == Direction::Widens,
     })
 }
 

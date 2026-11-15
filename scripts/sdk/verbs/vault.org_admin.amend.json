@@ -3,9 +3,10 @@
   "description": "The owner amends an organization's stored Admin setup: it replaces the Admin identities and the named powers, adding or dropping either; no Admin or agent can amend it.",
   "input": "crate::task_verb::sdk::OrgAdminAmendRequest",
   "output": "crate::task_verb::sdk::OrgAdminAmended",
-  "call": "crate::task_verb::sdk::amend_org_admin_as_owner(memory.vault(), &memory.embedded_owner(\"vault.org_admin.amend\")?, input)?",
+  "call": "crate::task_verb::sdk::amend_org_admin_as_owner(memory.vault(), &memory.embedded_owner(\"vault.org_admin.amend\")?, crate::authority::ActSurface::ThisInstall, input)?",
   "host_door": true,
   "host_door_lists": true,
+  "host_door_surface": true,
   "scope": "Write",
   "act_class": "grant_widen",
   "admission": {

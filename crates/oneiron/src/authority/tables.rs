@@ -69,6 +69,11 @@ crate::side_table::side_tables! {
     /// Key: hex32 (org_ref).
     ORG_ADMIN_POLICY: VaultMeta b"org.admin.v1." LegacyJson
         [restore: refuse "org admin grants"] [family: unclassified] [tier: canonical];
+    /// The owner's amend of an organization's stored setup, in the write that changed it (RULING
+    /// ORG-ADMIN-AMEND-CONFIRM-RECEIPT = A). Writer-trusted local receipt, not a signed op.
+    /// Key: u64be(sequence).
+    ORG_ADMIN_AMEND_ACT: VaultMeta b"settings:owner_act_org_admin_amend:v1:" Named
+        [restore: live] [family: unclassified] [tier: canonical];
     /// One holder's delivery of one export-first removal archive: the delivery version it was
     /// last sent and the one it acknowledged, never the archive (FIX 3215, 3396). Key: hex32
     /// (removed person) ":" hex32 (receipt id) ":" hex64 (holder binding key).

@@ -15,6 +15,9 @@
 //! The owner's amend (RULING ORG-ADMIN-SETUP-AMEND, the lead 16 Nov 02:1x =
 //! B): `vault.org_admin.amend` replaces a stored setup's Admins and named
 //! powers, and may add a power the setup lacks; no Admin or agent can amend.
+//! The amend's answer names the Admins and powers it added and took away,
+//! and whether it widens the setup (RULING ORG-ADMIN-AMEND-CONFIRM-RECEIPT =
+//! A, Engine 16 Nov 02:27; its receipt is `org_admin_amend_receipt`'s).
 //! The amend rows call the verb by name as the embedded owner, so on a tree
 //! without it each fails at run time as an unknown verb; an Admin's or an
 //! agent's amend is refused on both trees.
@@ -488,4 +491,64 @@ fn only_the_owner_amends_the_setup() {
         vec![OrgAdminPower::AddMember],
         "the refused amends add no power"
     );
+}
+
+/// RULING ORG-ADMIN-AMEND-CONFIRM-RECEIPT = A: the answer names what the
+/// amend changed, and an amend that seats an Admin or adds a power widens.
+#[test]
+fn an_amend_names_what_it_changed_and_that_it_widens() {
+    let org = owned_org();
+    let named = org.newcomer();
+    org.configure(org.org, &[org.admin], &[OrgAdminPower::AddMember]);
+    let amended = org
+        .amend(
+            &[named],
+            &[OrgAdminPower::AddMember, OrgAdminPower::AssignRole],
+        )
+        .expect("the owner's amend lands");
+    assert_eq!(amended["amended"], json!(true), "{amended}");
+    assert_eq!(amended["added_admins"], json!([named]), "{amended}");
+    assert_eq!(amended["removed_admins"], json!([org.admin]), "{amended}");
+    assert_eq!(
+        amended["added_powers"],
+        json!([OrgAdminPower::AssignRole]),
+        "{amended}"
+    );
+    assert_eq!(amended["dropped_powers"], json!([]), "{amended}");
+    assert_eq!(amended["widens"], json!(true), "{amended}");
+}
+
+/// An amend that only unseats an Admin and drops a power narrows, so it is
+/// not marked as widening; an amend equal to the stored setup changes
+/// nothing.
+#[test]
+fn a_narrowing_amend_is_not_marked_as_widening() {
+    let org = owned_org();
+    let named = org.newcomer();
+    org.configure(
+        org.org,
+        &[org.admin, named],
+        &[OrgAdminPower::AddMember, OrgAdminPower::AssignRole],
+    );
+    let narrowed = org
+        .amend(&[org.admin], &[OrgAdminPower::AddMember])
+        .expect("the owner's narrowing amend lands");
+    assert_eq!(narrowed["amended"], json!(true), "{narrowed}");
+    assert_eq!(narrowed["added_admins"], json!([]), "{narrowed}");
+    assert_eq!(narrowed["removed_admins"], json!([named]), "{narrowed}");
+    assert_eq!(narrowed["added_powers"], json!([]), "{narrowed}");
+    assert_eq!(
+        narrowed["dropped_powers"],
+        json!([OrgAdminPower::AssignRole]),
+        "{narrowed}"
+    );
+    assert_eq!(narrowed["widens"], json!(false), "{narrowed}");
+
+    let same = org
+        .amend(&[org.admin], &[OrgAdminPower::AddMember])
+        .expect("an amend equal to the stored setup");
+    assert_eq!(same["amended"], json!(false), "{same}");
+    assert_eq!(same["removed_admins"], json!([]), "{same}");
+    assert_eq!(same["dropped_powers"], json!([]), "{same}");
+    assert_eq!(same["widens"], json!(false), "{same}");
 }
