@@ -184,6 +184,15 @@ pub struct MemoryError {
     /// of `message`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub successor_short_id: Option<String>,
+    /// The native layout behind a bound extraction's `BAD_REQUEST` layout refusal.
+    ///
+    /// A job resubmits by this typed field and never parses `message`.
+    /// Boxed for the same reason `gate_denial` is: `MemoryError` is the `Err`
+    /// half of hundreds of `MemoryResult` returns by value, so an absent layout
+    /// must not add an inline payload to every return. The box is invisible
+    /// on the wire; `Option<Box<T>>` and `Option<T>` serialize identically.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extraction_layout: Option<Box<ExtractionLayout>>,
     /// The typed Gate denial behind a `FORBIDDEN` refusal, present only when
     /// the engine error was [`GateError::GateWriteRejected`](crate::error::GateError::GateWriteRejected) (ONE-1686).
     ///
@@ -250,6 +259,32 @@ pub struct MemoryError {
     pub room_join_hold: Option<Box<crate::room_join::RoomJoinHold>>,
 }
 
+/// The native layout a layout refusal carries instead of prose (untangle
+/// 6.9e e2f.2): which native slices the cited TURNs form, in native order.
+/// The tag leaves room for later variants: a later leaf (e2f.3) pins the
+/// bound read's page layout beside the step slices.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExtractionLayout {
+    /// The cited TURNs grouped exactly as native's `extraction_slices`
+    /// groups them: one row per native slice, in native order.
+    StepSlices {
+        /// One row per native slice, in native order.
+        slices: Vec<ExtractionStepSlice>,
+    },
+}
+
+/// One native slice of a bound extraction step's cited TURNs: the request
+/// positions it holds and the listing pages it spans.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExtractionStepSlice {
+    /// The positions in the request's evidence that fall in this slice, ascending.
+    pub evidence: Vec<usize>,
+    /// How many listing pages this slice spans.
+    pub pages: usize,
+}
+
 /// A wrong-root refusal's correction: the name the caller wrote, the
 /// canonical name to call instead, and where that verb's schema lives.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -285,6 +320,7 @@ impl MemoryError {
             message: message.into(),
             suggestions: suggestions.iter().map(|s| (*s).to_owned()).collect(),
             successor_short_id: None,
+            extraction_layout: None,
             gate_denial: None,
             read_receipt: None,
             policy_denial: None,

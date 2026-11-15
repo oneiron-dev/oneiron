@@ -249,3 +249,53 @@ pub(crate) async fn execute_bound_step(
     }
     Ok(receipt)
 }
+
+/// Returns the native slice turns with transcripts for `turns` of
+/// `attempt`, in native slice order, for bound-step parity tests.
+///
+/// The helper prepares the queued attempt the way native extraction
+/// does, opens its branch, and slices the given TURNs natively with
+/// `material` on the wake, so each transcript leads with the shared
+/// material prefix. Tests compare the bound request text against the
+/// matching slice transcript, mapping native order to request evidence
+/// positions through the turns.
+///
+/// # Errors
+///
+/// A missing queue record, an unprepared branch, the branch opening
+/// failures, or the native slicing failures.
+#[cfg(oneiron_test_support)]
+pub(crate) fn native_slice_transcripts_for_test(
+    vault: &crate::Vault,
+    attempt: crate::attempt_queue::AttemptId,
+    turns: &[EntityId],
+    material: &[String],
+) -> MemoryResult<Vec<(Vec<EntityId>, String)>> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    let attempt_entity = EntityId::from_bytes(*attempt.as_bytes()).map_err(crate::Error::from)?;
+    let (scope, _) =
+        crate::snapshot_read::queued_extraction_branch_in_txn(vault, &txn, attempt_entity)?;
+    drop(txn);
+    let wake = super::wake_plan::PreparedWake::prepare_one(vault, scope, None, attempt)
+        .map_err(MemoryError::from)?;
+    let plan = match wake.preparation(attempt) {
+        Some(super::wake_plan::AttemptPreparation::Ready(plan)) => plan.clone(),
+        _ => {
+            return Err(MemoryError::bad_request(
+                "the test attempt prepared no branch",
+            ));
+        }
+    };
+    let wake = wake.with_hook_material(material.to_vec());
+    let actor = vault.dreamer_authority().map_err(MemoryError::from)?;
+    let resources = super::resources::BranchResources::open_prepared(vault, actor, &plan, &wake)
+        .map_err(MemoryError::from)?;
+    let config = vault.consolidation_selection().map_err(MemoryError::from)?;
+    let (slices, _) = resources
+        .extraction_slices(turns, config.extraction_turns_per_child)
+        .map_err(MemoryError::from)?;
+    Ok(slices
+        .into_iter()
+        .map(|slice| (slice.turns, slice.transcript))
+        .collect())
+}
