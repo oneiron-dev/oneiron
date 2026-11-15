@@ -44,11 +44,13 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 }
 
 /// The vault's host: a hosted node, rooted, whose install carries the
-/// owner's acts, as every live machine profile of the vault does.
+/// owner's acts, as every live machine profile of the vault does. Its handle
+/// holds the self-host root as a serving host does, so those acts are proven
+/// (row CARRIER-OWNER-PROOF).
 struct Host {
     _dir: tempfile::TempDir,
     vault: Vault,
-    _issuer: HostSlipIssuer,
+    _issuer: Arc<HostSlipIssuer>,
     owner: AuthenticatedOwner,
     vault_id: [u8; 32],
 }
@@ -63,6 +65,8 @@ fn host() -> Host {
         .expect("the hosted node's live machine profile");
     let person = vault.ensure_embedded_owner_actor().expect("the owner");
     bind_host_owner(&vault, &issuer, person).expect("the owner's binding");
+    let issuer = Arc::new(issuer);
+    vault.hold_checkpoint_root_signer(issuer.clone());
     let owner = proof(&vault, person);
     let vault_id = vault
         .authority_fold()

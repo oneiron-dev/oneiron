@@ -24,7 +24,9 @@ pub(crate) fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 }
 
 /// A rooted vault as a host starts one: the owner bound, this install
-/// profiled. Its directory, the vault, its owner and the owner's proof.
+/// profiled, and the handle holding the host's root as a serving host does,
+/// so the owner acts it carries are proven (row CARRIER-OWNER-PROOF). Its
+/// directory, the vault, its owner and the owner's proof.
 pub(crate) fn rooted() -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwner) {
     let dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(dir.path(), VaultConfig::device()).expect("open vault");
@@ -36,6 +38,7 @@ pub(crate) fn rooted() -> (tempfile::TempDir, Vault, EntityId, AuthenticatedOwne
     let owner = vault.ensure_embedded_owner_actor().expect("embedded owner");
     oneiron::test_support::bind_host_owner(&vault, &issuer, owner).expect("the owner's binding");
     let owner_proof = proof(&vault, owner);
+    vault.hold_checkpoint_root_signer(Arc::new(issuer));
     (dir, vault, owner, owner_proof)
 }
 
