@@ -497,10 +497,14 @@ pub(crate) fn active_brief_shares_for(
 }
 
 fn verify_share_actor(store: &Store, txn: &heed::RoTxn<'_>, actor: &WriteActor) -> Result<()> {
-    let raw = store
-        .port_entity_record(txn, &actor.entity_ref())?
-        .ok_or(Error::EntityNotFound)?;
-    crate::provenance::validate_actor_class(raw.entity_type, actor.actor_class())
+    // A deleted shell keeps its header and type byte, so the raw row alone
+    // would admit a deleted issuer; only a live row names one.
+    let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+        crate::vault::live_entity_row_in_txn(store, txn, &actor.entity_ref())?
+    else {
+        return Err(Error::EntityNotFound);
+    };
+    crate::provenance::validate_actor_class(entity_type, actor.actor_class())
 }
 
 // PERSON admits both human and agent. Only a live, verified authority binding

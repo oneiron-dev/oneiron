@@ -1,9 +1,7 @@
 //! Transaction-bound actor authorization for engine-owned write doors.
 
-use crate::batch::EntityMetadataHeader;
 use crate::edge::EdgeActorClass;
 use crate::error::{Error, Result};
-use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_AGENT_DEF;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Vault};
@@ -226,16 +224,15 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         writer: &WriteActor,
     ) -> Result<AuthorityFold> {
-        let raw = self
-            .store
-            .port_entity_record(txn, &writer.entity_ref())?
-            .map(|row| row.encode())
-            .ok_or(Error::InvalidClaimBody(
+        // A deleted shell keeps its header and type byte, so the raw row
+        // alone would admit a deleted writer; only a live row names one.
+        let crate::vault::LiveEntityRow::Live { entity_type, .. } =
+            crate::vault::live_entity_row_in_txn(&self.store, txn, &writer.entity_ref())?
+        else {
+            return Err(Error::InvalidClaimBody(
                 "writer must name a live authority-bearing entity",
-            ))?;
-        let entity_type = EntityMetadataHeader::parse(&raw)
-            .ok_or(Error::CorruptedIndex("writer entity header"))?
-            .entity_type;
+            ));
+        };
         crate::provenance::validate_actor_class(entity_type, writer.actor_class())?;
         let fold = self.authority_fold_readonly_in_txn(txn)?;
         if fold.vault_root_is_conflicted() {
