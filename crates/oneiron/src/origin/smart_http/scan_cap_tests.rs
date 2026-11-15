@@ -167,7 +167,7 @@ fn no_origin_scan_refuses_for_its_row_count() {
                             OriginKeepRefKind::Snapshot,
                             &format!("snapshot-{index}"),
                             &commit,
-                            now_secs(),
+                            crate::unix_seconds_now(),
                         )
                         .expect("pin");
                 }
@@ -186,7 +186,12 @@ fn no_origin_scan_refuses_for_its_row_count() {
                     .published_origin_refs(&wire, *repo_id, handle)
                     .map(|refs| refs.len()),
                 Door::Census(repo_id, handle) => vault
-                    .reconcile_origin_publications(&wire, *repo_id, handle, now_secs())
+                    .reconcile_origin_publications(
+                        &wire,
+                        *repo_id,
+                        handle,
+                        crate::unix_seconds_now(),
+                    )
                     .map(|_| past),
             };
             match read {
