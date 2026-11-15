@@ -22,9 +22,11 @@ crate::side_table::side_tables! {
     /// left cached (when its send went out, its lifetime, its tokens, the model that answered),
     /// the parked attempt, the run's agent and the due time in unix milliseconds. Written right
     /// after the park, gone once the call is made or the wait closes. Ids, times and counts
-    /// only, no body. Key: id16(run) + id16(wait) + generation u64 BE.
+    /// only, no body. This node's own working state: the provider holds the prefix for this
+    /// runtime's calls only, so no image carries the row, and a restore never plants a call for
+    /// a prefix long gone. Key: id16(run) + id16(wait) + generation u64 BE.
     IDLE_FOLD_DUE: VaultMeta b"idle_fold:due:v1:" Named
-        [restore: content] [family: unclassified] [tier: canonical];
+        [restore: not_imaged] [family: not_imaged] [tier: runtime];
     /// The idle call each parked wait got (L2-37 PR-2): Fold, with the folds it landed and the
     /// prompt tokens their bodies held, or Expire, and when, for the replay check. Observations,
     /// no body. Key: id16(run) + id16(wait) + generation u64 BE.

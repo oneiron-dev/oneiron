@@ -23,7 +23,7 @@ use crate::attempt_queue::AttemptId;
 use crate::code_run::WaitKey;
 use crate::engine_executor::ParkedKindFolds;
 use crate::llm::{LlmUsage, ModelId, ServedCacheHorizon};
-use crate::side_table::{self, Named, SideTable};
+use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, Result, Vault};
 
 /// A parked wait's due idle call. Key: the wait's own row key (run, wait, generation).
@@ -125,29 +125,41 @@ pub fn record_cache_horizon(
 /// with none due. A row that does not decode is skipped.
 pub fn next_idle_call_due_ms(vault: &Vault) -> Result<Option<u64>> {
     let txn = vault.store.env.read_txn()?;
-    let mut next: Option<u64> = None;
-    for key in DUE.scan_keys(&vault.store, &txn, &[])? {
-        if let Some(due) = DUE.get_lenient(&vault.store, &txn, &key)? {
-            next = Some(next.map_or(due.due_ms, |at| at.min(due.due_ms)));
-        }
+    Ok(due_rows(vault, &txn)?
+        .into_iter()
+        .filter_map(|(_, due)| due.map(|due| due.due_ms))
+        .min())
+}
+
+/// Every due row: its wait, and its call or `None` for a value that does not decode. A key that
+/// does not decode names no wait and is skipped, so one damaged row never stops a pass.
+fn due_rows(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<(WaitKey, Option<IdleFoldDue>)>> {
+    let mut rows = Vec::new();
+    for raw in DUE.iter_raw_from(&vault.store, txn, &[])? {
+        let (key, value) = raw?;
+        let Some((run, wait_id, generation)) = <(EntityId, EntityId, u64)>::decode_key(&key) else {
+            continue;
+        };
+        let wait = WaitKey {
+            run,
+            wait_id,
+            generation,
+        };
+        rows.push((wait, DUE.decode_value(&value).ok()));
     }
-    Ok(next)
+    Ok(rows)
 }
 
 /// Makes every idle call due at `now_ms`, one per due row, and returns how many it made. Each is
 /// recorded in IDLE_FOLD_CALLS and its due row goes. A call that fails is logged and its due row
-/// dropped, so it never blocks a later pass; its wait reads as Expire. No model is called.
+/// dropped, so it never blocks a later pass; its wait reads as Expire, as does a row that does
+/// not decode. No model is called.
 pub fn run_due_idle_calls(vault: &Vault, now_ms: u64) -> Result<usize> {
     let (due, undecodable) = {
         let txn = vault.store.env.read_txn()?;
         let (mut due, mut undecodable) = (Vec::new(), Vec::new());
-        for (run, wait_id, generation) in DUE.scan_keys(&vault.store, &txn, &[])? {
-            let key = WaitKey {
-                run,
-                wait_id,
-                generation,
-            };
-            match DUE.get_lenient(&vault.store, &txn, &row(&key))? {
+        for (key, call) in due_rows(vault, &txn)? {
+            match call {
                 Some(call) if call.due_ms <= now_ms => due.push((key, call)),
                 Some(_) => {}
                 None => undecodable.push(key),
