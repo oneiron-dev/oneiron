@@ -99,7 +99,7 @@ pub(super) fn retrieval_quality_success_snapshot() -> String {
         body["quality"] = json!("passthrough");
         body["confidence_adjustment"] = json!(-0.35);
         if let Some(empty) = body.get_mut("empty") {
-            empty["retrievalQuality"] = json!({
+            empty["retrieval_quality"] = json!({
                 "quality": "passthrough", "confidenceAdjustment": -0.35,
             });
         }
