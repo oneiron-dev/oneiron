@@ -5,10 +5,12 @@ use serde::{Deserialize, Serialize};
 use oneiron_setting_contract::RowKey;
 
 use super::change::record_change_in_txn;
-use super::read::{StoredRow, in_force_in_txn, load_in_txn, names_subject, table_of};
+use super::read::{
+    StoredRow, in_force_in_txn, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
+};
 use super::{
     EncodedValue, Restore, SetBy, Setter, SettingChange, SettingMode, SettingScope, SettingSpec,
-    spec_named,
+    set_line, spec_named,
 };
 use crate::Vault;
 use crate::batch::secret_scan::admit_typed;
@@ -135,11 +137,14 @@ impl Vault {
     /// key's hook. Once the write commits, an applied change runs the key's `after_commit`.
     ///
     /// - The owner sets every key, a pin included.
+    /// - An agent whose live owner Grant lists the key's own line (`settings.set:<key>`,
+    ///   vault-wide) sets any value row of that key as the owner does, with no ask and no bound;
+    ///   its row counts as the owner's. Never a pin.
     /// - An agent sets a value row of a key of class `c` while it holds a live `engine.controls`
     ///   grant for `c`, and a value row about itself on a key set by its subject. It never
     ///   replaces a row the owner set. On a key that names its tighter direction, a holder's value
-    ///   stays inside the owner's nearest row at that scope or wider, and a subject's is no looser
-    ///   than the value in force.
+    ///   stays inside the owner's nearest row at that scope or wider, or inside the catalogue
+    ///   default where the owner set none, and a subject's is no looser than the value in force.
     /// - Any other change by an agent, a pin or a change under an owner's pin among them, waits
     ///   on a check-in under the agent's own live owner Grant that lists `vault.settings.set`:
     ///   the door opens it and answers [`SetSettingOutcome::Pending`]; the same change again,
@@ -405,6 +410,10 @@ fn agent_power_in_txn(
     if change.key.mode == SettingMode::Pin {
         return Ok(None);
     }
+    if let Some(grant) = key_line_grant_in_txn(vault, txn, agent, &set_line(spec.name))? {
+        // The key's own Grant line hands the owner's act on its value rows over: no bound.
+        return Ok(Some(Setter::KeyGrant { grant }));
+    }
     let setter = match spec.set_by {
         SetBy::Class(class) => vault
             .engine_controls_grant_in(txn, agent, class)?
@@ -437,7 +446,8 @@ fn person_power_in_txn(
 
 /// `setter` when the rows in force leave it room for `change`, else `None`: no owner's pin on
 /// the chain, no row the owner set in its place, and on a key that names its tighter direction a
-/// holder's value inside the owner's nearest row, a subject's no looser than the value in force.
+/// holder's value inside the owner's nearest row, or inside the catalogue default where the owner
+/// set none (a holder never raises a key past it), a subject's no looser than the value in force.
 fn bounded_power_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
@@ -476,17 +486,24 @@ fn bounded_power_in_txn(
             let (in_force, _, _) = in_force_in_txn(&vault.store, txn, spec, &chain, item)?;
             spec.kind.is_tighter(value, &in_force).unwrap_or(false)
         }
-        _ => loaded
-            .iter()
-            .filter(|row| row.found.mode == SettingMode::Value && row.found.by_owner)
-            .min_by_key(|row| (row.found.at, !row.found.item))
-            .is_none_or(|cap| {
-                cap.found
+        _ => {
+            let cap = loaded
+                .iter()
+                .filter(|row| row.found.mode == SettingMode::Value && row.found.by_owner)
+                .min_by_key(|row| (row.found.at, !row.found.item));
+            match cap {
+                Some(cap) => cap
+                    .found
                     .value
                     .as_ref()
                     .and_then(|cap| spec.kind.is_tighter(value, cap))
-                    .unwrap_or(false)
-            }),
+                    .unwrap_or(false),
+                None => spec
+                    .kind
+                    .is_tighter(value, &spec.kind.default_value()?)
+                    .unwrap_or(false),
+            }
+        }
     };
     Ok(within.then_some(setter))
 }
