@@ -372,21 +372,28 @@ pub(super) fn settle_tail(
 /// fold reads it for its image (`fold_resume::ImageFold`), from the rows it
 /// judges (`fold_engine::judged_entries`) in hash order: the image's carried
 /// bodies (it carries each genesis, enrollment, rotation, re-root, owner key
-/// enrollment, root record and machine profile whole; every row a clean image
-/// covers folded valid) and the judged tail ([`judged_tail`]). A tail row that
-/// hangs off another world's side row admits no key here, as in the whole
-/// fold, though the store door, which reads raw rows, counts it (Astra
-/// foldpast4 P2). A rotation, an enrollment or a re-root an admitter signed
-/// admits its owner key there whether or not the fold applies the row, as in
-/// the whole history. None where a key only the tail admits signed a covered
-/// slip row: that row would leave the counted ancestry, which only the whole
-/// history counts again.
+/// enrollment, root record and machine profile whole) and the judged tail
+/// ([`judged_tail`]). A row that hangs off another world's side row admits no
+/// key here, as in the whole fold, though the store door, which reads raw
+/// rows, counts it: a tail row (Astra foldpast4 P2), or a carried row of an
+/// image with issues, which a tail of rows
+/// [`crate::authority::fold_resume::admits_past`] takes, such as agent
+/// enrollments, still folds past (Spark r5 P2). A rotation, an enrollment or
+/// a re-root an admitter signed admits its owner key there whether or not the
+/// fold applies the row, as in the whole history. None where a key only the
+/// tail admits signed a covered slip row: that row would leave the counted
+/// ancestry, which only the whole history counts again.
 fn tail_issuers(
     image: &AuthorityCheckpointV2,
     carried: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
 ) -> Option<BTreeSet<AuthorityKey>> {
-    let rows: BTreeMap<_, _> = carried.iter().chain(judged).collect();
+    let covered_world = |hash: &AuthorityEntryHash| image.rows.get(hash).and_then(|row| row.world);
+    let rows: BTreeMap<_, _> = carried
+        .iter()
+        .filter(|(_, entry)| !hangs_off_another_world(entry, &covered_world))
+        .chain(judged)
+        .collect();
     let mut issuers =
         crate::authority::log_structure::authority_structure(rows.values().copied()).issuers;
     // Nothing leaves the set.
@@ -421,13 +428,7 @@ fn judged_tail(
     };
     let violations: Vec<_> = judged
         .iter()
-        .filter(|(_, entry)| {
-            let world = crate::authority::world_privacy::side_world(&entry.op);
-            entry
-                .parent_hashes
-                .iter()
-                .any(|parent| world_of(parent).is_some_and(|parent| world != Some(parent)))
-        })
+        .filter(|(_, entry)| hangs_off_another_world(entry, &world_of))
         .map(|(hash, _)| *hash)
         .collect();
     for hash in violations {
@@ -435,6 +436,20 @@ fn judged_tail(
         issues.push(AuthorityFoldIssue::InvalidEntry(hash));
     }
     judged
+}
+
+/// Whether `entry` names a side row of a world other than its own as a
+/// parent, `world_of` giving each parent's world: a row
+/// `world_privacy::side_branch_violations` drops before any fold path.
+fn hangs_off_another_world(
+    entry: &AuthorityLogEntry,
+    world_of: impl Fn(&AuthorityEntryHash) -> Option<EntityId>,
+) -> bool {
+    let world = crate::authority::world_privacy::side_world(&entry.op);
+    entry
+        .parent_hashes
+        .iter()
+        .any(|parent| world_of(parent).is_some_and(|parent| world != Some(parent)))
 }
 
 /// The whole log's ancestor pairs and counted pairs, as
