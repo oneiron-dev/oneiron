@@ -26,6 +26,14 @@
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
+//! The browser's passkey signs elsewhere than the engine, so its vouch is
+//! two steps: the engine prepares the entry and hands out its challenge,
+//! then lands the entry with the assertion. An entry changed in hand lands
+//! nothing, and neither does one whose key the roster names by the time it
+//! lands: a second vouch for a key goes through the confirmation door alone.
+//! The owner's audit names the enrolled passkey, its machine and its shape
+//! (pass 27 section 4.4).
+//!
 //! The passkey is a software P-256 key here; each assertion is built as a
 //! browser's `navigator.credentials.get` returns it (authenticator data,
 //! client data JSON, DER signature).
@@ -45,6 +53,8 @@ use oneiron::authority::{
     ROLE_AGENT, ROLE_OWNER, webauthn_assertion_envelope, webauthn_challenge,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::RecordError;
+use oneiron::receipt::AuthorityAuditQuery;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::passkey_vouch_limits::{
     SignedRow, append_signed_rows, revoke_owner_key_signed_by,
@@ -777,5 +787,144 @@ fn a_device_key_confirms_a_passkey_another_passkey_vouched_for() {
     assert!(
         hosted.live_owner_key(&ed_key(&further)),
         "the further key is enrolled"
+    );
+}
+
+/// The vouch as a browser makes it: the engine prepares the device key's
+/// enrollment with the passkey as predecessor, the passkey asserts over its
+/// challenge, and the engine lands it.
+fn vouch_in_two_steps(
+    hosted: &HostedVault,
+    input: OwnerKeyEnrollment,
+    tamper: bool,
+) -> oneiron::Result<oneiron::authority::OwnerKeyEnrollmentReceipt> {
+    let prepared = hosted
+        .vault
+        .prepare_owner_key_enrollment_as(&hosted.owner(), input, passkey_roster_key())
+        .expect("the engine prepares the enrollment");
+    let assertion = assert_over(&prepared.challenge, FLAGS_PRESENT_VERIFIED);
+    let signature = webauthn_assertion_envelope(
+        &assertion.authenticator_data,
+        &assertion.client_data_json,
+        &assertion.signature,
+    )
+    .expect("an envelope");
+    let mut entry = prepared.entry;
+    if tamper {
+        let last = entry.len() - 1;
+        entry[last] ^= 1;
+    }
+    hosted
+        .vault
+        .land_owner_key_enrollment_as(&hosted.owner(), &entry, signature)
+}
+
+#[test]
+fn the_enrolled_passkey_vouches_for_a_device_key_in_two_steps() {
+    let hosted = HostedVault::open();
+    let receipt = enrol_passkey(&hosted);
+    let listed = hosted
+        .vault
+        .enrolled_owner_passkeys()
+        .expect("the passkey listing");
+    assert!(
+        listed.iter().any(|passkey| passkey.live
+            && passkey.credential_id == CREDENTIAL_ID
+            && AuthorityKey::P256(passkey.public_key.clone()) == passkey_roster_key()),
+        "the listing names the live passkey by its credential id and key"
+    );
+    let input = device_enrollment(&hosted, receipt.machine);
+    let device_key = AuthorityKey::Ed25519(input.public_key);
+    vouch_in_two_steps(&hosted, input, false).expect("the passkey's assertion lands the vouch");
+    assert!(
+        hosted.live_owner_key(&device_key),
+        "the device key the passkey vouched for in two steps is a live owner root"
+    );
+}
+
+#[test]
+fn a_prepared_enrollment_changed_in_hand_lands_nothing() {
+    let hosted = HostedVault::open();
+    let receipt = enrol_passkey(&hosted);
+    let input = device_enrollment(&hosted, receipt.machine);
+    let device_key = AuthorityKey::Ed25519(input.public_key);
+    assert!(
+        vouch_in_two_steps(&hosted, input, true).is_err(),
+        "an entry that is not the one prepared is refused"
+    );
+    assert!(!hosted.live_owner_key(&device_key), "nothing was enrolled");
+}
+
+#[test]
+fn a_prepared_enrollment_of_a_key_enrolled_since_lands_no_second_vouch() {
+    let hosted = HostedVault::open();
+    let receipt = enrol_passkey(&hosted);
+    let prepared = hosted
+        .vault
+        .prepare_owner_key_enrollment_as(
+            &hosted.owner(),
+            device_enrollment(&hosted, receipt.machine),
+            passkey_roster_key(),
+        )
+        .expect("the engine prepares the enrollment");
+    hosted
+        .vault
+        .enrol_owner_signing_key_as(
+            &hosted.owner(),
+            device_enrollment(&hosted, receipt.machine),
+            passkey_roster_key(),
+            |transcript| Ok(passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)),
+        )
+        .expect("the passkey signs the same device key in at once");
+    let assertion = assert_over(&prepared.challenge, FLAGS_PRESENT_VERIFIED);
+    let signature = webauthn_assertion_envelope(
+        &assertion.authenticator_data,
+        &assertion.client_data_json,
+        &assertion.signature,
+    )
+    .expect("an envelope");
+    let landed =
+        hosted
+            .vault
+            .land_owner_key_enrollment_as(&hosted.owner(), &prepared.entry, signature);
+    assert!(
+        matches!(
+            landed,
+            Err(oneiron::Error::Record(
+                RecordError::InvalidAuthorityLogBody(_)
+            ))
+        ),
+        "a prepared entry whose key the roster names by now is refused as a key already \
+         enrolled, not judged as a second vouch: {landed:?}"
+    );
+}
+
+#[test]
+fn the_audit_names_the_enrolled_passkey_its_machine_and_its_shape() {
+    let hosted = HostedVault::open();
+    let receipt = enrol_passkey(&hosted);
+    let key_hex: String = receipt
+        .public_key
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    let page = hosted
+        .vault
+        .authority_audit(
+            &hosted.proof,
+            &AuthorityAuditQuery {
+                limit: Some(500),
+                ..AuthorityAuditQuery::default()
+            },
+        )
+        .expect("the owner's audit");
+    assert!(
+        page.rows
+            .iter()
+            .any(|row| row.source_op == "owner_key_enroll"
+                && row.detail.as_deref() == Some("passkey")
+                && row.subject_ref.as_deref() == Some(key_hex.as_str())
+                && row.holder_ref.as_deref() == Some(receipt.machine.to_hex().as_str())),
+        "the enrollment's audit row names the passkey's key, its machine and its shape"
     );
 }
