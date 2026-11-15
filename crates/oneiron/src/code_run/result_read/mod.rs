@@ -519,6 +519,28 @@ pub(crate) fn refusal(code: &str) -> Value {
     json!({"denied": code, "reasonCodes": [code]})
 }
 
+/// Doors for `oneiron-server`'s `tests/rest_snake_case_verb_grammar.rs`: the
+/// refusal objects a result call throws and the search input's decode.
+#[cfg(oneiron_test_support)]
+pub(crate) mod grammar_door {
+    use serde_json::Value;
+
+    /// The refusal a result call throws for `code`.
+    pub(crate) fn refusal(code: &str) -> Value {
+        super::refusal(code)
+    }
+
+    /// The unknown-handle refusal when the run holds no live result.
+    pub(crate) fn unknown_handle() -> Value {
+        super::unknown_handle(&[])
+    }
+
+    /// Whether `input` decodes as a search's input; the refusal otherwise.
+    pub(crate) fn decode_search_input(input: Value) -> Result<(), Value> {
+        super::search::decode_input(input)
+    }
+}
+
 /// `can({read: r})`'s verdict on a read refused before its taint, with the
 /// refusal's own detail: `unknown_handle` for a reference to no result of
 /// the run, `withheld_rows` when the rows its answers were served from stay

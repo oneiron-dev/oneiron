@@ -41,6 +41,8 @@ mod replay_parts;
 mod repo_calls;
 mod repo_model;
 mod result_read;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::result_read::grammar_door as result_read_grammar_door;
 pub(crate) mod run_verb_call;
 mod run_verbs;
 mod scoped_call_control;
