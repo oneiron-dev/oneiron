@@ -1127,3 +1127,37 @@ fn a_residence_index_carrying_a_coreference_link_its_owner_unlinks_is_refused() 
         assert!(!armed(&grant), "the hook ran as the answer was queued");
     });
 }
+
+/// A selector UPDATE that carries no row of a link leaves though that link's share consent is
+/// retracted after it is made: only the links an answer carries decide its release (NOT C).
+#[test]
+fn a_selector_update_carrying_no_coreference_link_leaves_when_an_omitted_link_is_unshared() {
+    run_on_engine_stack("selector-release-coreference-omitted", || async {
+        let case = coreference_fixture().await;
+        let fx = &case.fx;
+        let vault = Arc::clone(&fx.vault);
+        let grant = fx.grant_id;
+        let consent = case.consent;
+        arm(grant, move || {
+            vault
+                .retract_claim(&consent, vault.now_recorded_at())
+                .unwrap();
+        });
+        assert!(armed(&grant), "the hook is armed before the fetch");
+        let mut socket = bound(fx, transport::PROTOCOL_VERSION).await;
+        // The facet-only selector: the people, their link and its claims are in no facet it reads.
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&fx.selector, &[]).unwrap(),
+        )
+        .await;
+        let update = wait_update(&mut socket, &fx.window).await;
+        assert!(!armed(&grant), "the hook ran as the answer was queued");
+        assert!(
+            !carries_link(&fx.window, &update, case.person_a, case.person_b),
+            "the facet-only UPDATE carries no same_as link"
+        );
+    });
+}
