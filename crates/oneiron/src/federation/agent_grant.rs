@@ -580,6 +580,13 @@ impl Vault {
             if !fold.valid_entries.contains(&hash) {
                 continue;
             }
+            // A lapse's end the fold holds without effect (a line of another family) ends
+            // nothing.
+            if matches!(entry.op, AuthorityOp::GrantAct(_))
+                && fold.held_back_entries().contains(&hash)
+            {
+                continue;
+            }
             acts.push(CountedGrantAct {
                 hash,
                 op: entry.op,

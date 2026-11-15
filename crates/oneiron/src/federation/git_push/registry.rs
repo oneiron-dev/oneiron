@@ -160,7 +160,15 @@ impl Vault {
             let Some((grant, mint)) = named else {
                 continue;
             };
-            if !fold.valid_entries.contains(&authority_entry_hash(&entry)?) {
+            let hash = authority_entry_hash(&entry)?;
+            if !fold.valid_entries.contains(&hash) {
+                continue;
+            }
+            // A lapse's end the fold holds without effect (a line of another family) ends
+            // nothing.
+            if matches!(entry.op, AuthorityOp::GrantAct(_))
+                && fold.held_back_entries().contains(&hash)
+            {
                 continue;
             }
             match mint {

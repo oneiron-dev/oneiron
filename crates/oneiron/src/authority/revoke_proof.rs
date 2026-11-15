@@ -246,10 +246,17 @@ impl RevokeFacts {
                     Restriction::SlipBurn(BTreeSet::new())
                 }
                 // A general grant act's end withdraws the slips minted under its row, as
-                // `grant_lines::apply_grant_act_line` does.
+                // `grant_lines::apply_grant_act_line` does, only where it would count: an end of
+                // another family than a surviving line holds ends nothing there.
                 AuthorityOp::GrantAct(record) => match record.ended_grant() {
-                    Some(grant) => Restriction::SlipGrantRevoke(grant.to_hex()),
-                    None => continue,
+                    Some(grant)
+                        if survivors
+                            .values()
+                            .all(|state| state.grant_lines.admits(grant, record.family)) =>
+                    {
+                        Restriction::SlipGrantRevoke(grant.to_hex())
+                    }
+                    _ => continue,
                 },
                 _ => continue,
             };

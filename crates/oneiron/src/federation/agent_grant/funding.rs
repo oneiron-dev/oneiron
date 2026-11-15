@@ -194,6 +194,10 @@ fn counted_matching_mint_in_txn(
         if !fold.valid_entries.contains(hash) {
             continue;
         }
+        // A lapse's end the fold holds without effect (a line of another family) ends nothing.
+        if matches!(entry.op, AuthorityOp::GrantAct(_)) && fold.held_back_entries().contains(hash) {
+            continue;
+        }
         let AuthorityOp::AgentGrantAct(record) = &entry.op else {
             return Err(refused("a counted act withdrew it"));
         };

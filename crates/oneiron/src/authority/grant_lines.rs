@@ -25,8 +25,11 @@
 //! a lapse's end) or one general grant act family. A grant act of another family than the acts
 //! the line already holds is valid and without effect, so a shared vault's admin who names the
 //! owner's agent Grant in a member giving neither replaces his mint nor ends it. Two branches
-//! the fold cannot order that name a Grant in two families leave it standing on neither.
-//! Membership withdrawals and slip revokes end any Grant they name, of any family.
+//! the fold cannot order that name a Grant in two families leave it standing on neither, for
+//! good: no later act of either family counts on it, and an end of either family ends nothing
+//! there, so a concurrent end in another family is never stronger than a descendant one. A
+//! writer never gives or ends one id in two families; a Grant so suspended is given again at a
+//! fresh id. Membership withdrawals and slip revokes end any Grant they name, of any family.
 //!
 //! The fold reads the log alone: a giving need not find its row, and a row need not find its
 //! act. Only the reader puts the two together, asking the family it reads.
@@ -241,7 +244,8 @@ impl GrantLines {
     }
 
     /// Whether an act of `family` may give or end `grant`: no act of another family named it.
-    fn admits(&self, grant: EntityId, family: GrantFamily) -> bool {
+    /// The set of families only grows, so a refusal is for good.
+    pub(super) fn admits(&self, grant: EntityId, family: GrantFamily) -> bool {
         self.families(grant).iter().all(|held| *held == family)
     }
 
@@ -464,7 +468,13 @@ pub(super) fn folded_grant_lines(
                 (family.is_some() && live.next().is_none() && counts_here(&standing, hash, giving))
                     .then(|| (*hash, giving.settings.clone()))
             });
-            let ended = lines.ends.contains_key(&grant);
+            // An end of the line's own family, or of none (a membership withdrawal, a slip
+            // revoke), ends it; an end of another family, from a branch the fold cannot order,
+            // ends nothing, as it would end nothing after the line's acts.
+            let ended = lines.ends.get(&grant).is_some_and(|ends| {
+                ends.values()
+                    .any(|end| end.is_none() || (family.is_some() && *end == family))
+            });
             (
                 grant,
                 FoldedGrantLine {
@@ -516,7 +526,8 @@ pub(super) fn held_grant_acts(
 
 /// Bounds each Grant's giving by `bound`'s, the fold with no vouch (`install_fold::NoVouch`):
 /// a Grant that fold gives by no act, or by another act, stands on nothing here, unless only
-/// givings after a settled handoff stand in it (`fresh`).
+/// givings after a settled handoff stand in it (`fresh`). The giving alone is bounded: a line
+/// with no giving stands for nothing whatever its family and end say, so neither is touched.
 pub(super) fn cap_grant_lines(
     lines: &mut BTreeMap<EntityId, FoldedGrantLine>,
     bound: &BTreeMap<EntityId, FoldedGrantLine>,
