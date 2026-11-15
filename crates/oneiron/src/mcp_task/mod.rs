@@ -112,6 +112,11 @@ pub struct McpTaskEnded {
     pub end: McpTaskEnd,
     /// Host milliseconds when the end was kept.
     pub at_ms: u64,
+    /// A digest of the outcome the end's read named, for a record that can work on past its
+    /// end (a night step's remainder): a later read at the same end with another outcome is not
+    /// the task's result. `None` for a record whose end never moves.
+    #[serde(default)]
+    pub outcome_digest: Option<[u8; 16]>,
 }
 
 /// One stored handle.
@@ -280,10 +285,11 @@ impl Vault {
         }
     }
 
-    /// Keeps `end` as the end of handle `id` for `actor`, the first time only, and answers
-    /// the handle as [`Self::mcp_task`] reads it after the write. Call it once a read of the
-    /// record, run as `actor`, saw the record end. A handle that already keeps an end keeps
-    /// it: the answer then names the earlier end, so a task's end never changes.
+    /// Keeps `ended` as the end of handle `id` for `actor`, the first time only, and answers
+    /// the handle as [`Self::mcp_task`] reads it after the write; `ended.at_ms` is now. Call it
+    /// once a read of the record, run as `actor`, saw the record end. A handle that already
+    /// keeps an end keeps it: the answer then names the earlier end, so a task's end never
+    /// changes.
     ///
     /// # Errors
     ///
@@ -292,12 +298,11 @@ impl Vault {
         &self,
         actor: EntityId,
         id: &McpTaskId,
-        end: McpTaskEnd,
-        now_ms: u64,
+        ended: McpTaskEnded,
     ) -> Result<Option<McpTaskRecord>> {
         let key = id.row_key();
         let mut txn = self.store.env.write_txn()?;
-        match read_handle(HANDLES.get(&self.store, &txn, &key)?, actor, now_ms) {
+        match read_handle(HANDLES.get(&self.store, &txn, &key)?, actor, ended.at_ms) {
             HandleRead::Missing => Ok(None),
             HandleRead::Expired => {
                 HANDLES.delete(&self.store, &mut txn, &key)?;
@@ -306,7 +311,7 @@ impl Vault {
             }
             HandleRead::Live(mut row) => {
                 if row.ended.is_none() {
-                    row.ended = Some(McpTaskEnded { end, at_ms: now_ms });
+                    row.ended = Some(ended);
                     HANDLES.put(&self.store, &mut txn, &key, &row)?;
                     txn.commit()?;
                 }

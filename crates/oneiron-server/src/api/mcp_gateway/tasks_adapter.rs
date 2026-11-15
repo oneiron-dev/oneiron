@@ -59,7 +59,7 @@
 use std::sync::Arc;
 
 use axum::http::{Extensions, HeaderMap};
-use oneiron::mcp_task::{McpTaskEnd, McpTaskId, McpTaskRecord, McpTaskSubject};
+use oneiron::mcp_task::{McpTaskEnd, McpTaskEnded, McpTaskId, McpTaskRecord, McpTaskSubject};
 use oneiron::task_verb::{WorkflowRunAsks, WorkflowRunQuestion};
 use serde_json::{Map, Value, json};
 
@@ -574,10 +574,12 @@ impl RecordCall<'_> {
 
     /// The task's status from `output`, the caller's read of its record:
     /// the end the handle keeps, else the record's own state, kept on the
-    /// handle once it is an end, so a task's end never changes. The end is
-    /// kept at the time of its write, so a handle whose time ran out during
-    /// the read keeps nothing. A read that names no record answers as
-    /// missing.
+    /// handle once it is an end, so a task's end never changes. A record
+    /// that can work on past its end (a night step) keeps a digest of its
+    /// outcome with it, so a read at the same end with another outcome is
+    /// not the task's result. The end is kept at the time of its write, so
+    /// a handle whose time ran out during the read keeps nothing. A read
+    /// that names no record answers as missing.
     fn status(
         &self,
         id: &McpTaskId,
@@ -586,10 +588,11 @@ impl RecordCall<'_> {
     ) -> Result<TaskReading, McpGatewayError> {
         let status = TaskStatus::of_record(&row.subject, output).ok_or_else(task_missing)?;
         let seen = record_end(&row.subject, output, status);
+        let outcome_digest = record_outcome_digest(&row.subject, output);
         if let Some(ended) = row.ended {
             return Ok(TaskReading {
                 status: TaskStatus::of_end(ended.end),
-                read_is_result: seen == Some(ended.end),
+                read_is_result: seen.is_some_and(|end| same_end(ended, end, outcome_digest)),
                 row,
             });
         }
@@ -601,14 +604,19 @@ impl RecordCall<'_> {
             });
         };
         let vault = self.server.vault();
+        let ended = McpTaskEnded {
+            end,
+            at_ms: vault.now_recorded_ms(),
+            outcome_digest,
+        };
         let kept = vault
-            .end_mcp_task(self.actor.actor_ref, id, end, vault.now_recorded_ms())
+            .end_mcp_task(self.actor.actor_ref, id, ended)
             .map_err(engine_error)?
             .ok_or_else(task_missing)?;
-        let kept_end = kept.ended.map_or(end, |ended| ended.end);
+        let kept_ended = kept.ended.unwrap_or(ended);
         Ok(TaskReading {
-            status: TaskStatus::of_end(kept_end),
-            read_is_result: kept_end == end,
+            status: TaskStatus::of_end(kept_ended.end),
+            read_is_result: same_end(kept_ended, end, outcome_digest),
             row: kept,
         })
     }
@@ -649,8 +657,13 @@ impl RecordCall<'_> {
             .request_mcp_task_cancel(self.actor.actor_ref, id, now_ms)
             .map_err(engine_error)?;
         if verbs.cancel_drops_record {
+            let ended = McpTaskEnded {
+                end: McpTaskEnd::Cancelled,
+                at_ms: now_ms,
+                outcome_digest: None,
+            };
             vault
-                .end_mcp_task(self.actor.actor_ref, id, McpTaskEnd::Cancelled, now_ms)
+                .end_mcp_task(self.actor.actor_ref, id, ended)
                 .map_err(engine_error)?;
         }
         Ok(())
@@ -876,9 +889,28 @@ struct TaskReading {
     status: TaskStatus,
     row: McpTaskRecord,
     /// `false` once the record has worked on past the end the task keeps (a
-    /// night step's remainder, a failed attempt's successor): the read is
-    /// then the record as it stands now, not the task's result.
+    /// night step's remainder, also once it ended again; a failed attempt's
+    /// successor): the read is then the record as it stands now, not the
+    /// task's result.
     read_is_result: bool,
+}
+
+/// Whether the end `kept` on a handle is the end `end` a read shows, with
+/// the outcome `outcome_digest` names.
+fn same_end(kept: McpTaskEnded, end: McpTaskEnd, outcome_digest: Option<[u8; 16]>) -> bool {
+    kept.end == end && kept.outcome_digest == outcome_digest
+}
+
+/// A digest of the outcome a read of the record `subject` names, for a
+/// record that can work on past its end: a night step, whose deferred
+/// remainder runs under the same root and can end again with other jobs
+/// and results. `None` for any other record, whose end never moves.
+fn record_outcome_digest(subject: &McpTaskSubject, output: &Value) -> Option<[u8; 16]> {
+    if !matches!(subject, McpTaskSubject::NightStep { .. }) {
+        return None;
+    }
+    let outcome = serde_json::to_vec(output.get("outcome")?).ok()?;
+    blake3::hash(&outcome).as_bytes()[..16].try_into().ok()
 }
 
 /// The end a read of the record `subject` names shows at `status`, as the

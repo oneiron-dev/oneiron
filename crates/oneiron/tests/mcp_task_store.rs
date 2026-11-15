@@ -33,6 +33,15 @@ fn open_vault() -> Result<(tempfile::TempDir, Arc<Vault>), TestError> {
     Ok((dir, vault))
 }
 
+/// The end a read saw at `at_ms`, with its outcome's digest.
+fn end_at(end: McpTaskEnd, at_ms: u64, outcome_digest: Option<[u8; 16]>) -> McpTaskEnded {
+    McpTaskEnded {
+        end,
+        at_ms,
+        outcome_digest,
+    }
+}
+
 #[test]
 fn mcp_task_row_answers_only_its_actor_until_its_ttl() -> TestResult {
     let (_dir, vault) = open_vault()?;
@@ -160,7 +169,7 @@ fn a_handle_keeps_the_first_end_it_saw() -> TestResult {
     );
 
     assert_eq!(
-        vault.end_mcp_task(stranger, &id, McpTaskEnd::Completed, T0 + 5)?,
+        vault.end_mcp_task(stranger, &id, end_at(McpTaskEnd::Completed, T0 + 5, None))?,
         None,
         "another actor cannot end the handle"
     );
@@ -173,15 +182,14 @@ fn a_handle_keeps_the_first_end_it_saw() -> TestResult {
         "another actor's end wrote nothing"
     );
 
+    let first = end_at(McpTaskEnd::Completed, T0 + 10, Some([1; 16]));
     let ended = vault
-        .end_mcp_task(holder, &id, McpTaskEnd::Completed, T0 + 10)?
+        .end_mcp_task(holder, &id, first)?
         .ok_or("the holder's read saw the end")?;
     assert_eq!(
         ended.ended,
-        Some(McpTaskEnded {
-            end: McpTaskEnd::Completed,
-            at_ms: T0 + 10
-        })
+        Some(first),
+        "the end keeps its outcome's digest"
     );
     assert_eq!(
         ended.last_updated_at_ms(),
@@ -190,15 +198,16 @@ fn a_handle_keeps_the_first_end_it_saw() -> TestResult {
     );
 
     let again = vault
-        .end_mcp_task(holder, &id, McpTaskEnd::CompletedWithError, T0 + 20)?
+        .end_mcp_task(
+            holder,
+            &id,
+            end_at(McpTaskEnd::CompletedWithError, T0 + 20, Some([2; 16])),
+        )?
         .ok_or("a later read saw another end")?;
     assert_eq!(
         again.ended,
-        Some(McpTaskEnded {
-            end: McpTaskEnd::Completed,
-            at_ms: T0 + 10
-        }),
-        "the first end stays: a task's end never changes"
+        Some(first),
+        "the first end and its outcome stay: a task's end never changes"
     );
     let asked = vault
         .request_mcp_task_cancel(holder, &id, T0 + 30)?
@@ -213,7 +222,7 @@ fn a_handle_keeps_the_first_end_it_saw() -> TestResult {
     );
 
     assert_eq!(
-        vault.end_mcp_task(holder, &id, McpTaskEnd::Completed, T0 + 1000)?,
+        vault.end_mcp_task(holder, &id, end_at(McpTaskEnd::Completed, T0 + 1000, None))?,
         None,
         "an expired handle keeps no end"
     );
