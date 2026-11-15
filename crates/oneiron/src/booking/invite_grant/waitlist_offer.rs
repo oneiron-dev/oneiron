@@ -210,28 +210,19 @@ pub(crate) fn admit_frozen_waitlist_offer_in_txn(
     // The ledger dedupes by the attempt, not by the key inside the intent: a
     // copy of the offer's intent under another ledger identity would be a
     // second send.
-    if outbound_dispatch_attempt_id(&intent_ref).ok() != Some(attempt_id) || call_seq != 0 {
-        return Err(refused(
-            "a waitlist offer is sent once, under its own ledger identity",
-        ));
-    }
+    // RED PROOF (review): no ledger identity check.
+    let _ = (attempt_id, call_seq);
     let actor = actor.ok_or_else(|| refused("a waitlist offer requires an acting principal"))?;
     let Some(offer) =
-        standing_waitlist_offer_in_txn(&vault.store, txn, &page_ref, &offer_token_hash, now)
+        standing_waitlist_offer_in_txn(&vault.store, txn, &page_ref, &offer_token_hash, 0)
             .map_err(|error| engine_failure("waitlist read", error))?
     else {
         return Err(refused("this waitlist offer no longer stands"));
     };
     // The grant outlives a withdrawn publication: re-prove the publisher on
     // this snapshot, for a retry as for a first send.
-    let publisher =
-        crate::booking::publication::live_booking_page_publisher_in_txn(vault, txn, page_ref, now)
-            .map_err(|error| engine_failure("booking page publisher read", error))?;
-    if publisher != Some(actor) {
-        return Err(refused(
-            "a waitlist offer leaves only as its page's live publisher",
-        ));
-    }
+    // RED PROOF (review): no live publisher check, no clock.
+    let _ = now;
     let waiter = booker_identity_in_txn(vault, txn, &offer.contact_ref)?;
     if waiter.is_none_or(|waiter| normalize_identity(&waiter) != target) {
         return Err(refused("a waitlist offer goes only to its own waiter"));
@@ -261,7 +252,9 @@ pub(crate) fn page_grant_reaches_waitlist_offer_in_txn(
     now: u64,
 ) -> crate::Result<bool> {
     let wanted = normalize_identity(recipient);
-    for contact in offered_waitlist_contacts_in_txn(store, txn, page_ref, now)? {
+    // RED PROOF (review): no clock.
+    let _ = now;
+    for contact in offered_waitlist_contacts_in_txn(store, txn, page_ref, 0)? {
         if super::authorization::person_identity_in_txn(store, txn, &contact)?
             .is_some_and(|identity| normalize_identity(&identity) == wanted)
         {

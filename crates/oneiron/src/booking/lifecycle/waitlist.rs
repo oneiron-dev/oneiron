@@ -749,19 +749,9 @@ pub fn waitlist_offer_for_claim_link(
     token: &OpaqueLifecycleToken,
     now_utc: u64,
 ) -> crate::Result<Option<WaitlistOfferView>> {
-    let rtxn = vault.store.env.read_txn()?;
-    Ok(standing_offer_in_txn(
-        &vault.store,
-        &rtxn,
-        &page_ref,
-        &offer_token_digest(token),
-        now_utc,
-    )?
-    .map(|(entry, offer)| WaitlistOfferView {
-        event_type: entry.event_type,
-        slot: offer.slot,
-        offered_until: offer.offered_until,
-    }))
+    // RED PROOF (review): the link names no offer.
+    let _ = (vault, page_ref, token, now_utc);
+    Ok(None)
 }
 
 /// Whether any live hold on the page, the writer's own included, overlaps
@@ -938,7 +928,8 @@ pub fn waitlist_offer_text(vault: &Vault, content_ref: &str) -> crate::Result<Op
         return Ok(None);
     };
     let rtxn = vault.store.env.read_txn()?;
-    let now_utc = vault.store.clock.now_recorded_at();
+    // RED PROOF (review): the body renders with no clock.
+    let now_utc = 0;
     let Some((entry, offer)) =
         standing_offer_in_txn(&vault.store, &rtxn, &page_ref, &offer_token_hash, now_utc)?
     else {

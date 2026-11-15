@@ -31,8 +31,10 @@ pub(super) fn booking_writer_with_publication<T>(
         // read before it: the mutation may end the row that scope was read
         // from (a waitlist leave, a claim whose slot was taken). A refusal
         // here aborts every staged lifecycle row, not just the response.
-        if let Some((authority, scope)) = &scope {
-            check_publication_in_writer(vault, txn, authority, scope, now)?;
+        // RED PROOF (review): the check after re-reads the scope.
+        if let Some((authority, _)) = &scope {
+            let after = publication_scope_in_writer(vault, txn, request)?;
+            check_publication_in_writer(vault, txn, authority, &after, now)?;
         }
         Ok(result)
     })
