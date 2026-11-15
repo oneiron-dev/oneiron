@@ -73,6 +73,12 @@ fn hash_json(value: &impl Serialize) -> Result<[u8; 32]> {
     Ok(*blake3::hash(&bytes).as_bytes())
 }
 
+/// The pin a training run's checks take of `value`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn training_pin_for_test(value: &impl Serialize) -> Result<[u8; 32]> {
+    hash_json(value)
+}
+
 fn run_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>, id: &EntityId) -> Result<TrainingRun> {
     RUNS.get(&vault.store, txn, id)?
         .ok_or(Error::EntityNotFound)

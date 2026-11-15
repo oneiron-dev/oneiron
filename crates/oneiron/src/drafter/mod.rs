@@ -145,6 +145,12 @@ fn hash_json(value: &impl Serialize) -> Result<[u8; 32]> {
     Ok(*blake3::hash(&bytes).as_bytes())
 }
 
+/// The pin a drafter version's checks take of `value`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn drafter_pin_for_test(value: &impl Serialize) -> Result<[u8; 32]> {
+    hash_json(value)
+}
+
 /// The owner's policy in `txn`: the shipped default, on, when none is set.
 fn policy_in_txn(store: &Store, txn: &RoTxn<'_>) -> Result<DrafterPolicy> {
     Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
