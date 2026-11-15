@@ -37,7 +37,9 @@
 //!   search on where it read off before the import.
 //!
 //! POLICY_HOLD_QUEUE has no landing and no test: no production route queues a hold
-//! (FIX-LIST ARCHIVE-POLICY-HOLD-QUEUE-NOT-RESTORED).
+//! (FIX-LIST ARCHIVE-POLICY-HOLD-QUEUE-NOT-RESTORED). SOURCE_AUDIENCE_POLICY has no
+//! landing and no test: no archive carries the source and record rows that name a
+//! policy (FIX-LIST ARCHIVE-SOURCE-AUDIENCE-POLICY-NOT-RESTORED).
 //!
 //! New report counts are read through `serde_json::to_value` of the SIDE-1
 //! summary, so this file compiles on 56a501392094; an absent field fails its

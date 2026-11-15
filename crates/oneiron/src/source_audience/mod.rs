@@ -34,7 +34,6 @@
 //! binds no row, and until a row a source landed is written here the
 //! conjunct answers at once from each row's own stamp (fix list row 16255).
 
-pub(crate) mod archive_restore;
 #[cfg(oneiron_test_support)]
 pub(crate) mod binding_door;
 pub(crate) mod carried;

@@ -83,7 +83,7 @@ pub(crate) fn merge_policy_in_txn(
 /// for the same thread, minted before the two met, keeps its own bindings
 /// and shares, so it is filed beside the first under a key of its own, and
 /// a scan of the source finds it too. A source policy files nothing.
-pub(super) fn index_thread_in_txn(
+fn index_thread_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     id: &EntityId,

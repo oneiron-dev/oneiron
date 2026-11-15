@@ -150,8 +150,6 @@ pub(crate) enum ArchivedSideGroup {
     OrgAdmin,
     /// Shared-act policy change requests.
     SharedAct,
-    /// Source-audience policies before their dependent threads.
-    SourceAudience,
     /// Edit-distance escalation standing policies.
     EscalationPolicy,
     /// Mail compliance switch.
@@ -263,7 +261,6 @@ pub(crate) fn archived_side_group(source_table: &str) -> Option<ArchivedSideGrou
         name if name == side_table::CONNECTOR_GRANT_SLATE.name => Some(Group::ConnectorSlate),
         name if name == side_table::ORG_ADMIN_POLICY.name => Some(Group::OrgAdmin),
         name if name == side_table::SHARED_ACT_POLICY_CHANGE.name => Some(Group::SharedAct),
-        name if name == side_table::SOURCE_AUDIENCE_POLICY.name => Some(Group::SourceAudience),
         name if name == side_table::EDIT_DISTANCE_ESCALATION_POLICY.name => {
             Some(Group::EscalationPolicy)
         }
@@ -434,11 +431,6 @@ pub(crate) fn land_archived_side_group_in_txn(
         }
         ArchivedSideGroup::SharedAct => {
             crate::federation::pending_act::policy_change::land_archived_shared_act_policy_change_rows_in_txn(
-                vault, txn, permit, rows,
-            )
-        }
-        ArchivedSideGroup::SourceAudience => {
-            crate::source_audience::archive_restore::land_archived_source_audience_rows_in_txn(
                 vault, txn, permit, rows,
             )
         }
