@@ -121,6 +121,16 @@ pub(super) fn core_engine_error(message: &'static str, error: oneiron::Error) ->
         | ErrorKind::AgentDefinitionDisabled => ApiError::bad_request(error.to_string(), None),
         ErrorKind::EntityNotFound | ErrorKind::EdgeNotFound => ApiError::not_found("entity", None),
         ErrorKind::ConsentOwnerNotAuthenticated => ApiError::forbidden_scope("owner"),
+        // An owner choice this install could not prove the owner's (row
+        // CARRIER-OWNER-PROOF): a conflict under its own state, with the
+        // engine's words, on every route.
+        ErrorKind::OwnerKeyRequired => ApiError::new(
+            error.to_string(),
+            ApiErrorDetails::InvalidState {
+                state: Some(oneiron::error::OWNER_KEY_REQUIRED.to_owned()),
+            },
+            ["Make this choice on an owner device: a machine that holds the vault's owner key."],
+        ),
         // FIX 2222: a host credential where no host acts as a person, under
         // the engine's own code (FIX 6032).
         ErrorKind::HostActionRequiresSupportGrant => {

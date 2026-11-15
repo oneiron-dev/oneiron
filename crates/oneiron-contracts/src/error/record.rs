@@ -79,6 +79,10 @@ impl std::fmt::Display for ErasedHoldTarget {
 }
 
 /// A 32-byte revision as a surface shows it: 64 lower-case hex.
+/// The stable reason code of [`RecordError::OwnerKeyRequired`]: an owner
+/// route's refusal state, and a facade or MCP refusal's reason code.
+pub const OWNER_KEY_REQUIRED: &str = "owner_key_required";
+
 fn revision_hex(revision: &[u8; 32]) -> String {
     revision.iter().map(|byte| format!("{byte:02x}")).collect()
 }
@@ -243,6 +247,16 @@ pub enum RecordError {
         revision_hex(current)
     )]
     CheckpointPolicyRevisionStale { current: [u8; 32] },
+    /// An owner choice door refused an act it could not prove the owner's
+    /// (row CARRIER-OWNER-PROOF): the vault holds an owner key, and this
+    /// install is not the owner's machine and holds none, so the authority
+    /// fold would keep the act waiting with no effect. The owner decides it
+    /// on an owner device. [`OWNER_KEY_REQUIRED`] is its stable reason code
+    /// on every surface. Content-free. Nothing was written.
+    #[error(
+        "This machine is not the owner's and holds no owner key: decide it on an owner device."
+    )]
+    OwnerKeyRequired,
     /// The owner's world recipient choice keeps a world's rows from this
     /// destination (mesh PR2b, L11-B (B)): the reason names his choice (one
     /// named machine, or machines marked mine) and why this destination is
@@ -497,6 +511,7 @@ impl RecordError {
             Self::AuthorityRefused(_) => ErrorKind::AuthorityRefused,
             Self::CheckpointPolicyRefused(_) => ErrorKind::CheckpointPolicyRefused,
             Self::CheckpointPolicyRevisionStale { .. } => ErrorKind::CheckpointPolicyRevisionStale,
+            Self::OwnerKeyRequired => ErrorKind::OwnerKeyRequired,
             Self::WorldRecipientLimit(_) => ErrorKind::WorldRecipientLimit,
             Self::WorldPlacementUnverifiable(_) => ErrorKind::WorldPlacementUnverifiable,
             Self::InvalidAccessGrantBody(_) => ErrorKind::InvalidAccessGrantBody,

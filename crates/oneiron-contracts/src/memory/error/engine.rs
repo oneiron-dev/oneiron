@@ -304,6 +304,18 @@ impl From<Error> for MemoryError {
                 message,
                 &["Refresh the resource, merge local changes, then retry."],
             ),
+            // The refusal's own words say where to decide; its reason code
+            // lets a client tell it from any other conflict.
+            ErrorKind::OwnerKeyRequired => Self {
+                reason_codes: vec![crate::error::OWNER_KEY_REQUIRED.to_owned()],
+                ..Self::new(
+                    MEMORY_CODE_INVALID_STATE,
+                    message,
+                    &[
+                        "Make this choice on an owner device: a machine that holds the vault's owner key.",
+                    ],
+                )
+            },
             // FIX 12023 W0: the process that serves the vault spends its
             // request nonces; no change to the request helps here.
             ErrorKind::VaultServedElsewhere => Self::new(
