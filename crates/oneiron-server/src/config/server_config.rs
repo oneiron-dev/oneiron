@@ -92,6 +92,9 @@ pub struct SyncServerConfig {
     pub cloud_registration_pins: Option<PathBuf>,
     /// The `[native_mail]` server the native mail pack's check reaches.
     pub native_mail: Option<super::NativeMailConfig>,
+    /// The `[booking]` section: the public face's page URL prefix a rung-2
+    /// first send links its times to.
+    pub booking: Option<super::BookingConfig>,
     /// The `[connectors.<name>]` transports the generic connector call
     /// reaches, by normalized catalog name.
     pub connectors: std::collections::BTreeMap<String, super::ConnectorHostConfig>,
@@ -240,6 +243,7 @@ impl Default for SyncServerConfig {
             kit_bundle_public_urls: Vec::new(),
             cloud_registration_pins: None,
             native_mail: None,
+            booking: None,
             connectors: std::collections::BTreeMap::new(),
             allow_unauthenticated: false,
             allowed_origins: Vec::new(),
@@ -441,6 +445,9 @@ pub struct ServeConfig {
     /// The `[native_mail]` section: the host's own mail server, absent until
     /// the config file names it.
     pub native_mail: Option<super::NativeMailConfig>,
+    /// The `[booking]` section: the public booking pages' URL prefix,
+    /// absent until the config file names it.
+    pub booking: Option<super::BookingConfig>,
     /// The `[device_sync]` section: the home this machine dials, absent until
     /// the config file names it. Absent means it dials no one.
     pub device_sync: Option<super::DeviceSyncConfig>,
@@ -595,6 +602,7 @@ impl Default for ServeConfig {
             merge_queue: None,
             gpu: None,
             native_mail: None,
+            booking: None,
             device_sync: None,
             shared_env: Vec::new(),
             connectors: std::collections::BTreeMap::new(),
@@ -641,6 +649,7 @@ impl ServeConfig {
             kit_bundle_public_urls: self.kit_bundle_public_urls.clone(),
             cloud_registration_pins: self.cloud_registration_pins.clone(),
             native_mail: self.native_mail.clone(),
+            booking: self.booking.clone(),
             connectors: self
                 .connectors
                 .iter()

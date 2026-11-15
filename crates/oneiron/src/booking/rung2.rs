@@ -36,7 +36,7 @@ use crate::channel_identity::{
     channel_identity_selection_candidates_in_txn,
 };
 use crate::channel_identity_provider::native_mail::{
-    NativeMailAdapter, NativeMailHost, is_native_mailbox_on_domain_in_txn,
+    NativeMailAdapter, NativeMailHost, canonical_recipient, is_native_mailbox_on_domain_in_txn,
 };
 use crate::channel_identity_provider::stalwart::NativeMailMessage;
 use crate::channel_identity_selection::{
@@ -46,6 +46,7 @@ use crate::channel_identity_selection::{
 };
 use crate::edge::EdgeActorClass;
 use crate::entity_id::derived_domains::BOOKING_RUNG2_FIRST_SEND_BLOB;
+use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::outbound::{
     OutboundDeliveryWindowDecision, OutboundDispatchActor, OutboundDispatchGate,
     OutboundDispatchRequest, OutboundIntent, OutboundIntentDraft, OutboundIntentTrigger,
@@ -68,6 +69,13 @@ pub const BOOKING_RUNG2_SEND_VERB: &str = "send";
 
 /// The schema version of a kept rung-2 first send.
 pub const BOOKING_RUNG2_FIRST_SEND_SCHEMA_VERSION: u16 = 1;
+
+/// The producer of the inbox notice a page that cannot continue by email
+/// leaves for the vault's owners.
+pub const BOOKING_RUNG2_NOTICE_PRODUCER: &str = "booking.rung2";
+
+/// What that notice tells the owner (RUNG2-NO-SENDER = A).
+pub const BOOKING_RUNG2_NO_SENDER_DETAIL: &str = "This booking page cannot continue by email: its agent holds no live named work address on this host's mail domain.";
 
 /// The media type a kept rung-2 first send is stored under.
 const RUNG2_FIRST_SEND_MEDIA_TYPE: &str = "application/vnd.oneiron.booking-rung2-first-send+json";
@@ -175,6 +183,15 @@ impl Rung2FirstSend {
         .channel_identity_ref(self.identity_ref)
         .send_autonomy(RelationshipContext::SchedulingLogistics, None))
     }
+
+    /// Whether this send goes to `address`, compared in the canonical form
+    /// its message was kept in: a page session continues by email to one
+    /// address (RUNG2-ONE-ADDRESS = A). An address that is no mailbox is
+    /// never the kept one.
+    #[must_use]
+    pub fn is_addressed_to(&self, address: &str) -> bool {
+        canonical_recipient(address).is_ok_and(|address| address == self.message.to)
+    }
 }
 
 impl Vault {
@@ -280,6 +297,38 @@ impl Vault {
 }
 
 impl Vault {
+    /// Tells each of the vault's owners, once per page, that a visitor met
+    /// `page_ref` with no slot that fit and the page could not continue by
+    /// email: its agent holds no live named work address
+    /// (RUNG2-NO-SENDER = A). One Digest notice per owner, keyed by the page
+    /// and the owner, so every later visitor finds it and writes nothing.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub fn notify_booking_rung2_no_sender(&self, page_ref: EntityId, now: u64) -> Result<()> {
+        self.with_write_txn_grouped(|txn| {
+            for owner in crate::policy_model::owners_in_txn(self, &*txn)? {
+                let event = NotificationEvent {
+                    kind: NotificationKind::Digest,
+                    source: NotificationSource {
+                        producer: BOOKING_RUNG2_NOTICE_PRODUCER.to_owned(),
+                        event: format!("no-sender:{}:{}", page_ref.to_hex(), owner.to_hex()),
+                        result: Some(page_ref.to_hex()),
+                        detail: Some(BOOKING_RUNG2_NO_SENDER_DETAIL.to_owned()),
+                        ..NotificationSource::default()
+                    },
+                    subject_refs: vec![page_ref],
+                    recipient: Some(owner),
+                    created_at: now,
+                    origin_conversation: None,
+                };
+                self.record_notification_in_txn(txn, &event)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Keeps `sender`'s rung-2 first send of `message` for the session
     /// `continuation` names, once, written as the page's agent: a send
     /// already kept for that session is returned as it is, whatever

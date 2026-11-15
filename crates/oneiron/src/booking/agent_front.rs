@@ -27,8 +27,9 @@ use super::constraint::{
 /// a button, never text, model output, a voice line, or a deflect.
 pub const BOOKING_SLOT_BUTTON_ACTION: &str = "booking.select_slot";
 
-/// Most slot buttons a single reply renders.
-const MAX_RENDERED_SLOTS: usize = 3;
+/// Most slots a single reply offers: the card's buttons, and the options a
+/// rung-2 first send lists.
+pub const MAX_RENDERED_SLOTS: usize = 3;
 
 /// Every card this front assembles is identified by `booking-<session_ref>`
 /// when that fits a lens id.
@@ -317,7 +318,9 @@ pub fn constraint_no_fit(
 /// The oracle owns both the times and their order. When it returns more than
 /// [`MAX_RENDERED_SLOTS`], keep the top-ranked three and preserve the oracle's
 /// relative order among them. Nothing is invented, rewritten, or rounded.
-fn top_ranked_slots(slots: &[RankedSlot]) -> Vec<&RankedSlot> {
+/// A rung-2 first send offers the same slots a card would render.
+#[must_use]
+pub fn top_ranked_slots(slots: &[RankedSlot]) -> Vec<&RankedSlot> {
     if slots.len() <= MAX_RENDERED_SLOTS {
         return slots.iter().collect();
     }

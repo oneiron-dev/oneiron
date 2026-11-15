@@ -124,6 +124,8 @@ async fn run_constraint_turn_in(
         .clone()
         .ok_or_else(front_not_configured)?;
     let settings = parse_seat_settings(server)?;
+    // The no-fit answer reads the owner's copy after the turn.
+    let rung2_front = front.clone();
 
     // ── the one admission call, in the listing class ────────────────────
     let mut turn = turn::Turn::new(server, transport);
@@ -245,9 +247,17 @@ async fn run_constraint_turn_in(
                 session_ref,
             },
         },
-        ConstraintFrontOutcome::ContinueByEmail(continuation) => {
-            ConstraintTurnResponse::ContinueByEmail { continuation }
-        }
+        // Rung 2 asks for an email only where the page can continue by one
+        // (INBOX-RESIDUE PR-3b-3b).
+        ConstraintFrontOutcome::ContinueByEmail(continuation) => super::rung2::rung2_turn_answer(
+            server,
+            &authority,
+            &rung2_front,
+            continuation,
+            !authenticated,
+            now,
+            super::rung2::rung2_native_mail_domain(server).as_deref(),
+        )?,
         ConstraintFrontOutcome::Deflect(deflect) => {
             ConstraintTurnResponse::Deflect { card: deflect.card }
         }
@@ -275,7 +285,7 @@ fn front_not_configured() -> ApiError {
 /// The page's real oracle, clamped to the public rung on the way out: the
 /// front ranks and renders only slots the public availability answer would
 /// show, and never sees a host binding.
-struct PublicSlotOracle<'a>(ServerBookingOracle<'a>);
+pub(super) struct PublicSlotOracle<'a>(pub(super) ServerBookingOracle<'a>);
 
 impl SlotOracle for PublicSlotOracle<'_> {
     fn solve(&self, request: &SolveRequest) -> Result<SolveResult, BookingError> {

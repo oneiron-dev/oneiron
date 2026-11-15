@@ -3,6 +3,7 @@
 mod apns;
 pub mod artifact_backend;
 pub mod backup;
+pub mod booking;
 pub mod browser;
 mod channel_endpoints;
 pub mod connectors;
@@ -40,6 +41,7 @@ mod trusted_proxy;
 pub use apns::ApnsConfig;
 pub use artifact_backend::ArtifactBackendConfig;
 pub use backup::{BackupConfig, default_backup_dir};
+pub use booking::BookingConfig;
 pub use browser::BrowserConfig;
 pub use channel_endpoints::ChannelEndpointsConfig;
 pub use connectors::{ConnectorHostConfig, ConnectorTransport};

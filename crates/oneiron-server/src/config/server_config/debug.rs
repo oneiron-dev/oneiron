@@ -133,6 +133,7 @@ impl fmt::Debug for ServeConfig {
             .field("merge_queue", &self.merge_queue)
             .field("gpu", &self.gpu)
             .field("native_mail", &self.native_mail)
+            .field("booking", &self.booking)
             .field("device_sync", &self.device_sync)
             .field("shared_env", &self.shared_env)
             .field("connectors", &self.connectors)

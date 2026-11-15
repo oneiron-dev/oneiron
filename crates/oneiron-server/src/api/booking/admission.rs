@@ -9,7 +9,8 @@ use oneiron::booking::lifecycle::{confirm_event_type, confirm_hold_taken_at, tok
 use oneiron::booking::{
     ActiveHoldSource, BOOKING_BOOKER_CONTACT_PREDICATE, BOOKING_SOURCE_PAGE_PREDICATE,
     BOOKING_STATUS_PREDICATE, BookingBookerContactValue, BookingError, BookingSourcePageValue,
-    BookingStatus, BookingStatusValue, OpaqueLifecycleToken, SessionKey, VaultActiveHoldSource,
+    BookingStatus, BookingStatusValue, EventTypeKey, OpaqueLifecycleToken, SessionKey,
+    VaultActiveHoldSource,
 };
 use oneiron::registry::ENTITY_TYPE_EVENT;
 use oneiron::{
@@ -197,6 +198,41 @@ pub(super) fn strip_form_honeypot(
 
 /// Projects a non-`Continue` admission disposition onto an answer.
 ///
+/// The facts a rung-2 send is judged on (INBOX-RESIDUE PR-3b-3b): the
+/// visitor's address, session and source, on the event type the session's
+/// turn solved. A send carries no form, slot or intake, so those signals stay
+/// absent rather than fabricated, and the rung-2 law reads none of them.
+pub(super) fn rung2_send_facts(
+    page_ref: EntityId,
+    event_type: Option<EventTypeKey>,
+    transport: &BookingAdmissionContext,
+    visitor_email: &str,
+    session_ref: &str,
+    now: u64,
+) -> BookingRequestFacts {
+    BookingRequestFacts {
+        page_ref,
+        event_type,
+        ip_hash: transport.ip_hash,
+        email_hash: Some(booking_email_hash(visitor_email)),
+        session_hash: Some(booking_session_hash(session_ref)),
+        started_at_millis: 0,
+        submitted_at_millis: now.saturating_mul(1_000),
+        submission_fingerprint: [0_u8; 32],
+        selected_slot_hash: selected_slot_hash(None),
+        intake_content_hash: intake_content_hash(None),
+        honeypot_nonempty: false,
+        intake_chars: 0,
+        active_future_bookings_for_email: 0,
+        active_holds_for_session: 0,
+        email: Some(EmailValidationEvidence {
+            syntax_valid: is_syntactically_valid_email(visitor_email),
+            mx_present: None,
+            disposable_domain: false,
+        }),
+    }
+}
+
 /// `Continue` returns `None` and the executor proceeds. Every other
 /// disposition returns here, so a declined request reaches neither the parser,
 /// the oracle, nor the lifecycle.
@@ -214,17 +250,20 @@ pub(super) fn admission_short_circuit(
             Ok(Some(benign_response(request)))
         }
         BookingHttpDisposition::PromptCorrection { body } => Err(prompt_correction_error(&body)),
-        BookingHttpDisposition::RetryAfter { seconds, .. } => {
-            let state = format!("booking_retry_after_{seconds}s");
-            Err(ApiError::new(
-                format!("booking admission is rate limited; retry after {seconds} seconds"),
-                crate::error::ApiErrorDetails::InvalidState { state: Some(state) },
-                [format!(
-                    "Wait {seconds} seconds before retrying this booking request."
-                )],
-            ))
-        }
+        BookingHttpDisposition::RetryAfter { seconds, .. } => Err(rate_limited_error(seconds)),
     }
+}
+
+/// The refusal a request past one of the owner's rate windows gets.
+pub(super) fn rate_limited_error(seconds: u64) -> ApiError {
+    let state = format!("booking_retry_after_{seconds}s");
+    ApiError::new(
+        format!("booking admission is rate limited; retry after {seconds} seconds"),
+        crate::error::ApiErrorDetails::InvalidState { state: Some(state) },
+        [format!(
+            "Wait {seconds} seconds before retrying this booking request."
+        )],
+    )
 }
 
 /// The success-shaped answer a silent rejection returns.
@@ -251,7 +290,7 @@ fn benign_response(request: &BookingOperationRequest) -> BookingOperationRespons
 /// Re-projects the engine's correction body onto the typed API error.
 ///
 /// The engine owns the field and the sentence; this only chooses the envelope.
-fn prompt_correction_error(body: &str) -> ApiError {
+pub(super) fn prompt_correction_error(body: &str) -> ApiError {
     let parsed: Option<serde_json::Value> = serde_json::from_str(body).ok();
     let field = parsed
         .as_ref()

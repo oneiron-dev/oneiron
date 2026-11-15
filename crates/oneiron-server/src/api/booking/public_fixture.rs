@@ -174,7 +174,23 @@ impl Fixture {
         from: u64,
         until: u64,
     ) -> String {
-        let mut input = publication_input(page, published, from, until);
+        self.publish(publication_input(page, published, from, until))
+    }
+
+    /// Publishes the fixture page, live from 1 to a day from now, with
+    /// `front` as its constraint front.
+    pub(super) fn publish_front(
+        &self,
+        front: &oneiron::booking::agent_front::ConstraintFrontConfig,
+    ) -> String {
+        let mut input = publication_input(self.page, true, 1, now_secs().expect("clock") + 86_400);
+        input.value["constraint_front"] = serde_json::to_value(front).expect("front");
+        self.publish(input)
+    }
+
+    /// The fixture owner's publication write of `input`, confirmed when it
+    /// is staged.
+    fn publish(&self, mut input: ClaimInput) -> String {
         input.value["event_config_hashes"]["intro"] =
             json!(oneiron::booking::booking_config_hash(&self.config).expect("hash"));
         let receipt = self

@@ -348,6 +348,9 @@ impl PartialServeConfig {
         if let Some(value) = self.native_mail {
             resolved.native_mail = Some(value);
         }
+        if let Some(value) = self.booking {
+            resolved.booking = Some(value);
+        }
         if let Some(value) = self.device_sync {
             resolved.device_sync = Some(value);
         }

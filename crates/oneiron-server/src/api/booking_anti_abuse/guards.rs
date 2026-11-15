@@ -11,9 +11,10 @@ use oneiron::booking::anti_abuse::{
     admit_quarantine_submission, admit_quarantine_submission_without_quota,
     admit_restorable_quarantine_submission, applicable_booking_anti_abuse_rules, book_rate_knobs,
     evaluate_booking_amend_request, evaluate_booking_book_request, evaluate_booking_hold_request,
-    evaluate_booking_slot_list_request, hold_rate_knobs, observe_book_request,
-    observe_hold_request, observe_slot_list_request, server_submission_fingerprint,
-    slot_list_rate_knobs,
+    evaluate_booking_slot_list_request, evaluate_rung2_send_request, hold_rate_knobs,
+    observe_book_request, observe_hold_request, observe_rung2_page_send,
+    observe_rung2_send_request, observe_slot_list_request, rung2_send_rate_knobs,
+    server_submission_fingerprint, slot_list_rate_knobs,
 };
 use oneiron::limit_ask::EngineLimit;
 
@@ -253,6 +254,56 @@ pub(crate) async fn enforce_hold(
             Ok(BookingHttpDisposition::RetryAfter {
                 seconds: retry_after_secs,
                 bound: u64::from(per_minute_per_ip.get()),
+            })
+        }
+    }
+}
+
+/// Rung-2 send guard (INBOX-RESIDUE PR-3b-3b): the owner's correction prompt
+/// on the visitor's address alone, then the per-IP minute window, then the
+/// page's day budget, both from the owner's `Rung2SendRate` row. With no row
+/// there is no bucket. Only the public page sends rung 2, so every caller
+/// here is an anonymous visitor; the one-address law and the cold-send hold
+/// are the send's own, not this guard's.
+///
+/// # Errors
+///
+/// [`ApiError`] internal-server on engine or storage failure.
+pub(crate) fn enforce_rung2_send(
+    server: &SyncServer,
+    facts: &BookingRequestFacts,
+) -> std::result::Result<BookingHttpDisposition, ApiError> {
+    let vault = &server.vault;
+    let rows = load_rows(vault, facts)?;
+    let verdict = evaluate_rung2_send_request(&rows, facts);
+    if let Some(disposition) = disposition_from_verdict("rung2-send", facts, verdict)? {
+        return Ok(disposition);
+    }
+    let Some((per_minute_per_ip, per_day_per_page)) =
+        rung2_send_rate_knobs(&rows, &facts.page_ref, &facts.event_type)
+    else {
+        return Ok(BookingHttpDisposition::Continue);
+    };
+    let now = server.booking_now_secs()?;
+    if let BookingRateDecision::Exceeded { retry_after_secs } =
+        observe_rung2_send_request(vault, &facts.ip_hash, per_minute_per_ip, now)
+            .map_err(engine_error)?
+    {
+        log_rate_block("rung2-send", &facts.ip_hash, retry_after_secs);
+        return Ok(BookingHttpDisposition::RetryAfter {
+            seconds: retry_after_secs,
+            bound: u64::from(per_minute_per_ip.get()),
+        });
+    }
+    match observe_rung2_page_send(vault, &facts.page_ref, per_day_per_page, now)
+        .map_err(engine_error)?
+    {
+        BookingRateDecision::Allowed => Ok(BookingHttpDisposition::Continue),
+        BookingRateDecision::Exceeded { retry_after_secs } => {
+            log_rate_block("rung2-send-page-day", &facts.ip_hash, retry_after_secs);
+            Ok(BookingHttpDisposition::RetryAfter {
+                seconds: retry_after_secs,
+                bound: u64::from(per_day_per_page.get()),
             })
         }
     }

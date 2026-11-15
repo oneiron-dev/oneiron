@@ -17,7 +17,8 @@ use crate::auth::ClientAddress;
 // Public booking boundary (ONE-1815)
 // -------------------------------------------------------------------------
 
-/// Exactly two public resources. This router has no generic resource fallback.
+/// The published page and its public operations. This router has no generic
+/// resource fallback.
 pub(crate) fn public_booking_router() -> Router<Arc<SyncServer>> {
     let routes = Router::new()
         .route(
@@ -33,6 +34,10 @@ pub(crate) fn public_booking_router() -> Router<Arc<SyncServer>> {
         .route(
             "/{page_token}/constraint-turn",
             post(public_booking_constraint_turn).fallback(public_booking_not_found_response),
+        )
+        .route(
+            "/{page_token}/rung2-send",
+            post(public_booking_rung2_send).fallback(public_booking_not_found_response),
         )
         .route(
             "/{page_token}/verbs/{verb}",
@@ -238,6 +243,29 @@ async fn public_booking_constraint_turn(
         .map(Json)
 }
 
+/// A visitor's rung-2 send (`super::rung2`): an address for the session
+/// whose turn asked for one, authorized only by the published-page
+/// capability.
+async fn public_booking_rung2_send(
+    State(server): State<Arc<SyncServer>>,
+    client: ClientAddress,
+    path: Result<Path<String>, PathRejection>,
+    payload: Result<Json<super::rung2::Rung2SendInput>, JsonRejection>,
+) -> Result<Json<super::rung2::Rung2SendResponse>, ApiError> {
+    let Path(token) = path.map_err(|_| public_booking_not_found())?;
+    let (page_ref, publication) = resolve_public_booking_page(&server, &token)?;
+    let input = json_payload(payload)?;
+    let transport = public_http_transport_context(client)?;
+    let authority = oneiron::booking::publication::PublicBookingAuthority {
+        page_ref,
+        publication,
+    };
+    let transport = BookingAdmissionContext::from(&transport);
+    super::rung2::run_public_rung2_send(&server, authority, input, &transport)
+        .await
+        .map(Json)
+}
+
 /// A parser-backed allowlist, not a second verb registry.
 pub(crate) fn is_booking_pack_verb(verb: &str) -> bool {
     BookingVerb::parse(verb).is_some()
@@ -383,6 +411,9 @@ mod fixture;
 #[cfg(test)]
 #[path = "public_lifecycle_tests.rs"]
 mod lifecycle_tests;
+#[cfg(test)]
+#[path = "rung2_send_tests.rs"]
+mod rung2_send_tests;
 #[cfg(test)]
 #[path = "public_tests.rs"]
 mod tests;
