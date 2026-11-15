@@ -37,8 +37,11 @@ fn epoch_intent(
     lease: &OriginAuthorityLease,
     updates: Vec<RefUpdate>,
 ) -> EntityId {
-    let mut stamp =
-        DoorAdmissionStamp::from_principal(EntityId::now(), &actor.to_hex(), now_secs());
+    let mut stamp = DoorAdmissionStamp::from_principal(
+        EntityId::now(),
+        &actor.to_hex(),
+        crate::unix_seconds_now(),
+    );
     stamp.origin_authority = Some(OriginAuthorityStamp::from_lease(lease));
     vault
         .record_receive_pack_admission(root, &stamp, DoorSeam::Landed)
@@ -321,7 +324,7 @@ fn epoch_cutover_drains_crashed_old_admission_and_cannot_reauthorize_its_source(
         provenance_claim_id: row.provenance_claim_id,
         actor_id: row.actor_id,
         occurred: row.occurred,
-        learned_at: now_secs(),
+        learned_at: crate::unix_seconds_now(),
     };
     assert!(
         reopened
@@ -502,8 +505,11 @@ fn epoch_new_host_cannot_launder_old_observer_evidence_without_an_old_permit() {
         .set_origin_authority(&repo, None, OriginResidence::LocalVault, host, false)
         .expect("epoch 1");
     let lease = vault.lease_origin_authority(&repo, host).expect("lease");
-    let mut stamp =
-        DoorAdmissionStamp::from_principal(EntityId::now(), &actor.to_hex(), now_secs());
+    let mut stamp = DoorAdmissionStamp::from_principal(
+        EntityId::now(),
+        &actor.to_hex(),
+        crate::unix_seconds_now(),
+    );
     stamp.origin_authority = Some(OriginAuthorityStamp::from_lease(&lease));
     vault
         .record_receive_pack_admission(&root, &stamp, DoorSeam::Landed)
@@ -554,10 +560,10 @@ fn epoch_new_host_cannot_launder_old_observer_evidence_without_an_old_permit() {
         provenance_claim_id: attribution.provenance_claim_id,
         actor_id: actor,
         occurred: TimeRange {
-            start: now_secs(),
-            end: now_secs(),
+            start: crate::unix_seconds_now(),
+            end: crate::unix_seconds_now(),
         },
-        learned_at: now_secs(),
+        learned_at: crate::unix_seconds_now(),
     };
     assert!(matches!(
         vault.publish_origin_ref_authorized(&GitWire::new(&vault).expect("wire"), request, &lease),
