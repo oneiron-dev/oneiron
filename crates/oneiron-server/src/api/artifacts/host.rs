@@ -38,7 +38,6 @@ use oneiron_vault_contract::artifact_origin::{
 use oneiron_vault_contract::valid_vault_name;
 use tower::ServiceExt;
 
-use crate::config::SyncServerConfig;
 use crate::error::{ApiError, EnvelopedApiError};
 
 /// Marks a request this router rewrote from `/<artifact>/…` (or an app
@@ -207,22 +206,6 @@ impl ArtifactHosts {
         }
         response
     }
-}
-
-/// The vault's own host on [`LOCAL_ARTIFACT_DOMAIN`], `<name>.localhost`,
-/// where a plain serve with an artifact listener answers by name; its apps
-/// answer at `<app>--<name>.localhost`. `None` for a managed vault, a serve
-/// that names no vault or names it with no DNS label, and a serve with no
-/// artifact listener.
-pub(crate) fn local_vault_host(
-    config: &SyncServerConfig,
-    artifact_port: Option<u16>,
-) -> Option<String> {
-    if artifact_port.is_none() || config.artifact_internal_vault_id.is_some() {
-        return None;
-    }
-    let name = config.artifact_vault_name.as_deref()?.to_ascii_lowercase();
-    ArtifactHost::vault(name).name(LOCAL_ARTIFACT_DOMAIN)
 }
 
 async fn answer(app: Router, request: Request) -> Response {

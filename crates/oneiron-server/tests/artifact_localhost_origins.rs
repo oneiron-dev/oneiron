@@ -7,9 +7,9 @@
 //! Red at main: `<app>--<name>.localhost` falls to local serving, whose `/`
 //! has no route (404); a local preview lease answers at
 //! `preview-<hex>.localhost`, which the contract's `p-<lease>` codec does not
-//! read; `/api/health` names no local host. Guards (they pass there too): the
-//! bare `localhost` and `127.0.0.1` keep local `/a/`, and a `*.localhost`
-//! name of another vault serves nothing.
+//! read. Guards (they pass there too): the bare `localhost` and `127.0.0.1`
+//! keep local `/a/`, a `*.localhost` name of another vault serves nothing,
+//! and the unauthenticated `/api/health` names no vault.
 //!
 //! `cargo test --locked -p oneiron-server --features oneiron/test-support,oneiron/test-hooks
 //! --test artifact_localhost_origins`.
@@ -213,36 +213,36 @@ fn a_localhost_name_of_another_vault_serves_nothing() {
     });
 }
 
+/// `/api/health` answers with no credential, so it names no vault: a client
+/// that starts the serve knows its `--artifact-vault-name` and reaches
+/// `<name>.localhost:<artifact_port>` from that (#8359 review T5).
 #[test]
-fn health_names_the_local_vault_host() {
+fn health_names_no_vault() {
     on_engine_stack(|| async {
-        for (name, expected) in [(Some("Vault"), Some("vault.localhost")), (None, None)] {
-            let (_dir, server) = served(name);
-            let request = Request::builder()
-                .method("GET")
-                .uri("/api/health")
-                .body(Body::empty())
-                .expect("request");
-            let response = build_app(Arc::clone(&server))
-                .oneshot(request)
-                .await
-                .expect("response");
-            assert_eq!(response.status(), StatusCode::OK);
-            let bytes = to_bytes(response.into_body(), 1_048_576)
-                .await
-                .expect("health body");
-            let health: serde_json::Value = serde_json::from_slice(&bytes).expect("health JSON");
-            assert_eq!(
-                health["artifact_port"].as_u64(),
-                Some(u64::from(ARTIFACT_PORT)),
-                "{health:#}"
-            );
-            assert_eq!(
-                health["artifact_local_host"].as_str(),
-                expected,
-                "vault name {name:?}: {health:#}"
-            );
-        }
+        let (_dir, server) = served(Some("Quarry"));
+        let request = Request::builder()
+            .method("GET")
+            .uri("/api/health")
+            .body(Body::empty())
+            .expect("request");
+        let response = build_app(Arc::clone(&server))
+            .oneshot(request)
+            .await
+            .expect("response");
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = to_bytes(response.into_body(), 1_048_576)
+            .await
+            .expect("health body");
+        let health: serde_json::Value = serde_json::from_slice(&bytes).expect("health JSON");
+        assert_eq!(
+            health["artifact_port"].as_u64(),
+            Some(u64::from(ARTIFACT_PORT)),
+            "{health:#}"
+        );
+        assert!(
+            !health.to_string().to_ascii_lowercase().contains("quarry"),
+            "health names the vault: {health:#}"
+        );
     });
 }
 

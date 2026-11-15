@@ -128,7 +128,7 @@ use self::route::ArtifactRoute;
 
 #[path = "artifacts/host.rs"]
 mod host;
-pub(crate) use self::host::{ArtifactHosts, VaultHostRoute, local_vault_host};
+pub(crate) use self::host::{ArtifactHosts, VaultHostRoute};
 
 pub(crate) async fn serve_artifact_root(
     parts: Parts,

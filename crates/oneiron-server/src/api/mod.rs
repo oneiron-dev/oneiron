@@ -396,10 +396,6 @@ async fn health(State(server): State<Arc<SyncServer>>) -> impl IntoResponse {
         runtime: runtime_health_status_for_config(&server.config),
         ai: server.ai.status().health(),
         artifact_port: server.artifact_port(),
-        artifact_local_host: self::artifacts::local_vault_host(
-            &server.config,
-            server.artifact_port(),
-        ),
     })
 }
 
@@ -436,16 +432,6 @@ struct HealthResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schema(example = 49152)]
     artifact_port: Option<u16>,
-    /// This vault's host on the artifact port when the serve names its vault
-    /// (`--artifact-vault-name`): `<name>.localhost`, the hosted shape on
-    /// `*.localhost` (APP-HOST = A). Its artifacts answer at
-    /// `http://<name>.localhost:<artifact_port>/<artifact>/` and each app at
-    /// `http://<app>--<name>.localhost:<artifact_port>/`. Absent for a serve
-    /// that names no vault, a managed vault, and where no artifact listener
-    /// serves.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[schema(example = "vault.localhost")]
-    artifact_local_host: Option<String>,
 }
 
 // ─── Usage Ledger ────────────────────────────────────────────────────────────
