@@ -91,6 +91,23 @@ fn owner_vault() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
     (dir, vault, owner_proof)
 }
 
+/// A vault in the hosted posture, as custody_will_over_substrate.rs builds
+/// one: the test host's cloud root, this install's profile under it, the
+/// owner bound there.
+fn hosted_vault() -> (tempfile::TempDir, Vault, AuthenticatedOwner) {
+    let dir = tempfile::tempdir().expect("temporary vault directory");
+    let mut config = VaultConfig::device();
+    config.privacy.posture = HostingPrivacyPosture::Hosted;
+    let vault = Vault::open(dir.path(), config).expect("hosted vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    let issuer = oneiron::test_support::provision_engine_machines(&vault);
+    vault
+        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+        .expect("this install's machine profile under the host root");
+    let (_owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
+    (dir, vault, owner_proof)
+}
+
 /// The agent `agent_id`, defined by the owner.
 fn ensure_agent(vault: &Vault, owner_proof: &AuthenticatedOwner, agent_id: &str) -> EntityId {
     let agent = EntityId::now();
@@ -446,18 +463,7 @@ fn a_commit_the_push_never_landed_starts_nothing() {
 
 #[test]
 fn a_hosted_node_keeps_a_login_its_vendor_keeps_off_hosted() {
-    let dir = tempfile::tempdir().expect("temporary vault directory");
-    let mut config = VaultConfig::device();
-    config.privacy.posture = HostingPrivacyPosture::Hosted;
-    let vault = Vault::open(dir.path(), config).expect("hosted vault");
-    // The hosted fixture of custody_will_over_substrate.rs: the test host's
-    // cloud root, this install's profile under it, the owner bound there.
-    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
-    let issuer = oneiron::test_support::provision_engine_machines(&vault);
-    vault
-        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-        .expect("this install's machine profile under the host root");
-    let (_owner, owner_proof) = embedded_owner(&vault).expect("authenticated embedded owner");
+    let (_dir, vault, owner_proof) = hosted_vault();
     let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
     let conversation = import_conversation(&vault, &owner_proof);
     let policy = login_policy("codex");
@@ -500,6 +506,59 @@ fn a_hosted_node_keeps_a_login_its_vendor_keeps_off_hosted() {
     assert_eq!(skipped.len(), 1, "one seat is skipped: {skipped:?}");
     assert_eq!(skipped[0].seat, 0, "seat 0 is skipped");
     assert_eq!(skipped[0].reason, expected_reason, "the hosted reason");
+    assert_eq!(counts(&vault), before, "nothing is written");
+}
+
+#[test]
+fn a_continue_keeps_to_the_runner_it_names() {
+    // Seat 0 is Codex on its ChatGPT login, which a hosted node keeps off;
+    // seat 1 is Claude Code, which runs here. The caller asked for Codex, so
+    // neither door hands the work to Claude Code, whatever the spend rule.
+    let (_dir, vault, owner_proof) = hosted_vault();
+    let (_bare, _commit_p, commit_c) = seed_custody_repo(&vault);
+    let conversation = import_conversation(&vault, &owner_proof);
+    let mut policy = login_policy("codex");
+    policy.seats.extend(login_policy("claude-code").seats);
+    policy.on_spent = OnSeatSpent::Stop;
+    let before = counts(&vault);
+    let check = ContinueOutsideWorkCheckRequest {
+        repo: "demo".to_owned(),
+        runner: "codex".to_owned(),
+    };
+    let checked = vault
+        .continue_outside_work_check(RunnerContinueCaller::Owner(&owner_proof), &policy, &check)
+        .expect("the check answers");
+    let ContinueOutsideWorkCheckView::NoSeat { skipped } = checked else {
+        panic!("the check offers no seat of another runner: {checked:?}");
+    };
+    assert_eq!(
+        skipped.len(),
+        1,
+        "only the Codex seat is named: {skipped:?}"
+    );
+    assert_eq!(skipped[0].seat, 0, "seat 0 is skipped");
+    assert_eq!(skipped[0].runner, "codex", "the skipped seat is Codex");
+    let input = ContinueOutsideWorkRequest {
+        repo: "demo".to_owned(),
+        git_ref: CONTINUE_REF.to_owned(),
+        commit: commit_c,
+        conversation: conversation.to_hex(),
+        runner: "codex".to_owned(),
+        note: None,
+    };
+    let answered = vault
+        .continue_outside_work(RunnerContinueCaller::Owner(&owner_proof), &policy, &input)
+        .expect("the door answers");
+    let ContinueOutsideWorkView::NoSeat { skipped } = answered else {
+        panic!("the door binds no seat of another runner: {answered:?}");
+    };
+    assert_eq!(
+        skipped.len(),
+        1,
+        "only the Codex seat is named: {skipped:?}"
+    );
+    assert_eq!(skipped[0].seat, 0, "seat 0 is skipped");
+    assert_eq!(skipped[0].runner, "codex", "the skipped seat is Codex");
     assert_eq!(counts(&vault), before, "nothing is written");
 }
 
