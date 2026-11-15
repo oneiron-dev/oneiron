@@ -53,9 +53,10 @@ fn answered_from_row(answers: [oneiron::Result<ActionDispatch>; 2]) -> TestResul
             Ok(first),
             "the action made again answers as its first making did"
         ),
-        Err(Error::Gate(_)) => assert!(
-            second.is_err(),
-            "a first making the gate refused answers its refusal again: {second:?}"
+        Err(refusal @ Error::Gate(_)) => assert_eq!(
+            second,
+            Err(format!("{refusal:?}")),
+            "a first making the gate refused answers that refusal again"
         ),
         Err(other) => {
             return Err(format!("the action's first making did not run: {other:?}").into());

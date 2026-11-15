@@ -211,6 +211,11 @@ impl CodeRunBridgeCall {
     /// identity alone (FIX 6534): how a row an erase took the words of
     /// meets the call made again, and a live row by the identity it has.
     ///
+    /// It compares with no value base custody holds as the stand-in, unlike
+    /// `replay_request_match` (FIX REPLAY-COMPARE-KNOWN-MATCHER): a value
+    /// whose handle the row holds drifts here, failing closed (FIX-LIST
+    /// [REPLAY-COMPARE-KNOWN-OTHER-CALLERS]).
+    ///
     /// # Errors
     ///
     /// A request the side-row wall cannot read, or one that does not encode.
@@ -226,6 +231,11 @@ impl CodeRunBridgeCall {
     /// Whether this call dispatched `offered`, a kept or an erased row read
     /// one way (FIX 6534): the very value while its words are kept, and its
     /// identity once an erase took them.
+    ///
+    /// It compares with no value base custody holds as the stand-in, unlike
+    /// `replay_request_match` (FIX REPLAY-COMPARE-KNOWN-MATCHER): a value
+    /// whose handle the row holds drifts here, failing closed (FIX-LIST
+    /// [REPLAY-COMPARE-KNOWN-OTHER-CALLERS]).
     ///
     /// # Errors
     ///
