@@ -9,6 +9,9 @@
 //! - only the node that releases the vault's ticks runs them: a node that is not the elected home
 //!   steps over the rows, which stay due there and never wake it, and the home ticks each, late,
 //!   once.
+//! - a run's result lands only on the row it started on: a row armed again while its run runs (a
+//!   TASK rewrite that moves a waiting tick's due time) keeps its new arming (OPUS-SETTING's
+//!   review F2 of 5b-3).
 //!
 //! Red before 5b-3: no tick or timer row is ever armed, and the hook pass releases ticks without
 //! the runner.
@@ -26,11 +29,15 @@ use oneiron::housekeeping::HousekeepingBudget;
 use oneiron::runtime_hooks::{
     FactHookRunner, HOOK_PASS_ENTRIES, HookBodyRun, HookBodyRuntime, HookRunContext,
 };
+use oneiron::schedule::Trigger;
 use oneiron::skill::{
     SkillCallContract, SkillLifecycle, SkillRecord, SkillRole, canonical_skill_tree_hash,
 };
 use oneiron::task_verb::TaskCreateSpec;
-use oneiron::test_doors::schedule::{due_at, task_tick_waiting, while_a_pass_holds_the_runner};
+use oneiron::test_doors::schedule::{
+    TEST_REARM_AFTER_SECS, arm_as_engine, due_at, runs, task_tick_waiting,
+    while_a_pass_holds_the_runner,
+};
 use oneiron::{
     ClaimApprovalStatus, ClaimSource, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig,
 };
@@ -347,5 +354,40 @@ fn an_actors_timers_are_one_row_due_at_their_earliest_due_time() {
         fx.armed(TIMER_JOB, fx.owner),
         None,
         "no timer left: the row goes in the disarm's write"
+    );
+}
+
+/// A row armed again while its run runs keeps the new arming, and runs then: the run's result
+/// write lands only on the row the run started on (OPUS-SETTING's review F2 of 5b-3). Here the
+/// test job's first run arms its own row an hour on, in its own write, and answers done with no
+/// `due_by`, which ends the row it started on. Red before the fix: that answer took the new
+/// arming too, and the row went.
+#[test]
+fn a_row_armed_again_while_its_run_runs_keeps_its_new_arming() {
+    const JOB: &str = "test.rearm";
+    let fx = Fixture::open();
+    let subject = EntityId::from_bytes([0x5B; 16]).expect("subject");
+    arm_as_engine(&fx.vault, JOB, Some(subject), Trigger::At { at: T0 + 10 }).expect("armed");
+
+    fx.at(T0 + 10);
+    fx.pass();
+    assert_eq!(runs(JOB, Some(subject)), 1, "the row ran at its due time");
+    assert_eq!(
+        fx.armed(JOB, subject),
+        Some(T0 + 10 + TEST_REARM_AFTER_SECS),
+        "the arming its run made stands"
+    );
+
+    fx.at(T0 + 10 + TEST_REARM_AFTER_SECS);
+    fx.pass();
+    assert_eq!(
+        runs(JOB, Some(subject)),
+        2,
+        "the new arming ran at its time"
+    );
+    assert_eq!(
+        fx.armed(JOB, subject),
+        None,
+        "the second run ended the row it started on"
     );
 }
