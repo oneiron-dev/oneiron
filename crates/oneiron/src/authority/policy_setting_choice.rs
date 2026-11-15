@@ -96,6 +96,7 @@ pub(super) fn apply_policy_setting(
         machine: set.machine,
         choice: set.value.as_ref(),
         context: POLICY_SETTING_REVISION_CONTEXT,
+        persons_own: false,
     };
     let landing = owner_choice_landing(
         state,

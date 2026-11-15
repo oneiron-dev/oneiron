@@ -119,6 +119,7 @@ pub(super) fn apply_device_succession(
         machine: succession.machine,
         choice: Some(&choice),
         context: DEVICE_SUCCESSION_REVISION_CONTEXT,
+        persons_own: false,
     };
     let landing = owner_choice_landing(
         state,
