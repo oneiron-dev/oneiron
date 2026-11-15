@@ -650,6 +650,42 @@ fn an_opt_out_still_lands_with_no_person_proof() {
     );
 }
 
+/// Review fix (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): a person's own
+/// opt-out lands with no proof, so the fold never judges a proof on it. One
+/// that does not hold (another key's signature over a slip no row minted)
+/// still lets the opt-out land, never as an invalid entry.
+#[test]
+fn an_opt_out_with_a_person_proof_that_does_not_hold_still_lands() {
+    let answer = HostedNodeAnswer::new();
+    let (vault_id, node) = (answer.vault_id(), answer.machine);
+    let proof = person_proof(
+        &vault_id,
+        member(),
+        true,
+        [0; 32],
+        [0x5A; 32],
+        &signing(FORGER_SEED),
+    );
+    let (fold, entry) = answer.node_carries(members_own_choice(node, true, [0; 32], Some(proof)));
+    assert!(
+        !fold
+            .issues
+            .contains(&AuthorityFoldIssue::InvalidEntry(entry)),
+        "a proof on an opt-out never makes it invalid: {:?}",
+        fold.issues
+    );
+    assert!(
+        leaves_out(&fold, member()),
+        "the member's own opt-out lands: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::new(),
+        "a person's own opt-out never waits"
+    );
+}
+
 /// One vault as a managed host serves it: the Hosted posture, rooted under
 /// the test host (a custodial root, so the roster holds no key that proves
 /// for the owner), this install profiled `Unanswered`, and the embedded owner
@@ -872,4 +908,29 @@ fn the_owners_door_refuses_a_person_proof() {
             .leave_out,
         "the owner stays left out"
     );
+}
+
+/// Review fix (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF): the member's
+/// door drops a proof sent with their opt-out unjudged, so one that does not
+/// hold never refuses the opt-out.
+#[test]
+fn a_members_door_takes_an_opt_out_with_a_proof_that_does_not_hold() {
+    let served = ServedVault::hosted();
+    served.let_people_opt_out();
+    served.owner_key_held_on_another_install();
+    let (_, proof, _, _) = served.member_with_slip();
+    let out = served
+        .vault
+        .set_conversation_training(
+            &proof,
+            ActSurface::ThisInstall,
+            true,
+            None,
+            Some(PersonChoiceProof {
+                slip: [0xA0; 32],
+                signature: [0xA1; 64],
+            }),
+        )
+        .expect("the opt-out lands beside a proof that does not hold");
+    assert!(out.leave_out, "the member is left out");
 }
