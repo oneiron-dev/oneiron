@@ -2,5 +2,5 @@
 //! `oneiron` re-exports each item at its old path.
 
 pub fn hex(bytes: &[u8; 32]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
