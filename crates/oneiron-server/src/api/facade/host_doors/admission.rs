@@ -138,6 +138,13 @@ pub(in crate::api::facade) fn door_admits(
                         .map(drop)
                 })
         }
+        // `vault.cleanup.decide` (RESTRICTION-WAVE-10 C43): the owner's proof, or a credential
+        // bound to an agent, which the door admits only while the owner's
+        // vault_cleanup.decide.owner_only is off and on a Grant naming the verb. Any other
+        // caller keeps the owner refusal.
+        Proof::CleanupDecider => {
+            crate::api::facade::cleanup_doors::decider(server, auth, verb).map(drop)
+        }
         Proof::SharedPerson => {
             crate::api::facade::shared_act_doors::person(server, auth, verb).map(drop)
         }

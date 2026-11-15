@@ -115,6 +115,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::attempt_id::AttemptId;
 
+mod agent_decide;
 mod attempt_delete_authority;
 mod attempt_delete_receipts;
 mod attempt_delete_wire;
@@ -135,10 +136,12 @@ mod run_record;
 mod run_revert;
 mod run_snapshot;
 mod scan;
+pub(crate) mod setting_keys;
 pub mod surface;
 mod tripwire;
 mod visibility;
 
+pub use self::agent_decide::decide_cleanup_proposal_wire;
 pub use self::attempt_delete_wire::{
     AttemptArchiveDeleteConfirmRequest, AttemptArchiveDeleteExpectation,
     AttemptArchiveDeletePreviewRequest, AttemptArchiveDeletePreviewView,

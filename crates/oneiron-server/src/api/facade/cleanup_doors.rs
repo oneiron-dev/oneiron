@@ -14,6 +14,28 @@ use super::host_doors::support::{Listed, internal, owner_proof, refused};
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
 
+/// Who decides a cleanup proposal (RESTRICTION-WAVE-10 C43): the owner under
+/// its proof, or an agent on its own credential, whose owner key and Grant the
+/// engine door reads in the write that decides.
+pub(super) enum Decider {
+    Owner(oneiron::consent::AuthenticatedOwner),
+    Agent(oneiron::EntityId),
+}
+
+/// The caller `vault.cleanup.decide` admits before its door runs: the owner's
+/// proof, else a credential bound to an agent. A credential bound to anyone
+/// else, or to no one, keeps the owner refusal.
+pub(super) fn decider(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Decider> {
+    let refusal = match owner_proof(auth, server, verb) {
+        Ok(owner) => return Ok(Decider::Owner(owner)),
+        Err(refusal) => refusal,
+    };
+    match super::owner_binding::facade_caller_or(server, auth, || refusal.clone())? {
+        (agent, EdgeActorClass::Agent) => Ok(Decider::Agent(agent)),
+        _ => Err(refusal),
+    }
+}
+
 pub(crate) async fn vault_cleanup_run(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -97,23 +119,28 @@ pub(crate) async fn vault_cleanup_review(
 }
 
 /// One open proposal decided slot by slot in one complete verdict (FIX
-/// 1758), under the owner's proof.
+/// 1758), under the owner's proof, or by an agent the owner's
+/// `vault_cleanup.decide.owner_only` and its Grant admit.
 pub(crate) async fn vault_cleanup_decide(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: CleanupDecideRequest,
 ) -> Listed<CleanupDecideView> {
     const VERB: &str = "vault.cleanup.decide";
-    let owner = match owner_proof(auth, server, VERB) {
-        Ok(owner) => owner,
+    let decider = match decider(server, auth, VERB) {
+        Ok(decider) => decider,
         Err(error) => return refused(error),
     };
     let server = Arc::clone(server);
     let sourced: MemoryResult<(CleanupDecideView, Vec<oneiron::EntityId>)> =
         super::clock_ingress::run_blocking(move || {
-            server
-                .vault()
-                .decide_cleanup_proposal_sourced_as(&owner, &input)
+            let vault = server.vault();
+            match decider {
+                Decider::Owner(owner) => vault.decide_cleanup_proposal_sourced_as(&owner, &input),
+                Decider::Agent(agent) => {
+                    vault.decide_cleanup_proposal_sourced_as_agent(agent, &input)
+                }
+            }
         })
         .await
         .map_err(|_| internal(VERB))
