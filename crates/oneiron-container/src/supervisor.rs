@@ -281,7 +281,7 @@ pub(crate) fn cgroup_path(evidence: &serde_json::Value) -> Option<&str> {
 }
 
 /// This container's host pid as its runtime names it, if it names one.
-pub(crate) fn container_pid(evidence: &serde_json::Value) -> Option<u32> {
+pub(crate) fn host_pid(evidence: &serde_json::Value) -> Option<u32> {
     evidence
         .pointer("/0/State/Pid")
         .and_then(serde_json::Value::as_u64)
@@ -327,7 +327,7 @@ fn from_container(
         None => {
             let Some(pid) = inspect(runtime, name)
                 .ok()
-                .and_then(|evidence| container_pid(&evidence).map(u64::from))
+                .and_then(|evidence| host_pid(&evidence).map(u64::from))
             else {
                 return false;
             };

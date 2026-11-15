@@ -537,7 +537,7 @@ fn pressure_cgroup_dir(evidence: &serde_json::Value) -> Option<PathBuf> {
             return Some(given);
         }
     }
-    let pid = supervisor::container_pid(evidence)?;
+    let pid = supervisor::host_pid(evidence)?;
     let own = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
     let relative = own
         .lines()
