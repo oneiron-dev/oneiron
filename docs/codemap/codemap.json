@@ -28356,7 +28356,7 @@
      "path": "src/deletion/tombstone_scope.rs",
      "purpose": "The scope a deleted record held, kept as content-free evidence bound to its delete request, so a selector…",
      "surface": {
-      "crate-vis": 7
+      "crate-vis": 8
      }
     },
     {
@@ -85741,7 +85741,7 @@
      "path": "src/sync/selector/tombstones.rs",
      "purpose": "Which window tombstones a selector export carries beside the rows it keeps (FIX 10161)",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 4
      }
     },
     {
@@ -101872,6 +101872,14 @@
      "bucket": "m",
      "kind": "test",
      "notable": [],
+     "path": "tests/selector_tombstone_label.rs",
+     "purpose": "A federation selector window carries no tombstone of a relationship row its member does not read (OPUS-LEAKS…",
+     "surface": {}
+    },
+    {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
      "path": "tests/serving_egress_credentials.rs",
      "purpose": "Admitted agent egresses release typed Nulled bodies while the owner keeps encoded carriers and graph source…",
      "surface": {}
@@ -104260,7 +104268,7 @@
    "over_bar": 266,
    "purpose": "Long-context memory engine: an LMDB vault, a write Gate, retrieval pipelines and host surfaces",
    "source_files": 7605,
-   "test_files": 1346
+   "test_files": 1347
   },
   "oneiron-agent-runtime": {
    "files": [
@@ -117374,6 +117382,14 @@
     {
      "bucket": "s",
      "kind": "src",
+     "notable": [],
+     "path": "src/purposes/web_fetch.rs",
+     "purpose": "Purposes of web acquisition (`oneiron-web-fetch`; OF-444)",
+     "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "src",
      "notable": [
       "CanonicalBytesError"
      ],
@@ -117402,7 +117418,7 @@
      "purpose": "The K door: a digest that main already stores or sends keeps its exact bytes"
     },
     "purposes": {
-     "files": 3,
+     "files": 4,
      "impl_vault": false,
      "largest_src_bucket": "s",
      "layout": "dir",
@@ -117418,7 +117434,7 @@
    },
    "over_bar": 0,
    "purpose": "One fingerprint rule for engine digests (fable pass 22; PLAN-UC-04 stage 0)",
-   "source_files": 6,
+   "source_files": 7,
    "test_files": 1
   },
   "oneiron-gen": {
@@ -190630,6 +190646,17 @@
      "path": "src/web_fetch/tests.rs",
      "purpose": "—",
      "surface": {}
+    },
+    {
+     "bucket": "s",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/fingerprint_keep_web_fetch.rs",
+     "purpose": "K-proof (oracle) for PLAN-UC-04 stage 6.2a: the web fetch content hash keeps its bytes",
+     "surface": {
+      "const": 1,
+      "crate-vis": 1
+     }
     }
    ],
    "modules": {
@@ -190651,7 +190678,7 @@
    "over_bar": 0,
    "purpose": "Web acquisition of the oneiron engine",
    "source_files": 14,
-   "test_files": 1
+   "test_files": 2
   },
   "oneiron-xlsx-formula": {
    "files": [

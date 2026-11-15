@@ -16,5 +16,6 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/purposes/broker.rs` | src | s | — | — | Purposes of the credential broker (`oneiron-broker`; ARCH-0069 `#broker-digest`) |
 | `src/purposes/mod.rs` | src | s | 1 fn · 2 const | — | The purpose registry: every [`Purpose`] and every [`LegacyPurpose`] the engine uses, one file per engine area |
 | `src/purposes/testing.rs` | src | s | — | — | Purposes for tests only |
+| `src/purposes/web_fetch.rs` | src | s | — | — | Purposes of web acquisition (`oneiron-web-fetch`; OF-444) |
 | `src/record.rs` | src | s | 1 enum · 2 fn | CanonicalBytesError | The one canonical byte form of a structured value (DESIGN section 1.5) |
 | `tests/fingerprint_rules.rs` | test | m | — | — | PLAN-UC-04 stage 0: the rules of the fingerprint door, checked against hand-written transcripts |
