@@ -29,6 +29,7 @@ pub(crate) const BUILD_TIME_OUTPUTS: &[&str] = &[
     "crates/oneiron-remote/src/generated/agent_verbs.rs",
     "crates/oneiron-server/src/api/facade/generated/agent_verbs.rs",
     "crates/oneiron-server/src/api/facade/generated/dispatch.rs",
+    "crates/oneiron-server/src/api/facade/generated/doors.rs",
     "crates/oneiron-server/src/api/facade/generated/host_door_rows.rs",
     "crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
     "crates/oneiron-uniffi/src/generated/facade_generated.rs",
@@ -455,6 +456,10 @@ impl Generator {
             dispatch,
         );
         files.insert(
+            "crates/oneiron-server/src/api/facade/generated/doors.rs",
+            super::emit_doors::doors(self, &facade_rows)?,
+        );
+        files.insert(
             "crates/oneiron-server/src/api/facade/generated/host_door_rows.rs",
             super::emit_server::host_door_rows(self, &facade_rows)?,
         );
@@ -732,7 +737,7 @@ mod tests {
             Some(2)
         );
         assert_eq!(package_outputs("nope"), None);
-        assert_eq!(BUILD_TIME_OUTPUTS.len(), 17);
+        assert_eq!(BUILD_TIME_OUTPUTS.len(), 18);
         assert!(BUILD_TIME_OUTPUTS.contains(&super::super::wire_inputs::WIRE_INPUTS_PATH));
     }
 

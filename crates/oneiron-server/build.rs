@@ -16,6 +16,7 @@ fn main() {
     oneiron_sdk_build::generate(&[
         "crates/oneiron-server/src/api/facade/generated/agent_verbs.rs",
         "crates/oneiron-server/src/api/facade/generated/dispatch.rs",
+        "crates/oneiron-server/src/api/facade/generated/doors.rs",
         "crates/oneiron-server/src/api/facade/generated/host_door_rows.rs",
         "crates/oneiron-server/src/api/mcp_gateway/generated/agent_verb_dispatch.rs",
     ]);

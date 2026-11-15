@@ -31,6 +31,17 @@ pub(in crate::api::facade) trait ProofRule {
     fn prove(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<Self::Proof>;
 }
 
+/// A rule a generated door may run on the credential's own handle (`door::door_on_handle`): the actor that handle
+/// reads as, once the rule has admitted the caller (UC-01 PR 1).
+pub(in crate::api::facade) trait HandleRule: ProofRule {
+    /// The actor the credential's handle reads as under `proof`.
+    fn actor(
+        server: &SyncServer,
+        auth: &CoreAuth,
+        proof: &Self::Proof,
+    ) -> MemoryResult<(EntityId, EdgeActorClass)>;
+}
+
 /// The check host-door row `verb`'s door runs before the row's pre chain: the rule its row names.
 /// A row whose rule is `in_door`, and a verb that is no host-door row, pass: such a door checks its
 /// caller itself.
@@ -58,6 +69,18 @@ impl ProofRule for Owner {
     type Proof = AuthenticatedOwner;
     fn prove(server: &SyncServer, auth: &CoreAuth, verb: &str) -> MemoryResult<AuthenticatedOwner> {
         facade_owner(server, auth, verb)
+    }
+}
+/// The owner's handle reads as the credential's own principal, as the owner-listing doors read
+/// (`support::owner_listing::as_owner`).
+impl HandleRule for Owner {
+    fn actor(
+        server: &SyncServer,
+        auth: &CoreAuth,
+        _owner: &AuthenticatedOwner,
+    ) -> MemoryResult<(EntityId, EdgeActorClass)> {
+        crate::api::facade::facade_actor(server, auth)
+            .map_err(crate::api::facade::FacadeApiError::into_memory_error)
     }
 }
 

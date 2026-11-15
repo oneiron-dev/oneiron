@@ -18,6 +18,11 @@
 mod artifacts_audit;
 mod authority_clock;
 mod diary;
+mod door;
+/// The doors generated from their verb rows (UC-01 PR 1): every host-door row without `"door": "hand"`.
+mod generated {
+    include!(concat!(env!("OUT_DIR"), "/doors.rs"));
+}
 mod media;
 mod packs;
 mod proactivity;
@@ -29,6 +34,7 @@ mod vision;
 pub(crate) use self::artifacts_audit::*;
 pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
+pub(crate) use self::generated::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
 pub(crate) use self::proactivity::*;
@@ -293,7 +299,6 @@ pub(crate) use super::project_card_doors::*;
 // The owner's proposed-claim review and settle doors (DOOR-115), likewise.
 pub(crate) use super::claim_settle_doors::*;
 // The plugin Context Board section doors (DOOR-112), likewise.
-pub(crate) use super::commitment_doors::*;
 pub(crate) use super::consolidation_doors::*;
 pub(crate) use super::critical_confirm_doors::*;
 pub(crate) use super::plugin_section_doors::*;

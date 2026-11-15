@@ -7,6 +7,7 @@
 pub(crate) mod common;
 mod docs;
 pub(crate) mod emit_core;
+mod emit_doors;
 mod emit_http;
 pub(crate) mod emit_mcp;
 pub(crate) mod emit_native;

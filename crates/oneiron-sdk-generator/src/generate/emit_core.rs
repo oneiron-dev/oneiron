@@ -4,6 +4,7 @@
 //!
 //! None of these reads the `Inventory`: each is text over the module-level row sets, in Python's order.
 
+use super::emit_doors::{call_result, embedded_bindings};
 use super::row_access::{
     ByName, concat, context_is, flag, get_is, item, json, json_item, repr_list, shown, text,
     variant_of, variants,
@@ -568,14 +569,6 @@ pub(crate) fn prose_links_landed(row: &Dict, call: &str) -> Option<String> {
     })
 }
 
-/// `call[:-1] if call.endswith('?') else f'Ok({call})'`: an engine call's own result, or its value wrapped.
-fn call_result(call: &str) -> String {
-    match call.strip_suffix('?') {
-        Some(head) => head.to_owned(),
-        None => format!("Ok({call})"),
-    }
-}
-
 /// What `core` emits: the lib's `sdk_generated.rs`, the wire crate's `verb_input_checks.rs` and the files the wire
 /// ownership lookups read.
 pub(crate) struct CoreTexts {
@@ -885,6 +878,8 @@ pub(crate) fn core(
             Some(landed) => landed,
             None => call_result(super::common::str_receiver(call, "endswith")?),
         };
+        // UC-01 PR 1: the names the call uses beyond `memory` and `input`, bound from the handle (emit_doors.rs).
+        let result = embedded_bindings(row, &call.str())? + &result;
         let result = record_refs_check(row)? + &result;
         let result = prose_links_check(row)? + &result;
         let input = shown(row, "input")?;
@@ -907,6 +902,7 @@ pub(crate) fn core(
         // behind the same checks.
         if let Some(file_call) = row.get("file_call") {
             let file_result = call_result(super::common::str_receiver(file_call, "endswith")?);
+            let file_result = embedded_bindings(row, &file_call.str())? + &file_result;
             let file_result = prose_links_check(row)? + &record_refs_check(row)? + &file_result;
             core += &format!(
                 "{}pub fn {method}_file(memory: &Memory<'_>, {binding}: {}, body: &crate::blob_artifact::BlobBodyFile<'_>) -> MemoryResult<{}> {{ {checks} {file_result} }}\n",
@@ -916,6 +912,7 @@ pub(crate) fn core(
             );
         }
     }
+    core += &super::emit_doors::calls_module(generator, facade_rows)?;
     // FIX 1210: the record-ref check a row's engine fn runs before its call, alone, for a door that refuses a ref its
     // caller cannot read before that fn runs.
     core += "/// The record-ref check `verb`'s engine fn runs before its call, run alone\n/// (FIX 1210): a door that refused one of its refs before reaching the fn\n/// receipts that refusal as the fn would have. Its own checks of the input\n/// run first, as in the fn; no engine call runs. A verb whose door checks\n/// no readable ref checks nothing.\npub fn receipt_declared_refs(memory: &Memory<'_>, verb: &str, value: serde_json::Value) -> MemoryResult<()> {\nmatch verb {\n";

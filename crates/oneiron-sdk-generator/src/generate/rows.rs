@@ -182,7 +182,7 @@ fn admission_flag(row: &Dict, key: &str) -> Result<bool, GenerateError> {
 }
 
 /// `ValueError(f'{row["name"]}: {message}')`.
-fn refuse(row: &Dict, message: &str) -> GenerateError {
+pub(super) fn refuse(row: &Dict, message: &str) -> GenerateError {
     match row.get("name") {
         Some(name) => GenerateError::value(format!("{}: {message}", name.str())),
         None => GenerateError::key("name"),
@@ -522,13 +522,18 @@ fn check_doors(row: &Dict) -> Result<(), GenerateError> {
             "`proof` names a rule of host_doors/proofs.rs, or `in_door`",
         ));
     }
+    // UC-01 PR 1: a host door's row without `"door": "hand"` gets a generated door (emit_doors.rs).
     if row.get("door").is_some_and(|door| !door.is_str("hand"))
-        || host_door != row.contains_key("door")
+        || (row.contains_key("door") && !host_door)
     {
         return Err(refuse(
             row,
-            "a host door's row says \"door\": \"hand\" (its door fn is hand-written), and only a host door's",
+            "only a host door's row says \"door\": \"hand\" (its door fn is hand-written); without it the door is generated",
         ));
+    }
+    super::emit_doors::check_names(row)?;
+    if host_door {
+        super::emit_doors::check_door_row(row)?;
     }
     if host_door
         && (flag(row, "server_door") || admission_flag(row, "owner_grade")? || not_memory(row))
@@ -1168,11 +1173,11 @@ mod tests {
             ),
             (
                 r#""proof": "owner""#,
-                "ValueError: zz_fixture: a host door's row says \"door\": \"hand\" (its door fn is hand-written), and only a host door's",
+                "ValueError: zz_fixture: a generated door answers beside the rows it read (`lists`); keep \"door\": \"hand\"",
             ),
             (
                 r#""door": "hand""#,
-                "ValueError: zz_fixture: a host door's row says \"door\": \"hand\" (its door fn is hand-written), and only a host door's",
+                "ValueError: zz_fixture: only a host door's row says \"door\": \"hand\" (its door fn is hand-written); without it the door is generated",
             ),
             (
                 r#""lists": true"#,
@@ -1239,6 +1244,107 @@ mod tests {
             .to_string();
         assert_eq!(error, "ValueError: duplicate SDK verb");
         fs::remove_dir_all(&root).expect("cleanup");
+    }
+
+    /// UC-01 PR 1: a host-door row without `"door": "hand"` gets a generated door, and the generator refuses one that its
+    /// rule or its transport cannot serve, naming the row; an accepted row is "".
+    #[test]
+    fn generated_door_rows() {
+        const DOOR: &str = r#""name": "zz_door", "input": "ZzInput", "output": "ZzOutput", "scope": "Read", "act_class": "read", "section": false, "lists": true"#;
+        let row = |name: &str| format!("ValueError: zz_door: {name}");
+        let keep = "; keep \"door\": \"hand\"";
+        let cases: Vec<(&str, String)> = vec![
+            (
+                r#""proof": "owner", "call": "f(vault, owner, &input)?""#,
+                String::new(),
+            ),
+            (
+                r#""proof": "owner", "call": "memory.f(owner, input)?""#,
+                String::new(),
+            ),
+            (
+                r#""proof": "owner", "call": "f(owner, surface, &input)?", "host_door_surface": true"#,
+                String::new(),
+            ),
+            (
+                r#""proof": "owner", "call": "f(vault, owner, &input)?", "rows": "vec![answer.a, answer.b]""#,
+                String::new(),
+            ),
+            (
+                r#""proof": "owner", "call": "f(vault, owner, input)?", "rows": "vec![input.binding]""#,
+                String::new(),
+            ),
+            (
+                r#""proof": "owner", "call": "memory.f(&memory.embedded_owner(\"zz_door\")?, input)?", "door": "hand""#,
+                String::new(),
+            ),
+            (
+                r#""proof": "person", "call": "f(vault, owner, &input)?""#,
+                row(&format!(
+                    "rule `person` has no generated door yet (generated: owner){keep}"
+                )),
+            ),
+            (
+                r#""proof": "in_door", "call": "memory.f(input)?""#,
+                row(
+                    "`\"proof\": \"in_door\"` is a hand door's: its door proves its caller itself, so the row says \"door\": \"hand\"",
+                ),
+            ),
+            (
+                r#""proof": "owner", "call": "f(server, owner, &input)?""#,
+                row(
+                    "`call` uses `server`, which only a host call binds (`runs: host`, UC-01 PR 5.1); keep the host work in the hand door",
+                ),
+            ),
+            (
+                r#""call": "f(answer)?""#,
+                row("`call` uses `answer`, which only `rows` binds"),
+            ),
+            (
+                r#""proof": "owner", "call": "f(owner, &input)?", "host_door_caller": true"#,
+                row(&format!(
+                    "a generated door takes no caller from the dispatch (`host_door_caller`){keep}"
+                )),
+            ),
+            (
+                r#""proof": "owner", "call": "f(owner, surface, &input)?""#,
+                row(
+                    "a generated door takes the act surface (`host_door_surface`) exactly when its call uses `surface`",
+                ),
+            ),
+            (
+                r#""proof": "owner", "call": "f(owner, &input)?", "host_door_surface": true"#,
+                row(
+                    "a generated door takes the act surface (`host_door_surface`) exactly when its call uses `surface`",
+                ),
+            ),
+            (
+                r#""proof": "owner", "call": "f(owner, &input)?", "rows": "vec![answer.a, input.b]""#,
+                row(
+                    "`rows` reads `answer` or `input`, not both: the call moves `input` before `answer` exists",
+                ),
+            ),
+            (
+                r#""proof": "owner", "call": "f(owner, &input)?", "rows": "vec![owner.a]""#,
+                row("`rows` uses `owner`; it binds only `answer` and `input`"),
+            ),
+            (
+                r#""proof": "owner", "door": "hand", "call": "f(owner, &input)?", "rows": "vec![answer.a]""#,
+                row(
+                    "`rows` names the rows a generated door's answer or input names; a hand door lists its own",
+                ),
+            ),
+        ];
+        for (at, (fields, expected)) in cases.iter().enumerate() {
+            let root = tree(
+                &format!("generated-door-{at}"),
+                &[("zz_door.json", &format!("{{{DOOR}, {fields}}}"))],
+            );
+            let got =
+                Generator::new(&root).map_or_else(|error| error.to_string(), |_| String::new());
+            assert_eq!(&got, expected, "{fields}");
+            fs::remove_dir_all(&root).expect("cleanup");
+        }
     }
 
     #[test]
