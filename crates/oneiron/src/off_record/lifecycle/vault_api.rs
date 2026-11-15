@@ -649,10 +649,11 @@ fn vet_roomless_session_ref(session_ref: &str) -> Result<()> {
 /// the flip lands on the stretch it holds, never on one that took its name
 /// since.
 ///
-/// A flip back off record returns the wait it owes for the base write open
-/// now (ARCH-0052 #d5-proof-open). Its caller runs that wait once it has let
-/// go of the state lock: a flip inside a base write takes the lock while it
-/// holds the writer, so a wait under the lock would deadlock with it.
+/// A flip back off record, a repeat one too, returns the wait it owes for the
+/// base write open now (ARCH-0052 #d5-proof-open). Its caller runs that wait
+/// once it has let go of the state lock: a flip inside a base write takes the
+/// lock while it holds the writer, so a wait under the lock would deadlock
+/// with it.
 pub(super) fn set_entry_mode(
     entry: &OffRecordSessionEntry,
     state: &mut OffRecordSessionEntryState,
@@ -665,7 +666,13 @@ pub(super) fn set_entry_mode(
         }));
     }
     if state.record.mode == mode {
-        return Ok((state.record.clone(), OpenWriteTxnWait { owed: false }));
+        // A repeat flip back still owes the wait: an earlier flip may have
+        // published this mode and let go of the lock while a base write that
+        // passed its last check before it is still open.
+        let wait = OpenWriteTxnWait {
+            owed: mode == OffRecordMode::OffRecord,
+        };
+        return Ok((state.record.clone(), wait));
     }
     // Anonymous is an entry-time choice, never a way to hide an existing
     // transcript or later publish one. Check both ends before touching the
