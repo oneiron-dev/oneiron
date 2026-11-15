@@ -110,9 +110,11 @@ pub(super) fn serial_binding_op(op: &AuthorityOp) -> bool {
 }
 
 /// Whether `op` is a machine profile with no owner act: a roster revision or
-/// removal, which the tail folds past the image only serially, every covered
-/// row in its causal past, and signed by no owner anchor (FIX 11760,
-/// [`super::serial_fold_past`]). Its transition reads its parents' states,
+/// removal. The op names no signer, so this alone never means the row is
+/// admitted: [`super::serial_fold_past`] admits it past the image only
+/// serially, every covered row in its causal past, and only when no owner
+/// anchor signed it, since an anchor's mark folds through the anchor's own
+/// chain (FIX 11760). Its transition reads its parents' states,
 /// the whole fold's own, under the image's pin and peers. No covered row
 /// sets its floor: every covered row of its signer is in its past, so it
 /// folds only above them all (`NonMonotonicSeq`). Its tail then folds
