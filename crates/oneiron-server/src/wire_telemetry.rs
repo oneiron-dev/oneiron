@@ -766,6 +766,14 @@ impl WireTelemetry {
         active.frozen = false;
         Ok(())
     }
+    /// Runs `held` while the window's counter lock is held, as `observe`
+    /// holds it across a rollover's persist: the door for the test that a
+    /// call never waits for it on a runtime worker.
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn while_counter_held<T>(&self, held: impl FnOnce() -> T) -> T {
+        let _active = lock(&self.active);
+        held()
+    }
     pub fn snapshot(&self) -> Result<Option<WireWindowReceipt>> {
         Ok(self
             .active
