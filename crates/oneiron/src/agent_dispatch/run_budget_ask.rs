@@ -12,9 +12,11 @@
 //!   ([`Vault::press_run_budget_ask`]), which also takes the overdraft's cap.
 //!   `stay_parked` leaves the run held. `overdraft` records the run's
 //!   overdraft ([`RunOverdraft`]), raises the run's open root spend scope by
-//!   its cap, and resumes the run: its meters then run with
-//!   `Overdraft{cap}` ([`AgentDispatcher::run_overdraft_units`]). With no cap
-//!   named, the cap is the units one more call of the run reserves.
+//!   its cap, and resumes the run: each of its meters, fresh or restored
+//!   from a saved cursor, then takes the cap once on top of what it had
+//!   ([`AgentDispatcher::run_overdraft`]; the ask's arrival number names the
+//!   grant). With no cap named, the cap is the units one more call of the
+//!   run reserves.
 //! - When the vault's USD quote prices the unit of the run's open root
 //!   scope, the ask also offers `add_funds` (owner ruling RUN-BUDGET-SPENT =
 //!   B, 15 Nov 2026: "you can dedicate more money"). The owner names dollars
@@ -293,8 +295,9 @@ pub(super) fn funds_units(price: &FundsPrice, amount_usd_micros: u64) -> Result<
         })
 }
 
-/// The one-off overdraft the owner approved for a held run: its meters run
-/// with `Overdraft{cap_units}` until the run is held again.
+/// The one-off overdraft the owner approved for a held run: each of its
+/// meters takes `cap_units` once, as the grant `ask`, until the run is held
+/// again.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunOverdraft {
     pub cap_units: u64,
@@ -1087,16 +1090,16 @@ impl Vault {
 impl AgentDispatcher<'_> {
     /// The overdraft the owner approved for the run `attempt` belongs to (the
     /// root or any attempt of its run), while the run has not been held again:
-    /// its meters run with `Overdraft{cap}`. `None` with none approved.
+    /// each of its meters takes its cap once. `None` with none approved.
     ///
     /// # Errors
     ///
     /// Storage errors.
-    pub fn run_overdraft_units(&self, attempt: AttemptId) -> Result<Option<u64>> {
+    pub fn run_overdraft(&self, attempt: AttemptId) -> Result<Option<RunOverdraft>> {
         let txn = self.vault.store.env.read_txn()?;
         for key in self.run_keys_in_txn(&txn, attempt)? {
             if let Some(overdraft) = OVERDRAFT.get(&self.vault.store, &txn, &key)? {
-                return Ok(Some(overdraft.cap_units));
+                return Ok(Some(overdraft));
             }
         }
         Ok(None)
