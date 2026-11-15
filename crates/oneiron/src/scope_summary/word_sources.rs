@@ -23,8 +23,9 @@ pub(crate) enum WordSources {
 /// a scope summary, a TURN that copies one, a claim whose merge header names
 /// one, a `conversation.summary` claim's typed coverage, a native conflict
 /// pair's two claims, the MESSAGE an owner's stated intent cites, the
-/// finding and subject a Dreamer finding's notice points at, or the records
-/// a filed compaction step's call read.
+/// finding and subject a Dreamer finding's notice points at, the records
+/// a filed compaction step's call read, or those a compaction intent NOTE's
+/// epoch was written from.
 pub(crate) fn word_sources_in(
     vault: &Vault,
     txn: &RoTxn<'_>,
@@ -89,6 +90,30 @@ pub(crate) fn word_sources_through_in(
         } else {
             WordSources::From(sources)
         });
+    }
+    // A compaction epoch's intent NOTE holds the pass's note and the lines it
+    // keeps word for word from its window: its words came from its
+    // `DerivedFrom` targets, the epoch's own live sources, so it reads only
+    // beside them, as the epoch does (Engine RULING REACH-INTENT-NOTE-SOURCES
+    // = A, 16 Nov 07:19). A NOTE naming the kind whose core does not decode
+    // is no proof of words of its own.
+    if header.entity_type == crate::registry::ENTITY_TYPE_NOTE
+        && names(crate::store::note_kind::COMPACTION_INTENT_NOTE_KIND.as_bytes())
+    {
+        match crate::store::note_body::decode_note_core(body) {
+            Ok(core)
+                if core.kind.as_str() == crate::store::note_kind::COMPACTION_INTENT_NOTE_KIND =>
+            {
+                let sources = derived_from()?;
+                return Ok(if sources.is_empty() {
+                    WordSources::Own
+                } else {
+                    WordSources::From(sources)
+                });
+            }
+            Ok(_) => {}
+            Err(_) => return Ok(WordSources::Unresolved),
+        }
     }
     let sources = match header.entity_type {
         // A pointer no head stands for may be an epoch summary's, whose
