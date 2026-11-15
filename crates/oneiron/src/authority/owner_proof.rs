@@ -123,6 +123,15 @@ pub(super) fn web_sign_in_switch(state: &FoldState) -> Option<[u8; 32]> {
         .then(|| web_sign_in_value(&state.owner_keys_ever))
 }
 
+/// Whether `target` is the web sign-in setting's reserved target: the
+/// frontier [`runs_on_web_sign_in`] reads.
+pub(super) fn is_web_sign_in_target(target: EntityId) -> bool {
+    matches!(
+        PolicySetting::WebSignIn.reserved_target(),
+        Ok(Some(reserved)) if reserved == target
+    )
+}
+
 /// Whether the owner's switch back to web sign-in is in force in `state`:
 /// the setting has a live act, and every live act of it is the switch over
 /// exactly the owner keys the vault has held ([`web_sign_in_switch`]). A key

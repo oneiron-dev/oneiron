@@ -30,7 +30,9 @@
 //! owner key's proof and is kept under that value. An act of the setting
 //! with any other value asks for an owner key again and is kept as a clear,
 //! so no value a carrier picked stays in the register to speak for keys
-//! enrolled later.
+//! enrolled later. The register keys an act by its target alone and a
+//! free-time policy act names any target, so an act of another setting that
+//! names the web sign-in target is valid and without effect there.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -101,14 +103,17 @@ pub(super) fn apply_policy_setting(
     counting: (Option<&PinnedRoot>, InstallCounted<'_>),
     restriction_only: bool,
 ) -> std::result::Result<(), AuthorityFoldIssue> {
-    let web_sign_in = set.setting == PolicySetting::WebSignIn;
+    // The web sign-in frontier is judged by its target, whatever setting
+    // an act on it names: the register keys an act by its target alone.
+    let on_web_sign_in = super::owner_proof::is_web_sign_in_target(set.act.target);
+    let web_sign_in = on_web_sign_in && set.setting == PolicySetting::WebSignIn;
     let switches_back = web_sign_in
         && set.value.is_some()
         && set.value == super::owner_proof::web_sign_in_switch(state);
     let op = OwnerChoiceOp {
         act: &set.act,
         machine: set.machine,
-        choice: if web_sign_in && !switches_back {
+        choice: if on_web_sign_in && !switches_back {
             None
         } else {
             set.value.as_ref()
@@ -126,6 +131,15 @@ pub(super) fn apply_policy_setting(
         counting,
         restriction_only,
     )?;
+    // Another setting's act on the web sign-in target lands nothing there.
+    let landing = match landing {
+        OwnerChoiceLanding::Recorded { hash, .. } | OwnerChoiceLanding::Waiting { hash, .. }
+            if on_web_sign_in && !web_sign_in =>
+        {
+            OwnerChoiceLanding::Refused(hash)
+        }
+        landing => landing,
+    };
     // A waiting act is no agent's act in force: the owner's confirm is his
     // own act (row CARRIER-OWNER-PROOF).
     let waits = matches!(landing, OwnerChoiceLanding::Waiting { .. });
