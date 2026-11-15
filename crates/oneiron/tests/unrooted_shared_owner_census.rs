@@ -593,13 +593,15 @@ fn a_personal_vaults_owner_keeps_its_shortcuts() {
 /// co-owner made the embedded owner an Admin, the census holds one Owner,
 /// the co-owner, and the former owner stood for it, so it read the rows of
 /// the co-owner's personal source. It stands for no one there now; a source
-/// open to the vault still reads to it.
+/// open to the vault still reads to it. The test asks the source-audience
+/// judgment itself (`test_doors::source_audience::actor_reads_source`): the
+/// former owner's own read lane, an Admin's with no credential, reads no
+/// row before that judgment runs (Muse delta review of f02b608e, P1).
 #[cfg(oneiron_test_support)]
 mod source_audience {
     use std::collections::BTreeSet;
 
-    use oneiron::EdgeActorClass;
-    use oneiron::test_doors::source_audience::land_source_bound_artifact;
+    use oneiron::test_doors::source_audience::{actor_reads_source, land_source_bound_artifact};
 
     use super::Fixture;
 
@@ -614,38 +616,19 @@ mod source_audience {
             .expect("a source open to the vault lands a row");
         f.co_owner_demotes_the_embedded_owner(co_owner);
 
-        let co_owner_key = f
-            .vault
-            .memory(co_owner, EdgeActorClass::Human)
-            .read_key()
-            .expect("the co-owner's read key");
         assert!(
-            f.vault
-                .scoped_read(co_owner_key)
-                .is_entity_readable(&personal.row)
-                .expect("the co-owner's read"),
-            "the co-owner reads its own source's row"
+            actor_reads_source(&f.vault, personal.policy, co_owner)
+                .expect("the co-owner's audience read"),
+            "the co-owner reads its own source"
         );
-        let former_owner = f.vault.memory(f.owner, EdgeActorClass::Human);
-        let key = former_owner
-            .read_key()
-            .expect("the former owner's read key");
         assert!(
-            f.vault
-                .scoped_read(key)
-                .is_entity_readable(&open.row)
-                .expect("the former owner's read of the open source"),
+            actor_reads_source(&f.vault, open.policy, f.owner)
+                .expect("the former owner's audience read of the open source"),
             "the former owner, an Admin, reads a source open to the vault"
         );
 
-        let key = former_owner
-            .read_key()
-            .expect("the former owner's read key");
-        let read = f
-            .vault
-            .scoped_read(key)
-            .is_entity_readable(&personal.row)
-            .expect("the former owner's read of the personal source");
+        let read = actor_reads_source(&f.vault, personal.policy, f.owner)
+            .expect("the former owner's audience read of the personal source");
 
         assert!(
             !read,
