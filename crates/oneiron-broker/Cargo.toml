@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Credential broker: sends one admitted model request with a key the daemon hands it, and strips that key from the reply"
 repository.workspace = true
-homepage.workspace = true
 
 [lib]
 doctest = false
@@ -26,6 +25,7 @@ blake3 = { workspace = true }
 flate2 = "1"
 futures-util = "0.3"
 memchr = "2"
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 # OpenAI Responses: broker-upgraded WebSockets over the sender's trust roots.
 tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }

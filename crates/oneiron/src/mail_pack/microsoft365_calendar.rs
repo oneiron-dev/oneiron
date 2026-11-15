@@ -30,7 +30,9 @@ use serde_json::Value;
 
 use super::calendar::{MailCalendarPull, MailCalendarRead, MailCalendarWire};
 use super::credential::WireReads;
-use super::rest::{self, RestAnswer, VerifiedCredentials, array, bearer_header, refused, text_of};
+use super::rest::{
+    self, FreshAccessTokens, GrantIssuer, RestAnswer, VerifiedCredentials, array, refused, text_of,
+};
 use super::source::MailProvider;
 use super::wire::MailSyncSource;
 use crate::Vault;
@@ -76,6 +78,9 @@ pub struct HttpGraphCalendarWire<'v> {
     client: reqwest::blocking::Client,
     /// The credentials this wire has seen be their source's person.
     verified: VerifiedCredentials,
+    /// The fresh access tokens its sources' stored grants were exchanged
+    /// for ([MICROSOFT365-OAUTH-EXCHANGE]).
+    tokens: FreshAccessTokens,
 }
 
 impl<'v> HttpGraphCalendarWire<'v> {
@@ -89,6 +94,7 @@ impl<'v> HttpGraphCalendarWire<'v> {
             vault,
             client: rest::https_client()?,
             verified: VerifiedCredentials::new(),
+            tokens: FreshAccessTokens::new(GrantIssuer::Microsoft),
         })
     }
 
@@ -118,12 +124,12 @@ impl<'v> HttpGraphCalendarWire<'v> {
             return Err(refused("graph_calendar_link_not_on_graph"));
         }
         let mut answer: Option<RestAnswer> = None;
-        let _receipt = self.vault.with_source_token_at_door(
+        let door = self.vault.with_source_token_at_door(
             source,
             WireReads::Calendar,
             MICROSOFT365_CALENDAR_CONNECTOR_EFFECTOR,
             &mut |token: &[u8]| {
-                let auth = bearer_header(token)?;
+                let auth = self.tokens.bearer(&self.client, source.source_ref, token)?;
                 // The credential presented here is the one checked: its user
                 // is the person the source names.
                 if !self.verified.holds(source.source_ref, token) {
@@ -148,7 +154,10 @@ impl<'v> HttpGraphCalendarWire<'v> {
                 answer = Some(rest::send(request)?);
                 Ok(())
             },
-        )?;
+        );
+        self.tokens
+            .keep_successor(self.vault, source.source_ref, &door);
+        door?;
         answer.ok_or_else(|| refused("graph_calendar_credential_door_refused"))
     }
 
