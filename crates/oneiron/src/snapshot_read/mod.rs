@@ -15,6 +15,7 @@
 mod evidence_spans;
 mod policy_preflight;
 mod run_reader;
+mod setting_keys;
 mod settings_doors;
 pub(crate) mod skill_reader;
 mod snapshot;
