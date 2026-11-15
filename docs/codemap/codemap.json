@@ -50913,13 +50913,13 @@
      }
     },
     {
-     "bucket": "s",
+     "bucket": "m",
      "kind": "src",
      "notable": [],
      "path": "src/llm/step/retry.rs",
      "purpose": "Transport retries for one durable model call: the ONE retry authority",
      "surface": {
-      "crate-vis": 3
+      "crate-vis": 10
      }
     },
     {
@@ -148039,7 +148039,7 @@
      "path": "src/models/cooldown.rs",
      "purpose": "Offers a provider refused for a quota or a limit (OF-305)",
      "surface": {
-      "crate-vis": 14,
+      "crate-vis": 18,
       "enum": 1,
       "fn": 2,
       "struct": 3
@@ -148062,7 +148062,7 @@
      "path": "src/models/cooldown/offer_core.rs",
      "purpose": "Offer cooldown health, quota and fallback operations",
      "surface": {
-      "crate-vis": 20,
+      "crate-vis": 21,
       "fn": 3
      }
     },
@@ -148495,7 +148495,7 @@
      "path": "src/models/ladder/step_attempt.rs",
      "purpose": "The durable step executor owns retries; this door sends one gated attempt",
      "surface": {
-      "crate-vis": 2
+      "crate-vis": 3
      }
     },
     {
@@ -148759,7 +148759,7 @@
      "path": "src/models/mod.rs",
      "purpose": "The one provider abstraction: `[models]` in, one backend per seat out",
      "surface": {
-      "crate-vis": 30,
+      "crate-vis": 31,
       "fn": 1,
       "re-export": 16,
       "struct": 2
@@ -153779,6 +153779,14 @@
      "surface": {}
     },
     {
+     "bucket": "m",
+     "kind": "test",
+     "notable": [],
+     "path": "tests/model_step_health_rest.rs",
+     "purpose": "A durable model step whose provider is down waits out its offer's health rest without spending a declared…",
+     "surface": {}
+    },
+    {
      "bucket": "s",
      "kind": "test",
      "notable": [],
@@ -154580,7 +154588,7 @@
    "over_bar": 63,
    "purpose": "Oneiron CRDT sync server library",
    "source_files": 1887,
-   "test_files": 265
+   "test_files": 266
   },
   "oneiron-skill-attribution": {
    "files": [
