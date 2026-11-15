@@ -60,6 +60,14 @@ crate::side_table::side_tables! {
     /// evidence. Key: bytes32 (its digest).
     AUTHORITY_LEAVE_NOTICE_DELEGATION: VaultMeta b"authority:leave-notice-delegation:v1:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
+    /// The MACHINE rows by the endpoint key their mesh address names (ARCH-0044 H336, census
+    /// L3-28B): one empty row per MACHINE row whose body is a valid address envelope. Key: bytes32
+    /// (the endpoint key) + id16 (the MACHINE).
+    AUTHORITY_MESH_MACHINE_ENDPOINT_INDEX: VaultMeta b"authority:mesh-machine-endpoint:v1:" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
+    /// Completeness flag of the endpoint index above (u64 version). Key: ().
+    AUTHORITY_MESH_MACHINE_ENDPOINT_INDEX_STATE: VaultMeta b"authority:mesh-machine-endpoint-state:v1" Raw
+        [restore: not_imaged] [family: not_imaged] [tier: derived];
     /// An ask guest's FEDERATION_GRANT the owner withdrew: the guest it conferred on and when, so
     /// a repeat revoke reports the first (OF-232). Key: id16 (grant).
     FEDERATION_GUEST_REVOKE: VaultMeta b"federation:guest_revoke:v1:" Named
