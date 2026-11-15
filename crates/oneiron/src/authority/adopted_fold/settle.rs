@@ -55,6 +55,42 @@ pub(super) fn serial_withdrawal_op(op: &AuthorityOp) -> bool {
     )
 }
 
+/// Whether `op` is another row the tail folds past the image only serially,
+/// every covered row in its causal past (FIX 11760,
+/// [`super::serial_fold_past`]): a federation lifecycle act or a membership
+/// execution. Each reads only state the image's frontier keeps, and its
+/// tail then folds whole.
+pub(super) fn serial_fold_past_op(op: &AuthorityOp) -> bool {
+    matches!(
+        op,
+        AuthorityOp::FederationLifecycle(_) | AuthorityOp::MembershipExecution(_)
+    )
+}
+
+/// Whether the whole fold rejects the tail row `entry` on the image's
+/// states whatever the covered rows hold, so the tail folds it past the
+/// image as rejected, with no state (FIX 11760, [`super::serial_fold_past`]):
+/// a key rotation or a non-agent enrollment (a retired device-key op, which
+/// stands only in a re-root's pre-handoff line), an agent enrollment or a
+/// binding [`crate::authority::fold_resume::admits_past`] leaves to the
+/// history, or a federation confirm whose id or nonce a covered confirm
+/// spent. A row of these kinds the tail folds to a state still needs the
+/// whole history ([`settle_tail`]).
+pub(super) fn folds_rejected_op(image: &AuthorityCheckpointV2, entry: &AuthorityLogEntry) -> bool {
+    match &entry.op {
+        AuthorityOp::RotateKey { .. } => true,
+        AuthorityOp::EnrollDevice { .. } | AuthorityOp::BindActor { .. } => {
+            let mut unused: ConfirmKeys = Default::default();
+            !crate::authority::fold_resume::admits_past(&image.aggregate.merged, entry, &mut unused)
+        }
+        AuthorityOp::FederationConfirm(action) => {
+            image.safety.confirm_ids.contains(&action.confirm_id)
+                || image.safety.confirm_nonces.contains(&action.nonce)
+        }
+        _ => false,
+    }
+}
+
 /// The tail's fold on the image's frontier states, merged into the image's
 /// fold and projected, with `confirms` the confirms once the tail joined
 /// them ([`tail_folds_past`]); None wherever only the whole history folds
@@ -165,21 +201,36 @@ pub(super) fn settle_tail(
         return Ok(None);
     }
     states.retain(|hash, _| judged.contains_key(hash));
-    if states
-        .values()
-        .any(|state| state.federation_pacts != image.aggregate.merged.federation_pacts)
+    // A row the whole fold rejects on the image's states folds past it only
+    // as rejected (FIX 11760): one the tail folds to a state is judged by
+    // the whole history.
+    if judged
+        .iter()
+        .any(|(hash, entry)| states.contains_key(hash) && folds_rejected_op(image, entry))
     {
         return Ok(None);
     }
-    // A serial withdrawal's tail folds whole, every row of it on its own
-    // parents' states (FIX 11760): a row the fold rejects could still carry
-    // a withdrawal its branch proves past it, which only the whole history
+    // A pact the tail moves is read only on a row that folds serially
+    // (FIX 11760), whose parents' states are the whole fold's own; on any
+    // other row only the whole history tells it.
+    if states.iter().any(|(hash, state)| {
+        state.federation_pacts != image.aggregate.merged.federation_pacts
+            && !judged
+                .get(hash)
+                .is_some_and(|entry| super::folds_serially(image, tail, log, entry))
+    }) {
+        return Ok(None);
+    }
+    // A serial row's tail folds whole, every row of it on its own parents'
+    // states (FIX 11760): a row the fold rejects could still carry a
+    // withdrawal its branch proves past it, which only the whole history
     // proves. The image's facts then gain each actor revocation's own.
-    let serial = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
+    let withdrawal = tail.values().any(|entry| serial_withdrawal_op(&entry.op));
+    let serial = withdrawal || tail.values().any(|entry| serial_fold_past_op(&entry.op));
     if serial && tail.keys().any(|hash| !states.contains_key(hash)) {
         return Ok(None);
     }
-    let revoke_facts = if serial {
+    let revoke_facts = if withdrawal {
         image.safety.revoke_facts.with_serial_actor_revokes(
             image
                 .rows
