@@ -121,6 +121,8 @@ pub use files::files;
 mod history_import;
 #[cfg(unix)]
 pub(crate) use self::history_import::hosted_import;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::history_import::own_second;
 mod init;
 pub use init::init;
 pub(crate) use init::{ModelSetupAnswers, ModelSetupOutcome, setup_models_on_open_vault};

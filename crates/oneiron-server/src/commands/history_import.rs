@@ -286,7 +286,7 @@ fn order_key(conversation: &HistoryConversation) -> (u64, u64, String) {
 /// imports share one and each has a review of its own. Waits out the rest of
 /// the current second; a vault clock more than two seconds ahead of this
 /// machine's refuses the import rather than share a second with an earlier one.
-fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
+pub(crate) fn own_second(vault: &oneiron::Vault) -> anyhow::Result<u64> {
     let start = vault.now_recorded_at();
     let deadline = Instant::now() + std::time::Duration::from_secs(2);
     loop {
