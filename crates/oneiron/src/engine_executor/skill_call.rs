@@ -98,6 +98,12 @@ fn live_skill_call(
         runtime,
         root.token(),
     );
+    // The dispatch held the call's whole answer for this caller when its
+    // outer post chain may still run on it: the recorded outcome below is
+    // then its record-only card, and this entry returns the whole answer
+    // in its place, as a small answer is returned. Taken before the
+    // record takes the host's calls.
+    let outer_answer = host.admitted_skill_answer.take();
     // Read before the record takes the step's calls, failed or not: the
     // run's result rows already hold the callable rows (FIX 5460).
     *rows = host.result_rows();
@@ -118,8 +124,11 @@ fn live_skill_call(
     }
     vault.put_code_run_replay_record_if_generation(&record, Some(generation))?;
     let answer = answer?;
+    let view = answer.view;
     match answer.outcome {
-        SelfDispatchOutcome::SkillCall(result) => Ok(result.output),
+        SelfDispatchOutcome::SkillCall(result) => {
+            Ok(shown_skill_output(result.output, view, outer_answer))
+        }
         SelfDispatchOutcome::Denied(denied) => Err(MemoryError::new(
             &denied.outcome,
             "the skill call was refused",
@@ -135,6 +144,29 @@ fn live_skill_call(
             "the skill call did not return an answer",
             &[],
         )),
+    }
+}
+
+/// What this entry's caller reads for a skill call's recorded `output`:
+/// a verb hook's view of it when one was served (its `output` member, as
+/// the code-mode bridge frames it), else the whole answer held for the
+/// outer caller's own post chain, else the recorded output itself, its
+/// card for a large answer included. The run record this entry persisted
+/// binds no name to the real body in the first two cases: its dispatch
+/// recorded that body record-only.
+fn shown_skill_output(
+    output: serde_json::Value,
+    view: Option<serde_json::Value>,
+    outer: Option<serde_json::Value>,
+) -> serde_json::Value {
+    match (view, outer) {
+        (Some(serde_json::Value::Object(mut fields)), _) => match fields.remove("output") {
+            Some(output) => output,
+            None => serde_json::Value::Object(fields),
+        },
+        (Some(view), _) => view,
+        (None, Some(answer)) => answer,
+        (None, None) => output,
     }
 }
 

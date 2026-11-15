@@ -338,13 +338,19 @@ impl RecordingJsHost<'_, '_> {
     /// A callable skill's checked answer as the guest gets it: its JSON up
     /// to the inline reply size, else its card, the answer copied whole from
     /// the call's spool into a body of the run; only the large-answer copy
-    /// here streams in frames without reading into one value.
+    /// here streams in frames without reading into one value. With `whole`
+    /// (a verb-hook post chain is live for the call, its own or the admitted
+    /// outer caller's) the answer is read into one value at any size, so
+    /// that chain reads the body itself, never its card; `dispatch_call`
+    /// then stores it for the record as it stores every large answer, a
+    /// hook's view leaving it record-only ([`Shown::View`]).
     pub(super) fn skill_answer(
         &mut self,
         seq: u64,
         mut answer: crate::skill::CallableSkillAnswer,
+        whole: bool,
     ) -> Result<serde_json::Value> {
-        if answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
+        if whole || answer.byte_len() <= RESULT_REPLY_INLINE_BYTES as u64 {
             return serde_json::from_reader(std::io::BufReader::new(answer.reader()?)).map_err(
                 |_| Error::InvalidConfig("callable skill returned non-JSON output".to_owned()),
             );
@@ -472,6 +478,25 @@ impl RecordingJsHost<'_, '_> {
                 Err(stopped) => return Ok((stopped, None)),
             }
         };
+        // Whether a verb-hook post chain will read this call's answer: its
+        // own, live once its pre chain found hooks on the call, or, for the
+        // admitted outer call (`hooked` is `None` only there), the outer
+        // caller's, which may still run on the answer this host returns to
+        // it. While one may run, the answer is read whole below, however
+        // large, so no chain judges only a large answer's card and no name
+        // binds its real body before that chain has seen it.
+        let outer_hooks_may_run = hooked.is_none()
+            && match self.storage {
+                Some(ExecutorStorage::Canonical(vault)) => {
+                    vault.verb_hooks_may_run(SelfEffect::SkillsCall.as_str())
+                }
+                _ => false,
+            };
+        let whole_for_hooks = outer_hooks_may_run
+            || hooked
+                .as_ref()
+                .and_then(|held| held.0.as_ref())
+                .is_some_and(|pre| !pre.passed_through());
         // A callable running its body again runs the call it ran before: a
         // hook that redirects it holds the entry, and the body's calls are
         // refused (FIX 5878).
@@ -563,7 +588,7 @@ impl RecordingJsHost<'_, '_> {
         let outcome = match ran {
             Ok(answer) => SelfDispatchOutcome::SkillCall(SelfSkillCallResult {
                 skill: skill.skill,
-                output: self.skill_answer(seq, answer)?,
+                output: self.skill_answer(seq, answer, whole_for_hooks)?,
             }),
             // A cancelled skill is a failed call under its stable code, read
             // from the typed error the runtime raised, never from guest text.
@@ -603,9 +628,17 @@ impl RecordingJsHost<'_, '_> {
             };
             self.context_capture.callables.push(callable);
         }
-        // The post chain reads the answer as the guest gets it: a large one
-        // by its handle.
-        let outcome = self.store_large_answer(seq, outcome, Shown::Result)?;
+        // The admitted outer caller's post chain reads the whole answer
+        // this host returns to it: hold it for that entry, while
+        // `dispatch_call` records the outcome itself record-only below.
+        if outer_hooks_may_run && let SelfDispatchOutcome::SkillCall(result) = &outcome {
+            self.admitted_skill_answer = Some(result.output.clone());
+        }
+        // The post chain reads the answer itself: while one is live a large
+        // answer came back whole above, never by its card. No spill runs
+        // before it here: `dispatch_call` stores the outcome for its row
+        // once the chain has left its view, record-only when a view stands
+        // in its place, as it does for every other call.
         let rewritten = hooked.as_ref().and_then(|hooked| hooked.1.clone());
         match hooked {
             Some(hooked) => Ok((
@@ -844,7 +877,14 @@ impl RecordingJsHost<'_, '_> {
         // The seats this call's spawn resolved, taken whatever came of it:
         // its row keeps them, a failure's included (FIX 9180).
         let seats = self.gated_write.take_spawn_seats();
-        let shown = if view.is_some() {
+        // The admitted skill call's whole answer is held for its outer
+        // caller, whose post chain may still serve a view of it: its real
+        // body records record-only here too, bound to no name, exactly as
+        // when this call's own chain left a view.
+        let admitted_answer = matches!(&call, SelfCall::SkillsCall(_))
+            && self.admitted_skill_seq == Some(seq)
+            && self.admitted_skill_answer.is_some();
+        let shown = if view.is_some() || admitted_answer {
             Shown::View
         } else {
             Shown::Result
@@ -883,7 +923,7 @@ impl RecordingJsHost<'_, '_> {
                 .with_inputs(inputs.as_ref())
                 .with_spawn_seats(seats)
                 .with_rewritten_request(rewritten.as_ref())?;
-        row.hook_view_served = view.is_some();
+        row.hook_view_served = view.is_some() || admitted_answer;
         if self.durable_wait.is_none()
             && let SelfDispatchOutcome::DurableWait(wait) = &outcome
         {

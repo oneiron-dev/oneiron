@@ -145,6 +145,12 @@ pub(super) struct RecordingJsHost<'a, 's> {
     callable_depth: u32,
     /// The host projection already ran this outer call's verb hooks.
     admitted_skill_seq: Option<u64>,
+    /// The whole answer of the admitted skill call above, when the outer
+    /// caller's post chain may still run on it: its bridge row spills the
+    /// real answer record-only and binds no name to it, and the admitted
+    /// entry (`skill_call`) returns this answer to that caller instead of
+    /// the recorded card. Taken by that entry after its one dispatch.
+    pub(super) admitted_skill_answer: Option<serde_json::Value>,
     /// Each stored skill this host's callable calls read and loaded, and the
     /// rows of every result a read took from another run (`None` once one
     /// kept no set): what a callable's answer stands on, counted in
@@ -242,6 +248,7 @@ impl<'a, 's> RecordingJsHost<'a, 's> {
             summary_prompt_package: None,
             callable_depth: 0,
             admitted_skill_seq: None,
+            admitted_skill_answer: None,
             callable_rows: (Vec::new(), Some(Vec::new())),
             injection: None,
             program_callables: Vec::new(),
