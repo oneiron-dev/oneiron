@@ -132,6 +132,7 @@ mod owner_act;
 mod owner_choice;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
+mod owner_key_removal_door;
 mod owner_project_slip;
 mod owner_proof;
 mod owner_roots;
@@ -403,6 +404,10 @@ pub(crate) use owner_act::{
 pub use owner_choice::OwnerChoiceHead;
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerKeyKind, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
+};
+pub use owner_key_removal_door::{
+    EndedOwnerKey, LastDeviceKeyConfirmation, MachineRemoval, MachineRemovalReceipt,
+    OwnerKeyRemoval, RemainingOwnerKeys,
 };
 pub(crate) use owner_roots::anchor_signed_entry;
 pub use owner_roots::{AwaitedRoot, OwnerRootView};

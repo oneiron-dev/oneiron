@@ -72,11 +72,16 @@ pub(super) struct AnswerAct {
     pub(super) surface: ActSurface,
     pub(super) kind: OwnerActKind,
     pub(super) seen: Option<[u8; 32]>,
+    /// Whether the owner confirmed that a removal may end the last owner key
+    /// held on a device (the owner's ruling AUTH-5); no other answer reads
+    /// it.
+    pub(super) last_device_key: LastDeviceKeyConfirmation,
 }
 
 impl AnswerAct {
     /// The owner's own answer from `surface`: a removal for `Removed`, an
-    /// answer for any other role.
+    /// answer for any other role. It carries no confirmation of a last
+    /// device key's end.
     pub(super) fn by_owner(
         owner: EntityId,
         surface: ActSurface,
@@ -94,6 +99,7 @@ impl AnswerAct {
             surface,
             kind,
             seen,
+            last_device_key: LastDeviceKeyConfirmation::NotGiven,
         }
     }
 }
@@ -263,9 +269,18 @@ impl Vault {
     /// sealed again for the roster it changed. A held answer changes no
     /// roster, as for [`Self::enroll_machine`].
     ///
+    /// A removal that stands on an install that holds an owner key also ends
+    /// every live owner key whose enrolment names the machine, in the same
+    /// transaction (the owner's ruling AUTH-5). This door cannot ask, so it
+    /// refuses a removal that would end the last owner key held on a device;
+    /// [`Self::remove_machine`] asks first and takes the owner's
+    /// confirmation.
+    ///
     /// # Errors
     /// As [`Self::enroll_machine`], and [`invalid_authority`] for a machine no
-    /// revision names or one already removed.
+    /// revision names or one already removed; an authority refusal for a
+    /// removal that would end the last owner key held on a device, or whose
+    /// key revocation the fold does not count.
     pub fn set_machine_role(
         &self,
         owner: &AuthenticatedOwner,
@@ -277,6 +292,28 @@ impl Vault {
         let mut txn = self.store.env.write_txn()?;
         let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let answer = AnswerAct::by_owner(actor, surface, role, seen);
+        let landing = self.machine_role_answer_in_txn(&mut txn, &fold, answer, machine, role)?;
+        txn.commit()?;
+        #[cfg(feature = "sync")]
+        if landing.held().is_none() {
+            self.reseal_after_machine_admission()?;
+        }
+        Ok(landing)
+    }
+
+    /// The owner's answer `role` about `machine`, a machine a revision
+    /// names, in the caller's transaction: its next revision under his act
+    /// `answer`, carried by this install; the caller has checked
+    /// `answer.owner`.
+    pub(super) fn machine_role_answer_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        fold: &AuthorityFold,
+        answer: AnswerAct,
+        machine: EntityId,
+        role: MachineRole,
+    ) -> Result<MachineAnswerLanding> {
         let folded = fold.machine(machine).ok_or_else(invalid_authority)?;
         // The machine's identity as its newest head names it, the roster's
         // or an anchor's; the next revision tops every chain's.
@@ -287,7 +324,7 @@ impl Vault {
             return Err(invalid_authority());
         }
         let profile = MachineProfile {
-            owner: actor,
+            owner: answer.owner,
             role,
             revision: current
                 .profile
@@ -298,14 +335,7 @@ impl Vault {
             act: None,
             ..current.profile.clone()
         };
-        let answer = AnswerAct::by_owner(actor, surface, role, seen);
-        let landing = self.append_owner_answer_in_txn(&mut txn, &fold, answer, profile)?;
-        txn.commit()?;
-        #[cfg(feature = "sync")]
-        if landing.held().is_none() {
-            self.reseal_after_machine_admission()?;
-        }
-        Ok(landing)
+        self.append_owner_answer_in_txn(txn, fold, answer, profile)
     }
 
     /// Enrols in the caller's transaction under the owner's act, carried by
@@ -381,6 +411,14 @@ impl Vault {
     /// a replica may not store. The fold is the judge: an answer it refused
     /// never reports success, and one it holds for the owner's proof reports
     /// held.
+    ///
+    /// A removal that stands also ends the machine's owner keys here, under
+    /// the owner key this install holds (Engine RULING
+    /// AUTH-5-PR-B-REMOVE-DEVICE = A): every landing of a removal passes
+    /// this writer, the confirm of a held removal among them. A revocation
+    /// the fold does not count is an error, so the caller writes nothing. A
+    /// removal that would end the last owner key held on a device needs the
+    /// owner's confirmation in `answer`.
     pub(super) fn append_owner_answer_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -389,6 +427,12 @@ impl Vault {
         mut profile: MachineProfile,
     ) -> Result<MachineAnswerLanding> {
         let (carrier, key) = self.carrier_in_txn(txn, fold)?;
+        let ending = if profile.role == MachineRole::Removed {
+            self.owner_keys_ending_with_machine_in_txn(txn, fold, profile.machine)?
+        } else {
+            Vec::new()
+        };
+        self.refuse_unconfirmed_last_device_key_in_txn(txn, fold, &ending, answer.last_device_key)?;
         let target = fold.machine(profile.machine);
         let current = target.map_or([0; 32], FoldedMachine::answer_revision);
         // Revision integrity (contract §4): the owner decided on what the
@@ -435,7 +479,11 @@ impl Vault {
             now,
             proof.as_deref(),
         )?;
-        self.land_machine_profile_in_txn(txn, entry, &profile, now)
+        let landing = self.land_machine_profile_in_txn(txn, entry, &profile, now)?;
+        if landing.held().is_none() && !ending.is_empty() {
+            self.end_owner_keys_in_txn(txn, ending)?;
+        }
+        Ok(landing)
     }
 
     /// Signs every live root-signed roster standing again under `next`, in
