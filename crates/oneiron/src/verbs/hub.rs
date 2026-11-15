@@ -274,6 +274,7 @@ pub fn hub_skill_receipts_as_reader(
 ) -> MemoryResult<HubSkillReceipts> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     reader.admit_in_txn(vault, &txn)?;
+    drop(txn);
     hub_skill_receipts(vault, input)
 }
 

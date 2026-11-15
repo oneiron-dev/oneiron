@@ -31,6 +31,7 @@ pub fn skill_pack_receipt_as_reader(
 ) -> MemoryResult<SkillPackReceipt> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     reader.admit_in_txn(vault, &txn)?;
+    drop(txn);
     let receipt = crate::receipt::attempt_pack_receipt(vault, &input.attempt_receipt)?
         .ok_or_else(|| MemoryError::new(MEMORY_CODE_NOT_FOUND, "no stamped pack receipt", &[]))?;
     let loaded_skills = receipt.pack_manifest_skills().unwrap_or_default();

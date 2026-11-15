@@ -25,6 +25,7 @@ pub fn export_authority_history_as_reader(
 ) -> MemoryResult<SignedAuthorityHistory> {
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     reader.admit_in_txn(vault, &txn)?;
+    drop(txn);
     let entries = vault
         .export_signed_authority_history()?
         .into_iter()

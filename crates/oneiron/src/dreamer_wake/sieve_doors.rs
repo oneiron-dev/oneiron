@@ -103,6 +103,7 @@ pub fn sieve_receipts_as_reader(
 ) -> Result<SieveReceiptsPage> {
     let txn = vault.store.env.read_txn()?;
     reader.admit_in_txn(vault, &txn)?;
+    drop(txn);
     let receipts = vault.sieve_consumed(page_limit(input.limit))?;
     Ok(SieveReceiptsPage {
         receipts: receipts

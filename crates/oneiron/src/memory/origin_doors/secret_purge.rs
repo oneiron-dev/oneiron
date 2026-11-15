@@ -49,6 +49,7 @@ impl Memory<'_> {
                     .read_txn()
                     .map_err(crate::Error::from)?;
                 reader.admit_in_txn(self.vault, &txn)?;
+                drop(txn);
                 match self.vault.repo_secret_purge(input.plan)? {
                     Some(view) => Ok(view),
                     None => Err(MemoryError::not_found("repo secret purge plan not found")),
