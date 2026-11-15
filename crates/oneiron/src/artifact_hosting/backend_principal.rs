@@ -8,7 +8,10 @@ use crate::federation::{Scope, ScopeAxis};
 use serde::Serialize;
 
 /// The name prefix of a published app's backend principal: the PERSON
-/// [`Vault::create_artifact_backend_pairing`] derives, never a named agent's.
+/// [`Vault::create_artifact_backend_pairing`] derives. Agent naming does not
+/// reserve it, so an agent the owner names with it reads as a backend and
+/// takes no verb-bearing link without a Grant row (FIX
+/// [ARTIFACT-BACKEND-NAME-PREFIX-UNRESERVED]).
 const ARTIFACT_BACKEND_NAME_PREFIX: &str = "artifact-backend:";
 
 /// Whether `name`, a named agent PERSON's recorded name, is a published app's
