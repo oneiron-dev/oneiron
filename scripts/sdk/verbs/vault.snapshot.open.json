@@ -7,8 +7,7 @@
   "scope": "Read",
   "act_class": "reversible_work",
   "admission": {
-    "lane_record_scope": true,
-    "validate": "crate::snapshot_read::validate_snapshot_open(&input)?;"
+    "lane_record_scope": true
   },
   "section": false,
   "mcp_scope": "filtered"

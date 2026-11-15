@@ -26,7 +26,8 @@ use crate::side_table::{self, Named, SideTable};
 const HANDLES: SideTable<(EntityId, EntityId), SnapshotHandleRow, Named> =
     SideTable::new(&side_table::SNAPSHOT_READ_HANDLE);
 
-/// The most kinds one handle pages.
+/// The most kinds one handle pages while the owner has set no
+/// `snapshot_read.open.max_kinds` row: that key's default.
 pub const SNAPSHOT_MAX_KINDS: usize = 16;
 
 /// One kind of row a snapshot pages, by the vault's type index.

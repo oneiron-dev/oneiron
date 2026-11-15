@@ -17,7 +17,9 @@ use crate::claim::{ClaimReadStatus, PointRead, ScopedReadResult};
 use crate::dreamer_consolidation::TurnText;
 use crate::memory::{Memory, MemoryError, MemoryResult};
 
-/// The most byte ranges one `vault.evidence.spans` request names.
+/// The most byte ranges one `vault.evidence.spans` request names while the
+/// owner has set no `snapshot_read.evidence.max_ranges` row: that key's
+/// default.
 pub const EVIDENCE_SPANS_MAX_RANGES: usize = 64;
 
 /// The reason code of the refusal a reader other than the owner gets when a

@@ -32,7 +32,8 @@ use crate::gate::{DeriveCapability, derive_verdict_in_txn};
 use crate::memory::{Memory, MemoryError, MemoryResult};
 use crate::{EntityId, Vault, WriteActor};
 
-/// The most refs one `vault.policy.preflight` request names.
+/// The most refs one `vault.policy.preflight` request names while the owner
+/// has set no `snapshot_read.preflight.max_refs` row: that key's default.
 pub const POLICY_PREFLIGHT_MAX_REFS: usize = 100;
 
 /// The act a preflight asks about.
@@ -66,8 +67,9 @@ impl PolicyPreflightAct {
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PolicyPreflightRequest {
-    /// The refs, at most [`POLICY_PREFLIGHT_MAX_REFS`]; each is answered in
-    /// this order.
+    /// The refs, at most `snapshot_read.preflight.max_refs` in force
+    /// ([`POLICY_PREFLIGHT_MAX_REFS`] by default); each is answered in this
+    /// order.
     pub refs: Vec<EntityId>,
     /// The act the caller means to take on them.
     pub act: PolicyPreflightAct,
