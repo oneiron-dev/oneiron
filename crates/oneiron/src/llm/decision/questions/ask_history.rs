@@ -22,25 +22,10 @@ use crate::side_table::{self, Named, SideKey, SideTable};
 use crate::{EntityId, Error, ErrorKind, Result, Vault};
 
 /// Key of one log entry: id16(question) + u64be(sequence).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct AskHistoryKey {
     pub(super) question: EntityId,
     pub(super) sequence: u64,
-}
-
-impl SideKey for AskHistoryKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.question.as_bytes());
-        out.extend_from_slice(&self.sequence.to_be_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (question, sequence) = bytes.split_at_checked(16)?;
-        Some(Self {
-            question: EntityId::from_bytes(question.try_into().ok()?).ok()?,
-            sequence: u64::from_be_bytes(sequence.try_into().ok()?),
-        })
-    }
 }
 
 /// One [`AskHistoryKey`] for `test_doors::side_key_pins`.

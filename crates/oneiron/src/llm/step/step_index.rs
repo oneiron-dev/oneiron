@@ -28,45 +28,19 @@ use crate::write_envelope::WRITE_ENVELOPE_EVIDENCE_PROVENANCE_KEY;
 use rmpv::Value;
 
 /// Key of one forward step-index row: id16(attempt) + hash32(step) -> claim id16.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
 pub(super) struct StepIndexKey {
     pub(super) attempt_id: AttemptId,
     pub(super) step_hash: [u8; 32],
-}
-
-impl SideKey for StepIndexKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(self.attempt_id.as_bytes());
-        out.extend_from_slice(&self.step_hash);
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let (attempt, hash) = bytes.split_at_checked(16)?;
-        Some(Self {
-            attempt_id: AttemptId::from_bytes(attempt).ok()?,
-            step_hash: hash.try_into().ok()?,
-        })
-    }
 }
 
 /// Key of the reverse "i:" sub-index row: claim id16 -> the forward row's full stored key
 /// bytes. Both shapes share the `DREAMER_STEP_INDEX` declaration; they cannot collide because
 /// a forward row's key is always 48 bytes (id16 + hash32) and a reverse row's is always 18
 /// (`i:` + id16).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+#[side_key(prefix = b"i:")]
 pub(super) struct StepIndexClaimKey(pub(super) EntityId);
-
-impl SideKey for StepIndexClaimKey {
-    fn encode_into(&self, out: &mut Vec<u8>) {
-        out.extend_from_slice(b"i:");
-        out.extend_from_slice(self.0.as_bytes());
-    }
-
-    fn decode_key(bytes: &[u8]) -> Option<Self> {
-        let rest = bytes.strip_prefix(b"i:")?;
-        Some(Self(EntityId::from_bytes(rest.try_into().ok()?).ok()?))
-    }
-}
 
 /// One [`StepIndexKey`] for `test_doors::side_key_pins`.
 #[cfg(oneiron_test_support)]

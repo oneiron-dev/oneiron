@@ -8,10 +8,11 @@
 use super::Transactions;
 use crate::EntityId;
 use crate::error::Result;
+use crate::side_table::{HexId, SideKey};
 
 /// The document a set of rows belongs to, spelled as 32 lower-case hex characters in every key.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct DocumentSlot(EntityId);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+pub(crate) struct DocumentSlot(#[side_key(with = HexId)] EntityId);
 
 impl DocumentSlot {
     pub(crate) fn of(id: EntityId) -> Self {
@@ -24,7 +25,7 @@ impl DocumentSlot {
         Self::parse(hex).ok_or(crate::Error::CorruptedIndex("entity document slot"))
     }
 
-    pub(super) fn parse(hex: &str) -> Option<Self> {
+    fn parse(hex: &str) -> Option<Self> {
         let id = EntityId::from_hex(hex).ok()?;
         (id.to_hex() == hex).then_some(Self(id))
     }
@@ -44,10 +45,12 @@ pub(crate) enum UpdateSeq {
     Generation(u64),
 }
 
-/// One `u:e:` row key: its slot and its place in that slot's replay order.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// One `u:e:` row key: its slot, `:`, and its place in that slot's replay order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, SideKey)]
+#[side_key(sep = b':')]
 pub(crate) struct DocumentUpdateKey {
     pub(crate) slot: DocumentSlot,
+    #[side_key(rest)]
     pub(crate) seq: UpdateSeq,
 }
 
