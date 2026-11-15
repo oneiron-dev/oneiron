@@ -33,10 +33,14 @@ use crate::outbound_intent_ledger::{
 use crate::ports::TombstoneStore;
 
 /// The code run whose change journal an effect's gate receipts join
-/// (ARCH-0040 #revert-run), and the held call the effect is, when its gate
-/// input names one: its approval target's digest, so a later decision on
-/// that same call folds into the receipt the run lists for it, and a
-/// decision on another call of the same effect binding is listed apart.
+/// (ARCH-0040 #revert-run), and the held connector call the effect is, when
+/// it is a scoped-MCP tool call: its approval target's digest, so a later
+/// decision on that same call folds into the receipt the run lists for it,
+/// and a decision on another call of the same effect binding is listed
+/// apart. Every other effect names no call: a held dispatch send or e-sign
+/// act is answered by a pass no run asks (the connector-send executor, a
+/// recomposed delivery), so its receipt's verdict follows the newest
+/// decision on its effect binding (FIX 11478).
 struct EffectJournal {
     run: Option<String>,
     call: Option<String>,
@@ -45,8 +49,13 @@ struct EffectJournal {
 impl EffectJournal {
     fn of(prepared: &PreparedEffect) -> Self {
         let run = prepared.run_ref.clone();
+        let held_connector_call = matches!(
+            prepared.gate.provenance.approval_target,
+            Some(gate::ApprovalTarget::ScopedMcp(_))
+        );
         let call = run
             .as_ref()
+            .filter(|_| held_connector_call)
             .and_then(|_| gate::ApprovalTarget::held_digest(&prepared.gate));
         Self { run, call }
     }
