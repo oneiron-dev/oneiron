@@ -10,7 +10,6 @@ use super::{
 use crate::{
     Vault,
     error::{Error, Result},
-    store::Store,
 };
 
 /// Private, verified identity returned beside the final request.
@@ -65,12 +64,13 @@ pub struct InferencePolicySnapshot {
 }
 impl InferencePolicySnapshot {
     fn load(
-        store: &Store,
+        vault: &Vault,
         txn: &heed::RoTxn<'_>,
         role: Option<ModelRole>,
         host: &HostInferenceBinding,
         request: &mut LlmRequest,
     ) -> Result<Self> {
+        let store = &vault.store;
         let defaults = defaults::read_effective_defaults(store, txn)?;
         // Raw calls have their own explicit host-selected model; a role call
         // may instead bind a manifest model. Read its registry row afterwards.
@@ -79,10 +79,9 @@ impl InferencePolicySnapshot {
         } else {
             None
         };
-        let routes = if manifest.is_some() {
-            manifest::read_routes(store, txn)?
-        } else {
-            BTreeMap::new()
+        let routes = match &manifest {
+            Some(manifest) => manifest::read_routes(vault, txn, manifest)?,
+            None => BTreeMap::new(),
         };
         // `PurposeDefaultTable::apply`, on the row the call is admitted as.
         if let Some(row) = defaults
@@ -253,7 +252,7 @@ impl Vault {
         let mut request = request;
         let txn = self.store.env.read_txn()?;
         let snapshot =
-            InferencePolicySnapshot::load(&self.store, &txn, role, &host.binding, &mut request)?;
+            InferencePolicySnapshot::load(self, &txn, role, &host.binding, &mut request)?;
         let binding = snapshot.bind(&request, host)?;
         drop(txn); // Host code may read the vault; never call it under an LMDB reader.
         admit_extraction(&snapshot, &request, &binding, host)?;

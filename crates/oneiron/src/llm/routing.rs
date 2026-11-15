@@ -16,6 +16,7 @@ use super::decision::{
 };
 use super::registry::ModelWireFormat;
 use super::seat::{DescriptionSource, SeatLearningContext};
+use super::setting_keys::DESCRIPTION_POLICY;
 use super::{
     BudgetGuard, CallPurpose, ContentPart, DurableStepContext, DurableStepResult, LlmBackend,
     LlmMessage, LlmMessageRole, LlmRequest, ModelId, ModelLocality, ModelTierRef, ReasoningEffort,
@@ -37,9 +38,6 @@ pub use decisions::{DescriptionDecisions, DescriptionNotes};
 mod readings;
 use readings::resolve;
 pub use readings::{DescriptionFitnessReadings, DescriptionGrading};
-
-const POLICY: SideTable<(), DescriptionPolicy, LegacyJson> =
-    SideTable::new(&side_table::LLM_DESCRIPTION_POLICY);
 
 const MEASUREMENTS: SideTable<(), BTreeMap<ModelId, MeasuredDescription>, LegacyJson> =
     SideTable::new(&side_table::LLM_DESCRIPTION_MEASUREMENTS);
@@ -401,17 +399,13 @@ fn apply_controls(
     Ok(())
 }
 impl Vault {
-    pub fn set_description_policy(&self, policy: &DescriptionPolicy) -> Result<()> {
-        policy.validate()?;
-        let mut txn = self.store.env.write_txn()?;
-        POLICY.put(self, &mut txn, &(), policy)?;
-        txn.commit()?;
-        Ok(())
-    }
+    /// The vault's description policy, the key `models.description_policy`, or `None` while
+    /// none is set. The owner sets it through `vault.settings.set`.
     pub fn description_policy(&self) -> Result<Option<DescriptionPolicy>> {
         let txn = self.store.env.read_txn()?;
-        POLICY
-            .get(&self.store, &txn, &())?
+        DESCRIPTION_POLICY
+            .read_in_txn(self, &txn, &[], None)?
+            .value
             .map(|policy| {
                 policy.validate()?;
                 Ok(policy)
@@ -436,7 +430,7 @@ impl Vault {
     /// per pinned owner line even when the measured score later fluctuates.
     pub fn check_description_drift(&self) -> Result<Vec<DescriptionReask>> {
         let mut txn = self.store.env.write_txn()?;
-        let Some(policy) = POLICY.get(&self.store, &txn, &())? else {
+        let Some(policy) = DESCRIPTION_POLICY.read_in_txn(self, &txn, &[], None)?.value else {
             return Ok(vec![]);
         };
         policy.validate()?;
@@ -540,10 +534,10 @@ impl Vault {
         } = birth;
         seat_key(id)?;
         validate_overrides(&settings.inference_overrides)?;
-        let (policy_bytes, measurement_bytes, existing) = {
+        let (policy_read, measurement_bytes, existing) = {
             let txn = self.store.env.read_txn()?;
             (
-                POLICY.get_bytes(&self.store, &txn, &())?,
+                DESCRIPTION_POLICY.read_in_txn(self, &txn, &[], None)?,
                 MEASUREMENTS.get_bytes(&self.store, &txn, &())?,
                 SEATS.get(&self.store, &txn, &id.to_owned())?,
             )
@@ -551,9 +545,10 @@ impl Vault {
         if let Some(seat) = existing {
             return Ok(seat);
         }
-        let policy_bytes =
-            policy_bytes.ok_or_else(|| invalid("description policy not configured"))?;
-        let policy: DescriptionPolicy = POLICY.decode_value(&policy_bytes)?;
+        let policy = policy_read
+            .value
+            .clone()
+            .ok_or_else(|| invalid("description policy not configured"))?;
         policy.validate()?;
         let measurements = measurement_bytes
             .as_deref()
@@ -603,7 +598,7 @@ impl Vault {
         if let Some(seat) = SEATS.get(&self.store, &txn, &id.to_owned())? {
             return Ok(seat);
         }
-        if POLICY.get_bytes(&self.store, &txn, &())?.as_deref() != Some(policy_bytes.as_slice())
+        if DESCRIPTION_POLICY.read_in_txn(self, &txn, &[], None)? != policy_read
             || MEASUREMENTS.get_bytes(&self.store, &txn, &())? != measurement_bytes
         {
             return Err(invalid("description evidence changed during seat birth"));

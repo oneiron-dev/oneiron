@@ -59,9 +59,6 @@ crate::side_table::side_tables! {
     /// Measured description scores keyed inside one singleton map. Key: ().
     LLM_DESCRIPTION_MEASUREMENTS: VaultMeta b"llm:description_measurements:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_measurements_accepts_masked]
         [restore: live] [family: unclassified] [tier: canonical];
-    /// Vault-owned description policy. Key: ().
-    LLM_DESCRIPTION_POLICY: VaultMeta b"llm:description_policy:v1" LegacyJson Authored [accepts: crate::store::model_description_rows::llm_description_policy_accepts_masked]
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Durable re-ask keyed by 64-character hex identity.
     LLM_DESCRIPTION_REASK: VaultMeta b"llm:description_reask:v1:" LegacyJson
         [restore: live] [family: unclassified] [tier: canonical];
@@ -117,10 +114,6 @@ crate::side_table::side_tables! {
     /// FIX 4546: when the owner marked a model's registry row stale, kept through re-puts and
     /// pack refreshes until the owner clears it. Key: string(model id).
     LLM_REGISTRY_STALE_MARK: VaultMeta b"llm:registry_stale:v1:" Named Engine
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Per-vault narrow-only resident route overrides: those the new manifest
-    /// still admits stay, the others clear in the manifest txn. Key: ().
-    LLM_RESIDENT_ROUTES: VaultMeta b"llm:resident_routes:v1" LegacyJson
         [restore: live] [family: unclassified] [tier: canonical];
     /// One routed seat selected and pinned by caller-chosen bounded seat id.
     LLM_ROUTED_SEAT: VaultMeta b"llm:routed_seat:v1:" LegacyJson Authored [accepts: crate::llm::llm_routed_seat_accepts_masked]
