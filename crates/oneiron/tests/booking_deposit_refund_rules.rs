@@ -11,7 +11,10 @@
 //! - N3: a host cancellation the calendar shows at or after the booking's
 //!   start leaves the deposit (RULING DEPOSIT-HOST-CANCEL-AFTER-START = A,
 //!   parity with CAL-07); one first seen before the start and repaired after
-//!   it still refunds.
+//!   it still refunds. A provider tombstone counts from its first arrival, so
+//!   one stopped before its refund and sent again after the start refunds
+//!   (FIX [BK-DEPOSIT-TOMBSTONE-REDELIVERY-SEEN-AT]); a feed omission before
+//!   it is no cancellation evidence.
 //!
 //! The fixture is the emergency fixture of `tests/booking_feed_move_held.rs`
 //! (keystore, the page's facet, engine machines, this install elected the
@@ -366,9 +369,31 @@ fn poll_host_feed(
         body.push_str("STATUS:CANCELLED\r\n");
     }
     body.push_str("END:VEVENT\r\nEND:VCALENDAR\r\n");
+    poll_host_feed_body(fixture, body.into_bytes(), etag, now)
+}
+
+/// One complete poll of the host's feed that no longer carries the booking:
+/// an omission, which is no cancellation evidence.
+#[cfg(oneiron_test_support)]
+fn poll_host_feed_without_the_booking(
+    fixture: &Fixture,
+    etag: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
+    let body = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//oneiron//test//EN\r\nEND:VCALENDAR\r\n";
+    poll_host_feed_body(fixture, body.as_bytes().to_vec(), etag, now)
+}
+
+/// One poll of the host's feed answering `body` complete.
+fn poll_host_feed_body(
+    fixture: &Fixture,
+    body: Vec<u8>,
+    etag: &str,
+    now: u64,
+) -> Result<(), CalendarError> {
     let fetcher = ScriptedFeed(Mutex::new(Some(IcsFetchResponse::Complete {
         etag: Some(etag.to_owned()),
-        body: body.into_bytes(),
+        body,
     })));
     let config = IcsFeedPollConfig {
         secret_ref: format!("ics-feed:{HOST_FEED_SYSTEM}"),
@@ -377,6 +402,22 @@ fn poll_host_feed(
         cadence_max_seconds: 900,
     };
     run_ics_feed_poll(&fixture.vault, &fetcher, &config, now, 7).map(|_| ())
+}
+
+/// The host's provider deletes the booking's event: its tombstone (an
+/// explicit remote delete) lands under the host calendar's system at `now`.
+#[cfg(oneiron_test_support)]
+fn land_host_tombstone(
+    fixture: &Fixture,
+    booked: &ConfirmReceipt,
+    now: u64,
+) -> Result<(), CalendarError> {
+    oneiron::test_doors::calendar_source_tombstone::land_calendar_source_delete(
+        &fixture.vault,
+        HOST_FEED_SYSTEM,
+        &booked.calendar.uid,
+        now,
+    )
 }
 
 /// A sink whose every delivery lands.
@@ -853,5 +894,108 @@ fn a_host_cancel_seen_before_the_start_and_repaired_after_it_refunds() {
             amount_minor: 4_000
         },
         "a cancellation first seen before the start keeps its full refund"
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_tombstone_seen_after_the_start_keeps_the_deposit() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_tombstone_late", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        0,
+        false,
+        "v1",
+        NOW + 60,
+    )
+    .expect("the first host feed poll");
+    // At 09:01 the host's provider reports the event deleted.
+    land_host_tombstone(&fixture, &booked, slot_at(9).start + 60)
+        .expect("the tombstone after the start");
+    assert_eq!(
+        fixture.state_of("pi_tombstone_late"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "a tombstone seen after the start moves no money"
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_tombstone_stopped_before_its_refund_and_sent_again_after_the_start_refunds() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_tombstone_resent", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        0,
+        false,
+        "v1",
+        NOW + 60,
+    )
+    .expect("the first host feed poll");
+    // The tombstone's sweep marks the passport absent at 08:02 and the pull
+    // stops before the refund commits.
+    oneiron::test_doors::host_cancel_refund::stop_before_next_host_cancel_refund();
+    assert!(
+        land_host_tombstone(&fixture, &booked, NOW + 120).is_err(),
+        "the door stops the pull"
+    );
+    assert_eq!(
+        fixture.state_of("pi_tombstone_resent"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        }
+    );
+    // The provider sends the same tombstone again after the start.
+    land_host_tombstone(&fixture, &booked, slot_at(9).start + 60)
+        .expect("the tombstone sent again");
+    assert_eq!(
+        fixture.state_of("pi_tombstone_resent"),
+        DepositState::RefundDue {
+            amount_minor: 4_000
+        },
+        "a tombstone first seen before the start keeps its full refund"
+    );
+}
+
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_tombstone_after_a_feed_omission_counts_from_its_own_arrival() {
+    let fixture = Fixture::open();
+    let booked = captured_booking(&fixture, "pi_omitted", 9);
+    poll_host_feed(
+        &fixture,
+        &booked,
+        slot_at(9).start,
+        0,
+        false,
+        "v1",
+        NOW + 60,
+    )
+    .expect("the first host feed poll");
+    // At 08:01:30 the host's feed no longer carries the event: an omission.
+    poll_host_feed_without_the_booking(&fixture, "v2", NOW + 90).expect("the omitting poll");
+    assert_eq!(
+        fixture.state_of("pi_omitted"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "an omission moves no money"
+    );
+    // The provider's tombstone, the first cancellation evidence, comes at 09:01.
+    land_host_tombstone(&fixture, &booked, slot_at(9).start + 60)
+        .expect("the tombstone after the start");
+    assert_eq!(
+        fixture.state_of("pi_omitted"),
+        DepositState::Captured {
+            amount_minor: 4_000
+        },
+        "the omission before the start is no cancellation seen before it"
     );
 }
