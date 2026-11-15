@@ -183,11 +183,11 @@ pub fn authority_fold_settled(vault: &Vault) -> Result<bool> {
         let Some(local) = crate::identity::read_machine_id_in_txn(vault, &txn)? else {
             return Ok(false);
         };
+        // A machine no head of which stands here (a stranger's mark alone
+        // names it) is unsettled, as an absent one is.
         let settled = fold.machine(local).is_some_and(|machine| {
-            !machine
-                .standing_heads(fold.pinned_root.as_ref())
-                .iter()
-                .any(|chain| chain.admitter_unsettled)
+            let heads = machine.standing_heads(fold.pinned_root.as_ref());
+            !heads.is_empty() && !heads.iter().any(|chain| chain.admitter_unsettled)
         });
         if !settled {
             return Ok(false);

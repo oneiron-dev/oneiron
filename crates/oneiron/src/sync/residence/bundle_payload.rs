@@ -406,7 +406,17 @@ impl WindowManager {
             if fold.vault_id != Some(*vault_id) {
                 return Err(refused("the bundle's authority is another vault's"));
             }
-            opened.require_publisher(&fold, None)?;
+            // The kit's own root vouches for the publisher: the anchor this
+            // install believes once `restore_world_keys` below pins the kit,
+            // after the same seed gate, which runs here before any write.
+            // Another anchor's chain vouches for nothing (FIX
+            // FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES).
+            let (root, _) = vault.kit_seed_gate_in_txn(&txn, &fold, seed, confirm)?;
+            let pin = crate::authority::PinnedRoot {
+                id: root.id,
+                anchor_key: root.anchor_key,
+            };
+            opened.require_publisher_under(&fold, None, Some(&pin))?;
         }
         // Base windows first: a window of a world read everywhere may name a
         // base row.

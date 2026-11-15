@@ -307,19 +307,22 @@ impl OpenedVaultBundle {
 
     /// Whether a machine the owner vouched for signed the bundle, mine here now
     /// or removed since: the key of its roster chain an owner-held key accepted,
-    /// or of its chain under the owner anchor `fold`'s install pins, in `fold`.
-    /// Another anchor's chain vouches for nothing here (FIX
+    /// or of its chain under the owner anchor `pin` names, in `fold`. `pin` is
+    /// the root `fold`'s install pins, or the kit's own root while a restore
+    /// with that kit runs (`Vault::restore_sealed_bundle_with_kit`, which
+    /// pins it). Another anchor's chain vouches for nothing here (FIX
     /// FOREIGN-ANCHOR-CHAIN-COUNTS-IN-EVERY-CHAIN-PREDICATES). An install whose
     /// own profile is still unanswered is no machine he vouched for
     /// (selfprofile).
     #[cfg(feature = "sync")]
     #[must_use]
-    pub(crate) fn signed_by_owner_machine(&self, fold: &AuthorityFold) -> bool {
+    pub(crate) fn signed_by_owner_machine(
+        &self,
+        fold: &AuthorityFold,
+        pin: Option<&crate::authority::PinnedRoot>,
+    ) -> bool {
         fold.machine(self.publisher).is_some_and(|machine| {
-            let pinned = fold
-                .pinned_root
-                .as_ref()
-                .and_then(|pin| machine.anchored.get(&pin.anchor_key));
+            let pinned = pin.and_then(|pin| machine.anchored.get(&pin.anchor_key));
             machine
                 .roster_trusted
                 .iter()

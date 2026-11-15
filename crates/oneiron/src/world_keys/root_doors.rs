@@ -226,7 +226,7 @@ impl Vault {
     /// The kit-restored seed rule in `txn`: the seed's root, and whether the
     /// door publishes it first. A locally pending root is refused unless a
     /// stored or carried record matches it ([`PENDING_KIT_ROOT_RULE`]).
-    fn kit_seed_gate_in_txn(
+    pub(crate) fn kit_seed_gate_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         fold: &AuthorityFold,

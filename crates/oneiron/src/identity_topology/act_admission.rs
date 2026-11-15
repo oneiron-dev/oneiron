@@ -656,6 +656,11 @@ pub(super) fn decision_standing_digest_in_txn(
     let pin = fold.pinned_root.as_ref();
     for (machine, folded) in &fold.machines {
         let heads = folded.standing_heads(pin);
+        // A machine no head of which stands here (a stranger's mark alone
+        // names it) changes nothing a decision seal stands on.
+        if heads.is_empty() {
+            continue;
+        }
         let removed = heads.iter().any(|chain| chain.removed);
         let keys: BTreeSet<[u8; 32]> = heads
             .iter()
