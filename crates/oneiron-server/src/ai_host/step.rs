@@ -832,6 +832,16 @@ impl StepRunner {
         let logical_budget_units = continuation
             .as_ref()
             .map_or(self.budget_units, |saved| saved.progress.budget_units);
+        // A try whose attempt carries a dialed landing reserve (ONE-1896 §4)
+        // meters its ordinary calls on that dial less the reserve, as the
+        // Dreamer's turn program does, so no ordinary call reaches the slice
+        // kept for its landing (FIX 4208). The bound holds the guard and the
+        // live lease alike. An undialed attempt keeps the step's budget.
+        let logical_budget_units = if attempt.landing_reserve().is_dialed() {
+            logical_budget_units.min(attempt.ordinary_budget_limit_units())
+        } else {
+            logical_budget_units
+        };
         // OF-531: a room-paid step bills its root payer's own account, bound
         // before anything is reserved, never the vault owner's by default;
         // so does a member's bound run's step (FIX 5316). A payer this host
