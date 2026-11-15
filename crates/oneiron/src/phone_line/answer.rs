@@ -139,18 +139,6 @@ impl PhoneLineReadCeiling {
         Ok(Some(self.frozen.meet(&CallReach::of(&live))))
     }
 
-    /// The scope half of [`Self::current_reach_in`].
-    pub(crate) fn current_scope_in(
-        &self,
-        vault: &Vault,
-        txn: &heed::RoTxn<'_>,
-        caller: &str,
-    ) -> Result<Option<Scope>> {
-        Ok(self
-            .current_reach_in(vault, txn, caller)?
-            .map(|reach| reach.scope().clone()))
-    }
-
     /// The caller the call's arrival names, while that arrival still stands
     /// for this ceiling's attempt: the line provider's own text, untrusted.
     pub(crate) fn caller_in(&self, vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Option<String>> {
