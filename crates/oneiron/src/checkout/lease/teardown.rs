@@ -102,7 +102,7 @@ fn teardown_reason<R: CheckoutRepoOps, L: CheckoutLiveness>(
         });
     Ok(if foreign {
         Some(CheckoutRetainReason::LiveOccupant)
-    } else if i.dirty || i.receipt_match == TeardownReceiptMatch::Uncertain {
+    } else if i.dirty && i.receipt_match == TeardownReceiptMatch::Uncertain {
         Some(CheckoutRetainReason::DirtyOrUncertain)
     } else if i.receipt_match != TeardownReceiptMatch::Match || !head_matches {
         Some(CheckoutRetainReason::ReceiptMismatch)

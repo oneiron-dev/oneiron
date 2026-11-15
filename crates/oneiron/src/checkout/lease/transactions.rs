@@ -152,7 +152,7 @@ pub(crate) fn settle_in_txn(
             && old.observed_ref == r.observed_ref
             && old.result_ref == r.result_ref
         {
-            return Ok((a, old, false));
+            return Err(CheckoutError::SettlementAlreadyWon);
         }
         return Err(CheckoutError::SettlementAlreadyWon);
     }

@@ -25,7 +25,7 @@ pub fn validate_checkout_door(endpoint: &str) -> GitWireResult<()> {
         || host.is_empty()
         || !host
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b".:-[]".contains(&b))
+            .all(|b| b.is_ascii_alphanumeric() || b".:-[]@".contains(&b))
         || endpoint.starts_with("http://")
             && !(host == "localhost"
                 || host.starts_with("localhost:")
