@@ -28,7 +28,8 @@ pub const OBSERVATIONS_PAGE_VERB: &str = "vault.consolidation.strength.observati
 pub const DERIVE_COMMIT_VERB: &str = "vault.derive.commit";
 
 /// The most claims one page offers, so one page's Archive items always fit
-/// one derive batch (the engine takes at most 256 items).
+/// one derive batch (the engine's cap, `derive.batch.max_items`, is never
+/// below 256 items).
 const PAGE_LIMIT: u64 = 200;
 
 /// The page's status for a claim whose observed sources all still read
