@@ -323,12 +323,14 @@ impl CheckpointKey {
             .transpose()
     }
 
-    /// The custody-head subkeys of the data keys this key holds, current first (KS-4).
-    pub(crate) fn custody_wraps(&self) -> Vec<zeroize::Zeroizing<[u8; 32]>> {
-        std::iter::once(&self.current)
-            .chain(&self.earlier)
-            .map(|key| key.custody_wrap.clone())
-            .collect()
+    /// The custody-head subkey of the current generation's data key, which
+    /// alone opens a custody head (KS-4). An earlier generation's never does:
+    /// a holder of a replaced key could seal a head of its own beside a
+    /// newer backup. The first publication after a new generation seals
+    /// every head again under the new key (its commitment is part of the
+    /// publication policy).
+    pub(crate) fn custody_wrap(&self) -> zeroize::Zeroizing<[u8; 32]> {
+        self.current.custody_wrap.clone()
     }
 
     /// The keys for the artifact whose carried header names `commitment`.

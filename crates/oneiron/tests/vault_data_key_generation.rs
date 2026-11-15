@@ -2,9 +2,11 @@
 //! everything sealed after opens only with the new key, and everything sealed
 //! before still opens with the old one, reached through the link chain. A
 //! checkpoint sealed after refuses the old password and the old escrow
-//! capsule; a checkpoint sealed before still opens and restores; a custody
-//! head published before opens with a key unlocked after. An unconfirmed way
-//! refuses the act and writes nothing.
+//! capsule; a checkpoint sealed before still opens and restores. A custody
+//! head published before does not open with the key after, and the first
+//! publication after the act seals the head again under the new key. An
+//! unconfirmed way, and a presented password or passkey that does not open
+//! its wrap, refuse the act and write nothing.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -30,6 +32,7 @@ use oneiron::world_keys::{
     DataKeyGenerationCause, DataKeyGenerationWays, VaultKeyStatus, VaultKeyUnlock, escrow_recipient,
 };
 use oneiron::{Vault, VaultConfig};
+use zeroize::Zeroizing;
 
 const PASSWORD: &[u8] = b"correct horse battery staple";
 
@@ -358,16 +361,10 @@ fn an_unconfirmed_way_refuses_the_act_and_writes_nothing() {
     );
 }
 
-#[test]
-fn a_custody_head_published_before_opens_with_a_key_unlocked_after() {
-    let directory = tempfile::tempdir().expect("tempdir");
-    let vault = keyed_vault(&directory.path().join("vault"));
-    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
-    vault.install_device_keystore(Arc::clone(&keystore));
-    let device = device_wrap(&vault);
-    let owner_proof = owner(&vault).expect("owner proof");
-    // One secret in custody. It is this device's only, so its keys stay in
-    // local custody and the head carries no owner-only entry for it.
+/// Registers one secret in custody. It is this device's only, so its keys
+/// stay in local custody and a head carries no owner-only entry for it.
+fn register_custody_secret(vault: &Vault) {
+    let owner_proof = owner(vault).expect("owner proof");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .expect("wall time")
@@ -391,15 +388,14 @@ fn a_custody_head_published_before_opens_with_a_key_unlocked_after() {
             now,
         )
         .expect("the owner registers a secret");
-    let folder = directory.path().join("custody");
-    std::fs::create_dir_all(&folder).expect("the custody folder");
-    vault
-        .publish_custody(&folder, &[], None)
-        .expect("publish a head before the act");
-    let head = read_published_head(&folder).expect("the published head");
+}
 
+/// The act keeping only this install's device wrap: every other device wrap
+/// is confirmed away.
+fn start_generation_keeping_this_device(vault: &Vault, device: &str) {
+    let owner_proof = owner(vault).expect("owner proof");
     let mut confirmed = BTreeSet::new();
-    for id in wrap_ids(&vault) {
+    for id in wrap_ids(vault) {
         if id.starts_with("device:") && id != device {
             confirmed.insert(id);
         }
@@ -416,21 +412,172 @@ fn a_custody_head_published_before_opens_with_a_key_unlocked_after() {
             },
         )
         .expect("the owner starts a new generation");
+}
+
+#[test]
+fn a_custody_head_published_before_a_new_generation_does_not_open_with_the_key_after() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    vault.install_device_keystore(Arc::clone(&keystore));
+    let device = device_wrap(&vault);
+    register_custody_secret(&vault);
+    let folder = directory.path().join("custody");
+    std::fs::create_dir_all(&folder).expect("the custody folder");
+    vault
+        .publish_custody(&folder, &[], None)
+        .expect("publish a head before the act");
+    let head = read_published_head(&folder).expect("the published head");
+
+    start_generation_keeping_this_device(&vault, &device);
     let after = directory.path().join("after");
     vault
         .snapshot_checkpoint(&after, 100)
         .expect("seal a checkpoint after the act");
     let key = CheckpointKey::unlock(&after, &VaultKeyUnlock::Device(keystore.as_ref()))
         .expect("the checkpoint sealed after opens on this install");
-    // The head's control compartment opens with the old subkey the new key's
-    // link reaches, and so does every host-readable one: what stays shut is
-    // only a compartment no data key opens (owner-only, a world's pads).
-    let unopened = open_custody_head_with_checkpoint_key(&head, &key)
-        .expect("the head published before opens with the key unlocked after");
+    // A holder of the replaced key could seal a head of its own beside a
+    // newer backup: only the backup's own generation opens a head.
+    let opened = open_custody_head_with_checkpoint_key(&head, &key);
+    assert!(
+        opened.is_err(),
+        "a head sealed under the replaced key must not open with the key after: {opened:?}"
+    );
+}
+
+#[test]
+fn the_first_custody_pass_after_a_new_generation_seals_the_head_again_under_the_new_key() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    vault.install_device_keystore(Arc::clone(&keystore));
+    let device = device_wrap(&vault);
+    register_custody_secret(&vault);
+    let folder = directory.path().join("custody");
+    std::fs::create_dir_all(&folder).expect("the custody folder");
+    vault
+        .publish_custody(&folder, &[], None)
+        .expect("publish a head before the act");
+    let head_before = read_published_head(&folder).expect("the head before");
+    let before = directory.path().join("before");
+    vault
+        .snapshot_checkpoint(&before, 100)
+        .expect("seal a checkpoint before the act");
+    let key_before = CheckpointKey::unlock(&before, &VaultKeyUnlock::Device(keystore.as_ref()))
+        .expect("the checkpoint sealed before opens on this install");
+
+    start_generation_keeping_this_device(&vault, &device);
+    // Nothing in custody changed: the new generation alone seals every head
+    // again.
+    vault
+        .publish_custody(&folder, &[], None)
+        .expect("publish after the act");
+    let head_after = read_published_head(&folder).expect("the head after");
+    assert_ne!(
+        head_after, head_before,
+        "the first pass after the act seals the head again"
+    );
+    let after = directory.path().join("after");
+    vault
+        .snapshot_checkpoint(&after, 101)
+        .expect("seal a checkpoint after the act");
+    let key_after = CheckpointKey::unlock(&after, &VaultKeyUnlock::Device(keystore.as_ref()))
+        .expect("the checkpoint sealed after opens on this install");
+    let unopened = open_custody_head_with_checkpoint_key(&head_after, &key_after)
+        .expect("the head sealed again opens with the new key");
     assert!(
         unopened
             .iter()
             .all(|scope| scope == "OwnerOnly" || scope.starts_with("WorldPad")),
         "every compartment a data key opens opened: {unopened:?}"
+    );
+    let replaced = open_custody_head_with_checkpoint_key(&head_after, &key_before);
+    assert!(
+        replaced.is_err(),
+        "the head sealed again must not open with the replaced key: {replaced:?}"
+    );
+}
+
+#[test]
+fn a_presented_password_that_does_not_open_its_wrap_refuses_the_act() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    vault
+        .set_vault_key_password(PASSWORD, None)
+        .expect("a vault password");
+    let wraps = vault.vault_key_wraps().expect("the wraps before");
+    let before = directory.path().join("before");
+    vault
+        .snapshot_checkpoint(&before, 100)
+        .expect("seal a checkpoint before the refused act");
+
+    // The outcome has no Debug impl, so the refusal is matched.
+    let Err(error) = vault.start_data_key_generation_as(
+        &ActAuthority::Owner(owner_proof, ActSurface::ThisInstall),
+        DataKeyGenerationCause::OwnerRequest,
+        &DataKeyGenerationWays {
+            password: Some(b"another password entirely"),
+            passkeys: Vec::new(),
+            escrows: Vec::new(),
+            confirmed_removals: BTreeSet::new(),
+        },
+    ) else {
+        panic!("a password that does not open the vault's password wrap must refuse the act");
+    };
+    assert!(
+        error.to_string().contains("does not open its wrap"),
+        "the refusal names the way: {error}"
+    );
+    assert_eq!(
+        vault.vault_key_wraps().expect("the wraps after"),
+        wraps,
+        "a refused act changes no wrap"
+    );
+    let after = directory.path().join("after");
+    vault
+        .snapshot_checkpoint(&after, 101)
+        .expect("seal a checkpoint after the refused act");
+    assert_eq!(
+        commitment_of(&after),
+        commitment_of(&before),
+        "a refused act seals under the same commitment"
+    );
+    CheckpointKey::unlock(&after, &VaultKeyUnlock::Password(PASSWORD))
+        .expect("the vault's own password still opens");
+}
+
+#[test]
+fn a_presented_passkey_that_does_not_open_its_wrap_refuses_the_act() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let owner_proof = owner(&vault).expect("owner proof");
+    let enrolled = Zeroizing::new([3u8; 32]);
+    let presented = Zeroizing::new([4u8; 32]);
+    vault
+        .add_vault_key_passkey("credential-a", &enrolled)
+        .expect("a passkey wrap");
+    let wraps = vault.vault_key_wraps().expect("the wraps before");
+
+    let Err(error) = vault.start_data_key_generation_as(
+        &ActAuthority::Owner(owner_proof, ActSurface::ThisInstall),
+        DataKeyGenerationCause::OwnerRequest,
+        &DataKeyGenerationWays {
+            password: None,
+            passkeys: vec![("credential-a", &presented)],
+            escrows: Vec::new(),
+            confirmed_removals: BTreeSet::new(),
+        },
+    ) else {
+        panic!("a passkey output that does not open the credential's wrap must refuse the act");
+    };
+    assert!(
+        error.to_string().contains("does not open its wrap"),
+        "the refusal names the way: {error}"
+    );
+    assert_eq!(
+        vault.vault_key_wraps().expect("the wraps after"),
+        wraps,
+        "a refused act changes no wrap"
     );
 }

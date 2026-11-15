@@ -215,10 +215,13 @@ impl Vault {
                 );
                 Default::default()
             });
-        let data_key = self
+        let (data_key, data_key_commitment) = match self
             .unlock_vault_key()
-            .and_then(|()| self.vault_subkey(CUSTODY_HEAD_WRAP_CONTEXT))
-            .ok();
+            .and_then(|()| self.custody_head_data_key(CUSTODY_HEAD_WRAP_CONTEXT))
+        {
+            Ok((subkey, commitment)) => (Some(subkey), commitment),
+            Err(_) => (None, None),
+        };
         let txn = self.store.env.read_txn()?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         let root = self
@@ -230,6 +233,7 @@ impl Vault {
         Ok(Ok(CustodyRecipients {
             root,
             data_key,
+            data_key_commitment,
             pad_worlds_kept_local,
             credentials_eligible,
             pad_worlds,
@@ -542,7 +546,7 @@ impl Vault {
                 .ok_or_else(codec_error)?,
             required.as_ref(),
             &std::path::absolute(destination)?,
-            key.custody_wraps(),
+            key.custody_wrap(),
             source.as_ref(),
         )?;
         let (custody, mut landing) = match route {

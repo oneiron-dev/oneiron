@@ -335,30 +335,62 @@ impl Vault {
             .clone()
     }
 
-    fn hold_vault_key(&self, key: VaultDataKey) {
-        let held = Arc::new(key);
-        *self
-            .world_keys
-            .vault_key
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(&held));
-        // The earlier generations, reached from the held key through the link
-        // chain. A vault that never started a new generation has no links and
-        // keeps an empty ring. Any failure leaves the ring empty and warns;
-        // the unlock itself never fails for this.
-        let earlier = self.read_earlier_vault_keys(&held).unwrap_or_else(|error| {
-            tracing::warn!(%error, "the vault key's earlier generations did not load");
-            Vec::new()
-        });
-        *self
-            .world_keys
-            .earlier_vault_keys
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = earlier.into_iter().map(Arc::new).collect();
+    /// Holds `key` on this handle with the ring of its earlier generations
+    /// ([`Self::install_vault_key`]), then opens a new snapshot admission
+    /// generation.
+    ///
+    /// # Errors
+    /// Refused when the vault's stored commitment does not name `key`, and
+    /// when a link of its chain does not open.
+    fn hold_vault_key(&self, key: VaultDataKey) -> Result<()> {
+        self.install_vault_key(Arc::new(key))?;
         // An unlock opens a new snapshot admission generation, never readiness.
         self.store.inference_snapshots.reopen();
         // FIX 14976: a bound private drafter may serve again.
         self.notify_drafter_serving();
+        Ok(())
+    }
+
+    /// Sets the held key and the ring of its earlier generations together,
+    /// under the held key's lock, so a reader sees the old pair or the new
+    /// one and never the new key beside the old ring, which would read an
+    /// item sealed under the key just replaced as unopenable. The stored
+    /// commitment is read under that lock and must name `held`: an unlock
+    /// that opened a wrap before a new generation committed cannot put the
+    /// replaced key back after the act's finish, which takes the same lock
+    /// after its commit. A ring that does not load refuses as well, so no
+    /// reader runs on a key without its earlier generations.
+    fn install_vault_key(&self, held: Arc<VaultDataKey>) -> Result<()> {
+        let mut slot = self
+            .world_keys
+            .vault_key
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let earlier = self.read_earlier_vault_keys(&held)?;
+        let mut ring = self
+            .world_keys
+            .earlier_vault_keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *slot = Some(held);
+        *ring = earlier.into_iter().map(Arc::new).collect();
+        Ok(())
+    }
+
+    /// Drops the held key and its ring together, as a lock does.
+    fn drop_held_vault_key(&self) {
+        let mut slot = self
+            .world_keys
+            .vault_key
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let mut ring = self
+            .world_keys
+            .earlier_vault_keys
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        *slot = None;
+        *ring = Vec::new();
     }
 
     /// The data keys of this vault's earlier generations, newest first, read
@@ -371,7 +403,9 @@ impl Vault {
             .get(&self.store, &txn, &())?
             .ok_or_else(|| refused("the vault has no data key"))?;
         if state.commitment != held.commitment(&vault_id) {
-            return Err(refused("this handle holds another vault key"));
+            return Err(refused(
+                "the vault's data key is not this one: it moved to a new generation; unlock again",
+            ));
         }
         let mut links: Vec<KeyHeaderLink> = LINKS
             .scan(&self.store, &txn)?
@@ -418,11 +452,7 @@ impl Vault {
                 )
             })?,
         }
-        *self
-            .world_keys
-            .vault_key
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) = Some(Arc::clone(key));
+        self.install_vault_key(Arc::clone(key))?;
         // Its body files are envelopes under keys this one wraps, from the
         // vault's first write (FIX 5348).
         #[cfg(unix)]
@@ -494,6 +524,14 @@ impl Vault {
     }
 
     fn unlock_vault_key_with(&self, id: &str, secret: &UnlockSecret<'_>) -> Result<()> {
+        let key = self.open_vault_key_wrap(id, secret)?;
+        self.hold_vault_key(key)
+    }
+
+    /// The data key wrap `id` opens to with `secret`, under the commitment
+    /// stored now. Holding it is the unlock's second step, which checks the
+    /// commitment again ([`Self::install_vault_key`]).
+    fn open_vault_key_wrap(&self, id: &str, secret: &UnlockSecret<'_>) -> Result<VaultDataKey> {
         let vault_id = *self.vault_id().as_bytes();
         let (state, stored) = {
             let txn = self.store.env.read_txn()?;
@@ -505,9 +543,7 @@ impl Vault {
                 .ok_or_else(|| refused("the vault key has no such wrap"))?;
             (state, stored)
         };
-        let key = open_wrap(&vault_id, &state.commitment, &stored, secret)?;
-        self.hold_vault_key(key);
-        Ok(())
+        open_wrap(&vault_id, &state.commitment, &stored, secret)
     }
 
     fn add_vault_key_escrow_checked(

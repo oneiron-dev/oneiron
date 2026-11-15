@@ -162,7 +162,7 @@ impl Vault {
         })?;
         let admitted =
             self.store
-                .admit_restore_pads(&required, &recovery.source(), key.custody_wraps())?;
+                .admit_restore_pads(&required, &recovery.source(), key.custody_wrap())?;
         report.custody_note = admitted.note().map(str::to_owned);
         let mut retired = BTreeSet::new();
         for (world, keys) in &locked {

@@ -40,7 +40,7 @@ impl CustodySource for SelectedHead<'_> {
 pub(crate) fn admit_published_host_issuer_seeds(
     lineage: Lineage,
     source: &CustodySourceAt<'_>,
-    data_keys: Vec<Zeroizing<[u8; 32]>>,
+    data_key: Option<Zeroizing<[u8; 32]>>,
 ) -> std::result::Result<AdmittedIssuerSeeds, Rejected> {
     let reader = source.reader();
     let head = reader.head(lineage)?.ok_or_else(|| {
@@ -69,7 +69,7 @@ pub(crate) fn admit_published_host_issuer_seeds(
     };
     let opener = CustodyOpener {
         root: source.root,
-        data_keys,
+        data_key,
         machine: source.machine,
     };
     let admitted = admit_recovery(&required, &selected, &opener, source.anchor)?;

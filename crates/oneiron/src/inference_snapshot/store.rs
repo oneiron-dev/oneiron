@@ -385,6 +385,11 @@ impl Vault {
         wrapped.retire();
         let plaintext = match opened? {
             Some(Some(plaintext)) => plaintext,
+            // A body that does not open under keys read after a key handoff
+            // began proves nothing: it retires only while the admission
+            // still holds, as a new data-key generation ends every earlier
+            // admission before it commits.
+            Some(None) if !self.snapshot_admission_holds(admission) => return Ok(None),
             Some(None) => {
                 self.retire_inference_snapshot(id)?;
                 return Ok(None);

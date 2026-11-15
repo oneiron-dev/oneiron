@@ -92,7 +92,7 @@ pub(crate) struct OpenedHead {
     pub(super) control: Zeroizing<[u8; 32]>,
     pub(super) live: BTreeMap<CustodyId, CustodySecret>,
     pub(super) retired: BTreeSet<CustodyId>,
-    pub(crate) unopened: BTreeSet<CompartmentScope>,
+    pub(super) unopened: BTreeSet<CompartmentScope>,
     /// The released escrow recipients the lineage retired (LC FIX
     /// 5384/5385), from the control compartment.
     pub(super) recipients: Vec<RecipientRetirement>,
@@ -373,20 +373,17 @@ fn unwrap_key(
                 .open(OpenKey::Hybrid(secret), &policy)
                 .ok()
         }
-        // Each generation's subkey is tried, current first. The open is
-        // authenticated, so a wrong key just fails.
         (TO_DATA_KEY, None) if scope != Some(CompartmentScope::OwnerOnly) => {
-            opener.data_keys.iter().find_map(|data_key| {
-                open_sym(
-                    Purpose::CustodyCompartmentKey,
-                    position.vault,
-                    id,
-                    DATA_KEY_RECIPIENT,
-                    &Kek::from_bytes_ref(data_key),
-                    &wrap.envelope,
-                )
-                .ok()
-            })
+            let data_key = opener.data_key.as_ref()?;
+            open_sym(
+                Purpose::CustodyCompartmentKey,
+                position.vault,
+                id,
+                DATA_KEY_RECIPIENT,
+                &Kek::from_bytes_ref(data_key),
+                &wrap.envelope,
+            )
+            .ok()
         }
         _ => None,
     })?;
@@ -419,6 +416,30 @@ fn open_body(
         sealed,
     )?;
     rmp_serde::from_slice(&plain).map_err(|_| head_corrupt())
+}
+
+#[cfg(oneiron_test_support)]
+impl crate::store::Store {
+    /// The debug names of the scopes custody head `head` leaves unopened with
+    /// the data-key subkey `data_key` alone (no kit, no machine key), for the
+    /// data-key generation test door. Refused when the control compartment
+    /// does not open, so an `Ok` proves the data-key wrap opened.
+    pub(crate) fn custody_head_unopened_scopes(
+        head: &[u8],
+        data_key: Zeroizing<[u8; 32]>,
+    ) -> Result<Vec<String>> {
+        let opener = CustodyOpener {
+            root: None,
+            data_key: Some(data_key),
+            machine: None,
+        };
+        let opened = open_head(head, &opener)?;
+        Ok(opened
+            .unopened
+            .iter()
+            .map(|scope| format!("{scope:?}"))
+            .collect())
+    }
 }
 
 /// Opens `head` with `opener`. The control compartment must open, and it
