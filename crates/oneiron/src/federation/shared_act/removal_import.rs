@@ -155,6 +155,10 @@ impl Vault {
         {
             return Err(refused("is not the bytes its digest names"));
         }
+        // A test hook stands in for a caller rewriting the spool file
+        // between the import's passes; with no hook armed it does nothing.
+        #[cfg(oneiron_test_support)]
+        crate::test_doors::removal_import_kept_digest::after_digest_pass(&mut copy.archive)?;
         if version.checked_add(REMOVAL_EXPORT_RETAIN_SECS) != Some(copy.copy.expires_at) {
             return Err(refused("names a term no removal grants"));
         }
