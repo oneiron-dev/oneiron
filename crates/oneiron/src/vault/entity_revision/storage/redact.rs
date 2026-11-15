@@ -427,6 +427,15 @@ pub(crate) fn redact_claim_value_fields_in_txn(
         IDENTITY.put(&vault.store, txn, &binding.revision.0, &id)?;
     }
     DOC.put(&vault.store, txn, &id, &prepared.snapshot)?;
+    // A memory frontier names the revision the row held there: it names the
+    // redacted one now, so a fork reads the redacted words (L3-39).
+    super::super::timeline::replace_revisions_in_txn(&vault.store, txn, &id, |revision| {
+        prepared
+            .bindings
+            .iter()
+            .find(|binding| binding.previous_revision == revision)
+            .map(|binding| binding.revision)
+    })?;
     // Old staged inputs and vectors describe the pre-redaction bytes even
     // when their causal frontier did not change. Publish fresh text now.
     super::super::pending_index::clear(&vault.store, txn, &id)?;

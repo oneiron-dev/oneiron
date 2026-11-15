@@ -147,16 +147,19 @@ pub(crate) fn mask_embed_job_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) {
 /// - an overwritten entity's revision history is a Loro document, whose peer
 ///   id is random per document. The document, the frontiers retained from
 ///   it, and the frontier references hashed from those (in the frontier and
-///   identity keys and the state row's `live`/`indexed`) all carry it.
+///   identity keys, the state row's `live`/`indexed` and the memory
+///   timeline's values) all carry it.
 ///
 /// What stays: which entity holds a document, how many frontiers it retains,
 /// which entity each identity row names, whether its live revision is the
-/// indexed one, and whether it has a document.
+/// indexed one, whether it has a document, and which entity moved at each
+/// step of the memory timeline.
 pub(crate) fn mask_unrepeatable_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) -> Result<()> {
     const DOC: &[u8] = b"entity_revision:doc:";
     const FRONTIER: &[u8] = b"entity_revision:frontier:";
     const IDENTITY: &[u8] = b"entity_revision:identity:";
     const STATE: &[u8] = b"entity_revision:state:";
+    const TIMELINE: &[u8] = b"entity_revision:timeline:";
     const MASK: &[u8] = b"<loro>";
     const ID_LEN: usize = crate::entity_id::ENTITY_ID_LEN;
     for (key, value) in rows.iter_mut() {
@@ -169,6 +172,8 @@ pub(crate) fn mask_unrepeatable_stamps(rows: &mut [(Vec<u8>, Vec<u8>)]) -> Resul
         } else if key.starts_with(IDENTITY) {
             key.truncate(IDENTITY.len());
             key.extend_from_slice(MASK);
+        } else if key.starts_with(TIMELINE) {
+            *value = MASK.to_vec();
         } else if key.starts_with(STATE) {
             let corrupt = || Error::CorruptedIndex("entity revision state");
             let mut state =

@@ -167,6 +167,7 @@ impl Selection {
                         &crate::side_table::ENTITY_REVISION_DOC,
                         &crate::side_table::ENTITY_REVISION_FRONTIER,
                         &crate::side_table::ENTITY_REVISION_IDENTITY,
+                        &crate::side_table::ENTITY_REVISION_TIMELINE,
                         &crate::side_table::PROVENANCE_ROW_BIRTH,
                         &crate::side_table::PROVENANCE_BIRTH_BY_TRIGGER,
                     ]
