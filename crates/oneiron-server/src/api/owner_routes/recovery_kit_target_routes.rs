@@ -278,9 +278,7 @@ fn kit_target(server: &SyncServer, named: &str) -> Result<EntityId, ApiError> {
     };
     let token = format!("kit-target:{}", named.to_hex());
     let nonce = EntityId::now().to_hex();
-    let timestamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
+    let timestamp = oneiron_base::unix_seconds_now();
     let (machine, signature) = vault
         .machine_connection_proof(&token, timestamp, &nonce)
         .map_err(engine)?
