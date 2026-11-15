@@ -816,7 +816,38 @@ impl Memory<'_> {
             .into_iter()
             .filter(|header| root_ids.contains(&header.thread))
             .collect();
-        Ok(super::RoomTrunk { turn, headers })
+        let for_org = self
+            .turns_for_org(std::slice::from_ref(&turn))?
+            .remove(&turn.turn_id);
+        Ok(super::RoomTrunk {
+            turn,
+            headers,
+            for_org,
+        })
+    }
+
+    /// By turn id, the org each of `turns`' speakers ran as its house at the
+    /// turn's `at` (HOUSE-BIND = A, FIX SPEAKER-BYLINE-FOR-ORG). It reads the
+    /// house link receipts alone and stores nothing, so an unbind never
+    /// changes how a turn written before it reads. A speaker that ran no org
+    /// then, or whose actor is no entity id, has no entry.
+    pub(super) fn turns_for_org(
+        &self,
+        turns: &[RoomTurn],
+    ) -> MemoryResult<std::collections::BTreeMap<String, String>> {
+        let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
+        let mut for_org = std::collections::BTreeMap::new();
+        for turn in turns {
+            let Ok(speaker) = EntityId::from_hex(&turn.actor) else {
+                continue;
+            };
+            if let Some(org) =
+                crate::workspace_roster::house_org_at_in_txn(self.vault(), &txn, speaker, turn.at)?
+            {
+                for_org.insert(turn.turn_id.clone(), org.to_hex());
+            }
+        }
+        Ok(for_org)
     }
 
     /// The audience edits among `turns`, which a thread fold reads as no
