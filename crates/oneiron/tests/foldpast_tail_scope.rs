@@ -15,13 +15,13 @@ use ed25519_dalek::SigningKey;
 use oneiron::authority::{
     AuthorityAttestation, AuthorityCheckpointV2, AuthorityConfirmAction, AuthorityConfirmKind,
     AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityTier,
-    DeviceAuthority, FederationLifecycleAction, FederationPactStatus, HostSlipIssuer, ROLE_AGENT,
-    ROLE_OWNER, authority_entry_hash,
+    DeviceAuthority, FederationLifecycleAction, FederationPactStatus, HostSlipIssuer, ROLE_ADMIN,
+    ROLE_AGENT, ROLE_OWNER, authority_entry_hash,
 };
 use oneiron::error::{Error, RecordError};
 use oneiron::test_doors::foldpast::{
     connect_action, disconnect_action, forget_first_seen_receipt, put_signed_entries,
-    sign_next_host_op, sign_next_host_op_cosigned, sign_next_op_as,
+    sign_host_op_beside_next, sign_next_host_op, sign_next_host_op_cosigned, sign_next_op_as,
 };
 use oneiron::{EntityId, OpenOptions, Vault, VaultConfig, VaultStorageId};
 
@@ -917,4 +917,276 @@ fn slip_burn_below_a_rejected_tail_row_still_needs_history() {
         ),
         "history required, got {err:?}"
     );
+}
+
+/// The host issuer a re-root hands the vault to.
+fn successor_issuer(secret: &[u8]) -> HostSlipIssuer {
+    HostSlipIssuer::from_secret(secret).expect("successor issuer")
+}
+
+/// A re-root handing the vault to `successor`'s key, as owner and admin.
+fn re_root_to(successor: &HostSlipIssuer) -> AuthorityOp {
+    AuthorityOp::ReRoot {
+        new_device: DeviceAuthority {
+            key: successor.public_key(),
+            transport_key_binding: successor.binding_key(),
+            attestation: AuthorityAttestation {
+                kind: "SoftwareArgon2id".into(),
+                evidence: Vec::new(),
+            },
+            tier: AuthorityTier::Software,
+            roles: ROLE_OWNER | ROLE_ADMIN,
+        },
+    }
+}
+
+/// Whether `result`, a store and then a fold on the adopting vault, asked
+/// for the history.
+fn asks_history<T: std::fmt::Debug>(result: oneiron::error::Result<T>) {
+    let err = result.expect_err("adopting needs history");
+    assert!(
+        matches!(
+            err,
+            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+        ),
+        "history required, got {err:?}"
+    );
+}
+
+#[test]
+fn re_root_past_an_adopted_image_folds_and_matches_home() {
+    let fixture = fixture();
+    let successor = successor_issuer(b"foldpast-test-successor-secret");
+    let handoff = sign_and_share(&fixture, re_root_to(&successor));
+    let hash = authority_entry_hash(&handoff).expect("re-root hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds re-root");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds re-root");
+    for (vault, fold) in [("home", &home_fold), ("adopting", &adopting_fold)] {
+        assert!(
+            fold.valid_entries.contains(&hash),
+            "{vault} counts the re-root"
+        );
+        assert!(
+            fold.retired_keys.contains(&fixture.issuer.public_key()),
+            "{vault} retires the old root"
+        );
+        assert!(
+            fold.retired_keys.contains(&agent_key()),
+            "{vault} retires every key the old roster held"
+        );
+        assert!(
+            fold.roster
+                .get(&successor.public_key())
+                .is_some_and(|device| !device.revoked),
+            "{vault} installs the successor"
+        );
+    }
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+    assert_eq!(
+        adopting_fold.retired_keys, home_fold.retired_keys,
+        "retired keys match"
+    );
+    assert_eq!(
+        adopting_fold.federation_pacts, home_fold.federation_pacts,
+        "pacts match"
+    );
+    assert_eq!(adopting_fold.slips, home_fold.slips, "slips match");
+    // The successor's own row past the re-root folds on both.
+    let enroll = sign_next_host_op(
+        &fixture.home,
+        &successor,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x54, ROLE_AGENT),
+        },
+    )
+    .expect("sign as the successor");
+    let enroll_hash = authority_entry_hash(&enroll).expect("enroll hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&enroll)).expect("store on home");
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&enroll))
+        .expect("store on adopting");
+    let home_fold = fixture.home.authority_fold().expect("home folds enroll");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds enroll");
+    for (vault, fold) in [("home", &home_fold), ("adopting", &adopting_fold)] {
+        assert!(
+            fold.valid_entries.contains(&enroll_hash),
+            "{vault} counts the successor's enrollment"
+        );
+    }
+    assert_eq!(
+        adopting_fold.roster, home_fold.roster,
+        "rosters still match"
+    );
+    assert_eq!(
+        adopting_fold.retired_keys, home_fold.retired_keys,
+        "retired keys still match"
+    );
+}
+
+#[test]
+fn covered_approval_on_a_re_rooted_key_lapses_on_the_adoption_clock() {
+    let (fixture, confirm) = cosigned_confirm_fixture();
+    let successor = successor_issuer(b"foldpast-test-successor-secret");
+    let handoff = sign_and_share(&fixture, re_root_to(&successor));
+    let hash = authority_entry_hash(&handoff).expect("re-root hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds re-root");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds re-root");
+    assert!(
+        adopting_fold.valid_entries.contains(&hash),
+        "adopting counts the re-root"
+    );
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+    // Inside the window each vault still counts the approval resting on
+    // the keys the re-root retired: home from its own first sight, the
+    // adopter from its adoption of the image.
+    assert!(
+        home_fold.valid_entries.contains(&confirm),
+        "home counts the approval inside its window"
+    );
+    assert!(
+        adopting_fold.valid_entries.contains(&confirm),
+        "adopting counts the approval inside the adoption's window"
+    );
+    // Past min(first seen, re-root first seen) + window + 1 on each vault's
+    // own clock, the approval lapses on both.
+    for (name, vault) in [("home", &fixture.home), ("adopting", &fixture.adopting)] {
+        vault
+            .advance_authority_clock_for_test(vault.now_recorded_at() + PAST_THE_WINDOW_SECS)
+            .expect("advance the clock");
+        let fold = vault.authority_fold().expect("folds past the window");
+        assert!(
+            !fold.valid_entries.contains(&confirm),
+            "{name} lets the approval lapse"
+        );
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::StaleRosterApproval(confirm)),
+            "{name} lapses it as a stale roster approval"
+        );
+        assert!(
+            fold.valid_entries.contains(&hash),
+            "{name} still counts the re-root"
+        );
+    }
+}
+
+#[test]
+fn old_root_row_beside_a_re_root_still_needs_history() {
+    let fixture = fixture();
+    let successor = successor_issuer(b"foldpast-test-successor-secret");
+    // Both on the image's frontier: the old root's confirm at its next
+    // sequence, the re-root one past it.
+    let beside = sign_next_host_op(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xE7)),
+    )
+    .expect("sign the old root's row");
+    let handoff = sign_host_op_beside_next(&fixture.home, &fixture.issuer, re_root_to(&successor))
+        .expect("sign the re-root beside it");
+    assert_eq!(
+        beside.parent_hashes, handoff.parent_hashes,
+        "the two rows stand side by side"
+    );
+    let beside_hash = authority_entry_hash(&beside).expect("beside hash");
+    let hash = authority_entry_hash(&handoff).expect("re-root hash");
+    for vault in [&fixture.home, &fixture.adopting] {
+        put_signed_entries(vault, std::slice::from_ref(&beside)).expect("store the old root's row");
+    }
+    put_signed_entries(&fixture.home, std::slice::from_ref(&handoff)).expect("store on home");
+    let home_fold = fixture.home.authority_fold().expect("home folds re-root");
+    assert!(
+        home_fold.valid_entries.contains(&hash),
+        "home settles the re-root"
+    );
+    assert!(
+        !home_fold.valid_entries.contains(&beside_hash),
+        "home drops the old root's row beside it"
+    );
+    assert!(
+        home_fold
+            .issues
+            .contains(&AuthorityFoldIssue::RetiredSigner(beside_hash)),
+        "home drops it as signed by a retired key"
+    );
+    asks_history(
+        put_signed_entries(&fixture.adopting, std::slice::from_ref(&handoff))
+            .and_then(|()| fixture.adopting.authority_fold()),
+    );
+}
+
+#[test]
+fn two_re_roots_in_one_tail_still_need_history() {
+    let fixture = fixture();
+    let first = sign_next_host_op(
+        &fixture.home,
+        &fixture.issuer,
+        re_root_to(&successor_issuer(b"foldpast-test-successor-secret")),
+    )
+    .expect("sign the first re-root");
+    let second = sign_host_op_beside_next(
+        &fixture.home,
+        &fixture.issuer,
+        re_root_to(&successor_issuer(b"foldpast-test-second-successor")),
+    )
+    .expect("sign the second re-root");
+    let (first_hash, second_hash) = (
+        authority_entry_hash(&first).expect("first hash"),
+        authority_entry_hash(&second).expect("second hash"),
+    );
+    let both = [first, second];
+    put_signed_entries(&fixture.home, &both).expect("store both on home");
+    let home_fold = fixture.home.authority_fold().expect("home folds both");
+    for hash in [first_hash, second_hash] {
+        assert!(
+            !home_fold.valid_entries.contains(&hash),
+            "home settles neither re-root alone"
+        );
+        assert!(
+            home_fold
+                .issues
+                .contains(&AuthorityFoldIssue::UnsettledHandoff(hash)),
+            "home holds the two in conflict"
+        );
+    }
+    asks_history(
+        put_signed_entries(&fixture.adopting, &both)
+            .and_then(|()| fixture.adopting.authority_fold()),
+    );
+}
+
+#[test]
+fn successor_image_past_a_re_root_keeps_its_retired_keys() {
+    let fixture = fixture();
+    let successor = successor_issuer(b"foldpast-test-successor-secret");
+    let handoff = sign_and_share(&fixture, re_root_to(&successor));
+    let hash = authority_entry_hash(&handoff).expect("re-root hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds re-root");
+    // A newer image the successor root builds on the adopting vault, past
+    // its adopted image, and an empty adopter of that newer image.
+    let (readopting, _readopt_dir) = checkpoint_and_adopt(&fixture.adopting, &successor);
+    let fold = readopting
+        .authority_fold()
+        .expect("the newer image projects");
+    assert!(
+        fold.valid_entries.contains(&hash),
+        "the newer image covers the re-root"
+    );
+    assert!(
+        fold.retired_keys.contains(&fixture.issuer.public_key()),
+        "the newer image keeps the old root retired"
+    );
+    assert_eq!(
+        fold.retired_keys, home_fold.retired_keys,
+        "retired keys match home's"
+    );
+    assert_eq!(fold.roster, home_fold.roster, "rosters match home's");
 }
