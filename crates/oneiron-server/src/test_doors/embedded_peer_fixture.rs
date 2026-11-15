@@ -28,9 +28,37 @@ use ed25519_dalek::Signer;
 pub fn enrolled_device(
     dir: &Path,
 ) -> anyhow::Result<(Arc<oneiron::Vault>, crate::config::ServeConfig)> {
+    enrolled_device_with(dir, false)
+}
+
+/// [`enrolled_device`] on an install whose keystore also holds a host issuer seed of its own,
+/// drawn before the vault was rooted under another key, with a serve config that names an auth
+/// secret: a Mac whose open found its vault already carrying another root (L7-47 review). A
+/// host's boot loads that seed and is refused as the vault's root.
+///
+/// # Errors
+///
+/// What [`enrolled_device`] returns, and what drawing the seed returns.
+pub fn enrolled_device_holding_another_seed(
+    dir: &Path,
+) -> anyhow::Result<(Arc<oneiron::Vault>, crate::config::ServeConfig)> {
+    let (vault, mut config) = enrolled_device_with(dir, true)?;
+    config.auth_secret = Some("l7-47 device auth secret".to_owned());
+    Ok((vault, config))
+}
+
+fn enrolled_device_with(
+    dir: &Path,
+    own_seed: bool,
+) -> anyhow::Result<(Arc<oneiron::Vault>, crate::config::ServeConfig)> {
     let vault_dir = dir.join("vault");
     let vault = oneiron::Vault::open(&vault_dir, oneiron::VaultConfig::device())?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    if own_seed {
+        // Drawn while the vault's authority is unstarted, so the install's slot holds a seed of
+        // its own; the root below is another key.
+        vault.bootstrap_host_slip_issuer()?;
+    }
     let issuer = oneiron::test_support::provision_engine_machines(&vault);
     vault.ensure_serving_install_profile(&issuer, oneiron::authority::MachineRole::Unanswered)?;
     let local = vault
