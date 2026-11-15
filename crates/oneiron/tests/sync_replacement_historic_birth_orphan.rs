@@ -7,8 +7,14 @@
 //! every retained birth insertion, so it must judge that insertion against
 //! a state that carried the row (the range's starting state or an entity
 //! insertion in the range), not only against the final map the delete
-//! emptied. A birth whose owner no inspected state carries, and a birth
-//! that does not decode, are still refused.
+//! emptied. That excuse reaches only a birth the final state no longer
+//! carries: a birth still live at the end must find its row live beside
+//! it, because a live birth carrier waits to be stamped when its row
+//! lands. A birth whose owner no inspected state carries, and a birth
+//! that does not decode, are still refused. For an update the starting
+//! state is the state at the range's start, so the same bytes keep their
+//! verdict after they have been imported, and after a concurrent local
+//! delete of the row they birth and delete.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test sync_replacement_historic_birth_orphan`
@@ -272,6 +278,206 @@ fn a_malformed_birth_for_a_deleted_row_is_still_refused() -> TestResult {
     assert!(
         result.is_err(),
         "a birth that does not decode must be refused, deleted row or not: {result:?}"
+    );
+    Ok(())
+}
+
+/// The throwaway-carrier shape: the row is shipped, its birth is inserted,
+/// and then only the row is deleted, so the birth stays live with no live
+/// owner. The starting states above may excuse only a birth that leaves
+/// with its row; a live one would wait in the window and stamp whatever
+/// row later lands under its key, so it is refused.
+#[test]
+fn a_snapshot_that_leaves_a_birth_live_without_its_row_is_refused() -> TestResult {
+    let source = window_doc(1)?;
+    let receiver = window_doc(2)?;
+    let at = window_at()?;
+    let owner = EntityId::now();
+    let survivor = EntityId::now();
+    let birth = birth_bytes();
+    put_born_row(&source, &owner, at, &birth)?;
+    put_born_row(&source, &survivor, at, &birth_bytes())?;
+    delete_key(&source, "entities", &owner.to_hex())?;
+    assert!(
+        !carries(&source, "entities", &owner) && carries(&source, "row_births", &owner),
+        "FIXTURE: only the row left, so the birth stays live without it"
+    );
+    assert!(
+        carries(&source, "entities", &survivor),
+        "FIXTURE: the other row stays live"
+    );
+
+    let snapshot = source.export(ExportMode::Snapshot)?;
+    let shown = LoroDoc::from_snapshot(&snapshot)?;
+    assert!(
+        !carries(&shown, "entities", &owner) && carries(&shown, "row_births", &owner),
+        "FIXTURE: the snapshot's latest state carries the birth but not its row"
+    );
+    assert!(
+        birth_inserted_in_history(&shown, &owner, &birth),
+        "FIXTURE: the snapshot's history retains the birth insertion"
+    );
+
+    let result = validate_window_update_locality(&receiver, &snapshot);
+    assert!(
+        result.is_err(),
+        "a birth left live after its row is deleted must be refused: {result:?}"
+    );
+    Ok(())
+}
+
+/// The same shape past a shallow root that carries the row: the root is a
+/// starting state for a birth that leaves with its row, not for one left
+/// live without it.
+#[test]
+fn a_shallow_snapshot_that_leaves_a_birth_live_without_its_root_row_is_refused() -> TestResult {
+    let source = window_doc(1)?;
+    let receiver = window_doc(2)?;
+    let at = window_at()?;
+    let owner = EntityId::now();
+    insert_bytes(
+        &source,
+        "entities",
+        &owner.to_hex(),
+        &entity_blob(at, b"artifact row"),
+    )?;
+    let root = source.oplog_frontiers();
+    insert_bytes(&source, "row_births", &owner.to_hex(), &birth_bytes())?;
+    delete_key(&source, "entities", &owner.to_hex())?;
+
+    let snapshot = source.export(ExportMode::shallow_snapshot(&root))?;
+    let shown = LoroDoc::from_snapshot(&snapshot)?;
+    assert!(shown.is_shallow(), "FIXTURE: the snapshot is shallow");
+    assert!(
+        !carries(&shown, "entities", &owner) && carries(&shown, "row_births", &owner),
+        "FIXTURE: the snapshot's latest state carries the birth but not its row"
+    );
+
+    let result = validate_window_update_locality(&receiver, &snapshot);
+    assert!(
+        result.is_err(),
+        "a birth left live after its root row is deleted must be refused: {result:?}"
+    );
+    Ok(())
+}
+
+/// The same shape as an ordinary update over a held row: the state the
+/// range starts from carries the row, but the birth it leaves live does
+/// not leave with the row, so that starting state does not excuse it.
+#[test]
+fn an_update_that_leaves_a_birth_live_without_its_held_row_is_refused() -> TestResult {
+    let source = window_doc(1)?;
+    let receiver = window_doc(2)?;
+    let at = window_at()?;
+    let owner = EntityId::now();
+    insert_bytes(
+        &source,
+        "entities",
+        &owner.to_hex(),
+        &entity_blob(at, b"artifact row"),
+    )?;
+    receiver.import(&source.export(ExportMode::all_updates())?)?;
+    assert!(
+        carries(&receiver, "entities", &owner),
+        "FIXTURE: the receiver already holds the row"
+    );
+    let before = receiver.oplog_vv();
+    insert_bytes(&source, "row_births", &owner.to_hex(), &birth_bytes())?;
+    delete_key(&source, "entities", &owner.to_hex())?;
+    assert!(
+        !carries(&source, "entities", &owner) && carries(&source, "row_births", &owner),
+        "FIXTURE: only the row left, so the birth stays live without it"
+    );
+
+    let update = source.export(ExportMode::updates(&before))?;
+    let result = validate_window_update_locality(&receiver, &update);
+    assert!(
+        result.is_err(),
+        "a birth left live after its held row is deleted must be refused: {result:?}"
+    );
+    Ok(())
+}
+
+/// Redelivery of the births-then-deletes update: once the receiver has imported
+/// it, the receiver no longer holds the row, but the state the range
+/// starts from has not changed, so the same bytes are admitted again
+/// (the import itself would absorb them as a no-op).
+#[test]
+fn an_update_that_births_then_deletes_a_held_row_passes_admission_on_redelivery() -> TestResult {
+    let source = window_doc(1)?;
+    let receiver = window_doc(2)?;
+    let at = window_at()?;
+    let owner = EntityId::now();
+    insert_bytes(
+        &source,
+        "entities",
+        &owner.to_hex(),
+        &entity_blob(at, b"artifact row"),
+    )?;
+    receiver.import(&source.export(ExportMode::all_updates())?)?;
+    assert!(
+        carries(&receiver, "entities", &owner),
+        "FIXTURE: the receiver already holds the row"
+    );
+    let before = receiver.oplog_vv();
+    insert_bytes(&source, "row_births", &owner.to_hex(), &birth_bytes())?;
+    delete_born_row(&source, &owner)?;
+
+    let update = source.export(ExportMode::updates(&before))?;
+    let first = validate_window_update_locality(&receiver, &update);
+    assert!(
+        first.is_ok(),
+        "FIXTURE: the update passes admission on first delivery: {first:?}"
+    );
+    receiver.import(&update)?;
+    assert!(
+        !carries(&receiver, "entities", &owner) && !carries(&receiver, "row_births", &owner),
+        "FIXTURE: the import took the row and its birth out of the receiver"
+    );
+
+    let result = validate_window_update_locality(&receiver, &update);
+    assert!(
+        result.is_ok(),
+        "the same update must keep its verdict after it has been imported: {result:?}"
+    );
+    Ok(())
+}
+
+/// A concurrent local delete of the held row is not part of the state the
+/// update's range starts from either: that state still carries the row
+/// the update births and then deletes, so the delete does not stall it.
+#[test]
+fn an_update_that_births_then_deletes_a_row_the_receiver_deleted_locally_passes() -> TestResult {
+    let source = window_doc(1)?;
+    let receiver = window_doc(2)?;
+    let at = window_at()?;
+    let owner = EntityId::now();
+    insert_bytes(
+        &source,
+        "entities",
+        &owner.to_hex(),
+        &entity_blob(at, b"artifact row"),
+    )?;
+    receiver.import(&source.export(ExportMode::all_updates())?)?;
+    assert!(
+        carries(&receiver, "entities", &owner),
+        "FIXTURE: the receiver already holds the row"
+    );
+    let before = receiver.oplog_vv();
+    insert_bytes(&source, "row_births", &owner.to_hex(), &birth_bytes())?;
+    delete_born_row(&source, &owner)?;
+    let update = source.export(ExportMode::updates(&before))?;
+
+    delete_key(&receiver, "entities", &owner.to_hex())?;
+    assert!(
+        !carries(&receiver, "entities", &owner),
+        "FIXTURE: the receiver deleted the row locally before validating"
+    );
+
+    let result = validate_window_update_locality(&receiver, &update);
+    assert!(
+        result.is_ok(),
+        "the update must pass despite the concurrent local delete of its row: {result:?}"
     );
     Ok(())
 }
