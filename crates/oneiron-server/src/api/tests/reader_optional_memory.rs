@@ -24,11 +24,6 @@ fn put_reader(server: &SyncServer, id: oneiron::EntityId) {
         1_000,
         oneiron::ModelTierRef("test.summary".to_owned()),
         CompactionOwnership::Engine,
-    )
-    .with_optional_memory(
-        OptionalMemoryProfile::new(widest)
-            .with_family("narrow", narrow)
-            .with_family("no_memory", OptionalMemory::None),
     );
     let definition = AgentDefinition::new(
         "oneiron.agent.reader",
@@ -56,7 +51,12 @@ fn put_reader(server: &SyncServer, id: oneiron::EntityId) {
         true,
         None,
     )
-    .with_memory_profile(Some(profile));
+    .with_memory_profile(Some(profile))
+    .with_optional_memory(Some(
+        OptionalMemoryProfile::new(widest)
+            .with_family("narrow", narrow)
+            .with_family("no_memory", OptionalMemory::None),
+    ));
     server
         .vault
         .put_agent_definition(&id, &definition, oneiron::TimeRange { start: 1, end: 1 }, 1)
