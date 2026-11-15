@@ -1501,14 +1501,22 @@ summary_prompt = "Summarize these records."
     );
     host.shutdown().await;
 
-    let extraction = |seen: &crate::fake_llm::Seen| {
-        seen.body["messages"][0]["content"]
-            .as_str()
-            .is_some_and(|text| text.starts_with("Extract durable memory claims"))
+    // Both extraction-role shapes (FIX 7510) go to the extraction provider,
+    // and neither reaches the narrator's.
+    let opens_with = |seen: &crate::fake_llm::Seen, prompt: &str| {
+        seen_texts(&seen.body)
+            .first()
+            .is_some_and(|text| text.starts_with(prompt))
     };
-    assert!(extractor.seen().iter().all(extraction));
+    let extraction =
+        |seen: &crate::fake_llm::Seen| opens_with(seen, "Extract durable memory claims");
+    let extraction_role = |seen: &crate::fake_llm::Seen| {
+        extraction(seen) || opens_with(seen, "You follow one append-only log")
+    };
+    assert!(extractor.seen().iter().any(extraction));
+    assert!(extractor.seen().iter().all(extraction_role));
     assert!(!narrator.seen().is_empty());
-    assert!(!narrator.seen().iter().any(extraction));
+    assert!(!narrator.seen().iter().any(extraction_role));
     let rows = receipts.rows();
     for (run, fake) in [
         ("dreamer-pass/extraction_teacher", &extractor),

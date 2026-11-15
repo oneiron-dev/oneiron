@@ -701,7 +701,7 @@ async fn raw_doors_refuse_a_credential_whose_records_leave_the_record_out() {
         revision_ref: source,
         document_ref: source,
         world_ref: None,
-        document_revision: oneiron::vault::RevisionRef(*source.as_bytes()),
+        document_revision: oneiron_store::revision_ref::RevisionRef(*source.as_bytes()),
         words: oneiron::psych_profile::PsychProfileSourceWords::Record {
             content: [0x5c; 32],
         },

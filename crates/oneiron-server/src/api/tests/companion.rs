@@ -808,7 +808,7 @@ async fn v1_companion_profile_refresh_preserves_sources_and_drift_anchors() {
     assert_eq!(
         server
             .vault
-            .get_psych_profile(&persona_ref)
+            .get_psych_profile(&profile_id)
             .expect("read profile")
             .expect("profile persists")
             .source_revision_ids,

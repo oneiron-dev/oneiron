@@ -826,17 +826,44 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
         "owner presence alone cannot override a narrower peer clearance: {supervised_narrowed}"
     );
 
+    // OF-272: the roster reads a member's contacts from their identity claims,
+    // and a contact's identity claim stays when the contact is revoked, so a
+    // member's contact list only grows and each denial below is final. The
+    // phases therefore run from the restored dial, which admits Tier B again,
+    // to one second contact naming the same person.
+    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
+    let (status, restored) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{restored}");
+    assert!(
+        restored["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "the restored dial admits tier B again: {restored}"
+    );
+
+    let other_contact = seeded_test_entity_id(0x2094_0107);
+    seed_counterparty_contact(&server, other_contact, peer, "ambiguous@example.com");
+    seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
+    server
+        .vault
+        .put_edge(&other_contact, oneiron::EdgeKind::About, &peer, 1.0)
+        .expect("second contact linked to peer");
+    let (status, two_contacts) = room_owner_json(server.clone(), owner, &request(false)).await;
+    assert_eq!(status, StatusCode::OK, "{two_contacts}");
+    assert!(
+        !two_contacts["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|row| row["id"] == tier_b.to_hex()),
+        "two contacts for one person fail closed: {two_contacts}"
+    );
+
     // A client-supplied contact cannot replace a missing roster identity:
     // losing the unique person link makes that member unknown and denies the
     // absent-owner Tier-B read even when the caller names the contact.
-    seed_disclosure_scope(&server, peer_contact, oneiron::federation::Scope::top());
-    // OF-272: the roster link is the contact's identity claim, not its About
-    // edge. Revoking the contact drops the member to unknown; revocation is
-    // one-way, and every later phase expects denial anyway.
-    server
-        .vault
-        .revoke_counterparty_contact(&peer_contact, 102)
-        .expect("revoke peer contact");
     let (status, unlinked) = room_owner_json(
         server.clone(),
         owner,
@@ -859,53 +886,10 @@ async fn roster_room_applies_each_members_disclosure_dial_and_owner_presence() {
             .any(|row| row["id"] == tier_b.to_hex()),
         "missing roster identity cannot be replaced by a wire party: {unlinked}"
     );
-
-    let other_contact = seeded_test_entity_id(0x2094_0107);
-    seed_counterparty_contact(&server, other_contact, peer, "ambiguous@example.com");
-    seed_disclosure_scope(&server, other_contact, oneiron::federation::Scope::top());
-    server
-        .vault
-        .put_edge(&other_contact, oneiron::EdgeKind::About, &peer, 1.0)
-        .expect("second contact linked to peer");
-    let (status, two_contacts) = room_owner_json(server.clone(), owner, &request(false)).await;
-    assert_eq!(status, StatusCode::OK, "{two_contacts}");
-    assert!(
-        !two_contacts["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["id"] == tier_b.to_hex()),
-        "two contacts for one person fail closed: {two_contacts}"
-    );
-    server
-        .vault
-        .delete_edge(&other_contact, oneiron::EdgeKind::About, &peer)
-        .expect("remove extra contact");
-    let stranger = seeded_test_entity_id(0x2094_0108);
-    server
-        .vault
-        .put_entity(
-            &stranger,
-            oneiron::registry::ENTITY_TYPE_PERSON,
-            oneiron::TimeRange { start: 1, end: 1 },
-            1,
-            b"stranger",
-        )
-        .expect("other person");
-    server
-        .vault
-        .put_edge(&peer_contact, oneiron::EdgeKind::About, &stranger, 1.0)
-        .expect("contact points to two people");
-    let (status, two_people) = room_owner_json(server.clone(), owner, &request(false)).await;
-    assert_eq!(status, StatusCode::OK, "{two_people}");
-    assert!(
-        !two_people["results"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|row| row["id"] == tier_b.to_hex()),
-        "one contact for two people fails closed: {two_people}"
-    );
+    // A contact names one person (one identity head, OF-272), so a room
+    // member cannot be reached through "one contact for two people"; the
+    // About-edge uniqueness rule for that case serves only an audience
+    // outside a room (api/context_pack/audience.rs).
 
     // Omission is not authenticated presence in a room, even on owner auth.
     let (status, implicit) = room_owner_json(
