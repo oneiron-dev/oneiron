@@ -399,6 +399,8 @@ pub(crate) fn note_side_text_in_txn(
 }
 
 mod document_store;
+mod found_key_restore;
+pub(crate) use found_key_restore::restore_found_key_text_in_txn;
 mod saved;
 pub(crate) use document_store::deck_outline_document_in_txn;
 pub(crate) use document_store::resolve_deck_pin_in_txn;
