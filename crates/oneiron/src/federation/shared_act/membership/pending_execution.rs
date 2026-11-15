@@ -173,7 +173,9 @@ impl Vault {
             .withdrawn_grants
             .iter()
             .copied()
-            .filter(|grant| !fold.slips.revoked_grants.contains(&grant.to_hex()))
+            // Only a counted end of the Grant's line settles it: slips withdrawn alone
+            // leave the giving standing (REVIEW r2b-sol P2-4).
+            .filter(|grant| !fold.grant_line(*grant).is_some_and(|line| line.ended))
             .collect();
         if withdrawn_grants.is_empty() && pending.handover.is_none() {
             PENDING_MEMBERSHIP_EXECUTION.delete(&self.store, txn, &HexId(receipt))?;

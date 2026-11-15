@@ -53,6 +53,14 @@ pub(super) struct RevokeFacts {
     by_hash: BTreeMap<AuthorityEntryHash, VerifiedRestriction>,
 }
 
+/// Ends the line of the Grant `grant` (in hex, as a slip's claims name it) by the proved act
+/// `hash`, an end of no family: its family was judged where the fact was proved.
+fn end_proved_grant_line(state: &mut FoldState, grant: &str, hash: AuthorityEntryHash) {
+    if let Ok(grant) = EntityId::from_hex(grant) {
+        state.grant_lines.end(grant, hash);
+    }
+}
+
 impl RevokeFacts {
     /// Join only restrictions scoped to the surviving vault. The ordinary
     /// transition and this projection use the same max/union implementation:
@@ -74,12 +82,17 @@ impl RevokeFacts {
                     state.slips.revoked.insert(*slip_id);
                     state.slips.explicit_revoked.insert(*slip_id);
                 }
+                // A proved withdrawal ends the Grant's line too, as its ordinary transition
+                // does (pass 28 R1; REVIEW r2b-sol P2-4): a lost branch never leaves the
+                // slips withdrawn and the giving standing.
                 Restriction::SlipGrantRevoke(grant_ref) => {
                     state.slips.revoke_grant(grant_ref.clone());
+                    end_proved_grant_line(state, grant_ref, fact.entry_hash);
                 }
                 Restriction::GrantsWithdrawn(grants) => {
                     for grant in grants {
                         state.slips.revoke_grant(grant.clone());
+                        end_proved_grant_line(state, grant, fact.entry_hash);
                     }
                 }
                 Restriction::SlipBurn(burnt) => {

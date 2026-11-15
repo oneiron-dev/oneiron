@@ -276,7 +276,17 @@ pub(super) fn grant_member_bundle(
                     "federation_grant_ref is already bound to a different grant",
                 ));
             }
-            return Ok(());
+            // A replay writes nothing only when the row stands on its counted giving: equal
+            // bytes alone prove no giving (a row synced ahead of its act, or put back after
+            // its end). Otherwise the step gives below, and an ended id refuses there
+            // (REVIEW r2b-sol P2-2).
+            let now = crate::ports::recorded_at_in_txn(&vault.store, wtxn)?;
+            if vault
+                .standing_grant_in_txn(wtxn, id, crate::authority::GrantFamily::SharedMember, now)?
+                .is_some()
+            {
+                return Ok(());
+            }
         }
         let giver = vault.shared_write_principal_in_txn(wtxn, writer)?;
         let data = vault.give_grant_in_txn(
