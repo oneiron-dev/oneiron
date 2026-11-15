@@ -36,6 +36,14 @@
 //! gated owner lane rebuilds. Guards: the transferred source rebuild (its
 //! owner alternative already carried the access gate and no exemption), the
 //! device's own saved question and the attenuated one's asker read.
+//!
+//! A caveat that sets the credential an earlier end than its mint's ends
+//! the saved lane at that end, while the mint is still live (FIX
+//! SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY): rebuilt as its question's asker reader
+//! or over the owner's own key, rebuilt before the end and held past it,
+//! rebuilt over the device's own unattenuated proof of the same slip, and
+//! saved again from a rebuilt key, it reads nothing from then on. Red on
+//! #8105 (e59c71b9d44): each reads the owner's open claim past the end.
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test saved_lane_owner_basis`.
 #![cfg(oneiron_test_support)]
@@ -70,6 +78,11 @@ const DEVICE_BINDING_SEED: u8 = 0x4D;
 const DELEGATE_BINDING_SEED: u8 = 0x5E;
 /// The caveat that narrows only the credential's lifetime.
 const CAVEAT_TTL_SECS: u64 = 1_800;
+/// How long a caveat's earlier end leaves the device's credential: enough
+/// for every read before it, short enough to wait out.
+const CAVEAT_END_SECS: u64 = 5;
+/// The longest wait for the vault's clock to reach a caveat's end.
+const CAVEAT_END_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// A vault whose owner wrote a base-world claim open to every relationship
 /// and one inside a relationship no grant names, and paired their own
@@ -268,6 +281,66 @@ fn attenuated_slip(fixture: &Fixture) -> VerifiedSlip {
         "precondition: the device's attenuated credential stays on its key below the owner's floor"
     );
     proof
+}
+
+/// The device's credential narrowed by the device itself to end
+/// [`CAVEAT_END_SECS`] from now on the vault's clock, before its mint ends,
+/// kept on its key; with that end.
+fn caveat_end_slip(fixture: &Fixture) -> (VerifiedSlip, u64) {
+    let end = vault_now(fixture) + CAVEAT_END_SECS;
+    let mut slip = fixture.device_slip.clone();
+    slip.attenuate(
+        SlipCaveat {
+            expires_at: Some(end),
+            ..Default::default()
+        },
+        &SigningKey::from_bytes(&[DEVICE_BINDING_SEED; 32]),
+    )
+    .expect("the device sets its own credential an earlier end");
+    let proof = verified(fixture, &slip, DEVICE_BINDING_SEED);
+    assert!(
+        !proof.is_transferred() && !proof.is_full_vault_owner_grade(),
+        "precondition: the device's credential with an earlier end stays on its key below the owner's floor"
+    );
+    (proof, end)
+}
+
+/// The vault's clock, as a credential's proof is judged against it.
+fn vault_now(fixture: &Fixture) -> u64 {
+    fixture
+        .vault
+        .capability_slip_now()
+        .expect("the vault's clock")
+}
+
+/// Asserts that the reads before it ran before the caveat's `end`.
+fn assert_before_caveat_end(fixture: &Fixture, end: u64) {
+    let now = vault_now(fixture);
+    assert!(
+        now < end,
+        "precondition: every read before the caveat's end {end} ran before it; the vault's clock reads {now}"
+    );
+}
+
+/// Waits, polling the vault's own clock, until it reaches the caveat's
+/// `end`; then asserts that the device credential's mint is still live, so
+/// only the caveat's end can refuse a read.
+fn wait_past_caveat_end(fixture: &Fixture, end: u64) {
+    let started = std::time::Instant::now();
+    while vault_now(fixture) < end {
+        assert!(
+            started.elapsed() < CAVEAT_END_WAIT,
+            "precondition: the vault's clock reaches the caveat's end {end} within {CAVEAT_END_WAIT:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(
+        fixture
+            .vault
+            .capability_slip_id_is_live(&fixture.device_slip.claims.slip_id)
+            .expect("the credential's mint liveness"),
+        "precondition: the device credential's mint is still live past the caveat's end {end}"
+    );
 }
 
 fn credential_key(fixture: &Fixture, proof: &VerifiedSlip) -> ScopedReadActorKey {
@@ -664,5 +737,123 @@ fn a_gated_owner_saved_lane_over_the_owners_key_keeps_its_gate() {
     assert!(
         !read,
         "actor=the owner's key under the access gate held to the base world; expected its saved lane, rebuilt over the owner's own key, to refuse the relationship claim its live lane refused; seen {seen}"
+    );
+}
+
+/// A saved lane under a credential whose caveat set an earlier end than its
+/// mint reads nothing past that end, while the mint is still live: rebuilt
+/// as its saved question's asker reader and over the owner's own key (FIX
+/// SAVED-LANE-OUTLIVES-CAVEAT-EXPIRY).
+#[test]
+fn a_saved_lane_reads_nothing_past_its_credentials_caveat_end() {
+    let fixture = fixture();
+    let (proof, end) = caveat_end_slip(&fixture);
+    let frozen = saved_lane(&fixture, credential_key(&fixture, &proof));
+    assert!(
+        !frozen.reads_as_principal(),
+        "precondition: the lane of the device's credential with an earlier end keeps its Scope"
+    );
+    let (asker, seen) = asker_reads(&fixture, &frozen, fixture.open_claim);
+    assert!(
+        asker,
+        "precondition: the saved question's asker reader reads the owner's open claim before the caveat's end; seen {seen}"
+    );
+    let (owner, seen) = owner_key_reads(&fixture, &frozen, fixture.open_claim);
+    assert!(
+        owner,
+        "precondition: the saved lane rebuilt over the owner's own key reads the owner's open claim before the caveat's end; seen {seen}"
+    );
+    assert_before_caveat_end(&fixture, end);
+    wait_past_caveat_end(&fixture, end);
+    let (asker, seen) = asker_reads(&fixture, &frozen, fixture.open_claim);
+    assert!(
+        !asker,
+        "actor=the owner's device under a credential whose caveat ends at {end}; expected its saved question's asker reader to read nothing past that end, while the mint is live; seen {seen}"
+    );
+    let (owner, seen) = owner_key_reads(&fixture, &frozen, fixture.open_claim);
+    assert!(
+        !owner,
+        "actor=the owner's device under a credential whose caveat ends at {end}; expected its saved lane, rebuilt over the owner's own key, to read nothing past that end, while the mint is live; seen {seen}"
+    );
+}
+
+/// A key rebuilt from that saved lane before the caveat's end, and held
+/// past it, reads nothing from then on: each read judges the end again.
+#[test]
+fn a_key_rebuilt_from_a_saved_lane_reads_nothing_once_held_past_its_caveat_end() {
+    let fixture = fixture();
+    let (proof, end) = caveat_end_slip(&fixture);
+    let frozen = saved_lane(&fixture, credential_key(&fixture, &proof));
+    let rebuilt = asker_reader(&fixture.vault, fixture.owner, &frozen)
+        .expect("precondition: the saved lane rebuilds before the caveat's end");
+    let lane = question_lane(&fixture, rebuilt);
+    let (read, seen) = reads(&lane, fixture.open_claim);
+    assert!(
+        read,
+        "precondition: the rebuilt asker key reads the owner's open claim before the caveat's end; seen {seen}"
+    );
+    assert_before_caveat_end(&fixture, end);
+    wait_past_caveat_end(&fixture, end);
+    let (read, seen) = reads(&lane, fixture.open_claim);
+    assert!(
+        !read,
+        "actor=the owner's device under a credential whose caveat ends at {end}; expected the asker key rebuilt from its saved lane before that end, and held past it, to read nothing; seen {seen}"
+    );
+}
+
+/// The saved lane rebuilt over the device's own unattenuated credential,
+/// the same slip, whose proof ends only with its mint, still ends at the
+/// caveat's end.
+#[test]
+fn a_saved_lane_rebuilt_over_its_credentials_unattenuated_proof_reads_nothing_past_its_caveat_end()
+{
+    let fixture = fixture();
+    let (proof, end) = caveat_end_slip(&fixture);
+    let frozen = saved_lane(&fixture, credential_key(&fixture, &proof));
+    let own = verified(&fixture, &fixture.device_slip, DEVICE_BINDING_SEED);
+    assert_eq!(
+        own.claims().slip_id,
+        proof.claims().slip_id,
+        "precondition: the device's own proof is the same slip as its caveat's"
+    );
+    let rebuilt = frozen
+        .narrow(&fixture.vault, credential_key(&fixture, &own))
+        .expect("precondition: the saved lane rebuilds over the device's own key before the caveat's end");
+    let lane = held_lane(&fixture, rebuilt);
+    let (read, seen) = reads(&lane, fixture.open_claim);
+    assert!(
+        read,
+        "precondition: the saved lane rebuilt over the device's own key reads the owner's open claim before the caveat's end; seen {seen}"
+    );
+    assert_before_caveat_end(&fixture, end);
+    wait_past_caveat_end(&fixture, end);
+    let (read, seen) = reads(&lane, fixture.open_claim);
+    assert!(
+        !read,
+        "actor=the owner's device under a credential whose caveat ends at {end}; expected its saved lane, rebuilt over the device's own unattenuated proof of the same slip, to read nothing past that end; seen {seen}"
+    );
+}
+
+/// A key rebuilt from that saved lane and saved again keeps the caveat's
+/// end: the second lane reads nothing past it.
+#[test]
+fn a_saved_lane_frozen_again_from_its_rebuilt_key_keeps_its_caveat_end() {
+    let fixture = fixture();
+    let (proof, end) = caveat_end_slip(&fixture);
+    let frozen = saved_lane(&fixture, credential_key(&fixture, &proof));
+    let rebuilt = asker_reader(&fixture.vault, fixture.owner, &frozen)
+        .expect("precondition: the saved lane rebuilds before the caveat's end");
+    let again = saved_lane(&fixture, rebuilt);
+    let (read, seen) = asker_reads(&fixture, &again, fixture.open_claim);
+    assert!(
+        read,
+        "precondition: the lane saved again reads the owner's open claim before the caveat's end; seen {seen}"
+    );
+    assert_before_caveat_end(&fixture, end);
+    wait_past_caveat_end(&fixture, end);
+    let (read, seen) = asker_reads(&fixture, &again, fixture.open_claim);
+    assert!(
+        !read,
+        "actor=the owner's device under a credential whose caveat ends at {end}; expected the lane saved again from its rebuilt key to keep that end and read nothing past it; seen {seen}"
     );
 }
