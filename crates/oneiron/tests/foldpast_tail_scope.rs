@@ -9,18 +9,19 @@
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --no-fail-fast --test foldpast_tail_scope`.
-#![cfg(all(feature = "test-support", oneiron_test_support))]
+#![cfg(all(feature = "test-support", feature = "test-hooks", oneiron_test_support))]
 
 use ed25519_dalek::SigningKey;
 use oneiron::authority::{
     AuthorityAttestation, AuthorityCheckpointV2, AuthorityConfirmAction, AuthorityConfirmKind,
-    AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityTier, DeviceAuthority,
-    FederationLifecycleAction, FederationPactStatus, HostSlipIssuer, ROLE_AGENT, ROLE_OWNER,
-    authority_entry_hash,
+    AuthorityFoldIssue, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthorityTier,
+    DeviceAuthority, FederationLifecycleAction, FederationPactStatus, HostSlipIssuer, ROLE_AGENT,
+    ROLE_OWNER, authority_entry_hash,
 };
 use oneiron::error::{Error, RecordError};
 use oneiron::test_doors::foldpast::{
-    connect_action, disconnect_action, put_signed_entries, sign_next_host_op,
+    connect_action, disconnect_action, forget_first_seen_receipt, put_signed_entries,
+    sign_next_host_op, sign_next_host_op_cosigned, sign_next_op_as,
 };
 use oneiron::{EntityId, OpenOptions, Vault, VaultConfig, VaultStorageId};
 
@@ -48,6 +49,39 @@ fn fresh_device(seed: u8, roles: u16) -> DeviceAuthority {
         },
         tier: AuthorityTier::Software,
         roles,
+    }
+}
+
+/// Writes a newer clean attested image on `home` and adopts it on
+/// `adopting`, which adopted an older one.
+fn adopt_newer_image(home: &Vault, issuer: &HostSlipIssuer, adopting: &Vault) {
+    let head = home
+        .write_authority_checkpoint_v2(issuer)
+        .expect("write newer image");
+    let image: AuthorityCheckpointV2 = home
+        .authority_checkpoint_v2(&head)
+        .expect("read newer image")
+        .expect("newer image some");
+    let bytes = image.encode().expect("newer image encodes");
+    let attestations = home
+        .authority_checkpoint_attestations(&head)
+        .expect("newer attestations");
+    let pin = home
+        .authority_checkpoint_pin([0x5a; 32])
+        .expect("newer pin")
+        .expect("newer pin some");
+    match image.building_pin {
+        Some(root) => {
+            let fixed = pin.digest().expect("pin digest");
+            adopting
+                .adopt_recovered_authority_checkpoint(&pin, &bytes, &attestations, fixed, root)
+                .expect("adopt newer image");
+        }
+        None => {
+            adopting
+                .adopt_authority_checkpoint(&pin, &bytes, &attestations)
+                .expect("adopt newer image");
+        }
     }
 }
 
@@ -807,6 +841,217 @@ fn confirm_reusing_a_covered_id_folds_as_rejected() {
     assert_eq!(adopting_fold.slips, home_fold.slips, "slips match");
 }
 
+/// The signing key of the agent row `root_home` enrolls.
+fn agent_signing() -> SigningKey {
+    SigningKey::from_bytes(&[0x51; 32])
+}
+
+/// The authority key of the agent row `root_home` enrolls.
+fn agent_key() -> AuthorityKey {
+    fresh_device(0x51, ROLE_AGENT).key
+}
+
+/// A fresh federation confirm `seed` names.
+fn fresh_confirm(seed: u8) -> AuthorityConfirmAction {
+    AuthorityConfirmAction {
+        kind: AuthorityConfirmKind::Accept,
+        confirm_id: [seed; 32],
+        peer_vault_id: [seed.wrapping_add(1); 32],
+        epoch: 1,
+        nonce: [seed.wrapping_add(2); 16],
+    }
+}
+
+/// Home with a federation confirm the host signed and the agent cosigned
+/// covered (an approval resting on the agent's key), its adopter, and the
+/// confirm's hash.
+fn cosigned_confirm_fixture() -> (Fixture, [u8; 32]) {
+    let (home, issuer, home_dir) = root_home();
+    let entry = sign_next_host_op_cosigned(
+        &home,
+        &issuer,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xE1)),
+        &agent_signing(),
+    )
+    .expect("sign cosigned confirm");
+    let hash = authority_entry_hash(&entry).expect("confirm hash");
+    put_signed_entries(&home, &[entry]).expect("store cosigned confirm");
+    assert!(
+        home.authority_fold()
+            .expect("home folds confirm")
+            .valid_entries
+            .contains(&hash),
+        "home counts the cosigned confirm"
+    );
+    let (adopting, adopt_dir) = checkpoint_and_adopt(&home, &issuer);
+    let fixture = Fixture {
+        home,
+        adopting,
+        issuer,
+        _home_dir: home_dir,
+        _adopt_dir: adopt_dir,
+    };
+    (fixture, hash)
+}
+
+/// The host's revocation of the agent's key, signed on home and stored on
+/// both vaults.
+fn revoke_agent(fixture: &Fixture) -> AuthorityLogEntry {
+    sign_and_share(
+        fixture,
+        AuthorityOp::RevokeDevice {
+            revoked_key: agent_key(),
+        },
+    )
+}
+
+/// Three stale-roster windows (24 h each by default): past every deadline a
+/// row first seen in this test sets.
+const PAST_THE_WINDOW_SECS: u64 = 3 * 24 * 60 * 60;
+
+#[test]
+fn device_revocation_past_an_adopted_image_folds() {
+    let fixture = fixture();
+    let key = agent_key();
+    let revoke = revoke_agent(&fixture);
+    let hash = authority_entry_hash(&revoke).expect("revoke hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds revoke");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds revoke");
+    assert!(
+        home_fold.valid_entries.contains(&hash),
+        "home counts the revoke"
+    );
+    assert!(
+        adopting_fold.valid_entries.contains(&hash),
+        "adopting counts the revoke"
+    );
+    assert!(
+        adopting_fold
+            .roster
+            .get(&key)
+            .is_some_and(|device| device.revoked),
+        "adopting holds the agent key revoked"
+    );
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+    assert_eq!(
+        adopting_fold.federation_pacts, home_fold.federation_pacts,
+        "pacts match"
+    );
+    assert_eq!(adopting_fold.slips, home_fold.slips, "slips match");
+    // A later row the revoked key signs folds rejected on both.
+    let later = sign_next_op_as(
+        &fixture.home,
+        &agent_signing(),
+        AuthorityOp::FederationConfirm(fresh_confirm(0xE4)),
+    )
+    .expect("sign as the agent");
+    let later_hash = authority_entry_hash(&later).expect("later hash");
+    put_signed_entries(&fixture.home, std::slice::from_ref(&later)).expect("store later on home");
+    put_signed_entries(&fixture.adopting, std::slice::from_ref(&later))
+        .expect("store later on adopting");
+    let home_fold = fixture.home.authority_fold().expect("home folds later");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds later");
+    for (vault, fold) in [("home", &home_fold), ("adopting", &adopting_fold)] {
+        assert!(
+            !fold.valid_entries.contains(&later_hash),
+            "{vault} rejects the revoked key's row"
+        );
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::SignerNotInAncestry(later_hash)),
+            "{vault} rejects it as signed by a revoked key"
+        );
+    }
+    assert_eq!(
+        adopting_fold.roster, home_fold.roster,
+        "rosters still match"
+    );
+}
+
+#[test]
+fn covered_approval_on_a_revoked_device_lapses_on_the_adoption_clock() {
+    let (fixture, confirm) = cosigned_confirm_fixture();
+    let key = agent_key();
+    let revoke = revoke_agent(&fixture);
+    let revoke_hash = authority_entry_hash(&revoke).expect("revoke hash");
+    let home_fold = fixture.home.authority_fold().expect("home folds revoke");
+    let adopting_fold = fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds revoke");
+    assert!(
+        adopting_fold.valid_entries.contains(&revoke_hash),
+        "adopting counts the revoke"
+    );
+    assert!(
+        adopting_fold
+            .roster
+            .get(&key)
+            .is_some_and(|device| device.revoked),
+        "adopting holds the agent key revoked"
+    );
+    assert_eq!(adopting_fold.roster, home_fold.roster, "rosters match");
+    // Inside the window each vault still counts the approval: home from its
+    // own first sight, the adopter from its adoption of the image.
+    assert!(
+        home_fold.valid_entries.contains(&confirm),
+        "home counts the approval inside its window"
+    );
+    assert!(
+        adopting_fold.valid_entries.contains(&confirm),
+        "adopting counts the approval inside the adoption's window"
+    );
+    // Past min(first seen, revocation first seen) + window + 1 on each
+    // vault's own clock, the approval lapses on both.
+    for (name, vault) in [("home", &fixture.home), ("adopting", &fixture.adopting)] {
+        vault
+            .advance_authority_clock_for_test(vault.now_recorded_at() + PAST_THE_WINDOW_SECS)
+            .expect("advance the clock");
+        let fold = vault.authority_fold().expect("folds past the window");
+        assert!(
+            !fold.valid_entries.contains(&confirm),
+            "{name} lets the approval lapse"
+        );
+        assert!(
+            fold.issues
+                .contains(&AuthorityFoldIssue::StaleRosterApproval(confirm)),
+            "{name} lapses it as a stale roster approval"
+        );
+        assert!(
+            fold.valid_entries.contains(&revoke_hash),
+            "{name} still counts the revoke"
+        );
+    }
+}
+
+#[test]
+fn covered_approval_with_no_adoption_receipt_needs_history() {
+    let (fixture, confirm) = cosigned_confirm_fixture();
+    assert!(
+        forget_first_seen_receipt(&fixture.adopting, &confirm).expect("forget the receipt"),
+        "adoption kept a first-seen receipt of the covered approval"
+    );
+    revoke_agent(&fixture);
+    fixture.home.authority_fold().expect("home folds revoke");
+    let err = fixture
+        .adopting
+        .authority_fold()
+        .expect_err("adopting needs history");
+    assert!(
+        matches!(
+            err,
+            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+        ),
+        "history required, got {err:?}"
+    );
+}
+
 #[test]
 fn confirm_reusing_a_covered_nonce_folds_as_rejected() {
     let (fixture, covered) = confirm_fixture();
@@ -879,6 +1124,76 @@ fn binding_an_actor_a_covered_row_bound_still_needs_history() {
     asks_history(
         put_signed_entries(&fixture.adopting, std::slice::from_ref(&tail))
             .and_then(|()| fixture.adopting.authority_fold()),
+    );
+}
+
+#[test]
+fn readoption_keeps_no_receipt_for_a_row_the_prior_image_covered() {
+    let (fixture, confirm) = cosigned_confirm_fixture();
+    // As a vault that adopted before adoptions kept receipts.
+    assert!(
+        forget_first_seen_receipt(&fixture.adopting, &confirm).expect("forget the receipt"),
+        "adoption kept a first-seen receipt of the covered approval"
+    );
+    let unrelated = sign_next_host_op(
+        &fixture.home,
+        &fixture.issuer,
+        AuthorityOp::FederationConfirm(fresh_confirm(0xE7)),
+    )
+    .expect("sign unrelated confirm");
+    put_signed_entries(&fixture.home, &[unrelated]).expect("store unrelated confirm");
+    adopt_newer_image(&fixture.home, &fixture.issuer, &fixture.adopting);
+    assert!(
+        !forget_first_seen_receipt(&fixture.adopting, &confirm).expect("probe the receipt"),
+        "the newer adoption kept no receipt for a row the prior image covered"
+    );
+    revoke_agent(&fixture);
+    fixture.home.authority_fold().expect("home folds revoke");
+    let err = fixture
+        .adopting
+        .authority_fold()
+        .expect_err("adopting needs history");
+    assert!(
+        matches!(
+            err,
+            Error::Record(RecordError::AuthorityHistoryRequired { .. })
+        ),
+        "history required, got {err:?}"
+    );
+}
+
+#[test]
+fn stored_covered_row_with_no_receipt_is_corruption_past_an_image() {
+    let fixture = fixture();
+    // A row the adopter stores past its image, which a newer image covers.
+    let enroll = sign_and_share(
+        &fixture,
+        AuthorityOp::EnrollDevice {
+            device: fresh_device(0x56, ROLE_AGENT),
+        },
+    );
+    let hash = authority_entry_hash(&enroll).expect("enroll hash");
+    fixture
+        .adopting
+        .authority_fold()
+        .expect("adopting folds the enrollment");
+    adopt_newer_image(&fixture.home, &fixture.issuer, &fixture.adopting);
+    assert!(
+        forget_first_seen_receipt(&fixture.adopting, &hash).expect("forget the receipt"),
+        "the adopter kept its own receipt of the row it stored"
+    );
+    // A later second: the fold reads the sidecar again.
+    fixture
+        .adopting
+        .advance_authority_clock_for_test(fixture.adopting.now_recorded_at() + 60)
+        .expect("advance the clock");
+    let err = fixture
+        .adopting
+        .authority_fold()
+        .expect_err("a stored row's lost receipt is corruption");
+    assert!(
+        matches!(err, Error::CorruptedIndex(_)),
+        "corruption, as the whole-history read finds it, got {err:?}"
     );
 }
 
