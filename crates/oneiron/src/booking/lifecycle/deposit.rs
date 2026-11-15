@@ -197,7 +197,7 @@ fn bounded(text: &str, limit: usize) -> String {
 // -------------------------------------------------------------------------
 
 /// The payment a server created for one session's deposit.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct DepositCheckoutStart {
     pub page_ref: EntityId,
     pub event_type: EventTypeKey,

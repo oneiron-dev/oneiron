@@ -24,9 +24,9 @@ use oneiron::{
 };
 
 /// Monday 2 Mar 2026 00:00 UTC.
-pub const MONDAY: u64 = 1_772_409_600;
+pub(crate) const MONDAY: u64 = 1_772_409_600;
 /// 08:00 UTC: the host's working hours open at 09:00.
-pub const NOW: u64 = MONDAY + 8 * 3_600;
+pub(crate) const NOW: u64 = MONDAY + 8 * 3_600;
 
 const PAGE_SEED: u8 = 0x51;
 const HOST_SEED: u8 = 0x52;
@@ -40,15 +40,15 @@ const fn at(ts: u64) -> TimeRange {
 }
 
 /// `[seed; 16]`, as the shared integration helper builds it.
-pub fn test_id(seed: u8) -> EntityId {
+pub(crate) fn test_id(seed: u8) -> EntityId {
     EntityId::from_bytes([seed; 16]).expect("fixture id")
 }
 
-pub fn event_type() -> EventTypeKey {
+pub(crate) fn event_type() -> EventTypeKey {
     EventTypeKey("intro-call".to_owned())
 }
 
-pub fn fixture_config(deposit: Option<DepositTerms>) -> EventTypeConfig {
+pub(crate) fn fixture_config(deposit: Option<DepositTerms>) -> EventTypeConfig {
     EventTypeConfig {
         key: event_type(),
         duration_min: DEFAULT_INTRO_DURATION_MIN,
@@ -76,18 +76,18 @@ pub fn fixture_config(deposit: Option<DepositTerms>) -> EventTypeConfig {
     }
 }
 
-pub struct Fixture {
+pub(crate) struct Fixture {
     _dir: tempfile::TempDir,
-    pub vault: Vault,
-    pub page: EntityId,
-    pub booker: EntityId,
-    pub config: EventTypeConfig,
+    pub(crate) vault: Vault,
+    pub(crate) page: EntityId,
+    pub(crate) booker: EntityId,
+    pub(crate) config: EventTypeConfig,
 }
 
 impl Fixture {
     /// A vault with a booking page whose `intro-call` event type asks
     /// `deposit`, a host, a booker contact, and an elected home node.
-    pub fn open(deposit: Option<DepositTerms>) -> Self {
+    pub(crate) fn open(deposit: Option<DepositTerms>) -> Self {
         let dir = tempfile::tempdir().expect("temp dir");
         let vault = Vault::open(dir.path(), VaultConfig::default()).expect("open vault");
         let page = test_id(PAGE_SEED);
@@ -146,7 +146,7 @@ impl Fixture {
 
     /// Lets a calendar feed import into this vault: the feed's import actor
     /// writes as an enrolled engine machine, as in `tests/booking_feed_move.rs`.
-    pub fn enable_host_feed(&self) {
+    pub(crate) fn enable_host_feed(&self) {
         let issuer =
             oneiron::authority::HostSlipIssuer::from_secret(b"oneiron integration test host")
                 .expect("host issuer");
@@ -158,7 +158,7 @@ impl Fixture {
             .expect("engine machine identities");
     }
 
-    pub fn run(
+    pub(crate) fn run(
         &self,
         request: BookingVerbRequest,
         now: u64,
@@ -190,7 +190,7 @@ impl Fixture {
     }
 
     /// The fixture Monday's 30-minute slots, 09:00 to 13:30 UTC.
-    pub fn offered_slots(&self) -> Vec<RankedSlot> {
+    pub(crate) fn offered_slots(&self) -> Vec<RankedSlot> {
         LifecycleSolver {
             page: self.page,
             exclude: None,
@@ -210,7 +210,7 @@ impl Fixture {
         .slots
     }
 
-    pub fn hold(
+    pub(crate) fn hold(
         &self,
         session_key: SessionKey,
         slot: TimeRange,
@@ -220,7 +220,7 @@ impl Fixture {
         self.hold_type(session_key, event_type(), slot, lease, now)
     }
 
-    pub fn hold_type(
+    pub(crate) fn hold_type(
         &self,
         session_key: SessionKey,
         event_type: EventTypeKey,
@@ -246,7 +246,7 @@ impl Fixture {
         }
     }
 
-    pub fn confirm(
+    pub(crate) fn confirm(
         &self,
         hold: &HoldReceipt,
         session_key: SessionKey,
@@ -267,7 +267,11 @@ impl Fixture {
         }
     }
 
-    pub fn cancel(&self, token: &OpaqueLifecycleToken, now: u64) -> Result<(), BookingError> {
+    pub(crate) fn cancel(
+        &self,
+        token: &OpaqueLifecycleToken,
+        now: u64,
+    ) -> Result<(), BookingError> {
         match self.run(
             BookingVerbRequest::Cancel(CancelSpec {
                 token: token.clone(),
@@ -307,7 +311,7 @@ impl SlotOracle for LifecycleSolver<'_> {
     }
 }
 
-pub fn slot_of(ranked: &RankedSlot) -> TimeRange {
+pub(crate) fn slot_of(ranked: &RankedSlot) -> TimeRange {
     TimeRange {
         start: ranked.start_utc,
         end: ranked.end_utc,
