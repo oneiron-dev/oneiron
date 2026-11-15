@@ -73,8 +73,7 @@ fn waits_past_schedule(error: &RetryableLlmError, retry: usize, max_retries: usi
     ) {
         return true;
     }
-    let Some(reset_ms) =
-        stated_reset_secs(error, crate::unix_seconds_now()).map(|secs| secs.saturating_mul(1000))
+    let Some(reset_ms) = stated_reset_secs(error, unix_now()).map(|secs| secs.saturating_mul(1000))
     else {
         return false;
     };
@@ -115,8 +114,14 @@ pub(crate) fn stated_reset_at(error: &LlmError) -> Option<u64> {
     let LlmError::Retryable(error) = error else {
         return None;
     };
-    let now = crate::unix_seconds_now();
+    let now = unix_now();
     stated_reset_secs(error, now).map(|secs| now.saturating_add(secs))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 /// std-only timer future (zero-new-deps pin, design D1): a helper thread
