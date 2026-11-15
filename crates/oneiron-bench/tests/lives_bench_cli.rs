@@ -369,6 +369,8 @@ type Seen = Arc<Mutex<Vec<(String, Value)>>>;
 struct StubState {
     seen: Seen,
     ready: bool,
+    /// Settle polls after this many never answer (an adapter that hangs).
+    hang_after: Option<usize>,
 }
 
 /// A stub adapter on loopback, in this test's own runtime.
@@ -395,8 +397,16 @@ async fn stub_call(
     UrlPath(op): UrlPath<String>,
     Json(body): Json<Value>,
 ) -> Json<Value> {
-    let mut seen = state.seen.lock().unwrap();
-    seen.push((op.clone(), body.clone()));
+    let polled = {
+        let mut seen = state.seen.lock().unwrap();
+        seen.push((op.clone(), body.clone()));
+        seen.iter().filter(|(op, _)| op == "settle").count()
+    };
+    if op == "settle" && state.hang_after.is_some_and(|after| polled > after) {
+        // Longer than the bench client's own 600 s bound.
+        tokio::time::sleep(std::time::Duration::from_secs(3_600)).await;
+    }
+    let seen = state.seen.lock().unwrap();
     let answer = match op.as_str() {
         "settle" => json!({"ready": state.ready}),
         "ingest" => json!({"system_ms": 1.5}),
@@ -427,6 +437,11 @@ async fn stub_call(
 }
 
 fn stub(ready: bool) -> Stub {
+    stub_hanging(ready, None)
+}
+
+/// A stub whose settle polls after `hang_after` of them never answer.
+fn stub_hanging(ready: bool, hang_after: Option<usize>) -> Stub {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -442,6 +457,7 @@ fn stub(ready: bool) -> Stub {
         .with_state(StubState {
             seen: Arc::clone(&seen),
             ready,
+            hang_after,
         });
     runtime.spawn(async move { axum::serve(listener, app).await });
     Stub {
@@ -543,8 +559,22 @@ fn an_external_system_gets_the_same_lives_and_questions() {
     };
     assert_eq!(keys(stubbed).len(), 20);
     assert_eq!(keys(oneiron), keys(stubbed));
-    let searched = seen.iter().filter(|(op, _)| op == "search").count();
-    assert_eq!(searched, 20, "one search per question per grade");
+    // One untimed search per grade first (the first question, as Oneiron's
+    // warm-up recall), then one search per question per grade.
+    let searches = seen
+        .iter()
+        .filter(|(op, _)| op == "search")
+        .map(|(_, body)| body)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        searches.len(),
+        2 + 20,
+        "a warm-up and one search per question, per grade"
+    );
+    for warm in [searches[0], searches[11]] {
+        assert_eq!(warm["query"], searches[1]["query"], "{warm}");
+        assert_eq!(warm["as_of"], searches[1]["as_of"], "{warm}");
+    }
     for grade in ["light", "medium"] {
         let rows = rows(stubbed, grade);
         for r in &rows {
@@ -595,9 +625,11 @@ fn a_plain_http_adapter_off_loopback_is_refused() {
     );
 }
 
+/// The adapter answers its first settle poll `ready: false` and never
+/// answers the next: the wait still ends at `--settle-max-seconds`.
 #[test]
 fn an_adapter_that_never_settles_is_not_ready_and_the_rest_still_run() {
-    let stub = stub(false);
+    let stub = stub_hanging(false, Some(1));
     let dir = tempfile::tempdir().unwrap();
     let system = format!("stub={}", stub.url);
     let (output, report) = lives(
@@ -621,10 +653,8 @@ fn an_adapter_that_never_settles_is_not_ready_and_the_rest_still_run() {
     assert_eq!(systems[0]["rows"].as_array().unwrap().len(), 10);
     let stubbed = &systems[1];
     assert_eq!(stubbed["status"], "not_ready", "{stubbed}");
-    assert!(
-        stubbed["reason"]
-            .as_str()
-            .is_some_and(|r| r.contains("not ready")),
+    assert_eq!(
+        stubbed["reason"], "not ready after 2 s: the settle poll did not answer",
         "{stubbed}"
     );
     assert_eq!(stubbed["rows"].as_array().unwrap().len(), 0);
