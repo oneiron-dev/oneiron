@@ -13,7 +13,13 @@
 //! - the member's leave ends the company's half with the seat;
 //! - a seat accepted without an offer takes its edge later on the member's
 //!   own proof, a repeat answers the same counter, and a person with no seat
-//!   is refused.
+//!   is refused;
+//! - a lost join answer is read again by the identical call: the original
+//!   receipt and the same counter, with no second acceptance; another offer
+//!   after the accept is refused (#8300 review round 1 P1);
+//! - the join with an edge takes the invitee's own independent credential,
+//!   which still stands for its retry, and refuses the invitation's slip,
+//!   which the acceptance spends (FIX 8745).
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test inquiry_edge_at_join`.
 
@@ -451,4 +457,118 @@ fn a_seat_without_an_offer_takes_its_edge_later() {
             .status,
         FederationPactStatus::Active
     );
+}
+
+#[test]
+fn a_lost_join_answer_is_read_again_by_its_exact_retry() {
+    let fx = joining();
+    let stale = fx.prepare();
+    let prepared = fx.prepare();
+    let (receipt, counter) = fx.accept(&prepared.offer).expect("the member joins");
+
+    // The answer was lost: the identical call answers it again.
+    let (again, repeat) = fx
+        .accept(&prepared.offer)
+        .expect("the exact retry answers the accepted join");
+    assert_eq!(
+        again.id, receipt.id,
+        "the retry answers the original receipt"
+    );
+    assert_eq!(again.change, receipt.change);
+    assert_eq!(repeat, counter, "the retry answers the same counter");
+    let accepted = fx
+        .company
+        .vault
+        .shared_act_outcomes(&fx.seat_proof, SHARED)
+        .expect("the member's notices")
+        .into_iter()
+        .filter(|outcome| matches!(outcome.change, SharedVaultChange::InvitationAccepted { .. }))
+        .count();
+    assert_eq!(accepted, 1, "the retry applies no second acceptance");
+
+    // Another offer is no retry: the spent invitation refuses it.
+    fx.accept(&stale.offer)
+        .expect_err("an offer whose pact was never logged is refused");
+    assert_eq!(fx.apply(&prepared, &repeat), FederationPactStatus::Active);
+}
+
+#[test]
+fn the_join_with_an_edge_takes_the_independent_credential_not_the_invitation_slip() {
+    let fx = joining();
+    let company = &fx.company;
+    // The member's own human slip, cut from the company host's root and
+    // verified on its binding (tests/gate_pins_authority_custody_grants.rs
+    // g184), then their invitation's slip, bound on that credential.
+    let mut claims = company
+        .vault
+        .ensure_host_root_slip(&company.issuer)
+        .expect("host root")
+        .claims;
+    claims.slip_id = fresh_slip_id();
+    claims.holder_ref = fx.seat.to_hex();
+    claims.actor_class = Some("human".to_owned());
+    let own = company
+        .vault
+        .mint_capability_slip(&company.issuer, claims)
+        .expect("the member's own slip");
+    let own_proof = fx.proof_on(&own);
+    let invitation_slip = company
+        .vault
+        .mint_invitation_slip(&own_proof, SHARED, &fx.invitation, &company.issuer)
+        .expect("the invitation's slip on the member's own key");
+    let invitation_proof = fx.proof_on(&invitation_slip);
+
+    let prepared = fx.prepare();
+    let accept = |proof: &AuthenticatedOwner| {
+        company.vault.accept_shared_invitation_with_inquiry_edge(
+            proof,
+            SHARED,
+            &fx.invitation,
+            &company.issuer,
+            &prepared.offer,
+        )
+    };
+    accept(&invitation_proof)
+        .expect_err("the invitation's slip, spent by the acceptance, takes no join with an edge");
+    assert!(
+        !fx.company_has_pact_with_member(),
+        "the refused join wrote no edge"
+    );
+    let (receipt, counter) = accept(&own_proof).expect("the member's own credential joins");
+    let (again, repeat) = accept(&own_proof).expect("and retries the join on it");
+    assert_eq!((again.id, repeat), (receipt.id, counter.clone()));
+    assert_eq!(fx.apply(&prepared, &counter), FederationPactStatus::Active);
+}
+
+/// A slip id no other slip of the test holds.
+fn fresh_slip_id() -> [u8; 32] {
+    let mut id = [0_u8; 32];
+    id[..16].copy_from_slice(EntityId::now().as_bytes());
+    id[16..].copy_from_slice(EntityId::now().as_bytes());
+    id
+}
+
+impl Joining {
+    /// The member's person proof in the company's vault, carrying `slip`
+    /// as its request's credential, verified on the company host's binding.
+    fn proof_on(&self, slip: &CapabilitySlip) -> AuthenticatedOwner {
+        let company = &self.company;
+        let challenge = b"inquiry-edge-at-join";
+        let binding = company
+            .issuer
+            .binding_proof(slip, challenge)
+            .expect("binding proof");
+        let verified = company
+            .vault
+            .verify_capability_slip(&company.issuer.public_key(), slip, challenge, &binding)
+            .expect("the slip verifies");
+        let proof = company
+            .vault
+            .authenticate_owner(self.seat, &self.seat.to_hex(), true, GateDecisionId::now())
+            .expect("the member's person proof");
+        company
+            .vault
+            .bind_request_credential(proof, verified)
+            .expect("the request's slip binds")
+    }
 }
