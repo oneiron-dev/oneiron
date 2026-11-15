@@ -34,13 +34,11 @@ pub(super) use oneiron_records::booking::config::DAYS_PER_WEEK;
 pub(crate) use oneiron_records::booking::config::MINUTES_PER_DAY;
 #[doc(hidden)]
 pub use oneiron_records::booking::config::{
-    BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, HostAvailabilityConfig,
-    MAX_BOOKING_WINDOW_SECS, RoutingMode, WeeklyWallWindow,
+    BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, MAX_BOOKING_WINDOW_SECS,
+    RoutingMode,
 };
 #[doc(hidden)]
-use oneiron_records::booking::config::{
-    entity_ref_serde, entity_refs_serde, event_type_index_digest, storage_failure,
-};
+use oneiron_records::booking::config::{event_type_index_digest, storage_failure};
 
 /// Node-local `vault_meta` index prefix for the `(page_ref, key)` shortcut,
 /// mirroring `comm.rs`'s `PARTY_INDEX_PREFIX`.
@@ -54,6 +52,67 @@ pub const DEFAULT_MIN_NOTICE_SECS: u64 = 24 * 3_600;
 
 /// Ratified high-value preset minimum notice: 48 hours.
 pub const HIGH_VALUE_MIN_NOTICE_SECS: u64 = 48 * 3_600;
+
+/// One recurring civil window in a host's zone.
+///
+/// Half-open `[start_minute, end_minute)` minutes from local midnight, so
+/// `end_minute == MINUTES_PER_DAY` means "to the following midnight" and two
+/// adjacent rows never double-count the boundary minute.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WeeklyWallWindow {
+    /// `0 = Monday ..= 6 = Sunday`.
+    pub weekday: u8,
+    /// Inclusive, `0..MINUTES_PER_DAY`.
+    pub start_minute: u16,
+    /// Exclusive, `start_minute < end_minute <= MINUTES_PER_DAY`.
+    pub end_minute: u16,
+}
+
+impl WeeklyWallWindow {
+    fn defect(&self) -> Option<&'static str> {
+        if self.weekday >= DAYS_PER_WEEK {
+            return Some("booking.event_type weekday must be 0 (Monday) through 6 (Sunday)");
+        }
+        if self.start_minute >= self.end_minute || self.end_minute > MINUTES_PER_DAY {
+            return Some("booking.event_type wall window must satisfy 0 <= start < end <= 1440");
+        }
+        None
+    }
+}
+
+/// One host's availability configuration.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HostAvailabilityConfig {
+    #[serde(with = "entity_ref_serde")]
+    pub host_ref: EntityId,
+    /// The calendars whose busy union occupies this host's time.
+    #[serde(with = "entity_refs_serde")]
+    pub calendar_refs: Vec<EntityId>,
+    /// IANA zone the wall windows below are written in.
+    pub host_tz: String,
+    /// When this host is bookable at all.
+    pub working_hours: Vec<WeeklyWallWindow>,
+    /// A subset of bookable time this host would rather be booked in. Ranking
+    /// only: a preferred window never widens availability.
+    pub preferred_hours: Vec<WeeklyWallWindow>,
+}
+
+impl HostAvailabilityConfig {
+    fn defect(&self) -> Option<&'static str> {
+        if self.host_tz.is_empty() {
+            return Some("booking.event_type host_tz must name an IANA zone");
+        }
+        if self.calendar_refs.is_empty() {
+            return Some("booking.event_type host must bind at least one calendar");
+        }
+        self.working_hours
+            .iter()
+            .chain(&self.preferred_hours)
+            .find_map(WeeklyWallWindow::defect)
+    }
+}
 
 /// The full configuration for one event type on one booking page.
 ///
@@ -438,6 +497,56 @@ fn live_config_in_txn(
         )));
     }
     Ok(Some(decoded.config))
+}
+
+// -------------------------------------------------------------------------
+// serde adapters
+//
+// `EntityId` carries no serde impl, so configuration values cross the wire as
+// lowercase hex — the same `serde(with = ...)` shape ONE-1812 uses in
+// `crate::booking::disclosure_rung`.
+// -------------------------------------------------------------------------
+
+mod entity_ref_serde {
+    use super::{Deserialize, Deserializer, EntityId, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &EntityId,
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&value.to_hex())
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<EntityId, D::Error> {
+        let hex = String::deserialize(deserializer)?;
+        EntityId::from_hex(&hex).map_err(serde::de::Error::custom)
+    }
+}
+
+mod entity_refs_serde {
+    use super::{Deserialize, Deserializer, EntityId, Serialize, Serializer};
+
+    pub(super) fn serialize<S: Serializer>(
+        value: &[EntityId],
+        serializer: S,
+    ) -> Result<S::Ok, S::Error> {
+        value
+            .iter()
+            .map(EntityId::to_hex)
+            .collect::<Vec<_>>()
+            .serialize(serializer)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Vec<EntityId>, D::Error> {
+        Vec::<String>::deserialize(deserializer)?
+            .into_iter()
+            .map(|hex| EntityId::from_hex(&hex).map_err(serde::de::Error::custom))
+            .collect()
+    }
 }
 
 #[cfg(test)]

@@ -2,7 +2,6 @@
 //! `oneiron` re-exports each item at its old path.
 
 use serde::Serialize;
-use serde_json::Value;
 
 /// Retry class consumed by the later dispatch/retry policy.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
