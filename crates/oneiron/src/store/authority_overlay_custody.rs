@@ -54,8 +54,9 @@ use crate::store::home_handoff_custody::{
 };
 use crate::store::key_custody::{
     CustodyKind, CustodySecret, EntryState, ErasableItem, ErasablePurpose, LocalCustody,
-    delete_erasable_ref_in_txn, erasable_refs_of_in_txn, put_erasable_ref_in_txn,
-    retirement_in_txn, retirements_in_txn, stage_erasable_retirement_in_txn,
+    delete_erasable_ref_in_txn, erasable_ref_names_another_in_txn, erasable_refs_of_in_txn,
+    put_erasable_ref_in_txn, retirement_in_txn, retirements_in_txn,
+    stage_erasable_retirement_in_txn,
 };
 
 /// Each overlay key a committed writer here made ready to open its rows, by
@@ -263,6 +264,12 @@ pub(crate) fn open(
 /// each custody holds a directory for (live, retired, or an aborted
 /// writer's), each with a ref row, each a sealed row of `heads` names for
 /// `subject`, and each ref of `refs`, held here or not.
+///
+/// # Errors
+/// A ref of `refs` whose ref row here names another key: one ref names one
+/// key, so a peer that names another subject's ref for `subject` never
+/// closes or rebinds that subject's rows (Astra review of census L5-22 PR
+/// 1b); storage and custody faults.
 fn subject_keys_in_txn(
     store: &Store,
     txn: &RoTxn<'_>,
@@ -288,7 +295,13 @@ fn subject_keys_in_txn(
             .filter(|head| head.subject == *subject)
             .map(|head| item(subject, &head.key_ref)),
     );
-    items.extend(refs.iter().map(|key_ref| item(subject, key_ref)));
+    for key_ref in refs {
+        let item = item(subject, key_ref);
+        if erasable_ref_names_another_in_txn(store, txn, &item)? {
+            return Err(CustodyKind::ErasableKey.corrupt());
+        }
+        items.insert(item);
+    }
     Ok(items)
 }
 
@@ -332,8 +345,9 @@ fn subject_erased_in_txn(
 ///
 /// # Errors
 /// An archived vault; a secret that is not a 32-byte key; an erased
-/// subject (a key of it retired or staged to retire, under any ref); other
-/// bytes already under `key_ref`; custody faults.
+/// subject (a key of it retired or staged to retire, under any ref); a
+/// `key_ref` whose ref row here names another subject's key; other bytes
+/// already under `key_ref`; custody faults.
 pub(crate) fn install_key_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,
@@ -373,7 +387,8 @@ pub(crate) fn install_key_in_txn(
 /// (`crate::authority::erase_authority_overlay_subject_in_txn`).
 ///
 /// # Errors
-/// An archived vault; custody faults.
+/// An archived vault; a delivered ref whose ref row here names another
+/// subject's key; custody faults.
 pub(crate) fn retire_subject_keys_in_txn(
     store: &Store,
     txn: &mut RwTxn<'_>,

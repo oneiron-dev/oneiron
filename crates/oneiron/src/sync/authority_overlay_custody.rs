@@ -35,7 +35,12 @@
 //! Nothing here does network I/O or judges who the peer is: the residence
 //! doors admit only a machine of the owner's that its socket proved
 //! (`sync::residence::authority_overlay_custody`), and a machine judges its
-//! home the same way before it offers.
+//! home the same way before it offers. Each caller hands that judgement in
+//! as an `admitted` check ([`overlay_peer_trusted_in_txn`] for a proven
+//! machine), and each writer that applies the peer's page asks it again,
+//! as do the seal of a key to the peer and the clearing of its debts: a
+//! peer removed here while its page was on the way erases, installs and
+//! receives nothing (Astra review of census L5-22 PR 1b).
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -156,6 +161,50 @@ fn sessions() -> MutexGuard<'static, Vec<HeldSession>> {
 
 fn refused(reason: &'static str) -> Error {
     Error::InvalidConfig(format!("authority overlay custody refused: {reason}"))
+}
+
+/// Whether `peer` stands here, in `txn`, as a machine of the owner's this
+/// install's fold trusts, under the key `key` its socket proved: the
+/// judgement the residence doors and the machine's round make before a
+/// page, and hand in as its `admitted` check, which each writer of the page
+/// asks again (Astra review of census L5-22 PR 1b).
+///
+/// # Errors
+/// Storage and fold faults.
+pub(crate) fn overlay_peer_trusted_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    peer: EntityId,
+    key: [u8; 32],
+) -> Result<bool> {
+    let fold = vault.authority_fold_readonly_in_txn(txn)?;
+    Ok(fold.trusted_machine(peer).is_some() && fold.machine_proof_key(peer) == Some(key))
+}
+
+/// The refusal of a page whose peer `admitted` no longer admits.
+fn peer_not_admitted() -> Error {
+    refused("the peer is no longer a machine this install trusts")
+}
+
+/// Refuses unless `admitted` holds in a fresh snapshot: asked again before
+/// a key is sealed to the peer or its debts clear.
+fn check_admitted(
+    vault: &Vault,
+    admitted: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
+) -> Result<()> {
+    let txn = vault.store.env.read_txn()?;
+    if admitted(&txn)? {
+        Ok(())
+    } else {
+        Err(peer_not_admitted())
+    }
+}
+
+/// The admission the in-process test rounds hand in: every peer admitted,
+/// as no cheap fixture mints a trusted proven machine.
+#[cfg(test)]
+pub(crate) fn peer_admitted_for_test(_: &heed::RoTxn<'_>) -> Result<bool> {
+    Ok(true)
 }
 
 /// The binding both ends derive for keys `sender` seals to `receiver` in
@@ -303,11 +352,13 @@ fn live_target(
 /// erased here unless its erasure already stands): the authority's key
 /// event, one grouped writer per subject, then custody's finisher after the
 /// commits. Then clears `peer`'s debts for each key it names destroyed.
+/// Each writer, and the debt clearing, first asks `admitted` again.
 fn retire_erased(
     vault: &Vault,
     local: &OverlayInventory,
     peer: &EntityId,
     erased: &BTreeMap<EntityId, ErasedSubject>,
+    admitted: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<()> {
     let mut staged = false;
     for (subject, theirs) in erased {
@@ -320,6 +371,9 @@ fn retire_erased(
         }
         let refs: Vec<[u8; 32]> = theirs.refs.iter().copied().collect();
         vault.with_write_txn_grouped(|txn| {
+            if !admitted(txn)? {
+                return Err(peer_not_admitted());
+            }
             crate::authority::erase_authority_overlay_subject_in_txn(
                 &vault.store,
                 txn,
@@ -336,6 +390,10 @@ fn retire_erased(
         .values()
         .flat_map(|erased| erased.destroyed.iter().copied())
         .collect();
+    if destroyed.is_empty() {
+        return Ok(());
+    }
+    check_admitted(vault, admitted)?;
     clear_destroyed_holder_debts(&vault.store, peer, &destroyed)
 }
 
@@ -377,19 +435,23 @@ pub(crate) fn install_received_in_txn(
 }
 
 /// Installs each of `keys`, which `sender` sealed to this install's session,
-/// each in a grouped writer of its own that records `sender` as a holder of
-/// it first. Returns how many writers committed; one that does not open or
-/// install is logged and not counted.
+/// each in a grouped writer of its own that asks `admitted` again, then
+/// records `sender` as a holder of it. Returns how many writers committed;
+/// one that does not open or install is logged and not counted.
 fn install_keys(
     vault: &Vault,
     receiver: &EntityId,
     sender: &EntityId,
     session: &OverlayPageSession,
     keys: Vec<OverlaySentKey>,
+    admitted: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> u32 {
     let mut installed = 0u32;
     for key in keys {
         let outcome = vault.with_write_txn_grouped(|txn| {
+            if !admitted(txn)? {
+                return Err(peer_not_admitted());
+            }
             install_received_in_txn(
                 vault,
                 txn,
@@ -473,16 +535,20 @@ pub fn offer_overlay_page(
 /// lacks (sealed to the machine's session), the machine's keys it wants,
 /// and a session for them, which it holds in memory until [`receive_keys`].
 /// On a first page whose digest matches and where neither side waits on the
-/// other's proof, it answers `same` and carries nothing.
+/// other's proof, it answers `same` and carries nothing. Each write, and
+/// the seal of each key, first asks `admitted` whether the machine is still
+/// admitted here.
 ///
 /// # Errors
 /// A vault with no authority genesis; a session key that does not import;
-/// the random source failed; storage, custody and key-event faults.
+/// a machine `admitted` no longer admits; the random source failed;
+/// storage, custody and key-event faults.
 pub(crate) fn answer_offer(
     vault: &Vault,
     home: &EntityId,
     machine: &EntityId,
     offer: &OverlayOffer,
+    admitted: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<OverlayAnswer> {
     let vault_id = vault_id(vault)?;
     let binding = session_binding(&vault_id, machine, home);
@@ -503,7 +569,7 @@ pub(crate) fn answer_offer(
         erased: offer.erased.clone(),
     };
     let theirs = page_of(&theirs, after, through.as_ref());
-    retire_erased(vault, &local, machine, &theirs.erased)?;
+    retire_erased(vault, &local, machine, &theirs.erased, admitted)?;
     if !theirs.erased.is_empty() {
         local = overlay_inventory(&vault.store)?;
     }
@@ -515,6 +581,7 @@ pub(crate) fn answer_offer(
             !theirs.ready.contains(&(*subject, *key_ref)) && !theirs.erased.contains_key(subject)
         })
         .copied();
+    check_admitted(vault, admitted)?;
     let keys = export_keys(vault, &target, send);
     let wanted: BTreeSet<(EntityId, [u8; 32])> = theirs
         .ready
@@ -548,8 +615,8 @@ pub(crate) fn answer_offer(
 
 /// The home's half of the keys `machine` sends: each sealed to the session
 /// this install (`home`) offered it, installed through the authority's key
-/// event in a writer of its own; the session closes. Returns how many it
-/// installed.
+/// event in a writer of its own that asks `admitted` again; the session
+/// closes. Returns how many it installed.
 ///
 /// # Errors
 /// A vault with no authority genesis; no session open here for this
@@ -559,6 +626,7 @@ pub(crate) fn receive_keys(
     home: &EntityId,
     machine: &EntityId,
     keys: Vec<OverlaySentKey>,
+    admitted: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<u32> {
     let binding = session_binding(&vault_id(vault)?, machine, home);
     let held = {
@@ -573,7 +641,7 @@ pub(crate) fn receive_keys(
         secret: held.secret,
         binding: held.binding,
     };
-    Ok(install_keys(vault, home, machine, &session, keys))
+    Ok(install_keys(vault, home, machine, &session, keys, admitted))
 }
 
 /// The machine's half of the home's answer to `offer`: refuses a session
@@ -582,11 +650,14 @@ pub(crate) fn receive_keys(
 /// (sealed to `session`), and seals each key the home wants, of those this
 /// page offered and of a subject the answer does not name erased, to the
 /// home's session. Returns the keys to send the home; none when it wants
-/// none.
+/// none. Each write, and the seal of each key, first asks `admitted`
+/// whether the home is still admitted here: a home removed while its
+/// answer was on the way erases and installs nothing, and is sealed no key.
 ///
 /// # Errors
 /// A vault with no authority genesis; a session key that does not import;
-/// storage, custody and key-event faults.
+/// a home `admitted` no longer admits; storage, custody and key-event
+/// faults.
 pub fn apply_overlay_answer(
     vault: &Vault,
     machine: &EntityId,
@@ -594,6 +665,7 @@ pub fn apply_overlay_answer(
     offer: &OverlayOffer,
     session: &OverlayPageSession,
     answer: OverlayAnswer,
+    admitted: &dyn Fn(&heed::RoTxn<'_>) -> Result<bool>,
 ) -> Result<Vec<OverlaySentKey>> {
     if answer.same {
         return Ok(Vec::new());
@@ -605,14 +677,15 @@ pub fn apply_overlay_answer(
         .map(|theirs| live_target(&vault_id, machine, home, theirs))
         .transpose()?;
     let local = overlay_inventory(&vault.store)?;
-    retire_erased(vault, &local, home, &answer.erased)?;
-    install_keys(vault, machine, home, session, answer.keys);
+    retire_erased(vault, &local, home, &answer.erased, admitted)?;
+    install_keys(vault, machine, home, session, answer.keys, admitted);
     let Some(target) = target else {
         return Ok(Vec::new());
     };
     let wanted = answer.wanted.into_iter().filter(|(subject, key_ref)| {
         offer.ready.contains(&(*subject, *key_ref)) && !answer.erased.contains_key(subject)
     });
+    check_admitted(vault, admitted)?;
     Ok(export_keys(vault, &target, wanted))
 }
 
@@ -630,11 +703,19 @@ pub(crate) fn run_round_for_test(
     let mut after = None;
     loop {
         let (offer, session) = offer_overlay_page(source, machine, home, after)?;
-        let answer = answer_offer(destination, home, machine, &offer)?;
+        let answer = answer_offer(destination, home, machine, &offer, &peer_admitted_for_test)?;
         let through = answer.through;
-        let sent = apply_overlay_answer(source, machine, home, &offer, &session, answer)?;
+        let sent = apply_overlay_answer(
+            source,
+            machine,
+            home,
+            &offer,
+            &session,
+            answer,
+            &peer_admitted_for_test,
+        )?;
         if !sent.is_empty() {
-            receive_keys(destination, home, machine, sent)?;
+            receive_keys(destination, home, machine, sent, &peer_admitted_for_test)?;
         }
         match through {
             Some(through) if after.is_none_or(|after| through > after) => after = Some(through),
@@ -654,8 +735,16 @@ pub(crate) fn run_round_then_abort_for_test(
     home: &EntityId,
 ) -> Result<()> {
     let (offer, session) = offer_overlay_page(source, machine, home, None)?;
-    let answer = answer_offer(destination, home, machine, &offer)?;
-    let sent = apply_overlay_answer(source, machine, home, &offer, &session, answer)?;
+    let answer = answer_offer(destination, home, machine, &offer, &peer_admitted_for_test)?;
+    let sent = apply_overlay_answer(
+        source,
+        machine,
+        home,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )?;
     let binding = session_binding(&vault_id(destination)?, machine, home);
     let held = {
         let mut held_sessions = sessions();

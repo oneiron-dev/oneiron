@@ -4,12 +4,14 @@
 //! (`crate::sync::authority_overlay_custody`).
 //!
 //! Only a machine of the owner's that proved itself on its socket is heard:
-//! a machine the current fold trusts, under the proof key it proved. An
-//! offer names the machine's inventory page and a session for the keys this
-//! node sends it; the answer names this node's erased subjects, its keys the
-//! machine lacks (sealed to that session), the keys it wants and a session
-//! for them; `.keys` installs those. Key refs, subjects and seals only: no
-//! key leaves these doors unsealed, and no seal is stored.
+//! a machine the current fold trusts, under the proof key it proved, judged
+//! again in each writer the call makes and before each seal to it (Astra
+//! review of census L5-22 PR 1b). An offer names the machine's inventory
+//! page and a session for the keys this node sends it; the answer names
+//! this node's erased subjects, its keys the machine lacks (sealed to that
+//! session), the keys it wants and a session for them; `.keys` installs
+//! those. Key refs, subjects and seals only: no key leaves these doors
+//! unsealed, and no seal is stored.
 //!
 //! The machine's half of the round is public here too
 //! ([`offer_overlay_page`], [`apply_overlay_answer`]): a client runs it over
@@ -33,7 +35,9 @@ pub use crate::sync::authority_overlay_custody::{
     ErasedSubject, OVERLAY_PAGE_SUBJECTS, OverlayAnswer, OverlayKeySession, OverlayOffer,
     OverlayPageSession, OverlaySentKey, apply_overlay_answer, offer_overlay_page,
 };
-use crate::sync::authority_overlay_custody::{answer_offer, receive_keys};
+use crate::sync::authority_overlay_custody::{
+    answer_offer, overlay_peer_trusted_in_txn, receive_keys,
+};
 
 use super::bundle::denied;
 
@@ -51,21 +55,18 @@ pub fn overlay_wire_from_hex<const N: usize>(text: &str) -> Option<[u8; N]> {
     super::bundle::unhex(text)
 }
 
-/// Admits a machine of the owner's, as its socket proved it, and names it
-/// and this node's own machine.
-fn machine_and_home(vault: &Vault, peer: PeerMachine) -> Result<(EntityId, EntityId)> {
+/// Admits a machine of the owner's, as its socket proved it, and names it,
+/// the proof key it proved and this node's own machine.
+fn machine_and_home(vault: &Vault, peer: PeerMachine) -> Result<(EntityId, [u8; 32], EntityId)> {
     let PeerMachine::Proven { machine, key } = peer else {
         return Err(denied());
     };
     let txn = vault.store.env.read_txn()?;
-    let fold = vault.authority_fold_readonly_in_txn(&txn)?;
-    let machine = fold
-        .trusted_machine(machine)
-        .filter(|_| fold.machine_proof_key(machine) == Some(key))
-        .map(|_| machine)
-        .ok_or_else(denied)?;
+    if !overlay_peer_trusted_in_txn(vault, &txn, machine, key)? {
+        return Err(denied());
+    }
     let home = crate::identity::read_machine_id_in_txn(vault, &txn)?.ok_or_else(denied)?;
-    Ok((machine, home))
+    Ok((machine, key, home))
 }
 
 /// One page of the calling machine's overlay key round (census L5-22 1a-iii
@@ -83,8 +84,10 @@ pub fn authority_overlay_offer(
     peer: PeerMachine,
     offer: &OverlayOffer,
 ) -> Result<OverlayAnswer> {
-    let (machine, home) = machine_and_home(vault, peer)?;
-    answer_offer(vault, &home, &machine, offer)
+    let (machine, key, home) = machine_and_home(vault, peer)?;
+    answer_offer(vault, &home, &machine, offer, &|txn: &heed::RoTxn<'_>| {
+        overlay_peer_trusted_in_txn(vault, txn, machine, key)
+    })
 }
 
 /// Installs `keys`, the calling machine's keys this node wanted, sealed to
@@ -101,8 +104,10 @@ pub fn authority_overlay_keys(
     peer: PeerMachine,
     keys: Vec<OverlaySentKey>,
 ) -> Result<u32> {
-    let (machine, home) = machine_and_home(vault, peer)?;
-    receive_keys(vault, &home, &machine, keys)
+    let (machine, key, home) = machine_and_home(vault, peer)?;
+    receive_keys(vault, &home, &machine, keys, &|txn: &heed::RoTxn<'_>| {
+        overlay_peer_trusted_in_txn(vault, txn, machine, key)
+    })
 }
 
 #[derive(Deserialize)]

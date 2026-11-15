@@ -13,8 +13,8 @@ use crate::store::authority_overlay_custody::{
 #[cfg(feature = "sync")]
 use crate::sync::authority_overlay_custody::{
     ErasedSubject, OverlayAnswer, OverlayKeySession, OverlayOffer, answer_offer,
-    apply_overlay_answer, offer_overlay_page, receive_keys, run_round_for_test,
-    run_round_then_abort_for_test,
+    apply_overlay_answer, offer_overlay_page, peer_admitted_for_test, receive_keys,
+    run_round_for_test, run_round_then_abort_for_test,
 };
 use crate::{OpenOptions, Vault, VaultConfig, VaultStorageId};
 
@@ -430,7 +430,8 @@ fn a_sealed_row_opens_and_counts_once_custody_delivers_its_key() {
     }
 
     let (offer, _session) = offer_overlay_page(&home, &home_id, &other_id, None).unwrap();
-    let answer = answer_offer(&other, &other_id, &home_id, &offer).unwrap();
+    let answer =
+        answer_offer(&other, &other_id, &home_id, &offer, &peer_admitted_for_test).unwrap();
     assert!(answer.same, "the delivered inventories answer same");
     run_round_for_test(&home, &home_id, &other, &other_id).unwrap();
     {
@@ -655,11 +656,26 @@ fn a_held_key_session_closes_when_its_machine_offers_again() {
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert_eq!(offer.ready.len(), 1);
     let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
-    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(answer.session.is_some());
     assert!(answer.wanted.contains(&(subject, key_ref)));
-    let sent =
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert_eq!(sent.len(), 1);
 
     let offer2 = OverlayOffer {
@@ -674,10 +690,17 @@ fn a_held_key_session_closes_when_its_machine_offers_again() {
             .0
             .session,
     };
-    let answer2 = answer_offer(&home, &home_id, &machine_id, &offer2).unwrap();
+    let answer2 = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer2,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(answer2.session.is_none());
     assert!(
-        receive_keys(&home, &home_id, &machine_id, sent).is_err(),
+        receive_keys(&home, &home_id, &machine_id, sent, &peer_admitted_for_test).is_err(),
         "a batch sealed to the session the machine's next offer replaced must not install"
     );
     let fold = home.authority_fold().unwrap();
@@ -734,7 +757,16 @@ fn an_offer_whose_session_key_does_not_import_retires_nothing() {
             nonce: [7; 32],
         },
     };
-    assert!(answer_offer(&home, &home_id, &machine_id, &offer).is_err());
+    assert!(
+        answer_offer(
+            &home,
+            &home_id,
+            &machine_id,
+            &offer,
+            &peer_admitted_for_test
+        )
+        .is_err()
+    );
     assert!(
         home.authority_fold()
             .unwrap()
@@ -800,7 +832,13 @@ fn an_offer_naming_a_subject_erased_with_no_key_erases_it_where_it_arrives() {
         erased: BTreeMap::from([(subject, ErasedSubject::default())]),
         session: inventory_offer.session,
     };
-    let answer = answer_offer(&home, &home_id, &machine_id, &offer);
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
+    );
     assert!(
         answer.is_ok(),
         "a ref-less erasure stands where the offer arrives"
@@ -856,8 +894,16 @@ fn an_answer_naming_a_subject_erased_with_no_key_erases_it_where_it_arrives() {
                 .session,
         ),
     };
-    let sent =
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(
         sent.is_empty(),
         "a key of the erased subject must not be sealed"
@@ -909,8 +955,16 @@ fn a_wanted_key_of_a_subject_the_answer_names_erased_is_retired_not_sent() {
                 .session,
         ),
     };
-    let sent =
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(
         sent.is_empty(),
         "a key of a subject the answer names erased must not be sent"
@@ -918,6 +972,184 @@ fn a_wanted_key_of_a_subject_the_answer_names_erased_is_retired_not_sent() {
     let fold = machine.authority_fold().unwrap();
     assert!(fold.pass_through_entries.contains(&mint_row));
     assert!(!fold.valid_entries.contains(&mint_row));
+}
+
+/// One machine vault with one sealed mint row: the row's hash, the subject
+/// and ref of its overlay key, and the machine's first offer page to a home
+/// with that page's session.
+#[cfg(feature = "sync")]
+struct MachineWithOneSealedRow {
+    _dir: tempfile::TempDir,
+    machine: Vault,
+    machine_id: EntityId,
+    home_id: EntityId,
+    mint_row: AuthorityEntryHash,
+    subject: EntityId,
+    key_ref: [u8; 32],
+    offer: OverlayOffer,
+    session: crate::sync::authority_overlay_custody::OverlayPageSession,
+}
+
+#[cfg(feature = "sync")]
+fn machine_with_one_sealed_row(slip_id: [u8; 32]) -> MachineWithOneSealedRow {
+    let dir = tempfile::tempdir().unwrap();
+    let machine = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let machine_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = machine.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:e".to_owned()]);
+    let slip = machine.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let home_id = EntityId::now();
+    let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
+    assert_eq!(offer.ready.len(), 1);
+    let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
+    assert!(
+        machine
+            .authority_fold()
+            .unwrap()
+            .valid_entries
+            .contains(&mint_row),
+        "the sealed row opens before any answer"
+    );
+    MachineWithOneSealedRow {
+        _dir: dir,
+        machine,
+        machine_id,
+        home_id,
+        mint_row,
+        subject,
+        key_ref,
+        offer,
+        session,
+    }
+}
+
+/// T-FOREIGN-REF (Astra review of census L5-22 PR 1b, threat 5): an answer
+/// that names another subject erased under the ref of this machine's key
+/// for the row's subject is refused in the writer. One ref names one key:
+/// the row still opens, its key stays ready, and the named subject is not
+/// erased here either.
+#[test]
+#[cfg(feature = "sync")]
+fn a_page_naming_another_subjects_key_under_an_erased_subject_closes_nothing() {
+    let held = machine_with_one_sealed_row([107; 32]);
+    let named = EntityId::now();
+    assert_ne!(named, held.subject);
+    let answer = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::from([(
+            named,
+            ErasedSubject {
+                refs: BTreeSet::from([held.key_ref]),
+                destroyed: BTreeSet::new(),
+            },
+        )]),
+        keys: Vec::new(),
+        wanted: BTreeSet::new(),
+        session: None,
+    };
+    assert!(
+        apply_overlay_answer(
+            &held.machine,
+            &held.machine_id,
+            &held.home_id,
+            &held.offer,
+            &held.session,
+            answer,
+            &peer_admitted_for_test,
+        )
+        .is_err(),
+        "an erased subject named under another subject's key must be refused"
+    );
+    let fold = held.machine.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&held.mint_row),
+        "the row of the subject whose key was named still opens"
+    );
+    assert!(!fold.pass_through_entries.contains(&held.mint_row));
+    let inventory = overlay_inventory(&held.machine.store).unwrap();
+    assert!(inventory.ready.contains(&(held.subject, held.key_ref)));
+    assert!(!inventory.erased.contains_key(&named));
+    assert!(!inventory.erased.contains_key(&held.subject));
+}
+
+/// T-REMOVED-HOME (Astra review of census L5-22 PR 1b, threat 3): a home
+/// the machine no longer admits when its answer arrives (removed while the
+/// answer was on the way) erases nothing here and is sealed no key: each
+/// writer and the seal ask the admission again.
+#[test]
+#[cfg(feature = "sync")]
+fn an_answer_from_a_home_no_longer_admitted_erases_and_seals_nothing() {
+    fn home_removed(_: &heed::RoTxn<'_>) -> crate::error::Result<bool> {
+        Ok(false)
+    }
+    let held = machine_with_one_sealed_row([108; 32]);
+    let erasing = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::from([(
+            held.subject,
+            ErasedSubject {
+                refs: BTreeSet::from([held.key_ref]),
+                destroyed: BTreeSet::new(),
+            },
+        )]),
+        keys: Vec::new(),
+        wanted: BTreeSet::new(),
+        session: None,
+    };
+    assert!(
+        apply_overlay_answer(
+            &held.machine,
+            &held.machine_id,
+            &held.home_id,
+            &held.offer,
+            &held.session,
+            erasing,
+            &home_removed,
+        )
+        .is_err(),
+        "an erasure from a home no longer admitted must be refused"
+    );
+    let fold = held.machine.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&held.mint_row),
+        "a home no longer admitted erased the row"
+    );
+    let inventory = overlay_inventory(&held.machine.store).unwrap();
+    assert!(inventory.ready.contains(&(held.subject, held.key_ref)));
+    assert!(!inventory.erased.contains_key(&held.subject));
+
+    let wanting = OverlayAnswer {
+        same: false,
+        through: None,
+        erased: BTreeMap::new(),
+        keys: Vec::new(),
+        wanted: BTreeSet::from([(held.subject, held.key_ref)]),
+        session: Some(
+            offer_overlay_page(&held.machine, &held.machine_id, &held.home_id, None)
+                .unwrap()
+                .0
+                .session,
+        ),
+    };
+    assert!(
+        apply_overlay_answer(
+            &held.machine,
+            &held.machine_id,
+            &held.home_id,
+            &held.offer,
+            &held.session,
+            wanting,
+            &home_removed,
+        )
+        .is_err(),
+        "a home no longer admitted must be sealed no key"
+    );
 }
 
 /// T-DEBT (census L5-22 1a-iii, RULING 21:24; ASK L5-22-1A-III-DEBT-FIX):
@@ -952,15 +1184,30 @@ fn a_key_refused_for_a_subject_the_home_erased_mid_round_leaves_no_debt_after_tw
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert_eq!(offer.ready.len(), 1);
     let (subject, key_ref) = offer.ready.iter().next().copied().unwrap();
-    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert!(answer.wanted.contains(&(subject, key_ref)));
-    let sent =
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
+    let sent = apply_overlay_answer(
+        &machine,
+        &machine_id,
+        &home_id,
+        &offer,
+        &session,
+        answer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert_eq!(sent.len(), 1);
 
     retire_authority_overlay_subject_for_test(&home, &subject).unwrap();
     assert_eq!(
-        receive_keys(&home, &home_id, &machine_id, sent).unwrap(),
+        receive_keys(&home, &home_id, &machine_id, sent, &peer_admitted_for_test).unwrap(),
         0,
         "a key of a subject erased here must not install"
     );
@@ -994,9 +1241,15 @@ fn a_key_refused_for_a_subject_the_home_erased_mid_round_leaves_no_debt_after_tw
     );
     let (offer, _session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert!(
-        answer_offer(&home, &home_id, &machine_id, &offer)
-            .unwrap()
-            .same,
+        answer_offer(
+            &home,
+            &home_id,
+            &machine_id,
+            &offer,
+            &peer_admitted_for_test
+        )
+        .unwrap()
+        .same,
         "the pair answers same once both holder debts are clear"
     );
     let fold = home.authority_fold().unwrap();
@@ -1040,14 +1293,29 @@ fn a_key_refused_for_a_subject_the_machine_erased_mid_round_leaves_no_debt_after
 
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert!(offer.ready.is_empty());
-    let answer = answer_offer(&home, &home_id, &machine_id, &offer).unwrap();
+    let answer = answer_offer(
+        &home,
+        &home_id,
+        &machine_id,
+        &offer,
+        &peer_admitted_for_test,
+    )
+    .unwrap();
     assert_eq!(answer.keys.len(), 1);
 
     retire_authority_overlay_subject_for_test(&machine, &subject).unwrap();
     assert!(
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer)
-            .unwrap()
-            .is_empty()
+        apply_overlay_answer(
+            &machine,
+            &machine_id,
+            &home_id,
+            &offer,
+            &session,
+            answer,
+            &peer_admitted_for_test
+        )
+        .unwrap()
+        .is_empty()
     );
     assert!(
         overlay_inventory(&machine.store)
@@ -1077,9 +1345,15 @@ fn a_key_refused_for_a_subject_the_machine_erased_mid_round_leaves_no_debt_after
     );
     let (offer, _session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
     assert!(
-        answer_offer(&home, &home_id, &machine_id, &offer)
-            .unwrap()
-            .same,
+        answer_offer(
+            &home,
+            &home_id,
+            &machine_id,
+            &offer,
+            &peer_admitted_for_test
+        )
+        .unwrap()
+        .same,
         "the pair answers same once both holder debts are clear"
     );
     let fold = machine.authority_fold().unwrap();
