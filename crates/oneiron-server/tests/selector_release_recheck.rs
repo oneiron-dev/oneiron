@@ -26,11 +26,16 @@ use futures_util::{SinkExt, StreamExt};
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
-use oneiron::authority::{CapabilitySlip, HostSlipIssuer};
+use oneiron::authority::{
+    CapabilitySlip, ForwardedCallerProof, HostSlipIssuer, MachineOwnership, MachineRole,
+};
+use oneiron::claim::CallerLocality;
+use oneiron::edge::EdgeActorClass;
 use oneiron::federation::{
     FederationGrant, FederationGrantPreset, FederationGrantRole, Scope, ScopeAxis,
     own_device_residence_scope,
 };
+use oneiron::memory::{WitnessAuthor, WitnessMessage, WitnessTurn};
 use oneiron::registry::{
     ENTITY_TYPE_CLAIM, ENTITY_TYPE_FACET, ENTITY_TYPE_PERSON, ENTITY_TYPE_RELATIONSHIP,
 };
@@ -43,6 +48,7 @@ use oneiron::sync::{
     put_selector_test_federation_grant,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
+use oneiron_keystore::MemoryKeystore;
 use oneiron_server::test_doors::selector_release::{arm, armed};
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde::{Deserialize, Serialize};
@@ -267,6 +273,19 @@ async fn bound(fx: &Fixture, version: u8) -> Socket {
         fx.caller.bind_params(now_secs()),
     )
     .await;
+    assert_eq!(
+        bound,
+        Value::Null,
+        "same-slip bind has a terminal success reply"
+    );
+    socket
+}
+
+/// An arbitrary credential bound in band, as a forwarded search's carrier
+/// binds its owner's before it forwards its caller's.
+async fn bound_as(fx: &Fixture, version: u8, caller: &Caller) -> Socket {
+    let mut socket = upgrade(fx, version).await;
+    let bound = rpc(&mut socket, 1, "auth.bind", caller.bind_params(now_secs())).await;
     assert_eq!(
         bound,
         Value::Null,
@@ -601,63 +620,6 @@ fn a_selector_update_queued_before_its_delegate_grant_expires_never_leaves() {
 }
 
 #[test]
-fn a_selector_update_queued_before_its_members_access_grant_is_revoked_never_leaves() {
-    run_on_engine_stack("selector-release-access-grant", || async {
-        let fx = fixture().await;
-        // The member's relationship reach is an access grant, stored outside
-        // the authority log: its revocation leaves the selector grant's
-        // bytes and the authority fold as they were (Sol review F2).
-        let relationship = EntityId::now();
-        fx.vault
-            .put_entity(
-                &relationship,
-                ENTITY_TYPE_RELATIONSHIP,
-                TimeRange { start: 1, end: 1 },
-                1,
-                b"a relationship space",
-            )
-            .unwrap();
-        let access = EntityId::now();
-        fx.vault
-            .create_access_grant(
-                &access,
-                &AccessGrant {
-                    principal_ref: fx.grant.member_ref,
-                    scope: AccessGrantScope::Messages {
-                        space_ref: relationship,
-                    },
-                    capability: AccessGrantCapability::MessagesRead,
-                    authority_scope: Scope::top(),
-                    status: AccessGrantStatus::Active,
-                    created_at: 1,
-                    revoked_at: None,
-                    expires_at: None,
-                    companion_bounds: None,
-                },
-            )
-            .unwrap();
-        let vault = Arc::clone(&fx.vault);
-        let grant = fx.grant_id;
-        arm(grant, move || {
-            vault
-                .revoke_access_grant(&access, vault.now_recorded_at())
-                .unwrap();
-        });
-        assert!(armed(&grant), "the hook is armed before the fetch");
-        let mut socket = bound(&fx, transport::PROTOCOL_VERSION).await;
-        send_window(
-            &mut socket,
-            &fx.window,
-            window_sub_tags::SELECTOR_VV_REQUEST,
-            &encode_selector_vv_request(&fx.selector, &[]).unwrap(),
-        )
-        .await;
-        assert_no_update(&mut socket, &fx.window).await;
-        assert!(!armed(&grant), "the hook ran as the answer was queued");
-    });
-}
-
-#[test]
 fn a_selector_answer_whose_grant_stands_leaves() {
     run_on_engine_stack("selector-release-guard", || async {
         let fx = fixture().await;
@@ -687,5 +649,258 @@ fn a_selector_answer_whose_grant_stands_leaves() {
         )
         .await;
         assert_eq!(index["items"][0]["entity_id"], fx.item.to_hex(), "{index}");
+    });
+}
+
+#[test]
+fn a_forwarded_search_reply_queued_before_its_callers_access_grant_is_revoked_is_refused() {
+    run_on_engine_stack("selector-release-forwarded", || async {
+        let fx = fixture().await;
+        fx.vault
+            .install_device_keystore(Arc::new(MemoryKeystore::new()));
+        let owner = fx.vault.ensure_embedded_owner_actor().unwrap();
+        let issuer = HostSlipIssuer::from_secret(SECRET.as_bytes()).unwrap();
+        let root = fx.vault.ensure_host_root_slip(&issuer).unwrap();
+        fx.vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Owned(MachineOwnership::Yours))
+            .unwrap();
+        let grant_id = EntityId::now();
+        let grant = FederationGrant::new(
+            own_device_residence_scope(),
+            owner,
+            FederationGrantRole::Owner,
+            FederationGrantPreset::Owner,
+        );
+        put_selector_test_federation_grant(
+            &fx.vault,
+            &grant_id,
+            &grant,
+            fx.vault.now_recorded_at(),
+        )
+        .unwrap();
+        let owner_caller = mint(&fx.vault, &issuer, &root, owner, grant_id, &grant);
+        let caller_person = person(&fx.vault, "caller");
+        let caller_grant_id = EntityId::now();
+        let caller_grant = FederationGrant::new(
+            own_device_residence_scope(),
+            caller_person,
+            FederationGrantRole::Member,
+            FederationGrantPreset::Member,
+        );
+        put_selector_test_federation_grant(
+            &fx.vault,
+            &caller_grant_id,
+            &caller_grant,
+            fx.vault.now_recorded_at(),
+        )
+        .unwrap();
+        let caller = mint(
+            &fx.vault,
+            &issuer,
+            &root,
+            caller_person,
+            caller_grant_id,
+            &caller_grant,
+        );
+        let relationship = EntityId::now();
+        fx.vault
+            .put_entity(
+                &relationship,
+                ENTITY_TYPE_RELATIONSHIP,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a relationship space",
+            )
+            .unwrap();
+        let access = EntityId::now();
+        fx.vault
+            .create_access_grant(
+                &access,
+                &AccessGrant {
+                    principal_ref: caller_person,
+                    scope: AccessGrantScope::Messages {
+                        space_ref: relationship,
+                    },
+                    capability: AccessGrantCapability::MessagesRead,
+                    authority_scope: Scope::top(),
+                    status: AccessGrantStatus::Active,
+                    created_at: 1,
+                    revoked_at: None,
+                    expires_at: None,
+                    companion_bounds: None,
+                },
+            )
+            .unwrap();
+        let at = fx.window.start_timestamp().unwrap() + 86_400;
+        let room = EntityId::now();
+        let turn = EntityId::now();
+        fx.vault
+            .memory(owner, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                thread_audience: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: "harbor view table for two".to_owned(),
+                    parts: None,
+                    metadata: Some(json!({"rel": relationship.to_hex()})),
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: at,
+                assertions: Default::default(),
+            })
+            .unwrap();
+        let doc = create_window_doc("home", &fx.window);
+        reverse_rematerialize(&fx.vault, &doc, &fx.window).unwrap();
+        persist_window_snapshot(&fx.vault, &fx.window, &doc).unwrap();
+        let selector = SyncSelector::new(grant_id, owner, SyncSelectorWorld::All, vec![], vec![]);
+        let selector_wire = encode_sync_selector(&selector).unwrap();
+        let token = caller.slip.to_token().unwrap();
+        let timestamp = now_secs();
+        let binding = caller.binding(timestamp);
+        let forwarded = ForwardedCallerProof {
+            token,
+            timestamp,
+            nonce: binding["nonce"].as_str().unwrap().to_owned(),
+            signature: binding["signature"].as_str().unwrap().to_owned(),
+        };
+        let locality = CallerLocality::OnDevice;
+        let machine_proof = oneiron::sync::residence::with_forwarded_search_page(
+            "harbor",
+            16,
+            &selector_wire,
+            None,
+            None,
+            None,
+            locality,
+            None,
+            |request| {
+                fx.vault
+                    .forwarding_machine_proof(request, &forwarded)
+                    .unwrap()
+                    .expect("the install forwards its caller's search")
+            },
+        );
+        let vault = Arc::clone(&fx.vault);
+        arm(grant_id, move || {
+            vault
+                .revoke_access_grant(&access, vault.now_recorded_at())
+                .unwrap();
+        });
+        assert!(armed(&grant_id), "the hook is armed before the call");
+        let mut socket = bound_as(&fx, transport::RESIDENCE_PROTOCOL_VERSION, &owner_caller).await;
+        let mut params = json!({
+            "query": "harbor",
+            "limit": 16,
+            "selector": encoded_selector(&selector),
+        });
+        params["forwarded"] = serde_json::to_value(&forwarded).unwrap();
+        params["machine_proof"] = serde_json::to_value(&machine_proof).unwrap();
+        params["caller_locality"] = serde_json::to_value(&locality).unwrap();
+        send_rpc(&mut socket, 2, "residence.search", params).await;
+        let error = rpc_reply_within(&mut socket, 2, REPLY_WAIT)
+            .await
+            .expect_err("a reply queued before its caller's grant was revoked is refused");
+        assert_eq!(error["code"], "RESULT_CHANGED", "{error}");
+        assert!(!armed(&grant_id), "the hook ran as the answer was queued");
+    });
+}
+
+#[test]
+fn a_selector_update_carrying_a_message_its_members_revoked_grant_admits_never_leaves() {
+    run_on_engine_stack("selector-release-member-message", || async {
+        let fx = fixture().await;
+        // The member's relationship reach is an access grant, stored outside
+        // the authority log: its revocation leaves the selector grant's
+        // bytes and the authority fold as they were (Sol review F2). The
+        // revoked grant is the only thing that admits the MESSAGE the answer
+        // carries, so a release would leak it (SELECTOR-RELEASE-MEMBER-REACH-
+        // SCOPE = A, 15 Nov 22:23).
+        let relationship = EntityId::now();
+        fx.vault
+            .put_entity(
+                &relationship,
+                ENTITY_TYPE_RELATIONSHIP,
+                TimeRange { start: 1, end: 1 },
+                1,
+                b"a relationship space",
+            )
+            .unwrap();
+        let access = EntityId::now();
+        fx.vault
+            .create_access_grant(
+                &access,
+                &AccessGrant {
+                    principal_ref: fx.grant.member_ref,
+                    scope: AccessGrantScope::Messages {
+                        space_ref: relationship,
+                    },
+                    capability: AccessGrantCapability::MessagesRead,
+                    authority_scope: Scope::top(),
+                    status: AccessGrantStatus::Active,
+                    created_at: 1,
+                    revoked_at: None,
+                    expires_at: None,
+                    companion_bounds: None,
+                },
+            )
+            .unwrap();
+        let at = fx.window.start_timestamp().unwrap() + 86_400;
+        let room = EntityId::now();
+        let turn = EntityId::now();
+        fx.vault
+            .memory(fx.grant.member_ref, EdgeActorClass::Human)
+            .witness(&WitnessTurn {
+                conversation_ref: room.to_hex(),
+                turn_ref: Some(turn.to_hex()),
+                thread_audience: None,
+                messages: vec![WitnessMessage {
+                    id: None,
+                    author: WitnessAuthor::User,
+                    message_type: "dialogue".to_owned(),
+                    content: "harbor view table for two".to_owned(),
+                    parts: None,
+                    metadata: Some(json!({"rel": relationship.to_hex()})),
+                    is_visible: true,
+                    order: 0,
+                    quote: None,
+                }],
+                occurred_at: at,
+                assertions: Default::default(),
+            })
+            .unwrap();
+        let doc = create_window_doc("home", &fx.window);
+        reverse_rematerialize(&fx.vault, &doc, &fx.window).unwrap();
+        persist_window_snapshot(&fx.vault, &fx.window, &doc).unwrap();
+        let selector = SyncSelector::new(
+            fx.grant_id,
+            fx.grant.member_ref,
+            SyncSelectorWorld::All,
+            vec![],
+            vec![],
+        );
+        let vault = Arc::clone(&fx.vault);
+        let grant = fx.grant_id;
+        arm(grant, move || {
+            vault
+                .revoke_access_grant(&access, vault.now_recorded_at())
+                .unwrap();
+        });
+        assert!(armed(&grant), "the hook is armed before the fetch");
+        let mut socket = bound(&fx, transport::PROTOCOL_VERSION).await;
+        send_window(
+            &mut socket,
+            &fx.window,
+            window_sub_tags::SELECTOR_VV_REQUEST,
+            &encode_selector_vv_request(&selector, &[]).unwrap(),
+        )
+        .await;
+        assert_no_update(&mut socket, &fx.window).await;
+        assert!(!armed(&grant), "the hook ran as the answer was queued");
     });
 }
