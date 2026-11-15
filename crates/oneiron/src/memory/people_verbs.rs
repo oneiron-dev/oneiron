@@ -400,7 +400,7 @@ impl Memory<'_> {
                     order: 0,
                     quote: None,
                 }],
-                occurred_at: now_ms / 1_000,
+                occurred_at: Some(now_ms / 1_000),
                 assertions: Default::default(),
             },
             |wtxn| {

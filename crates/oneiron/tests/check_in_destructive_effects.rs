@@ -167,7 +167,7 @@ fn artifact(memory: &Memory<'_>) -> EntityId {
             id: None,
             name: "erase fixture".to_owned(),
             media_type: "text/plain".to_owned(),
-            occurred_at: 1,
+            occurred_at: Some(1),
             learned_at: None,
         })
         .expect("the owner writes an artifact");

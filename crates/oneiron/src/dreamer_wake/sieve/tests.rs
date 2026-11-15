@@ -91,7 +91,7 @@ fn witness_messages(
         conversation_ref: ROOM.into(),
         turn_ref: Some(turn_ref.to_owned()),
         thread_audience: None,
-        occurred_at,
+        occurred_at: Some(occurred_at),
         messages,
         assertions: Default::default(),
     };

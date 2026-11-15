@@ -157,7 +157,7 @@ pub(super) fn witness(server: &SyncServer, text: &str) -> WitnessReceipt {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: AT,
+            occurred_at: Some(AT),
             assertions: Default::default(),
             thread_audience: None,
         })
@@ -2242,7 +2242,7 @@ async fn erasing_a_folded_message_refreshes_the_live_recall_of_its_turn() {
                     said(0, "The mechanic says the brakes squeal."),
                     said(1, "We met for lunch at noon."),
                 ],
-                occurred_at: AT,
+                occurred_at: Some(AT),
                 assertions: Default::default(),
                 thread_audience: None,
             })

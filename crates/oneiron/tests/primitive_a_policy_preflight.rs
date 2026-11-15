@@ -49,7 +49,7 @@ fn witnessed_turn_and_message(
             order: 0,
             quote: None,
         }],
-        occurred_at: 900,
+        occurred_at: Some(900),
         assertions: WitnessAssertions::default(),
     })?;
     let message = receipt

@@ -188,7 +188,7 @@ impl Vault {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: tap.occurred_at,
+            occurred_at: Some(tap.occurred_at),
             assertions: Default::default(),
         };
         let mut minted = None;

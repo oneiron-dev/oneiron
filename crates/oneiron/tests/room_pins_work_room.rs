@@ -138,7 +138,7 @@ fn speak_thread(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: Default::default(),
         })?;
     let thread = EntityId::now();
@@ -159,7 +159,7 @@ fn speak_thread(vault: &Vault, speaker: EntityId, room: EntityId) -> TestResult<
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: Default::default(),
         })?;
     Ok(thread)
@@ -277,7 +277,7 @@ fn room_wake_run_works_in_the_waking_room() -> TestResult {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: Default::default(),
         })?;
     let spec = ResidentAgentSpec {
@@ -317,7 +317,7 @@ fn room_wake_run_works_in_the_waking_room() -> TestResult {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: Default::default(),
         })?;
     let staged = vault.staged_room_wakes()?;

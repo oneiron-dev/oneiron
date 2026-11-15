@@ -69,7 +69,10 @@ pub struct AppendBlobVersionRequest {
     pub content_base64: String,
     #[serde(default)]
     pub run_ref: Option<String>,
-    pub occurred_at: u64,
+    /// Unix seconds; `None` ⇒ the vault's recording clock, read once in
+    /// the write (UC-02 B1b).
+    #[serde(default)]
+    pub occurred_at: Option<u64>,
     #[serde(default)]
     pub learned_at: Option<u64>,
 }

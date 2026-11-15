@@ -124,7 +124,9 @@ impl<'v> SessionWitnessContext<'v> {
                     "a new witnessed turn needs one non-system speaker",
                 ));
             }
-            validate_witness_occurrence(self.caller.vault.now_recorded_at(), turn.occurred_at)?;
+            if let Some(occurred_at) = turn.occurred_at {
+                validate_witness_occurrence(self.caller.vault.now_recorded_at(), occurred_at)?;
+            }
             let lane = (!turn.assertions.cited.is_empty() || !turn.assertions.created.is_empty())
                 .then(|| author.read_lane(ClaimReadStatus::Recorded))
                 .transpose()?;
@@ -194,7 +196,9 @@ impl<'v> SessionWitnessContext<'v> {
                 "a new witnessed turn needs one non-system speaker",
             ));
         }
-        validate_witness_occurrence(self.caller.vault.now_recorded_at(), turn.occurred_at)?;
+        if let Some(occurred_at) = turn.occurred_at {
+            validate_witness_occurrence(self.caller.vault.now_recorded_at(), occurred_at)?;
+        }
         let txn = self
             .caller
             .vault

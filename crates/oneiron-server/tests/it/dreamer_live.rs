@@ -593,7 +593,7 @@ fn witness(vault: &Vault, person: EntityId, conversation: EntityId, text: &str) 
                 parts: None,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at() + 1,
+            occurred_at: Some(vault.now_recorded_at() + 1),
             thread_audience: None,
             assertions: Default::default(),
         })

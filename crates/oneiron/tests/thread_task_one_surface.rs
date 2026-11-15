@@ -93,7 +93,7 @@ fn speak_turn(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: Default::default(),
         })?;
     Ok(message)

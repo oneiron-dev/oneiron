@@ -242,7 +242,7 @@ fn owner_public_stamped_inferred_claim_parks_proposed() {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 1_772_400_000,
+            occurred_at: Some(1_772_400_000),
             assertions: WitnessAssertions::default(),
         })
         .expect("the evidence turn")

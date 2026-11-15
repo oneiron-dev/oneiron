@@ -47,7 +47,7 @@ fn witness_writes_turn_messages_edges_and_text() {
                 witness_message(1, WitnessAuthor::User, "second owner row"),
                 witness_message(2, WitnessAuthor::User, "closing note"),
             ],
-            occurred_at: 500,
+            occurred_at: Some(500),
         })
         .expect("witness turn");
 
@@ -150,7 +150,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_hex.clone()),
             messages: vec![witness_message(0, WitnessAuthor::User, "first half")],
-            occurred_at: 600,
+            occurred_at: Some(600),
         })
         .expect("first witness");
     let turn_id = EntityId::from_hex(&turn_hex).unwrap();
@@ -171,7 +171,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_hex.clone()),
             messages: vec![witness_message(1, WitnessAuthor::System, "system row")],
-            occurred_at: 601,
+            occurred_at: Some(601),
         })
         .expect("second witness");
     assert_eq!(first.turn_short_id, second.turn_short_id);
@@ -238,7 +238,7 @@ fn witness_create_or_get_reuses_containers_and_skips_system_author_edge() {
             conversation_ref: turn_hex,
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "x")],
-            occurred_at: 602,
+            occurred_at: Some(602),
         })
         .expect_err("turn id passed as conversation must fail");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -266,7 +266,7 @@ fn witness_facade_turn_enqueues_meso_on_session_close() {
                 WitnessAuthor::Companion,
                 "companion turn headed for the close",
             )],
-            occurred_at: 500,
+            occurred_at: Some(500),
         })
         .expect("witness turn");
 
@@ -347,7 +347,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
                     "companion row in the same call",
                 ),
             ],
-            occurred_at: 500,
+            occurred_at: Some(500),
         })
         .expect_err("a mixed non-system mint is a bad request");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -395,7 +395,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
                 WitnessAuthor::User,
                 "owner holds the turn alone",
             )],
-            occurred_at: 500,
+            occurred_at: Some(500),
         })
         .expect("mint a user turn");
     let turn = facade
@@ -420,7 +420,7 @@ fn witness_rejects_mixed_non_system_speakers_atomically() {
                 WitnessAuthor::Companion,
                 "companion usurps the owner turn",
             )],
-            occurred_at: 600,
+            occurred_at: Some(600),
         })
         .expect_err("a cross-speaker append is a bad request");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -496,7 +496,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                 conversation_ref: conversation_hex,
                 turn_ref: Some(turn_id.to_hex()),
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "late joiner")],
-                occurred_at: 750,
+                occurred_at: Some(750),
             },
             || {
                 let empty_body = encode_rmpv(&Value::Map(Vec::new())).expect("container body");
@@ -582,7 +582,7 @@ fn witness_concurrent_same_type_turn_creation_routes_through_validation() {
                 conversation_ref: conversation2_hex,
                 turn_ref: Some(turn2_id.to_hex()),
                 messages: vec![witness_message(0, WitnessAuthor::Companion, "speaker grab")],
-                occurred_at: 850,
+                occurred_at: Some(850),
             },
             || {
                 vault
@@ -653,7 +653,7 @@ fn witness_concurrent_wrong_type_conversation_refuses_without_rows_or_edges() {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
                 messages: vec![message],
-                occurred_at: 750,
+                occurred_at: Some(750),
             },
             || {
                 vault
@@ -716,7 +716,7 @@ fn witness_concurrent_soft_erased_conversation_refuses_without_a_turn() {
                 conversation_ref: conversation.to_hex(),
                 turn_ref: Some(turn_id.to_hex()),
                 messages: vec![witness_message(0, WitnessAuthor::User, "after erasure")],
-                occurred_at: 750,
+                occurred_at: Some(750),
             },
             || {
                 vault
@@ -747,7 +747,7 @@ fn witness_append_redirties_the_same_turn() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_id.to_hex()),
             messages: vec![witness_message(0, WitnessAuthor::User, "the original turn")],
-            occurred_at: 1_000,
+            occurred_at: Some(1_000),
         })
         .expect("mint the turn");
     let minted_raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
@@ -779,7 +779,7 @@ fn witness_append_redirties_the_same_turn() {
                 witness_message(1, WitnessAuthor::User, "the turn continues"),
                 witness_message(2, WitnessAuthor::System, "tool row in between"),
             ],
-            occurred_at: 900,
+            occurred_at: Some(900),
         })
         .expect("backdated same-speaker append");
 
@@ -867,7 +867,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                 WitnessAuthor::Companion,
                 "the assistant turn",
             )],
-            occurred_at: 600,
+            occurred_at: Some(600),
         })
         .expect("mint an assistant turn");
 
@@ -880,7 +880,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_id.to_hex()),
             messages: vec![witness_message(1, WitnessAuthor::System, "tool result row")],
-            occurred_at: 601,
+            occurred_at: Some(601),
         })
         .expect("system interleave on an established turn is permitted");
     let raw = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
@@ -923,7 +923,7 @@ fn witness_system_interleave_appends_but_never_mints_a_turn() {
                     WitnessAuthor::System,
                     "orphan system rows",
                 )],
-                occurred_at: 700,
+                occurred_at: Some(700),
             })
             .expect_err("a system-only mint has no grouping speaker");
         assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -955,7 +955,7 @@ fn witness_bumps_open_session_activity_atomically() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "hello again")],
-            occurred_at: 500,
+            occurred_at: Some(500),
         })
         .expect("witness turn");
 
@@ -975,7 +975,7 @@ fn witness_bumps_open_session_activity_atomically() {
             conversation_ref: conversation_hex,
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "backfilled note")],
-            occurred_at: 450,
+            occurred_at: Some(450),
         })
         .expect("witness backfill turn");
     let open = vault
@@ -999,7 +999,7 @@ fn witness_without_an_open_session_stays_valid() {
             conversation_ref: conversation_hex,
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "sessionless turn")],
-            occurred_at: 600,
+            occurred_at: Some(600),
         })
         .expect("witness sessionless turn");
     assert_eq!(vault.open_session().expect("open session read"), None);
@@ -1037,7 +1037,7 @@ fn witnessed_person_turn_obeys_room_delete_and_erasure_fence_without_blocking_ot
                 conversation_ref: room.to_hex(),
                 turn_ref: None,
                 messages: vec![witness_message(0, WitnessAuthor::User, content)],
-                occurred_at: 10,
+                occurred_at: Some(10),
             })
     };
     let first = witness(alice, "owner room turn").expect("owner witness");
@@ -1115,7 +1115,7 @@ fn witness_author_cannot_be_replaced_or_removed_by_raw_turn_reput() {
                 WitnessAuthor::User,
                 "keep original author",
             )],
-            occurred_at: 10,
+            occurred_at: Some(10),
         })
         .expect("witness");
     let turn =
@@ -1213,7 +1213,7 @@ fn mixed_room_messages() -> (
             conversation_ref: room.to_hex(),
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "cedarwax")],
-            occurred_at: 10,
+            occurred_at: Some(10),
         })
         .expect("first witness");
     let turn = EntityId::from_hex(first.receipt_ref.strip_prefix("witness:").unwrap()).unwrap();
@@ -1233,7 +1233,7 @@ fn mixed_room_messages() -> (
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             messages: vec![witness_message(1, WitnessAuthor::User, "orchidwax")],
-            occurred_at: 11,
+            occurred_at: Some(11),
         })
         .expect("second actor appends to the first TURN");
     // Bob is not the vault's owner (H149), and the room's rows carry no
@@ -1528,7 +1528,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
                 WitnessAuthor::Companion,
                 "agentwitnessneedle",
             )],
-            occurred_at: 10,
+            occurred_at: Some(10),
         })
         .expect("admitted AGENT_DEF witness");
     let agent_turn =
@@ -1553,7 +1553,7 @@ fn non_person_witness_author_does_not_block_another_persons_room_erasure() {
                 WitnessAuthor::User,
                 "alicewitnessneedle",
             )],
-            occurred_at: 11,
+            occurred_at: Some(11),
         })
         .expect("Alice witness");
     let alice_message = EntityId::from_hex(
@@ -1621,7 +1621,7 @@ fn a_turn_fill_leased_before_the_owner_binding_does_not_land() {
                 WitnessAuthor::User,
                 "The mechanic says the car needs new brakes.",
             )],
-            occurred_at: 500,
+            occurred_at: Some(500),
         })
         .expect("witness turn");
     let turn = EntityId::from_hex(
@@ -1683,7 +1683,7 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
             .to_hex(),
         turn_ref: None,
         messages: vec![witness_message(0, WitnessAuthor::User, "a plain turn")],
-        occurred_at,
+        occurred_at: Some(occurred_at),
     };
 
     let refused = facade
@@ -1705,7 +1705,7 @@ fn witness_refuses_a_future_occurrence_that_would_strand_later_turns() {
             body: serde_json::json!({"speaker": "user"}),
             text_fields: None,
             edges: None,
-            occurred_at: now,
+            occurred_at: Some(now),
             learned_at: Some(now + 10 * 365 * 86_400),
         })
         .expect_err("a far-future structural turn is refused");

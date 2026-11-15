@@ -267,7 +267,7 @@ pub fn ensure_completed_trial_offer(vault: &Vault) -> Result<TrialFixture> {
                 body: json!({"name": format!("Binding proposer fixture unit {index}")}),
                 text_fields: None,
                 edges: None,
-                occurred_at: now,
+                occurred_at: Some(now),
                 learned_at: None,
             })
             .map_err(memory_failed)?;

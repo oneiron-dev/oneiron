@@ -1247,7 +1247,7 @@ async fn conversation_list_previews_witness_message_content_not_turn_speaker() {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: at,
+            occurred_at: Some(at),
             assertions: Default::default(),
             thread_audience: None,
         })

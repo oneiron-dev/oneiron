@@ -45,7 +45,7 @@ fn witness(
             conversation_ref: room.to_hex(),
             turn_ref: Some(turn.to_hex()),
             messages: vec![message],
-            occurred_at: at,
+            occurred_at: Some(at),
         })
         .expect("witness a turn");
 }

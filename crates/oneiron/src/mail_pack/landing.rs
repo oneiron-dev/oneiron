@@ -438,7 +438,7 @@ impl<'v> Landing<'v> {
                 order: u32::try_from(order).unwrap_or(u32::MAX),
                 quote: None,
             }],
-            occurred_at: occurred,
+            occurred_at: Some(occurred),
             assertions: Default::default(),
         };
         let stamp = ImportedTurnStamp {

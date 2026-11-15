@@ -144,6 +144,9 @@ pub(super) fn append_blob(
         .decode(&content_base64)
         .map_err(|_| MemoryError::bad_request("invalid blob base64"))?;
     drop(content_base64);
+    // An omitted time is the vault's recording clock, read once for this
+    // write (UC-02 B1b), never the wall clock.
+    let occurred_at = occurred_at.unwrap_or_else(|| memory.vault().now_recorded_at());
     memory.append_blob_version(
         &artifact_ref,
         &content,
@@ -166,11 +169,14 @@ pub(super) fn append_blob_file(
             "content arrives in the body file, not in the request",
         ));
     }
+    let occurred_at = input
+        .occurred_at
+        .unwrap_or_else(|| memory.vault().now_recorded_at());
     memory.append_blob_version_file(
         &input.artifact_ref,
         body,
         input.run_ref.as_deref(),
-        input.occurred_at,
+        occurred_at,
         input.learned_at,
     )
 }

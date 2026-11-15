@@ -754,7 +754,7 @@ fn the_owners_upload_of_a_held_booking_move_says_it_was_held() {
             id: None,
             name: "host-calendar.ics".to_owned(),
             media_type: "text/calendar".to_owned(),
-            occurred_at: NOW + 120,
+            occurred_at: Some(NOW + 120),
             learned_at: None,
         })
         .expect("the upload's artifact");

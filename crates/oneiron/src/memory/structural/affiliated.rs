@@ -467,11 +467,14 @@ impl Memory<'_> {
             predicate: input.predicate.clone(),
             value: input.value.clone(),
         };
+        let occurred_at = input
+            .occurred_at
+            .unwrap_or_else(|| self.vault.now_recorded_at());
         let occurred = TimeRange {
-            start: input.occurred_at,
-            end: input.occurred_at,
+            start: occurred_at,
+            end: occurred_at,
         };
-        let learned_at = input.learned_at.unwrap_or(input.occurred_at);
+        let learned_at = input.learned_at.unwrap_or(occurred_at);
         let mut approval = if config.trust_ceiling.permits_auto(Some(0)) {
             ClaimApprovalStatus::Auto
         } else {

@@ -93,7 +93,7 @@ fn a_snapshot_pages_versioned_rows_and_marks_the_rows_learned_after_its_open() -
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 900,
+            occurred_at: Some(900),
             assertions: WitnessAssertions::default(),
         })?
         .turn_id;
@@ -284,7 +284,7 @@ fn a_caller_is_paged_only_the_rows_it_reads() -> TestResult {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 900,
+            occurred_at: Some(900),
             assertions: WitnessAssertions::default(),
         })?;
     let stranger = put_person(&vault, 1)?;

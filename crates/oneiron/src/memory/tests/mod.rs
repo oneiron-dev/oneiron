@@ -735,7 +735,7 @@ fn every_memory_read_verb_returns_a_receipt() {
                 WitnessAuthor::User,
                 "receipted solar panels",
             )],
-            occurred_at: 100,
+            occurred_at: Some(100),
             thread_audience: None,
             assertions: Default::default(),
         })
@@ -922,7 +922,7 @@ fn a_deleted_shell_is_absent_from_every_memory_read() {
                 .to_hex(),
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "Shelly waves")],
-            occurred_at: 100,
+            occurred_at: Some(100),
             thread_audience: None,
             assertions: Default::default(),
         })
@@ -1121,7 +1121,7 @@ fn witness_and_session_witness_run_one_program() {
             conversation_ref,
             turn_ref,
             messages: vec![message],
-            occurred_at: AT,
+            occurred_at: Some(AT),
             thread_audience: None,
             assertions: Default::default(),
         }

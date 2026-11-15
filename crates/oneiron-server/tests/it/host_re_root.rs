@@ -194,7 +194,7 @@ fn a_leaked_host_secret_moves_to_a_new_one_and_the_vault_keeps_its_id() {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: unix_seconds_now(),
+            occurred_at: Some(unix_seconds_now()),
             thread_audience: None,
             assertions: Default::default(),
         })

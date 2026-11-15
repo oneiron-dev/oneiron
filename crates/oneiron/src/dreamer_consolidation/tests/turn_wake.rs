@@ -289,7 +289,7 @@ fn witness_into(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             messages,
-            occurred_at: 10,
+            occurred_at: Some(10),
         })
         .expect("witnessed turn");
     turn

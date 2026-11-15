@@ -218,7 +218,7 @@ fn outsider_reads(metadata: impl FnOnce(EntityId) -> Option<serde_json::Value>) 
                     metadata(relationship),
                 ),
             ],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: WitnessAssertions::default(),
         })
         .expect("the owner's turn");

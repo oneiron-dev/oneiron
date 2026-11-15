@@ -20,7 +20,7 @@ fn witness_refuses_a_human_or_agent_actor_claiming_system_authorship() {
                     witness_message(0, WitnessAuthor::User, "the owner speaks"),
                     witness_message(1, WitnessAuthor::System, "forged engine voice"),
                 ],
-                occurred_at: 700,
+                occurred_at: Some(700),
             })
             .expect_err("a human/agent actor may not author a system row");
         assert_eq!(err.code, MEMORY_CODE_FORBIDDEN, "class {actor_class:?}");
@@ -55,7 +55,7 @@ fn witness_ceiling_is_not_satisfied_by_authorship_alone() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: Some(turn_hex.clone()),
             messages: vec![witness_message(0, WitnessAuthor::User, "a real question")],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect("the actor's own user row lands");
     let turn_id = EntityId::from_hex(&turn_hex).expect("turn id");
@@ -66,7 +66,7 @@ fn witness_ceiling_is_not_satisfied_by_authorship_alone() {
             conversation_ref: conversation_hex,
             turn_ref: Some(turn_hex),
             messages: vec![witness_message(1, WitnessAuthor::System, "tool said so")],
-            occurred_at: 701,
+            occurred_at: Some(701),
         })
         .expect_err("the same actor may not append an unattributed row");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -117,7 +117,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
                 witness_message(0, WitnessAuthor::Companion, "the assistant answers"),
                 witness_message(1, WitnessAuthor::System, "tool result"),
             ],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect("an explicitly authorized machine actor may author engine rows");
     assert_eq!(
@@ -134,7 +134,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
             conversation_ref: conversation_hex.clone(),
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "hi")],
-            occurred_at: 701,
+            occurred_at: Some(701),
         })
         .expect("an ordinary user row is untouched by the ceiling");
     let message_count_before_refusal = vault
@@ -150,7 +150,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
                 witness_message(0, WitnessAuthor::User, "hi again"),
                 witness_message(1, WitnessAuthor::System, "still forged"),
             ],
-            occurred_at: 702,
+            occurred_at: Some(702),
         })
         .expect_err("the class-wide human ceiling is not consent to speak as the engine");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -184,7 +184,7 @@ fn witness_system_authorship_takes_an_explicit_actor_bound_ceiling_row() {
                 witness_message(0, WitnessAuthor::User, "hi once more"),
                 witness_message(1, WitnessAuthor::System, "owner-authorized row"),
             ],
-            occurred_at: 703,
+            occurred_at: Some(703),
         })
         .expect("an owner-authored actor-bound ceiling row authorizes this actor");
     assert_eq!(
@@ -212,7 +212,7 @@ fn witness_refuses_an_arbitrary_verified_system_actor_without_ceiling_row() {
                 witness_message(0, WitnessAuthor::Companion, "ordinary companion context"),
                 witness_message(1, WitnessAuthor::System, "unapproved engine voice"),
             ],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect_err("a verified system actor without a named ceiling must be refused");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -248,7 +248,7 @@ fn witness_ceiling_row_clamping_the_actor_refuses_every_row() {
                 WitnessAuthor::Companion,
                 "clamped answer",
             )],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect_err("a clamped actor writes no transcript");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -293,7 +293,7 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
                 witness_message(0, WitnessAuthor::User, "cover story"),
                 hostile(),
             ],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect_err("a hidden forged system row is refused");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -312,7 +312,7 @@ fn witness_refuses_a_hidden_system_row_with_hostile_metadata() {
                 witness_message(0, WitnessAuthor::Companion, "cover story"),
                 hostile(),
             ],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect_err("metadata may not restate an envelope axis at any depth");
     assert_eq!(err.code, MEMORY_CODE_FORBIDDEN);
@@ -424,7 +424,7 @@ fn witness_refuses_every_malformed_envelope_axis_atomically() {
             conversation_ref: EntityId::from_bytes([0xB6; 16]).expect("conv").to_hex(),
             turn_ref: None,
             messages: vec![legitimate, hostile],
-            occurred_at: 700,
+            occurred_at: Some(700),
         });
         let Err(err) = result else {
             panic!("{label} must be refused");
@@ -463,7 +463,7 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
                 order: MAX_WITNESS_MESSAGE_ORDER + 1,
                 ..witness_message(0, WitnessAuthor::User, "way out there")
             }],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect_err("an unbounded order is a channel, not a position");
     assert_eq!(out_of_range.code, MEMORY_CODE_BAD_REQUEST);
@@ -476,7 +476,7 @@ fn witness_refuses_out_of_range_and_colliding_message_orders() {
                 witness_message(1, WitnessAuthor::User, "first claim"),
                 witness_message(1, WitnessAuthor::User, "second claim"),
             ],
-            occurred_at: 701,
+            occurred_at: Some(701),
         })
         .expect_err("two messages may not claim one position");
     assert_eq!(collision.code, MEMORY_CODE_BAD_REQUEST);
@@ -504,7 +504,7 @@ fn witness_append_rejects_a_persisted_message_order_collision() {
                 id: Some(first_message.to_hex()),
                 ..witness_message(0, WitnessAuthor::User, "first slot")
             }],
-            occurred_at: 702,
+            occurred_at: Some(702),
         })
         .expect("first turn append");
 
@@ -516,7 +516,7 @@ fn witness_append_rejects_a_persisted_message_order_collision() {
                 id: Some(second_message.to_hex()),
                 ..witness_message(0, WitnessAuthor::User, "contested slot")
             }],
-            occurred_at: 703,
+            occurred_at: Some(703),
         })
         .expect_err("a later message may not reuse the turn's order");
     assert_eq!(refused.code, MEMORY_CODE_BAD_REQUEST);
@@ -597,7 +597,7 @@ fn witness_append_rejects_unstamped_turn_without_legacy_fallback() {
                 WitnessAuthor::User,
                 "append to the old turn",
             )],
-            occurred_at: 550,
+            occurred_at: Some(550),
         })
         .expect_err("an unstamped turn has no grouping speaker to match against");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -652,7 +652,7 @@ fn witness_append_rejects_a_different_conversation_atomically() {
             conversation_ref: conversation_a_id.to_hex(),
             turn_ref: Some(turn_id.to_hex()),
             messages: vec![witness_message(0, WitnessAuthor::User, "the home turn")],
-            occurred_at: 500,
+            occurred_at: Some(500),
         })
         .expect("mint the turn in conversation A");
     let turn_raw_before = vault.get_raw(&turn_id).expect("turn raw").expect("turn");
@@ -669,7 +669,7 @@ fn witness_append_rejects_a_different_conversation_atomically() {
                 WitnessAuthor::User,
                 "cross-conversation hijack",
             )],
-            occurred_at: 600,
+            occurred_at: Some(600),
         })
         .expect_err("an append under a foreign conversation is a bad request");
     assert_eq!(err.code, MEMORY_CODE_BAD_REQUEST);
@@ -766,7 +766,7 @@ fn witness_door_rejects_a_conversation_owned_by_a_live_session() {
             conversation_ref: conversation.to_hex(),
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "door probe")],
-            occurred_at: 700,
+            occurred_at: Some(700),
         })
         .expect_err("the base door must refuse a session-owned conversation");
     assert_eq!(refused.code, MEMORY_CODE_OFF_RECORD_SESSION_DOOR);

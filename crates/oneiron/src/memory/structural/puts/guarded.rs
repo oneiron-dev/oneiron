@@ -20,11 +20,14 @@ impl Memory<'_> {
         let type_byte = type_byte_for_kind(&input.kind)?;
         self.admit_structural_kind(type_byte, input)?;
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
+        let occurred_at = input
+            .occurred_at
+            .unwrap_or_else(|| self.vault.now_recorded_at());
         let occurred = TimeRange {
-            start: input.occurred_at,
-            end: input.occurred_at,
+            start: occurred_at,
+            end: occurred_at,
         };
-        let learned_at = input.learned_at.unwrap_or(input.occurred_at);
+        let learned_at = input.learned_at.unwrap_or(occurred_at);
         // A TURN's learned time feeds the consolidation watermark: this door
         // holds it to the witness door's clock ceiling (F30).
         if type_byte == ENTITY_TYPE_TURN {

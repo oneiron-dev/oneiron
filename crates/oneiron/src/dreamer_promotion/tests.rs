@@ -619,7 +619,7 @@ fn imported_evidence_lands_proposed_in_its_import_review_whatever_the_policy_gra
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 9_000,
+            occurred_at: Some(9_000),
             thread_audience: None,
             assertions: Default::default(),
         })

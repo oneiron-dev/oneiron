@@ -358,7 +358,7 @@ fn mint_fixture(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 20,
+            occurred_at: Some(20),
             assertions: Default::default(),
         })
         .map_err(|err| crate::Error::InvalidConfig(err.to_string()))?;
@@ -837,7 +837,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
         let turn = WitnessTurn {
             conversation_ref: chat.to_hex(),
             turn_ref: None,
-            occurred_at: at,
+            occurred_at: Some(at),
             messages: vec![WitnessMessage {
                 id: Some(message.to_hex()),
                 author: WitnessAuthor::User,
@@ -866,7 +866,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     let append = |message: EntityId, order: u32, content: &str| WitnessTurn {
         conversation_ref: chat.to_hex(),
         turn_ref: Some(alice_turn.to_hex()),
-        occurred_at: 5,
+        occurred_at: Some(5),
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,
@@ -909,7 +909,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     let streamed = WitnessTurn {
         conversation_ref: chat.to_hex(),
         turn_ref: Some(EntityId::now().to_hex()),
-        occurred_at: 5,
+        occurred_at: Some(5),
         messages: vec![WitnessMessage {
             id: Some(streamed_message.to_hex()),
             author: WitnessAuthor::User,
@@ -1062,7 +1062,7 @@ fn leaders_open_direct_chat_under_own_scopes_and_root_rule_narrows() -> Result<(
     let turn = WitnessTurn {
         conversation_ref: chat.to_hex(),
         turn_ref: None,
-        occurred_at: 4,
+        occurred_at: Some(4),
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,

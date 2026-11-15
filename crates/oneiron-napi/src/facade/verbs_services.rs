@@ -95,8 +95,9 @@ impl ActorScopedVault {
             habit_ref: input.habit_ref,
             id: input.id,
             data: input.data.map(super::js_json::js_json),
-            occurred_at: ts_to_engine(input.occurred_at, "occurred_at")
-                .map_err(caller_input_error)?,
+            occurred_at: Some(
+                ts_to_engine(input.occurred_at, "occurred_at").map_err(caller_input_error)?,
+            ),
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at")
                 .map_err(caller_input_error)?,
         };
@@ -126,8 +127,9 @@ impl ActorScopedVault {
             subject_ref: input.subject_ref,
             predicate: input.predicate,
             value: super::js_json::js_json(input.value),
-            occurred_at: ts_to_engine(input.occurred_at, "occurred_at")
-                .map_err(caller_input_error)?,
+            occurred_at: Some(
+                ts_to_engine(input.occurred_at, "occurred_at").map_err(caller_input_error)?,
+            ),
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at")
                 .map_err(caller_input_error)?,
         };
@@ -153,8 +155,9 @@ impl ActorScopedVault {
             id: input.id,
             name: input.name,
             media_type: input.media_type,
-            occurred_at: ts_to_engine(input.occurred_at, "occurred_at")
-                .map_err(caller_input_error)?,
+            occurred_at: Some(
+                ts_to_engine(input.occurred_at, "occurred_at").map_err(caller_input_error)?,
+            ),
             learned_at: ts_opt_to_engine(input.learned_at, "learned_at")
                 .map_err(caller_input_error)?,
         };
@@ -182,11 +185,12 @@ impl ActorScopedVault {
         learned_at: Option<i64>,
     ) -> napi::Result<NapiBlobVersionAppendOutcome> {
         let bytes = decode_blob_base64(&bytes_base64).map_err(caller_input_error)?;
+        let occurred_at = ts_to_engine(occurred_at, "occurred_at").map_err(caller_input_error)?;
         let request = AppendBlobVersionRequest {
             artifact_ref,
             content_base64: bytes_base64.clone(),
             run_ref,
-            occurred_at: ts_to_engine(occurred_at, "occurred_at").map_err(caller_input_error)?,
+            occurred_at: Some(occurred_at),
             learned_at: ts_opt_to_engine(learned_at, "learned_at").map_err(caller_input_error)?,
         };
         let memory = self.facade()?;
@@ -204,7 +208,7 @@ impl ActorScopedVault {
                     &input.artifact_ref,
                     &bytes,
                     input.run_ref.as_deref(),
-                    input.occurred_at,
+                    input.occurred_at.unwrap_or(occurred_at),
                     input.learned_at,
                 )
             },

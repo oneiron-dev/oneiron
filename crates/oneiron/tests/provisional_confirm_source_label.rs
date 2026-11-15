@@ -275,7 +275,7 @@ fn tagged_fixture() -> Fixture {
                 ),
                 message(open_message, 2, OPEN_WORDS, None),
             ],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: WitnessAssertions::default(),
         })
         .expect("witness");
@@ -495,7 +495,7 @@ fn a_pronoun_in_an_open_message_does_not_open_a_name_read_only_in_a_relationship
                 ),
                 message(open_message, 1, "She is fine.", None),
             ],
-            occurred_at: 20,
+            occurred_at: Some(20),
             assertions: WitnessAssertions::default(),
         })
         .expect("the second turn");

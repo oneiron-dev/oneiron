@@ -34,7 +34,7 @@ fn identical_recalls_return_the_same_pack_across_a_clock_tick() {
             conversation_ref: "11111111111111111111111111111111".to_owned(),
             turn_ref: None,
             messages: vec![witness_message(0, WitnessAuthor::User, "window seat")],
-            occurred_at: written,
+            occurred_at: Some(written),
         })
         .expect("witness");
     facade

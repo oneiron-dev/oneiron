@@ -53,7 +53,7 @@ fn room_fixture() -> Result<(
             is_visible: true,
             order: 0,
         }],
-        occurred_at: 2,
+        occurred_at: Some(2),
     };
     let user = vault.memory(host, EdgeActorClass::Human);
     user.rooms_speak(&speak(trunk, "trunk", None))

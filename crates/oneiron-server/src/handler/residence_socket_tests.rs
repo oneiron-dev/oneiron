@@ -114,7 +114,7 @@ async fn phone_enrols_with_index_then_opens_one_item_and_searches_home() {
                 parts: None,
                 quote: None,
             }],
-            occurred_at: now,
+            occurred_at: Some(now),
             assertions: Default::default(),
             thread_audience: None,
         })

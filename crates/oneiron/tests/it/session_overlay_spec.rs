@@ -61,7 +61,7 @@ fn turn_of(content: &str, at: u64) -> WitnessTurn {
             parts: None,
             quote: None,
         }],
-        occurred_at: at,
+        occurred_at: Some(at),
         thread_audience: None,
         assertions: Default::default(),
     }

@@ -82,7 +82,7 @@ fn a_2xx_body_that_is_not_the_verb_output_is_internal() {
         conversation_ref: "conversation".into(),
         turn_ref: None,
         messages: vec![],
-        occurred_at: 1,
+        occurred_at: Some(1),
         thread_audience: None,
         assertions: Default::default(),
     });

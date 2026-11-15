@@ -111,7 +111,7 @@ fn witness_message(conversation: EntityId, node: EntityId, now: u64) -> WitnessT
             order: 0,
             quote: None,
         }],
-        occurred_at: now,
+        occurred_at: Some(now),
         assertions: Default::default(),
     }
 }
@@ -489,7 +489,7 @@ fn address_yuki(vault: &Vault, fixture: &Fixture, room: EntityId) -> TestResult<
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: Default::default(),
         })?;
     Ok(turn)

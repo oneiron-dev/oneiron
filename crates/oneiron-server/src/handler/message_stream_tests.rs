@@ -121,7 +121,7 @@ async fn message_stream_local_host_relay_is_live_without_a_sync_client() {
     let turn = WitnessTurn {
         conversation_ref: oneiron::EntityId::now().to_hex(),
         turn_ref: Some(oneiron::EntityId::now().to_hex()),
-        occurred_at: 1,
+        occurred_at: Some(1),
         messages: vec![WitnessMessage {
             id: Some(message.to_hex()),
             author: WitnessAuthor::User,

@@ -91,7 +91,7 @@ fn consolidation_queue_round_trip_with_facade_writeback() {
                 WitnessAuthor::User,
                 "mid-consolidation note",
             )],
-            occurred_at: 2003,
+            occurred_at: Some(2003),
         })
         .expect("source write never queues behind derived work");
 
@@ -220,7 +220,7 @@ fn enqueue_consolidation_requires_a_verified_actor() {
             body: serde_json::json!({"name": "g1"}),
             text_fields: None,
             edges: None,
-            occurred_at: 2101,
+            occurred_at: Some(2101),
             learned_at: None,
         })
         .expect("event");

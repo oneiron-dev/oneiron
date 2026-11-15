@@ -41,7 +41,7 @@ fn open() -> TestResult<Fixture> {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: vault.now_recorded_at(),
+            occurred_at: Some(vault.now_recorded_at()),
             assertions: WitnessAssertions::default(),
         })?;
     // A fresh owner-authored TURN has no import or installed pack behind it.

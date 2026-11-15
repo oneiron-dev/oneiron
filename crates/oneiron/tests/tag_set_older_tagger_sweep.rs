@@ -122,7 +122,7 @@ fn witness_tagged(vault: &Vault, stack: Option<&str>) -> EntityId {
         conversation_ref: ROOM.into(),
         turn_ref: Some(TURN.to_owned()),
         thread_audience: None,
-        occurred_at: now_seconds(),
+        occurred_at: Some(now_seconds()),
         messages: vec![WitnessMessage {
             id: None,
             author: WitnessAuthor::User,

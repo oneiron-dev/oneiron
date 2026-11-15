@@ -124,7 +124,7 @@ fn erasing_a_message_drops_its_turn_vector_before_any_worker_runs() {
                     ),
                     witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
                 ],
-                occurred_at: 500,
+                occurred_at: Some(500),
             })
             .expect("witness turn");
         let id_of = |short_id: &str| {
@@ -247,7 +247,7 @@ fn a_vectorless_handle_still_erases_the_turn_vector_of_an_erased_message() {
                         ),
                         witness_message(1, WitnessAuthor::User, "We met for lunch at noon."),
                     ],
-                    occurred_at: 500,
+                    occurred_at: Some(500),
                 })
                 .expect("witness turn");
             let id_of = |short_id: &str| {

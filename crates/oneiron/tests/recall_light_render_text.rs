@@ -28,7 +28,7 @@ fn witness_sentinel(memory: &Memory<'_>) -> TestResult {
             order: 0,
             quote: None,
         }],
-        occurred_at: 900,
+        occurred_at: Some(900),
         assertions: WitnessAssertions::default(),
     })?;
     Ok(())

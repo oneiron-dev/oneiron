@@ -102,7 +102,7 @@ impl WitnessTurnInput {
             turn_ref: self.turn_ref,
             thread_audience: self.thread_audience,
             messages,
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: self.assertions,
         })
     }

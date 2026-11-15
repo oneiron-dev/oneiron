@@ -419,6 +419,7 @@ impl Memory<'_> {
             plan.conversation_id,
             plan.turn_id,
             plan.turn,
+            plan.occurred.start,
             &message_ids,
             quote_key,
             regeneration.as_ref(),

@@ -637,7 +637,7 @@ fn issue_one(
                 order: 0,
                 quote: None,
             }],
-            occurred_at: route.at,
+            occurred_at: Some(route.at),
             assertions: Default::default(),
         })?;
     }

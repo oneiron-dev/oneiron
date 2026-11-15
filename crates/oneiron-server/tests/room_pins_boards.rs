@@ -358,7 +358,7 @@ fn trunk_turn(vault: &Vault, room: EntityId, message: EntityId) -> WitnessTurn {
             order: 0,
             quote: None,
         }],
-        occurred_at: vault.now_recorded_at(),
+        occurred_at: Some(vault.now_recorded_at()),
         assertions: Default::default(),
     }
 }

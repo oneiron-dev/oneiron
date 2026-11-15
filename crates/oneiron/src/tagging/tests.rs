@@ -187,7 +187,7 @@ fn turn(turn_ref: Option<String>, messages: Vec<WitnessMessage>) -> WitnessTurn 
         conversation_ref: ROOM.into(),
         turn_ref,
         messages,
-        occurred_at: NOW,
+        occurred_at: Some(NOW),
         thread_audience: None,
         assertions: Default::default(),
     }
@@ -1941,7 +1941,7 @@ fn bind_resident(vault: &Vault) -> EntityId {
         .witness(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: None,
-            occurred_at: 2,
+            occurred_at: Some(2),
             messages: vec![WitnessMessage {
                 id: Some(node.to_hex()),
                 ..message(0, "room")
@@ -2085,7 +2085,7 @@ fn witness_at(vault: &Vault, content: &str, occurred_at: u64) -> EntityId {
     let receipt = vault
         .memory(speaker(vault), EdgeActorClass::Human)
         .witness(&WitnessTurn {
-            occurred_at,
+            occurred_at: Some(occurred_at),
             ..turn(None, vec![message(0, content)])
         })
         .expect("witness");

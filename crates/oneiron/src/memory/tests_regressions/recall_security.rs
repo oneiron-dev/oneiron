@@ -16,7 +16,7 @@ fn grantless_actor_cannot_recall_private_messages_or_render_their_text() {
                 WitnessAuthor::User,
                 "aurora borealis private fjord",
             )],
-            occurred_at: 1500,
+            occurred_at: Some(1500),
         })
         .expect("witness private message");
     let grantless = vault.memory(agent, EdgeActorClass::Agent);

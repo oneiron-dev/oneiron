@@ -197,7 +197,11 @@ impl Memory<'_> {
             metadata: message.metadata.clone(),
             is_visible: message.is_visible,
             order: message.order,
-            occurred_at: turn.occurred_at,
+            // An omitted time is the vault's recording clock, read once as
+            // the stream opens (UC-02 B1b); every checkpoint keeps it.
+            occurred_at: turn
+                .occurred_at
+                .unwrap_or_else(|| self.vault.now_recorded_at()),
             created_at_ms: at,
             mode,
             idle_timeout_ms: policy.idle_timeout_ms,
@@ -532,7 +536,7 @@ impl Memory<'_> {
                         .ok_or(Error::CorruptedIndex("message order"))?,
                     quote: None,
                 }],
-                occurred_at: self.vault.now_recorded_at(),
+                occurred_at: Some(self.vault.now_recorded_at()),
                 assertions: Default::default(),
             }
         };

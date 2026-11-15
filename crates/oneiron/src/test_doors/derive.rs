@@ -927,7 +927,7 @@ pub fn witness_turn(vault: &Vault, words: &str) -> Result<EntityId> {
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 10,
+            occurred_at: Some(10),
             assertions: WitnessAssertions::default(),
         })
         .map_err(|error| crate::error::Error::InvalidConfig(format!("witness: {error:?}")))?;

@@ -295,7 +295,7 @@ pub(super) fn witness_user_turn(
                 order: 0,
                 quote: None,
             }],
-            occurred_at,
+            occurred_at: Some(occurred_at),
             assertions: WitnessAssertions::default(),
         })
         .map_err(|error| Error::InvalidConfig(format!("witness: {error:?}")))?;

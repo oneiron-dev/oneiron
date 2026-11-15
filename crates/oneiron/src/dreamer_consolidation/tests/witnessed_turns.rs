@@ -244,7 +244,7 @@ pub(super) fn witness(
             conversation_ref: conversation.to_hex(),
             turn_ref: Some(turn.to_hex()),
             messages,
-            occurred_at: 10,
+            occurred_at: Some(10),
         })
         .expect("witnessed turn");
     (turn, conversation)
@@ -1136,7 +1136,7 @@ pub(super) fn stream_turn(
         conversation_ref: conversation.to_hex(),
         turn_ref: Some(turn.to_hex()),
         messages: vec![message(0, WitnessAuthor::User, "", true)],
-        occurred_at: 10,
+        occurred_at: Some(10),
     };
     end_stream(vault, person, &input, text, ending);
     Ok((turn, conversation, id_of(&input.messages[0]), input))

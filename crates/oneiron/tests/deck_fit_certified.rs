@@ -80,7 +80,7 @@ impl Fixture {
             id: Some(artifact.to_hex()),
             name: "deck-create-template.pptx".to_owned(),
             media_type: PPTX.to_owned(),
-            occurred_at: now,
+            occurred_at: Some(now),
             learned_at: None,
         })?;
         match owner.append_blob_version(

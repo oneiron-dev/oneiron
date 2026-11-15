@@ -124,7 +124,7 @@ fn witnessed_turn(owner: &Memory<'_>) -> Result<EntityId, Box<dyn std::error::Er
                 order: 0,
                 quote: None,
             }],
-            occurred_at: 900,
+            occurred_at: Some(900),
             assertions: WitnessAssertions::default(),
         })?
         .turn_id)

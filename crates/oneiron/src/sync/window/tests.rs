@@ -4509,7 +4509,7 @@ fn device_only_holds_a_task_replicated_after_the_upgrade_sweep_but_ships_one_it_
             body: serde_json::json!({"role": 4, "content": "errand"}),
             text_fields: None,
             edges: None,
-            occurred_at: 10,
+            occurred_at: Some(10),
             learned_at: None,
         })
         .unwrap();

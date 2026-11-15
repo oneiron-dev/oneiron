@@ -286,7 +286,7 @@ impl<'vault> SessionVault<'vault> {
                         order: 0,
                         quote: None,
                     }],
-                    occurred_at,
+                    occurred_at: Some(occurred_at),
                     assertions: crate::memory::WitnessAssertions::default(),
                 },
                 summary,

@@ -508,7 +508,7 @@ impl Lower<engine::WitnessTurn> for WitnessTurn {
             turn_ref: self.turn_ref,
             thread_audience,
             messages: self.messages.lower()?,
-            occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+            occurred_at: Some(stamped_seconds("occurred_at", self.occurred_at)?),
             assertions: assertions.unwrap_or_default(),
         })
     }
@@ -1021,7 +1021,7 @@ impl Lower<engine::StructuralPutInput> for StructuralPutInput {
                     })
                     .collect()
             }),
-            occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+            occurred_at: Some(stamped_seconds("occurred_at", self.occurred_at)?),
             learned_at: optional_seconds("learned_at", self.learned_at)?,
         })
     }
@@ -1033,7 +1033,7 @@ impl Lower<engine::HabitCheckinInput> for HabitCheckinInput {
             habit_ref: self.habit_ref,
             id: self.id,
             data: self.data.lower()?,
-            occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+            occurred_at: Some(stamped_seconds("occurred_at", self.occurred_at)?),
             learned_at: optional_seconds("learned_at", self.learned_at)?,
         })
     }
@@ -1048,7 +1048,7 @@ impl Lower<engine::AdmitImportedClaimInput> for AdmitImportedClaimInput {
             subject_ref: self.subject_ref,
             predicate: self.predicate,
             value: self.value.lower()?,
-            occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+            occurred_at: Some(stamped_seconds("occurred_at", self.occurred_at)?),
             learned_at: optional_seconds("learned_at", self.learned_at)?,
         })
     }
@@ -1081,7 +1081,7 @@ impl Lower<engine::BlobArtifactInput> for BlobArtifactInput {
             id: self.id,
             name: self.name,
             media_type: self.media_type,
-            occurred_at: stamped_seconds("occurred_at", self.occurred_at)?,
+            occurred_at: Some(stamped_seconds("occurred_at", self.occurred_at)?),
             learned_at: optional_seconds("learned_at", self.learned_at)?,
         })
     }
@@ -1099,7 +1099,7 @@ impl Lower<sdk::AppendBlobVersionRequest>
             artifact_ref,
             content_base64: base64::engine::general_purpose::STANDARD.encode(&content),
             run_ref,
-            occurred_at: stamped_seconds("occurred_at", occurred_at)?,
+            occurred_at: Some(stamped_seconds("occurred_at", occurred_at)?),
             learned_at: optional_seconds("learned_at", learned_at)?,
         })
     }

@@ -79,11 +79,14 @@ impl Memory<'_> {
             }
         }
         let data = encode_rmpv(&Value::Map(entries))?;
+        let occurred_at = input
+            .occurred_at
+            .unwrap_or_else(|| self.vault.now_recorded_at());
         let occurred = TimeRange {
-            start: input.occurred_at,
-            end: input.occurred_at,
+            start: occurred_at,
+            end: occurred_at,
         };
-        let learned_at = input.learned_at.unwrap_or(input.occurred_at);
+        let learned_at = input.learned_at.unwrap_or(occurred_at);
         // Marker check and checkin put share one write transaction (A1).
         let refused = self.with_actor_content_write_txn(|content| {
             if self
@@ -111,11 +114,14 @@ impl Memory<'_> {
     /// [`Self::append_blob_version`]).
     pub fn put_blob_artifact(&self, input: &BlobArtifactInput) -> MemoryResult<EntityRefReceipt> {
         let id = id_from_optional_hex(self.vault, input.id.as_deref())?;
+        let occurred_at = input
+            .occurred_at
+            .unwrap_or_else(|| self.vault.now_recorded_at());
         let occurred = TimeRange {
-            start: input.occurred_at,
-            end: input.occurred_at,
+            start: occurred_at,
+            end: occurred_at,
         };
-        let learned_at = input.learned_at.unwrap_or(input.occurred_at);
+        let learned_at = input.learned_at.unwrap_or(occurred_at);
         // Marker check and artifact put share one write transaction (A1);
         // the encoded body matches Vault::put_blob_artifact exactly.
         let refused = self.with_actor_content_write_txn(|content| {

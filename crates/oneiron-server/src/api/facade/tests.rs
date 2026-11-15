@@ -1758,7 +1758,7 @@ async fn recall_returns_the_person_an_agent_asks_about() {
                     value: "Mika Tanaka".into(),
                 }]),
                 edges: None,
-                occurred_at: 1_767_225_600,
+                occurred_at: Some(1_767_225_600),
                 learned_at: None,
             })
             .expect("put person")

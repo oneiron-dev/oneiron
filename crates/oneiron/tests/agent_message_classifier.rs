@@ -217,7 +217,7 @@ fn witness_message(conversation: EntityId, node: EntityId, now: u64) -> WitnessT
             order: 0,
             quote: None,
         }],
-        occurred_at: now,
+        occurred_at: Some(now),
         assertions: Default::default(),
     }
 }

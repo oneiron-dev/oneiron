@@ -22,7 +22,7 @@ fn speak(
         .rooms_speak(&WitnessTurn {
             conversation_ref: room.to_hex(),
             turn_ref: Some(id.to_hex()),
-            occurred_at: at,
+            occurred_at: Some(at),
             messages: vec![WitnessMessage {
                 id: Some(EntityId::now().to_hex()),
                 author: if class == EdgeActorClass::Human {

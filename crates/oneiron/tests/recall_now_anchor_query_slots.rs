@@ -48,7 +48,7 @@ fn witness(memory: &Memory<'_>, content: String) -> TestResult {
             order: 0,
             quote: None,
         }],
-        occurred_at,
+        occurred_at: Some(occurred_at),
         assertions: WitnessAssertions::default(),
     })?;
     Ok(())
