@@ -524,9 +524,10 @@ impl Vault {
             &WriteActor::new(inviter, EdgeActorClass::Human),
             &SharedVaultWrite::Admin(OrgAdminPower::AddMember),
         )?;
-        // Steward and Deputy are the owner's to give, judged on the
+        // Owner, Steward and Deputy are the owner's to give, judged on the
         // inviter's standing now: an Owner made an Admin while the invitation
-        // waited no longer gives either (FABLE-6988-1).
+        // waited no longer gives any of them (FABLE-6988-1; a founding Owner
+        // invitation too, REVIEW r2b-sol P1-1).
         self.reserved_role_given_by_owner_in_txn(txn, vault_id, inviter, invitation.role)?;
         // The inviter, whose standing was judged again just now, gives the
         // role (pass 28 R2): the invitee only accepts it.

@@ -221,12 +221,15 @@ impl Vault {
         giver: EntityId,
         role: Role,
     ) -> Result<()> {
-        if matches!(role, Role::Steward | Role::Deputy)
+        // Owner: only a founding invitation names it, and its inviter gives it
+        // on accepting, so an Owner made an Admin while it waited gives none
+        // (REVIEW r2b-sol P1-1). Every other caller refuses Owner before this.
+        if matches!(role, Role::Owner | Role::Steward | Role::Deputy)
             && self.member_role_in_txn(txn, vault_id, giver)? != Some(Role::Owner)
         {
             return Err(crate::error::Error::Claim(
                 crate::error::ClaimError::ActorLacksClaimAuthority {
-                    reason: "only an owner of the vault gives the Steward or Deputy role",
+                    reason: "only an owner of the vault gives the Owner, Steward or Deputy role",
                 },
             ));
         }
@@ -403,10 +406,17 @@ impl Vault {
         if crate::federation::holds_system_agent_grant(member) {
             return Err(invalid());
         }
+        // A Steward's attached `engine.controls` grant is the owner's agent Grant, given by
+        // its own act: no role is given on it here (REVIEW r2b-sol P2-1); a move off
+        // Steward drops it ([`Self::move_member_in_txn`]).
         let mut ids: Vec<EntityId> = self
             .member_grants_in_txn(txn, vault_id)?
             .into_iter()
-            .filter(|(_, grant)| grant.member_ref == member && grant.role != Role::Delegate)
+            .filter(|(_, grant)| {
+                grant.member_ref == member
+                    && grant.role != Role::Delegate
+                    && !crate::federation::is_engine_controls_grant(grant)
+            })
             .map(|(id, _)| id)
             .collect();
         if ids.is_empty() {
@@ -467,12 +477,29 @@ impl Vault {
         slips: Option<&HostSlipIssuer>,
         receipt: &str,
     ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
-        let dropped: Vec<(EntityId, bool)> = self
+        let dropped: Vec<(EntityId, FederationGrant)> = self
             .member_grants_in_txn(txn, vault_id)?
             .into_iter()
             .filter(|(_, grant)| {
                 (leaves && grant.member_ref == member) || grant.delegated_by == Some(member)
             })
+            .collect();
+        self.drop_grant_rows_in_txn(txn, dropped, slips, receipt)
+    }
+
+    /// Deletes `dropped`, a membership change's Grant rows, in `txn`: each withdrawal known
+    /// here and to the vault's peers, and with `slips` an owner's signed mint (a GitPush grant
+    /// or an owner's agent grant) gets the host's signed withdrawal (FIX 7135). The deleted
+    /// ids, then each no host signed a withdrawal of, which the change's record names.
+    fn drop_grant_rows_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        dropped: Vec<(EntityId, FederationGrant)>,
+        slips: Option<&HostSlipIssuer>,
+        receipt: &str,
+    ) -> Result<(Vec<EntityId>, Vec<EntityId>)> {
+        let dropped: Vec<(EntityId, bool)> = dropped
+            .into_iter()
             .map(|(id, grant)| (id, grant.is_git_push() || grant.owner_agent))
             .collect();
         // Each withdrawal stays known here and reaches its peers, in this
@@ -515,6 +542,19 @@ impl Vault {
         now: u64,
     ) -> Result<MemberMove> {
         refuse_house_mind_move_in_txn(self, txn, &member)?;
+        // A Steward's attached `engine.controls` grant goes with the Steward membership
+        // (ruling on FIX ENGINE-CONTROLS-GRANT-READS-AS-MEMBERSHIP, Engine 11 Nov), read now,
+        // while the roster still reads it with that membership (REVIEW r2b-sol P2-1).
+        let controls: Vec<(EntityId, FederationGrant)> = if to == Some(Role::Steward) {
+            Vec::new()
+        } else {
+            self.member_grants_in_txn(txn, vault_id)?
+                .into_iter()
+                .filter(|(_, grant)| {
+                    grant.member_ref == member && crate::federation::is_engine_controls_grant(grant)
+                })
+                .collect()
+        };
         let mut grants = Vec::new();
         if let Some(role) = to {
             grants.extend(self.set_member_role_in_txn(txn, vault_id, member, role, giver, now)?);
@@ -531,6 +571,17 @@ impl Vault {
             )?;
             grants.extend(dropped);
             unsigned_withdrawals = unsigned;
+        }
+        // A leave dropped them with the membership already; any other move off Steward drops
+        // them here, their ends riding the change's record.
+        let controls: Vec<(EntityId, FederationGrant)> = controls
+            .into_iter()
+            .filter(|(id, _)| !grants.contains(id))
+            .collect();
+        if !controls.is_empty() {
+            let (dropped, unsigned) = self.drop_grant_rows_in_txn(txn, controls, slips, receipt)?;
+            grants.extend(dropped);
+            unsigned_withdrawals.extend(unsigned);
         }
         let mut retired_own_device = Vec::new();
         if crate::federation::own_device::own_device_grant_retires(from, to) {
