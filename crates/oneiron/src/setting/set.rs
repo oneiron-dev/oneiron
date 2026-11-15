@@ -41,7 +41,8 @@ pub struct SetSetting {
     pub item: Option<String>,
     pub scope: SettingScope,
     pub mode: SettingMode,
-    /// The new value as JSON; `None` clears the row.
+    /// The new value as JSON; `None` clears the row. For a key whose value is an `Option`,
+    /// `Some(Value::Null)` stores `None` (the verb reads a `null` value as a clear).
     pub value: Option<serde_json::Value>,
     /// The row's revision the caller saw; the change is refused when the row has moved since.
     pub expected_revision: Option<u64>,
@@ -97,6 +98,24 @@ impl Vault {
         caller: SettingCaller<'_>,
         request: SetSetting,
     ) -> Result<SetSettingOutcome> {
+        self.with_write_txn_grouped(|txn| self.set_setting_in_txn(txn, caller, &request))
+    }
+
+    /// [`Self::set_setting`] in the caller's write: the same checks, power, change row and hook,
+    /// so the change commits with the caller's other writes or not at all. Several changes in one
+    /// write take consecutive sequences. A [`SetSettingOutcome::Pending`] answer opened its
+    /// check-in in this write too; a caller whose other writes need the change applied fails its
+    /// write on it.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::set_setting`].
+    pub(crate) fn set_setting_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        caller: SettingCaller<'_>,
+        request: &SetSetting,
+    ) -> Result<SetSettingOutcome> {
         let spec = spec_named(&request.key)?;
         spec.check_item(request.item.as_deref())?;
         if !spec.admits_scope(request.scope.kind()) {
@@ -126,14 +145,12 @@ impl Vault {
             mode: request.mode,
             scope: request.scope.clone(),
         };
-        self.with_write_txn_grouped(|txn| {
-            let change = Change {
-                spec,
-                key: &key,
-                value: value.as_ref(),
-            };
-            set_in_txn(self, txn, &change, caller, &request)
-        })
+        let change = Change {
+            spec,
+            key: &key,
+            value: value.as_ref(),
+        };
+        set_in_txn(self, txn, &change, caller, request)
     }
 }
 
