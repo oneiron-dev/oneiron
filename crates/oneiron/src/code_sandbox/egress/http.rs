@@ -1,8 +1,18 @@
 //! Guarded, pinned HTTP with manual redirects and final-domain decisions.
 
 use super::*;
+use crate::limit_ask::EngineLimit;
+use oneiron_container::HostNetPermit;
 use reqwest::{Url, header};
 use std::io::Read;
+
+/// Bytes of a response body read and leased at a time (FIX 7946).
+const BODY_CHUNK_BYTES: usize = 64 * 1024;
+/// The first wait for a full host byte floor, doubled at each wait up to
+/// [`FLOOR_WAIT_MAX`] (FIX 7946).
+const FLOOR_WAIT_FIRST: Duration = Duration::from_millis(5);
+/// The longest single wait for a full host byte floor.
+const FLOOR_WAIT_MAX: Duration = Duration::from_millis(250);
 
 pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result<HttpResponse> {
     let mut url = Url::parse(&request.url).map_err(io::Error::other)?;
@@ -119,7 +129,7 @@ pub(super) fn fetch(proxy: &OpenEgressProxy, request: HttpRequest) -> io::Result
             url = next;
             continue;
         }
-        return deliver(proxy, &url, response);
+        return deliver(proxy, &url, response, start + proxy.config.request_timeout);
     }
     Err(io::Error::other("egress redirects exhausted"))
 }
@@ -140,6 +150,7 @@ pub(super) fn forward(
     // The authority alone is replaced, never joined: the path cannot name
     // another destination.
     let mut upstream = logical.clone();
+    let deadline = Instant::now() + proxy.config.request_timeout;
     let attempt = (|| {
         upstream
             .set_ip_host(IpAddr::V4(*target.ip()))
@@ -205,7 +216,7 @@ pub(super) fn forward(
             return Err(error);
         }
     };
-    let mut answer = deliver(proxy, &upstream, response)?;
+    let mut answer = deliver(proxy, &upstream, response, deadline)?;
     answer.url = logical.to_string();
     Ok(answer)
 }
@@ -225,12 +236,13 @@ fn carried(name: &str) -> bool {
 }
 
 /// The answer `response` delivered from `url`: its headers less framing,
-/// its body under the byte bound, policy-checked and receipted as
-/// delivered.
+/// its whole body read under the vault's host byte floor before
+/// `deadline` (FIX 7946), policy-checked and receipted as delivered.
 fn deliver(
     proxy: &OpenEgressProxy,
     url: &Url,
     mut response: reqwest::blocking::Response,
+    deadline: Instant,
 ) -> io::Result<HttpResponse> {
     let status = response.status().as_u16();
     let headers = response
@@ -244,22 +256,20 @@ fn deliver(
             )
         })
         .collect();
-    let mut bytes = Vec::new();
-    (&mut response)
-        .take(proxy.config.max_response_bytes as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(io::Error::other)?;
-    if bytes.len() > proxy.config.max_response_bytes {
-        proxy.record(
-            "http_response",
-            url.as_str(),
-            &bytes,
-            PolicyClassifyDecision::Block,
-            PolicyVerdictCategory::None,
-            None,
-        )?;
-        return Err(io::Error::other("egress response byte bound"));
-    }
+    let (bytes, _held) = match read_body_under_floor(proxy, &mut response, deadline) {
+        Ok(read) => read,
+        Err(error) => {
+            proxy.record(
+                "http_response",
+                url.as_str(),
+                &[],
+                PolicyClassifyDecision::Block,
+                PolicyVerdictCategory::None,
+                None,
+            )?;
+            return Err(error);
+        }
+    };
     // The final URL and exact delivered content, not the first URL or a
     // rewritten summary, are what the policy and receipt name.
     let (decision, category, policy_receipt) = proxy.policy(url.as_str(), &bytes)?;
@@ -283,4 +293,63 @@ fn deliver(
         headers,
         body: bytes.into(),
     })
+}
+
+/// Reads `source` whole under the vault's host byte floor (FIX 7946):
+/// each chunk takes its bytes of the floor before it is kept, and the
+/// permits, growing with the body, are returned with it, so the floor
+/// holds the body until its caller drops them. A full floor is waited
+/// for, backing off, until it frees or `deadline` passes; then the read
+/// refuses with the floor's own typed saturation (`WouldBlock` naming
+/// the byte floor). No byte count refuses a body: its size is measured
+/// on `limits.sandbox_egress_response_bytes`, which asks past its row.
+pub(super) fn read_body_under_floor(
+    proxy: &OpenEgressProxy,
+    source: &mut impl Read,
+    deadline: Instant,
+) -> io::Result<(Vec<u8>, Vec<HostNetPermit>)> {
+    let floor = proxy.host_net_floor();
+    let mut bytes = Vec::new();
+    let mut held = Vec::new();
+    let mut chunk = vec![0_u8; BODY_CHUNK_BYTES];
+    loop {
+        let read = match source.read(&mut chunk) {
+            Ok(0) => break,
+            Ok(read) => read,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(io::Error::other(error)),
+        };
+        held.push(lease_body_bytes(floor, read as u64, deadline)?);
+        bytes
+            .try_reserve(read)
+            .map_err(|error| io::Error::new(io::ErrorKind::OutOfMemory, error))?;
+        bytes.extend_from_slice(&chunk[..read]);
+    }
+    proxy
+        .vault
+        .measure_limit(EngineLimit::SandboxEgressResponseBytes, bytes.len() as u64);
+    Ok((bytes, held))
+}
+
+/// `bytes` of `floor`, waited for while the floor is full until `deadline`.
+fn lease_body_bytes(
+    floor: &dyn HostNetFloor,
+    bytes: u64,
+    deadline: Instant,
+) -> io::Result<HostNetPermit> {
+    let mut wait = FLOOR_WAIT_FIRST;
+    loop {
+        match floor.acquire_bytes(bytes) {
+            Ok(permit) => return Ok(permit),
+            Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                let left = deadline.saturating_duration_since(Instant::now());
+                if left.is_zero() {
+                    return Err(error);
+                }
+                std::thread::sleep(wait.min(left));
+                wait = wait.saturating_mul(2).min(FLOOR_WAIT_MAX);
+            }
+            Err(error) => return Err(error),
+        }
+    }
 }

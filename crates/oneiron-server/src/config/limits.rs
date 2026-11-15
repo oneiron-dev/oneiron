@@ -446,6 +446,7 @@ impl LimitsConfig {
             organ_memory_bytes,
             organ_mesh_object_bytes,
             organ_mesh_staged_bytes,
+            sandbox_egress_response_bytes,
             deadline_jobs_per_caller,
             backup_handoff_pending_backups,
             backup_handoff_pending_bytes,
@@ -735,6 +736,10 @@ impl LimitsConfig {
             (EngineLimit::OrganMemoryBytes, organ_memory_bytes),
             (EngineLimit::OrganMeshObjectBytes, organ_mesh_object_bytes),
             (EngineLimit::OrganMeshStagedBytes, organ_mesh_staged_bytes),
+            (
+                EngineLimit::SandboxEgressResponseBytes,
+                sandbox_egress_response_bytes,
+            ),
             (EngineLimit::DeadlineJobsPerCaller, deadline_jobs_per_caller),
             (
                 EngineLimit::BackupHandoffPendingBackups,

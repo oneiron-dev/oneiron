@@ -4,7 +4,6 @@
 //! forward to one operator-configured upstream (FIX 8061), reached by
 //! nothing but this exact origin. With neither set, no request is taken.
 use super::*;
-use std::io::Read;
 use std::path::{Component, Path};
 
 /// The one upstream a fixture origin forwards to (FIX 8061), as checked by
@@ -125,13 +124,11 @@ pub(super) fn fetch(
                 ));
             }
         }
-        let mut bytes = Vec::new();
-        std::fs::File::open(&path)?
-            .take(proxy.config.max_response_bytes as u64 + 1)
-            .read_to_end(&mut bytes)?;
-        if bytes.len() > proxy.config.max_response_bytes {
-            return Err(io::Error::other("fixture byte bound"));
-        }
+        // The whole file, under the vault's host byte floor before the
+        // request deadline, as an upstream body is read (FIX 7946).
+        let deadline = Instant::now() + proxy.config.request_timeout;
+        let (bytes, _held) =
+            super::http::read_body_under_floor(proxy, &mut std::fs::File::open(&path)?, deadline)?;
         let mime = match path.extension().and_then(|e| e.to_str()) {
             Some("html" | "htm") => "text/html",
             Some("js") => "text/javascript",

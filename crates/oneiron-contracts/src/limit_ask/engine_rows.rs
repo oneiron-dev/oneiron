@@ -153,6 +153,7 @@ impl EngineLimit {
         Self::OrganMemoryBytes,
         Self::OrganMeshObjectBytes,
         Self::OrganMeshStagedBytes,
+        Self::SandboxEgressResponseBytes,
         Self::DeadlineJobsPerCaller,
         Self::BackupHandoffPendingBackups,
         Self::BackupHandoffPendingBytes,
@@ -331,6 +332,7 @@ impl EngineLimit {
             Self::OrganMemoryBytes => "limits.organ_memory_bytes",
             Self::OrganMeshObjectBytes => "limits.organ_mesh_object_bytes",
             Self::OrganMeshStagedBytes => "limits.organ_mesh_staged_bytes",
+            Self::SandboxEgressResponseBytes => "limits.sandbox_egress_response_bytes",
             Self::DeadlineJobsPerCaller => "limits.deadline_jobs_per_caller",
             Self::BackupHandoffPendingBackups => "limits.backup_handoff_pending_backups",
             Self::BackupHandoffPendingBytes => "limits.backup_handoff_pending_bytes",
@@ -559,6 +561,9 @@ impl EngineLimit {
             // The 1 GiB the organ mesh refused one object and one
             // connection's staging past before Rule 5 (FIX 6193).
             Self::OrganMeshObjectBytes | Self::OrganMeshStagedBytes => 1 << 30,
+            // The 32 MiB the sandbox egress refused one body past before
+            // FIX 7946 (EgressConfig's max_response_bytes default).
+            Self::SandboxEgressResponseBytes => 32 << 20,
             // Ten times the fleet's 200 agents, as `limits.task_work` sits.
             Self::DeadlineJobsPerCaller => 2_048,
             // Two days of hourly backups no stage ack has released.

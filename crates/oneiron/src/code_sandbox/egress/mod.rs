@@ -35,6 +35,10 @@ pub struct EgressConfig {
     /// to the address.
     pub raw_endpoints: Vec<RawEndpointGrant>,
     pub request_timeout: Duration,
+    /// The headless browser guest's message bound derives from it (FIX
+    /// 6815). An HTTP or fixture body past it is no longer refused (FIX
+    /// 7946): bodies are read under the host byte floor and measured on
+    /// `limits.sandbox_egress_response_bytes`.
     pub max_response_bytes: usize,
     pub max_redirects: u8,
 }

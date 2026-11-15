@@ -175,6 +175,7 @@ pub(in crate::config) struct LimitsConfigOverride {
     pub(in crate::config) organ_memory_bytes: Option<u64>,
     pub(in crate::config) organ_mesh_object_bytes: Option<u64>,
     pub(in crate::config) organ_mesh_staged_bytes: Option<u64>,
+    pub(in crate::config) sandbox_egress_response_bytes: Option<u64>,
     pub(in crate::config) deadline_jobs_per_caller: Option<u64>,
     pub(in crate::config) backup_handoff_pending_backups: Option<u64>,
     pub(in crate::config) backup_handoff_pending_bytes: Option<u64>,
