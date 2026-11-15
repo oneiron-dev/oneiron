@@ -215,7 +215,7 @@ impl Memory<'_> {
         };
         let pending = pending_compliance_pack_in_txn(&vault.store, &txn)?
             .map(|pack| {
-                let proposal_hash = hash_hex(&compliance_proposal_hash(&pack)?);
+                let proposal_hash = oneiron_hex::encode(&compliance_proposal_hash(&pack)?);
                 Ok::<_, crate::Error>(CompliancePendingProposal {
                     pack,
                     proposal_hash,
@@ -325,7 +325,7 @@ fn new_receipt(
         },
         proposed_version: proposed.pack_version,
         class,
-        proposal_hash: hash_hex(&compliance_proposal_hash(proposed)?),
+        proposal_hash: oneiron_hex::encode(&compliance_proposal_hash(proposed)?),
         actor_ref: memory.actor().to_hex(),
         owner_stamp: None,
         notice: None,
@@ -342,10 +342,6 @@ fn save_receipt(
     let id = EntityId::from_hex(&receipt.receipt_ref)?;
     RECEIPTS.put(&memory.vault().store, txn, id.as_bytes(), &receipt)?;
     Ok(receipt)
-}
-
-fn hash_hex(hash: &[u8; 32]) -> String {
-    hash.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn parse_hash(hash: &str) -> MemoryResult<[u8; 32]> {

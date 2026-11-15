@@ -64,17 +64,6 @@ pub struct AppendToStreamRequest {
     pub delta: String,
 }
 
-impl From<MessageCancelReason> for StreamCancelReason {
-    fn from(reason: MessageCancelReason) -> Self {
-        match reason {
-            MessageCancelReason::Named(MessageCancelKind::UserInterrupted) => Self::UserInterrupted,
-            MessageCancelReason::Named(MessageCancelKind::AgentAborted) => Self::AgentAborted,
-            MessageCancelReason::Named(MessageCancelKind::ExternalSignal) => Self::ExternalSignal,
-            MessageCancelReason::Custom(reason) => Self::Custom(reason.description),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CancelStreamRequest {
