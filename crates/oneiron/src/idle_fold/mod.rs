@@ -19,7 +19,7 @@
 //! is not recorded either.
 
 mod returns;
-mod tables;
+pub(crate) mod tables;
 
 use serde::{Deserialize, Serialize};
 
