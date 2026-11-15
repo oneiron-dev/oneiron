@@ -386,10 +386,10 @@ impl Vault {
         let mut rows = Vec::new();
         for row in self.store.vault_meta.prefix_iter(&txn, SCHEDULE_PREFIX)? {
             let (key, _) = row?;
-            let Some(reader) = WeaveDigestReader::from_schedule_key(key) else {
+            let Some(reader) = WeaveDigestReader::from_schedule_key(&key) else {
                 continue;
             };
-            let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, key)? else {
+            let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, &key)? else {
                 continue;
             };
             if let Ok(mut wire) = serde_json::from_slice::<WireSchedule>(&bytes) {
@@ -416,7 +416,7 @@ impl Vault {
         let mut next: Option<u64> = None;
         for row in self.store.vault_meta.prefix_iter(&txn, SCHEDULE_PREFIX)? {
             let (key, _) = row?;
-            let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, key)? else {
+            let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, &key)? else {
                 continue;
             };
             // An undecodable row must not arm an instantly repeating deadline.
@@ -454,8 +454,8 @@ impl Vault {
             let mut due = Vec::new();
             for row in self.store.vault_meta.prefix_iter(&txn, SCHEDULE_PREFIX)? {
                 let (key, _) = row?;
-                if let Some(reader) = WeaveDigestReader::from_schedule_key(key)
-                    && let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, key)?
+                if let Some(reader) = WeaveDigestReader::from_schedule_key(&key)
+                    && let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, &key)?
                     && let Ok(wire) = serde_json::from_slice::<WireSchedule>(&bytes)
                     && wire.serve_at() <= now
                 {
@@ -755,7 +755,7 @@ fn previous_weave_lens_in_txn(
         if at >= scheduled_for {
             break;
         }
-        let mut wire: WireDigest = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
         if let Some(lens) = wire.lens.take() {
             previous = Some((at, wire.into_report()?.value, lens));
         }

@@ -69,7 +69,7 @@ pub(super) fn due_row_in_txn(
     Ok(store
         .vault_meta
         .get(txn, key)?
-        .and_then(|bytes| serde_json::from_slice::<WireDue>(bytes).ok()))
+        .and_then(|bytes| serde_json::from_slice::<WireDue>(&bytes).ok()))
 }
 
 /// Writes the due row at `key`.
