@@ -240,6 +240,7 @@ fn empty_plan(
         cases: Vec::new(),
         cuts: Vec::new(),
         cohorts: Vec::new(),
+        repair_seeds: Vec::new(),
     };
     (plan, inventory)
 }
