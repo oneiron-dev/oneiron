@@ -14,13 +14,22 @@
 //! held), and twice after the byte is put back (held again; both read whole,
 //! as the file changed under a minute before). It prints each time and the
 //! artifact's size: the measurement main and the fix are compared by.
+//!
+//! A second test changes a byte through a page already mapped writable,
+//! which moves no time: device, inode, size, mtime and ctime all stay (Astra
+//! review of #8317). The held read before that change must not seed the
+//! memo (the file changed under a minute before it), so the held read after
+//! it reads the changed bytes whole and refuses them. It prints whether the
+//! identity really stayed (`FIX6729-KEPT`).
+//!
 //! Markers are read only on unix; the memory keystore needs `test-support`.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test backup_marker_held_memo`
 #![cfg(all(unix, feature = "test-support"))]
 
 use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::Path;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -30,6 +39,9 @@ use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 
 const LABEL: &str = "heldmemo";
 const BODIES: u64 = 1_024;
+/// The second test's label and vault size: small, as it times nothing.
+const KEPT_LABEL: &str = "keptidentity";
+const KEPT_BODIES: u64 = 64;
 const BODY_BYTES: usize = 32 * 1024;
 
 /// Text no compressor shrinks much: letters and digits from a xorshift.
@@ -68,12 +80,35 @@ fn flip_byte(path: &Path, at: u64) {
     file.sync_all().expect("sync");
 }
 
-#[test]
-fn a_recorded_backup_is_held_without_a_whole_read_until_it_changes() {
+/// One backup landed under `label` with its marker; the directories live as
+/// long as it does.
+struct Landed {
+    _vault_dir: tempfile::TempDir,
+    backups: tempfile::TempDir,
+    marker: BackupMarker,
+    path: PathBuf,
+    size: u64,
+}
+
+/// The file's identity as the memo keys it.
+fn identity_of(path: &Path) -> (u64, u64, u64, i64, i64, i64, i64) {
+    let metadata = std::fs::metadata(path).expect("artifact metadata");
+    (
+        metadata.dev(),
+        metadata.ino(),
+        metadata.size(),
+        metadata.mtime(),
+        metadata.mtime_nsec(),
+        metadata.ctime(),
+        metadata.ctime_nsec(),
+    )
+}
+
+fn land(label: &str, bodies: u64) -> Landed {
     let vault_dir = tempfile::tempdir().expect("tempdir");
     let vault = Vault::open(vault_dir.path(), VaultConfig::device()).expect("open vault");
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::new()));
-    for seed in 0..BODIES {
+    for seed in 0..bodies {
         vault
             .put_entity(
                 &EntityId::now(),
@@ -92,14 +127,32 @@ fn a_recorded_backup_is_held_without_a_whole_read_until_it_changes() {
         .snapshot_backup(&partial, vault.now_recorded_at(), None, None)
         .expect("a backup");
     let id8 = receipt.image_digest.get(..8).expect("a hex digest");
-    let file = format!("{LABEL}-1-20261115T201500.000Z-{id8}.oneiron-backup");
+    let file = format!("{label}-1-20261115T201500.000Z-{id8}.oneiron-backup");
     let path = backups.path().join(&file);
     std::fs::rename(&partial, &path).expect("the artifact lands");
     receipt
-        .persist_marker(backups.path(), LABEL, &file)
+        .persist_marker(backups.path(), label, &file)
         .expect("the marker lands");
-    let marker = backup_marker(backups.path(), LABEL).expect("the marker names the backup");
+    let marker = backup_marker(backups.path(), label).expect("the marker names the backup");
     let size = std::fs::metadata(&path).expect("artifact metadata").len();
+    Landed {
+        _vault_dir: vault_dir,
+        backups,
+        marker,
+        path,
+        size,
+    }
+}
+
+#[test]
+fn a_recorded_backup_is_held_without_a_whole_read_until_it_changes() {
+    let Landed {
+        backups,
+        marker,
+        path,
+        size,
+        ..
+    } = land(LABEL, BODIES);
     // Past the memo's settle time since the artifact's rename.
     std::thread::sleep(Duration::from_secs(61));
 
@@ -124,5 +177,40 @@ fn a_recorded_backup_is_held_without_a_whole_read_until_it_changes() {
         "FIX6729-HELD artifact_mib={mebibytes:.1} landed_first_ms={first_ms:.2} \
          landed_second_ms={second_ms:.2} rewritten_ms={changed_ms:.2} \
          restored_first_ms={restored_ms:.2} restored_second_ms={again_ms:.2}"
+    );
+}
+
+#[test]
+fn a_change_that_keeps_the_identity_is_not_held() {
+    let landed = land(KEPT_LABEL, KEPT_BODIES);
+    let dir = landed.backups.path();
+    let at = usize::try_from(landed.size / 2).expect("an offset");
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&landed.path)
+        .expect("the artifact opens for writing");
+    // SAFETY: the test owns the artifact; nothing truncates it while mapped.
+    let mut map = unsafe { memmap2::MmapMut::map_mut(&file) }.expect("a shared writable map");
+    let byte = map.as_mut_ptr().wrapping_add(at);
+    // SAFETY: `at` is inside the mapping, which lives to the end of the test.
+    let original = unsafe { std::ptr::read_volatile(byte) };
+    // The first store faults the page writable and moves the file's times.
+    // SAFETY: as above.
+    unsafe { std::ptr::write_volatile(byte, original) };
+    let before = identity_of(&landed.path);
+    assert!(landed.marker.held(dir), "the landed backup is held");
+    // A later store through the writable page moves no time.
+    // SAFETY: as above.
+    unsafe { std::ptr::write_volatile(byte, !original) };
+    let after = identity_of(&landed.path);
+    let changed = landed.marker.held(dir);
+    // SAFETY: as above.
+    unsafe { std::ptr::write_volatile(byte, original) };
+    drop(map);
+    println!("FIX6729-KEPT identity_unchanged={}", before == after);
+    assert!(
+        !changed,
+        "a backup changed through a writable mapping is not held"
     );
 }
