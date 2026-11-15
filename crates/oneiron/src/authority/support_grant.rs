@@ -143,7 +143,10 @@ impl Vault {
         issuer: &HostSlipIssuer,
         request: SupportGrantRequest,
     ) -> Result<SupportGrantMinted> {
-        let ttl = request.ttl_secs.unwrap_or(SUPPORT_GRANT_DEFAULT_TTL_SECS);
+        // SEEDED FAULT G1 (red proof only): a requested lifetime mints the longest one.
+        let ttl = request
+            .ttl_secs
+            .map_or(SUPPORT_GRANT_DEFAULT_TTL_SECS, |_| SUPPORT_GRANT_MAX_TTL_SECS);
         if ttl == 0 || ttl > SUPPORT_GRANT_MAX_TTL_SECS {
             return Err(refused(
                 "a support grant lasts between one second and SUPPORT_GRANT_MAX_TTL_SECS",
@@ -290,7 +293,8 @@ impl Vault {
                 decision_id: None,
             });
         }
-        self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id })?;
+        // SEEDED FAULT G4 (red proof only): the signed revoke is never logged.
+        let _ = AuthorityOp::SlipRevoke { slip_id };
         let revoked_at = crate::ports::observe_clock_floor_in_txn(&self.store, &mut txn)?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(REVOKE_DIGEST_CONTEXT);
@@ -367,14 +371,8 @@ impl Vault {
                 "the support holder is not a live person of this vault",
             ));
         }
-        if holder == approver
-            || crate::vault::embedded_owner_actor_id().ok() == Some(holder)
-            || crate::policy_model::is_live_vault_owner_in_txn(self, txn, &holder)?
-        {
-            return Err(refused(
-                "an owner of this vault is never its support holder",
-            ));
-        }
+        // SEEDED FAULT G6 (red proof only): an owner may be the support holder.
+        let _ = approver;
         Ok(())
     }
 }
@@ -408,8 +406,14 @@ fn support_slip_scope(scope: Scope) -> Result<Scope> {
         ScopeAxis::Some(verbs) => verbs,
     };
     verbs.insert("read".to_owned());
+    // SEEDED FAULT G2 (red proof only): the slip reaches one more world.
+    let mut worlds = scope.worlds;
+    if let ScopeAxis::Some(named) = &mut worlds {
+        named.insert(crate::federation::ScopeId(EntityId::now()));
+    }
     Ok(Scope {
         verbs: ScopeAxis::Some(verbs),
+        worlds,
         ..scope
     })
 }

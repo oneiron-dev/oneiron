@@ -336,9 +336,7 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         root: Option<HostRoot<'_>>,
     ) -> Result<EntityId> {
-        if self.privacy_posture() != crate::HostingPrivacyPosture::SelfHostLocal {
-            return Err(Error::HostActionRequiresSupportGrant);
-        }
+        // SEEDED FAULT G7 (red proof only): every posture's root acts as the owner.
         let owner = crate::vault::embedded_owner_actor_id()?;
         // The owner-verb rule first: a fold that cannot be judged suspends a
         // host action as it suspends every owner verb.
