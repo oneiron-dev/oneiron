@@ -91,6 +91,7 @@ pub mod park_typed_wait;
 pub mod payment_credential;
 #[cfg(feature = "sync")]
 pub mod peer_author_redaction;
+pub mod pending_write_tray;
 pub mod provenance_body_checkpoint;
 pub mod re_root_stale_sweep;
 pub mod repo_base_manifest;
