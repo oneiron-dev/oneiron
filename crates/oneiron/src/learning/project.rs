@@ -29,7 +29,8 @@ use super::estimate::{
 use super::evidence::{Anchor, CELL, CellRow, EvidenceRow, Observation, evidence_in_txn};
 use super::frozen::{FrozenFold, accumulate};
 use super::judge::{JudgeConversion, conversions_in_txn};
-use super::prior::stored_prior_for_cell_in_txn;
+use super::prior::{catalog_prior, stored_prior_for_cell_in_txn};
+use super::read::default_form;
 
 /// Seconds in a day, for the window setting's unit.
 const DAY_SECS: f64 = 86_400.0;
@@ -171,6 +172,55 @@ fn window_of_days(days: f64) -> Window {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let half_life = (days * DAY_SECS).round().max(1.0) as u64;
     Window { half_life }
+}
+
+/// `cell`'s own evidence folded at `now` over [`catalog_prior`], at the
+/// catalog's window, each judge's score as the judge gave it. Nothing a row
+/// outside the cell holds enters it: no stored, borrowed or captured prior,
+/// no owner's seed, no judge conversion fitted on other cells' overlap, and
+/// no window or shipped weight a vault row tuned. A grant narrowed to some
+/// projects reads a cell of theirs so (UNBUILT-08). Writes nothing.
+///
+/// # Errors
+///
+/// Storage errors.
+pub(crate) fn fold_cell_at_catalog_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    cell: &LearningCell,
+    now: u64,
+) -> Result<Estimate> {
+    let window = catalog_window();
+    let digest = cell.digest();
+    let Some(row) = CELL.get(&vault.store, txn, &digest)? else {
+        let form = default_form(cell);
+        let of = cell.predicate.default_of(form).to_owned();
+        return Ok(Estimate::from_prior(
+            catalog_prior(cell, form, &of),
+            of,
+            window,
+        ));
+    };
+    let prior = catalog_prior(cell, row.form, &row.of);
+    let folded = fold_evidence_in_txn(
+        vault,
+        txn,
+        &row,
+        &digest,
+        window,
+        now,
+        &BTreeMap::new(),
+        &mut None,
+    )?;
+    Ok(Estimate {
+        value: fold_value(&prior, &folded.tally),
+        runs: folded.runs,
+        prior,
+        of: row.of.clone(),
+        labels: folded.labels,
+        window,
+        ver: ESTIMATOR_VERSION,
+    })
 }
 
 /// Folds a cell's evidence into its estimate without writing anything.
