@@ -43,8 +43,9 @@ A stopped vault needs `serve --config <config>`; the MCP bridge does not start i
 These rules outrank every other process line in this repo.
 
 - **Merge bar.** A change merges as soon as `cargo check --workspace --all-features` passes on its
-  head. Nothing else blocks a merge. Add `--locked`, so a stale manifest fails instead of
-  rewriting `Cargo.lock`.
+  head. Nothing else blocks a merge, except one count: the pre-flight also runs
+  `scripts/ratchet/raw_hasher_starts.py --check`, which fails a change that starts a hash by hand
+  (see "Ratchets"). Add `--locked`, so a stale manifest fails instead of rewriting `Cargo.lock`.
 - **No tests.** Do not write, compile or run tests. The existing tests stay in the repo, untouched.
 - **Stored data.** A row a vault already holds never changes meaning, and never stops decoding,
   under an unchanged ABI stamp (`STORAGE_ABI_VERSION`). A change takes one of three paths: keep
@@ -136,12 +137,18 @@ unchanged.
 
 ## Ratchets
 
-`scripts/ratchet/check.sh` counts six metrics over non-test code against
+`scripts/ratchet/check.sh` counts seven metrics over non-test code against
 `scripts/ratchet/baseline.json`: files at or over 800 lines, `#[allow(` attributes, print macros,
-process-global mutable statics, the keyspace census and raw core writes. It skips `tests/`
-directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`. `scripts/ratchet/root-surface-check.sh`
-pins the `oneiron` crate root to the names in `scripts/ratchet/root-surface.txt`. Both run in
-`ratchet.yml` after a push to `main`; neither blocks a merge.
+process-global mutable statics, the keyspace census, raw core writes and hand-started hashes
+(`raw_hasher_starts`). It skips `tests/` directories, `tests.rs`, `*_tests.rs` and `tests_*.rs`.
+`scripts/ratchet/root-surface-check.sh` pins the `oneiron` crate root to the names in
+`scripts/ratchet/root-surface.txt`. Both run in `ratchet.yml` after a push to `main`; neither
+blocks a merge, with one exception (lead, 2026-11-15): the pipeline pre-flight runs
+`scripts/ratchet/raw_hasher_starts.py --check` on each change merged into `main` and fails it when
+the count of `blake3::` and `Sha256` starts outside `scripts/ratchet/raw_hasher_allowlist.txt`
+rises above `main`'s baseline. A new hash goes through `oneiron_contracts::fingerprint`: a purpose
+from the registry in `crates/oneiron-fingerprint/src/purposes/`, or `ContentHash` for the bytes of
+a body. A path joins the allowlist only with its reason on the same line.
 
 ## Vendored and forked code
 

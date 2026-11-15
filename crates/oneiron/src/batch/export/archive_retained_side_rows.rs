@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::io::{Read, Seek};
 
 use heed::{RoTxn, RwTxn};
+use oneiron_records::batch::export::archive_side_tables::byte_values;
 use serde::{Deserialize, Serialize};
 
 use super::archive_index::{IndexedArchive, Loc, Tag};
@@ -268,7 +269,7 @@ fn payload_withholds_credential(value: &rmpv::Value) -> bool {
     use rmpv::Value as Mp;
     match value {
         Mp::Binary(bytes) | Mp::Ext(_, bytes) => opaque_withholds_credential(bytes),
-        Mp::Array(items) => match super::archive_side_tables::byte_values(items) {
+        Mp::Array(items) => match byte_values(items) {
             Some(bytes) => opaque_withholds_credential(&bytes),
             None => items.iter().any(payload_withholds_credential),
         },

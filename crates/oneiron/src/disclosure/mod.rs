@@ -14,6 +14,7 @@
 mod attendee_ask;
 mod clearance_use;
 mod disclosable_set;
+mod home;
 mod import_audience;
 mod model_channel;
 mod retained_copies;
@@ -30,6 +31,7 @@ pub use self::attendee_ask::{
 };
 pub(crate) use self::disclosable_set::discloses_raw;
 pub use self::disclosable_set::{DisclosableSet, disclosable_set};
+pub use self::home::{ConversationHome, HomeClearanceRequest, HomeClearanceSet, HomeClearanceView};
 pub use self::import_audience::import_audience_rule_ref;
 pub use self::model_channel::{
     DisclosureBand, DisclosureCeilingRequest, DisclosureCeilingSet, DisclosureCeilingView,
