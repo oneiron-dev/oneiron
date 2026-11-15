@@ -38,3 +38,47 @@ pub fn configured_deposit_terms(
     crate::booking::config::load_event_type_config(vault, page_ref, key)
         .map(|config| config.deposit)
 }
+
+/// The provider idempotency domain of one hold's deposit checkout.
+const CHECKOUT_IDEMPOTENCY_DOMAIN: &[u8] = b"oneiron.booking.deposit_checkout.v1\0";
+
+/// The provider (Stripe) idempotency key of one hold's deposit checkout: the
+/// page, the session, the event type, the hold's own replay key and the terms
+/// the visitor accepted, each as its length (u64 little-endian) and its bytes,
+/// under the checkout domain. A retried hold finds the same payment; a new
+/// hold of the session, or a retry after the terms changed, opens a new one,
+/// and an old one is voided when its window ends.
+///
+/// The digest is the booking lifecycle's domain-tagged one, so a server opens
+/// no hasher of its own.
+#[must_use]
+pub fn deposit_checkout_idempotency_key(
+    page_ref: crate::EntityId,
+    session_ref: &str,
+    event_type: &crate::booking::EventTypeKey,
+    hold_key: &str,
+    terms: &DepositTerms,
+) -> String {
+    let amount = terms.amount_minor.to_le_bytes();
+    let notice = terms.refund.full_refund_notice_secs.to_le_bytes();
+    let late = [terms.refund.late_cancel_refund_percent];
+    let mut material = Vec::new();
+    for part in [
+        page_ref.as_bytes().as_slice(),
+        session_ref.as_bytes(),
+        event_type.0.as_bytes(),
+        hold_key.as_bytes(),
+        amount.as_slice(),
+        terms.currency.as_bytes(),
+        notice.as_slice(),
+        late.as_slice(),
+    ] {
+        material.extend_from_slice(&(part.len() as u64).to_le_bytes());
+        material.extend_from_slice(part);
+    }
+    let digest = super::lifecycle::digest_with(CHECKOUT_IDEMPOTENCY_DOMAIN, &material);
+    format!(
+        "oneiron-deposit-checkout-{}",
+        &super::lifecycle::hex_lower(&digest)[..48]
+    )
+}

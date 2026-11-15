@@ -18,14 +18,11 @@ use oneiron::booking::agent_api::BookingDepositCheckout;
 use oneiron::booking::lifecycle::{DepositCheckoutStart, begin_deposit_checkout};
 use oneiron::booking::{
     BookingError, DepositTerms, EventTypeKey, OpaqueCheckoutLeaseToken, SessionKey,
-    configured_deposit_terms,
+    configured_deposit_terms, deposit_checkout_idempotency_key,
 };
 use oneiron::{EntityId, Vault};
 
 use super::stripe::{StripeCallError, StripeClient, publishable_key};
-
-/// The Stripe idempotency domain of one hold's checkout.
-const CHECKOUT_IDEMPOTENCY_DOMAIN: &[u8] = b"oneiron.booking.deposit_checkout.v1\0";
 
 /// A checkout the hold opened: the lease it presents, and the visitor's
 /// part.
@@ -47,42 +44,6 @@ pub(crate) enum CheckoutFailure {
     TermsChanged,
     /// Stripe is not set up on this server, or did not answer.
     Stripe(StripeCallError),
-}
-
-/// The Stripe idempotency key of one hold's checkout: the page, the
-/// session, the event type, the hold's own replay key and the terms the
-/// visitor accepted. A retried hold finds the same PaymentIntent; a new hold
-/// of the session, or a retry after the terms changed, opens a new one, and
-/// an old one is voided when its window ends.
-fn checkout_idempotency_key(
-    page_ref: EntityId,
-    session_ref: &str,
-    event_type: &EventTypeKey,
-    hold_key: &str,
-    terms: &DepositTerms,
-) -> String {
-    let amount = terms.amount_minor.to_le_bytes();
-    let notice = terms.refund.full_refund_notice_secs.to_le_bytes();
-    let late = [terms.refund.late_cancel_refund_percent];
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(CHECKOUT_IDEMPOTENCY_DOMAIN);
-    for part in [
-        page_ref.as_bytes().as_slice(),
-        session_ref.as_bytes(),
-        event_type.0.as_bytes(),
-        hold_key.as_bytes(),
-        amount.as_slice(),
-        terms.currency.as_bytes(),
-        notice.as_slice(),
-        late.as_slice(),
-    ] {
-        hasher.update(&(part.len() as u64).to_le_bytes());
-        hasher.update(part);
-    }
-    format!(
-        "oneiron-deposit-checkout-{}",
-        &hasher.finalize().to_hex()[..48]
-    )
 }
 
 /// The hold a checkout is opened for.
@@ -133,7 +94,7 @@ pub(crate) fn open_hold_checkout(
     let payment = client
         .create_deposit_payment(
             &terms,
-            &checkout_idempotency_key(page_ref, session_ref, event_type, hold_key, &terms),
+            &deposit_checkout_idempotency_key(page_ref, session_ref, event_type, hold_key, &terms),
         )
         .map_err(CheckoutFailure::Stripe)?;
     let lease = begin_deposit_checkout(
