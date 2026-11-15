@@ -210,6 +210,16 @@ fn owner_switch_routes_foreign_runs_to_the_named_vendor() {
         f.select(SandboxGuestTier::Untrusted),
         "backend vendor:daytona"
     );
+    // A run's gate knows each vendor's backend by its name, and none of ours.
+    for vendor in SandboxVendor::ALL {
+        assert_eq!(
+            SandboxVendor::from_backend_name(vendor.backend_name()),
+            Some(vendor)
+        );
+    }
+    for ours in ["firecracker", "landlock-container", "dev-process-isolation"] {
+        assert_eq!(SandboxVendor::from_backend_name(ours), None, "{ours}");
+    }
     assert_eq!(
         f.select(SandboxGuestTier::FirstPartyDreamer),
         "in-process",
