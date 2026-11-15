@@ -23,6 +23,11 @@
 //! value is no digest of a row: the act that switches a hosted vault back to
 //! web sign-in carries [`web_sign_in_value`] over the owner keys it speaks
 //! for, and any other value asks for an owner key again.
+//!
+//! A second is read by the fold the same way: the owner's choice "Let my
+//! passkey remove devices and keys" ([`PolicySetting::PasskeyFullOwner`],
+//! Engine ruling WEBPASSKEY-OPTIN-HOME = A, 16 Nov). Its value is
+//! [`passkey_full_owner_value`] of on or off, never a row's digest.
 
 use std::collections::BTreeSet;
 
@@ -82,6 +87,18 @@ pub fn web_sign_in_value(owner_keys: &BTreeSet<AuthorityKey>) -> [u8; 32] {
     *hasher.finalize().as_bytes()
 }
 
+/// The domain of [`passkey_full_owner_value`].
+pub const PASSKEY_FULL_OWNER_VALUE_CONTEXT: &str = "oneiron passkey full owner v1";
+
+/// The value of an act of the owner's choice "Let my passkey remove devices
+/// and keys" ([`PolicySetting::PasskeyFullOwner`]): BLAKE3 under
+/// [`PASSKEY_FULL_OWNER_VALUE_CONTEXT`] over one byte, 1 for on and 0 for
+/// off. Only the value of on turns it on; any other value is off.
+#[must_use]
+pub fn passkey_full_owner_value(on: bool) -> [u8; 32] {
+    blake3::derive_key(PASSKEY_FULL_OWNER_VALUE_CONTEXT, &[u8::from(on)])
+}
+
 /// The target an owner act names when it changes no row of its own: a
 /// vault-wide setting, by its name, or a whole-vault export
 /// (`vault.export`). Reserved and derived from the name (BLAKE3 under a
@@ -136,6 +153,17 @@ pub enum PolicySetting {
     /// switches the vault back, and any other value asks for an owner key
     /// again.
     WebSignIn,
+    /// The owner's choice "Let my passkey remove devices and keys" (Engine
+    /// ruling WEBPASSKEY-OPTIN-HOME = A, 16 Nov; choice id
+    /// `passkey.full_owner`), off by default. While it is on, a passkey and
+    /// every key only a passkey vouched for act as full owner keys: the
+    /// passkey limits (rulings WEBPASSKEY-BLIND-SIGNATURE = B,
+    /// WEBPASSKEY-PASSKEY-OWN-REVOKE = B, WEBPASSKEY-MACHINE-ANSWER = A) are
+    /// lifted. The fold reads it and no install keeps a row of it: the value
+    /// [`passkey_full_owner_value`] of on turns it on, and only with an owner
+    /// key's proof by a key the passkey limits do not reach; any other value
+    /// turns it off.
+    PasskeyFullOwner,
 }
 
 impl PolicySetting {
@@ -154,6 +182,7 @@ impl PolicySetting {
             Self::UndoSend => "settings.undo_send",
             Self::AgentWorldAccess => "settings.agent_world_access",
             Self::WebSignIn => "settings.web_sign_in",
+            Self::PasskeyFullOwner => "passkey.full_owner",
         }
     }
 
@@ -171,6 +200,7 @@ impl PolicySetting {
             Self::UndoSend => "undo_send",
             Self::AgentWorldAccess => "agent_world_access",
             Self::WebSignIn => "web_sign_in",
+            Self::PasskeyFullOwner => "passkey_full_owner",
         }
     }
 
@@ -188,6 +218,7 @@ impl PolicySetting {
             "undo_send" => Self::UndoSend,
             "agent_world_access" => Self::AgentWorldAccess,
             "web_sign_in" => Self::WebSignIn,
+            "passkey_full_owner" => Self::PasskeyFullOwner,
             _ => return None,
         })
     }
@@ -204,7 +235,8 @@ impl PolicySetting {
             | Self::DefaultFacet
             | Self::UndoSend
             | Self::AgentWorldAccess
-            | Self::WebSignIn => OwnerActKind::PolicySetting,
+            | Self::WebSignIn
+            | Self::PasskeyFullOwner => OwnerActKind::PolicySetting,
             Self::FreeTimePolicy => OwnerActKind::FreeTimePolicy,
         }
     }

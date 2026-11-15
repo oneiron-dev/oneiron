@@ -97,6 +97,31 @@ where
     vault.enrol_owner_key_on_parents_for_test(authority, input, parents, predecessor, sign)
 }
 
+/// One act of the owner's choice "Let my passkey remove devices and keys"
+/// (choice id `passkey.full_owner`; Engine ruling WEBPASSKEY-OPTIN-HOME =
+/// A), turning it `on` or off, carried by this install, with `proof`'s key
+/// as the owner key's proof when named (its signer gets the authority
+/// transcript): at the vault's main-log heads, or on `fork`, parents that
+/// carry no act of the choice. True when the fold counted it; false when it
+/// waits for an owner key's proof or is invalid.
+///
+/// # Errors
+///
+/// An agent's act, an install that cannot carry it, an owner proof that no
+/// longer holds, or the store's refusal of the row.
+pub fn set_passkey_full_owner<S>(
+    vault: &Vault,
+    authority: &ActAuthority,
+    on: bool,
+    proof: Option<(AuthorityKey, S)>,
+    fork: Option<Vec<AuthorityEntryHash>>,
+) -> Result<bool>
+where
+    S: Fn(&[u8]) -> Vec<u8> + Send + Sync,
+{
+    vault.set_passkey_full_owner_for_test(authority, on, proof, fork)
+}
+
 /// The vault's main-log heads now, the parents a row appended now names.
 ///
 /// # Errors

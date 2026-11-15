@@ -35,6 +35,16 @@
 //! A passkey that only another passkey vouched for has its own confirmation
 //! door (F5).
 //!
+//! The owner's choice "Let my passkey remove devices and keys" (choice id
+//! `passkey.full_owner`; Engine ruling WEBPASSKEY-OPTIN-HOME = A) lifts
+//! every one of these limits while it is on, for the passkey and for every
+//! key only a passkey vouched for. Only an owner key's proof by a key the
+//! limits do not reach turns it on, and turning it off brings the limits
+//! back, also for each key a limited key vouched for or rotated to while it
+//! was on. It reads at each row's parents: a row on a sibling branch of the
+//! choice keeps the limits, and an off beside an on that did not see it
+//! reads off.
+//!
 //! The passkey is a software P-256 key here; each assertion is built as a
 //! browser's `navigator.credentials.get` returns it (authenticator data,
 //! client data JSON, DER signature).
@@ -60,7 +70,7 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::test_doors::passkey_vouch_limits::{
     SignedRow, append_signed_rows, append_signed_rows_on, enrol_owner_key_on, main_log_heads,
-    revoke_owner_key_signed_by,
+    revoke_owner_key_signed_by, set_passkey_full_owner,
 };
 use oneiron::{HostingPrivacyPosture, Vault, VaultConfig};
 use p256::ecdsa::signature::Signer as _;
@@ -1142,4 +1152,334 @@ fn a_device_key_confirms_a_passkey_another_passkey_vouched_for() {
         hosted.live_owner_key(&ed_key(&further)),
         "the further key is enrolled"
     );
+}
+
+// The owner's choice "Let my passkey remove devices and keys" (choice id
+// `passkey.full_owner`; Engine ruling WEBPASSKEY-OPTIN-HOME = A).
+
+/// A further key, which a key only the passkey vouched for vouches for while
+/// the choice is on.
+fn further() -> ed25519_dalek::SigningKey {
+    ed25519_dalek::SigningKey::from_bytes(&[0x5D; 32])
+}
+
+/// Signs `transcript` as `key`: the passkey's assertion, or one of the
+/// Ed25519 keys this file holds.
+fn proves_as(key: &AuthorityKey, transcript: &[u8]) -> Vec<u8> {
+    if *key == passkey_roster_key() {
+        passkey_signs(transcript, FLAGS_PRESENT_VERIFIED)
+    } else {
+        signs_as(key, transcript)
+    }
+}
+
+/// The choice turned `on` or off at the main-log heads, carried by this
+/// install and proved by `key`; true when the fold counted it.
+fn full_owner_proved_by(hosted: &HostedVault, on: bool, key: &AuthorityKey) -> bool {
+    let signer = key.clone();
+    set_passkey_full_owner(
+        &hosted.vault,
+        &hosted.owner(),
+        on,
+        Some((key.clone(), move |transcript: &[u8]| {
+            proves_as(&signer, transcript)
+        })),
+        None,
+    )
+    .unwrap_or(false)
+}
+
+/// Whether the fold reads the choice on.
+fn full_owner_reads_on(hosted: &HostedVault) -> bool {
+    hosted
+        .vault
+        .authority_fold()
+        .expect("authority fold")
+        .passkey_full_owner()
+}
+
+/// `predecessor` vouches for [`further`] through the owner key enrollment
+/// door; true when the fold counted it.
+fn vouches_for_further(
+    hosted: &HostedVault,
+    machine: oneiron::EntityId,
+    predecessor: &ed25519_dalek::SigningKey,
+) -> bool {
+    hosted
+        .vault
+        .enrol_owner_signing_key_as(
+            &hosted.owner(),
+            keyed_enrollment(hosted, machine, &further()),
+            ed_key(predecessor),
+            |transcript| Ok(predecessor.sign(transcript).to_bytes().to_vec()),
+        )
+        .is_ok()
+}
+
+#[test]
+fn with_full_owner_on_a_key_only_a_passkey_vouched_for_fences_a_device_key() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    assert!(full_owner_reads_on(&hosted), "guard: the fold reads it on");
+    assert!(
+        host_key_revokes_device_key(&hosted),
+        "with the choice on, the passkey-vouched key revokes another owner key"
+    );
+    assert!(
+        !hosted.live_owner_key(&ed_key(&owner_device())),
+        "its revoke counted"
+    );
+}
+
+#[test]
+fn with_full_owner_on_the_passkey_revokes_another_owner_key() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    assert!(
+        revoke_owner_key_signed_by(
+            &hosted.vault,
+            passkey_roster_key(),
+            ed_key(&owner_device()),
+            |transcript| passkey_signs(transcript, FLAGS_PRESENT_VERIFIED),
+        )
+        .unwrap_or(false),
+        "with the choice on, the passkey's own revoke of another owner key counts"
+    );
+    assert!(
+        !hosted.live_owner_key(&ed_key(&owner_device())),
+        "the device key is revoked"
+    );
+}
+
+/// OPUS-SECREAD-A N1's bar is lifted with the others (the ruling's
+/// sub-point).
+#[test]
+fn with_full_owner_on_a_key_only_a_passkey_vouched_for_answers_a_machine_as_the_owners() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    assert!(
+        answers_fresh_machine(
+            &hosted,
+            &host_held(),
+            MachineRole::Owned(MachineOwnership::Yours)
+        ),
+        "with the choice on, the passkey-vouched key's machine answer counts"
+    );
+}
+
+/// The passkey's own assertion is no owner key's proof, and a key only the
+/// passkey vouched for is one the limits reach: neither turns the choice
+/// on, so a mislabelled prompt cannot lift the limits it set.
+#[test]
+fn full_owner_proved_by_the_passkey_or_a_key_only_it_vouched_for_turns_nothing_on() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        !full_owner_proved_by(&hosted, true, &passkey_roster_key()),
+        "the passkey alone turns nothing on"
+    );
+    assert!(
+        !full_owner_proved_by(&hosted, true, &ed_key(&host_held())),
+        "a key only the passkey vouched for turns nothing on"
+    );
+    assert!(!full_owner_reads_on(&hosted), "the choice stays off");
+    assert!(!host_key_revokes_device_key(&hosted), "the limits stand");
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "the owner's device key still turns it on"
+    );
+}
+
+/// Turning the choice off is any owner act, a limited key's included, and
+/// it brings back the limits of the passkey-vouched key and of the key that
+/// key vouched for while the choice was on.
+#[test]
+fn full_owner_off_brings_back_the_limits_of_every_key_a_passkey_vouched_for() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    assert!(
+        vouches_for_further(&hosted, machine, &host_held()),
+        "with the choice on, the passkey-vouched key vouches for a further key"
+    );
+    assert!(
+        full_owner_proved_by(&hosted, false, &ed_key(&host_held())),
+        "turning the choice off counts with any owner key's proof"
+    );
+    assert!(!full_owner_reads_on(&hosted), "the choice reads off");
+    assert!(
+        !host_key_revokes_device_key(&hosted),
+        "the passkey-vouched key's limits are back"
+    );
+    assert!(
+        !revoke_owner_key_signed_by(
+            &hosted.vault,
+            ed_key(&further()),
+            ed_key(&owner_device()),
+            |transcript| further().sign(transcript).to_bytes().to_vec(),
+        )
+        .unwrap_or(false),
+        "so are the limits of the key it vouched for while the choice was on"
+    );
+    assert!(
+        hosted.live_owner_key(&ed_key(&owner_device())),
+        "the owner's device key stands"
+    );
+}
+
+/// The choice reads at each row's parents: a row on a sibling branch of the
+/// choice's act did not see it and keeps the limits; a row that saw it acts
+/// in full.
+#[test]
+fn full_owner_on_lifts_nothing_for_a_row_on_a_sibling_branch() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    let fork = main_log_heads(&hosted.vault).expect("the heads before the fork");
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    let counted = append_signed_rows_on(
+        &hosted.vault,
+        fork,
+        vec![SignedRow {
+            op: AuthorityOp::RevokeDevice {
+                revoked_key: ed_key(&owner_device()),
+            },
+            signer: ed_key(&host_held()),
+            cosigners: Vec::new(),
+        }],
+        signs_as,
+    )
+    .unwrap_or_default();
+    assert!(
+        !counted.first().copied().unwrap_or(false),
+        "a row that did not see the choice keeps the limits"
+    );
+    assert!(
+        hosted.live_owner_key(&ed_key(&owner_device())),
+        "the owner's device key stands"
+    );
+    assert!(
+        vouches_for_further(&hosted, machine, &host_held()),
+        "a row that saw the choice is not limited"
+    );
+}
+
+/// Two acts of the choice that did not see each other, on and off, read
+/// off where the fold merges them.
+#[test]
+fn a_sibling_off_beside_an_on_reads_off() {
+    let hosted = HostedVault::open();
+    let machine = passkey_vouched_host_key(&hosted);
+    let fork = main_log_heads(&hosted.vault).expect("the heads before the fork");
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    assert!(
+        vouches_for_further(&hosted, machine, &host_held()),
+        "with the choice on alone, the passkey-vouched key vouches for a further key"
+    );
+    assert!(
+        set_passkey_full_owner(
+            &hosted.vault,
+            &hosted.owner(),
+            false,
+            Some((ed_key(&owner_device()), |transcript: &[u8]| {
+                owner_device().sign(transcript).to_bytes().to_vec()
+            })),
+            Some(fork),
+        )
+        .expect("the sibling act is stored"),
+        "guard: the off on the sibling branch counts"
+    );
+    assert!(!full_owner_reads_on(&hosted), "the merged fold reads off");
+    assert!(
+        !host_key_revokes_device_key(&hosted),
+        "the limits are back where the two acts meet"
+    );
+}
+
+/// A rotation a limited key makes while the choice is on hands its limits
+/// to its successor: once the choice is off, the successor revokes no other
+/// owner key until a non-passkey key confirms it.
+#[test]
+fn a_successor_a_limited_key_rotated_to_under_full_owner_is_limited_once_it_is_off() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    assert!(
+        full_owner_proved_by(&hosted, true, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice on"
+    );
+    let rotated = append_signed_rows(
+        &hosted.vault,
+        vec![SignedRow {
+            op: AuthorityOp::RotateKey {
+                old_key: ed_key(&host_held()),
+                new_device: software_device(&successor(), ROLE_OWNER),
+            },
+            signer: ed_key(&host_held()),
+            cosigners: Vec::new(),
+        }],
+        signs_as,
+    )
+    .unwrap_or_default();
+    assert!(
+        rotated.first().copied().unwrap_or(false),
+        "with the choice on, the passkey-vouched key rotates"
+    );
+    assert!(
+        full_owner_proved_by(&hosted, false, &ed_key(&owner_device())),
+        "guard: the owner's device key turns the choice off"
+    );
+    assert!(
+        !revoke_owner_key_signed_by(
+            &hosted.vault,
+            ed_key(&successor()),
+            ed_key(&owner_device()),
+            |transcript| successor().sign(transcript).to_bytes().to_vec(),
+        )
+        .unwrap_or(false),
+        "the successor keeps the limits of the key it succeeded"
+    );
+    assert!(
+        hosted.live_owner_key(&ed_key(&owner_device())),
+        "the owner's device key stands"
+    );
+}
+
+/// The owner's door proves the act with an owner key this install holds; a
+/// hosted install holds none, so turning the choice on waits for the
+/// owner's device and the door refuses, storing nothing.
+#[test]
+fn the_door_turns_full_owner_on_only_with_an_owner_key_this_install_holds() {
+    let hosted = HostedVault::open();
+    passkey_vouched_host_key(&hosted);
+    let refused = hosted.vault.set_passkey_full_owner(&hosted.owner(), true);
+    assert!(
+        matches!(
+            refused,
+            Err(oneiron::Error::Record(
+                oneiron::error::RecordError::OwnerKeyRequired
+            ))
+        ),
+        "the door asks for an owner key: {refused:?}"
+    );
+    assert!(!full_owner_reads_on(&hosted), "the choice stays off");
 }
