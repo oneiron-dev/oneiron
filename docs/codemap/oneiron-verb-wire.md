@@ -807,7 +807,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/task_verb/mod.rs` | src | s | 1 struct · 12 mod · 26 re-export · 1 crate-vis | TaskWaitRequest | Moved from `crates/oneiron/src/task_verb/mod.rs` (lib split W2: wire types below the lib) |
 | `src/task_verb/revoke_lands.rs` | src | s | 1 struct | ConnectorPackBasis | Moved from `crates/oneiron/src/task_verb/revoke_lands.rs` (lib split W2: wire types below the lib) |
 | `src/task_verb/run_control.rs` | src | s | 1 struct · 1 enum | RunControlEffect, RunControlRequest | Moved from `crates/oneiron/src/task_verb/run_control.rs` (lib split W2: wire types below the lib) |
-| `src/task_verb/run_doors.rs` | src | s | 4 struct · 1 enum | CancelForceRequest, ConsultDisposition, ConsultLandSpend, ConsultReadRequest, RunBranchesRequest | Moved from `crates/oneiron/src/task_verb/run_doors.rs` (lib split W2: wire types below the lib) |
+| `src/task_verb/run_doors.rs` | src | s | 5 struct · 1 enum | CancelForceRequest, ConsultDisposition, ConsultLandSpend, ConsultReadRequest, RunBranchesRequest, RunJobRequest | Moved from `crates/oneiron/src/task_verb/run_doors.rs` (lib split W2: wire types below the lib) |
 | `src/task_verb/verb_kind.rs` | src | s | 1 struct · 2 fn | TaskTtl | Moved from `crates/oneiron/src/task_verb/verb_kind.rs` (lib split W2: wire types below the lib) |
 | `src/team/doors.rs` | src | m | 17 struct · 2 enum | BorrowedCellView, CriticAssociation, CriticObservation, LearningCellView, LearningEvidenceView, LearningObservation, ObservationIssue, PlannedSpawnRead +11 | Moved from `crates/oneiron/src/team/doors.rs` (lib split W1: wire types below the lib) |
 | `src/team/mod.rs` | src | s | 5 mod · 31 re-export | — | — |
@@ -980,3 +980,4 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/world_keys/vault_key/escrow.rs` | src | s | 1 struct | EscrowRetirement | Moved from `crates/oneiron/src/world_keys/vault_key/escrow.rs` (lib split W1: wire types below the lib) |
 | `src/world_keys/vault_key/mod.rs` | src | s | 2 mod · 4 re-export | — | — |
 | `src/world_keys/vault_key/vocabulary.rs` | src | s | 1 enum | VaultKeyStatus | Moved from `crates/oneiron/src/world_keys/vault_key/vocabulary.rs` (lib split W1: wire types below the lib) |
+| `tests/wire_list_limit_rules.rs` | test | s | — | — | UC-13 PR 4c: the limit rules of two wire requests, pinned at limit 0, 1, the default, the maximum and the… |
