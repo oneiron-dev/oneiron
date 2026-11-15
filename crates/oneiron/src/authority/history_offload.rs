@@ -10,7 +10,8 @@
 //! and the fold still proves that machine here on the key it proved then.
 //! The home keeps the whole log (RULING L5-22-3-OFFLOAD-MACHINE = A): the
 //! door refuses on the node the vault elected its home, whatever image it
-//! adopted.
+//! adopted. Once rows went, a whole-vault export refuses with the history
+//! this vault lacks ([`offloaded_history_refusal_in_txn`]).
 //!
 //! An image that covers a sealed row has no fold view: its adoption landed
 //! every covered row and the stored log folds whole, so offload refuses it
@@ -194,6 +195,41 @@ fn elected_home_in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<bool> {
     Ok(crate::dreamer_runner::DreamerRunnerStore::new(vault)
         .home_node_designation_in_txn(txn)?
         .is_some_and(|home| home.node_id == node))
+}
+
+/// The refusal a whole-vault export gives once this vault offloaded covered
+/// history (census L5-22 PR 3): the archive would carry the vault without
+/// the rows it dropped, so the export names what this vault lacks, as the
+/// signed-history export does on an adopted vault, and writes nothing.
+/// `None` on a vault that never offloaded, or that holds every covered row
+/// again.
+pub(crate) fn offloaded_history_refusal_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+) -> Result<Option<Error>> {
+    if OFFLOAD.scan(&vault.store, txn)?.is_empty() {
+        return Ok(None);
+    }
+    let Some(adopted) =
+        super::checkpoint_adopt::cached_verified_adoption_in_txn(&vault.store, txn)?
+    else {
+        return Ok(None);
+    };
+    let held = held_covered_in_txn(vault, txn, &adopted)?;
+    let missing: BTreeSet<AuthorityEntryHash> = adopted
+        .image()
+        .covered
+        .iter()
+        .filter(|hash| !held.contains_key(*hash))
+        .copied()
+        .collect();
+    Ok((!missing.is_empty()).then(|| {
+        super::readonly_fold::history_required(&super::AuthorityHistoryRequest {
+            vault_id: Some(adopted.pin().genesis),
+            checkpoint: Some(adopted.id()),
+            missing,
+        })
+    }))
 }
 
 /// What an offload in `txn` would stand on: the adopted head and the covered

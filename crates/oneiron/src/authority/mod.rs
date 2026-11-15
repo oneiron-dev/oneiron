@@ -337,6 +337,7 @@ pub use history_fetch::{
     AuthorityHistorySelection, AuthorityHistoryVerificationCoverage,
 };
 pub use history_offload::AuthorityHistoryOffload;
+pub(crate) use history_offload::offloaded_history_refusal_in_txn;
 pub use history_repair::AuthorityRepairOutcome;
 pub use history_transfer::{VaultRecoveryRequest, recover_vaults_independently};
 pub(crate) use home_candidacy::{

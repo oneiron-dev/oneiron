@@ -391,6 +391,11 @@ impl Vault {
     /// `slot_bindings`, the three kind slots; no vector. It has no importer.
     pub fn export_vault_json(&self) -> Result<Vec<u8>> {
         let txn = self.store.env.read_txn()?;
+        // As the whole-vault archive: a vault that offloaded covered
+        // authority history names the rows it lacks (census L5-22 PR 3).
+        if let Some(refusal) = crate::authority::offloaded_history_refusal_in_txn(self, &txn)? {
+            return Err(refusal);
+        }
         let mut ids = Vec::new();
         for row in crate::ports::EntityStoreRead::port_entity_raw_records(&self.store, &txn)? {
             ids.push(row?.0);
