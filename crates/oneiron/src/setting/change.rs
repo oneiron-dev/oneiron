@@ -19,7 +19,7 @@ const CHANGES: SideTable<u64, SettingChange, Named> = SideTable::new(&side_table
 const CHANGE_NEXT: SideTable<(), u64, Named> = SideTable::new(&side_table::SETTING_CHANGE_NEXT);
 
 /// One change to one setting row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SettingChange {
     /// Its id: what the change feed names it by.
@@ -42,6 +42,10 @@ pub struct SettingChange {
     pub at: u64,
     /// The setter's reason, when it gave one.
     pub why: Option<String>,
+    /// A learned key's seed: the row's weight in runs after the change. Absent on every other
+    /// change, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight_runs: Option<f64>,
 }
 
 /// Writes `change` under the next sequence, in the caller's write; returns its sequence.

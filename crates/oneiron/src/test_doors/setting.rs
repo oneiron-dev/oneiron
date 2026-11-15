@@ -10,7 +10,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 #[cfg(feature = "test-support")]
 use crate::setting::{
-    EngineSetting, Resolved, SetSetting, SetSettingOutcome, SettingCaller, SettingMode,
+    EngineSetting, FitCell, Resolved, SetSetting, SetSettingOutcome, SettingCaller, SettingMode,
     SettingScope,
 };
 
@@ -139,4 +139,47 @@ pub fn leave_keeps_setting_row(key: &str, scope: SettingScope) -> bool {
     };
     let full = [crate::side_table::SETTING.prefix, row.encode().as_slice()].concat();
     crate::setting::leave_keeps_row(&full)
+}
+
+/// Caches `value`, learned from `runs` runs, as the fit of `key` in `cell`, as the learning
+/// projector does: the fit a learned key's read finds there.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(feature = "test-support")]
+pub fn put_setting_fit(
+    vault: &Vault,
+    key: &str,
+    cell: &FitCell,
+    value: f64,
+    runs: f64,
+) -> Result<()> {
+    let fit_key = crate::learning_setting::setting_fit_key(
+        key,
+        cell.project,
+        cell.goal,
+        cell.task_type.as_deref(),
+    );
+    let mut txn = vault.store.env.write_txn()?;
+    crate::learning::project::SETTING_FIT.put(
+        &vault.store,
+        &mut txn,
+        &fit_key,
+        &crate::learning::project::SettingFit { value, runs, at: 0 },
+    )?;
+    txn.commit()?;
+    Ok(())
+}
+
+/// The seed a fit of `test.learned_rate` starts from at the places `known`, with its weight in
+/// runs (`Setting::seed_in_txn`).
+///
+/// # Errors
+///
+/// A place the key does not admit; storage errors.
+#[cfg(feature = "test-support")]
+pub fn learned_rate_seed(vault: &Vault, known: &[SettingScope]) -> Result<Option<(f64, f64)>> {
+    let txn = vault.store.env.read_txn()?;
+    super::setting_keys::TEST_LEARNED_RATE.seed_in_txn(&vault.store, &txn, known)
 }

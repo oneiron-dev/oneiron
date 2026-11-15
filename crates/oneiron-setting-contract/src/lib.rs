@@ -22,7 +22,7 @@ mod key;
 mod scope;
 mod value;
 
-pub use self::decide::{Decided, FoundRow, decide};
+pub use self::decide::{Decided, FoundFit, FoundRow, decide};
 pub use self::key::{RowKey, check_item, check_name};
 pub use self::scope::{ScopeKind, SettingScope};
 pub use self::value::{EncodedValue, SettingValue, higher_is_tighter, lower_is_tighter};
@@ -139,6 +139,16 @@ pub struct Resolved<T> {
     pub revision: u64,
 }
 
+/// The cell a learned key's fit is learned in (ARCH-0003 `#learning-settings`): the project its
+/// runs ran under, else the vault; the project's goal, for a fit learned on that goal; the task
+/// type's node, for a fit learned at one type rather than the root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct FitCell {
+    pub project: Option<EntityId>,
+    pub goal: Option<EntityId>,
+    pub task_type: Option<String>,
+}
+
 /// Which row decided a read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(tag = "from", content = "scope", rename_all = "snake_case")]
@@ -147,6 +157,8 @@ pub enum SettingSource {
     Pin(SettingScope),
     /// The value row at this scope.
     Row(SettingScope),
+    /// A learned key's fit, learned in this cell.
+    Fit(FitCell),
     /// No row: the catalogue default.
     Default,
     /// The deciding row at this scope does not decode: the key's strictest value, never the

@@ -33,6 +33,10 @@ fn zero() -> u64 {
     0
 }
 
+fn learned_rate_seed() -> f64 {
+    0.05
+}
+
 fn quiet_default() -> bool {
     false
 }
@@ -170,5 +174,11 @@ crate::setting::setting_keys! {
     /// A list of entities, 32 hex each: an erase takes the erased one out of the value.
     pub TEST_MENTIONED_IDS: Vec<String> = "test.mentioned_ids" {
         kind: Kind::new(no_ids).erase_mentions(drop_mention),
+    };
+    /// A learned rate in [0, 1]: a fit learns it under its seeds, at the goal, project, task
+    /// type and vault scopes.
+    pub TEST_LEARNED_RATE: f64 = "test.learned_rate" {
+        kind: Kind::new(learned_rate_seed).learned(0.0, 1.0),
+        scopes: &crate::setting::LEARNED_SCOPES,
     };
 }

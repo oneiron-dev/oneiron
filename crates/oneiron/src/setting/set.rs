@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use oneiron_setting_contract::RowKey;
 
 use super::change::record_change_in_txn;
+use super::learned::checked_weight;
 use super::read::{
     StoredRow, in_force_in_txn, key_line_grant_in_txn, load_in_txn, names_subject, table_of,
 };
@@ -92,6 +93,9 @@ pub struct SetSetting {
     pub why: Option<String>,
     /// The settled check-in this change waited on, to spend.
     pub check_in_ref: Option<EntityId>,
+    /// A learned key's seed: its weight in runs, finite and above zero (ARCH-0003
+    /// `#learning-settings`). Only a value row of a learned key carries one, and it must.
+    pub weight_runs: Option<f64>,
 }
 
 impl SetSetting {
@@ -108,6 +112,7 @@ impl SetSetting {
             expected_revision: None,
             why: None,
             check_in_ref: None,
+            weight_runs: None,
         }
     }
 }
@@ -235,6 +240,7 @@ impl Vault {
             spec,
             key: &key,
             value: value.as_ref(),
+            weight_runs: checked_weight(spec, request)?,
         };
         set_in_txn(self, txn, &change, caller, request)
     }
@@ -277,6 +283,8 @@ struct Change<'a> {
     spec: &'static SettingSpec,
     key: &'a RowKey,
     value: Option<&'a EncodedValue>,
+    /// A learned key's seed weight ([`checked_weight`]).
+    weight_runs: Option<f64>,
 }
 
 fn set_in_txn(
@@ -338,13 +346,15 @@ fn set_in_txn(
     }
     // A row that does not decode is never "the same value": a clear removes it, a set replaces it.
     let readable = !matches!(prior, Some(None));
-    let prior_value = prior.flatten().map(|row| row.value);
+    let prior_row = prior.flatten();
+    let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
+    let prior_value = prior_row.map(|row| row.value);
     let json = |value: Option<&EncodedValue>| {
         value
             .and_then(|value| change.spec.kind.to_json(value))
             .unwrap_or(serde_json::Value::Null)
     };
-    if readable && prior_value.as_ref() == change.value {
+    if readable && prior_value.as_ref() == change.value && prior_weight == change.weight_runs {
         return Ok(SetSettingOutcome::Applied {
             sequence: None,
             revision,
@@ -367,6 +377,7 @@ fn set_in_txn(
             value: change.value.cloned(),
             at: now,
             why: request.why.clone(),
+            weight_runs: change.weight_runs,
         },
     )?;
     let revision = match change.value {
@@ -377,6 +388,7 @@ fn set_in_txn(
                 setter,
                 set_at: now,
                 change: recorded.sequence,
+                weight_runs: change.weight_runs,
             };
             table.put(&vault.store, txn, &key_bytes, &row)?;
             recorded.sequence
@@ -522,8 +534,9 @@ fn check_in_scope(scope: &SettingScope) -> CheckInScope {
     }
 }
 
-/// The digest of one change: the row's key and the value it would hold. BLAKE3, key derived from
-/// `oneiron setting set v1`.
+/// The digest of one change: the row's key, the value it would hold and a seed's weight. BLAKE3,
+/// key derived from `oneiron setting set v1`. A change with no weight hashes as before weights
+/// existed, so a check-in opened for it still matches.
 fn effect_digest(change: &Change<'_>) -> [u8; 32] {
     let key = change.key.encode();
     let mut hasher = blake3::Hasher::new_derive_key("oneiron setting set v1");
@@ -533,6 +546,9 @@ fn effect_digest(change: &Change<'_>) -> [u8; 32] {
         None => hasher.update(&[0]),
         Some(value) => hasher.update(&[1]).update(&value.0),
     };
+    if let Some(weight) = change.weight_runs {
+        hasher.update(&[2]).update(&weight.to_bits().to_be_bytes());
+    }
     *hasher.finalize().as_bytes()
 }
 

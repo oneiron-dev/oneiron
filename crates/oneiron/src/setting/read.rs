@@ -2,11 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use oneiron_setting_contract::{Decided, FoundRow, RowKey, decide};
+use oneiron_setting_contract::{Decided, FitCell, FoundFit, FoundRow, RowKey, decide};
 
+use super::learned::{LoadedFit, SettingFitView, fit_view, fits_in_txn};
 use super::{
-    EncodedValue, Kind, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting, SettingMode,
-    SettingScope, SettingSource, SettingSpec, SettingValue,
+    EncodedValue, Kind, LearnedRange, ReadBy, Resolved, Restore, ScopeKind, SetBy, Setter, Setting,
+    SettingMode, SettingScope, SettingSource, SettingSpec, SettingValue,
 };
 use crate::Vault;
 use crate::edge::EdgeActorClass;
@@ -31,7 +32,7 @@ pub(super) const fn table_of(spec: &SettingSpec) -> SideTable<Vec<u8>, StoredRow
 }
 
 /// One stored row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct StoredRow {
     pub(super) value: EncodedValue,
@@ -43,6 +44,10 @@ pub(super) struct StoredRow {
     /// The sequence of the change that wrote it: the row's revision. It only grows, through a
     /// clear and a new write too, so a caller's `expected_revision` never matches a later row.
     pub(super) change: u64,
+    /// A learned key's seed: its weight in runs (ARCH-0003 `#learning-settings`). Absent on every
+    /// other row, whose bytes it leaves as they were.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) weight_runs: Option<f64>,
 }
 
 impl StoredRow {
@@ -122,10 +127,11 @@ pub(super) enum Walked<V> {
     Unreadable(SettingScope),
 }
 
-/// The walk over loaded rows, with values decoded by `decode`; `default` is the catalogue
-/// default, a holder's cap where the owner set no row.
+/// The walk over loaded rows and a learned key's fits, with values decoded by `decode`;
+/// `default` is the catalogue default, a holder's cap where the owner set no row.
 pub(super) fn walk<V: Clone>(
     loaded: &[Loaded],
+    fits: &[LoadedFit],
     chain: &[SettingScope],
     decode: impl Fn(&EncodedValue) -> Option<V>,
     tighter: Option<&dyn Fn(&V, &V) -> bool>,
@@ -141,14 +147,39 @@ pub(super) fn walk<V: Clone>(
             value: row.found.value.as_ref().and_then(&decode),
         })
         .collect();
+    // A fit that does not decode as the key's type is passed over: it is no row of the key.
+    let (found_fits, fit_cells): (Vec<FoundFit<V>>, Vec<&FitCell>) = fits
+        .iter()
+        .filter_map(|fit| {
+            let value = decode(&fit.found.value)?;
+            Some((
+                FoundFit {
+                    at: fit.found.at,
+                    value,
+                },
+                &fit.cell,
+            ))
+        })
+        .unzip();
     let index_of = |decided: &FoundRow<V>| {
         found
             .iter()
             .position(|row| std::ptr::eq(row, decided))
             .unwrap_or_default()
     };
-    match decide(&found, tighter, Some(default)) {
+    match decide(&found, &found_fits, tighter, Some(default)) {
         Decided::Default => Walked::Default,
+        Decided::Fit(fit) => {
+            let index = found_fits
+                .iter()
+                .position(|found| std::ptr::eq(found, fit))
+                .unwrap_or_default();
+            Walked::Row {
+                value: fit.value.clone(),
+                source: SettingSource::Fit(fit_cells[index].clone()),
+                revision: 0,
+            }
+        }
         Decided::Unreadable(at) => Walked::Unreadable(chain[at].clone()),
         Decided::Pin(row) | Decided::Row(row) => {
             let loaded = &loaded[index_of(row)];
@@ -205,11 +236,19 @@ impl<T: SettingValue> Setting<T> {
         self.spec.check_item(item)?;
         let chain = SettingScope::chain(known, self.spec.scopes)?;
         let loaded = load_in_txn(dbs, txn, self.spec, &chain, item)?;
+        let fits = fits_in_txn(dbs, txn, self.spec, &chain)?;
         let tighter = self.kind.tighter_typed();
         let tighter_ref = tighter.as_ref().map(|f| f as &dyn Fn(&T, &T) -> bool);
         let default = self.kind.default_typed();
         Ok(
-            match walk(&loaded, &chain, Kind::<T>::decode, tighter_ref, &default) {
+            match walk(
+                &loaded,
+                &fits,
+                &chain,
+                Kind::<T>::decode,
+                tighter_ref,
+                &default,
+            ) {
                 Walked::Row {
                     value,
                     source,
@@ -248,6 +287,9 @@ pub struct SettingView {
     pub source: SettingSource,
     /// The deciding row's revision; 0 when no row decided.
     pub revision: u64,
+    /// A learned key's narrowest fit on the read's chain, also when a row or a pin decides.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fit: Option<SettingFitView>,
 }
 
 /// One stored row, as the verbs show it.
@@ -265,6 +307,9 @@ pub struct SettingRowView {
     pub by: Option<String>,
     pub setter: Setter,
     pub set_at: u64,
+    /// A learned key's seed: its weight in runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub weight_runs: Option<f64>,
 }
 
 /// The value in force for `spec` in `txn`, as JSON.
@@ -284,6 +329,7 @@ pub(super) fn view_in_txn(
         value: spec.kind.to_json(&value).unwrap_or(serde_json::Value::Null),
         source,
         revision,
+        fit: fit_view(spec, &fits_in_txn(store, txn, spec, &chain)?),
     })
 }
 
@@ -296,6 +342,7 @@ pub(super) fn in_force_in_txn(
     item: Option<&str>,
 ) -> Result<(EncodedValue, SettingSource, u64)> {
     let loaded = load_in_txn(dbs, txn, spec, chain, item)?;
+    let fits = fits_in_txn(dbs, txn, spec, chain)?;
     let tighter = |a: &EncodedValue, b: &EncodedValue| spec.kind.is_tighter(a, b).unwrap_or(false);
     let tighter_ref = spec
         .kind
@@ -305,6 +352,7 @@ pub(super) fn in_force_in_txn(
     Ok(
         match walk(
             &loaded,
+            &fits,
             chain,
             |value| Some(value.clone()),
             tighter_ref,
@@ -352,6 +400,7 @@ pub(super) fn rows_in_txn(
             by: stored.as_ref().and_then(|row| row.by).map(|by| by.to_hex()),
             setter: stored.as_ref().map_or(Setter::Owner, |row| row.setter),
             set_at: stored.as_ref().map_or(0, |row| row.set_at),
+            weight_runs: stored.as_ref().and_then(|row| row.weight_runs),
         });
     }
     Ok(rows)
@@ -449,6 +498,9 @@ pub struct SettingCatalogueEntry {
     /// For a family key, what its items name.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub item: Option<String>,
+    /// For a learned key, the range its rows and its fits stay in.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub learned: Option<LearnedRange>,
     /// The value in force at the vault (or at the places the request named), when the reader
     /// reads the whole key.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -564,6 +616,7 @@ impl Vault {
                     .filter(|kind| spec.admits_scope(*kind))
                     .collect(),
                 item: spec.item.map(|domain| domain.name.to_owned()),
+                learned: spec.kind.learned_range(),
                 value,
                 rows,
             });
