@@ -33,8 +33,9 @@ pub fn saved_question_reader(
 
 /// The reader a saved question's refresh, artifact and wake reads build
 /// (`saved_reader::saved_source_key_in_txn`): the principal's own key, its
-/// class taken from its row's type, under the access gate on its own
-/// grants, narrowed by `read_lane`, in a snapshot of its own.
+/// class taken from its row's type, with the owner's exemption while the
+/// principal is the vault's live owner and otherwise under the access gate
+/// on its own grants, narrowed by `read_lane`, in a snapshot of its own.
 ///
 /// # Errors
 /// As `saved_reader::saved_source_key_in_txn`, and a store failure opening

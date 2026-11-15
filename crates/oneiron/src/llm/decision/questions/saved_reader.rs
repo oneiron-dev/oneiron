@@ -45,25 +45,59 @@ pub(crate) fn saved_reader(
     saved_reader_in_txn(vault, &txn, principal, read_lane)
 }
 
-/// `principal`'s source reader of a version saved under `read_lane`, in
-/// `txn`: the principal's own key as a question's source reads build it
-/// (its class from its row's type, under the access gate on its own
-/// grants), narrowed by the lane. The refresh's unit read, an artifact
-/// ask's rows and a withdrawal wake's admission each rebuild here, so one
-/// rebuild serves the three (OPUS-SECREAD-A N2 on #8109).
+/// `key`, a question's source key, read on `principal`'s grants in `txn`:
+/// with the owner's exemption while `principal` is the vault's live owner,
+/// proved again at each read, as the asker reader holds it
+/// (`graph_ask::asker_reader_in_txn`); otherwise under the access gate on
+/// `principal`'s grants (FIX SAVED-SOURCE-DROPS-OWNER-EXEMPTION). A saved
+/// lane keeps the exemption only where its live key held an owner standing
+/// ([`FrozenReadLane::narrow_in_txn`]).
 ///
 /// # Errors
-/// A store failure reading the principal's row, an `EntityNotFound` for a
-/// principal that is no actor, and a store, fold or clock failure judging
-/// the frozen credential.
+/// A store failure reading the principal's row or the owner binding.
+pub(super) fn under_principal_gate_in(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    key: ScopedReadActorKey,
+    principal: EntityId,
+) -> Result<ScopedReadActorKey> {
+    let owner =
+        crate::memory::owner_exemption_holds_in_txn(vault, txn, principal).map_err(|refusal| {
+            crate::error::Error::Claim(crate::error::ClaimError::ScopedReadOwnerNotLive(Box::new(
+                refusal,
+            )))
+        })?;
+    Ok(if owner {
+        key.exempt_while_owner(principal)
+    } else {
+        key.require_access_grants(Some(principal))
+    })
+}
+
+/// `principal`'s source reader of a version saved under `read_lane`, in
+/// `txn`: the principal's own key as a question's source reads build it
+/// (its class from its row's type, on its own grants as
+/// [`under_principal_gate_in`] reads them), narrowed by the lane. The
+/// refresh's unit read, an artifact ask's rows and a withdrawal wake's
+/// admission each rebuild here, so one rebuild serves the three
+/// (OPUS-SECREAD-A N2 on #8109).
+///
+/// # Errors
+/// A store failure reading the principal's row or the owner binding, an
+/// `EntityNotFound` for a principal that is no actor, and a store, fold or
+/// clock failure judging the frozen credential.
 pub(crate) fn saved_source_key_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
     principal: EntityId,
     read_lane: &FrozenReadLane,
 ) -> Result<ScopedReadActorKey> {
-    let key = super::refresh::source_actor_key(vault, txn, principal, None)?
-        .require_access_grants(Some(principal));
+    let key = under_principal_gate_in(
+        vault,
+        txn,
+        super::refresh::source_actor_key(vault, txn, principal, None)?,
+        principal,
+    )?;
     read_lane.narrow_in_txn(vault, txn, key)
 }
 

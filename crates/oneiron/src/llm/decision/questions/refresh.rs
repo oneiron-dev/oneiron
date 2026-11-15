@@ -281,7 +281,8 @@ pub(crate) fn principal_lane(
 ) -> Result<crate::claim::ScopedRead<'_>> {
     let key = {
         let txn = vault.store.env.read_txn()?;
-        source_actor_key(vault, &txn, principal, None)?.require_access_grants(Some(principal))
+        let key = source_actor_key(vault, &txn, principal, None)?;
+        super::saved_reader::under_principal_gate_in(vault, &txn, key, principal)?
     };
     Ok(question_lane(vault, key))
 }
@@ -396,8 +397,12 @@ fn source(
     // every other read of the question does (OF-506, FIX 1712).
     let principal_key =
         super::saved_reader::saved_source_key_in_txn(vault, txn, principal, read_lane)?;
-    let actor_key = source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?
-        .require_access_grants(Some(principal));
+    let actor_key = super::saved_reader::under_principal_gate_in(
+        vault,
+        txn,
+        source_actor_key(vault, txn, actor.entity_ref(), Some(actor.actor_class()))?,
+        principal,
+    )?;
     // FIX 7461: each lane also reads under its own reader's live owner
     // authority once its own admission and Grants refuse.
     let Some(raw) = question_lane(vault, principal_key).entity_raw_live_in(txn, &unit)? else {
