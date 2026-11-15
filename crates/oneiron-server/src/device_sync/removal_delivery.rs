@@ -505,9 +505,7 @@ async fn post(
     credential: &SyncTransportCredential,
     body: Option<serde_json::Value>,
 ) -> anyhow::Result<reqwest::Response> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let headers = credential
         .left_notice_headers(now)
         .map_err(anyhow::Error::msg)?;
@@ -543,9 +541,7 @@ where
     use axum::body::Body;
     use axum::http::{Request, header};
 
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     let headers = credential
         .left_notice_headers(now)
         .map_err(anyhow::Error::msg)?;
@@ -738,9 +734,7 @@ fn import_dir(
     let person = oneiron::EntityId::from_hex(&slip.claims.holder_ref)?;
     // The wall clock, which the store clock never trails: a term passed on it
     // has passed on the store clock the import reads.
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs());
+    let now = oneiron_base::unix_seconds_now();
     for entry in entries {
         let path = entry?.path();
         let Some((receipt, version)) = archive_name(&path) else {
