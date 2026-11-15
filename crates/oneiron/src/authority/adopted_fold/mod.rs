@@ -8,17 +8,20 @@
 //! image's merged state and safety indexes, merges the tail's states, and
 //! projects through the image-backed row reads a resumed fold uses
 //! ([`super::fold_resume::Resumed`]). This install's own observations are
-//! the tail's alone: no first-seen time, sequence floor or vouch is read or
-//! made for a covered row. A zero tail still projects under this install's
-//! pin and finishes its heads and sequences over the covered rows.
+//! the tail's: no sequence floor or vouch is read or made for a covered row,
+//! and a covered row's only first-seen time is the receipt of this install's
+//! own first sight of it, which its adoption keeps for each covered row the
+//! stale-roster window reads (FOLDPAST-COVERED-APPROVAL-CLOCK). A zero tail
+//! still projects under this install's pin and finishes its heads and
+//! sequences over the covered rows.
 //!
 //! The tail it folds is the resumed fold's: ops that leave every earlier
 //! row's fate as it was ([`super::fold_resume::admits_past`]), and an actor
 //! revocation or a slip or Grant withdrawal, a federation lifecycle act or a
 //! membership execution with every covered row in its causal past, on a
 //! clean image this install judges as it was built, whose whole tail then
-//! folds, or a row the whole fold rejects on the image's states, which
-//! folds with no state (FIX 11760), each on a
+//! folds, a device revocation so placed, or a row the whole fold rejects on
+//! the image's states, which folds with no state (FIX 11760), each on a
 //! frontier, tail or covered parent, a world key record on stated parents
 //! alone (FIX 4881). A late fork, a tail row on a covered row off the
 //! frontier, folds on the state the image's replay evidence keeps there
@@ -77,7 +80,9 @@ pub(super) struct AdoptedTail<'a> {
     /// held or kept, and the image-grade capture keeps each one's state
     /// beside the new frontier's (a seal's causal point, FIX 4649).
     pub(super) required: &'a BTreeSet<AuthorityEntryHash>,
-    /// The tail rows' first-seen seconds, and no covered row's.
+    /// The tail rows' first-seen seconds, and each covered row's this
+    /// install kept a receipt of: its own first sight, at its adoption of the
+    /// image for a row it never stored (FOLDPAST-COVERED-APPROVAL-CLOCK).
     pub(super) first_seen_at_secs: &'a BTreeMap<AuthorityEntryHash, u64>,
     pub(super) now_secs: u64,
     pub(super) peer_consent_roots: &'a BTreeMap<AuthorityVaultId, BTreeSet<AuthorityKey>>,
@@ -145,7 +150,8 @@ pub(super) fn fold_adopted_checkpoint_tail(
         projected, fold, ..
     } = settled;
     // This install's own view, over the rows its stale-roster window reads:
-    // the tail's first-seen times are the only ones it has.
+    // the tail's first-seen times, and the receipts of its own first sight
+    // of covered rows its adoption kept.
     let window_secs = log.observations.policy.stale_roster_window_secs;
     let read_whole: Vec<&AuthorityLogEntry> = projected
         .values()
@@ -156,6 +162,19 @@ pub(super) fn fold_adopted_checkpoint_tail(
         )
         .filter(|entry| super::fold_resume::is_projected(&entry.op))
         .collect();
+    // A covered approval a tail revocation leaves on a revoked key expires
+    // at min(adoption, revocation first seen) + window + 1, as a device that
+    // fetched the whole history at its adoption computes
+    // (FOLDPAST-COVERED-APPROVAL-CLOCK = A, Engine 16 Nov 00:48). Where a
+    // receipt is missing (an image adopted before adoption kept them) its
+    // window could never start here: only the whole history decides it.
+    if !super::stale_roster::stale_roster_clocks_complete(
+        &read_whole,
+        &fold,
+        log.first_seen_at_secs,
+    ) {
+        return Ok(whole());
+    }
     let mut view = super::install_fold::install_view(
         &read_whole,
         fold,
@@ -551,9 +570,10 @@ fn serial_withdrawal(
 /// Another row [`super::fold_resume::admits_past`] leaves to the history
 /// that folds past the image all the same (FIX 11760), under [`folds_serially`]'s
 /// conditions: a federation lifecycle act or a membership execution, whose
-/// tail must then fold whole, or a row the whole fold rejects on the image's
-/// states ([`settle::folds_rejected_op`]), which must then fold with no
-/// state. A rotation or a non-agent enrollment stands only in a re-root's
+/// tail must then fold whole, a device revocation
+/// ([`settle::serial_roster_revoke_op`]), or a row the whole fold rejects on
+/// the image's states ([`settle::folds_rejected_op`]), which must then fold
+/// with no state. A rotation or a non-agent enrollment stands only in a re-root's
 /// pre-handoff line, and only a tail re-root names a tail row in its line,
 /// so a rejected row folds so only in a tail with no re-root.
 fn serial_fold_past(
@@ -562,7 +582,8 @@ fn serial_fold_past(
     log: AdoptedTail<'_>,
     entry: &AuthorityLogEntry,
 ) -> bool {
-    let op = if settle::serial_fold_past_op(&entry.op) {
+    let op = if settle::serial_fold_past_op(&entry.op) || settle::serial_roster_revoke_op(&entry.op)
+    {
         true
     } else {
         settle::folds_rejected_op(image, entry)

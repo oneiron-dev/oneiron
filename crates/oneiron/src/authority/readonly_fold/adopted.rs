@@ -6,7 +6,9 @@ use super::*;
 /// The fold on a vault that adopted `adopted` (OF-469): its stored rows are
 /// the covered rows it still holds, never tail and never read again, and the
 /// tail past the image, which folds from the image with the tail's own
-/// first-seen times and observations alone; no clock is read for a covered
+/// first-seen times and observations, and the first-seen receipts of the
+/// image's carried rows this install kept (its adoption keeps one for each
+/// row the stale-roster window reads); no other clock is read for a covered
 /// row. None where the image cannot answer yet every covered row is held:
 /// the stored log then folds whole. Each `arriving` row folds as a stored row
 /// first seen now (FIX 2535).
@@ -62,6 +64,17 @@ pub(super) fn fold_adopted_in_txn(
             readonly_first_seen_for(store, txn, hash, backfilled, key.now_secs)?
         };
         first_seen_at_secs.insert(*hash, first_seen);
+    }
+    // This install's own first sight of a carried covered row, where it kept
+    // a receipt: at its adoption of the image, for a row it never stored
+    // (FOLDPAST-COVERED-APPROVAL-CLOCK). A row with none gets no clock here;
+    // the fold asks for the history where the window would need it.
+    for (hash, row) in &image.rows {
+        if row.body.is_some()
+            && let Some(first_seen) = readonly_first_seen_receipt(store, txn, hash, false)?
+        {
+            first_seen_at_secs.entry(*hash).or_insert(first_seen);
+        }
     }
     let rows: Vec<_> = tail
         .iter()

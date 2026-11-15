@@ -16,8 +16,10 @@
 //! head, the adopted pin's digest, the authority cache generation), checks
 //! the image against this vault (its storage id, a resident Genesis, its
 //! owner-root pin, an empty unresolved closure, coverage that never shrinks),
-//! then keeps the image as the head, stores the pin and attestations and
-//! advances the generation. It publishes nothing into the process cache.
+//! then keeps the image as the head, stores the pin and attestations, keeps
+//! this install's first sight of each covered row the stale-roster window
+//! reads ([`keep_covered_first_seen_in_txn`]) and advances the generation. It
+//! publishes nothing into the process cache.
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
@@ -380,6 +382,43 @@ pub(crate) fn adopted_checkpoint_id_in_txn(
         .map(|adopted| adopted.pin.checkpoint))
 }
 
+/// Keeps, for each covered row of `image` the stale-roster window reads (an
+/// approval or a roster revocation, carried whole) that holds no first-seen
+/// receipt here, a receipt at this adoption: this install's own first sight
+/// of it, on its own clock, nothing imported, as a device that fetched the
+/// whole history now would record it (FOLDPAST-COVERED-APPROVAL-CLOCK = A,
+/// Engine 16 Nov 00:48). A receipt already kept (a row stored here before)
+/// stands, and a row stored later keeps this one. Additive: a vault that
+/// adopted before keeps no receipt, and a fold past its image that needs one
+/// asks for the history ([`super::stale_roster::stale_roster_clocks_complete`]).
+fn keep_covered_first_seen_in_txn(
+    store: &Store,
+    wtxn: &mut heed::RwTxn<'_>,
+    image: &AuthorityCheckpointV2,
+) -> Result<()> {
+    let mut unseen = Vec::new();
+    for (hash, row) in &image.rows {
+        let Some(body) = &row.body else {
+            continue;
+        };
+        let key = authority_first_seen_sidecar_key(hash);
+        if AUTHORITY_FIRST_SEEN.contains(store, wtxn, &key)? {
+            continue;
+        }
+        if super::stale_roster::window_reads(&decode_authority_log_entry_body(body)?.op) {
+            unseen.push(key);
+        }
+    }
+    if unseen.is_empty() {
+        return Ok(());
+    }
+    let seen = advance_authority_clock_in_txn(store, wtxn, store.clock.now_recorded_at())?;
+    for key in unseen {
+        AUTHORITY_FIRST_SEEN.put(store, wtxn, &key, &seen)?;
+    }
+    Ok(())
+}
+
 impl Vault {
     /// What [`Vault::adopt_authority_checkpoint_in_txn`] compares, read in
     /// `txn`'s snapshot.
@@ -453,6 +492,7 @@ impl Vault {
         // OF-469 cutoffs: the adopted head's accounting, and the covered rows
         // whose later arrival is hydration rather than growth.
         super::checkpoint::note_adopted_checkpoint_in_txn(store, wtxn, &id, image)?;
+        keep_covered_first_seen_in_txn(store, wtxn, image)?;
         ADOPTED.put(
             store,
             wtxn,

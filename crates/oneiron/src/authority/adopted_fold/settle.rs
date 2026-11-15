@@ -67,6 +67,18 @@ pub(super) fn serial_fold_past_op(op: &AuthorityOp) -> bool {
     )
 }
 
+/// Whether `op` is a device revocation, which the tail folds past the image
+/// only serially, every covered row in its causal past (FIX 11760,
+/// [`super::serial_fold_past`]). It moves only its key's roster bit, which
+/// every merge ORs in, and makes no restrictive fact, so its tail need not
+/// fold whole: a later row its key signs folds rejected there, as in the
+/// whole fold. A covered approval on its key expires on this install's own
+/// first sight of it, the receipt the adoption kept
+/// (FOLDPAST-COVERED-APPROVAL-CLOCK; [`super::fold_adopted_checkpoint_tail`]).
+pub(super) fn serial_roster_revoke_op(op: &AuthorityOp) -> bool {
+    matches!(op, AuthorityOp::RevokeDevice { .. })
+}
+
 /// Whether the whole fold rejects the tail row `entry` on the image's
 /// states whatever the covered rows hold, so the tail folds it past the
 /// image as rejected, with no state (FIX 11760, [`super::serial_fold_past`]):
@@ -457,9 +469,11 @@ fn parents_first(
 }
 
 /// Whether a valid tail approval rests on a key the fold holds revoked. Its
-/// stale-roster window would start at this install's first sight of the
-/// covered revocation, a time this install never recorded: no clock is
-/// imported, so the whole history must decide it.
+/// stale-roster window could start at this install's first sight of a
+/// covered revocation, which a vault adopted with no receipt for it never
+/// recorded: no clock is imported, so the whole history must decide it. A
+/// covered approval on a tail-revoked key is timed past the image instead
+/// ([`super::fold_adopted_checkpoint_tail`]).
 fn approves_on_revoked_key(
     fold: &AuthorityFold,
     judged: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,

@@ -75,6 +75,92 @@ pub(super) fn revokes_roster_key(op: &AuthorityOp) -> bool {
     )
 }
 
+/// Whether `op` is a reusable approval the window expires once a key it
+/// rests on is revoked.
+fn is_reusable_approval(op: &AuthorityOp) -> bool {
+    match op {
+        AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
+        AuthorityOp::FederationConfirm(action) => action.kind != AuthorityConfirmKind::Revoke,
+        AuthorityOp::CriticalWriteConfirm(action) => {
+            action.disposition == CriticalWriteConfirmDisposition::Clear
+        }
+        // An owner answer rests on its carrier's act, never on a roster key,
+        // so no roster revocation expires it (C3).
+        AuthorityOp::MachineProfile(profile) => {
+            profile.role != MachineRole::Removed && profile.act.is_none()
+        }
+        _ => false,
+    }
+}
+
+/// The keys `op` revokes that `fold` holds revoked: a revoked device's, a
+/// rotation's old key, or every roster key a re-root leaves behind.
+fn revoked_keys(op: &AuthorityOp, fold: &AuthorityFold) -> Vec<AuthorityKey> {
+    let keys = match op {
+        AuthorityOp::RevokeDevice { revoked_key } => vec![revoked_key.clone()],
+        AuthorityOp::RotateKey { old_key, .. } => vec![old_key.clone()],
+        AuthorityOp::ReRoot { new_device } => fold
+            .roster
+            .keys()
+            .filter(|key| **key != new_device.key)
+            .cloned()
+            .collect(),
+        _ => Vec::new(),
+    };
+    keys.into_iter()
+        .filter(|key| fold.roster.get(key).is_some_and(|device| device.revoked))
+        .collect()
+}
+
+/// Whether the window reads a row of `op`'s kind by its first-seen second:
+/// a reusable approval, or a row that revokes a roster key. An adopting
+/// install keeps a receipt of its own first sight of each such covered row
+/// (FOLDPAST-COVERED-APPROVAL-CLOCK, Engine 16 Nov 00:48).
+pub(super) fn window_reads(op: &AuthorityOp) -> bool {
+    is_reusable_approval(op) || revokes_roster_key(op)
+}
+
+/// Whether `first_seen` holds every second the window times over `entries`:
+/// each valid approval resting on a key `fold` holds revoked, and each valid
+/// row revoking a key such an approval rests on. A row with none never
+/// starts its window, so an approval on it would never expire, or would
+/// expire later than the whole history's: a caller missing one asks for the
+/// history instead (FOLDPAST-COVERED-APPROVAL-CLOCK).
+pub(super) fn stale_roster_clocks_complete<E: LogRow>(
+    entries: &[E],
+    fold: &AuthorityFold,
+    first_seen: &dyn FirstSeenMap,
+) -> bool {
+    let subjects = stale_roster_subject_approvals(entries, fold);
+    if subjects.is_empty() {
+        return true;
+    }
+    let mut rested_on = BTreeSet::new();
+    for row in entries {
+        if row
+            .entry_hash()
+            .is_some_and(|hash| subjects.contains(&hash))
+        {
+            let entry = row.entry();
+            rested_on.extend(
+                std::iter::once(&entry.signer)
+                    .chain(&entry.cosigns)
+                    .map(|signature| &signature.public_key),
+            );
+        }
+    }
+    subjects.iter().all(|hash| first_seen.get(hash).is_some())
+        && entries.iter().all(|row| {
+            row.entry_hash().is_none_or(|hash| {
+                !fold.valid_entries.contains(&hash)
+                    || !revoked_keys(&row.entry().op, fold)
+                        .iter()
+                        .any(|key| rested_on.contains(key))
+                    || first_seen.get(&hash).is_some()
+            })
+        })
+}
+
 /// Earliest second at which each currently valid approval becomes stale.
 /// A checked deadline at the u64 ceiling never arrives, just as the original
 /// saturating-subtraction predicate could never exceed its window there.
@@ -96,46 +182,18 @@ fn stale_roster_approval_deadlines<E: LogRow>(
         let Some(seen) = first_seen.get(&hash).copied() else {
             continue;
         };
-        let keys = match &entry.op {
-            AuthorityOp::RevokeDevice { revoked_key } => vec![revoked_key.clone()],
-            AuthorityOp::RotateKey { old_key, .. } => vec![old_key.clone()],
-            AuthorityOp::ReRoot { new_device } => fold
-                .roster
-                .keys()
-                .filter(|key| **key != new_device.key)
-                .cloned()
-                .collect(),
-            _ => Vec::new(),
-        };
-        for key in keys {
-            if fold.roster.get(&key).is_some_and(|device| device.revoked) {
-                revoked_at
-                    .entry(key)
-                    .and_modify(|at| *at = (*at).min(seen))
-                    .or_insert(seen);
-            }
+        for key in revoked_keys(&entry.op, fold) {
+            revoked_at
+                .entry(key)
+                .and_modify(|at| *at = (*at).min(seen))
+                .or_insert(seen);
         }
     }
     entries
         .iter()
         .filter_map(|row| {
             let entry = row.entry();
-            let approval = match &entry.op {
-                AuthorityOp::BindActor { .. } | AuthorityOp::RebindActor { .. } => true,
-                AuthorityOp::FederationConfirm(action) => {
-                    action.kind != AuthorityConfirmKind::Revoke
-                }
-                AuthorityOp::CriticalWriteConfirm(action) => {
-                    action.disposition == CriticalWriteConfirmDisposition::Clear
-                }
-                // An owner answer rests on its carrier's act, never on a
-                // roster key, so no roster revocation expires it (C3).
-                AuthorityOp::MachineProfile(profile) => {
-                    profile.role != MachineRole::Removed && profile.act.is_none()
-                }
-                _ => false,
-            };
-            if !approval {
+            if !is_reusable_approval(&entry.op) {
                 return None;
             }
             let hash = row.entry_hash()?;
