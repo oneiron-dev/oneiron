@@ -320,3 +320,60 @@ fn pack_refuses_a_tar_skill_file_with_an_escaped_credential_key() -> TestResult 
     );
     Ok(())
 }
+
+#[test]
+fn pack_refuses_a_tar_skill_file_with_a_credential_key_in_nested_json_text() -> TestResult {
+    // CONTROL: a member that is a JSON string whose text is clean JSON
+    // exports byte-exact.
+    let clean_member = serde_json::to_string(r#"{"name":"yuki"}"#)?;
+    let clean_archive = tar_with_config_json(clean_member.as_bytes())?;
+    let clean_fixture = fixture(Some(HubFile::new("config.tar", clean_archive.clone())))?;
+    let clean_pack = clean_fixture
+        .vault
+        .memory(clean_fixture.owner, EdgeActorClass::Human)
+        .export_agent_pack(&AgentPackExportRequest {
+            agent_ref: clean_fixture.agent.to_hex(),
+            travel: None,
+        })?;
+    let path = format!(
+        "skills/{}/config.tar",
+        clean_fixture.package.content_hash()?.to_hex()
+    );
+    let carried = clean_pack
+        .files
+        .iter()
+        .find(|file| file.path == path)
+        .expect("clean nested-JSON tar skill file in pack");
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD.decode(&carried.content_base64)?,
+        clean_archive,
+        "the pack keeps a clean nested-JSON tar byte-exact"
+    );
+
+    // The member is a JSON string whose text is JSON escaping the field name
+    // password: neither the member's text nor its one decode names it.
+    let credential_member = serde_json::to_string(r#"{"pass\u0077ord":"vault-private-42"}"#)?;
+    assert!(credential_member.contains(r#"\\u0077"#));
+    let credential_archive = tar_with_config_json(credential_member.as_bytes())?;
+    let fixture = fixture(Some(HubFile::new("config.tar", credential_archive)))?;
+    let result = fixture
+        .vault
+        .memory(fixture.owner, EdgeActorClass::Human)
+        .export_agent_pack(&AgentPackExportRequest {
+            agent_ref: fixture.agent.to_hex(),
+            travel: None,
+        });
+    assert!(
+        result.is_err(),
+        "an agent pack must refuse a tar skill file whose JSON text names a credential field"
+    );
+    let error = result
+        .expect_err("credential-bearing skill file is refused")
+        .to_string();
+    assert!(error.contains("config.tar"), "{error}");
+    assert!(
+        !error.contains("vault-private-42"),
+        "the refusal must not disclose the credential"
+    );
+    Ok(())
+}

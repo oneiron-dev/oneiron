@@ -208,7 +208,8 @@ impl NoteSelection {
     /// This selection for a copy bound for another vault, where no grant
     /// admits a credential (SCOPED-EXPORT-RULE = A, ARCH-0027 :382): it also
     /// keeps home each NOTE, core or attachment, whose review carriers in
-    /// `source` hold text the release check reads a credential in: an
+    /// `source` hold text the release check reads a credential in, raw or
+    /// through the typed rule ([`crate::serialize::release_keeps_text`]): an
     /// undecided fork's proposal value, or the explainer of a bundle that
     /// holds one of its members. A carrier is never rewritten, so that NOTE
     /// and its workflow stay home whole.
@@ -218,12 +219,12 @@ impl NoteSelection {
         }
         let state = codec::read(source)?;
         for ((note, _), text) in &state.docs {
-            if crate::batch::secret_scan::scan_text_content(text).is_some() {
+            if !crate::serialize::release_keeps_text(text) {
                 self.withheld.insert(*note);
             }
         }
         for carrier in state.bundles.values() {
-            if crate::batch::secret_scan::scan_text_content(&carrier.bundle.explainer).is_some() {
+            if !crate::serialize::release_keeps_text(&carrier.bundle.explainer) {
                 self.withheld.extend(bundle_notes(&carrier.bundle));
             }
         }

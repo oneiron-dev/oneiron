@@ -988,13 +988,25 @@ fn member_peer_window_withholds_message_with_credential_signature() -> Result<()
 
 #[test]
 fn member_peer_window_withholds_note_with_credential_proposal() -> Result<()> {
+    let credential = format!("ghp_{}", "a".repeat(36));
+    assert_member_window_withholds_note_with_proposal(
+        &format!("Rotate the token {credential} before Tuesday."),
+        &credential,
+    )
+}
+
+/// A member peer's window keeps home whole a NOTE whose undecided proposal is
+/// `credential_text`, which holds `credential`, and carries a clean NOTE with
+/// its proposal.
+fn assert_member_window_withholds_note_with_proposal(
+    credential_text: &str,
+    credential: &str,
+) -> Result<()> {
     let fixture = member_fixture()?;
     let vault = &fixture.vault;
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
-    let credential = format!("ghp_{}", "a".repeat(36));
     let control_text = "Move the standup to Tuesday.";
-    let credential_text = format!("Rotate the token {credential} before Tuesday.");
     let control_note = vault
         .create_note("research", "The weekly review covers the schedule.", actor)
         .expect("control NOTE");
@@ -1014,7 +1026,7 @@ fn member_peer_window_withholds_note_with_credential_proposal() -> Result<()> {
         .fork_note(
             credential_note,
             &oneiron::note::NoteProgramEdit::Rewrite {
-                text: credential_text.clone(),
+                text: credential_text.to_owned(),
             },
             actor,
         )
@@ -1167,6 +1179,18 @@ fn witness_prompt_message(
 
 #[test]
 fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
+    let credential = format!("ghp_{}", "a".repeat(36));
+    let credential_text = format!("Rotate the token {credential} before Tuesday.");
+    assert_member_window_keeps_born_with_prompt_home(&[credential_text.as_str()], &credential)
+}
+
+/// A member peer's window carries a row born of prompts whose texts are
+/// `credential_prompt_texts`, in order, which hold `credential`, without its
+/// Prompt field, and a row born of a clean prompt with it.
+fn assert_member_window_keeps_born_with_prompt_home(
+    credential_prompt_texts: &[&str],
+    credential: &str,
+) -> Result<()> {
     use oneiron::authority::{ActSurface, MachineRole};
     use oneiron::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
     use oneiron::provenance::made_by::{
@@ -1199,16 +1223,20 @@ fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
         choice
     );
 
-    let credential = format!("ghp_{}", "a".repeat(36));
     let control_text = "Count the weekly review items.";
-    let credential_text = format!("Rotate the token {credential} before Tuesday.");
     let conversation = EntityId::now();
     let control_prompt = witness_prompt_message(vault, &owner, conversation, control_text)?;
-    let credential_prompt = witness_prompt_message(vault, &owner, conversation, &credential_text)?;
+    let credential_prompts = credential_prompt_texts
+        .iter()
+        .map(|text| witness_prompt_message(vault, &owner, conversation, text))
+        .collect::<Result<Vec<_>>>()?;
     let owner_id = vault.ensure_embedded_owner_actor().expect("embedded owner");
     let actor = WriteActor::new(owner_id, EdgeActorClass::Human);
     let mut artifacts = Vec::new();
-    for (name, prompt) in [("owen", control_prompt), ("yuki", credential_prompt)] {
+    for (name, prompts) in [
+        ("owen", vec![control_prompt]),
+        ("yuki", credential_prompts.clone()),
+    ] {
         let id = EntityId::now();
         vault.put_blob_artifact(
             &id,
@@ -1220,10 +1248,13 @@ fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
             LEARNED_AT,
         )?;
         let made_by = MadeBy {
-            inputs: vec![MadeByInput {
-                row: prompt,
-                role: MadeByInputRole::Prompt,
-            }],
+            inputs: prompts
+                .iter()
+                .map(|&row| MadeByInput {
+                    row,
+                    role: MadeByInputRole::Prompt,
+                })
+                .collect(),
             process: MadeByProcess {
                 actor: owner_id,
                 class: MadeByClass::Stated,
@@ -1262,18 +1293,16 @@ fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
     let stored = vault.born_with_text(&credential_row.id, None)?;
     assert_eq!(
         stored.get(&BornWithField::Prompt).map(String::as_str),
-        Some(credential_text.as_str()),
+        Some(credential_prompt_texts.join("\n\n").as_str()),
         "the public born-with read reaches the credential prompt before export"
     );
 
     let key = WindowKey::new(WINDOW);
     let window = fixture.manager.open_window(&key)?;
-    for id in [
-        control_prompt,
-        credential_prompt,
-        control_row.id,
-        credential_row.id,
-    ] {
+    for id in [control_prompt, control_row.id, credential_row.id]
+        .into_iter()
+        .chain(credential_prompts.iter().copied())
+    {
         assert!(
             map_get_bytes(&window.doc.get_map("entities"), &id.to_hex()).is_some(),
             "the shared window contains the prompt and selected row: {}",
@@ -1319,6 +1348,105 @@ fn member_peer_window_keeps_credential_born_with_prompt_home() -> Result<()> {
         );
     });
     assert_unchanged(vault, &[control_row, credential_row])?;
-    assert_eq!(vault.entity_text(&credential_prompt)?, credential_text);
+    for (prompt, text) in credential_prompts.iter().zip(credential_prompt_texts) {
+        assert_eq!(vault.entity_text(prompt)?, *text);
+    }
     Ok(())
+}
+
+#[test]
+fn member_peer_window_withholds_message_with_json_escaped_credential_signature() -> Result<()> {
+    let fixture = member_fixture()?;
+    let conversation = EntityId::now();
+    let control_message = witness_message_with_signature(
+        &fixture.vault,
+        conversation,
+        "provider-signature-reference",
+    )?;
+    // Each signature is JSON whose text escapes the credential: a field named
+    // password, and a quoted GitHub token. The raw text holds neither.
+    let escaped_signatures = [
+        r#"{"pass\u0077ord":"vault-private-42"}"#,
+        r#""gh\u0070_0123456789abcdefghijklmnopqrstuvwxyz""#,
+    ];
+    let mut credential_messages = Vec::new();
+    for signature in escaped_signatures {
+        let message = witness_message_with_signature(&fixture.vault, conversation, signature)?;
+        assert!(
+            message
+                .body
+                .windows(signature.len())
+                .any(|part| part == signature.as_bytes()),
+            "scan-Off stores the original escaped signature before export"
+        );
+        credential_messages.push(message);
+    }
+    let key = WindowKey::new(WINDOW);
+    let window = fixture.manager.open_window(&key)?;
+    assert_exact(&window.doc, &control_message);
+    for message in &credential_messages {
+        assert_exact(&window.doc, message);
+    }
+    let member = filtered_window_doc_for_peer(
+        &fixture.vault,
+        &window.doc,
+        &key,
+        FederationGrantScope::vault(SHARED),
+        &fixture.selector,
+        PeerMachine::Unknown,
+    )?;
+    // CONTROL: a signed MESSAGE crosses byte-exact, including its signature.
+    assert_exact(&member, &control_message);
+    let entities = member.get_map("entities");
+    for message in &credential_messages {
+        assert!(
+            entities.get(&message.id.to_hex()).is_none(),
+            "a MESSAGE whose signature escapes a credential in JSON stays home whole"
+        );
+    }
+    entities.for_each(|_, value| {
+        let ValueOrContainer::Value(LoroValue::Binary(bytes)) = value else {
+            panic!("entity values must be binary metadata plus body");
+        };
+        for signature in escaped_signatures {
+            assert!(
+                !bytes
+                    .windows(signature.len())
+                    .any(|part| part == signature.as_bytes()),
+                "no member entity may carry the escaped signature bytes"
+            );
+        }
+    });
+    let mut stored = vec![&control_message];
+    stored.extend(&credential_messages);
+    assert_unchanged(&fixture.vault, &stored)?;
+    Ok(())
+}
+
+/// JSON text whose field name escapes `password`: the raw text holds no
+/// credential key, and [`ESCAPED_PASSWORD_VALUE`] is no token shape.
+const ESCAPED_PASSWORD_JSON: &str = r#"{"pass\u0077ord":"s3cr3tValue42"}"#;
+const ESCAPED_PASSWORD_VALUE: &str = "s3cr3tValue42";
+
+#[test]
+fn member_peer_window_withholds_note_with_json_escaped_credential_proposal() -> Result<()> {
+    assert_member_window_withholds_note_with_proposal(ESCAPED_PASSWORD_JSON, ESCAPED_PASSWORD_VALUE)
+}
+
+#[test]
+fn member_peer_window_keeps_json_escaped_credential_born_with_prompt_home() -> Result<()> {
+    assert_member_window_keeps_born_with_prompt_home(
+        &[ESCAPED_PASSWORD_JSON],
+        ESCAPED_PASSWORD_VALUE,
+    )
+}
+
+/// The Prompt field joins a clean prompt and the escaped JSON with a blank
+/// line: the joined text is no JSON, yet the JSON part keeps it home.
+#[test]
+fn member_peer_window_keeps_joined_prompt_with_json_escaped_credential_home() -> Result<()> {
+    assert_member_window_keeps_born_with_prompt_home(
+        &["Count the open review items.", ESCAPED_PASSWORD_JSON],
+        ESCAPED_PASSWORD_VALUE,
+    )
 }
