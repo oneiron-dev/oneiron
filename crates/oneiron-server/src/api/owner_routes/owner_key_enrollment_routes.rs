@@ -180,12 +180,12 @@ pub(crate) fn enroll_receipt_schema() -> serde_json::Value {
 /// digits of a proof, one raw Ed25519 signature.
 const PROOF_HEX_DIGITS: usize = 2 * OWNER_KEY_POSSESSION_PROOF_LEN;
 
-fn hex(bytes: &[u8]) -> String {
+pub(super) fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// A proof as the client sent it: [`PROOF_HEX_DIGITS`] lower-case hex.
-fn parse_proof(value: &str) -> OwnerResult<Vec<u8>> {
+pub(super) fn parse_proof(value: &str) -> OwnerResult<Vec<u8>> {
     let refused = || {
         OwnerError::Invalid(format!(
             "proof must be {PROOF_HEX_DIGITS} lower-case hex: the new key's signature over its \
@@ -217,7 +217,7 @@ fn parse_proof(value: &str) -> OwnerResult<Vec<u8>> {
 /// request; an agent's act, an install that cannot carry it, or an
 /// enrollment the fold does not count is a refusal naming its rule.
 /// Anything else stays the engine's.
-fn refusal(error: oneiron::Error) -> OwnerError {
+pub(super) fn refusal(error: oneiron::Error) -> OwnerError {
     match &error {
         oneiron::Error::Record(RecordError::InvalidAuthorityLogBody(_)) => {
             OwnerError::Invalid(error.to_string())
@@ -231,7 +231,7 @@ fn refusal(error: oneiron::Error) -> OwnerError {
 
 /// What a route answers when this host holds no root key to sign the
 /// enrollment as its predecessor: this enrollment does not happen here.
-fn no_root_signer() -> OwnerError {
+pub(super) fn no_root_signer() -> OwnerError {
     OwnerError::Refused(
         "this host holds no root signing key to authorize an owner key enrollment".to_owned(),
     )

@@ -154,6 +154,46 @@ pub struct OwnerPasskeyEnrollmentReceipt {
     pub credential_id: Vec<u8>,
 }
 
+/// One enrolled passkey as the owner's surface lists it (row
+/// WEB-PASSKEY-OWNER-KEY): its valid retained enrollment, joined to the
+/// roster now.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnrolledOwnerPasskey {
+    /// The enrollment's authority entry.
+    pub entry: AuthorityEntryHash,
+    /// The carrier that served its ceremony, named as its machine.
+    pub machine: EntityId,
+    /// The owner whose act enrolled it.
+    pub owner: EntityId,
+    /// The passkey's key, compressed SEC1.
+    pub public_key: Vec<u8>,
+    /// The passkey's credential id (`rawId`).
+    pub credential_id: Vec<u8>,
+    /// On the roster and not revoked.
+    pub live: bool,
+    /// When it was signed, advisory unix seconds.
+    pub at: u64,
+}
+
+/// An owner key enrollment built for a predecessor that signs elsewhere (a
+/// passkey in the owner's browser), waiting for that signature: the entry's
+/// canonical encoding with zero signatures, which the client hands back
+/// unchanged, and the challenge the passkey's assertion names,
+/// [`webauthn_challenge`] of the entry's authority transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedOwnerKeyEnrollment {
+    /// The unsigned entry, canonical MessagePack.
+    pub entry: Vec<u8>,
+    /// The challenge the predecessor's assertion names.
+    pub challenge: [u8; 32],
+}
+
+/// Integrity: the prepared enrollment handed back is not one this install
+/// prepared for this owner: another op, owner, vault or carrier, a passkey
+/// in place of a device's key, or bytes that are not its one encoding.
+const NOT_PREPARED: &str = "the prepared enrollment is not one this install prepared for this \
+                            owner; prepare it again";
+
 /// An enrollment that does not verify, as the typed integrity refusal.
 fn not_valid(reason: &'static str) -> Error {
     Error::Record(RecordError::InvalidAuthorityLogBody(reason))
@@ -204,6 +244,18 @@ fn passkey_enrollment_device(input: &OwnerPasskeyEnrollment) -> Result<(Vec<u8>,
     let evidence = owner_passkey_possession_evidence(&input.credential_id, &envelope)
         .map_err(|_| not_valid(NOT_VALID))?;
     Ok((public_key.clone(), enrolled_passkey(public_key, evidence)))
+}
+
+/// An unsigned entry as [`Vault::prepare_owner_key_enrollment_as`] encoded
+/// it: one MessagePack value, and exactly its canonical encoding.
+fn decode_unsigned_entry(bytes: &[u8]) -> Option<AuthorityLogEntry> {
+    let mut cursor = std::io::Cursor::new(bytes);
+    let value = rmpv::decode::read_value(&mut cursor).ok()?;
+    if usize::try_from(cursor.position()).ok()? != bytes.len() {
+        return None;
+    }
+    let entry = decode_entry_value(&value).ok()?;
+    (encode_value(&entry_value(&entry, true)).ok()? == bytes).then_some(entry)
 }
 
 /// The op's own checks on `entry` before anyone signs it: the fixed shape,
@@ -325,34 +377,63 @@ impl Vault {
     where
         S: FnOnce(&[u8]) -> Result<Vec<u8>>,
     {
+        let mut txn = self.store.env.write_txn()?;
+        let (mut entry, carrier_key) = self.unsigned_owner_key_enroll_in_txn(
+            &mut txn,
+            authority,
+            holder,
+            device,
+            predecessor,
+            confirming,
+        )?;
+        let transcript = authority_transcript(&entry)?;
+        entry.signer.signature = sign_predecessor(&transcript)?;
+        let (hash, machine) = self.land_owner_key_enroll_in_txn(&mut txn, entry, &carrier_key)?;
+        txn.commit()?;
+        Ok((hash, machine))
+    }
+
+    /// The enrollment of `device` as `authority`, carried by this install,
+    /// with `predecessor` as its primary signer (with `confirming`, the
+    /// second vouch for a key the roster already names), built in `txn` with
+    /// no signature yet (zero placeholders), and the carrier's install key
+    /// that cosigns it. A frontier wider than one entry names is joined in
+    /// `txn` first (FIX 7908).
+    fn unsigned_owner_key_enroll_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        authority: &ActAuthority,
+        holder: Option<EntityId>,
+        device: DeviceAuthority,
+        predecessor: AuthorityKey,
+        confirming: bool,
+    ) -> Result<(AuthorityLogEntry, ed25519_dalek::SigningKey)> {
         let (owner, surface) = match authority {
             ActAuthority::Owner(owner, surface) => (owner, *surface),
             ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
         };
-        let mut txn = self.store.env.write_txn()?;
-        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let fold = self.authority_view_readonly_in_txn(txn)?;
         let vault_id = fold.vault_id.ok_or_else(invalid_authority)?;
         let (carrier, carrier_key) = self
-            .carrier_in_txn(&txn, &fold)
+            .carrier_in_txn(txn, &fold)
             .map_err(authority_refusal_as(NO_CARRIER))?;
         let machine = holder.unwrap_or(carrier);
-        let key = device.key.clone();
-        if fold.roster.contains_key(&key) != confirming {
+        if fold.roster.contains_key(&device.key) != confirming {
             return Err(not_valid(if confirming {
                 NOT_ON_ROSTER
             } else {
                 KEY_ON_ROSTER
             }));
         }
-        let key_bytes: &[u8] = match &key {
-            AuthorityKey::Ed25519(bytes) => bytes,
-            AuthorityKey::P256(bytes) => bytes,
+        let target = match &device.key {
+            AuthorityKey::Ed25519(bytes) => owner_key_enrollment_target(&vault_id, bytes)?,
+            AuthorityKey::P256(bytes) => owner_key_enrollment_target(&vault_id, bytes)?,
         };
         // FIX 7908: join a frontier wider than one entry names, else today's path.
         let joiner = FrontierSigner::Install(carrier, &carrier_key);
         let fold = self
-            .prepare_authority_frontier_in_txn(&mut txn, &fold, joiner, MAX_PARENTS)?
+            .prepare_authority_frontier_in_txn(txn, &fold, joiner, MAX_PARENTS)?
             .unwrap_or(fold);
         // The main-log heads alone: the carrier's standing rows and the
         // predecessor's roster rows are main-log rows among them or their
@@ -367,12 +448,12 @@ impl Vault {
         let act = OwnerAct::by_owner(
             actor,
             OwnerActKind::OwnerKeyEnrollment,
-            owner_key_enrollment_target(&vault_id, key_bytes)?,
+            target,
             surface,
             OWNER_KEY_ENROLLMENT_SEEN,
         );
-        let now = self.instant_in_txn(&txn)?.secs();
-        let mut entry = AuthorityLogEntry {
+        let now = self.instant_in_txn(txn)?.secs();
+        let entry = AuthorityLogEntry {
             schema_version: AUTHORITY_LOG_SCHEMA_VERSION,
             vault_id: Some(vault_id),
             seq: next_sequence(&fold, &predecessor)?,
@@ -396,25 +477,42 @@ impl Vault {
             ts: now,
         };
         verify_unsigned(&entry)?;
+        Ok((entry, carrier_key))
+    }
+
+    /// Lands `entry`, its predecessor's signature in place: the carrier's
+    /// install key (`carrier_key`) cosigns its transcript, the entry is
+    /// stored in `txn`, and the fold runs again there. Answers the entry and
+    /// the machine it names only when the fold counted it, held nothing
+    /// back and keeps the key on the roster live; the caller commits.
+    fn land_owner_key_enroll_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        mut entry: AuthorityLogEntry,
+        carrier_key: &ed25519_dalek::SigningKey,
+    ) -> Result<(AuthorityEntryHash, EntityId)> {
+        let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+            return Err(not_valid(NOT_VALID));
+        };
+        let (key, machine) = (enroll.device.key.clone(), enroll.machine);
         let transcript = authority_transcript(&entry)?;
         if let Some(cosign) = entry.cosigns.first_mut() {
             cosign.signature = carrier_key.sign(&transcript).to_bytes().to_vec();
         }
-        entry.signer.signature = sign_predecessor(&transcript)?;
         let hash = authority_entry_hash(&entry)?;
+        let now = entry.ts;
         let at = TimeRange {
             start: now,
             end: now,
         };
-        self.put_authority_log_entries_in_txn(&mut txn, &[(entry, at, now)])?;
-        let after = self.authority_view_readonly_in_txn(&txn)?;
+        self.put_authority_log_entries_in_txn(txn, &[(entry, at, now)])?;
+        let after = self.authority_view_readonly_in_txn(txn)?;
         if !after.valid_entries.contains(&hash)
             || after.install.held_back.contains(&hash)
             || !after.roster.get(&key).is_some_and(|device| !device.revoked)
         {
             return Err(authority_refused(NOT_COUNTED));
         }
-        txn.commit()?;
         Ok((hash, machine))
     }
 
@@ -600,6 +698,100 @@ impl Vault {
         })
     }
 
+    /// The first step of a device key's enrollment whose predecessor signs
+    /// elsewhere (row WEB-PASSKEY-OWNER-KEY: the owner's passkey, in his
+    /// browser, vouches for a new device): the entry
+    /// [`Self::enrol_owner_signing_key_as`] would write, built now with no
+    /// signature, and the challenge its predecessor's assertion names. A
+    /// frontier join this needs is written and kept; nothing else is.
+    ///
+    /// # Errors
+    /// As [`Self::enrol_owner_signing_key_as`], before any signature.
+    pub fn prepare_owner_key_enrollment_as(
+        &self,
+        authority: &ActAuthority,
+        input: OwnerKeyEnrollment,
+        predecessor: AuthorityKey,
+    ) -> Result<PreparedOwnerKeyEnrollment> {
+        let mut txn = self.store.env.write_txn()?;
+        let device = enrolled_device(input.public_key, input.proof);
+        let (entry, _) = self.unsigned_owner_key_enroll_in_txn(
+            &mut txn,
+            authority,
+            Some(input.machine),
+            device,
+            predecessor,
+            false,
+        )?;
+        let challenge = webauthn_challenge(&authority_transcript(&entry)?);
+        let body = encode_value(&entry_value(&entry, true))?;
+        // A frontier join the entry names must stand for it to land.
+        txn.commit()?;
+        Ok(PreparedOwnerKeyEnrollment {
+            entry: body,
+            challenge,
+        })
+    }
+
+    /// The second step: the owner lands `entry`, as
+    /// [`Self::prepare_owner_key_enrollment_as`] answered it, with
+    /// `predecessor_signature` (a passkey's assertion envelope over its
+    /// challenge) in place. The entry must be an owner key enrollment of a
+    /// device's key the roster does not name yet, which this install carries
+    /// for the owner `authority` proves now, in its one encoding; this
+    /// install cosigns it, and it lands only when the fold counts it, as the
+    /// one-step door's does. It never lands a second vouch for a key the
+    /// roster names: a confirmation goes through [`Self::confirm_owner_key_as`].
+    ///
+    /// # Errors
+    /// [`RecordError::InvalidAuthorityLogBody`] for an entry this install
+    /// did not prepare for this owner, or for a key the roster names by now;
+    /// then as [`Self::enrol_owner_signing_key_as`].
+    pub fn land_owner_key_enrollment_as(
+        &self,
+        authority: &ActAuthority,
+        entry: &[u8],
+        predecessor_signature: Vec<u8>,
+    ) -> Result<OwnerKeyEnrollmentReceipt> {
+        let owner = match authority {
+            ActAuthority::Owner(owner, _) => owner,
+            ActAuthority::Agent(_) => return Err(authority_refused(OWNER_ONLY)),
+        };
+        let mut entry = decode_unsigned_entry(entry).ok_or_else(|| not_valid(NOT_PREPARED))?;
+        let mut txn = self.store.env.write_txn()?;
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, &txn)?;
+        let fold = self.authority_view_readonly_in_txn(&txn)?;
+        let (carrier, carrier_key) = self
+            .carrier_in_txn(&txn, &fold)
+            .map_err(authority_refusal_as(NO_CARRIER))?;
+        let carrier_cosign = AuthorityKey::Ed25519(carrier_key.verifying_key().to_bytes());
+        let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+            return Err(not_valid(NOT_PREPARED));
+        };
+        let Some(public_key) = enroll.public_key().copied() else {
+            return Err(not_valid(NOT_PREPARED));
+        };
+        if enroll.act.owner != actor
+            || enroll.carrier != carrier
+            || entry.vault_id != fold.vault_id
+            || !matches!(entry.cosigns.as_slice(), [cosign] if cosign.public_key == carrier_cosign)
+        {
+            return Err(not_valid(NOT_PREPARED));
+        }
+        if fold.roster.contains_key(&enroll.device.key) {
+            return Err(not_valid(KEY_ON_ROSTER));
+        }
+        verify_unsigned(&entry)?;
+        entry.signer.signature = predecessor_signature;
+        let (hash, machine) = self.land_owner_key_enroll_in_txn(&mut txn, entry, &carrier_key)?;
+        txn.commit()?;
+        Ok(OwnerKeyEnrollmentReceipt {
+            entry: hash,
+            machine,
+            public_key,
+        })
+    }
+
     /// A revoke of `revoked` signed by `signer` alone at this vault's
     /// main-log heads, stored for the fold to judge; true when it counted.
     /// The integration tests' door to the limits on a key only a passkey
@@ -765,25 +957,91 @@ impl Vault {
     /// branches, joined to the roster now, a revoked or ineligible key
     /// included. Empty before any enrollment.
     pub fn enrolled_owner_keys(&self) -> Result<Vec<EnrolledOwnerKey>> {
-        let txn = self.store.env.read_txn()?;
-        let fold = self.authority_view_readonly_in_txn(&txn)?;
         let managed = CheckpointPosture::from(self.privacy_posture()) == CheckpointPosture::Managed;
         let mut keys = BTreeMap::new();
+        self.visit_authority_entries(|fold, hash, entry| {
+            keep_enrolled(&mut keys, fold, managed, hash, entry);
+        })?;
+        Ok(keys.into_values().collect())
+    }
+
+    /// Every enrolled passkey (row WEB-PASSKEY-OWNER-KEY), ascending by key:
+    /// each valid passkey enrollment this vault keeps, stored or carried by
+    /// an adopted checkpoint image, the smallest entry for a key enrolled on
+    /// two branches, joined to the roster now, a revoked one included. What
+    /// a browser needs to ask for a passkey by its credential id and to name
+    /// its key as a predecessor. Empty before any passkey enrollment.
+    pub fn enrolled_owner_passkeys(&self) -> Result<Vec<EnrolledOwnerPasskey>> {
+        let mut keys = BTreeMap::new();
+        self.visit_authority_entries(|fold, hash, entry| {
+            keep_enrolled_passkey(&mut keys, fold, hash, entry);
+        })?;
+        Ok(keys.into_values().collect())
+    }
+
+    /// Calls `visit` with the fold now and each authority entry this vault
+    /// keeps: every stored row, then each body an adopted checkpoint image
+    /// carries past them.
+    fn visit_authority_entries<F>(&self, mut visit: F) -> Result<()>
+    where
+        F: FnMut(&AuthorityFold, AuthorityEntryHash, &AuthorityLogEntry),
+    {
+        let txn = self.store.env.read_txn()?;
+        let view = self.authority_view_readonly_in_txn(&txn)?;
+        let fold: &AuthorityFold = &view;
         let mut stored = BTreeSet::new();
         for (_, body) in super::readonly_fold::authority_log_rows_in_txn(&self.store, &txn)? {
             let entry = decode_authority_log_entry_body(&body)?;
             let hash = authority_entry_hash(&entry)?;
             stored.insert(hash);
-            keep_enrolled(&mut keys, &fold, managed, hash, &entry);
+            visit(fold, hash, &entry);
         }
         if let Some(evidence) = super::adopted_evidence::adopted_evidence_in_txn(&self.store, &txn)?
         {
             for (hash, entry) in evidence.carried_past(&stored) {
-                keep_enrolled(&mut keys, &fold, managed, *hash, entry);
+                visit(fold, *hash, entry);
             }
         }
-        Ok(keys.into_values().collect())
+        Ok(())
     }
+}
+
+/// Keeps `entry`, at `hash`, in `keys` when it is a valid passkey
+/// enrollment on `fold` whose key no smaller entry already stands for.
+fn keep_enrolled_passkey(
+    keys: &mut BTreeMap<Vec<u8>, EnrolledOwnerPasskey>,
+    fold: &AuthorityFold,
+    hash: AuthorityEntryHash,
+    entry: &AuthorityLogEntry,
+) {
+    let AuthorityOp::OwnerKeyEnroll(enroll) = &entry.op else {
+        return;
+    };
+    let Some(credential_id) = enroll.passkey_credential_id() else {
+        return;
+    };
+    if !fold.valid_entries.contains(&hash) {
+        return;
+    }
+    let public_key = enroll.key_bytes().to_vec();
+    if keys.get(&public_key).is_some_and(|kept| kept.entry <= hash) {
+        return;
+    }
+    keys.insert(
+        public_key.clone(),
+        EnrolledOwnerPasskey {
+            entry: hash,
+            machine: enroll.machine,
+            owner: enroll.act.owner,
+            credential_id: credential_id.to_vec(),
+            live: fold
+                .roster
+                .get(&enroll.device.key)
+                .is_some_and(|device| !device.revoked),
+            public_key,
+            at: entry.ts,
+        },
+    );
 }
 
 /// Keeps `entry`, at `hash`, in `keys` when it is a valid owner key
