@@ -629,6 +629,27 @@ fn safe_text(text: &str, depth: usize) -> bool {
     }
 }
 
+/// Whether the typed rule keeps `text` as it is where a body holds it as a
+/// string ([`safe_text`] at the body's own depth): a door that masks a slot
+/// before the typed rule reads the body judges the slot's text by this
+/// first, so the mask hides no text the rule would null.
+pub(crate) fn typed_rule_keeps_text(text: &str) -> bool {
+    safe_text(text, 0)
+}
+
+/// Whether a door that ships `text` beside a row, where no typed rule reads
+/// it, may ship it as it is: the raw release check reads no credential in it,
+/// nor in it read as a body, each text inside decoded again
+/// ([`crate::batch::secret_scan::release_decoded_hit`]); and the typed rule
+/// would keep it ([`typed_rule_keeps_text`]). JSON text that escapes a
+/// credential's key or token is no text the raw check reads.
+pub(crate) fn release_keeps_text(text: &str) -> bool {
+    use crate::batch::secret_scan::{release_decoded_hit, scan_text_content};
+    scan_text_content(text).is_none()
+        && release_decoded_hit(text.as_bytes()).is_none()
+        && typed_rule_keeps_text(text)
+}
+
 fn byte_container_is_opaque_or_tainted(bytes: &[u8], depth: usize) -> bool {
     if scan_undecoded_body(bytes).is_some() {
         return true;
@@ -683,5 +704,15 @@ impl ExportValue {
     /// The MessagePack value this restores, at any depth.
     pub(crate) fn to_msgpack(&self) -> Result<Mp> {
         tree::restore_value_tree(self)
+    }
+
+    /// The JSON a contact bundle carries of this value: binary text as its
+    /// text; an id reference, opaque binary and extension bytes as null; the
+    /// rest as [`crate::serialize::msgpack_value_to_json`] projects it (a
+    /// map's text keys once each, numbers without their width).
+    pub(crate) fn to_released_json(&self) -> Result<Value> {
+        Ok(crate::serialize::msgpack_value_to_json(
+            &tree::projected_value_tree(self)?,
+        ))
     }
 }

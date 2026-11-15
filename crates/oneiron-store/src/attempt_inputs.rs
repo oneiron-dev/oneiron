@@ -70,6 +70,9 @@ pub enum AttemptInterventionEffect {
     AlreadyCancelled,
     Redirected,
     AlreadyRedirected,
+    /// A running run takes a person's pause at its next step boundary: its
+    /// Pause signal is pending.
+    PausingAtNextStep,
 }
 
 impl AttemptInterventionEffect {
@@ -85,6 +88,7 @@ impl AttemptInterventionEffect {
             Self::AlreadyCancelled => "already_cancelled",
             Self::Redirected => "redirected",
             Self::AlreadyRedirected => "already_redirected",
+            Self::PausingAtNextStep => "pausing_at_next_step",
         }
     }
 }

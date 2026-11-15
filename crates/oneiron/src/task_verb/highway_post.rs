@@ -66,6 +66,7 @@ use super::wire_encode::canonical_bytes;
 mod brief;
 mod key;
 mod parking;
+mod plan_run;
 mod settlement;
 use self::key::{PostKey, observe_key_in};
 pub(crate) use self::settlement::settle_task_proposal_in_txn;
@@ -519,6 +520,10 @@ impl Memory<'_> {
         let (type_ref, stale_pins) = {
             let txn = self.vault().store.env.read_txn().map_err(Error::from)?;
             observe_key_in(self.vault(), &txn, &post.intent_key, task_ref);
+            // Plan mode, before the pin checks: a plan-doc pinned at a
+            // revision the owner has not approved is a plan refusal, not a
+            // moved pin.
+            self.require_plan_admission_in(&txn, Some(post.assignee), Some(&post.brief))?;
             let stale_pins = if copy.is_some() {
                 post.brief
                     .validate_copy_in(self.vault(), &txn, Some(post.assignee))?
@@ -620,6 +625,10 @@ impl Memory<'_> {
             if let Some(binding) = &post.brief.context.workflow {
                 binding.validate_in(self.vault(), &*wtxn, Some(post.assignee))?;
             }
+            // Plan mode: so are the plan the brief pins and the assignee's
+            // plan mode, so a verdict, an edit or a mode set that lands after
+            // the check above still decides.
+            self.require_plan_admission_in(&*wtxn, Some(post.assignee), Some(&post.brief))?;
             record_task_create(
                 self.vault(),
                 wtxn,

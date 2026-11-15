@@ -1,31 +1,20 @@
 //! Core half of `graph_fs::snapshot`: its store-layer items live in `oneiron_store::graph_fs::snapshot` and are
 //! re-exported here; the items below stay in the engine.
 
-pub(crate) use oneiron_store::graph_fs::snapshot::*;
-
 use super::model::{
     GraphFsEntry, GraphFsFile, GraphFsMount, GraphFsOptions, GraphFsPage, GraphFsResolver,
 };
-use super::paging::{PageBuilder, SealedPosition};
+use super::paging::PageBuilder;
 use super::readdir::GraphFsFileRead;
 use crate::claim::ScopedRead;
 use crate::codebase::read_asset_blob_sighted_in_txn;
-use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::ports::PointRead;
 use crate::store::code_snapshot::snapshot_asset_entity_id;
-use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-/// A reference selects content, never authority. Historical references name
-/// retained imported snapshots, not a local folder on the serving host.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
-pub enum GraphFsReference {
-    LiveHead,
-    ForkHash { repo: EntityId, hash: String },
-    RepoSnapshot { snapshot: EntityId },
-}
+#[doc(hidden)]
+pub use oneiron_verb_wire::graph_fs::snapshot::GraphFsReference;
 
 impl<'vault> ScopedRead<'vault> {
     /// Opens the file face under this read's own credential. Snapshot ids
