@@ -10,7 +10,8 @@
 //! ledger, role defaults) live in this module.
 
 mod autocheck;
-mod budget;
+// The setting catalogue names the resident share's key: `budget::setting_keys`.
+pub(crate) mod budget;
 mod defaults;
 pub(crate) use defaults::read_effective_defaults;
 pub use defaults::{

@@ -18,6 +18,10 @@ pub enum ResidenceModeName {
     All,
 }
 
+/// This machine's residence choice is a Setting value (`sync.residence.mode`, DESIGN
+/// 15-setting-primitive): either name stands.
+impl oneiron_setting_contract::SettingValue for ResidenceModeName {}
+
 /// `vault.residence.index`'s input: the machine whose thin index to read.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]

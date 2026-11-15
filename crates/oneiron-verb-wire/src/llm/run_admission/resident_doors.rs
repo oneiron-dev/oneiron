@@ -9,22 +9,6 @@ use serde::Serialize;
 #[serde(deny_unknown_fields)]
 pub struct ResidentSharesRequest {}
 
-/// The owner's setting for one resident's share.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct SetResidentShareRequest {
-    /// The resident, as its entity id in hex.
-    pub resident: String,
-    /// The share in the allocation's unit; absent returns the resident to
-    /// the default split of what the set shares leave.
-    #[serde(default)]
-    pub units: Option<u64>,
-    /// Pinned, the share refuses the resident's new paid work once a call
-    /// no longer fits it; soft, spend past it writes an overdraft receipt.
-    #[serde(default)]
-    pub pinned: bool,
-}
-
 /// One resident's share and its depletion on the allocation it last drew
 /// on.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]

@@ -1,14 +1,15 @@
 //! The store's catalogue keys (DESIGN 15-setting-primitive): the owner's retrieval-policy pins,
-//! each engine scan's threshold on this machine, and the owner's wait for each queue of retained
-//! peer work. The wait's readers are in
-//! `sync::federation_burst`, which only some builds compile; the catalogue names every key in
-//! every build, so its row is here.
+//! each engine scan's threshold on this machine, the owner's wait for each queue of retained
+//! peer work, and this machine's residence mode. The wait's and the mode's readers are in
+//! `sync`, which only some builds compile; the catalogue names every key in every build, so
+//! their rows are here.
 
+use oneiron_verb_wire::verbs::residence::ResidenceModeName;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::setting::{ItemDomain, Kind, Restore, SettingChange, SettingSync, SettingValue};
+use crate::setting::{ItemDomain, Kind, Restore, Setter, SettingChange, SettingSync, SettingValue};
 use crate::store::{EngineScan, RetrievalPolicyPins};
 
 /// The pins' hook: holds the served blend weights to the pins now in force, in the write that
@@ -105,5 +106,41 @@ crate::setting::setting_keys! {
         kind: Kind::new(scan_default),
         item: Some(ENGINE_SCAN),
         sync: SettingSync::Install,
+    };
+}
+
+fn residence_mode_default() -> Option<ResidenceModeName> {
+    None
+}
+
+/// The residence mode's hook: only the engine writes the row, on the paths that switch the live
+/// connection in the same step (the owner's `vault.residence.mode`, the owner's residence
+/// directive, a shared env's start). A row written past them would leave the read caches of
+/// sync-opened under sync-all, or the held windows with no new grant, and the connection on its
+/// old mode, so every other change is refused.
+fn refuse_unswitched_residence_mode(
+    _vault: &Vault,
+    _txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> Result<()> {
+    if matches!(change.setter, Setter::Engine { .. }) {
+        return Ok(());
+    }
+    Err(Error::InvalidConfig(
+        "this machine's residence mode is set with vault.residence.mode, which switches the live \
+         connection with it"
+            .into(),
+    ))
+}
+
+crate::setting::setting_keys! {
+    /// This machine's residence choice: `all` (sync every window it may read) or `opened`
+    /// (sync what it opened). With no row the host's configured mode holds, and the elected
+    /// home always runs `all`. The owner sets it with `vault.residence.mode`, which switches the
+    /// live connection in the same step; `vault.settings.set` refuses a change to it.
+    pub(crate) RESIDENCE_MODE: Option<ResidenceModeName> = "sync.residence.mode" {
+        kind: Kind::new(residence_mode_default),
+        sync: SettingSync::Install,
+        on_change: Some(refuse_unswitched_residence_mode),
     };
 }

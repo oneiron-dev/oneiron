@@ -6,62 +6,33 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_verb_wire::verbs::residence::ResidenceModeName;
+
 use crate::Vault;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::setting::{EngineSetting, SetSetting, SettingCaller};
+use crate::store::setting_keys::RESIDENCE_MODE;
 use crate::sync::client::SyncResidenceMode;
 
-/// The one local preference row (`rs:mode`). Key: ().
-const PREFERENCE_KEY: &str = "rs:mode";
-const PREFERENCE_LEN: usize = 9;
 /// The one local row of the owner's world pick (`rs:worlds`): each picked
 /// world's 16 id bytes, ascending. Key: ().
 const WORLD_PICK_KEY: &str = "rs:worlds";
 
-/// The owner's last explicit choice for this machine.
+/// The owner's last explicit choice for this machine: the `sync.residence.mode` row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct DeviceSyncPreference {
     pub mode: SyncResidenceMode,
-    /// Recorded-clock seconds when the choice was made.
-    pub chosen_at: u64,
-}
-
-impl DeviceSyncPreference {
-    fn encode(self) -> [u8; PREFERENCE_LEN] {
-        let mut bytes = [0; PREFERENCE_LEN];
-        bytes[0] = match self.mode {
-            SyncResidenceMode::Opened => 0,
-            SyncResidenceMode::All => 1,
-        };
-        bytes[1..].copy_from_slice(&self.chosen_at.to_be_bytes());
-        bytes
-    }
-
-    fn decode(bytes: &[u8]) -> Result<Self> {
-        let bytes: &[u8; PREFERENCE_LEN] = bytes
-            .try_into()
-            .map_err(|_| Error::CorruptedIndex("device sync preference"))?;
-        let mode = match bytes[0] {
-            0 => SyncResidenceMode::Opened,
-            1 => SyncResidenceMode::All,
-            _ => return Err(Error::CorruptedIndex("device sync preference")),
-        };
-        let mut at = [0; 8];
-        at.copy_from_slice(&bytes[1..]);
-        Ok(Self {
-            mode,
-            chosen_at: u64::from_be_bytes(at),
-        })
-    }
 }
 
 /// The persisted choice, or `None` when the owner never chose on this machine.
 pub fn load_device_sync_preference(vault: &Vault) -> Result<Option<DeviceSyncPreference>> {
-    vault
-        .sync_state_get(PREFERENCE_KEY)?
-        .map(|bytes| DeviceSyncPreference::decode(&bytes))
-        .transpose()
+    let txn = vault.store.env.read_txn()?;
+    Ok(RESIDENCE_MODE
+        .read_in_txn(vault, &txn, &[], None)?
+        .value
+        .map(|mode| DeviceSyncPreference { mode: mode.into() }))
 }
 
 /// Record the owner's choice for this machine. The live connection applies
@@ -74,21 +45,21 @@ pub fn set_device_sync_preference(
 }
 
 /// [`set_device_sync_preference`] in the caller's transaction, for a door
-/// that records more in the same commit.
+/// that records more in the same commit. The engine writes the row: every
+/// caller is a path that switches the live connection with it, and the key
+/// refuses any other change. The key runs nothing after the commit.
 pub(crate) fn set_device_sync_preference_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,
     mode: SyncResidenceMode,
 ) -> Result<DeviceSyncPreference> {
-    let preference = DeviceSyncPreference {
-        mode,
-        chosen_at: vault.store.clock.wall_now(),
-    };
-    vault
-        .store
-        .sync_state
-        .put(txn, PREFERENCE_KEY, &preference.encode())?;
-    Ok(preference)
+    let mut request = SetSetting::vault_value(
+        RESIDENCE_MODE.spec.name,
+        serde_json::json!(ResidenceModeName::from(mode)),
+    );
+    request.why = Some("the residence switch".to_owned());
+    vault.set_setting_in_txn(txn, SettingCaller::Engine(EngineSetting::own()), &request)?;
+    Ok(DeviceSyncPreference { mode })
 }
 
 /// The worlds the owner picked for this machine to follow (ARCH-0023b

@@ -1,15 +1,15 @@
-//! Typed owner doors over the resident shares (FIX 11310): set one
-//! resident's share of the host-paid allocation, and read every resident's
-//! share and depletion. The vault's resident ledger owns every admission
-//! rule; these doors only check the owner's proof and project.
+//! The typed owner door over the resident shares (FIX 11310): read every
+//! resident's share and depletion. The owner sets a share with
+//! `vault.settings.set` (key `budget.resident_share`, at the resident's agent
+//! scope). The vault's resident ledger owns every admission rule; this door
+//! only checks the owner's proof and projects.
 
-use super::ResidentShare;
 use crate::consent::AuthenticatedOwner;
-use crate::{EntityId, Error, Result, Vault};
+use crate::{Result, Vault};
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::llm::run_admission::resident_doors::{
-    ResidentShareView, ResidentSharesRequest, ResidentSharesView, SetResidentShareRequest,
+    ResidentShareView, ResidentSharesRequest, ResidentSharesView,
 };
 
 fn shares_view(vault: &Vault) -> Result<ResidentSharesView> {
@@ -38,25 +38,5 @@ pub fn resident_shares_as_owner(
     _input: &ResidentSharesRequest,
 ) -> Result<ResidentSharesView> {
     owner.revalidate(vault)?;
-    shares_view(vault)
-}
-
-/// Sets one resident's share as the owner asks; its depletion stays as it
-/// stands.
-pub fn set_resident_share_as_owner(
-    vault: &Vault,
-    owner: &AuthenticatedOwner,
-    input: &SetResidentShareRequest,
-) -> Result<ResidentSharesView> {
-    owner.revalidate(vault)?;
-    let resident = EntityId::from_hex(&input.resident)
-        .map_err(|_| Error::InvalidConfig("resident is not an entity id".to_owned()))?;
-    vault.set_resident_share(
-        resident,
-        ResidentShare {
-            units: input.units,
-            pinned: input.pinned,
-        },
-    )?;
     shares_view(vault)
 }

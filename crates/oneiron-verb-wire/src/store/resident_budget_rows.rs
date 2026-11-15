@@ -18,3 +18,7 @@ pub struct ResidentShare {
     /// overdraft receipt.
     pub pinned: bool,
 }
+
+/// The owner's share is a Setting value (`budget.resident_share`, DESIGN 15-setting-primitive,
+/// stage 4): every share in units, and the default split, stands.
+impl oneiron_setting_contract::SettingValue for ResidentShare {}

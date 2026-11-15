@@ -4,6 +4,7 @@
 mod resident;
 mod rsi;
 pub mod rsi_doors;
+pub(crate) mod setting_keys;
 
 pub use resident::{ResidentShareRead, VaultResidentLedger};
 pub(crate) use resident::{resident_share_fits_in_txn, resident_share_frees};
