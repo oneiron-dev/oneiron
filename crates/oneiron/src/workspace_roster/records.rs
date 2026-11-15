@@ -180,6 +180,18 @@ impl SideKey for RosterMemberKey {
     }
 }
 
+/// One [`RosterMemberKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn roster_member_key_pin_for_test(
+    workspace_ref: &str,
+    person_ref: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&RosterMemberKey {
+        workspace_ref: workspace_ref.to_owned(),
+        person_ref,
+    })
+}
+
 /// A journal record as stored under [`ONBOARDING`].
 ///
 /// Deliberately does NOT store outcome refs: every ref is caller-supplied, so

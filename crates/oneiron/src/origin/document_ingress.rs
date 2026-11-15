@@ -90,6 +90,18 @@ impl SideKey for ProvenanceRefKey {
     }
 }
 
+/// One [`ProvenanceRefKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn provenance_ref_key_pin_for_test(
+    provenance: EntityId,
+    ref_name_hash: [u8; 32],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ProvenanceRefKey {
+        provenance,
+        ref_name_hash,
+    })
+}
+
 impl Vault {
     /// The authenticated observer receipt, not a trailer, identifies the push.
     /// The outer landing holds the repo coordinator and already validated it.

@@ -53,6 +53,18 @@ impl SideKey for RepoRevisionKey {
     }
 }
 
+/// One [`RepoRevisionKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn repo_revision_key_pin_for_test(
+    repo_hex: &str,
+    revision: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&RepoRevisionKey {
+        repo_hex: repo_hex.to_owned(),
+        revision,
+    })
+}
+
 fn export_key(repo: &GitWireRepo, revision: EntityId) -> RepoRevisionKey {
     RepoRevisionKey {
         repo_hex: repo.identity().as_hex(),

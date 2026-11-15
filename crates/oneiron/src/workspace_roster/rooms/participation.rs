@@ -149,6 +149,24 @@ impl SideKey for FactKey {
     }
 }
 
+/// One [`FactKey`] for `test_doors::side_key_pins`; `subject` is a kind byte and id that
+/// [`FactSubject::decode`] reads.
+#[cfg(oneiron_test_support)]
+pub(crate) fn fact_key_pin_for_test(
+    room: EntityId,
+    branch: [u8; 16],
+    subject: (u8, [u8; 16]),
+    cause: (u8, [u8; 16]),
+) -> crate::test_doors::side_key_pins::Pin {
+    let subject = FactSubject::decode(subject.0, subject.1).expect("a fixture subject reads");
+    crate::test_doors::side_key_pins::Pin::of(&FactKey {
+        room,
+        branch,
+        subject,
+        cause,
+    })
+}
+
 /// The key bytes every fact of `room`, or of its thread `branch`, starts with.
 pub(super) fn place_prefix(room: EntityId, branch: Option<EntityId>) -> Vec<u8> {
     let mut out = Vec::with_capacity(KEY_LEN);

@@ -74,6 +74,20 @@ impl SideKey for LfsRefKey {
     }
 }
 
+/// One [`LfsRefKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn lfs_ref_key_pin_for_test(
+    repo_id: EntityId,
+    ref_name: &str,
+    oid: [u8; 32],
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&LfsRefKey {
+        repo_id,
+        ref_name: ref_name.to_owned(),
+        oid: LfsOid::from_bytes(oid),
+    })
+}
+
 /// The bytes after `REFS`'s prefix that name every row for one repo+ref, without the trailing
 /// OID.
 fn ref_scan_prefix(repo_id: &EntityId, ref_name: &str) -> Vec<u8> {

@@ -96,6 +96,34 @@ impl SideKey for ReceivePackProgressKey {
     }
 }
 
+/// One [`ReceivePackIntentKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn receive_pack_intent_key_pin_for_test(
+    repo_identity_hex: &str,
+    operation_id: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ReceivePackIntentKey {
+        repo_identity_hex: repo_identity_hex.to_owned(),
+        operation_id,
+    })
+}
+
+/// One [`ReceivePackProgressKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn receive_pack_progress_key_pin_for_test(
+    repo_identity_hex: &str,
+    operation_id: EntityId,
+    batch: u64,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&ReceivePackProgressKey {
+        intent: ReceivePackIntentKey {
+            repo_identity_hex: repo_identity_hex.to_owned(),
+            operation_id,
+        },
+        batch,
+    })
+}
+
 #[derive(Serialize, Deserialize)]
 struct ReceivePackBatchProgress {
     refs: Vec<(bool, ReceivePackRefStatus)>,

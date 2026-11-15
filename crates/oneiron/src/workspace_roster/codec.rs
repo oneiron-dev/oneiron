@@ -173,6 +173,18 @@ impl SideKey for MemberIntentKey {
     }
 }
 
+/// One [`MemberIntentKey`] for `test_doors::side_key_pins`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn member_intent_key_pin_for_test(
+    workspace_ref: &str,
+    person_ref: EntityId,
+) -> crate::test_doors::side_key_pins::Pin {
+    crate::test_doors::side_key_pins::Pin::of(&MemberIntentKey {
+        workspace_ref: workspace_ref.to_owned(),
+        person_ref,
+    })
+}
+
 /// Guards one member's workspace-onboarding slot against a second onboarding
 /// with different inputs. Key: [`MemberIntentKey`].
 pub(super) const MEMBER_INTENT: SideTable<MemberIntentKey, [u8; 32], Raw> =

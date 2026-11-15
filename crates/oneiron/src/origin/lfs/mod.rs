@@ -24,6 +24,8 @@ mod store;
 mod transport;
 mod upload;
 pub(crate) use self::chunks::archive_lfs_tables;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::store::lfs_ref_key_pin_for_test;
 
 pub use self::batch_client::{
     LFS_BATCH_ANSWER_MAX_BYTES, download_lfs_objects, upload_lfs_objects,

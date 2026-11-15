@@ -128,6 +128,8 @@ pub use offer_settle::{OfferAnswer, OfferAnswerRequest, OfferSettlement};
 pub use offers::{OfferCard, OfferDraft, OfferState, OfferVoteTally, OffersPage, OffersRequest};
 pub use participants::{ParticipantView, ParticipantsPage, ParticipantsRequest};
 pub use participation::JoinCause;
+#[cfg(oneiron_test_support)]
+pub(crate) use participation::fact_key_pin_for_test;
 pub(super) use participation::record_bound_task_in_txn;
 pub(in crate::workspace_roster) use participation::stands_in_thread_in;
 pub(crate) use participation::{

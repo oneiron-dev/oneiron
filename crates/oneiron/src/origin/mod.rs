@@ -19,6 +19,8 @@ pub use document_candidates::projected::{
 };
 pub use document_ingress::ReceivedFileOperation;
 pub(crate) use document_ingress::erase_code_operations_actor_in_txn;
+#[cfg(oneiron_test_support)]
+pub(crate) use document_ingress::provenance_ref_key_pin_for_test;
 pub(crate) use oneiron_store::origin::git_ref_change;
 pub use secret_projection::clearance::RepoProjectionHoldCause;
 pub mod lfs;
