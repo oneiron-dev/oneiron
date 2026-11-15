@@ -14,7 +14,7 @@ pub fn reply_recipient_count(
     vault: &Vault,
     cc: &[String],
 ) -> Result<std::result::Result<usize, String>> {
-    crate::mail_pack::reply_recipient_count(vault, cc)
+    crate::mail_pack::setting_keys::reply_recipient_count(vault, cc)
 }
 
 /// The first link a Microsoft 365 calendar view opened at `now` reads, and the span its

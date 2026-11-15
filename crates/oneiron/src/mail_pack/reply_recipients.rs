@@ -8,8 +8,9 @@
 //! winning over a later Cc. A reply that names no To recipient, a malformed
 //! address, a named group's members or more recipients than the owner's
 //! ceiling (`mail_calendar.reply.max_recipients`, [`MAX_REPLY_RECIPIENTS`]
-//! unless the owner sets another) is refused, never cut. A list's address is one opaque recipient: no group
-//! is expanded into its members (fix list row 17642).
+//! unless the owner sets another) is refused, never cut. A list's address is
+//! one opaque recipient: no group is expanded into its members (fix list row
+//! 17642).
 
 use super::gmail::{AddressPlace, address_list, address_places};
 use super::state::MailReplyHeaders;
@@ -300,36 +301,4 @@ pub(super) fn addresses_in(
         .filter(|named| named.role == role)
         .map(|named| named.address.clone())
         .collect()
-}
-
-/// How many recipients a reply to one sender with `cc` in Cc names under the
-/// vault's ceiling, or the refusal's message: a test door, built only under
-/// `--cfg oneiron_test_support`.
-///
-/// # Errors
-///
-/// Storage errors.
-#[cfg(oneiron_test_support)]
-pub(crate) fn reply_recipient_count(
-    vault: &crate::Vault,
-    cc: &[String],
-) -> crate::Result<std::result::Result<usize, String>> {
-    let max_recipients = {
-        let txn = vault.store.env.read_txn()?;
-        super::setting_keys::reply_max_recipients_in_txn(vault, &txn)?
-    };
-    let parent = MailReplyHeaders {
-        thread_id: None,
-        rfc_message_id: None,
-        references: Vec::new(),
-        from: Some("sender@example.com".to_owned()),
-        reply_to: Vec::new(),
-        recipients: None,
-        subject: None,
-        sent_by_mailbox: false,
-    };
-    let own = ["owner@example.com".to_owned()];
-    Ok(reply_recipients(&parent, &own, false, cc, max_recipients)
-        .map(|named| named.len())
-        .map_err(|error| error.to_string()))
 }

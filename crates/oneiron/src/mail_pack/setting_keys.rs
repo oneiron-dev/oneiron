@@ -120,17 +120,15 @@ crate::setting::setting_keys! {
     };
 }
 
-/// The most recipients one drafted reply names in `txn`, at the vault scope.
+/// The most recipients one drafted reply names, at the vault scope.
 ///
 /// # Errors
 ///
 /// Storage errors.
-pub(super) fn reply_max_recipients_in_txn(
-    vault: &crate::Vault,
-    txn: &heed::RoTxn<'_>,
-) -> Result<usize> {
+pub(super) fn reply_max_recipients(vault: &crate::Vault) -> Result<usize> {
+    let txn = vault.store.env.read_txn()?;
     let ceiling = MAIL_REPLY_MAX_RECIPIENTS
-        .read_in_txn(vault, txn, &[], None)?
+        .read_in_txn(vault, &txn, &[], None)?
         .value
         .0;
     Ok(usize::try_from(ceiling).unwrap_or(usize::MAX))
@@ -153,4 +151,35 @@ pub(super) fn microsoft365_calendar_view(vault: &crate::Vault) -> Result<(u64, u
         .value
         .0;
     Ok((before, after))
+}
+
+/// How many recipients a reply to one sender with `cc` in Cc names under the
+/// vault's ceiling, or the refusal's message: a test door, built only under
+/// `--cfg oneiron_test_support`.
+///
+/// # Errors
+///
+/// Storage errors.
+#[cfg(oneiron_test_support)]
+pub(crate) fn reply_recipient_count(
+    vault: &crate::Vault,
+    cc: &[String],
+) -> crate::Result<std::result::Result<usize, String>> {
+    let max_recipients = reply_max_recipients(vault)?;
+    let parent = super::state::MailReplyHeaders {
+        thread_id: None,
+        rfc_message_id: None,
+        references: Vec::new(),
+        from: Some("sender@example.com".to_owned()),
+        reply_to: Vec::new(),
+        recipients: None,
+        subject: None,
+        sent_by_mailbox: false,
+    };
+    let own = ["owner@example.com".to_owned()];
+    Ok(
+        super::reply_recipients::reply_recipients(&parent, &own, false, cc, max_recipients)
+            .map(|named| named.len())
+            .map_err(|error| error.to_string()),
+    )
 }

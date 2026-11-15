@@ -132,8 +132,6 @@ pub use reply::{
 };
 pub(crate) use reply::{approved_source_reply_in_txn, erase_reply_drafter_in_txn};
 pub(crate) use reply_ask::MAIL_REPLY_ASK_PRODUCER;
-#[cfg(oneiron_test_support)]
-pub(crate) use reply_recipients::reply_recipient_count;
 pub use reply_send::SMTP_SUBMISSION_CONNECTOR_EFFECTOR;
 pub use search::{MailSearchReport, MailSourceSearchRequest};
 pub use share::{MailThreadShareReceipt, MailThreadShareRequest};
