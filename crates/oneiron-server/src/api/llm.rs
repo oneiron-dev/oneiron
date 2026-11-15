@@ -4,6 +4,10 @@ use crate::models::{CallDeadline, ModelCallBinding, OfferLadder, RawInference};
 
 pub(super) mod decision_read;
 mod defaults_submit;
+// Review round 2 of #7831: the raw stream door's model stream, unpolled,
+// for the integration tests.
+#[cfg(oneiron_test_support)]
+mod stream_door;
 use crate::{auth::CoreAuth, server::SyncServer};
 use axum::{
     Json, Router,
@@ -23,6 +27,8 @@ use oneiron::llm::run_admission::{RunAdmission, RunDenied};
 use oneiron::{LlmError, LlmRequest, LlmResponse, LlmStreamEvent};
 use serde::Deserialize;
 use std::sync::Arc;
+#[cfg(oneiron_test_support)]
+pub(crate) use stream_door::raw_stream_opened_unpolled;
 use tokio::time::Instant;
 
 pub(super) fn routes() -> Router<Arc<SyncServer>> {

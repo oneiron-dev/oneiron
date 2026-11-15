@@ -159,6 +159,8 @@ mod linear_push;
 mod llm;
 #[cfg(feature = "mesh")]
 pub(crate) use llm::MeshLlm;
+#[cfg(oneiron_test_support)]
+pub(crate) use llm::raw_stream_opened_unpolled;
 pub(crate) use llm::record_raw_response;
 mod mcp_gateway;
 mod memory;

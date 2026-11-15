@@ -14,7 +14,9 @@
 //! with those codes on every call, deadline or not (RULING
 //! CHAT-ROLE-DEADLINE-CODES = A). No line of a raw stream waits for room in
 //! its client's queue past the deadline, so a client that stopped reading
-//! never holds the model's stream beyond it (review round 1 of #7831).
+//! never holds the model's stream beyond it (review round 1 of #7831). No
+//! rung goes out once the deadline has passed, however late the door's relay
+//! first polls the model's stream (review round 2 of #7831).
 //!
 //! Red on main: the raw doors read no deadline and run every call open. A
 //! call whose offer rests past its deadline waits the rest out, and a send
@@ -98,6 +100,11 @@ const CUT_DEADLINE_MS: u64 = 1_500;
 /// one full with a line still waiting for room.
 const STALL_DELTA_COUNTS: [usize; 10] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 32];
 
+/// Test (6): the deadline of a stream its door's relay first polls only
+/// after it has passed.
+#[cfg(oneiron_test_support)]
+const LATE_POLL_DEADLINE_MS: u64 = 300;
+
 /// The fake model's limit refusal, naming `secs` until it is back.
 fn limited(secs: u64) -> Reply {
     Reply::Error {
@@ -112,6 +119,8 @@ fn limited(secs: u64) -> Reply {
 struct Served {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
+    #[cfg(oneiron_test_support)]
+    server: Arc<SyncServer>,
     app: Router,
     host: AiHost,
     issuer: HostSlipIssuer,
@@ -151,10 +160,13 @@ async fn served(script: Vec<Reply>, fallback: Reply) -> Served {
         .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
         .expect("this install's live machine profile");
     vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let server = Arc::new(server);
     Served {
         _dir: dir,
         vault,
-        app: build_app(Arc::new(server)),
+        #[cfg(oneiron_test_support)]
+        server: Arc::clone(&server),
+        app: build_app(server),
         host,
         issuer,
         root,
@@ -698,6 +710,51 @@ fn a_raw_stream_whose_client_stopped_reading_lets_go_of_the_model_at_its_deadlin
                 "{count} deltas: the stalled reply never finished, got {text}"
             );
         }
+        served.host.shutdown().await;
+    });
+}
+
+/// Test (6), review round 2 of #7831: a raw stream whose door's relay first
+/// polls the model's stream only after the caller's deadline has passed, as
+/// a relay the runtime suspended past it does, sends no rung: the stream
+/// ends with `timeout` and the model is never asked.
+///
+/// Red at the round-1 head: the walk ran on the vault's waits alone, which
+/// never expire, so the first poll sent the rung past the deadline and the
+/// model answered. It opens the stream through a test door, so it runs
+/// only under `--cfg oneiron_test_support`, as the fleet command sets.
+#[cfg(oneiron_test_support)]
+#[test]
+fn a_raw_stream_first_polled_after_its_deadline_sends_no_rung() {
+    use futures_util::StreamExt;
+    use oneiron::{LlmError, RetryableLlmError};
+
+    run_on_engine_stack("caller-deadline-late-poll", || async {
+        let served = served(Vec::new(), Reply::text(SERVED)).await;
+        let mut stream = oneiron_server::test_doors::raw_stream::opened_unpolled(
+            &served.server,
+            request(),
+            LATE_POLL_DEADLINE_MS,
+        )
+        .expect("the stream opens within its deadline");
+        tokio::time::sleep(Duration::from_millis(LATE_POLL_DEADLINE_MS * 2)).await;
+        let first = tokio::time::timeout(ANSWER_BOUND, stream.next())
+            .await
+            .expect("the late-polled stream answers within the bound");
+        assert!(
+            matches!(
+                first,
+                Some(Err(LlmError::Retryable(RetryableLlmError::Timeout)))
+            ),
+            "a stream first polled after its {LATE_POLL_DEADLINE_MS} ms deadline ends with \
+             timeout, got {first:?}"
+        );
+        drop(stream);
+        assert!(
+            served.fake.seen().is_empty(),
+            "no rung goes out after the deadline: the model saw {} request(s)",
+            served.fake.seen().len()
+        );
         served.host.shutdown().await;
     });
 }
