@@ -661,16 +661,6 @@ fn add_funds_in_txn(
     // its next call: its meter takes the bought units once, as it takes an
     // overdraft's cap (Engine ruling RUNBUDGET-ADDFUNDS-METER = A). The next
     // hold deletes the grant; the raise stays.
-    OVERDRAFT.put(
-        &vault.store,
-        wtxn,
-        &root,
-        &RunOverdraft {
-            cap_units: units,
-            ask: seq,
-            approved_at: now,
-        },
-    )?;
     record_funds_in_txn(
         vault,
         wtxn,
