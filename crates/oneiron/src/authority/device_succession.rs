@@ -120,8 +120,8 @@ pub(super) fn apply_device_succession(
         machine: succession.machine,
         choice: Some(&choice),
         context: DEVICE_SUCCESSION_REVISION_CONTEXT,
-        persons_own_narrowing: false,
         needs_proof_off_the_line,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,

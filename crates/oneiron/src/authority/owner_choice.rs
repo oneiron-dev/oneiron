@@ -158,6 +158,10 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     pub(super) choice: Option<&'a P>,
     /// The kind's revision domain, which `seen` is under.
     pub(super) context: &'static [u8],
+    /// The choice lies outside a proving owner-key enrolment's line (row
+    /// CARRIER-PROOF-OLD-PARENTS, [`super::owner_key_line`]): it needs the
+    /// owner's proof as if its parents held that key.
+    pub(super) needs_proof_off_the_line: bool,
     /// The act is a person's own narrowing of their own row (a person's
     /// kind, whose act names its own person as owner and target, and whose
     /// choice takes something of theirs away: an opt-out). It is that
@@ -168,10 +172,6 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     /// goes through the gate as every act does (ruling
     /// CARRIER-PERSON-OPT-BACK-IN = A, AUTH-4 PERSON-PROOF-RUNG = A).
     pub(super) persons_own_narrowing: bool,
-    /// The choice lies outside a proving owner-key enrolment's line (row
-    /// CARRIER-PROOF-OLD-PARENTS, [`super::owner_key_line`]): it needs the
-    /// owner's proof as if its parents held that key.
-    pub(super) needs_proof_off_the_line: bool,
 }
 
 /// What a valid choice does to its register ([`OwnerChoiceState::land`]).
@@ -263,10 +263,23 @@ pub(super) fn owner_choice_landing<P: Clone>(
     if !admitted || !super::owner_act::owner_live_at(state, op.act.owner) {
         return Ok(OwnerChoiceLanding::Refused(hash));
     }
+    // Outside a proving owner-key enrolment's line (row
+    // CARRIER-PROOF-OLD-PARENTS), a not-mine carrier's unproven choice waits
+    // as it would on parents that hold the key.
+    if proof.is_none()
+        && op.needs_proof_off_the_line
+        && !carrier_is_mine
+        && !op.persons_own_narrowing
+    {
+        return Ok(OwnerChoiceLanding::Waiting {
+            target: op.act.target,
+            hash,
+        });
+    }
     if proof.is_none()
         && !carrier_is_mine
         && !op.persons_own_narrowing
-        && (op.needs_proof_off_the_line || super::owner_proof::not_mine_carriers_need_proof(state))
+        && super::owner_proof::not_mine_carriers_need_proof(state)
     {
         return Ok(OwnerChoiceLanding::Waiting {
             target: op.act.target,

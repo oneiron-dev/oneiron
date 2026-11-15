@@ -69,8 +69,8 @@ pub(super) fn apply_home_pick(
         machine: pick.machine,
         choice: pick.node_id.as_ref(),
         context: HOME_PICK_REVISION_CONTEXT,
-        persons_own_narrowing: false,
         needs_proof_off_the_line,
+        persons_own_narrowing: false,
     };
     let landing = owner_choice_landing(
         state,

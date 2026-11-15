@@ -130,8 +130,8 @@ pub(super) fn apply_conversation_training(
         context: CONVERSATION_TRAINING_REVISION_CONTEXT,
         // Leaving their own messages out narrows the person's own row;
         // letting them back in widens it, and a carrier proves only itself.
-        persons_own_narrowing: set.act.target == set.act.owner && set.leave_out,
         needs_proof_off_the_line,
+        persons_own_narrowing: set.act.target == set.act.owner && set.leave_out,
     };
     let landing = owner_choice_landing(
         state,
