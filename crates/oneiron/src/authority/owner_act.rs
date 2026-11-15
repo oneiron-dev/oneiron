@@ -31,24 +31,30 @@ use super::*;
 /// in any role (yours, work or school, rented, a hosted node, an execution
 /// node), as the sync wire accepts a proven peer machine
 /// ([`AuthorityFold::machine_proof_key`]) and not only a "yours" one. Live:
-/// not removed in any chain, not conflicted or poisoned, not stale, held or
-/// unsettled where the view says so. A role change between linked roles
-/// never revokes it; only removal does. It never admits a key the authority
-/// roster names (the host root, an owner or roster device key: FIX 2222, the
-/// unattended host root acts as nobody), nor an engine MACHINE writer, which
-/// no profile names.
+/// the roster's chain names `key` live (not removed, conflicted or
+/// poisoned, not stale, held or unsettled where the view says so). An
+/// anchor's chain neither admits nor removes a carrier: any fresh key can
+/// publish a root and mark any machine, under keys it holds, owned or
+/// removed in its own chain, and the fold cannot tell the owner's anchor
+/// from a stranger's (RULINGs FOREIGN-ANCHOR-FOLD-JUDGE-RULE = C, 16 Nov
+/// 05:10, and FOREIGN-ANCHOR-ADMIT-SIDE-P1 = B, 05:38). The owner's kit acts
+/// through its own key on the roster, like any owner key (Fable design pass
+/// 29; ANCHORS-1 = A, 16 Nov 06:1x); an install that only an anchor marked
+/// carries once the roster profiles it ([`crate::Vault::ensure_serving_install_profile`]
+/// enrols it then).
+/// A role change between linked roles never revokes it; only removal does.
+/// It never admits a key the authority roster names (the host root, an owner
+/// or roster device key: FIX 2222, the unattended host root acts as nobody),
+/// nor an engine MACHINE writer, which no profile names.
 pub(crate) fn owner_act_signer_admits(
     machine: Option<&FoldedMachine>,
     roster: &BTreeMap<AuthorityKey, FoldedDevice>,
     key: &[u8; 32],
 ) -> bool {
     !roster.contains_key(&AuthorityKey::Ed25519(*key))
-        && machine.is_some_and(|folded| {
-            folded.chains().all(|(_, chain)| !chain.removed)
-                && folded
-                    .chains()
-                    .any(|(_, chain)| chain.is_live() && chain.profile.machine_key == *key)
-        })
+        && machine
+            .and_then(|folded| folded.roster.as_ref())
+            .is_some_and(|chain| chain.is_live() && chain.profile.machine_key == *key)
 }
 
 /// Whether `owner` is a live owner at an act's causal point, as the fold
