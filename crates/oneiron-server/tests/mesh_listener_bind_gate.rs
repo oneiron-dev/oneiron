@@ -9,6 +9,10 @@
 //! `mesh listening`. Serve logs its finished startup after the mesh start, so
 //! once that line is written the log is complete for the mesh: it must name no
 //! listener, and serve must still be running.
+//!
+//! The finished line also gives the milliseconds of each step the startup gate
+//! held requests for, serve's own steps in their order with the mesh start
+//! among them (FIX 25667).
 #![allow(
     clippy::disallowed_methods,
     reason = "a test process starts its own subprocesses; the rule covers the server's crates"
@@ -25,6 +29,18 @@ const SECRET: &str = "mesh-listener-bind-gate-host-secret";
 const STARTUP_FINISHED: &str = "startup finished";
 /// What the mesh listener logs once it is bound (`handler::mesh`).
 const MESH_LISTENING: &str = "mesh listening";
+/// Steps the finished line times, in serve's order: the workers' first and
+/// last, then each of serve's own from the router to the hand-over.
+const TIMED_STEPS: [&str; 8] = [
+    "gate_spawn",
+    "ai_attach",
+    "sleep_watch",
+    "router",
+    "mesh",
+    "host_ready",
+    "proposal_spool",
+    "hand_over",
+];
 /// How long a fresh install's serve may take to finish its startup.
 const STARTUP_DEADLINE: Duration = Duration::from_secs(180);
 
@@ -123,4 +139,17 @@ fn serve_without_a_mesh_bind_address_starts_no_mesh_listener() {
         server.0.try_wait().expect("poll oneiron serve").is_none(),
         "oneiron serve exited after its startup: {text}"
     );
+    let finished = text
+        .lines()
+        .find(|line| line.contains(STARTUP_FINISHED))
+        .expect("the finished line");
+    let mut rest = finished;
+    for step in TIMED_STEPS {
+        let at = rest.find(&format!("{step}=")).unwrap_or_else(|| {
+            panic!("the finished line times no {step} after the steps before it: {finished}")
+        });
+        rest = &rest[at + step.len() + 1..];
+    }
+    // The times themselves, for the run's log.
+    eprintln!("{finished}");
 }
