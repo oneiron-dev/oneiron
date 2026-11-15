@@ -8321,6 +8321,7 @@ dependencies = [
  "heed",
  "libc",
  "loro",
+ "oneiron-fingerprint",
  "oneiron-hex",
  "rand 0.8.8",
  "rand_core 0.6.4",
@@ -8438,6 +8439,20 @@ dependencies = [
  "serde_json",
  "tempfile",
  "zeroize",
+]
+
+[[package]]
+name = "oneiron-fingerprint"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "oneiron-hex",
+ "rmp",
+ "rmp-serde",
+ "rmpv",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
 ]
 
 [[package]]
