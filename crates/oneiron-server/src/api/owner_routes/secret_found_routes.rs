@@ -205,6 +205,9 @@ struct KeyView {
     settled: Option<SettledView>,
     /// The native action names: what may still be done for this key.
     actions: Vec<&'static str>,
+    /// What is true of one that needs no answer though it is open, such as
+    /// a seal of bytes the file no longer holds.
+    note: Option<String>,
 }
 
 impl From<FoundKeyCard> for KeyView {
@@ -221,6 +224,7 @@ impl From<FoundKeyCard> for KeyView {
                 .into_iter()
                 .map(|action| action.as_str())
                 .collect(),
+            note: card.note,
         }
     }
 }

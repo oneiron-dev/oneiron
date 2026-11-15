@@ -201,6 +201,15 @@ pub(crate) fn project_repo_bytes_in_txn(
     }
     let mut places = marks.places();
     if let Some(row) = masked_file_in_txn(&vault.store, txn, &hash)? {
+        // A file the write door sealed whole holds a hit no mark places: no
+        // copy of it is made (ARCH-0069 #binary-secrets).
+        if row.sealed {
+            let source_blob = match marks.source_blob() {
+                Some(source_blob) => source_blob.clone(),
+                None => git_blob_oid(&bytes)?,
+            };
+            return Ok(RepoBodyProjection::Opaque(RepoOpaqueFile { source_blob }));
+        }
         for (member, spans) in row.places() {
             for span in spans {
                 add_place(&mut places, &member, span);

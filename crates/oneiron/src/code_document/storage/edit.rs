@@ -144,8 +144,10 @@ impl Vault {
     /// field (FIX 2372): each secret the door's text rules place goes to
     /// custody, under the document's carrier origin (the one its lifted keys
     /// name), and leaves its handle; a value custody already holds keeps its
-    /// handle. `None` when the replacement is unchanged: the switch is off, it
-    /// holds no hit, or a hit it holds is one no span places, which the
+    /// handle. A hit no span places seals the replacement whole, as the
+    /// batch door seals a text field: it keeps one handle. `None` when the
+    /// replacement is unchanged: the switch is off, it holds no hit, or a
+    /// hit it holds is one no seal clears (`predict_masked_text`), which the
     /// whole-file read still judges as before. A [`EditAdmission::Plan`]
     /// gives the handles of the values its matcher holds and mints and writes
     /// nothing; any other secret refuses there.

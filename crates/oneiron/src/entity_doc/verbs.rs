@@ -492,7 +492,8 @@ pub(super) fn admitted_prose_in_txn(
 /// text keeps its handle before any operation holds it; then each handle of
 /// a key the live text's lift marked (`lifted`) is the value it stands for
 /// again (Engine ruling G2 = b). A handle this write minted stays a handle.
-/// A hit no span places refuses as before.
+/// A hit no span places seals the text whole; one no seal clears refuses as
+/// before.
 pub(super) fn admitted_text_in_txn(
     vault: &Vault,
     txn: &mut heed::RwTxn<'_>,

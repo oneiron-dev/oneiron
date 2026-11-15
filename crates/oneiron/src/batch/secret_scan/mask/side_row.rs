@@ -4,13 +4,18 @@
 //! a side table the catalog classes as authored, an attempt record's payload
 //! and notes, an intake event. A secret the mask places goes to custody in the
 //! writer's own transaction, and the row keeps its handle where the secret
-//! was. A hit the mask cannot place refuses the write with the scan's error:
-//! a recovery phrase, a key split over members, a key in a container's
-//! member (FIX 2312), bytes no reading takes (an opaque codec), a masked copy
-//! the row's own codec refuses, or a secret that needs a new record in a
-//! writer whose target holds no custody door. A value custody already holds
-//! still takes its handle there (FIX 6647). With the owner's switch off the
-//! row is written as given, as the batch door skips its scan.
+//! was. A hit the mask cannot place (a key split over members, a token
+//! spelled as byte values, text that reads as a document holding a key) is
+//! sealed whole, as the batch door seals one (`seal_whole`; ARCH-0038
+//! #secret-scan-target): the smallest value that reads as the hit alone goes
+//! to custody, and its handle takes its place; a text keeps one handle. The
+//! write still refuses with the scan's error when no seal clears it (a key in
+//! a container's member, FIX 2312, that no value alone reads as), when the
+//! row's own codec refuses the sealed or masked copy, when a secret needs a
+//! new record in a writer whose target holds no custody door, and in a
+//! tracked pass, which seals nothing. A value custody already holds still
+//! takes its handle there (FIX 6647). With the owner's switch off the row is
+//! written as given, as the batch door skips its scan.
 //!
 //! A body a session route publishes is decided by the base vault
 //! ([`admit_decided_parts`], FIX 6647, FIX 5718 part 3): its switch, kept
@@ -43,6 +48,7 @@ use super::super::{
     REASON_DETECTED, SecretScanMode, scan_write_tree, secret_scan_error, secret_scan_mode_in_txn,
 };
 use super::admit::Lifted;
+use super::seal_whole;
 pub(crate) use super::text::TextReplacements;
 use super::wipe::{PlanParts, PlanTree, replace_wiped, wipe_value};
 use super::{HANDLE_OPEN, Masker, STAND_IN, credential_member};
@@ -72,7 +78,7 @@ impl SidePart {
     /// The door's scan of this part, a container's members included (FIX
     /// 2312), with this record's owner-kept values screened first. A tree's
     /// encoded copy and its screened copy are wiped once read (FIX 1101).
-    fn scan(&self, kept: &KeptValues, record: &EntityId) -> Result<()> {
+    pub(super) fn scan(&self, kept: &KeptValues, record: &EntityId) -> Result<()> {
         let scanned: Cow<'_, [u8]> = match self {
             Self::Body(bytes) => Cow::Borrowed(bytes.as_slice()),
             Self::Text(text) => Cow::Borrowed(text.as_bytes()),
@@ -425,11 +431,12 @@ struct Pass {
 /// The wall's one admission for a record's own parts, which every part's
 /// own reading accepts. With the owner's switch on, parts the door would
 /// refuse are planned on a copy with a stand-in for each secret their spans
-/// place, and the copy is read again: only a clean copy mints custody
-/// records, one per value. The parts then hold their handles. A hit the
-/// plan leaves refuses the write with the door's reason, before anything is
-/// minted. `known` is the index the caller already read in this writer, if
-/// it did.
+/// place, and the copy is read again: a hit the plan leaves is sealed whole
+/// (`seal_whole`), a stand-in in its place, and only a clean copy mints
+/// custody records, one per value and one per sealed value. The parts then
+/// hold their handles. A hit no seal clears refuses the write with the
+/// door's reason, before anything is minted. `known` is the index the caller
+/// already read in this writer, if it did.
 ///
 /// `origins` names, for each part in turn, the record and the place each
 /// custody record minted from it names. `seed` holds the handles this writer
@@ -482,9 +489,12 @@ pub(super) fn plan_seeded_parts(
 
 /// The wall's one admission, for a side row and for a record's own parts
 /// alike: `None` when the parts are written as given, else, with a tracked
-/// `pass`, where each handle went in each text it masked. Only a clean copy
-/// the row's own reading `accepts` mints custody records, and only through
-/// `scope`'s door. Both the plan and the minted pass read `pass.refs`.
+/// `pass`, where each handle went in each text it masked. A hit the plan
+/// leaves is sealed whole (`seal_whole`) where a seal can land: `scope`'s
+/// door mints its record, or custody already holds its value whole; a
+/// tracked pass seals nothing. Only a clean copy the row's own reading
+/// `accepts` mints custody records, and only through `scope`'s door. Both
+/// the plan and the minted pass read `pass.refs`.
 fn admitted(
     scope: Scope<'_>,
     wtxn: &mut RwTxn<'_>,
@@ -541,25 +551,36 @@ fn admitted(
         plan.at = Some((*record, (*place).to_owned()));
         placed |= part.mask(&mut plan, pass.refs)?;
     }
-    // Nothing placed, not even a value the seed holds: the hit is the
-    // door's.
-    if !placed {
-        return refusal.map_or(Ok(None), Err);
+    if !placed && refusal.is_none() {
+        return Ok(None);
     }
-    // A hit no span places is still in the copy, and refuses as before.
-    for (part, (record, _)) in planned.iter().zip(origins) {
-        part.scan(&kept, record)?;
+    // The copy is read again. A hit no span places is still in it: the
+    // smallest value that reads as it alone is sealed whole, a stand-in in
+    // its place, and a part no seal clears refuses as before. A seal lands
+    // only where a door mints its record or custody holds its value whole;
+    // a tracked pass seals nothing, since its writer moves its bounds by the
+    // spans the pass replaced (FIX 6144).
+    let sealing = !pass.tracked && (scope.door.is_some() || known.is_some());
+    let seals = seal_whole::plan_part_seals(&kept, &mut planned, origins, sealing)?;
+    // Nothing placed, not even a value the seed holds, and nothing sealed:
+    // the hit is the door's.
+    if !placed && seals.is_empty() {
+        return refusal.map_or(Ok(None), Err);
     }
     if !accepts(&planned[..]) {
         return Err(refusal.unwrap_or_else(|| secret_scan_error(REASON_DETECTED)));
     }
     drop(planned);
+    // The door the plan's records go through, with the time it stamps them.
+    let door = match &scope.door {
+        Some(door) => Some((door, crate::ports::recorded_at_in_txn(door.store, wtxn)?)),
+        None => None,
+    };
     // With no door nothing is minted (FIX 6647): a plan that needs a new
     // record refuses with the door's reason, and one that placed only
     // values custody already holds takes their handles, minting none.
-    match &scope.door {
-        Some(door) => {
-            let at = crate::ports::recorded_at_in_txn(door.store, wtxn)?;
+    match door {
+        Some((door, at)) => {
             seed.0
                 .adopt(plan.mint(door, wtxn, at)?.map(|(handle, _)| handle));
         }
@@ -571,7 +592,7 @@ fn admitted(
     let mut minted = Masker {
         handles: seed.0.clone(),
         minted: true,
-        known,
+        known: known.clone(),
         kept,
         traced: pass.tracked.then(TextReplacements::default),
         ..Masker::default()
@@ -580,6 +601,17 @@ fn admitted(
         minted.at = Some((*record, (*place).to_owned()));
         part.mask(&mut minted, pass.refs)?;
     }
+    // Each seal's value, as the minted pass left it, goes to custody whole
+    // and joins the values this writer lifted.
+    seal_whole::mint_part_seals(
+        door,
+        wtxn,
+        parts,
+        origins,
+        seals,
+        known.as_deref(),
+        &mut seed.0,
+    )?;
     if !accepts(parts) {
         return Err(Error::InvariantViolation(
             "a side row's own reading refused the handles its plan placed",

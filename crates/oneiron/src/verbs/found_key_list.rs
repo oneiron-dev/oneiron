@@ -102,6 +102,9 @@ pub struct FoundKeyCardReply {
     pub settled: Option<FoundKeySettledReply>,
     /// The native action names: what the owner may still do about it.
     pub actions: Vec<String>,
+    /// What is true of one that needs no answer though it is open, such as
+    /// a seal of bytes the file no longer holds.
+    pub note: Option<String>,
 }
 
 /// One found key on its writer's card: no value, custody name, label,
@@ -164,6 +167,7 @@ impl From<FoundKeyCard> for FoundKeyCardReply {
                 .into_iter()
                 .map(|action| action.as_str().to_owned())
                 .collect(),
+            note: card.note,
         }
     }
 }

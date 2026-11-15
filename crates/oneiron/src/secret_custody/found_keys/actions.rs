@@ -100,8 +100,8 @@ impl Vault {
 
     /// Deletes the record or file a found key sits in, through the owner's
     /// delete door ([`crate::Memory::safe_delete`], a hard delete with its
-    /// redaction receipt), and settles every key found there. The key's
-    /// custody record stays: rotate or revoke it on its own.
+    /// redaction receipt), and settles every key and file seal found there.
+    /// The key's custody record stays: rotate or revoke it on its own.
     ///
     /// # Errors
     /// What the delete door returns; [`GateError::ConsentOwnerNotAuthenticated`]
@@ -142,6 +142,11 @@ impl Vault {
             if let Some(mut found) = FOUND.get(&self.store, txn, &record)? {
                 for key in found.keys.iter_mut().filter(|key| !key.kept_by_owner()) {
                     key.settled = Some(settled.clone());
+                }
+                // A file the record held sealed whole goes with it: its seal
+                // closes, and its bytes' mark stays (REVIEW-7887 F2).
+                for seal in found.seals.iter_mut().filter(|seal| seal.settled.is_none()) {
+                    seal.settled = Some(settled.clone());
                 }
                 FOUND.put(&self.store, txn, &record, &found)?;
             }
@@ -184,6 +189,11 @@ impl Vault {
     /// whose writer is not the proof's person is refused as a non-owner is,
     /// whether or not the handle names one.
     ///
+    /// A file the write door sealed whole is named by its own id, as its
+    /// notice names it (`as12`): the owner's ruling clears its seal, and
+    /// no value goes back, since its bytes never changed
+    /// (L6-03-SEALED-FILE-NO-NOTICE). Only the owner rules on it.
+    ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is neither
     /// the live owner's nor that of the live person who wrote the key.
@@ -225,6 +235,11 @@ impl Vault {
         handle: &str,
         action: FoundKeyAction,
     ) -> Result<FoundKeySettled> {
+        // A file sealed whole has no custody record: its handle is the
+        // file's own id (L6-03-SEALED-FILE-NO-NOTICE).
+        if super::sealed_file::names_a_file(handle) {
+            return self.rule_sealed_file(owner, handle, action);
+        }
         let (reason, cause, erased) = match action {
             FoundKeyAction::NotASecret => (
                 FOUND_KEY_REASON_NOT_A_SECRET,
@@ -509,6 +524,7 @@ pub(super) fn card_in_txn(
         found_at: key.found_at,
         settled: key.settled.clone(),
         actions,
+        note: None,
     })
 }
 
@@ -575,7 +591,7 @@ impl Located {
 
 /// The owner's proof, rechecked at the owner tier in `txn`: the acting
 /// owner.
-fn live_owner_in_txn(
+pub(super) fn live_owner_in_txn(
     vault: &Vault,
     owner: &AuthenticatedOwner,
     txn: &RoTxn<'_>,
@@ -672,7 +688,7 @@ fn is_record_place(place: &str) -> bool {
     matches!(place, "body" | "claim" | "file") || place.starts_with("text:")
 }
 
-fn gate_ref(decision: GateDecisionId) -> String {
+pub(super) fn gate_ref(decision: GateDecisionId) -> String {
     format!("gate:{}", decision.to_hex())
 }
 
@@ -687,6 +703,32 @@ fn append_ruling_in_txn(
     reason: &'static str,
     revocation: EntityId,
 ) -> Result<GateDecisionId> {
+    append_ruling_receipt_in_txn(
+        vault,
+        txn,
+        actor,
+        reason,
+        vec![
+            format!("handle:{}", found.handle),
+            format!("record:{}", found.record.to_hex()),
+            format!("place:{place}"),
+            format!("kind:{}", found.key().kind()),
+            format!("revocation:{}", revocation.to_hex()),
+        ],
+        found.custody.as_bytes().to_vec(),
+    )
+}
+
+/// Appends a found-key ruling by `actor` to the Gate receipt family, in
+/// `txn`: its reason, its notices and what it names (`diff_handle`).
+pub(super) fn append_ruling_receipt_in_txn(
+    vault: &Vault,
+    txn: &mut RwTxn<'_>,
+    actor: EntityId,
+    reason: &'static str,
+    notices: Vec<String>,
+    diff_handle: Vec<u8>,
+) -> Result<GateDecisionId> {
     let decision_id = GateDecisionId::from_bytes(vault.store.clock.ulid()?);
     let record = GateDecisionRecord {
         version: GATE_DECISION_LEDGER_VERSION,
@@ -697,13 +739,7 @@ fn append_ruling_in_txn(
         receipt_reasons: Vec::new(),
         system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
             FOUND_KEY_CONTENT_KIND,
-            vec![
-                format!("handle:{}", found.handle),
-                format!("record:{}", found.record.to_hex()),
-                format!("place:{place}"),
-                format!("kind:{}", found.key().kind()),
-                format!("revocation:{}", revocation.to_hex()),
-            ],
+            notices,
         ),
         actor_class: "human".into(),
         actor_ref: Some(actor.to_hex()),
@@ -711,7 +747,7 @@ fn append_ruling_in_txn(
         policy_manifest_version: crate::gate::POLICY_SCHEMA_VERSION.into(),
         claim_id: None,
         grant_ref: None,
-        diff_handle: found.custody.as_bytes().to_vec(),
+        diff_handle,
         read_frontier_hash: [0; 32],
         context: Default::default(),
         redacted_at: None,

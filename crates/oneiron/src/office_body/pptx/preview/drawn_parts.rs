@@ -39,6 +39,13 @@ pub(super) struct PackageMarks {
 }
 
 impl PackageMarks {
+    /// Whether the package or one of its opaque parts is a file the write
+    /// door sealed whole: no key in it names what it holds.
+    pub(super) fn holds_sealed(&self) -> bool {
+        self.package.as_ref().is_some_and(|mark| mark.sealed)
+            || self.parts.iter().any(|(_, mark)| mark.sealed)
+    }
+
     /// The marks of the package whose bytes hash to `package` and of each
     /// opaque part `deck` pins, read in `txn`.
     pub(super) fn read_in_txn(
