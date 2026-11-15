@@ -18,7 +18,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod pack;
 pub use pack::{
@@ -51,7 +51,8 @@ pub struct SystemOneHttpRequest {
     pub body: Vec<u8>,
     /// The model the body names (`<model>-<version>`), which the reply names too.
     pub model: String,
-    /// How long the answer may take: the decision's work time left.
+    /// How long the answer may take: the decision's work time left once the
+    /// request was built, its images fitted.
     pub time_left: Duration,
 }
 
@@ -80,6 +81,31 @@ pub trait SystemOneTransport: Send + Sync {
     /// the default, for a transport that checks nothing first.
     fn preflight(&self) -> LlmResult<()> {
         Ok(())
+    }
+}
+
+/// One seat call's deadline: the work time left when the seat took the call,
+/// counted down from that moment, so time the seat spends before it sends
+/// (fitting images, the wait for a blocking worker) is spent from it.
+#[derive(Debug, Clone, Copy)]
+struct SeatDeadline {
+    started: Instant,
+    time_left: Duration,
+}
+
+impl SeatDeadline {
+    /// A deadline that starts now, with `time_left` of work time.
+    fn start(time_left: Duration) -> Self {
+        Self {
+            started: Instant::now(),
+            time_left,
+        }
+    }
+
+    /// The time left now, or `None` once it is gone: the call is then answered
+    /// as timed out, and nothing is sent.
+    fn time_left(self) -> Option<Duration> {
+        Some(self.time_left.saturating_sub(self.started.elapsed())).filter(|left| !left.is_zero())
     }
 }
 
@@ -181,21 +207,23 @@ impl SystemOneSeat {
     async fn build(
         &self,
         request: &SeatRequest,
-        time_left: Duration,
+        deadline: SeatDeadline,
     ) -> LlmResult<SystemOneHttpRequest> {
         self.build_questions(
             request,
             json!({"decision": build_question(request)}),
-            time_left,
+            deadline,
         )
         .await
     }
 
+    /// The request for `questions`, its time left read once its images are
+    /// fitted; a call out of time by then is answered as timed out, unsent.
     async fn build_questions(
         &self,
         request: &SeatRequest,
         questions: Value,
-        time_left: Duration,
+        deadline: SeatDeadline,
     ) -> LlmResult<SystemOneHttpRequest> {
         let model = format!("{}-{}", self.pin.model, self.pin.version);
         // Each image is an asset; its state field holds the asset's reference, which
@@ -223,6 +251,9 @@ impl SystemOneSeat {
         if !assets.is_empty() {
             body["assets"] = Value::Object(assets);
         }
+        // Read after the images are fitted: the server's budget and the
+        // transport's timeout are both what is left of the call now.
+        let time_left = deadline.time_left().ok_or(RetryableLlmError::Timeout)?;
         if self.native_budget {
             // Rounded down, so the server never gets more time than the call has left.
             body[NATIVE_BUDGET_KEY] =
@@ -248,10 +279,11 @@ impl SystemOneSeat {
         time_left: Duration,
         capture: bool,
     ) -> SeatRead {
+        let deadline = SeatDeadline::start(time_left);
         let mut digests = None;
         let result = async {
             request.validate_remote()?;
-            let sent = self.build(&request, time_left).await?;
+            let sent = self.build(&request, deadline).await?;
             if capture {
                 // Fingerprint the built JSON tree, not the pre-transform request
                 // or its wire encoding. The host warns/skips missing evidence.
