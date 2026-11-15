@@ -21,17 +21,28 @@
 //!   its own row; anything else waits on a check-in. Every change row records its direction.
 //! - Change stream: every change is one `SETTING_CHANGE` row, written in the commit that makes it,
 //!   and the feeds' `settings` source.
-//! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`.
+//! - Defaults: the default layer (DESIGN 1.5, stage 6.0): what the vault accepted from each
+//!   pack, as rows at `SettingScope::Pack`, written only by the pack door. The `engine` pack is
+//!   this build's catalogue and runs at open; a tighter default lands, a looser one waits for the
+//!   owner's yes (`vault.settings.accept_defaults`). A read with no deciding row starts there.
+//! - Moves: on a key whose rows meet, a project reads the rows of every parent line
+//!   ([`SettingScope::chain_of_lines`]), and a write that moves a project carries the rows of the
+//!   lines it leaves onto it as one carried row per key (stage 6.0), so no move loosens a read.
+//! - Verbs: `vault.settings.get`, `vault.settings.list`, `vault.settings.set`,
+//!   `vault.settings.accept_defaults`.
 //!
 //! Stage 0.1 lands the primitive unused: no engine key is in the catalogue yet, and no value in
 //! force moves.
 
+mod carry;
 mod catalogue;
 mod change;
 mod learned;
+mod pack;
 mod person;
 mod read;
 mod set;
+mod signed_act;
 pub(crate) mod tables;
 
 use std::marker::PhantomData;
@@ -42,6 +53,9 @@ pub use oneiron_setting_contract::{
     SettingSource, SettingSync, SettingValue,
 };
 
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::carry::carry_between_in_txn;
+pub(crate) use self::carry::carry_settings_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use self::catalogue::leave_keeps_row;
 pub use self::catalogue::{catalogue, spec_named};
@@ -54,6 +68,9 @@ pub(crate) use self::change::{
     settings_head_in_txn,
 };
 pub use self::learned::{LEARNED_SCOPES, LearnedRange, SettingFitView};
+pub use self::pack::{ENGINE_PACK, PackApplied, ProposedDefaultView};
+#[cfg(all(oneiron_test_support, feature = "test-support"))]
+pub(crate) use self::pack::{delete_layer_row, layer_row_revision};
 #[cfg(all(oneiron_test_support, feature = "test-support"))]
 pub(crate) use self::read::put_stored_bytes;
 pub use self::read::{Requested, SettingCatalogueEntry, SettingRowView, SettingView};

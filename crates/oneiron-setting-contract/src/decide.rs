@@ -134,7 +134,7 @@ pub enum Met<'a, V> {
 ///    the vault's value rows, the item's and the item-less one, met; else `default`;
 /// 2. narrow: every value row at the pin's scope or narrower (with no pin, every value row below
 ///    the vault) meets the start. A value row only ever makes the result stricter, and no value
-///    row replaces another, whoever set it.
+///    row replaces another, whoever set it. A row a move carried narrows as a value row does.
 ///
 /// A pin no owner set is passed over. A row that takes part and does not decode makes the read
 /// [`Met::Unreadable`] at the narrowest such place; a row the pin releases plays no part.
@@ -151,7 +151,7 @@ pub fn decide_met<'a, V: Clone + PartialEq>(
         .min_by_key(|row| row.rank());
     let mut taking: Vec<&FoundRow<V>> = rows
         .iter()
-        .filter(|row| row.mode == SettingMode::Value && pin.is_none_or(|pin| row.at <= pin.at))
+        .filter(|row| row.mode != SettingMode::Pin && pin.is_none_or(|pin| row.at <= pin.at))
         .chain(pin)
         .collect();
     // Narrowest first; at one place the item's row first, and a pin before a value row.
@@ -499,5 +499,32 @@ mod tests {
                 rows: 2
             }
         );
+    }
+
+    #[test]
+    fn a_carried_row_narrows_as_a_value_row_and_one_row_keys_pass_it_over() {
+        let min = |a: &u64, b: &u64| *a.min(b);
+        let rows = [
+            row(0, false, SettingMode::Carried, true, 4),
+            row(1, false, SettingMode::Value, false, 6),
+            row(2, false, SettingMode::Value, true, 9),
+        ];
+        let met = decide_met(&rows, 2, &min, &10);
+        assert_eq!(
+            (met_value(&met), met_by(&met)),
+            (Some(4), Some((0, SettingMode::Carried)))
+        );
+        // A pin narrower than the carried row releases it, as it releases a value row.
+        let rows = [
+            row(1, false, SettingMode::Carried, true, 4),
+            row(0, false, SettingMode::Pin, true, 8),
+        ];
+        assert_eq!(met_value(&decide_met(&rows, 2, &min, &10)), Some(8));
+        // A key that reads one row never reads a carried row.
+        let rows = [
+            row(0, false, SettingMode::Carried, true, 4),
+            row(1, false, SettingMode::Value, true, 6),
+        ];
+        assert_eq!(value_of(&decide(&rows, &[], None, None)), Some(6));
     }
 }

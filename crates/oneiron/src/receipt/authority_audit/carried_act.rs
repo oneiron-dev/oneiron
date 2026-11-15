@@ -22,7 +22,7 @@ pub(super) fn classify_policy_setting(
         AuthorityAuditEventKind::Other,
         "policy_setting",
         OpFields {
-            detail: Some(format!("{} {change}", set.setting.wire())),
+            detail: Some(format!("{} {change}", set.setting)),
             subject_ref: Some(set.act.target.to_hex()),
             grant_ref,
             holder_ref,
