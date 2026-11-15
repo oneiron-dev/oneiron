@@ -18,8 +18,9 @@
 //! with a secret word W, and the successor drops the label (the label is no
 //! part of the stamp): the co-Owner's page serves rows holding W, the
 //! member's call is refused and no member reply holds W. Guard 3 is the
-//! co-Owner alone on test 2's vault. Guard 4 births T public and unlabelled
-//! with no successor: the member's page serves rows.
+//! co-Owner alone on test 2's vault. Guard 4 births T public and unlabelled,
+//! and the owner's ordinary successor makes it a readable target (a Proposed
+//! machine birth is no surfaceable target): the member's page serves rows.
 //!
 //! Needs `oneiron/test-hooks` (`put_selector_test_federation_grant`) and
 //! `oneiron/test-support` (`bind_host_owner`), plus its `[[test]]` stanza.
@@ -764,6 +765,17 @@ async fn fixture_public() -> Seeded {
             now,
         },
     );
+    let owner = vault.ensure_embedded_owner_actor().expect("vault owner");
+    bind_host_owner(&vault, &issuer, owner).expect("owner binding");
+    put_successor(
+        &vault,
+        owner,
+        subject,
+        target,
+        "a public successor note",
+        now,
+    )
+    .expect("FIXTURE: the public successor lands");
     let (member_selector, co_owner_selector) = seed_grants(&vault, member, co_owner, now);
     let key = WindowKey::from_timestamp(now).as_str().to_owned();
     let fixture = serve(vault, dir).await;
@@ -783,8 +795,9 @@ async fn fixture_public() -> Seeded {
 /// private machine birth is refused as a restamp (a CLAIM's sensitivity is
 /// fixed at birth, `record_scope/stamping.rs`), and T stays the private
 /// birth. The member then reads no row of it: its page is refused as not
-/// found and no reply holds the secret word. The page gate's stamped-claim
-/// arm is defence in depth here; test 2 is the reachable leak.
+/// found and no reply holds the secret word. T stays a Proposed birth, so the
+/// target admission alone refuses it: the page gate's stamped-claim arm is
+/// defence in depth here; test 2 is the reachable leak.
 #[tokio::test]
 async fn a_private_machine_birth_takes_no_public_successor_and_serves_no_member_page() {
     let seeded = fixture_private().await;
@@ -792,7 +805,10 @@ async fn a_private_machine_birth_takes_no_public_successor_and_serves_no_member_
         .successor_refusal
         .as_deref()
         .expect("the public successor of a private machine birth is refused");
-    eprintln!("the public successor's refusal: {refusal}");
+    assert!(
+        refusal.contains("record scope restamp refused"),
+        "the public successor is refused as a restamp, not for another reason: {refusal}"
+    );
     let vault = seeded.fixture.server.vault();
     let live = vault
         .get_claim(&seeded.target)
