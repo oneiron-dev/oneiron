@@ -6,7 +6,7 @@ fn linkedin_entity_id_is_domain_separated_and_stable() -> TestResult {
     let key = LinkedInExternalKey::person(" \tsynthetic-shared\r\n")?;
     assert_eq!(key.source_ref(), "linkedin:person:synthetic-shared");
     let expected = EntityId::derive(
-        b"oneiron.linkedin.entity.v1",
+        crate::entity_id::derived_domains::LINKEDIN_ENTITY,
         &[b"linkedin:person:synthetic-shared"],
     )?;
     let before = unix_seconds_now();

@@ -13,6 +13,8 @@ pub(crate) use prepared::{PreparedAgentPerson, prepare_agent_person_after_puts_i
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::one_line_token;
 use crate::entity_id::EntityId;
 use crate::error::Result;
@@ -23,15 +25,6 @@ use crate::{EdgeActorClass, TimeRange, Vault, WriteActor};
 /// Token budget of one vault's `people` rows in the cached prefix. Rows past
 /// it page out behind `more: +N`; `vault.people.list` reads the further pages.
 pub const PEOPLE_PREFIX_BUDGET_TOK: usize = 512;
-
-/// Derivation domain of the model PERSON an agent definition is born with.
-const AGENT_PERSON_DOMAIN: &[u8] = b"oneiron.people.agent-person.v1";
-
-/// Derivation domain of a seeded agent's `person.substrate` claim (FIX 12098).
-const SEEDED_SUBSTRATE_DOMAIN: &[u8] = b"oneiron.people.seeded-substrate.v1";
-
-/// Derivation domain of a seeded agent's `actor.subject_ref` claim (FIX 12098).
-const SEEDED_ANCHOR_DOMAIN: &[u8] = b"oneiron.people.seeded-anchor.v1";
 
 /// Whether a person is a human or an agent. The room roster's kind column.
 #[derive(
@@ -558,7 +551,7 @@ pub(crate) fn ensure_agent_person_in_txn(
     if crate::dreamer_runner::authority::is_base_agent_actor(&agent)? {
         return Ok(());
     }
-    let person = EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?;
+    let person = EntityId::derive(purposes::people::AGENT_PERSON, &[agent.as_bytes()])?;
     if crate::subject_model::actor_subject_anchor_in_txn(vault, &*txn, &agent, at)?.is_some() {
         return Ok(());
     }
@@ -586,9 +579,9 @@ pub(crate) fn ensure_agent_person_in_txn(
 /// the same rows. The empty-vault join guard reads the same derivations.
 pub(crate) fn seeded_agent_person_ids(agent: EntityId) -> Result<(EntityId, EntityId, EntityId)> {
     Ok((
-        EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?,
-        EntityId::derive(SEEDED_SUBSTRATE_DOMAIN, &[agent.as_bytes()])?,
-        EntityId::derive(SEEDED_ANCHOR_DOMAIN, &[agent.as_bytes()])?,
+        EntityId::derive(purposes::people::AGENT_PERSON, &[agent.as_bytes()])?,
+        EntityId::derive(purposes::people::SEEDED_SUBSTRATE, &[agent.as_bytes()])?,
+        EntityId::derive(purposes::people::SEEDED_ANCHOR, &[agent.as_bytes()])?,
     ))
 }
 
@@ -596,7 +589,7 @@ pub(crate) fn seeded_agent_person_ids(agent: EntityId) -> Result<(EntityId, Enti
 /// board ([`ensure_agent_person_in_txn`], and a seeded agent's): it derives from
 /// the agent's id, so every device names the same one.
 pub(crate) fn agent_person_id(agent: EntityId) -> Result<EntityId> {
-    EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])
+    EntityId::derive(purposes::people::AGENT_PERSON, &[agent.as_bytes()])
 }
 
 fn agent_person_body(name: &str) -> Result<Vec<u8>> {

@@ -8,12 +8,8 @@ use crate::code_run::CodeRunReplayRecord;
 use crate::error::{Error, Result};
 use crate::provenance::body::{BodyLocation, BodyRef, BodyState, OwnedBody};
 use crate::{EntityId, TimeRange};
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
-
-/// A completed agent run's result TURN. Parts: attempt.
-const RUN_RESULT: &[u8] = b"oneiron:agent-run-result:v1";
-/// The run's answer body, as the result TURN holds it. Parts: result TURN.
-const RUN_RESULT_BODY: &[u8] = b"oneiron:agent-run-result-body:v1";
 
 struct PreparedRunResult {
     id: EntityId,
@@ -125,7 +121,10 @@ impl AgentDispatcher<'_> {
         attempt: &AttemptRecord,
         run: &CodeRunReplayRecord,
     ) -> Result<PreparedRunResult> {
-        let result_ref = EntityId::derive(RUN_RESULT, &[attempt.id.as_bytes().as_slice()])?;
+        let result_ref = EntityId::derive(
+            purposes::agent::RUN_RESULT,
+            &[attempt.id.as_bytes().as_slice()],
+        )?;
         // The finished step's observation or its accepted native decline reason,
         // never a marker or an unrelated file.
         let answer = self.agent_run_output(attempt, run);
@@ -165,8 +164,10 @@ impl AgentDispatcher<'_> {
                     .store
                     .body_file_present(&output.raw_blake3, output.raw_len)? =>
             {
-                let occurrence =
-                    EntityId::derive(RUN_RESULT_BODY, &[result_ref.as_bytes().as_slice()])?;
+                let occurrence = EntityId::derive(
+                    purposes::agent::RUN_RESULT_BODY,
+                    &[result_ref.as_bytes().as_slice()],
+                )?;
                 Some(OwnedBody {
                     owner: result_ref,
                     occurrence,
@@ -259,7 +260,12 @@ impl AgentDispatcher<'_> {
         let Ok(turn) = EntityId::from_hex(result_ref) else {
             return Ok(None);
         };
-        if turn != EntityId::derive(RUN_RESULT, &[attempt.as_bytes().as_slice()])? {
+        if turn
+            != EntityId::derive(
+                purposes::agent::RUN_RESULT,
+                &[attempt.as_bytes().as_slice()],
+            )?
+        {
             return Ok(None);
         }
         let Some(bytes) = self.vault.get(&turn)? else {

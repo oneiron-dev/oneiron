@@ -1,7 +1,9 @@
-//! PLAN-UC-04 stage 0: the id rules against the fingerprint door.
+//! PLAN-UC-04 stage 0 and 2.1: the id rules against the fingerprint door.
 //!
 //! 1. `EntityId::derive` is the first 16 bytes of the fingerprint under the same purpose,
-//!    stamped as RFC 9562 version 8 (DESIGN section 3.1), on 20 fixtures and two purposes.
+//!    stamped as RFC 9562 version 8 (DESIGN section 3.1), on 20 fixtures and two purposes;
+//!    and it equals `EntityId::derive_unregistered` under the purpose's context, which keeps
+//!    the body `derive` had before it took a `Purpose` (2.1).
 //! 2. `EntityId::derive_legacy_material` gives the bytes of the store's
 //!    `entity_id_from_hash_material` (oracle: a copy of its body at main eed5070979c,
 //!    `crates/oneiron-store/src/code_snapshot/ids.rs:35-54` with `write_hash_len` from
@@ -70,8 +72,11 @@ fn derive_is_the_stamped_prefix_of_the_fingerprint() {
     for purpose in [ALPHA, BETA] {
         for parts in &fixtures {
             let slices = as_slices(parts);
-            let id = EntityId::derive(purpose.context().as_bytes(), &slices)
+            let id =
+                EntityId::derive(purpose, &slices).expect("no fixture lands in the reserved range");
+            let unregistered = EntityId::derive_unregistered(purpose.context().as_bytes(), &slices)
                 .expect("no fixture lands in the reserved range");
+            assert_eq!(id, unregistered, "{} {parts:?}", purpose.context());
             let prefix = Fingerprint::of_parts(purpose, &slices).prefix::<ENTITY_ID_LEN>();
             assert_eq!(
                 id.as_bytes(),

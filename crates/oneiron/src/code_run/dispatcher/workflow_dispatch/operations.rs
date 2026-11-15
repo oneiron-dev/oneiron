@@ -1,4 +1,5 @@
 //! Typed saved workflows: ordered AGENT_DEF compositions the owner keeps.
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 mod agent_definition;
@@ -316,9 +317,6 @@ pub(crate) fn dispatch_workflow_bound_as(
     )?)
 }
 
-/// Domain of a member-funded run's root spend scope id.
-const MEMBER_FUNDING_DOMAIN: &[u8] = b"oneiron.workflow.member_funding.v1";
-
 /// `vault.workflows.dispatch_bound` (FIX 5316): `person`, a member by the
 /// proof their door bound to their own slip, binds one run of a saved
 /// workflow to a TASK as themselves. `memory` is the handle their credential
@@ -465,7 +463,7 @@ fn member_funding(
     let cap = input.cap_units.to_be_bytes();
     let shown = input.shown_at_ms.to_be_bytes();
     let root = EntityId::derive(
-        MEMBER_FUNDING_DOMAIN,
+        purposes::code_run::MEMBER_FUNDING,
         &[
             person.as_bytes().as_slice(),
             input.task_ref.as_bytes().as_slice(),

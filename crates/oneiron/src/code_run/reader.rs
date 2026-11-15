@@ -15,6 +15,7 @@ mod origins;
 
 use std::sync::Arc;
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use super::ScopedChildSpec;
@@ -354,7 +355,7 @@ pub(crate) fn summary_memo_key(
 /// recipe are the same task.
 pub(crate) fn summary_task_id(parent_run: EntityId, memo: &[u8; 32]) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron:code-reader-summary:v1",
+        purposes::code_run::READER_SUMMARY,
         &[parent_run.as_bytes().as_slice(), memo.as_slice()],
     )
 }
@@ -759,21 +760,24 @@ pub(crate) fn vault_ref(vault: VaultId) -> String {
 /// child.
 pub(crate) fn reader_task_id(parent_run: EntityId, intent_key: &str) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron:code-reader-task:v1",
+        purposes::code_run::READER_TASK,
         &[parent_run.as_bytes().as_slice(), intent_key.as_bytes()],
     )
 }
 
 /// The run a child task runs as.
 pub(crate) fn reader_run_id(task: EntityId) -> Result<EntityId> {
-    EntityId::derive(b"oneiron:code-reader-run:v1", &[task.as_bytes().as_slice()])
+    EntityId::derive(
+        purposes::code_run::READER_RUN,
+        &[task.as_bytes().as_slice()],
+    )
 }
 
 /// The attempt a child's spend scope is keyed by (OF-532). It has no queue
 /// row: a scope with no queued attempt is found by its own id.
 pub(crate) fn reader_attempt_id(task: EntityId) -> Result<AttemptId> {
     let id = EntityId::derive(
-        b"oneiron:code-reader-attempt:v1",
+        purposes::code_run::READER_ATTEMPT,
         &[task.as_bytes().as_slice()],
     )?;
     AttemptId::from_bytes(id.as_bytes())
@@ -782,7 +786,7 @@ pub(crate) fn reader_attempt_id(task: EntityId) -> Result<AttemptId> {
 /// The wait set a parent's step key names.
 pub(crate) fn reader_wait_id(parent_run: EntityId, step_key: &str) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron:code-reader-wait:v1",
+        purposes::code_run::READER_WAIT,
         &[parent_run.as_bytes().as_slice(), step_key.as_bytes()],
     )
 }

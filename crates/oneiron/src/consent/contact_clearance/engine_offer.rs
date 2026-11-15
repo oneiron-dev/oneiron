@@ -1,11 +1,9 @@
 //! The engine's own contact-disclosure offer for a PERSON's first entry into
 //! a room (OF-365 P5, FIX 2288): an ask the owner answers, never an admit.
 
-use super::*;
+use oneiron_contracts::fingerprint::purposes;
 
-/// The id the engine files its own offers under: no agent speaks for them,
-/// and the owner who settles them never filed them. No parts.
-const ENGINE_OFFER_FILER: &[u8] = b"oneiron:contact-disclosure-engine-filer:v1";
+use super::*;
 
 /// What the owner reads on an entry offer the engine filed.
 const PERSON_ENTRY_OFFER_PURPOSE: &str =
@@ -40,7 +38,7 @@ impl Vault {
         scope: Scope,
         owner_ref: &str,
     ) -> Result<()> {
-        let filer = EntityId::derive(ENGINE_OFFER_FILER, &[])?;
+        let filer = EntityId::derive(purposes::people::CONTACT_DISCLOSURE_ENGINE_FILER, &[])?;
         if self.person_entry_disclosure_offer_filed_in_txn(
             txn,
             filer,
@@ -98,7 +96,7 @@ impl Vault {
             offer,
         };
         let filer = WriteActor::new(
-            EntityId::derive(ENGINE_OFFER_FILER, &[])?,
+            EntityId::derive(purposes::people::CONTACT_DISCLOSURE_ENGINE_FILER, &[])?,
             EdgeActorClass::System,
         );
         let expires_at = self.store.clock.now_recorded_at() + PERSON_ENTRY_OFFER_TERM_SECS;

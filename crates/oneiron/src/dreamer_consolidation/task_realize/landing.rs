@@ -5,14 +5,13 @@
 //! names the first as the row's result, and a replay of the durable step
 //! after a crash finds the same ids: it never writes a second NOTE.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::attempt_queue::{AttemptQueue, AttemptRecord, AttemptResultRef, SetAttemptResult};
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::{Vault, WriteActor};
-
-/// The domain each answer part's NOTE id is derived in.
-const NOTE_ID_DOMAIN: &[u8] = b"oneiron.dreamer.task_realize.note.v1";
 
 fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("task realization: {reason}"))
@@ -21,7 +20,7 @@ fn invalid(reason: &str) -> Error {
 /// The NOTE id of part `index` of `record`'s answer: the same at every try.
 pub(super) fn part_id(record: &AttemptRecord, index: usize) -> Result<EntityId> {
     EntityId::derive(
-        NOTE_ID_DOMAIN,
+        purposes::dreamer::TASK_REALIZE_NOTE,
         &[
             record.id.as_bytes().as_slice(),
             &(index as u64).to_le_bytes(),

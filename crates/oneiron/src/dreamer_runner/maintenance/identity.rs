@@ -119,9 +119,6 @@ const MIN_TERM_CHARS: usize = 4;
 const RETRY_SECS: u64 = 3_600;
 /// The rationale on a someone-new answer's `assert_distinct` event.
 const SOMEONE_NEW_RATIONALE: &str = "identity ask: someone new";
-/// The context of the id an owner's answer binds its topology decision to
-/// (its act's `answer`, mesh PR2-topology): the ask, by its key.
-const ASK_ANSWER_CONTEXT: &[u8] = b"oneiron/identity-ask/answer/v1";
 /// Words too common to tell two people apart.
 const STOP_WORDS: &[&str] = &[
     "about", "after", "again", "also", "been", "before", "being", "could", "does", "doing", "done",

@@ -4,6 +4,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::purposes;
 use serde_json::{Value, json};
 
 use super::{
@@ -23,8 +24,6 @@ use crate::identity_topology::{
 };
 use crate::vault::Vault;
 
-/// The domain a recipe's id derives under.
-const RECIPE_DOMAIN: &[u8] = b"oneiron/coach/topology-audit-recipe/v1";
 /// The domain a recipe's revision derives under.
 const RECIPE_REVISION_DOMAIN: &[u8] = b"oneiron/coach/topology-audit-recipe-revision/v1";
 
@@ -45,7 +44,10 @@ impl TopologyAuditRecipe {
     ///
     /// Never in practice: the id derives from a fixed domain.
     pub fn pin(name: &str, questions: &[&str]) -> Result<Self> {
-        let recipe = EntityId::derive(RECIPE_DOMAIN, &[name.as_bytes()])?;
+        let recipe = EntityId::derive(
+            purposes::identity::TOPOLOGY_AUDIT_RECIPE,
+            &[name.as_bytes()],
+        )?;
         let mut hasher = blake3::Hasher::new();
         hasher.update(RECIPE_REVISION_DOMAIN);
         hasher.update(recipe.as_bytes());

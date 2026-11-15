@@ -26,6 +26,8 @@
 
 use std::fmt::Write as _;
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::llm::decision::{AskTo, HumanDecisionRequest};
@@ -44,12 +46,6 @@ const ELICITATION_ASK_QUEUE_VERSION: &str = "v1";
 /// The version of the ask's question; bump it with its wording or contract.
 pub(super) const ELICITATION_ASK_VERSION: u32 = 3;
 
-/// The derivation domain of the ask's correlation.
-const ELICITATION_ASK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-ask:v1";
-
-/// The derivation domain of a linked part's question id.
-const ELICITATION_ASK_PART_DOMAIN: &[u8] = b"oneiron:connector-elicitation-ask-part:v1";
-
 /// The host-issued queue identity of an answer's secret-shape check
 /// (FIX 3841), apart from the approval ask's.
 const ANSWER_CHECK_QUEUE: &str = "outbound.connector_elicitation_answer_check";
@@ -61,9 +57,6 @@ const ANSWER_CHECK_VERSION: u32 = 2;
 /// The release check's generic class: what an answer reads as when only its
 /// field names, not one of its values' shapes, matched.
 const GENERIC_SECRET_SHAPE: &str = "gate.secret_scan.sensitive_env";
-
-/// The derivation domain of the check's correlation.
-const ANSWER_CHECK_DOMAIN: &[u8] = b"oneiron:connector-elicitation-answer-check:v1";
 
 /// The most characters of a connector or tool name the ask quotes.
 const ASK_NAME_MAX_CHARS: usize = 120;
@@ -111,7 +104,7 @@ pub(super) fn elicitation_ask_correlation(
     digest: &[u8; 32],
 ) -> crate::Result<EntityId> {
     EntityId::derive(
-        ELICITATION_ASK_DOMAIN,
+        purposes::connector::ELICITATION_ASK,
         &[handle.as_bytes(), &generation.to_le_bytes(), digest],
     )
 }
@@ -335,7 +328,7 @@ impl Vault {
         let mut parts = Vec::with_capacity(chunks.len());
         for (at, chunk) in chunks.iter().enumerate() {
             let queued = EntityId::derive(
-                ELICITATION_ASK_PART_DOMAIN,
+                purposes::connector::ELICITATION_ASK_PART,
                 &[
                     answer.handle.as_bytes(),
                     &answer.generation.to_le_bytes(),
@@ -405,7 +398,7 @@ impl Vault {
         let principal = EntityId::from_hex(&binding.principal_ref)?;
         let shapes = secret_shapes(answer);
         let correlation = EntityId::derive(
-            ANSWER_CHECK_DOMAIN,
+            purposes::connector::ELICITATION_ANSWER_CHECK,
             &[handle.as_bytes(), &generation.to_le_bytes(), &digest],
         )?;
         self.queue_decision_ask(&HumanDecisionRequest {

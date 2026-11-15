@@ -28,6 +28,7 @@
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord, AttemptState};
@@ -169,7 +170,7 @@ fn hex(id: AttemptId) -> String {
 /// The wait an attempt's step key names.
 fn agent_wait_id(parent: AttemptId, step_key: &str) -> Result<EntityId> {
     EntityId::derive(
-        b"oneiron:code-agent-wait:v1",
+        purposes::agent::CODE_AGENT_WAIT,
         &[parent.as_bytes().as_slice(), step_key.as_bytes()],
     )
 }

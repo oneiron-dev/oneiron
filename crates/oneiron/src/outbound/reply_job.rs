@@ -23,6 +23,7 @@ pub(crate) use witness_rows::connector_witness_rows_in_txn;
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::{
@@ -48,8 +49,6 @@ pub const CONNECTOR_REPLY_REF: &str = "reply";
 pub const CONNECTOR_REPLY_RESULT_PREFIX: &str = "connector-reply-result:";
 /// Domain of a job's dedupe and run key: one job per (agent, event).
 const CONNECTOR_REPLY_JOB_KEY_DOMAIN: &[u8] = b"oneiron.connector-reply-job.v1\0";
-/// Domain of a job result's artifact id: one per job attempt.
-const CONNECTOR_REPLY_RESULT_DOMAIN: &[u8] = b"oneiron:connector-reply-job-result:v1";
 const CONNECTOR_REPLY_RESULT_MEDIA_TYPE: &str = "application/json";
 /// The lease owner the host's reply worker claims jobs as.
 const CONNECTOR_REPLY_JOB_LEASE_OWNER: &str = "connector-reply-worker";
@@ -492,7 +491,7 @@ impl Vault {
 /// The artifact a job attempt's result is kept as.
 fn connector_reply_result_id(attempt: AttemptId) -> Result<EntityId> {
     EntityId::derive(
-        CONNECTOR_REPLY_RESULT_DOMAIN,
+        purposes::connector::REPLY_JOB_RESULT,
         &[attempt.as_bytes().as_slice()],
     )
 }

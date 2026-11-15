@@ -2,6 +2,8 @@
 //! rows are compared with it. A continuation also asks here whether a
 //! receipt past its cut may have run (FIX 4199).
 
+use oneiron_contracts::fingerprint::Purpose;
+
 use crate::code_run::payload::{
     agent_verb_call_identity as call_identity, decode_self_dispatch_outcome,
 };
@@ -16,7 +18,7 @@ use crate::{EntityId, Vault};
 
 use super::super::{ExecutorCallSite, HostSelfDispatcher};
 
-const AGENT_VERB_RECEIPT_DOMAIN: &[u8] =
+const AGENT_VERB_RECEIPT_DOMAIN: Purpose =
     crate::entity_id::derived_domains::EXECUTOR_AGENT_VERB_RECEIPT;
 
 /// The reason a receipt's refusal row carries, so that no row read back from

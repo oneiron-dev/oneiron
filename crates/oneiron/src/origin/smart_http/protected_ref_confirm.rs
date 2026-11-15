@@ -29,6 +29,8 @@
 //! the ref lets the move pass unasked. The intent's writer reads it again and
 //! receipts the act as bypassed, with the intent or not at all.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::door_window::{DoorWindowRequest, DoorWindowVerdict, printable_ref_name};
 use super::retained_reasons::RetainedReasons;
 use crate::Vault;
@@ -60,7 +62,6 @@ const MOVE_DIGEST_DOMAIN: &[u8] = b"oneiron:origin-protected-ref-move:v1";
 const ASK_QUEUE: &str = "origin.protected_ref_rewrite_or_delete";
 const ASK_QUEUE_VERSION: &str = "v1";
 const ASK_VERSION: u32 = 1;
-const ASK_DOMAIN: &[u8] = b"oneiron:origin-protected-ref-move-ask:v1";
 
 /// The ref a push by anyone but the vault's owner may neither delete nor
 /// rewrite, read under the canonical repository's coordinator.
@@ -167,7 +168,10 @@ impl MoveAsk {
         let Ok(principal) = EntityId::from_hex(pusher) else {
             return Ok(None);
         };
-        let correlation = EntityId::derive(ASK_DOMAIN, &[digest.as_bytes()])?;
+        let correlation = EntityId::derive(
+            purposes::origin::PROTECTED_REF_MOVE_ASK,
+            &[digest.as_bytes()],
+        )?;
         Ok(Some(Self {
             question: DecisionQuestion {
                 id: correlation,

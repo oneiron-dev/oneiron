@@ -11,6 +11,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use super::ThingProposalRef;
@@ -19,12 +20,6 @@ use crate::attempt_queue::AttemptId;
 use crate::code_run::{host_run_recorded, read_host_output, stage_host_output};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
-
-/// The domain of a thing's host parent run.
-const PARENT_RUN_DOMAIN: &[u8] = b"oneiron:dreamer-thing-parent:v1";
-
-/// The domain of a staged draft candidate's id.
-const DRAFT_ID_DOMAIN: &[u8] = b"oneiron:dreamer-thing-draft:v1";
 
 /// Where a cut run's checkpoint sits in its parent run.
 pub(super) const CHECKPOINT_PATH: &str = "thing/checkpoint.json";
@@ -40,7 +35,7 @@ pub(super) type Issued = BTreeMap<String, BTreeSet<String>>;
 /// reparented one.
 pub(super) fn host_parent_run(attempt: AttemptId, generation: u32) -> Result<EntityId> {
     EntityId::derive(
-        PARENT_RUN_DOMAIN,
+        purposes::dreamer::THING_PARENT_RUN,
         &[
             attempt.as_bytes().as_slice(),
             generation.to_be_bytes().as_slice(),
@@ -216,7 +211,7 @@ pub(super) fn check_report(
 fn draft_candidate_id(step_hash: &[u8; 32], index: usize) -> Result<EntityId> {
     let index = u64::try_from(index).unwrap_or(u64::MAX);
     EntityId::derive(
-        DRAFT_ID_DOMAIN,
+        purposes::dreamer::THING_DRAFT,
         &[step_hash.as_slice(), index.to_be_bytes().as_slice()],
     )
 }

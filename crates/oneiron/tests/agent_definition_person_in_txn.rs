@@ -25,9 +25,9 @@ use oneiron::store::ports::ManualClock;
 use oneiron::{EdgeActorClass, EntityId, Error, TimeRange, Vault, VaultConfig, WriteActor};
 use rmpv::Value;
 
-/// The domain the engine derives an agent's PERSON id under
-/// (`context_board/people.rs`, `AGENT_PERSON_DOMAIN`).
-const AGENT_PERSON_DOMAIN: &[u8] = b"oneiron.people.agent-person.v1";
+// The purpose the engine derives an agent's PERSON id under (`context_board/people.rs`).
+// Its bytes are pinned in `crates/oneiron-contracts/tests/derive_registry_literals.rs`.
+use oneiron_contracts::fingerprint::purposes::people::AGENT_PERSON;
 
 /// The refusal the person build meets over a row that is no PERSON.
 const NOT_A_PERSON: &str = "person.substrate subject must be a PERSON";
@@ -74,8 +74,8 @@ fn open() -> (tempfile::TempDir, Arc<ManualClock>, Vault) {
 /// Plants an ORG row at `agent`'s derived PERSON id, so its person cannot
 /// be built, and returns that id.
 fn block_person(vault: &Vault, agent: EntityId) -> EntityId {
-    let person = EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])
-        .expect("derive the agent's PERSON id");
+    let person =
+        EntityId::derive(AGENT_PERSON, &[agent.as_bytes()]).expect("derive the agent's PERSON id");
     assert_ne!(agent, person);
     assert!(
         vault

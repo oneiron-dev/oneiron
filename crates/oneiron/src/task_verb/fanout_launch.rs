@@ -73,6 +73,7 @@ use crate::side_table::{self, HexId, Named, SideTable};
 use crate::wave_orchestration::{
     ValidatedWavePlan, WAVE_PLAN_SCHEMA_VERSION, WavePlan, WaveTaskWrite,
 };
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 mod ask_auto;
@@ -97,9 +98,6 @@ pub(super) use self::scrub::{
 /// One fan-out launch, keyed by its launch ref.
 pub(super) const FANOUT_LAUNCHES: SideTable<HexId, StoredLaunch, Named> =
     SideTable::new(&side_table::TASK_FANOUT_LAUNCH);
-
-/// Domain of a wave launch's ref: one launch per actor and plan_ref.
-const LAUNCH_REF_DOMAIN: &[u8] = b"oneiron.tasks.fanout.launch.v1";
 
 /// The plan target of a wave task with no assignee: the default realization.
 const WAVE_DEFAULT_REALIZATION: &str = "tasks.realize";
@@ -524,7 +522,7 @@ pub(super) fn erase_launch_override_actor_in_txn(
 /// The ref of `actor`'s launch of the cut named `plan_ref`.
 pub(super) fn wave_launch_ref(actor: EntityId, plan_ref: &str) -> Result<EntityId> {
     EntityId::derive(
-        LAUNCH_REF_DOMAIN,
+        purposes::task::FANOUT_LAUNCH,
         &[b"wave", actor.as_bytes(), plan_ref.as_bytes()],
     )
 }

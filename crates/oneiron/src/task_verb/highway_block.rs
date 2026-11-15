@@ -16,6 +16,7 @@
 //! the owner's permission. Asks an agent supplied itself carry no
 //! continuation; the agent's Progress is their exit.
 
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -34,9 +35,7 @@ use super::ask_types::{
     TaskAskTarget,
 };
 use super::brief::StoredBrief;
-use super::consts::{
-    TASK_BLOCK_QUESTION_ID_DOMAIN, TASK_BLOCK_QUESTION_PREDICATE, TASK_EXTERNAL_ATTEMPT_KIND,
-};
+use super::consts::{TASK_BLOCK_QUESTION_PREDICATE, TASK_EXTERNAL_ATTEMPT_KIND};
 use super::consult_payload::ConsultPayloadRef;
 use super::consult_result::TaskVerbBody;
 use super::highway::{attempt_hex, not_found, stamp_fields};
@@ -192,7 +191,7 @@ pub(super) fn block_question_label(
 
 /// The id of a block's question CLAIM, derived from its ask group.
 fn block_question_id(group: EntityId) -> Result<EntityId> {
-    EntityId::derive(TASK_BLOCK_QUESTION_ID_DOMAIN, &[group.as_bytes()])
+    EntityId::derive(purposes::task::BLOCK_QUESTION, &[group.as_bytes()])
 }
 
 /// The owner ask's intent key: the TASK, the purpose, the try that blocked

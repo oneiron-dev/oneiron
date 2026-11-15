@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use super::signature::is_content_hash;
@@ -141,7 +142,7 @@ pub(crate) fn emit_issue_signature_local_in_txn(
     // the same signature again — a trigger re-escalated to an owner who
     // did not hold it yet — lands on the same row instead of a second one.
     let bytes = encode_signature(sig)?;
-    let id = EntityId::derive(b"oneiron:issue-signature:v1", &[bytes.as_slice()])?;
+    let id = EntityId::derive(purposes::learning::ISSUE_SIGNATURE, &[bytes.as_slice()])?;
     SIGNATURE.put(&vault.store, wtxn, &id, sig)?;
     Ok(id)
 }

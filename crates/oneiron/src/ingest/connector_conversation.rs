@@ -16,6 +16,7 @@
 //! [`super::connector_witness_grant`]); a grant that fails to issue is owed
 //! a repair and never holds the turn back.
 
+use oneiron_contracts::fingerprint::{Purpose, purposes};
 use rmpv::Value as Msgpack;
 use serde_json::json;
 
@@ -33,13 +34,6 @@ use crate::surface_event::SurfaceConnectorPayload;
 const CONNECTOR_IMPORT_SOURCE: &str = "connector";
 /// The message type a connector conversation's messages carry.
 const CONNECTOR_MESSAGE_TYPE: &str = "import.connector";
-/// A connector conversation. Parts: channel, receiving identity, provider
-/// thread (empty when none), audience (the reply target).
-const CONNECTOR_CONVERSATION_DOMAIN: &[u8] = b"oneiron.ingest.connector.conversation.v1";
-/// A connector conversation's TURN. Parts: conversation, then the side.
-const CONNECTOR_TURN_DOMAIN: &[u8] = b"oneiron.ingest.connector.turn.v1";
-/// A connector conversation's MESSAGE. Parts: conversation, then the side.
-const CONNECTOR_MESSAGE_DOMAIN: &[u8] = b"oneiron.ingest.connector.message.v1";
 /// The side an inbound message lands as. Parts after it: the provider event.
 const INBOUND_SIDE: &str = "inbound";
 /// The side a reply lands as. Parts after it: the provider event, the agent
@@ -193,13 +187,13 @@ impl Vault {
         let conversation_hex = conversation.to_hex();
         let current = [
             derive(
-                CONNECTOR_TURN_DOMAIN,
+                purposes::connector::TURN,
                 &conversation_hex,
                 &inbound_side(origin),
             )?
             .to_hex(),
             derive(
-                CONNECTOR_TURN_DOMAIN,
+                purposes::connector::TURN,
                 &conversation_hex,
                 &reply_side(origin, agent, reply_ref),
             )?
@@ -245,8 +239,8 @@ impl Vault {
     ) -> MemoryResult<ConnectorWitness> {
         let conversation = connector_conversation_id(origin)?;
         let conversation_hex = conversation.to_hex();
-        let turn_id = derive(CONNECTOR_TURN_DOMAIN, &conversation_hex, side)?;
-        let message_id = derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, side)?;
+        let turn_id = derive(purposes::connector::TURN, &conversation_hex, side)?;
+        let message_id = derive(purposes::connector::MESSAGE, &conversation_hex, side)?;
         message.id = Some(message_id.to_hex());
         let turn = WitnessTurn {
             conversation_ref: conversation_hex.clone(),
@@ -347,12 +341,12 @@ pub(crate) fn connector_witness_row_ids(
     let reply = reply_side(origin, agent, reply_ref);
     Ok([
         (
-            derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, &inbound)?,
-            derive(CONNECTOR_TURN_DOMAIN, &conversation_hex, &inbound)?,
+            derive(purposes::connector::MESSAGE, &conversation_hex, &inbound)?,
+            derive(purposes::connector::TURN, &conversation_hex, &inbound)?,
         ),
         (
-            derive(CONNECTOR_MESSAGE_DOMAIN, &conversation_hex, &reply)?,
-            derive(CONNECTOR_TURN_DOMAIN, &conversation_hex, &reply)?,
+            derive(purposes::connector::MESSAGE, &conversation_hex, &reply)?,
+            derive(purposes::connector::TURN, &conversation_hex, &reply)?,
         ),
     ])
 }
@@ -367,7 +361,7 @@ fn connector_conversation_id(origin: &SurfaceConnectorPayload) -> MemoryResult<E
         origin.thread_ref.as_deref().unwrap_or_default().as_bytes(),
         origin.reply_target().as_bytes(),
     ];
-    EntityId::derive(CONNECTOR_CONVERSATION_DOMAIN, &parts).map_err(MemoryError::from)
+    EntityId::derive(purposes::connector::CONVERSATION, &parts).map_err(MemoryError::from)
 }
 
 fn inbound_side(origin: &SurfaceConnectorPayload) -> [&str; 2] {
@@ -384,13 +378,13 @@ fn reply_side(origin: &SurfaceConnectorPayload, agent: EntityId, reply_ref: &str
 }
 
 fn derive(
-    domain: &[u8],
+    purpose: Purpose,
     conversation_hex: &str,
     side: &[impl AsRef<str>],
 ) -> MemoryResult<EntityId> {
     let mut parts = vec![conversation_hex.as_bytes()];
     parts.extend(side.iter().map(|part| part.as_ref().as_bytes()));
-    EntityId::derive(domain, &parts).map_err(MemoryError::from)
+    EntityId::derive(purpose, &parts).map_err(MemoryError::from)
 }
 
 /// The body a connector conversation is minted with: its import source and

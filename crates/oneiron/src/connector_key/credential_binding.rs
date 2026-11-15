@@ -16,6 +16,8 @@
 
 use std::collections::BTreeSet;
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::lifecycle::{catalog_key_in_txn, derived_key_catalog_in_txn};
 use super::record::{
     ConnectorKeyRecord, ScopedCapabilityProvenance, invalid_body, normalize_connector_key,
@@ -34,8 +36,6 @@ use crate::{EntityId, Vault};
 /// One credential slot's binding. Key: the binding ref.
 const BINDINGS: SideTable<EntityId, ConnectorCredentialBinding, Named> =
     SideTable::new(&side_table::CONNECTOR_CREDENTIAL_BINDING);
-/// A binding's ref: its catalog key and credential slot.
-const BINDING_DOMAIN: &[u8] = b"oneiron:connector-credential-binding:v1";
 
 /// Why a call on a row an issuer change halted holds (FIX 988).
 pub const CONNECTOR_ISSUER_HOLD_REASON: &str = "connector_credential_issuer_changed";
@@ -398,7 +398,7 @@ impl Vault {
             let dependents =
                 dependents_in_txn(&self.store, txn, catalog_key, &observation.dependents)?;
             let binding_ref = EntityId::derive(
-                BINDING_DOMAIN,
+                purposes::connector::CREDENTIAL_BINDING,
                 &[catalog_key.as_bytes(), observation.slot.as_bytes()],
             )?;
             let Some(mut binding) = BINDINGS.get(&self.store, txn, &binding_ref)? else {

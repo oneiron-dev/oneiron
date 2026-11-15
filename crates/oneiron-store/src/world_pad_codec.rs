@@ -6,11 +6,10 @@
 use oneiron_authority::authority::WorldKeyId;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::error::{Error, Result};
+use oneiron_contracts::fingerprint::purposes;
 use zeroize::Zeroizing;
 
 use crate::key_material::os_fill;
-
-const PAD_ROW_DOMAIN: &[u8] = b"oneiron/world-key-pad-row/v1";
 
 /// One key's pad. It has no `Clone` and no `Serialize`, its `Debug` prints
 /// nothing, and its bytes are wiped on drop.
@@ -55,7 +54,7 @@ impl WorldKeyPad {
 /// The deterministic row id of `key`'s pad.
 pub fn pad_row_id(key: &WorldKeyId) -> Result<EntityId> {
     EntityId::derive(
-        PAD_ROW_DOMAIN,
+        purposes::world::KEY_PAD_ROW,
         &[
             key.world.as_bytes(),
             &key.generation.to_be_bytes(),

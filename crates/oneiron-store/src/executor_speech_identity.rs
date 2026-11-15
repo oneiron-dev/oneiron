@@ -7,12 +7,13 @@ use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::entity_id::derived_domains::{
     EXECUTOR_COMPACTION_SESSION, EXECUTOR_SPEECH_TURN,
 };
+use oneiron_contracts::fingerprint::Purpose;
 
-/// Derives one deterministic entity id from a registered domain and its
+/// Derives one deterministic entity id from a registered purpose and its
 /// parts by the one derived-id rule, [`EntityId::derive`] (FIX 9711): a
 /// result in the reserved range is refused, never re-salted.
-pub fn derived_executor_id(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
-    EntityId::derive(domain, parts)
+pub fn derived_executor_id(purpose: Purpose, parts: &[&[u8]]) -> Result<EntityId> {
+    EntityId::derive(purpose, parts)
 }
 
 /// The turn one run's speech appends to.

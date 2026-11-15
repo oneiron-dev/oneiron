@@ -14,6 +14,8 @@
 //! revoke and, when revoked, its owner re-grant command with the exact agent
 //! and conversation. Its receipts name the reason it was issued.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::Vault;
 use crate::access_grant::{
     AccessGrant, AccessGrantActChange, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
@@ -45,10 +47,6 @@ pub(crate) const CONNECTOR_WITNESS_READ_REASON: &str = "connector_witness_read";
 /// The owner verb that revokes one witness-read grant.
 pub(crate) const CONNECTOR_WITNESS_READ_REVOKE_COMMAND: &str =
     "vault.connectors.read_grants.revoke";
-
-/// A witness-read grant. Parts: the agent, then the conversation.
-const CONNECTOR_WITNESS_READ_GRANT_DOMAIN: &[u8] =
-    b"oneiron.ingest.connector.witness_read_grant.v1";
 
 impl Vault {
     /// Issues `agent` its read grant over the MESSAGEs of `conversation`,
@@ -433,7 +431,7 @@ fn witness_read_grant(agent: EntityId, conversation: EntityId, now: u64) -> Acce
 /// The id of `agent`'s witness-read grant over `conversation`.
 fn connector_witness_read_grant_id(agent: EntityId, conversation: EntityId) -> Result<EntityId> {
     EntityId::derive(
-        CONNECTOR_WITNESS_READ_GRANT_DOMAIN,
+        purposes::connector::WITNESS_READ_GRANT,
         &[
             agent.as_bytes().as_slice(),
             conversation.as_bytes().as_slice(),

@@ -49,6 +49,7 @@
 //! answer is the host's to carry, checked under the same grant
 //! ([`crate::Vault::authorize_connector_elicitation_answer`]).
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use crate::attempt_queue::AttemptId;
@@ -82,10 +83,6 @@ pub const CONNECTOR_REPLY_MAX_BYTES: usize = 1024 * 1024;
 /// The held and pending-delivery calls, by call ref.
 pub(super) const PENDING_CALLS: SideTable<EntityId, PendingConnectorCall, Named> =
     SideTable::new(&side_table::OUTBOUND_CONNECTOR_CALL_PENDING);
-
-/// The derivation domain of the call ref a host's own identity fixes, so the
-/// same logical call finds its held row again instead of holding a second.
-const CONNECTOR_CALL_REF_DOMAIN: &[u8] = b"oneiron:connector-call-ref:v1";
 
 /// The effector a call on `route` presents its credential for:
 /// `connector:<connector>`. A `self.use` binding names it.
@@ -251,7 +248,7 @@ pub(super) fn connector_call_ref(
     invocation: ConnectorCallInvocation,
 ) -> Result<EntityId, IntentLedgerError> {
     Ok(EntityId::derive(
-        CONNECTOR_CALL_REF_DOMAIN,
+        purposes::connector::CALL_REF,
         &[
             principal_ref.as_bytes(),
             invocation.attempt_id.as_bytes(),

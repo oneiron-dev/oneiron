@@ -15,6 +15,7 @@
 //! was erased stays on the ask alone. No unit view carries ask numbers; the
 //! kept rows are the read ([`Vault::question_unit_asks`]).
 
+use oneiron_contracts::fingerprint::purposes;
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
@@ -29,8 +30,6 @@ use crate::{
     ClaimCandidate, EdgeActorClass, EntityId, Error, Result, TimeRange, Vault, WriteActor,
     WriteEnvelope, WriteProvenance,
 };
-
-const QUESTION_UNIT_ASK_DOMAIN: &[u8] = b"oneiron:question-unit-ask:v1";
 
 /// Every graph or artifact unit's person ask, keyed by its arrival number.
 pub(super) const UNIT_ASKS: SideTable<u64, QuestionUnitAsk, Named> =
@@ -72,7 +71,7 @@ pub fn question_unit_correlation(
     source: &[u8; 32],
 ) -> Result<EntityId> {
     EntityId::derive(
-        QUESTION_UNIT_ASK_DOMAIN,
+        purposes::llm::QUESTION_UNIT_ASK,
         &[
             question.id.as_bytes(),
             &question.version.to_le_bytes(),

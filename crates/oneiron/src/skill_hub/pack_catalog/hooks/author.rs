@@ -3,6 +3,8 @@
 //! Entry: `HookAuthor` and `Vault::hook_author_in_txn`.
 //! Defines its own items.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::*;
 
 /// The foreign-actor kind a hub pack's publisher is (ARCH-0072).
@@ -14,7 +16,7 @@ pub use oneiron_verb_wire::skill_hub::pack_catalog::hooks::author::HookAuthor;
 /// The vault-resident actor a hub's publisher runs hooks as.
 fn foreign_publisher_actor(hub: EntityId, identity: &str) -> Result<EntityId> {
     Ok(EntityId::derive(
-        b"oneiron.pack-hook.foreign-publisher.v1",
+        purposes::skill_hub::PACK_HOOK_FOREIGN_PUBLISHER,
         &[hub.as_bytes(), identity.as_bytes()],
     )?)
 }

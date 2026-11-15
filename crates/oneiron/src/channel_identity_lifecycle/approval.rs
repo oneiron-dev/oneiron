@@ -41,6 +41,7 @@
 //! retirement (`apply_channel_identity_body`) drops every request naming it,
 //! and the actor's erase every request it made (this table's actor scrub).
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -58,8 +59,6 @@ use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
 use crate::store::verb_invocation::InvocationId;
 
-/// The derivation domain of a request ref its host's invocation fixes.
-const LIFECYCLE_REQUEST_REF_DOMAIN: &[u8] = b"oneiron:channel-identity-lifecycle-request-ref:v1";
 /// The BLAKE3 domain of a lifecycle door input's digest.
 const LIFECYCLE_INPUT_DOMAIN: &[u8] = b"oneiron.channel_identity.lifecycle.input.v1";
 /// The BLAKE3 domain of a built lifecycle request's digest.
@@ -429,7 +428,7 @@ impl Vault {
         let named = supplied.or_else(|| {
             let invocation = invocation?;
             EntityId::derive(
-                LIFECYCLE_REQUEST_REF_DOMAIN,
+                purposes::channel_identity::LIFECYCLE_REQUEST_REF,
                 &[
                     actor.as_bytes(),
                     verb.as_bytes(),

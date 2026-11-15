@@ -27,6 +27,7 @@ mod split;
 use std::collections::BTreeMap;
 use std::fmt;
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use crate::entity_id::EntityId;
@@ -58,7 +59,6 @@ pub const SEED_TYPES: [&str; 7] = [
 ];
 
 #[doc(hidden)]
-use oneiron_records::task_type::TYPE_NODE_ID_DOMAIN;
 #[doc(hidden)]
 pub(crate) use oneiron_records::task_type::invalid_type_ref;
 #[doc(hidden)]
@@ -264,7 +264,7 @@ impl TaskTypeNode {
     /// names it by: derived from the node id, so the vault tree and every
     /// fork that holds the node spell it alike.
     pub fn entity_id(&self) -> Result<EntityId> {
-        EntityId::derive(TYPE_NODE_ID_DOMAIN, &[self.node_id.as_bytes()])
+        EntityId::derive(purposes::task::TYPE_NODE, &[self.node_id.as_bytes()])
     }
 
     /// True while this leaf's own data is too thin to read decisions from.

@@ -69,10 +69,9 @@ use serde_json::json;
 /// The shipped default policy pack, whose rules a fixture extends.
 const SHIPPED_POLICY_PACK: &str = "oneiron-default-policy";
 
-/// The provider-inbound MACHINE's derivation domain, the engine's
-/// `derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR`, spelled out as
-/// `tests/summary_as_record_permit.rs` spells its landing writer's.
-const SURFACE_PROVIDER_INBOUND_ACTOR: &[u8] = b"oneiron:surface-provider-inbound-actor:v1";
+// The provider-inbound MACHINE's derivation purpose. Its bytes are pinned in
+// `crates/oneiron-contracts/tests/derive_registry_literals.rs`.
+use oneiron_contracts::entity_id::derived_domains::SURFACE_PROVIDER_INBOUND_ACTOR;
 
 /// The rooted vault's fixed clock: no wall time, no sleeps.
 const ROOTED_T0: u64 = 1_780_000_000;

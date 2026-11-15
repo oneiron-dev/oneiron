@@ -8,12 +8,13 @@
 //! the next call rather than asked twice. A speaker entered with no ask, one
 //! its roster placed or one in a project room, has no route.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::*;
 use crate::conversation::{ContainerAttendee, ContainerAttendeeEvent};
 use crate::disclosure::{PREDICATE_DISCLOSURE_ATTENDEE_ASK, attendee_ask_ref};
 
 pub(super) const ATTENDEE_ENTRY: &str = "tasks.attendee_entry";
-const ENTRY_ID_DOMAIN: &[u8] = b"oneiron.tasks.attendee_entry.v1";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -89,14 +90,14 @@ pub(crate) fn attendee_entry_id(
 ) -> Result<EntityId> {
     match attendee {
         ContainerAttendee::Person(person) => EntityId::derive(
-            ENTRY_ID_DOMAIN,
+            purposes::task::ATTENDEE_ENTRY,
             &[container.as_bytes(), b"person", person.as_bytes()],
         ),
         ContainerAttendee::Speaker {
             session_key,
             speaker_key,
         } => EntityId::derive(
-            ENTRY_ID_DOMAIN,
+            purposes::task::ATTENDEE_ENTRY,
             &[
                 container.as_bytes(),
                 b"speaker",

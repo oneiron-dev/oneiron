@@ -9,6 +9,8 @@
 //! Its bytes are content the room keeps, spent from the room's budget as any
 //! row it stages is. It takes nothing from the vault's id or clock floors.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::EntityId;
 use crate::batch::BatchOp;
 use crate::claim::ScopedRead;
@@ -19,10 +21,6 @@ use crate::receipt::ServedForm;
 use crate::registry::ENTITY_TYPE_RECEIPT_RECORD;
 use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
 use crate::temporal::TimeRange;
-
-/// The domain a room's served-form record id derives under (CALLS-8): one
-/// host call's identity and the form's place among its sorted forms.
-const ROOM_SERVED_FORM_ID: &[u8] = b"oneiron/room-served-form/v1";
 
 impl ScopedRead<'_> {
     /// Keeps `served`, what this lane's read in `session` served, as one
@@ -84,7 +82,10 @@ impl ScopedRead<'_> {
 /// serving of the same form is a call of its own, with an id of its own.
 fn room_served_form_id(call: &[u8], ordinal: usize) -> Result<EntityId> {
     let ordinal = u64::try_from(ordinal).map_err(|_| Error::IndexOverflow("room served form"))?;
-    EntityId::derive(ROOM_SERVED_FORM_ID, &[call, &ordinal.to_le_bytes()])
+    EntityId::derive(
+        purposes::claim::ROOM_SERVED_FORM,
+        &[call, &ordinal.to_le_bytes()],
+    )
 }
 
 /// A room's served-form carrier (CALLS-8, CALLS-4): the record `body` at

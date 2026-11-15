@@ -60,7 +60,30 @@ macro_rules! areas {
     };
 }
 
-areas! { outbound_intent_ledger, retrieval, saved_query, testing }
+areas! {
+    agent,
+    blob,
+    channel_identity,
+    claim,
+    code_run,
+    connector,
+    dreamer,
+    identity,
+    ids,
+    learning,
+    llm,
+    note,
+    origin,
+    outbound_intent_ledger,
+    people,
+    retrieval,
+    saved_query,
+    secret,
+    skill_hub,
+    task,
+    testing,
+    world,
+}
 
 const _: () = assert_distinct_registry(PURPOSE_FILES, LEGACY_FILES);
 

@@ -1,5 +1,7 @@
 //! Typed headless host door for running the one ready workflow leaf.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use super::widen_record::invalid;
 use super::{AgentDispatchStatus, AgentDispatcher, WorkflowProgress};
 use crate::attempt_queue::{
@@ -291,9 +293,10 @@ impl AgentDispatcher<'_> {
         use crate::{EntityId, Error};
         use rmpv::Value;
 
-        const RESULT: &[u8] = b"oneiron:workflow-run-result:v1";
-        const BODY: &[u8] = b"oneiron:workflow-run-result-body:v1";
-        let result = EntityId::derive(RESULT, &[attempt.id.as_bytes().as_slice()])?;
+        let result = EntityId::derive(
+            purposes::agent::WORKFLOW_RUN_RESULT,
+            &[attempt.id.as_bytes().as_slice()],
+        )?;
         let inline = {
             let txn = self.vault.store.env.read_txn()?;
             self.vault.code_run_body_inline_in_txn(&txn, &output.hash)?
@@ -334,7 +337,10 @@ impl AgentDispatcher<'_> {
         let mut bytes = Vec::new();
         rmpv::encode::write_value(&mut bytes, &artifact)
             .map_err(|error| Error::InvalidConfig(error.to_string()))?;
-        let occurrence = EntityId::derive(BODY, &[result.as_bytes().as_slice()])?;
+        let occurrence = EntityId::derive(
+            purposes::agent::WORKFLOW_RUN_RESULT_BODY,
+            &[result.as_bytes().as_slice()],
+        )?;
         let held = OwnedBody {
             owner: result,
             occurrence,

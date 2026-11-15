@@ -6,6 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use super::{
@@ -26,14 +27,6 @@ mod grants;
 
 /// Rows on one `vault.people.list` page.
 pub const PEOPLE_PAGE_SIZE: usize = 50;
-
-/// Derivation domain of the one Direct room two persons share.
-const DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.direct-room.v1";
-
-/// Derivation domain of a leader message's room: one per leadership tenure,
-/// keyed by both projects and the actors leading them, so a new leader gets
-/// a new room and the old one stops admitting turns (FIX 1380; CALLS C6).
-const LEADER_DIRECT_ROOM_DOMAIN: &[u8] = b"oneiron.people.leader-room.v1";
 
 /// Policy hook (CALLS "FIX 3899 ceiling source", open): the comm
 /// ceiling of a caller whose credential is no capability slip (a host
@@ -560,7 +553,7 @@ impl Memory<'_> {
                 ([theirs, mine], [their_leader, self.actor])
             };
             let room = EntityId::derive(
-                LEADER_DIRECT_ROOM_DOMAIN,
+                purposes::people::LEADER_ROOM,
                 &[
                     projects[0].as_bytes(),
                     leaders[0].as_bytes(),
@@ -584,7 +577,7 @@ impl Memory<'_> {
             [target.person, me]
         };
         let room = EntityId::derive(
-            DIRECT_ROOM_DOMAIN,
+            purposes::people::DIRECT_ROOM,
             &[pair[0].as_bytes(), pair[1].as_bytes()],
         )?;
         Ok(Ok(MessageRoute::Plain { room, pair }))

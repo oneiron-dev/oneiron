@@ -1,6 +1,8 @@
 //! Exact native PERSON and subject-fact tuples prepared before setup Gate.
 
-use super::{AGENT_PERSON_DOMAIN, agent_person_body};
+use oneiron_contracts::fingerprint::purposes;
+
+use super::agent_person_body;
 use crate::batch::PreparedPersonSubstrate;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
@@ -38,7 +40,7 @@ pub(crate) fn prepare_agent_person_after_puts_in_txn(
     if crate::dreamer_runner::authority::is_base_agent_actor(&agent)? {
         return Ok(None);
     }
-    let person = EntityId::derive(AGENT_PERSON_DOMAIN, &[agent.as_bytes()])?;
+    let person = EntityId::derive(purposes::people::AGENT_PERSON, &[agent.as_bytes()])?;
     let prepared_agent = PreparedSubjectAgent::after_puts(agent, definition_data, preceding)?;
     // The old anchor read precedes the PERSON-create branch: it may project
     // the candidate definition, but cannot assume a PERSON will be created.

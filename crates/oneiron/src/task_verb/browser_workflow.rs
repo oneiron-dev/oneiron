@@ -26,6 +26,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use oneiron_browser::{
     BatchStopCause, ExpectInput, ExpectOutput, LibraryRunOutput, SecretArg, SubgoalStatus,
 };
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
@@ -54,8 +55,6 @@ use super::wire_decode::task_verb_body_in;
 const ATTEMPTS: SideTable<[u8; 16], AttemptRow, Named> =
     SideTable::new(&side_table::TASK_BROWSER_WORKFLOW_ATTEMPT);
 
-/// Domain of a try's receipt NOTE id.
-const RECEIPT_NOTE_DOMAIN: &[u8] = b"oneiron.tasks.browser_workflow.receipt.v1";
 /// A try's receipt is a research NOTE, as a workflow run's report is.
 const RECEIPT_NOTE_KIND: &str = "research";
 /// What a masked secret value reads as in a receipt, as the browser's
@@ -516,7 +515,10 @@ pub fn mark_task_workflow_started(
 /// A try's receipt NOTE id, derived from the try alone, so every pass
 /// names the same entity.
 fn receipt_note_id(attempt: AttemptId) -> Result<EntityId> {
-    EntityId::derive(RECEIPT_NOTE_DOMAIN, &[attempt.as_bytes().as_slice()])
+    EntityId::derive(
+        purposes::task::BROWSER_WORKFLOW_RECEIPT,
+        &[attempt.as_bytes().as_slice()],
+    )
 }
 
 /// The outcome `report` comes to for `row`'s pin, with its receipt `note`.

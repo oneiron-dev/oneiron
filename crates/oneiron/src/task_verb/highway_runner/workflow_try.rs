@@ -17,6 +17,8 @@
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::Vault;
 use crate::agent_dispatch::{
     AgentDispatchOutcome, AgentDispatcher, AgentSpawnContext, DispatchAgent, WorkflowStepResult,
@@ -65,8 +67,6 @@ pub(in crate::task_verb) const WORKFLOW_TRY_OWNER: &str = "oneiron.workflow-task
 const TAKE_KEY: &str = "workflow.take";
 /// A run's report is a research NOTE, as a realization's result is.
 const REPORT_NOTE_KIND: &str = "research";
-/// Domain of a run's report NOTE id.
-const REPORT_NOTE_DOMAIN: &[u8] = b"oneiron.workflow.task_report.v1";
 
 /// One ended TASK-bound run, as its wrapper's durable rows hold it.
 pub(crate) struct WorkflowRunEnd {
@@ -579,7 +579,10 @@ fn close_in(
 /// A run's report NOTE id, derived from its wrapper alone, so every pass
 /// names the same entity.
 fn report_note_id(root: AttemptId) -> Result<EntityId> {
-    EntityId::derive(REPORT_NOTE_DOMAIN, &[root.as_bytes().as_slice()])
+    EntityId::derive(
+        purposes::task::WORKFLOW_TASK_REPORT,
+        &[root.as_bytes().as_slice()],
+    )
 }
 
 /// Lands an ended run's report NOTE in a writer of its own unless it is

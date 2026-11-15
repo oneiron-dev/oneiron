@@ -1,5 +1,7 @@
 //! The ordinary frozen dispatch held by its owner's connector tool setting.
 
+use oneiron_contracts::fingerprint::purposes;
+
 use crate::Vault;
 use crate::consent::{AuthenticatedOwner, ConsentReceipt, EffectDigest};
 use crate::entity_id::EntityId;
@@ -139,7 +141,6 @@ impl Vault {
 const ASK_QUEUE: &str = "outbound.intent.approval";
 const ASK_QUEUE_VERSION: &str = "v1";
 const ASK_VERSION: u32 = 1;
-const ASK_DOMAIN: &[u8] = b"oneiron:outbound-intent-approval-ask:v1";
 
 /// Keeps the exact ordinary question in the caller's writer. Its identity
 /// depends on the ledger row and reviewed digest, not rendered wording. An
@@ -160,7 +161,10 @@ pub(super) fn queue_owner_ask_in_txn(
     let Some(principal) = candidate.actor else {
         return Ok(None);
     };
-    let correlation = EntityId::derive(ASK_DOMAIN, &[&record.id, candidate.digest.as_bytes()])?;
+    let correlation = EntityId::derive(
+        purposes::outbound_intent_ledger::INTENT_APPROVAL_ASK,
+        &[&record.id, candidate.digest.as_bytes()],
+    )?;
     let mut question = DecisionQuestion {
         id: correlation,
         version: ASK_VERSION,
