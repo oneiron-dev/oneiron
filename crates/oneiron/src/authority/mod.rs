@@ -130,6 +130,7 @@ mod op_apply;
 mod origin_cut;
 mod owner_act;
 mod owner_choice;
+mod owner_key_changes;
 mod owner_key_enrollment;
 mod owner_key_enrollment_door;
 mod owner_key_removal_door;
@@ -402,6 +403,7 @@ pub(crate) use owner_act::{
     owner_act_signer_admits,
 };
 pub use owner_choice::OwnerChoiceHead;
+pub use owner_key_changes::{OwnerKeyChange, OwnerKeyChangeKind};
 pub use owner_key_enrollment_door::{
     EnrolledOwnerKey, EnrolledOwnerKeyKind, OwnerKeyEnrollment, OwnerKeyEnrollmentReceipt,
 };
