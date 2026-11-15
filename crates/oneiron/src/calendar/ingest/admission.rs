@@ -530,6 +530,10 @@ impl PollAdmission<'_> {
     /// An omission is no cancellation evidence and moves no money; an EVENT
     /// with no deposit writes nothing.
     fn refund_host_cancelled_deposit(&self, event_ref: EntityId) -> Result<(), CalendarError> {
+        #[cfg(oneiron_test_support)]
+        if crate::test_doors::host_cancel_refund::take_stop_before_refund() {
+            return Err(ingest("stopped before the host-cancel refund (test door)"));
+        }
         crate::booking::lifecycle::refund_deposit_on_host_cancel(self.vault, &event_ref, self.now)
             .map_err(|error| CalendarError::IcsIngest {
                 reason: error.to_string(),

@@ -74,6 +74,8 @@ pub struct DepositSettleRequest<'a> {
 pub enum DepositProviderFailure {
     /// Worth another try: the network, a timeout, the provider's 5xx or 429.
     Transient(String),
+    /// Red-proof shim: the fix's variant, with no handling of its own.
+    Pending(String),
     /// The provider refused the move itself; another try answers the same.
     Permanent(String),
 }
@@ -81,7 +83,7 @@ pub enum DepositProviderFailure {
 impl DepositProviderFailure {
     fn reason(&self) -> &str {
         match self {
-            Self::Transient(reason) | Self::Permanent(reason) => reason,
+            Self::Transient(reason) | Self::Pending(reason) | Self::Permanent(reason) => reason,
         }
     }
 }
