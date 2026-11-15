@@ -213,7 +213,7 @@ fn delete_stale_items(
     run: &EntityId,
     counts: [u64; 4],
 ) -> Result<Vec<Vec<u8>>> {
-    let mut deleted = Vec::new();
+    let mut stale = Vec::new();
     for row in ITEMS.iter_raw_from(dbs, wtxn, &ReplayItemKey::run_prefix(run))? {
         let (suffix, _) = row?;
         let Some(key) = ReplayItemKey::decode_key(&suffix) else {
@@ -226,12 +226,13 @@ fn delete_stale_items(
             ReplayFamily::Bindings => 3,
         };
         if key.index >= counts[slot] {
-            let full = ITEMS.key_bytes(&key);
-            dbs.side_vault_meta().delete(wtxn, &full)?;
-            deleted.push(full);
+            stale.push(ITEMS.key_bytes(&key));
         }
     }
-    Ok(deleted)
+    for full in &stale {
+        dbs.side_vault_meta().delete(wtxn, full)?;
+    }
+    Ok(stale)
 }
 
 /// `run`'s `family` items in index order, checked exactly `0..count`: a gap or an extra row is corrupted.

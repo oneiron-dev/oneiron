@@ -1,14 +1,19 @@
 //! The split replay rows assemble (FIX CODE-RUN-REPLAY-SPLIT-LAYOUT PR1 and PR2).
 //! Head plus items join to the whole encoding; appends, rebinds, whole puts and header
-//! crossings keep it, and the historical lift sweep walks every item through its head.
+//! crossings keep it, a guarded write that replaces a stored checkpoint persists it, the
+//! side-row wall reads the head's fields as it read the whole record's, and the historical
+//! lift sweep walks every item through its head.
 //!
 //! Fleet: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test replay_split_rows`
 #![cfg(oneiron_test_support)]
 
+use std::sync::Arc;
+
 use oneiron::code_run::{
-    CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput, CodeRunReplayRecord,
-    CodeRunResultBinding, CodeRunStepCheckpoint, SelfCall, SelfDispatchOutcome,
-    SelfMemorySearchCall, SelfMemorySearchResult, encode_code_run_replay_record,
+    CodeRunAbiLayoutCheck, CodeRunBridgeCall, CodeRunDeterminism, CodeRunRawOutput,
+    CodeRunReplayRecord, CodeRunResultBinding, CodeRunStepCheckpoint, SelfCall,
+    SelfDispatchOutcome, SelfMemorySearchCall, SelfMemorySearchResult,
+    encode_code_run_replay_record,
 };
 use oneiron::test_doors::replay_rows;
 use oneiron::{EntityId, Vault, VaultConfig};
@@ -134,15 +139,16 @@ fn a_whole_put_after_a_shorter_record_drops_stale_items() {
     for index in 0..30_u64 {
         append(&mut long, index, Some(index));
     }
-    vault
+    let long_generation = vault
         .put_code_run_replay_record_if_generation(&long, None)
         .expect("long record");
     let mut short = CodeRunReplayRecord::new(run_id, determinism);
     for index in 0..10_u64 {
         append(&mut short, index, Some(index));
     }
+    // Under the long record's generation: the shorter counts select the whole put.
     vault
-        .put_code_run_replay_record_if_generation(&short, None)
+        .put_code_run_replay_record_if_generation(&short, Some(long_generation))
         .expect("short record");
     let stored = vault
         .get_code_run_replay_record(&run_id)
@@ -155,6 +161,74 @@ fn a_whole_put_after_a_shorter_record_drops_stale_items() {
         + short.outputs.len()
         + short.bindings.len()) as u64;
     assert_eq!(count, expected);
+}
+
+#[test]
+fn a_guarded_write_that_replaces_a_stored_checkpoint_persists_it() {
+    let directory = tempfile::tempdir().expect("temporary vault");
+    let vault = Vault::open(directory.path(), VaultConfig::device()).expect("fresh vault");
+    let run_id = EntityId::now();
+    let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(0, [7; 32]));
+    for index in 0..6_u64 {
+        append(&mut record, index, Some(index));
+    }
+    let generation = vault
+        .put_code_run_replay_record_if_generation(&record, None)
+        .expect("seeded record");
+    // No count moves, so the guarded write takes the append path: a middle
+    // checkpoint and the last one (whose hash the generation carries) change.
+    record.step_checkpoints[2].state_hash = [9; 32];
+    let last = record.step_checkpoints.len() - 1;
+    record.step_checkpoints[last].state_hash = [8; 32];
+    let next = vault
+        .put_code_run_replay_record_if_generation(&record, Some(generation))
+        .expect("guarded overwrite");
+    let stored = vault
+        .get_code_run_replay_record(&run_id)
+        .expect("stored record reads")
+        .expect("stored record");
+    assert_eq!(stored, record);
+    assert_eq!(stored.generation().expect("stored generation"), next);
+    vault
+        .put_code_run_replay_record_if_generation(&stored, Some(next))
+        .expect("the read record saves under its own generation");
+}
+
+/// The public BIP39 test vector, a recovery phrase's twelve words.
+const PHRASE: &str = "legal winner thank year wave sausage worth useful legal winner thank yellow";
+
+#[test]
+fn a_recovery_phrase_in_an_abi_check_is_refused_at_the_head() {
+    let directory = tempfile::tempdir().expect("temporary vault");
+    // The owner's scan switch at its default (on), with a custody door.
+    let vault = Vault::open(directory.path(), VaultConfig::default()).expect("fresh vault");
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
+    vault.ensure_embedded_owner_actor().expect("embedded owner");
+    let clean_run = EntityId::now();
+    let mut clean = CodeRunReplayRecord::new(clean_run, CodeRunDeterminism::new(0, [7; 32]));
+    append(&mut clean, 0, Some(0));
+    vault
+        .put_code_run_replay_record_if_generation(&clean, None)
+        .expect("a clean record lands with the scan on");
+    let run_id = EntityId::now();
+    let mut record = CodeRunReplayRecord::new(run_id, CodeRunDeterminism::new(0, [7; 32]));
+    append(&mut record, 0, Some(0));
+    let words: Vec<&str> = PHRASE.split(' ').collect();
+    record
+        .abi_layout_checks
+        .push(CodeRunAbiLayoutCheck::for_fields("fixture", 1, &words));
+    // The head's shell carries the ABI checks: the wall reads the field words
+    // joined, as in the whole record, and a masked check no longer matches its
+    // layout hash, so the write refuses rather than store the phrase or an
+    // unreadable record.
+    let refused = vault.put_code_run_replay_record_if_generation(&record, None);
+    assert!(refused.is_err(), "the phrase write landed: {refused:?}");
+    assert!(
+        vault
+            .get_code_run_replay_record(&run_id)
+            .expect("the refused run reads")
+            .is_none()
+    );
 }
 
 #[test]
