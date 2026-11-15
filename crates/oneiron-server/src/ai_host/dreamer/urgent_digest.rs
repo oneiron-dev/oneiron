@@ -22,7 +22,7 @@ use oneiron::llm::decision::{DecisionRung, Reversibility};
 use oneiron::retrieval_depth::RetrievalDeadline;
 use oneiron::{DreamerAdmittedAttempt, DreamerAttemptExecution, Vault, WakeAttemptContext};
 
-use super::{PassAdmission, admit, now_ms, pause, pause_lifted, paused};
+use super::{PassAdmission, admit, pause, pause_lifted, paused, unix_millis_now};
 use crate::decision_host::DecisionHost;
 
 /// The harm question's shipped wording: prompt data beside this host, never
@@ -100,7 +100,7 @@ fn queue_round(
     {
         return Ok(());
     }
-    let now = now_ms() / 1_000;
+    let now = unix_millis_now() / 1_000;
     for candidate in vault.digest_harm_candidates(now)? {
         let basis = candidate.basis(question)?;
         if queued.contains(&basis) || vault.digest_harm_answered(&basis)? {
