@@ -145,18 +145,8 @@ fn unhex<const N: usize>(text: &str, what: &str) -> OwnerResult<[u8; N]> {
 }
 
 fn unhex_vec(text: &str, what: &str) -> OwnerResult<Vec<u8>> {
-    let invalid = || OwnerError::Invalid(format!("{what} is not hex"));
-    if !text.len().is_multiple_of(2) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-        return Err(invalid());
-    }
-    (0..text.len())
-        .step_by(2)
-        .map(|at| {
-            text.get(at..at + 2)
-                .and_then(|pair| u8::from_str_radix(pair, 16).ok())
-                .ok_or_else(invalid)
-        })
-        .collect()
+    oneiron_hex::decode_vec_any_case(text)
+        .ok_or_else(|| OwnerError::Invalid(format!("{what} is not hex")))
 }
 
 /// `GET /v1/owner/custody-anchor`: one lineage's current anchor record here.

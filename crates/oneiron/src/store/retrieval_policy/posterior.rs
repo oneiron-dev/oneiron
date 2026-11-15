@@ -10,14 +10,8 @@ use crate::store::RetrievalState;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub(crate) struct PolicyObservation {
-    pub identity: RetrievalPolicyIdentity,
-    pub context: [f64; 16],
-    pub action: RetrievalPolicyAction,
-    pub reward: f64,
-    pub weight: f64,
-}
+#[doc(hidden)]
+pub(crate) use oneiron_records::store::retrieval_policy::posterior::PolicyObservation;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalPolicyPosterior {

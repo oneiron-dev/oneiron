@@ -4,22 +4,10 @@
 //! run (FIX 11003).
 use std::sync::atomic::Ordering;
 
-use serde::Serialize;
-
 use super::{RunAdmission, RunInner};
 
-/// What a bound run's calls serve, as the engine stamped it before the run
-/// began (FIX 4453): the agent, its free-time cycle and item, the label every
-/// call carries and the spend scope its spend lands on. Fixed for the run's
-/// life; never read from a prompt or from the run's name.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct RunAttribution {
-    pub agent: crate::EntityId,
-    pub cycle: crate::EntityId,
-    pub item: crate::EntityId,
-    pub purpose: crate::llm::CallPurpose,
-    pub spend_scope: String,
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::run_admission::admission::origin::RunAttribution;
 
 /// What a handle names about the calls admitted through it: the rows their
 /// input was assembled from ([`RunAdmission::sourced`]) and who acted to
