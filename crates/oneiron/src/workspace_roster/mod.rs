@@ -50,8 +50,6 @@
 //! contracts and writes only its own `vault_meta` prefixes plus the entities
 //! the intent explicitly names.
 
-use std::io::Cursor;
-
 use rmpv::Value;
 
 use crate::Vault;

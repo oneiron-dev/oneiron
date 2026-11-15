@@ -1,11 +1,10 @@
 //! Shared MessagePack plumbing plus origin/basis/space/consent/sample encode_/decode_ pairs kept together.
 
-use std::io::Cursor;
-
+use oneiron_contracts::msgpack::{self, Entries};
 use rmpv::Value;
 
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::side_table::{CodecError, RawValue};
 
 use super::codec_records::{
@@ -90,29 +89,16 @@ const BASIS_VERBAL_KEYS: [&str; 5] = [KEY_KIND, "recording_ref", "start_ms", "en
 const BASIS_TOGGLE_KEYS: [&str; 2] = [KEY_KIND, "surface_ref"];
 
 pub(super) fn validate_keys(entries: &[(Value, Value)], keys: &[&str]) -> Result<()> {
-    let mut seen = vec![false; keys.len()];
-    for (key, _) in entries {
-        let key = key.as_str().ok_or_else(corrupt_voice_row)?;
-        let Some(index) = keys.iter().position(|known| *known == key) else {
-            return Err(corrupt_voice_row());
-        };
-        if seen[index] {
-            return Err(corrupt_voice_row());
-        }
-        seen[index] = true;
-    }
-    if seen.into_iter().all(|present| present) {
-        Ok(())
-    } else {
-        Err(corrupt_voice_row())
-    }
+    Entries::new(entries)
+        .exact_keys(keys, &[])
+        .map_err(|_| corrupt_voice_row())?;
+    Ok(())
 }
 
 pub(super) fn required_value<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(corrupt_voice_row)
+    Entries::new(entries)
+        .require(key)
+        .map_err(|_| corrupt_voice_row())
 }
 
 pub(super) fn map_entries(value: &Value) -> Result<&Vec<(Value, Value)>> {
@@ -219,19 +205,11 @@ pub(super) fn require_schema_version(entries: &[(Value, Value)]) -> Result<()> {
 }
 
 pub(super) fn write_body(value: &Value) -> Result<Vec<u8>> {
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, value)
-        .map_err(|_| Error::InvariantViolation("voice identity record encode failed"))?;
-    Ok(out)
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn read_body(bytes: &[u8]) -> Result<Value> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| corrupt_voice_row())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(corrupt_voice_row());
-    }
-    Ok(value)
+    msgpack::decode(bytes).map_err(|_| corrupt_voice_row())
 }
 
 fn encode_origin(origin: &VoiceEnrollmentOrigin) -> Value {

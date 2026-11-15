@@ -65,8 +65,7 @@ pub use text_ref::{
 };
 pub(crate) use text_ref::{StoredProposal, erase_proposal_texts_in_txn, put_imported_endpoints};
 
-use std::io::Cursor;
-
+use oneiron_contracts::msgpack::{self, Entries};
 use rmpv::Value;
 
 use crate::Vault;
@@ -642,11 +641,7 @@ fn encode_stored_proposal(stored: &StoredProposal) -> Result<Vec<u8>> {
                 .map_or(Value::Nil, |id| Value::Binary(id.as_bytes().to_vec())),
         ),
     ]);
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value).map_err(|_| {
-        Error::InvariantViolation("proposal artifact record MessagePack encode failed")
-    })?;
-    Ok(out)
+    Ok(msgpack::encode(&value))
 }
 
 fn encode_span(attribution: OpAttribution, span: &OpSpan) -> Value {
@@ -688,30 +683,30 @@ fn encode_span(attribution: OpAttribution, span: &OpSpan) -> Value {
 
 fn decode_stored_proposal(bytes: &[u8]) -> Result<StoredProposal> {
     let entries = decode_map(bytes)?;
-    if field(&entries, KEY_SCHEMA_VERSION).and_then(Value::as_u64)
+    if field(&entries, KEY_SCHEMA_VERSION)?.and_then(Value::as_u64)
         != Some(PROPOSAL_ARTIFACT_SCHEMA_VERSION)
     {
         return Err(corrupt());
     }
-    let spans = match field(&entries, KEY_SPANS).ok_or_else(corrupt)? {
+    let spans = match field(&entries, KEY_SPANS)?.ok_or_else(corrupt)? {
         Value::Array(items) => items.iter().map(decode_span).collect::<Result<Vec<_>>>()?,
         _ => return Err(corrupt()),
     };
-    let head = text_ref::decode_head(field(&entries, KEY_HEAD).ok_or_else(corrupt)?)?;
+    let head = text_ref::decode_head(field(&entries, KEY_HEAD)?.ok_or_else(corrupt)?)?;
     let record = FinalizedProposalText {
         artifact_ref: ProposalArtifactRef::new(field_entity_id(&entries, KEY_ARTIFACT)?),
         proposed_ref: LoroOpRef::from_bytes(field_binary(&entries, KEY_PROPOSED_REF)?),
         final_ref: LoroOpRef::from_bytes(field_binary(&entries, KEY_FINAL_REF)?),
         ops_by_actor: spans,
         source_turn_ref: field_opt_entity_id(&entries, KEY_SOURCE_TURN)?,
-        birth_attempt: match field(&entries, KEY_BIRTH_ATTEMPT).ok_or_else(corrupt)? {
+        birth_attempt: match field(&entries, KEY_BIRTH_ATTEMPT)?.ok_or_else(corrupt)? {
             Value::Nil => None,
             Value::Binary(bytes) => Some(AttemptId::from_bytes(bytes).map_err(|_| corrupt())?),
             _ => return Err(corrupt()),
         },
         made_by_inputs: field_entity_id_list(&entries, KEY_MADE_BY_INPUTS)?,
     };
-    let lifted = text_ref::decode_lifted(field(&entries, KEY_LIFTED).ok_or_else(corrupt)?)?;
+    let lifted = text_ref::decode_lifted(field(&entries, KEY_LIFTED)?.ok_or_else(corrupt)?)?;
     Ok(StoredProposal {
         record,
         head,
@@ -755,22 +750,12 @@ fn decode_attribution(entries: &[(Value, Value)]) -> Result<OpAttribution> {
 }
 
 fn decode_map(bytes: &[u8]) -> Result<Vec<(Value, Value)>> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| corrupt())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(corrupt());
-    }
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(corrupt()),
-    }
+    msgpack::decode_map(bytes).map_err(|_| corrupt())
 }
 
-fn field<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find(|(k, _)| k.as_str() == Some(key))
-        .map(|(_, value)| value)
+/// A repeated key is refused.
+fn field<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
+    Entries::new(entries).get(key).map_err(|_| corrupt())
 }
 
 /// [`field`] for the repeated-key test door (`test_doors::lib_rows_b_repeated_key`). Not API.
@@ -779,29 +764,29 @@ pub(crate) fn proposal_field_for_test(
     entries: &[(Value, Value)],
     key: &str,
 ) -> Result<Option<Value>> {
-    Ok(field(entries, key).cloned())
+    Ok(field(entries, key)?.cloned())
 }
 
 fn field_str<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
-    field(entries, key)
+    field(entries, key)?
         .and_then(Value::as_str)
         .ok_or_else(corrupt)
 }
 
 fn field_u64(entries: &[(Value, Value)], key: &str) -> Result<u64> {
-    field(entries, key)
+    field(entries, key)?
         .and_then(Value::as_u64)
         .ok_or_else(corrupt)
 }
 
 fn field_i64(entries: &[(Value, Value)], key: &str) -> Result<i64> {
-    field(entries, key)
+    field(entries, key)?
         .and_then(Value::as_i64)
         .ok_or_else(corrupt)
 }
 
 fn field_binary(entries: &[(Value, Value)], key: &str) -> Result<Vec<u8>> {
-    match field(entries, key) {
+    match field(entries, key)? {
         Some(Value::Binary(bytes)) => Ok(bytes.clone()),
         _ => Err(corrupt()),
     }
@@ -815,14 +800,14 @@ fn field_entity_id(entries: &[(Value, Value)], key: &str) -> Result<EntityId> {
 }
 
 fn field_opt_entity_id(entries: &[(Value, Value)], key: &str) -> Result<Option<EntityId>> {
-    match field(entries, key) {
+    match field(entries, key)? {
         None | Some(Value::Nil) => Ok(None),
         Some(_) => field_entity_id(entries, key).map(Some),
     }
 }
 
 fn field_entity_id_list(entries: &[(Value, Value)], key: &str) -> Result<Vec<EntityId>> {
-    let Some(Value::Array(items)) = field(entries, key) else {
+    let Some(Value::Array(items)) = field(entries, key)? else {
         return Err(corrupt());
     };
     items

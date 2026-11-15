@@ -4,6 +4,7 @@ use super::records::PresetRow;
 use super::*;
 use crate::error::{GateError, RecordError};
 use crate::ports::EntityStoreRead;
+use oneiron_contracts::msgpack::{self, Entries, MsgpackError};
 
 // ---------------------------------------------------------------------------
 // Roster reads
@@ -792,30 +793,27 @@ pub(super) fn read_federation_grant_in_txn(
 }
 
 pub(super) fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut buf = Vec::new();
-    rmpv::encode::write_value(&mut buf, value)
-        .map_err(|_| invalid("workspace roster MessagePack encode failed"))?;
-    Ok(buf)
+    Ok(msgpack::encode(value))
 }
 
 pub(super) fn decode_map(bytes: &[u8]) -> Result<Vec<(Value, Value)>> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor)
-        .map_err(|_| invalid("workspace roster MessagePack decode failed"))?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(invalid("workspace roster body has trailing bytes"));
-    }
-    match value {
-        Value::Map(entries) => Ok(entries),
-        _ => Err(invalid("workspace roster body must be a map")),
-    }
+    msgpack::decode_map(bytes).map_err(|error| {
+        invalid(match error {
+            MsgpackError::Trailing => "workspace roster body has trailing bytes",
+            MsgpackError::NotMap => "workspace roster body must be a map",
+            _ => "workspace roster MessagePack decode failed",
+        })
+    })
 }
 
+/// A repeated key is refused.
 pub(super) fn required<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a Value> {
-    entries
-        .iter()
-        .find_map(|(candidate, value)| (candidate.as_str() == Some(key)).then_some(value))
-        .ok_or_else(|| invalid("workspace roster body is missing a required key"))
+    Entries::new(entries).require(key).map_err(|error| {
+        invalid(match error {
+            MsgpackError::DuplicateKey(_) => "workspace roster body repeats a key",
+            _ => "workspace roster body is missing a required key",
+        })
+    })
 }
 
 /// [`required`] for the repeated-key test door (`test_doors::lib_rows_b_repeated_key`). Not API.

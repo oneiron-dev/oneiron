@@ -45,6 +45,7 @@ mod indexes;
 pub(crate) mod tables;
 mod transaction_memo;
 
+use oneiron_contracts::msgpack;
 use rmpv::Value;
 
 use crate::Vault;
@@ -544,8 +545,5 @@ fn validate_provider_key(provider: &str) -> Result<()> {
 }
 
 fn encode_value(value: &Value) -> Result<Vec<u8>> {
-    let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, value)
-        .map_err(|_| Error::InvariantViolation("provider actor MessagePack encode failed"))?;
-    Ok(bytes)
+    Ok(msgpack::encode(value))
 }

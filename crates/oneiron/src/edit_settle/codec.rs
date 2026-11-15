@@ -1,7 +1,6 @@
 //! Row and anchor codec.
 
-use std::io::Cursor;
-
+use oneiron_contracts::msgpack::{self, Entries};
 use rmpv::Value;
 
 use super::keys::{
@@ -199,11 +198,7 @@ pub(super) fn encode_settlement_record(record: &SettlementRecord) -> Result<Vec<
                 .map_err(|_| Error::InvariantViolation("discarded settle words encode failed"))?,
         ));
     }
-    let value = Value::Map(entries);
-    let mut out = Vec::new();
-    rmpv::encode::write_value(&mut out, &value)
-        .map_err(|_| Error::InvariantViolation("settlement record MessagePack encode failed"))?;
-    Ok(out)
+    Ok(msgpack::encode(&Value::Map(entries)))
 }
 
 fn encode_settled_anchor(anchor: &SettledAnchor) -> Value {
@@ -221,29 +216,18 @@ fn encode_settled_anchor(anchor: &SettledAnchor) -> Value {
 }
 
 pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord> {
-    let mut cursor = Cursor::new(bytes);
-    let value = rmpv::decode::read_value(&mut cursor).map_err(|_| corrupt())?;
-    if cursor.position() != bytes.len() as u64 {
-        return Err(corrupt());
-    }
-    let Value::Map(entries) = value else {
-        return Err(corrupt());
-    };
-    let mut seen = std::collections::BTreeSet::new();
-    for (key, _) in &entries {
-        let key = key.as_str().ok_or_else(corrupt)?;
-        if !SETTLEMENT_RECORD_KEYS.contains(&key) || !seen.insert(key) {
-            return Err(corrupt());
-        }
-    }
-    if field(&entries, KEY_SCHEMA_VERSION).and_then(Value::as_u64)
+    let entries = msgpack::decode_map(bytes).map_err(|_| corrupt())?;
+    Entries::new(&entries)
+        .exact_keys(&[], &SETTLEMENT_RECORD_KEYS)
+        .map_err(|_| corrupt())?;
+    if field(&entries, KEY_SCHEMA_VERSION)?.and_then(Value::as_u64)
         != Some(SETTLEMENT_SCHEMA_VERSION)
     {
         return Err(corrupt());
     }
     let outcome =
         SettleOutcomeKind::parse(field_str(&entries, KEY_OUTCOME)?).ok_or_else(corrupt)?;
-    let anchors = decode_anchors(field(&entries, KEY_ANCHORS).ok_or_else(corrupt)?)?;
+    let anchors = decode_anchors(field(&entries, KEY_ANCHORS)?.ok_or_else(corrupt)?)?;
     Ok(SettlementRecord {
         proposal_ref: field_str(&entries, KEY_PROPOSAL_REF)?.to_owned(),
         outcome,
@@ -257,13 +241,15 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
         manifest_ref: field_opt_hash(&entries, KEY_MANIFEST_REF)?,
         manifest_ops: field_u64(&entries, KEY_MANIFEST_OPS)?,
         pptx_slide_creation_id_mints: decode_mints(
-            field(&entries, KEY_PPTX_MINTS).ok_or_else(corrupt)?,
+            field(&entries, KEY_PPTX_MINTS)?.ok_or_else(corrupt)?,
         )?,
         pptx_review_identities: decode_review_identities(
-            field(&entries, KEY_PPTX_REVIEW_IDENTITIES).ok_or_else(corrupt)?,
+            field(&entries, KEY_PPTX_REVIEW_IDENTITIES)?.ok_or_else(corrupt)?,
         )?,
-        pptx_judgments: decode_judgments(field(&entries, KEY_PPTX_JUDGMENTS).ok_or_else(corrupt)?)?,
-        docx_judgments: match field(&entries, KEY_DOCX_JUDGMENTS) {
+        pptx_judgments: decode_judgments(
+            field(&entries, KEY_PPTX_JUDGMENTS)?.ok_or_else(corrupt)?,
+        )?,
+        docx_judgments: match field(&entries, KEY_DOCX_JUDGMENTS)? {
             Some(Value::Binary(bytes)) => {
                 let rows: Vec<crate::edit_roundtrip::ParagraphJudgment> =
                     rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
@@ -273,7 +259,7 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
         },
         anchors,
         reason: field_opt_str(&entries, KEY_REASON)?,
-        sheet_answers: match field(&entries, KEY_SHEET_ANSWERS) {
+        sheet_answers: match field(&entries, KEY_SHEET_ANSWERS)? {
             Some(Value::Nil) => None,
             Some(Value::Binary(bytes)) => {
                 let bundle: crate::edit_roundtrip::SheetAnswerBundle =
@@ -283,14 +269,14 @@ pub(super) fn decode_settlement_record(bytes: &[u8]) -> Result<SettlementRecord>
             }
             _ => return Err(corrupt()),
         },
-        deck: match field(&entries, KEY_DECK) {
+        deck: match field(&entries, KEY_DECK)? {
             Some(Value::Nil) => None,
             Some(Value::Binary(bytes)) => Some(Box::new(
                 rmp_serde::from_slice(bytes).map_err(|_| corrupt())?,
             )),
             _ => return Err(corrupt()),
         },
-        discarded_words: match field(&entries, KEY_DISCARDED_WORDS) {
+        discarded_words: match field(&entries, KEY_DISCARDED_WORDS)? {
             None => None,
             Some(Value::Binary(bytes)) => {
                 Some(rmp_serde::from_slice(bytes).map_err(|_| corrupt())?)
@@ -392,8 +378,8 @@ fn decode_settled_anchor(value: &Value) -> Result<SettledAnchor> {
         return Err(corrupt());
     };
     let thread_id = field_entity(entries, KEY_ANCHOR_THREAD_ID)?;
-    let locator = decode_locator(field(entries, KEY_ANCHOR_LOCATOR).ok_or_else(corrupt)?)?;
-    let drifted = field(entries, KEY_ANCHOR_DRIFTED)
+    let locator = decode_locator(field(entries, KEY_ANCHOR_LOCATOR)?.ok_or_else(corrupt)?)?;
+    let drifted = field(entries, KEY_ANCHOR_DRIFTED)?
         .and_then(Value::as_bool)
         .ok_or_else(corrupt)?;
     Ok(SettledAnchor {
@@ -403,11 +389,9 @@ fn decode_settled_anchor(value: &Value) -> Result<SettledAnchor> {
     })
 }
 
-fn field<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
-    entries
-        .iter()
-        .find(|(entry_key, _)| entry_key.as_str() == Some(key))
-        .map(|(_, value)| value)
+/// A repeated key is refused.
+fn field<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<Option<&'a Value>> {
+    Entries::new(entries).get(key).map_err(|_| corrupt())
 }
 
 /// [`field`] for the repeated-key test door (`test_doors::lib_rows_b_repeated_key`). Not API.
@@ -416,23 +400,23 @@ pub(crate) fn settlement_field_for_test(
     entries: &[(Value, Value)],
     key: &str,
 ) -> Result<Option<Value>> {
-    Ok(field(entries, key).cloned())
+    Ok(field(entries, key)?.cloned())
 }
 
 fn field_str<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
-    field(entries, key)
+    field(entries, key)?
         .and_then(Value::as_str)
         .ok_or_else(corrupt)
 }
 
 fn field_u64(entries: &[(Value, Value)], key: &str) -> Result<u64> {
-    field(entries, key)
+    field(entries, key)?
         .and_then(Value::as_u64)
         .ok_or_else(corrupt)
 }
 
 fn field_opt_str(entries: &[(Value, Value)], key: &str) -> Result<Option<String>> {
-    match field(entries, key) {
+    match field(entries, key)? {
         None => Err(corrupt()),
         Some(Value::Nil) => Ok(None),
         Some(value) => Ok(Some(value.as_str().ok_or_else(corrupt)?.to_owned())),
@@ -440,7 +424,7 @@ fn field_opt_str(entries: &[(Value, Value)], key: &str) -> Result<Option<String>
 }
 
 fn field_opt_u64(entries: &[(Value, Value)], key: &str) -> Result<Option<u64>> {
-    match field(entries, key) {
+    match field(entries, key)? {
         None => Err(corrupt()),
         Some(Value::Nil) => Ok(None),
         Some(value) => Ok(Some(value.as_u64().ok_or_else(corrupt)?)),
@@ -448,7 +432,7 @@ fn field_opt_u64(entries: &[(Value, Value)], key: &str) -> Result<Option<u64>> {
 }
 
 fn field_opt_hash(entries: &[(Value, Value)], key: &str) -> Result<Option<[u8; 32]>> {
-    match field(entries, key) {
+    match field(entries, key)? {
         None => Err(corrupt()),
         Some(Value::Nil) => Ok(None),
         Some(Value::Binary(bytes)) => Ok(Some(bytes.as_slice().try_into().map_err(|_| corrupt())?)),
@@ -457,7 +441,7 @@ fn field_opt_hash(entries: &[(Value, Value)], key: &str) -> Result<Option<[u8; 3
 }
 
 fn field_entity(entries: &[(Value, Value)], key: &str) -> Result<EntityId> {
-    let Some(Value::Binary(bytes)) = field(entries, key) else {
+    let Some(Value::Binary(bytes)) = field(entries, key)? else {
         return Err(corrupt());
     };
     let raw: [u8; ENTITY_ID_LEN] = bytes.as_slice().try_into().map_err(|_| corrupt())?;
