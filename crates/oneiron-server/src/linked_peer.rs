@@ -9,10 +9,11 @@
 //! together ([`oneiron::Vault::issue_linked_peer_link`]) and hands the
 //! control plane the link's one-line form, at the origin the peer redeems it
 //! at, as `oneiron device enrol` does; the redeem records the machine it
-//! enrolled. A control plane that does not take the request, or whose
-//! answer is lost, may have handed the link on first: the link is revoked
-//! here as an unlink revokes it, and the row dropped. One link act runs at a
-//! time, so a link's request and an unlink never act on each other's row.
+//! enrolled and the slip it minted. A control plane that does not take the
+//! request, or whose answer is lost, may have handed the link on first: the
+//! link is revoked here as an unlink revokes it, and the row dropped. One
+//! link act runs at a time, so a link's request and an unlink never act on
+//! each other's row.
 //!
 //! The peer's slip is for the owner's PERSON with no actor class (RULING
 //! LINK-PEER-AUTHORITY = B): its redeem passes the HTTP door, and no owner
@@ -28,7 +29,9 @@
 //! the control plane did not take keeps the row, and the next unlink asks
 //! again. So does a machine removal the roster refused (this install carrying
 //! no live profile to sign the owner's act, for one): the peer's slips are
-//! revoked all the same, and the control plane is still asked.
+//! revoked all the same, and the control plane is still asked. And so do
+//! revokes this install could not sign, holding no slip issuer at the time:
+//! the row keeps the slip and the machine they name for the next unlink.
 
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::{Mutex, MutexGuard, PoisonError};
@@ -202,11 +205,17 @@ pub(crate) struct UnlinkReceipt {
     machine: Option<PeerMachine>,
     /// What the unlink did with that machine in the roster.
     machine_removal: MachineRemoval,
-    /// Whether the machine's mesh pairing and grants were revoked now.
+    /// Whether the machine's mesh binding was marked revoked now. Its mesh
+    /// pairing and grants are slips its machine holds: `slips_revoked`
+    /// counts them.
     mesh_revoked: bool,
     /// How many of the peer's slips were revoked now: the one its redeem
     /// minted and those its machine holds.
     slips_revoked: usize,
+    /// Whether this install held no slip issuer, so neither the peer's slips
+    /// nor its mesh binding were revoked: the row stays owed, and the next
+    /// unlink revokes them.
+    revokes_owed: bool,
     removal: PeerRemoval,
     erasure: &'static str,
 }
@@ -377,6 +386,7 @@ pub(crate) fn unlink(
         machine_removal: revoked.machine_removal,
         mesh_revoked: revoked.mesh_revoked,
         slips_revoked: revoked.slips_revoked,
+        revokes_owed: revoked.revokes_owed,
         removal,
         erasure: PEER_ERASURE,
     }))
@@ -387,12 +397,14 @@ struct RevokedHere {
     slips_revoked: usize,
     machine_removal: MachineRemoval,
     mesh_revoked: bool,
+    revokes_owed: bool,
 }
 
 impl RevokedHere {
-    /// Whether nothing is owed here: only a refused machine removal is.
+    /// Whether nothing is owed here: a refused machine removal is, and so
+    /// are revokes no slip issuer was here to sign.
     const fn settled(&self) -> bool {
-        !matches!(self.machine_removal, MachineRemoval::Refused { .. })
+        !self.revokes_owed && !matches!(self.machine_removal, MachineRemoval::Refused { .. })
     }
 }
 
@@ -401,7 +413,7 @@ impl RevokedHere {
 /// slips stay, and every slip its machine holds, its mesh pairing and
 /// grants among them, so nothing after this, a refused removal included,
 /// leaves one live. Then its machine is removed and its mesh binding
-/// revoked.
+/// revoked. With no slip issuer here, the revokes are owed, not done.
 fn revoke_here(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
@@ -410,6 +422,7 @@ fn revoke_here(
 ) -> oneiron::Result<RevokedHere> {
     let vault = server.vault();
     let issuer = server.host_issuer();
+    let revokes_owed = issuer.is_none() && (peer.slip.is_some() || peer.machine.is_some());
     let mut slips_revoked = 0_usize;
     if let Some(issuer) = issuer {
         if let Some(slip) = peer.slip
@@ -438,6 +451,7 @@ fn revoke_here(
         slips_revoked,
         machine_removal,
         mesh_revoked,
+        revokes_owed,
     })
 }
 

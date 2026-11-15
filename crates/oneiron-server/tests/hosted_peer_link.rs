@@ -192,14 +192,18 @@ impl Host {
             .slip_is_live(slip)
     }
 
-    /// The live slips `holder` holds, by id.
+    /// The live, unexpired slips `holder` holds, by id: those a revoke by
+    /// holder revokes.
     fn live_slips_held_by(&self, holder: EntityId) -> Vec<[u8; 32]> {
         let fold = self.vault.authority_fold().expect("authority fold");
+        let now = self.vault.now_recorded_at();
         fold.slips
             .mints
             .iter()
             .filter(|(id, mint)| {
-                mint.action.claims.holder_ref == holder.to_hex() && fold.slip_is_live(id)
+                mint.action.claims.holder_ref == holder.to_hex()
+                    && now < mint.action.claims.expires_at
+                    && fold.slip_is_live(id)
             })
             .map(|(id, _)| *id)
             .collect()

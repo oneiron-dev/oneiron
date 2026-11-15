@@ -46,7 +46,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "get",
                 path: "/link",
-                summary: "Where the vault's hosted peer stands (`oneiron link status`): not linked; linked, with its machine as the roster holds it and what the control plane says of it; or unlinked here with its removal still owed to the control plane, or its machine's removal to this roster.",
+                summary: "Where the vault's hosted peer stands (`oneiron link status`): not linked; linked, with its machine as the roster holds it and what the control plane says of it; or unlinked here with its removal still owed to the control plane, its machine's removal to this roster, or its revokes to this install.",
                 row: None,
                 shape: None,
             },
@@ -56,7 +56,7 @@ pub(super) fn owner_table() -> OwnerTable {
             OwnerRoute {
                 method: "delete",
                 path: "/link",
-                summary: "Unlink the vault's hosted peer (`oneiron unlink`): its machine is removed, its mesh grants, the slip its redeem minted and every slip its machine holds are revoked at once, then the control plane is asked to remove the peer, erasing its live copy and its keys; backups age out on the disaster-recovery schedule of 90 days or less. The local vault is not touched. A removal the control plane did not take, or a machine removal this install could not sign, is asked again by the next unlink.",
+                summary: "Unlink the vault's hosted peer (`oneiron unlink`): its machine is removed, the slip its redeem minted and every slip its machine holds (its mesh pairing and grants among them) are revoked at once, and its mesh binding with them, then the control plane is asked to remove the peer, erasing its live copy and its keys; backups age out on the disaster-recovery schedule of 90 days or less. The local vault is not touched. A removal the control plane did not take, a machine removal this install could not sign, or revokes it could not sign for want of a slip issuer, are asked again by the next unlink.",
                 row: None,
                 shape: None,
             },
