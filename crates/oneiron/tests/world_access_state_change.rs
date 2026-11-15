@@ -22,7 +22,9 @@
 //! widening"): an agent with a live delete Grant, or an Admin in scope,
 //! deleted the owner's grant about an agent, which then read base reality.
 //! The delete authority now leaves a world-access row to a live owner,
-//! whatever role or Grant another caller holds.
+//! whatever role or Grant another caller holds. The lead's generalization
+//! ("any delete of a row whose removal widens someone's access or authority
+//! is judged as a widen") is shown on one more kind: a do-not-contact bar.
 //!
 //! Grants and proposals land through the cfg door #7793 added
 //! (`test_doors::world_access`), stamped with their writer's envelope as the
@@ -54,6 +56,10 @@ use oneiron::test_support::bind_host_owner;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
     mint_agent_grant_as,
+};
+use oneiron::write_envelope::cohort_claims::{
+    CommDoNotContactValue, DO_NOT_CONTACT_SCOPE_ALL, PREDICATE_COMM_DO_NOT_CONTACT,
+    encode_do_not_contact_value,
 };
 use oneiron::write_envelope::{
     WriteActor, WriteEnvelope, WriteProvenance, write_envelope_evidence,
@@ -436,6 +442,39 @@ fn ordinary_claim(vault: &Vault, subject: EntityId, facet: EntityId) -> EntityId
     vault
         .put_claim(&id, &body, at(LEARNED_AT), LEARNED_AT)
         .expect("an ordinary claim");
+    id
+}
+
+/// A `comm.do_not_contact` bar on every channel and scope about a new
+/// PERSON in `facet`, on the owner's raw door. Returns its id.
+fn do_not_contact_bar(vault: &Vault, facet: EntityId) -> EntityId {
+    let person = EntityId::now();
+    vault
+        .put_entity(
+            &person,
+            ENTITY_TYPE_PERSON,
+            at(LEARNED_AT),
+            LEARNED_AT,
+            b"human",
+        )
+        .expect("a live person");
+    let mut body = ClaimBody::new(
+        PREDICATE_COMM_DO_NOT_CONTACT,
+        ClaimSubject::Entity(person),
+        encode_do_not_contact_value(&CommDoNotContactValue {
+            channel: None,
+            scope: DO_NOT_CONTACT_SCOPE_ALL.to_owned(),
+        }),
+        1.0,
+        ClaimApprovalStatus::Auto,
+        ClaimLifecycleStatus::Active,
+    )
+    .unwrap();
+    body.scope_facet = facet;
+    let id = EntityId::now();
+    vault
+        .put_claim(&id, &body, at(LEARNED_AT), LEARNED_AT)
+        .expect("a do-not-contact bar");
     id
 }
 
@@ -896,6 +935,29 @@ fn an_admin_never_deletes_the_owners_grant_in_scope() {
     );
     assert!(!deleted(&f.vault, grant), "the refused grant is untouched");
     let refused = result.expect_err("an Admin never deletes a world-access row");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert!(
+        refused.message.starts_with(AUTHORITY_ROW),
+        "the refusal names its reason: {refused:?}"
+    );
+}
+
+/// The lead's generalization of [WORLD-ACCESS-GRANT-DELETE-BY-DELETE-AUTHORITY]:
+/// an Admin deletes, in scope, a do-not-contact bar on a person. Before this
+/// change DEL-2's in-scope delete landed and sends to that person were open
+/// again; the bar is a restriction, so it is the live owner's to delete.
+#[test]
+fn an_admin_never_deletes_a_do_not_contact_bar_in_scope() {
+    let f = AdminFixture::new();
+    let bar = do_not_contact_bar(&f.vault, f.facet);
+
+    let result = f.admin_deletes(bar);
+
+    assert!(
+        !deleted(&f.vault, bar),
+        "the bar still stands (delete: {result:?})"
+    );
+    let refused = result.expect_err("an Admin never deletes a restriction");
     assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
     assert!(
         refused.message.starts_with(AUTHORITY_ROW),
