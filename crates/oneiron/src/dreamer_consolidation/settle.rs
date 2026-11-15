@@ -456,6 +456,24 @@ pub(crate) fn open_conflict_in_txn(
         .ok_or(invalid_consolidation("conflict subject"))
 }
 
+/// Who answers a conflict: what each settler may close.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SettlementSettler {
+    /// The owner or a person holder on their own slip: closes anything.
+    Person,
+    /// The vault's Dreamer under standing review: never closes user-stated truth; closes a
+    /// restricting member only with the owner's `dreamer.lifts_restrictions` key on.
+    Dreamer,
+    /// Anyone else (agent holder, derive batch, auto close): closes neither.
+    Delegate,
+}
+
+impl SettlementSettler {
+    const fn is_person(self) -> bool {
+        matches!(self, Self::Person)
+    }
+}
+
 /// Writes `settlement` for `conflict` in the caller's transaction, after the
 /// caller has checked the responder's authority (and, for `ApproveAndKeep`,
 /// approved the staged member, which is then kept as `Keep` keeps a member).
@@ -468,16 +486,19 @@ pub(crate) fn open_conflict_in_txn(
 /// staged replacement that lost drops its binding, and a pending review tray
 /// closes), under the claim lifecycle's own guards: a generated claim still
 /// never supersedes user-stated truth.
-/// Only a `person` closes user-stated truth at all: an agent's settlement
-/// that would is refused, and the conflict stays for the owner. Only a
-/// `person` supersedes a member that restricts someone's access either
-/// (a delivery window, an opt-out, a do-not-contact, a held campaign
-/// membership, ...; [`crate::federation::claim_removal_widens_in`]),
-/// whatever its source: removing a restriction widens access, and an
-/// agent's widening always asks the person affected (canon
-/// #widen-world-floor). An agent holder's or the Dreamer's settlement that
-/// would is refused, and the conflict stays for a person holder or the
-/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). `close_as`
+/// Only `Person` closes user-stated truth at all: any other settler's settlement
+/// that would is refused, and the conflict stays for the owner. Only `Person`
+/// supersedes a member that restricts someone's access either (a delivery
+/// window, an opt-out, a do-not-contact, a held campaign membership, ...;
+/// [`crate::federation::claim_removal_widens_in`]), whatever its source:
+/// removing a restriction widens access, and an agent's widening always asks
+/// the person affected (canon #widen-world-floor). A `Delegate`'s settlement
+/// that would is refused, and the conflict stays for a person holder or the
+/// owner (RULING RESTRICTION-CLOSE-BY-CONFLICT-SETTLE). The `Dreamer`'s is
+/// refused the same way unless the owner's
+/// [`DREAMER_LIFTS_RESTRICTIONS`](super::setting_keys::DREAMER_LIFTS_RESTRICTIONS)
+/// key is on; then the answer receipts the lift in its `restriction_lift` entry
+/// (RULING DREAMER-SETTLE-KEY-SCOPE = B). `close_as`
 /// attributes a delegate's close; the owner's close is the owner's. The
 /// answering claim then records the settlement on the marker's own axes.
 /// `keep_as` says how a kept retained alternative lands (FIX 5753). `now` is
@@ -489,7 +510,7 @@ pub(crate) fn apply_settlement_in_txn(
     settlement: ConflictSettlement,
     envelope: &WriteEnvelope,
     close_as: Option<WriteActor>,
-    person: bool,
+    settler: SettlementSettler,
     keep_as: KeepAs<'_>,
     now: u64,
 ) -> Result<SettlementApplied> {
@@ -498,6 +519,8 @@ pub(crate) fn apply_settlement_in_txn(
     let mut superseded = Vec::new();
     let mut materialized = None;
     let mut standing = None;
+    // The predicate of each restricting member the Dreamer superseded under the owner's key.
+    let mut lifted = Vec::new();
     if let Some(selected) = settlement.kept() {
         let mut winner = selected;
         // A retained alternative lands first, as its round proposed it and
@@ -556,15 +579,25 @@ pub(crate) fn apply_settlement_in_txn(
                     "a conflict member is off the conflict's subject",
                 ));
             }
-            if !person && matches!(body.source, None | Some(ClaimSource::UserStated)) {
+            if !settler.is_person() && matches!(body.source, None | Some(ClaimSource::UserStated)) {
                 return Err(invalid_consolidation(
                     "only a person supersedes user-stated truth",
                 ));
             }
-            if !person && crate::federation::claim_removal_widens_in(vault, txn, &body)? {
-                return Err(invalid_consolidation(
-                    "only a person supersedes a claim that restricts someone's access",
-                ));
+            if !settler.is_person()
+                && crate::federation::claim_removal_widens_in(vault, txn, &body)?
+            {
+                // The owner's key lets the Dreamer, and no other settler, lift it.
+                let dreamer_may_lift = settler == SettlementSettler::Dreamer
+                    && super::setting_keys::DREAMER_LIFTS_RESTRICTIONS
+                        .read_in_txn(vault, txn, &[], None)?
+                        .value;
+                if !dreamer_may_lift {
+                    return Err(invalid_consolidation(
+                        "only a person supersedes a claim that restricts someone's access",
+                    ));
+                }
+                lifted.push(body.predicate);
             }
             vault.cancel_deferred_claim_in_txn(txn, &loser)?;
             vault.store.close_pending_gate_consent_in_txn(
@@ -605,6 +638,15 @@ pub(crate) fn apply_settlement_in_txn(
                     .collect(),
             ),
         ));
+        if !lifted.is_empty() {
+            resolution.push((
+                Value::from("restriction_lift"),
+                super::setting_keys::dreamer_lift_receipt(
+                    super::setting_keys::DreamerLiftAct::Settle,
+                    lifted,
+                ),
+            ));
+        }
     }
     if let Some((selector, born)) = materialized {
         resolution.push((

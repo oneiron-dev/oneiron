@@ -78,6 +78,9 @@ pub mod routing;
 mod running_buckets;
 mod scope_summary_attempt;
 pub mod selection;
+/// The owner's key that lets the Dreamer lift a restriction on its own; the build script names its
+/// row in the setting catalogue.
+pub(crate) mod setting_keys;
 mod settle;
 mod sieve_attempt;
 mod sieve_decisions;
@@ -158,8 +161,9 @@ pub use settle::{
     settle_parked_conflicts_while,
 };
 pub(crate) use settle::{
-    apply_settlement_in_txn, marker_ids, open_conflict_in_txn, open_conflicts_in_txn,
-    revert_settlement_in_txn, settled_answers_in_txn, settlement_revert_lifts_restriction_in,
+    SettlementSettler, apply_settlement_in_txn, marker_ids, open_conflict_in_txn,
+    open_conflicts_in_txn, revert_settlement_in_txn, settled_answers_in_txn,
+    settlement_revert_lifts_restriction_in,
 };
 pub use sieve_ports::{
     ExtractionPorts, NeighbourhoodExtraction, NeighbourhoodExtractionPort, PortFuture,

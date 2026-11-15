@@ -13,7 +13,8 @@ use super::batch::{DerivedSettle, DerivedSettlement};
 use super::commit::{ItemContext, ItemOutcome, allowance_receipt_in_txn, refusal_receipt_in_txn};
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::dreamer_consolidation::{
-    ConflictSettlement, KeepAs, SettlementApplied, apply_settlement_in_txn, open_conflict_in_txn,
+    ConflictSettlement, KeepAs, SettlementApplied, SettlementSettler, apply_settlement_in_txn,
+    open_conflict_in_txn,
 };
 use crate::error::{Error, GateError, Result};
 use crate::gate::{DeriveCapability, derive_verdict_in_txn};
@@ -123,7 +124,7 @@ pub(super) fn stage_in_txn(
         settlement,
         &envelope,
         Some(actor),
-        false,
+        SettlementSettler::Delegate,
         KeepAs::Auto(&held),
         context.now.saturating_mul(1_000),
     );
