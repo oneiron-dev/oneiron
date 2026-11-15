@@ -23,14 +23,8 @@ struct SpeakerProof {
 /// A rule row about a PROJECT. `false` narrows leader chat; `true` cannot widen it.
 pub const LEADER_CHAT_RULE_PREDICATE: &str = "project.leader_chat";
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LeaderChat {
-    pub projects: [EntityId; 2],
-    pub actors: [EntityId; 2],
-    /// Each speaker's PERSON, or `None` for an AGENT_DEF that speaks as itself.
-    pub persons: [Option<EntityId>; 2],
-}
+#[doc(hidden)]
+pub use oneiron_records::workspace_roster::project::leader_chat::LeaderChat;
 
 fn key(prefix: &[u8], id: EntityId) -> Vec<u8> {
     [prefix, id.as_bytes()].concat()
