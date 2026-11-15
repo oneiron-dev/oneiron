@@ -4,7 +4,8 @@
 //! The owner, or an agent whose live Grant names `vault.runners.continue`,
 //! starts an outside session the local CLI pushed to a custody repo this node
 //! serves, on this node's own `[models.dreamer] runner_seats`; the engine
-//! checks the caller in its own transaction. The check writes nothing. The
+//! checks the caller before the repo answers anything, and again in its own
+//! transaction. The check writes nothing. The
 //! policy is the node's own: a caller-supplied policy is refused as an unknown
 //! field, and a node with no seats answers `no_runner_seat`.
 //!
@@ -21,6 +22,8 @@
 //!
 //! On PR 1's head (no rows) each case's first call to a continue row answers
 //! 404 (no route), so all four fail on an assertion; with this PR all pass.
+//! Case 5 (blind review F1): before the engine judged the caller first, the
+//! agent with no Grant got a not-found for a repo this node does not serve.
 //!
 //! Deterministic: in-process vault and router, one seat, no provider calls.
 //!
@@ -104,6 +107,8 @@ struct Fixture {
     owner_slip: CapabilitySlip,
     owner_token: String,
     commit: String,
+    /// The hand-off ref's first commit: held by the store, not the tip.
+    earlier_commit: String,
     conversation: EntityId,
     _ai_host: Option<AiHost>,
 }
@@ -246,7 +251,7 @@ async fn setup(seats: bool) -> (Fixture, Agent) {
     let owner_proof = vault
         .authenticate_owner(owner, &owner.to_hex(), true, GateDecisionId::now())
         .expect("authenticated owner");
-    let (_bare, _commit_p, commit) = seed_custody_repo(&vault);
+    let (_bare, earlier_commit, commit) = seed_custody_repo(&vault);
     let conversation = import_conversation(&vault, &owner_proof);
     let (server, ai_host) = if seats {
         let models = ModelsConfig::from_toml(RUNNER_SEATS, None).expect("node runner seats");
@@ -267,6 +272,7 @@ async fn setup(seats: bool) -> (Fixture, Agent) {
             owner_slip,
             owner_token,
             commit,
+            earlier_commit,
             conversation,
             _ai_host: ai_host,
         },
@@ -533,6 +539,15 @@ fn continue_body(fixture: &Fixture) -> Value {
     })
 }
 
+/// A refusal's status and body with the body's per-request id taken out, so
+/// two refusals of one caller compare equal when nothing else differs.
+fn refusal_answer(status: StatusCode, mut body: Value) -> (StatusCode, Value) {
+    if let Some(error) = body.get_mut("error").and_then(Value::as_object_mut) {
+        error.remove("request_id");
+    }
+    (status, body)
+}
+
 /// The value is a 32 lower-hex id.
 fn assert_hex32(value: &Value, what: &str) {
     let text = value.as_str().expect("an id is text");
@@ -704,5 +719,66 @@ fn the_seat_policy_is_the_nodes_own() {
         .await;
         assert_eq!(status, StatusCode::OK, "the same body binds: {body}");
         assert_eq!(body["outcome"].as_str(), Some("bound"), "{body}");
+    });
+}
+
+/// Case 5: the Grant refusal is the whole answer the paired agent with no
+/// Grant gets. A repo this node does not serve, a commit that is not the
+/// ref's tip and a commit the store does not hold each answer it as the
+/// right hand-off does, so the agent learns nothing of the repo.
+#[test]
+fn an_agent_without_the_grant_learns_nothing_of_the_repo() {
+    run_on_engine_stack("continue-refused-repo", || async {
+        let (fixture, agent) = setup(true).await;
+        let binding = || agent_binding(&fixture, &agent);
+        let (status, body) = check_as(&fixture, &agent.token, binding(), check_body()).await;
+        assert!(
+            body.to_string().contains(AUTHORITY_REFUSAL_MESSAGE),
+            "precondition: the check answers the Grant refusal: {status} {body}"
+        );
+        let refusal = refusal_answer(status, body);
+        let (status, body) = check_as(
+            &fixture,
+            &agent.token,
+            binding(),
+            json!({"repo": "absent", "runner": "claude-code"}),
+        )
+        .await;
+        assert_eq!(
+            refusal_answer(status, body),
+            refusal,
+            "a repo this node does not serve answers the check's Grant refusal"
+        );
+
+        let (status, body) =
+            continue_as(&fixture, &agent.token, binding(), continue_body(&fixture)).await;
+        assert!(
+            body.to_string().contains(AUTHORITY_REFUSAL_MESSAGE),
+            "precondition: the continue answers the Grant refusal: {status} {body}"
+        );
+        let refusal = refusal_answer(status, body);
+        let shapes = [
+            ("a repo this node does not serve", "repo", json!("absent")),
+            (
+                "a commit that is not the ref's tip",
+                "commit",
+                json!(fixture.earlier_commit.as_str()),
+            ),
+            (
+                "a commit the store does not hold",
+                "commit",
+                json!("0".repeat(40)),
+            ),
+        ];
+        for (shape, field, value) in shapes {
+            let mut input = continue_body(&fixture);
+            input[field] = value;
+            let (status, body) = continue_as(&fixture, &agent.token, binding(), input).await;
+            assert_eq!(
+                refusal_answer(status, body),
+                refusal,
+                "{shape} answers the continue's Grant refusal"
+            );
+        }
     });
 }
