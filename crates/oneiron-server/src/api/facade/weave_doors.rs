@@ -146,25 +146,6 @@ pub(in crate::api::facade) fn person_lens(
     Ok((proof, caller))
 }
 
-/// The check the weave lens and digest doors run first, which `verb` `does`
-/// for: the host preflight, then the bound person or agent. The facade runs
-/// it before their pre chain (FIX 1817).
-pub(in crate::api::facade) fn own_caller(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    verb: &str,
-    does: &str,
-) -> MemoryResult<(EntityId, EdgeActorClass)> {
-    super::owner_binding::host_preflight(server, auth)?;
-    super::facade_actor(server, auth).map_err(|_| {
-        MemoryError::new(
-            MEMORY_CODE_FORBIDDEN,
-            format!("{verb} {does}"),
-            &["Present a person's or an agent's own credential."],
-        )
-    })
-}
-
 /// The owner's live proof, for a label `act` in the owner lens.
 fn owner_lens(
     server: &SyncServer,

@@ -7,7 +7,7 @@ use regex::Regex;
 
 use super::Generator;
 use super::emit_ts::{VerbTree, row_of, row_type, ts_doc, ts_input, verb_tree};
-use super::row_access::{item, json};
+use super::row_access::{has_door, item, json};
 use crate::error::GenerateError;
 use crate::py::json::dumps_str;
 use crate::py::re::compile_fullmatch;
@@ -210,7 +210,7 @@ pub(crate) fn http_facade(generator: &mut Generator) -> Result<String, GenerateE
         let description = json(row.get("description").unwrap_or(&no_description));
         let scope = json(item(row, "scope")?);
         let proposes = json_flag(row.get("proposes"));
-        let host_door = json_flag(row.get("host_door"));
+        let host_door = if has_door(row) { "true" } else { "false" };
         let section = json_flag(Some(item(row, "section")?));
         out += &format!(
             "  {name}: {{ description: {description}, scope: {scope}, proposes: {proposes}, hostDoor: {host_door}, section: {section} }},\n"

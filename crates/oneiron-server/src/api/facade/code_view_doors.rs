@@ -145,18 +145,6 @@ fn view_edit_lane(auth: &CoreAuth) -> MemoryResult<()> {
     })
 }
 
-/// The check the view edit row's door runs before its pre chain
-/// (`door_admits`): the lane guard, then a credential that binds a
-/// principal. A host root alone binds none. Its Grant is the engine's.
-pub(super) fn view_editor_admits(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    verb: &str,
-) -> MemoryResult<()> {
-    view_edit_lane(auth)?;
-    super::owner_binding::facade_caller_or(server, auth, || not_a_view_editor(verb)).map(drop)
-}
-
 /// `vault.code.views.edit` (row 6 WORKING-VIEW-EDIT): the caller bound from
 /// its own credential, the owner's proof when it carries one, else the
 /// engine's Grant arm, run on that credential's own lane.

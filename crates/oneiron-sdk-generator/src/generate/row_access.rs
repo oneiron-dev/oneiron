@@ -51,6 +51,11 @@ pub(crate) fn flag(row: &Dict, key: &str) -> bool {
     row.get(key).is_some_and(Value::truthy)
 }
 
+/// Whether `row` has a host door: it names the proof rule its door admits on (`proof`, UC-01 PR 0a).
+pub(crate) fn has_door(row: &Dict) -> bool {
+    row.get("proof").is_some()
+}
+
 /// `row.get(key) == text` (a missing key is `None`, which equals no `str`).
 pub(crate) fn get_is(row: &Dict, key: &str, text: &str) -> bool {
     row.get(key).is_some_and(|value| value.is_str(text))

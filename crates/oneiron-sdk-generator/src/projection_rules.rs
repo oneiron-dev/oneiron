@@ -386,17 +386,44 @@ fn owner_grade_admission_puts_the_owner_door_first() {
     assert!(!tool(edited()).contains("is_owner_grade"));
 }
 
-/// Every checked host door names the proof its door runs first; the generator refuses one that does not.
+/// Every host door names a proof rule of `host_doors/proofs.rs` (UC-01 PR 0a); the generator refuses a row that
+/// names a proof kind instead.
 #[test]
-fn a_checked_host_door_without_its_proof_is_refused() {
+fn a_host_door_naming_no_rule_is_refused() {
     let tree = Tree::new("host-door-proof");
     let mut embed = tree.row("ai.embed");
-    assert!(embed.get("host_door").is_some_and(Value::is_true));
-    assert!(embed.shift_remove("host_door_proof").is_some());
+    assert!(
+        embed
+            .get("proof")
+            .is_some_and(|proof| proof.is_str("owner_grade"))
+    );
+    embed.insert("proof".into(), Value::Str("media_owner_grade".into()));
     tree.write(&embed);
     assert_eq!(
         tree.outputs().err().as_deref(),
-        Some("ValueError: checked host doors without `host_door_proof`: ['ai.embed']")
+        Some("ValueError: ai.embed: `proof` names a rule of host_doors/proofs.rs, or `in_door`")
+    );
+}
+
+/// A row still in the old host-door form (`host_door`, `host_door_proof`) is refused with what replaced the field,
+/// so a branch written before UC-01 PR 0a fails at generation, never as a row without a door.
+#[test]
+fn a_host_door_row_in_the_old_form_is_refused() {
+    let tree = Tree::new("host-door-old-form");
+    let mut embed = tree.row("ai.embed");
+    assert!(embed.shift_remove("proof").is_some());
+    assert!(embed.shift_remove("door").is_some());
+    embed.insert("host_door".into(), Value::Bool(true));
+    embed.insert(
+        "host_door_proof".into(),
+        Value::Str("media_owner_grade".into()),
+    );
+    tree.write(&embed);
+    assert_eq!(
+        tree.outputs().err().as_deref(),
+        Some(
+            "ValueError: ai.embed: `host_door` is now `\"proof\": <rule>` with `\"door\": \"hand\"` (UC-01 PR 0a; scripts/refactor/tools/door_rule_rows.py rewrites the row)"
+        )
     );
 }
 

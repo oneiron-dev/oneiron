@@ -15,24 +15,24 @@
 //! the call is the owner's, the vault's inference policy admits its model,
 //! then its seat's ladder admits, sends and settles each rung it reaches.
 
-mod admission;
 mod artifacts_audit;
 mod authority_clock;
 mod diary;
 mod media;
 mod packs;
 mod proactivity;
+pub(in crate::api::facade) mod proofs;
 pub(in crate::api) mod support;
 mod verdict_hooks;
 mod vision;
 
-pub(super) use self::admission::*;
 pub(crate) use self::artifacts_audit::*;
 pub(crate) use self::authority_clock::*;
 pub(crate) use self::diary::*;
 pub(crate) use self::media::*;
 pub(crate) use self::packs::*;
 pub(crate) use self::proactivity::*;
+pub(super) use self::proofs::door_admits;
 pub(crate) use self::verdict_hooks::*;
 pub(crate) use self::vision::*;
 

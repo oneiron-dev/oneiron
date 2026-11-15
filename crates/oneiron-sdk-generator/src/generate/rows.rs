@@ -8,6 +8,7 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use super::row_access::has_door;
 use super::{Generator, MCP_NONE_CONTEXTS, MCP_SCOPES, RowId, RowStore, SESSION_READS};
 use crate::error::GenerateError;
 use crate::facade_types::{Inventory, type_names};
@@ -41,6 +42,56 @@ static PROSE_POINTER: LazyLock<Regex> = LazyLock::new(|| {
 static ARG_NAME: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[a-z_][a-z0-9_]*"));
 /// A row's description: `[ -~]{1,240}\.`
 static DESCRIPTION: LazyLock<Regex> = LazyLock::new(|| compile_fullmatch(r"[ -~]{1,240}\."));
+
+/// The proof rules of `host_doors/proofs.rs` a host-door row may name in `proof` (UC-01 PR 0a), each the snake case
+/// of its rule's type.
+pub(crate) const PROOF_RULES: &[&str] = &[
+    "owner",
+    "person",
+    "member",
+    "owner_or_holder",
+    "owner_or_caller",
+    "caller",
+    "lane_caller",
+    "owner_grade",
+    "usage_repair",
+    "off_record",
+    "off_record_room",
+    "voice_bank",
+    "booking_owner_act",
+    "packs_setup",
+    "decision_holder",
+    "hyde_caller",
+    "guest_document_reader",
+    "tradeoff_picker",
+    "artifact_publisher",
+    "model_step_caller",
+    "policy_power",
+    "ramp_power",
+    "grants_answer",
+    "credential_holder",
+    "foreign_code",
+    "verdict_asker",
+    "eval_authoring",
+    "saved_query",
+    "lens_person",
+];
+/// The `proof` of a door that proves its caller itself, after the row's hooks: it names no rule, and the facade
+/// checks nothing before the hooks.
+pub(crate) const IN_DOOR: &str = "in_door";
+/// The rules that admit only the owner or a person, so the dispatch refuses an agent's call before the door runs
+/// (FIX-LIST TAKES-PERSON-PROOF-MISSES-THREE-KINDS).
+pub(crate) const PERSON_RULES: &[&str] = &["owner", "person", "member"];
+/// The host-door fields UC-01 PR 0a replaced, each with what replaced it.
+const REPLACED_DOOR_FIELDS: &[(&str, &str)] = &[
+    ("host_door", "`\"proof\": <rule>` with `\"door\": \"hand\"`"),
+    (
+        "host_door_proof",
+        "`proof`, naming a rule of host_doors/proofs.rs",
+    ),
+    ("host_door_precheck", "`\"proof\": \"in_door\"`"),
+    ("host_door_lists", "`lists`"),
+];
 
 /// The keys a host projection may hold.
 const HOST_KEYS: &[&str] = &[
@@ -196,10 +247,23 @@ fn host_synthetic(row: &Dict) -> Result<Dict, GenerateError> {
         name.str()
     );
     out.insert("call".into(), Value::Str(call));
-    out.insert("host_door".into(), Value::Bool(true));
     let host_get = |key: &str, default: bool| -> Result<Value, GenerateError> {
         Ok(host.dict_get(key)?.cloned().unwrap_or(Value::Bool(default)))
     };
+    // The projection's door proves under the rule its host names, or proves its caller itself when the host says
+    // `host_door_precheck: false` (UC-01 PR 6.2 renames the host's keys).
+    let proof = match host.dict_get("host_door_proof")? {
+        Some(rule) => rule.clone(),
+        None if host_get("host_door_precheck", true)?.is_false() => Value::Str(IN_DOOR.into()),
+        None => {
+            return Err(refuse(
+                row,
+                "a host projection names its proof rule or says host_door_precheck false",
+            ));
+        }
+    };
+    out.insert("proof".into(), proof);
+    out.insert("door".into(), Value::Str("hand".into()));
     out.insert(
         "host_door_session".into(),
         host_get("host_door_session", true)?,
@@ -214,17 +278,7 @@ fn host_synthetic(row: &Dict) -> Result<Dict, GenerateError> {
     } else {
         host_get("host_door_lists", false)?
     };
-    out.insert("host_door_lists".into(), lists);
-    out.insert(
-        "host_door_precheck".into(),
-        host_get("host_door_precheck", true)?,
-    );
-    if host.contains_str("host_door_proof")? {
-        out.insert(
-            "host_door_proof".into(),
-            host.getitem("host_door_proof")?.clone(),
-        );
-    }
+    out.insert("lists".into(), lists);
     out.insert("openapi".into(), host_get("openapi", false)?);
     let mut admission = Dict::new();
     admission.insert("unrestricted_record_scope".into(), Value::Bool(true));
@@ -447,7 +501,35 @@ fn check_doors(row: &Dict) -> Result<(), GenerateError> {
     if flag(row, "lands_turn") && is(row, "context", "board") {
         return Err(refuse(row, "a board verb lands no turn"));
     }
-    let host_door = flag(row, "host_door");
+    for &(field, now) in REPLACED_DOOR_FIELDS {
+        if row.contains_key(field) {
+            return Err(refuse(
+                row,
+                &format!(
+                    "`{field}` is now {now} (UC-01 PR 0a; scripts/refactor/tools/door_rule_rows.py rewrites the row)"
+                ),
+            ));
+        }
+    }
+    let host_door = has_door(row);
+    if let Some(proof) = row.get("proof")
+        && !proof
+            .as_str()
+            .is_some_and(|rule| rule == IN_DOOR || PROOF_RULES.contains(&rule))
+    {
+        return Err(refuse(
+            row,
+            "`proof` names a rule of host_doors/proofs.rs, or `in_door`",
+        ));
+    }
+    if row.get("door").is_some_and(|door| !door.is_str("hand"))
+        || host_door != row.contains_key("door")
+    {
+        return Err(refuse(
+            row,
+            "a host door's row says \"door\": \"hand\" (its door fn is hand-written), and only a host door's",
+        ));
+    }
     if host_door
         && (flag(row, "server_door") || admission_flag(row, "owner_grade")? || not_memory(row))
     {
@@ -459,20 +541,11 @@ fn check_doors(row: &Dict) -> Result<(), GenerateError> {
     for (key, message) in [
         ("host_door_caller", "only a host door takes its caller"),
         ("host_door_session", "only a host door takes its session"),
-        ("host_door_lists", "only a host door lists its rows"),
+        ("lists", "only a host door lists its rows"),
     ] {
         if flag(row, key) && !host_door {
             return Err(refuse(row, message));
         }
-    }
-    if let Some(precheck) = row.get("host_door_precheck")
-        && !precheck.is_true()
-        && (!precheck.is_false() || !host_door)
-    {
-        return Err(refuse(
-            row,
-            "host_door_precheck is only a host door's, and only false",
-        ));
     }
     for (key, message) in [
         ("host_door_paced", "only a host door takes a paced context"),
@@ -547,8 +620,7 @@ fn check_admission(row: &Dict) -> Result<(), GenerateError> {
     if admission_get("require_granted_scope")?
         && (!admission_get("lane_record_scope")?
             || is(row, "scope", "Read")
-            || (flag(row, "host_door")
-                && !(flag(row, "host_door_caller") || flag(row, "host_door_lists")))
+            || (has_door(row) && !(flag(row, "host_door_caller") || flag(row, "lists")))
             || not_memory(row)
             || {
                 let mut any = false;
@@ -570,7 +642,7 @@ fn check_admission(row: &Dict) -> Result<(), GenerateError> {
     if flag(row, "mcp_off_runtime")
         && (flag(row, "task_decisions")
             || flag(row, "task_work")
-            || flag(row, "host_door")
+            || has_door(row)
             || flag(row, "server_door")
             || not_memory(row)
             || admission_flag(row, "owner_grade")?)
@@ -600,7 +672,7 @@ fn check_refs(row: &Dict) -> Result<(), GenerateError> {
         return Ok(());
     };
     if not_memory(row)
-        || flag(row, "host_door")
+        || has_door(row)
         || flag(row, "server_door")
         || admission_flag(row, "owner_grade")?
     {
@@ -625,7 +697,7 @@ fn check_file_call(row: &Dict) -> Result<(), GenerateError> {
     };
     if !matches!(file_call, Value::Str(_))
         || not_memory(row)
-        || flag(row, "host_door")
+        || has_door(row)
         || flag(row, "server_door")
         || row.contains_key("prose_links")
         || !file_call.contains_str("body")?
@@ -663,7 +735,7 @@ fn check_prose_links(row: &Dict) -> Result<(), GenerateError> {
         return Ok(());
     };
     if not_memory(row)
-        || flag(row, "host_door")
+        || has_door(row)
         || flag(row, "server_door")
         || admission_flag(row, "owner_grade")?
     {
@@ -1083,8 +1155,28 @@ mod tests {
                 "ValueError: zz_fixture: only a browser or scoped-child row states \"mcp\": \"none\", and every such row does",
             ),
             (
-                r#""host_door": true, "host_door_precheck": 0"#,
-                "ValueError: zz_fixture: host_door_precheck is only a host door's, and only false",
+                r#""host_door": true"#,
+                "ValueError: zz_fixture: `host_door` is now `\"proof\": <rule>` with `\"door\": \"hand\"` (UC-01 PR 0a; scripts/refactor/tools/door_rule_rows.py rewrites the row)",
+            ),
+            (
+                r#""host_door_proof": "owner""#,
+                "ValueError: zz_fixture: `host_door_proof` is now `proof`, naming a rule of host_doors/proofs.rs (UC-01 PR 0a; scripts/refactor/tools/door_rule_rows.py rewrites the row)",
+            ),
+            (
+                r#""proof": "shared_person", "door": "hand""#,
+                "ValueError: zz_fixture: `proof` names a rule of host_doors/proofs.rs, or `in_door`",
+            ),
+            (
+                r#""proof": "owner""#,
+                "ValueError: zz_fixture: a host door's row says \"door\": \"hand\" (its door fn is hand-written), and only a host door's",
+            ),
+            (
+                r#""door": "hand""#,
+                "ValueError: zz_fixture: a host door's row says \"door\": \"hand\" (its door fn is hand-written), and only a host door's",
+            ),
+            (
+                r#""lists": true"#,
+                "ValueError: zz_fixture: only a host door lists its rows",
             ),
             (
                 r#""admission": {"require_granted_scope": true}"#,
