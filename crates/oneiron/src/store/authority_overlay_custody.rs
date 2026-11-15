@@ -297,9 +297,6 @@ fn subject_keys_in_txn(
     );
     for key_ref in refs {
         let item = item(subject, key_ref);
-        if erasable_ref_names_another_in_txn(store, txn, &item)? {
-            return Err(CustodyKind::ErasableKey.corrupt());
-        }
         items.insert(item);
     }
     Ok(items)
