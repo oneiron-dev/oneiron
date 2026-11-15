@@ -47,9 +47,10 @@ enum EvalRepairExpected {
 }
 
 /// A compiled task. The answer and source evidence stay out of the
-/// candidate input, and the answer is not in the task's own workspace or
-/// history, by exact text or, for an end state, by exact JSON. This is not a
-/// label, a certificate of task quality or a measured pass.
+/// candidate input, and the answer is not in anything the contract shows a
+/// leg (its workspace, history, intent, preconditions and declared tools),
+/// by exact text or, for an end state, by exact JSON. This is not a label, a
+/// certificate of task quality or a measured pass.
 #[derive(Debug, Clone)]
 pub struct EvalRepairTask {
     pub source: EvalRepairTaskSource,
@@ -62,6 +63,9 @@ pub struct EvalRepairTask {
     initial_state: Value,
     /// The declared tools the task offers; none for a text-response world.
     tools: Vec<EvalRepairTool>,
+    /// What the contract's author wrote that a leg is shown, as
+    /// [`shown_parts`] lists it; an answer in any part leaks.
+    shown: Vec<Value>,
     expected: EvalRepairExpected,
 }
 
@@ -143,9 +147,9 @@ impl EvalRepairTask {
 
     /// The digest an adjudicated answer is held by, after the checks a
     /// compiled answer gets: the task's grader is an adjudicated response,
-    /// and the answer is not leaked in the workspace, the history or the
-    /// intent. Nor is it in the label's own `reference`, which the seed and
-    /// its case keep as text.
+    /// and the answer is not leaked in anything the contract shows a leg.
+    /// Nor is it in the text the seed keeps: the source's task pointer, and
+    /// the label's own `reference`, which its case keeps too.
     pub(super) fn adjudicated_answer_digest(
         &self,
         answer: &str,
@@ -156,12 +160,14 @@ impl EvalRepairTask {
                 "only an adjudicated-response Repair task takes an adjudicated answer",
             ));
         }
-        if answer_leaks(&self.initial_state, answer)
-            || answer_leaks(&self.input["input"], answer)
-            || answer_leaks(&self.input["intent"], answer)
-        {
+        if self.shown.iter().any(|part| answer_leaks(part, answer)) {
             return Err(Error::InvalidClaimBody(
                 "Repair task answer is leaked in its workspace or history",
+            ));
+        }
+        if answer_leaks(&Value::String(self.source.task_pointer.clone()), answer) {
+            return Err(Error::InvalidClaimBody(
+                "an adjudicated answer is in the task pointer its seed keeps",
             ));
         }
         if answer_leaks(&Value::String(reference.to_owned()), answer) {
@@ -226,6 +232,33 @@ fn state_leaks(world: &Value, state: &Value) -> bool {
             Value::Array(items) => items.iter().any(|item| state_leaks(item, state)),
             _ => false,
         }
+}
+
+/// What the contract's author wrote that a leg is shown: the rebuilt state,
+/// the input, the intent, each precondition's pointer and value, and each
+/// declared tool's name and effect pointer (the offered tools are among
+/// them). The world's kind and the allowed actions are fixed words, not the
+/// author's text.
+fn shown_parts(spec: &EvalRepairTaskSpec) -> Vec<Value> {
+    let mut shown = vec![
+        spec.initial_state.clone(),
+        spec.input.clone(),
+        Value::String(spec.intent.clone()),
+    ];
+    for check in &spec.preconditions {
+        shown.push(Value::String(check.pointer.clone()));
+        shown.push(check.equals.clone());
+    }
+    if let EvalRepairWorld::JsonStateTools { tools } = &spec.world {
+        for tool in tools {
+            let (EvalRepairToolEffect::Set { pointer }
+            | EvalRepairToolEffect::Append { pointer }
+            | EvalRepairToolEffect::Remove { pointer }) = &tool.effect;
+            shown.push(Value::String(tool.name.clone()));
+            shown.push(Value::String(pointer.clone()));
+        }
+    }
+    shown
 }
 
 /// RFC 6901 syntax: empty, or `/`-led with every `~` escaped as `~0` or `~1`.
@@ -458,20 +491,14 @@ impl Memory<'_> {
         };
         // A trace is a task only if its answer is not leaked in the workspace
         // or the history (ARCH-0053 #eval-trace-task): the rebuilt state and
-        // the input, and the intent, which the candidate is shown with them.
+        // the input, and the rest of what the candidate is shown with them.
         // An adjudicated answer is checked when its label lands.
-        let intent = Value::String(spec.intent.clone());
+        let shown = shown_parts(&spec);
         let leaked = match &expected {
             EvalRepairExpected::Response(answer) => {
-                answer_leaks(&spec.initial_state, answer)
-                    || answer_leaks(&spec.input, answer)
-                    || answer_leaks(&intent, answer)
+                shown.iter().any(|part| answer_leaks(part, answer))
             }
-            EvalRepairExpected::State(state) => {
-                state_leaks(&spec.initial_state, state)
-                    || state_leaks(&spec.input, state)
-                    || state_leaks(&intent, state)
-            }
+            EvalRepairExpected::State(state) => shown.iter().any(|part| state_leaks(part, state)),
             EvalRepairExpected::Adjudicated(_) => false,
         };
         if leaked {
@@ -507,6 +534,7 @@ impl Memory<'_> {
                 input,
                 initial_state: spec.initial_state,
                 tools,
+                shown,
                 expected,
             }),
             receipt: read.receipt,

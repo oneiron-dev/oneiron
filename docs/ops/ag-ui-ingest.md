@@ -136,14 +136,15 @@ preconditions, intent, input and action contract, but not the repair, observed
 outcome or grader answer. A trace is a task only if its answer is not leaked
 in the workspace or the history (ARCH-0053 `#eval-trace-task`): the reader
 refuses a task whose trimmed answer is in any string or object key of its
-`initial_state` or `input`, or in its `intent`, or is the whole text of a number
-or boolean there.
+`initial_state` or `input`, or in its `intent`, a precondition's pointer or
+value, or a declared tool's name or effect pointer, or is the whole text of a
+number or boolean there: everything the contract's author wrote that a leg is
+shown (the world's kind and the allowed actions are fixed words).
 The check is exact text, not similarity: a paraphrased answer passes it, and a
 short answer that recurs by chance refuses the task. A tool world's answer is
 its end state: the reader refuses a task whose `initial_state` already is that
-state, or holds it, or whose `input` holds it, as exact JSON. The intent is shown to
-the candidate with them, so the same checks refuse an intent that holds the answer
-or the end state. This is not a certificate of task quality.
+state, or holds it, or whose `input` holds it, as exact JSON, and the same checks
+cover the rest of what a leg is shown. This is not a certificate of task quality.
 
 The reader preserves the AG-UI read receipt, exact content pin, authenticated
 capture binding and live-owner checks. A missing or withheld source returns no
@@ -202,8 +203,9 @@ proposed `awaiting_label`, and the gate grades nothing until
 `Memory::label_eval_repair_seed` lands its label. Only an `adjudicated_audit`
 label is taken (an owner's pick arrives through its ask, and a judge's verdict
 is never a check). Its value is the adjudicated answer: at most 512 bytes (a
-longer one is refused, never cut), refused if the task's workspace, history or
-intent holds it or the label's own reference does, and kept only as the BLAKE3
+longer one is refused, never cut), refused if anything the task shows a leg
+holds it (as for a compiled answer) or the text the seed keeps does (the task
+pointer, and the label's own reference), and kept only as the BLAKE3
 of its bytes, with the label's reference, weight and date. The label door, like
 the gate, reads before it looks for a seed, and writes only the seed row it
 read. The label is set once (the same answer and reference again change nothing)

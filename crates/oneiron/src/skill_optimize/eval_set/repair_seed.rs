@@ -498,9 +498,10 @@ impl Memory<'_> {
     /// Land the adjudicated audit label an adjudicated-response seed awaits,
     /// which makes it `Pending` for the gate. The label's value is the
     /// adjudicated answer: bounded (at most 512 bytes; a longer one is
-    /// refused, never cut), checked against the task's workspace, history
-    /// and intent as a compiled answer is, and against the label's own
-    /// reference, and held only as the BLAKE3 of its bytes. An owner's pick
+    /// refused, never cut), checked against what the task shows a leg as a
+    /// compiled answer is, and against the text the seed keeps (the task
+    /// pointer and the label's own reference), and held only as the BLAKE3
+    /// of its bytes. An owner's pick
     /// arrives through its ask and a judge's verdict is never a check, so
     /// only an adjudicated audit is taken. The label is set once: the same
     /// answer and reference again return the seed unchanged. As at the gate,
@@ -605,7 +606,8 @@ impl Vault {
         SEEDS.get(&self.store, &txn, &seed_key(source)?)
     }
 
-    /// Every seed the gate has not graded yet, for the measuring host.
+    /// Every seed the gate can grade now, for the measuring host: an
+    /// adjudicated seed is listed once its label lands.
     ///
     /// # Errors
     ///
