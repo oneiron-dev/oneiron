@@ -4,34 +4,47 @@
 
 use std::collections::BTreeMap;
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
-use super::{TABLE, body_owner, key};
-use crate::Result;
+use super::{CheckpointRow, TABLE, body_owner, key};
 use crate::side_table::SideKey;
 use crate::store::ManifestDbs;
-use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OwnerRef, OwnerRows, Restored, RowLocator, Unresolved,
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, Check, Join, PlacedTable,
+};
+use crate::store::checkpoint_payload::rows::{Captured, OwnerRef, TypedRow, Unresolved};
+use crate::{EntityId, Result};
+
+/// Every transcript pointer row, whole under its actor, with its known
+/// sources and room as dependencies; a row with no binding is structure.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[&PlacedTable {
+        table: TABLE,
+        place: place_row,
+    }],
+    capture: Capture::ByTable,
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::NoSplit,
 };
 
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
-    for row in rows::typed_rows(dbs, txn, TABLE, &mut out)? {
-        if key(row.value.attempt)? != row.key {
-            out.unclassified(row.at, None, Unresolved::NoOwner);
-            continue;
-        }
-        let Some(content) = row.value.binding() else {
-            out.structure(row.at, row.bytes, Vec::new());
-            continue;
-        };
-        let owner = OwnerRef::entity(&content.actor);
-        for source in content.known_sources.iter().copied().chain(content.room) {
-            out.depends(owner, &row.at, OwnerRef::entity(&source));
-        }
-        out.exact(owner, row.at, row.bytes);
+/// Files one row: unclassified when its key is not its attempt's, structure
+/// when it binds no content, else under its actor.
+fn place_row(out: &mut Captured, row: TypedRow<EntityId, CheckpointRow>) -> Result<()> {
+    if key(row.value.attempt)? != row.key {
+        out.unclassified(row.at, None, Unresolved::NoOwner);
+        return Ok(());
     }
-    Ok(out)
+    let Some(content) = row.value.binding() else {
+        out.structure(row.at, row.bytes, Vec::new());
+        return Ok(());
+    };
+    let owner = OwnerRef::entity(&content.actor);
+    for source in content.known_sources.iter().copied().chain(content.room) {
+        out.depends(owner, &row.at, OwnerRef::entity(&source));
+    }
+    out.exact(owner, row.at, row.bytes);
+    Ok(())
 }
 
 /// Positive native source dependencies for this capture's dedicated body
@@ -72,26 +85,4 @@ pub(crate) fn body_dependencies(
         }
     }
     Ok(dependencies)
-}
-
-fn owns(at: &RowLocator) -> bool {
-    at.in_table(TABLE.decl())
-}
-
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(
-        dbs,
-        txn,
-        &opened,
-        |at, value| rows::check_row(TABLE, at, value),
-        rows::no_join,
-    )
 }

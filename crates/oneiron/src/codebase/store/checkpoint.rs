@@ -27,17 +27,35 @@
 
 use std::collections::BTreeSet;
 
-use heed::{RoTxn, RwTxn};
+use heed::RoTxn;
 
 use super::{CUSTODY_REPORTS, FORK_INDEX, PROJECT_INDEX, REPO_INDEX, SCOPE_INDEX, SNAPSHOTS};
 use crate::batch::EntityMetadataHeader;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_CODE_ARTIFACT, ENTITY_TYPE_CODE_SYMBOL};
-use crate::store::ManifestDbs;
+use crate::store::checkpoint_payload::rows::descriptor::{
+    Adapter, Capture, CapturedByAdapter, Check, Join,
+};
 use crate::store::checkpoint_payload::rows::{
-    self, Captured, OpenedOwnerRows, OtherClient, OwnerRef, OwnerRows, Restored, RowLocator,
-    Unresolved,
+    self, Captured, OtherClient, OwnerRef, RowLocator, Unresolved,
+};
+use crate::store::{ManifestDbs, Store};
+
+/// Every snapshot and its index rows, by snapshot, restored exactly. The
+/// custody reports are read and left unclassified, never held.
+pub(crate) static ADAPTER: Adapter = Adapter {
+    tables: &[
+        &CapturedByAdapter(SNAPSHOTS),
+        &CapturedByAdapter(REPO_INDEX),
+        &CapturedByAdapter(PROJECT_INDEX),
+        &CapturedByAdapter(FORK_INDEX),
+        &CapturedByAdapter(SCOPE_INDEX),
+    ],
+    capture: Capture::Own(capture),
+    check: Check::ByTable,
+    row_owner: None,
+    join: Join::NoSplit,
 };
 
 /// Where a scope row goes, by the entity its id names: a snapshot's tree,
@@ -71,69 +89,26 @@ fn scope_row(
 }
 
 /// Every codebase row in `txn`, by snapshot.
-pub(crate) fn capture(dbs: &impl ManifestDbs, txn: &RoTxn<'_>) -> Result<Captured> {
-    let mut out = Captured::default();
+fn capture(store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
     let mut snapshots = BTreeSet::new();
-    for row in rows::typed_rows(dbs, txn, SNAPSHOTS, &mut out)? {
+    for row in rows::typed_rows(store, txn, SNAPSHOTS, out)? {
         snapshots.insert(row.key);
         out.exact(OwnerRef::entity(&row.key), row.at, row.bytes);
     }
     for table in [REPO_INDEX, PROJECT_INDEX] {
-        for row in rows::typed_rows(dbs, txn, table, &mut out)? {
+        for row in rows::typed_rows(store, txn, table, out)? {
             out.exact(OwnerRef::entity(&row.key.id), row.at, row.bytes);
         }
     }
-    for row in rows::typed_rows(dbs, txn, FORK_INDEX, &mut out)? {
+    for row in rows::typed_rows(store, txn, FORK_INDEX, out)? {
         out.exact(OwnerRef::entity(&row.key.id), row.at, row.bytes);
     }
-    for row in rows::typed_rows(dbs, txn, SCOPE_INDEX, &mut out)? {
+    for row in rows::typed_rows(store, txn, SCOPE_INDEX, out)? {
         let id = row.key.id;
-        scope_row(dbs, txn, &snapshots, &id, row.at, row.bytes, &mut out)?;
+        scope_row(store, txn, &snapshots, &id, row.at, row.bytes, out)?;
     }
-    for row in rows::typed_rows(dbs, txn, CUSTODY_REPORTS, &mut out)? {
+    for row in rows::typed_rows(store, txn, CUSTODY_REPORTS, out)? {
         out.unclassified(row.at, None, Unresolved::SharedOwners);
     }
-    Ok(out)
-}
-
-fn owns(at: &RowLocator) -> bool {
-    [
-        SNAPSHOTS.decl(),
-        REPO_INDEX.decl(),
-        PROJECT_INDEX.decl(),
-        FORK_INDEX.decl(),
-        SCOPE_INDEX.decl(),
-    ]
-    .into_iter()
-    .any(|decl| at.in_table(decl))
-}
-
-/// The bundle framing of `rows`' codebase parts.
-pub(crate) fn bytes_for_owner(rows: &OwnerRows) -> Result<Vec<u8>> {
-    rows::frame_owner(rows, owns)
-}
-
-fn check(at: &RowLocator, value: &[u8]) -> Result<()> {
-    if at.in_table(SNAPSHOTS.decl()) {
-        rows::check_row(SNAPSHOTS, at, value)
-    } else if at.in_table(REPO_INDEX.decl()) {
-        rows::check_row(REPO_INDEX, at, value)
-    } else if at.in_table(PROJECT_INDEX.decl()) {
-        rows::check_row(PROJECT_INDEX, at, value)
-    } else if at.in_table(FORK_INDEX.decl()) {
-        rows::check_row(FORK_INDEX, at, value)
-    } else if at.in_table(SCOPE_INDEX.decl()) {
-        rows::check_row(SCOPE_INDEX, at, value)
-    } else {
-        Err(rows::bad_part())
-    }
-}
-
-/// Puts `opened`'s codebase rows back exactly.
-pub(crate) fn restore_in_txn(
-    dbs: &impl ManifestDbs,
-    txn: &mut RwTxn<'_>,
-    opened: OpenedOwnerRows,
-) -> Result<Restored> {
-    rows::restore_parts(dbs, txn, &opened, check, rows::no_join)
+    Ok(())
 }

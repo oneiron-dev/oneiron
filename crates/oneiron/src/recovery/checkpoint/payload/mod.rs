@@ -118,17 +118,17 @@ pub(in crate::recovery::checkpoint) use crate::store::checkpoint_payload::rows::
 /// families and puts an opened compartment's rows back. The getters, their tags and their order
 /// sit with the rows they place ([`Getter`]).
 macro_rules! getter_modules {
-    ($($name:ident => $($module:ident)::+;)+) => {
+    (
+        modules { $($name:ident => $($module:ident)::+;)+ }
+        rows { $($row:ident => $($row_module:ident)::+;)+ }
+    ) => {
         impl Getter {
             /// Every row of this getter's families in `txn`, by owner. It
             /// reads its whole families: nothing here filters them.
-            pub(super) fn capture(
-                self,
-                dbs: &impl ManifestDbs,
-                txn: &RoTxn<'_>,
-            ) -> Result<Captured> {
+            pub(super) fn capture(self, store: &Store, txn: &RoTxn<'_>) -> Result<Captured> {
                 match self {
-                    $(Self::$name => $($module)::+::capture(dbs, txn),)+
+                    $(Self::$name => $($module)::+::capture(store, txn),)+
+                    $(Self::$row => $($row_module)::+::ADAPTER.capture(store, txn),)+
                 }
             }
 
@@ -137,6 +137,7 @@ macro_rules! getter_modules {
             pub(super) fn bytes_for_owner(self, rows: &OwnerRows) -> Result<Vec<u8>> {
                 match self {
                     $(Self::$name => $($module)::+::bytes_for_owner(rows),)+
+                    $(Self::$row => $($row_module)::+::ADAPTER.bytes_for_owner(rows),)+
                 }
             }
 
@@ -150,32 +151,41 @@ macro_rules! getter_modules {
             ) -> Result<Restored> {
                 match self {
                     $(Self::$name => $($module)::+::restore_in_txn(dbs, txn, opened),)+
+                    $(Self::$row => $($row_module)::+::ADAPTER.restore_in_txn(dbs, txn, opened),)+
                 }
             }
         }
     };
 }
 
+/// Each owner getter's store module, beside its own codecs (KS7-2a): it reads the getter's
+/// families and puts an opened compartment's rows back. The getters, their tags and their order
+/// sit with the rows they place ([`Getter`]). A module under `rows` declares its checkpoint rows
+/// once, as its `ADAPTER` descriptor row (UC-10); the others still spell their own skeleton.
 getter_modules! {
-    Entities => crate::ports::checkpoint;
-    Note => crate::note::checkpoint;
-    EntityDoc => crate::entity_doc::checkpoint;
-    TypedBody => crate::typed_body::checkpoint;
-    EntityRevision => crate::vault::entity_revision::checkpoint;
-    TextSource => crate::bm25::checkpoint;
-    PhoneticSource => crate::batch::checkpoint;
-    ProvenanceBody => crate::provenance::body::checkpoint;
-    ProvenanceBirth => crate::provenance::birth::checkpoint;
-    CodeDocument => crate::code_document::checkpoint;
-    CodeRevision => crate::code_revision::checkpoint;
-    Codebase => crate::codebase::checkpoint;
-    OfficeBody => crate::office_body::checkpoint;
-    BlobArtifact => crate::blob_artifact::checkpoint;
-    OutboundCall => crate::outbound_intent_ledger::checkpoint;
-    BlockedSourceOwner => crate::self_heal::blocked_reports::checkpoint;
-    EmbedMedia => crate::embed::checkpoint;
-    WorkflowTool => crate::agent_dispatch::workflow_tool_checkpoint;
-    SourceAudience => crate::source_audience::checkpoint;
+    modules {
+        Entities => crate::ports::checkpoint;
+        Note => crate::note::checkpoint;
+        EntityDoc => crate::entity_doc::checkpoint;
+        TypedBody => crate::typed_body::checkpoint;
+        EntityRevision => crate::vault::entity_revision::checkpoint;
+        ProvenanceBirth => crate::provenance::birth::checkpoint;
+        CodeDocument => crate::code_document::checkpoint;
+        CodeRevision => crate::code_revision::checkpoint;
+        OfficeBody => crate::office_body::checkpoint;
+        BlobArtifact => crate::blob_artifact::checkpoint;
+    }
+    rows {
+        TextSource => crate::bm25::checkpoint;
+        PhoneticSource => crate::batch::checkpoint;
+        ProvenanceBody => crate::provenance::body::checkpoint;
+        Codebase => crate::codebase::checkpoint;
+        OutboundCall => crate::outbound_intent_ledger::checkpoint;
+        BlockedSourceOwner => crate::self_heal::blocked_reports::checkpoint;
+        EmbedMedia => crate::embed::checkpoint;
+        WorkflowTool => crate::agent_dispatch::workflow_tool_checkpoint;
+        SourceAudience => crate::source_audience::checkpoint;
+    }
 }
 
 /// KS7-3's port: splits a mixed sync carrier's row into the fragments its
@@ -691,7 +701,7 @@ fn for_each_row(
 /// rows of a family or kind it names stay in the image, named, and a
 /// database it names is not read ([`preflight`]).
 pub(super) fn project(
-    dbs: &impl ManifestDbs,
+    store: &Store,
     txn: &RoTxn<'_>,
     filter: &ImageFilter,
     carriers: &dyn MixedCarrierProjection,
@@ -712,7 +722,7 @@ pub(super) fn project(
     // takes are kept, and no part of a family or kind a registry gap names.
     for getter in Getter::ALL {
         let role = BundleRole::Content(*getter);
-        let captured = preflight.hold_out(filter.keep(getter.capture(dbs, txn)?));
+        let captured = preflight.hold_out(filter.keep(getter.capture(store, txn)?));
         claims.note(role, &captured)?;
         projected.captures.push((role, captured));
     }
@@ -796,7 +806,7 @@ pub(super) fn project(
             }
             Ok(())
         };
-        if !for_each_row(dbs, txn, name, &mut place)? {
+        if !for_each_row(store, txn, name, &mut place)? {
             let gap = preflight::RegistryGap::unread(name);
             gap.log();
             projected.registry_gaps.push(gap);

@@ -10,11 +10,12 @@
 //! that varies is a fn pointer. A capture reads [`Store`], the one target
 //! every checkpoint capture reads, so a fn pointer can name it.
 //!
-//! Nothing uses these yet: the adapters move onto them one family at a
-//! time, each pinned to the bytes its own getter gives today.
+//! The adapters move onto them one family at a time, each pinned to the
+//! bytes its own getter gave before: the getters with no join first (UC-10
+//! PR 3), then the split and the complex ones.
 #![allow(
     dead_code,
-    reason = "UC-10 PRs 3-5 move the getters onto the descriptor; until then only the test door uses it"
+    reason = "UC-10 PRs 4-5 move the getters with joins; until then only the test door joins"
 )]
 
 use heed::{RoTxn, RwTxn};
@@ -58,6 +59,31 @@ pub(crate) trait AdapterTable: Sync {
 
     /// Places each of this table's rows in `out`, in key order.
     fn capture(&self, store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()>;
+}
+
+/// A table each of whose rows goes whole, as it is stored, under the owner
+/// its key names. A row its codec does not read is unclassified
+/// ([`typed_rows`]).
+pub(crate) struct ExactTable<K, V, C> {
+    pub(crate) table: SideTable<K, V, C>,
+    pub(crate) owner: fn(&K) -> OwnerRef,
+}
+
+impl<K: SideKey, V, C: SideCodec<V>> AdapterTable for ExactTable<K, V, C> {
+    fn decl(&self) -> &'static SideTableDecl {
+        self.table.decl()
+    }
+
+    fn check(&self, at: &RowLocator, value: &[u8]) -> Result<()> {
+        check_row(self.table, at, value)
+    }
+
+    fn capture(&self, store: &Store, txn: &RoTxn<'_>, out: &mut Captured) -> Result<()> {
+        for row in typed_rows(store, txn, self.table, out)? {
+            out.exact((self.owner)(&row.key), row.at, row.bytes);
+        }
+        Ok(())
+    }
 }
 
 /// A table each of whose rows `place` places alone: owned exact, split by
