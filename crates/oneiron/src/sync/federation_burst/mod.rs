@@ -43,6 +43,8 @@ use crate::sync::{SyncSelector, WindowKey, authorize_sync_selector};
 use crate::{EntityId, Error, FederationGrantScope, Result, Vault};
 use oneiron_model::llm::NormalizedBurstInputs;
 
+#[cfg(oneiron_test_support)]
+pub(crate) use ledger::decode as decode_receipt_row;
 pub(in crate::sync) use queue::{DeferredWork, WorkKind};
 pub(crate) use queue::{earliest_retained_deadline, expire_retained_work};
 

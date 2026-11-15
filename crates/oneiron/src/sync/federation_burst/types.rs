@@ -29,10 +29,10 @@ impl FederationBurstScope {
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::sync::federation_burst::types::{
-    FederationBurstBaseline, FederationBurstBaselineState, FederationBurstDisposition,
-    FederationBurstOutcome, FederationBurstPeerRef, FederationBurstPolicy, FederationBurstReceipt,
-    FederationBurstReviewReceipt, FederationBurstReviewRequest, FederationBurstWorkState,
-    FederationBurstWorld,
+    FederationBurstBaseline, FederationBurstBaselineState, FederationBurstDeviceRef,
+    FederationBurstDisposition, FederationBurstOutcome, FederationBurstPeerRef,
+    FederationBurstPolicy, FederationBurstReceipt, FederationBurstReviewReceipt,
+    FederationBurstReviewRequest, FederationBurstWorkState, FederationBurstWorld,
 };
 
 /// A grant-backed address of retained peer work. Public lifecycle calls

@@ -7,7 +7,11 @@
 //! (its Write credential's slip expired or revoked since) ends
 //! `StaleAuthority` and is never handed back.
 //!
-//! Run: `cargo test --locked -p oneiron --all-features --test device_burst_admission`.
+//! The last test reads a receipt stored before own devices had receipts
+//! through the ledger's door (the lead's M-1 STORED-CHANGE-RULE, Engine
+//! RULING L7-41-STORED-RECEIPT = B).
+//!
+//! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test device_burst_admission`.
 
 use std::sync::Arc;
 
@@ -19,10 +23,11 @@ use oneiron::store::ports::ManualClock;
 use oneiron::sync::WindowKey;
 use oneiron::sync::federation_burst::{
     BurstPeer, DeviceBurstAdmission, DevicePeer, FederationBurstBaseline,
-    FederationBurstDisposition, FederationBurstOutcome, FederationBurstPeerRef,
-    FederationBurstPolicy, FederationBurstReceipt, FederationBurstWorkState,
-    admit_device_window_update, ready_device_work,
+    FederationBurstBaselineState, FederationBurstDisposition, FederationBurstOutcome,
+    FederationBurstPeerRef, FederationBurstPolicy, FederationBurstReceipt,
+    FederationBurstWorkState, admit_device_window_update, ready_device_work,
 };
+use oneiron::test_doors::burst_receipt_stored_shape::decode_burst_receipt_row;
 use oneiron::{EntityId, Vault, VaultConfig};
 use tempfile::TempDir;
 
@@ -187,11 +192,12 @@ fn a_device_burst_over_its_baseline_defers_and_a_trickle_is_allowed() -> TestRes
     work.complete(&home.vault)?;
     let landed = home.receipt(&work.batch_ref())?;
     assert_eq!(
-        landed.peer,
-        FederationBurstPeerRef::Machine {
+        landed.peer(),
+        Some(FederationBurstPeerRef::Machine {
             machine: home.machine
-        }
+        })
     );
+    assert_eq!((landed.principal, landed.grant), (None, None));
     assert_eq!(landed.disposition, FederationBurstDisposition::Allow);
     assert_eq!(landed.state, FederationBurstWorkState::Imported);
 
@@ -202,11 +208,12 @@ fn a_device_burst_over_its_baseline_defers_and_a_trickle_is_allowed() -> TestRes
     };
     let held = home.receipt(&batch_ref)?;
     assert_eq!(
-        held.peer,
-        FederationBurstPeerRef::Machine {
+        held.peer(),
+        Some(FederationBurstPeerRef::Machine {
             machine: home.machine
-        }
+        })
     );
+    assert_eq!((held.principal, held.grant), (None, None));
     assert_eq!(
         held.disposition,
         FederationBurstDisposition::Defer {
@@ -351,10 +358,79 @@ fn a_held_burst_ends_stale_once_its_machines_slip_is_revoked() -> TestResult {
     let ended = home.receipt_of(&device, &batch_ref)?;
     assert_eq!(ended.state, FederationBurstWorkState::StaleAuthority);
     assert_eq!(
-        ended.peer,
-        FederationBurstPeerRef::Machine {
+        ended.peer(),
+        Some(FederationBurstPeerRef::Machine {
             machine: home.machine
-        }
+        })
+    );
+    Ok(())
+}
+
+/// A federated peer's burst receipt as a vault stored it before own devices
+/// had receipts: it names the peer by `principal` and `grant`, field for
+/// field in the order the ledger wrote them.
+#[derive(serde::Serialize)]
+struct ReceiptStoredBeforeDevices {
+    batch_ref: String,
+    principal: EntityId,
+    grant: EntityId,
+    window_key: String,
+    disposition: FederationBurstDisposition,
+    state: FederationBurstWorkState,
+    baseline: FederationBurstBaselineState,
+}
+
+#[test]
+fn a_receipt_stored_before_device_peers_loads_and_lists_as_before() -> TestResult {
+    let principal = EntityId::now();
+    let grant = EntityId::now();
+    let batch_ref = "a1".repeat(32);
+    let stored_row = ReceiptStoredBeforeDevices {
+        batch_ref: batch_ref.clone(),
+        principal,
+        grant,
+        window_key: "base".to_owned(),
+        disposition: FederationBurstDisposition::Defer {
+            replay_ref: batch_ref.clone(),
+        },
+        state: FederationBurstWorkState::Pending,
+        baseline: FederationBurstBaselineState {
+            baseline: FederationBurstBaseline {
+                name: "peer".to_owned(),
+                writes_per_sec: 1.0,
+                structural_streak: 1.0,
+            },
+            learned: true,
+            vault_size: 64,
+            recent_writes: 5,
+            rate_ratio: 5.0,
+            streak: 1,
+            streak_ratio: 1.0,
+        },
+    };
+    let stored = rmp_serde::to_vec_named(&stored_row)?;
+    let federated = FederationBurstPeerRef::Federated { principal, grant };
+
+    let loaded = decode_burst_receipt_row(&stored, &federated, &batch_ref)
+        .map_err(|error| format!("a receipt stored before own devices loads: {error}"))?;
+    assert_eq!(
+        serde_json::to_value(&loaded)?,
+        serde_json::to_value(&stored_row)?,
+        "it lists as the peer's burst doors answered it before"
+    );
+    assert_eq!(
+        rmp_serde::to_vec_named(&loaded)?,
+        stored,
+        "written again, a federated receipt keeps its stored bytes"
+    );
+
+    let other_peer = FederationBurstPeerRef::Federated {
+        principal: EntityId::now(),
+        grant,
+    };
+    assert!(
+        decode_burst_receipt_row(&stored, &other_peer, &batch_ref).is_err(),
+        "another peer does not read it"
     );
     Ok(())
 }

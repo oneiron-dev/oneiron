@@ -78,7 +78,7 @@ async fn burst_held_and_trickle_lands() {
             other => panic!("the retained burst is held again: {other:?}"),
         };
     let held = home.receipt(DevicePeer::Unproven, &batch_ref);
-    assert_eq!(held.peer, FederationBurstPeerRef::Unproven);
+    assert_eq!(held.peer(), Some(FederationBurstPeerRef::Unproven));
     assert_eq!(held.state, FederationBurstWorkState::Pending);
     assert!(
         held.baseline.rate_ratio > 1.0,

@@ -1,7 +1,8 @@
 //! Payload-free batch receipts, kept after durable work completes.
 use super::{
     BurstPeer, DeferredWork, FederationBurstBaselineState, FederationBurstDecision,
-    FederationBurstDisposition, FederationBurstReceipt, FederationBurstWorkState, corrupt,
+    FederationBurstDisposition, FederationBurstPeerRef, FederationBurstReceipt,
+    FederationBurstWorkState, corrupt,
 };
 use crate::store::Store;
 use crate::{Result, Vault};
@@ -21,13 +22,25 @@ pub(super) fn load(
     let Some(bytes) = vault.store.sync_queue.get(txn, &key(id))? else {
         return Ok(None);
     };
-    let row: FederationBurstReceipt = rmp_serde::from_slice(&bytes).map_err(|_| corrupt())?;
+    decode(&bytes, &peer.receipt_peer(), id).map(Some)
+}
+
+/// One stored receipt as the ledger reads it: the row must name the batch
+/// `id` and the peer `named`, else it is corrupt. A receipt stored before
+/// own devices had receipts names a federated peer by principal and grant,
+/// as one stored now does, so it reads unchanged (L7-41 keep path).
+pub(crate) fn decode(
+    bytes: &[u8],
+    named: &FederationBurstPeerRef,
+    id: &[u8; 32],
+) -> Result<FederationBurstReceipt> {
+    let row: FederationBurstReceipt = rmp_serde::from_slice(bytes).map_err(|_| corrupt())?;
     if row.batch_ref != blake3::Hash::from(*id).to_hex().to_string()
-        || row.peer != peer.receipt_peer()
+        || row.peer().as_ref() != Some(named)
     {
         return Err(corrupt());
     }
-    Ok(Some(row))
+    Ok(row)
 }
 
 fn put(store: &Store, txn: &mut heed::RwTxn<'_>, row: &FederationBurstReceipt) -> Result<()> {
@@ -61,12 +74,15 @@ pub(super) fn record(
             }
         }
     };
+    let named = peer.receipt_peer();
     put(
         &vault.store,
         txn,
         &FederationBurstReceipt {
             batch_ref,
-            peer: peer.receipt_peer(),
+            principal: named.principal(),
+            grant: named.grant(),
+            device: named.device(),
             window_key: work.window.clone(),
             disposition,
             state: FederationBurstWorkState::Pending,
