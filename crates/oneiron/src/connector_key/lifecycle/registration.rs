@@ -8,6 +8,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CONNECTOR_KEY;
 use crate::secret_custody::resolve_secret_ref_in_txn;
 use crate::temporal::TimeRange;
+use oneiron_store::side_table::key::TextIdKey;
 
 use super::super::codec::{decode_connector_key_body, encode_connector_key_body};
 use super::super::record::{
