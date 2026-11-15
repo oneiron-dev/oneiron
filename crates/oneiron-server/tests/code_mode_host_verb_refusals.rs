@@ -47,7 +47,7 @@ use oneiron_browser::{DesktopGuest, GuestLimits, SendPolicy};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::server::SyncServer;
-use oneiron_server::test_doors::code_mode_verbs::{
+use oneiron_server::test_doors::mcp_code_mode_verbs::{
     TestCredential, admit_host_verb, admits_guest, call_verb, gate_host_verb, register_credential,
 };
 

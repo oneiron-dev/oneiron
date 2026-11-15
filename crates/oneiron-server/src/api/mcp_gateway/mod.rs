@@ -41,6 +41,11 @@ pub(crate) use self::actor_dispatch::{
     ensure_mcp_actor_matches, execute_mcp_tool, mcp_params, mcp_tool_validation_error,
     resolve_mcp_actor_for_auth, resolve_mcp_gateway_actor,
 };
+// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::actor_dispatch::mcp_host_verb_gate;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::admission::mcp_admit_host_verb;
 pub(crate) use self::admission::mcp_admit_scoped_call;
 use self::admission::{
     mcp_credential_reads, mcp_scope_covers_entity, mcp_scoped_task_rows, mcp_scoped_tasks_section,
@@ -64,16 +69,12 @@ pub(crate) use self::code_mode_verbs::{
 pub(crate) use self::code_run_resume::{McpCodeRunContinuations, reenter_ready_mcp_code_runs};
 // L09's resident_pump `run_bound` calls the strict preflight (CUA E4).
 pub(crate) use self::code_mode_verbs::{WorkflowPreflight, preflight_task_workflow};
+// The integration tests' door to the composed code-mode call (DESKTOP-CODE-MODE-REFUSALS).
+#[cfg(oneiron_test_support)]
+pub(crate) use self::code_mode_verbs::McpCodeModeVerbs;
 // The integration tests' door to a draft's solved-run span (FIX 10508).
 #[cfg(oneiron_test_support)]
 pub(crate) use self::code_mode_verbs::draft_checked_span;
-// The integration tests' door to the code-mode host-verb gates (DESKTOP-CODE-MODE-REFUSALS).
-#[cfg(oneiron_test_support)]
-pub(crate) use self::actor_dispatch::mcp_host_verb_gate;
-#[cfg(oneiron_test_support)]
-pub(crate) use self::admission::mcp_admit_host_verb;
-#[cfg(oneiron_test_support)]
-pub(crate) use self::code_mode_verbs::McpCodeModeVerbs;
 #[cfg(test)]
 pub(crate) use self::device_release::release_hook;
 // The integration tests' door to the carrier release check (census L2-38).

@@ -7,7 +7,6 @@
 pub mod big_rung;
 pub mod build_server;
 pub mod coach_round;
-pub mod code_mode_verbs;
 #[cfg(unix)]
 pub mod hosted_import;
 pub mod lfs_install_line;
@@ -15,6 +14,7 @@ pub mod live_lease;
 pub mod live_run_payer;
 pub mod live_run_step;
 pub mod mcp_carrier_release;
+pub mod mcp_code_mode_verbs;
 pub mod mcp_page_mint;
 pub mod mcp_surface;
 pub mod media_job_spend;

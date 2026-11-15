@@ -1,5 +1,5 @@
 //! Door for `oneiron-server/tests/code_mode_host_verb_refusals.rs` (through
-//! its `test_doors::code_mode_verbs`): a host write origin for a door-built
+//! its `test_doors::mcp_code_mode_verbs`): a host write origin for a door-built
 //! code-mode verb call, stamped from the credential's actor, as the code-run
 //! dispatcher stamps one host-side for a guest's call.
 
