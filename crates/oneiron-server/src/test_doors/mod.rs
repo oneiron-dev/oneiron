@@ -24,4 +24,5 @@ pub mod resident_pump;
 pub mod siwc_seat;
 pub mod solved_runs;
 pub mod wire_health_sweep;
+pub mod wire_thresholds;
 pub mod workflow_park;

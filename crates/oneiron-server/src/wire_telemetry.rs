@@ -463,7 +463,7 @@ impl WireTelemetry {
         }
         self.save_limit_questions()
     }
-    pub fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
+    pub(crate) fn set_thresholds(&self, thresholds: &WireThresholds) -> Result<()> {
         self.write_thresholds(thresholds, |txn| {
             self.vault
                 .sync_state_put_in_write_txn(txn, MANIFEST, &encode(thresholds)?)
