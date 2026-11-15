@@ -74,8 +74,9 @@ impl Vault {
 /// What a claim's evidence says about imports.
 pub(crate) struct ImportedEvidence {
     /// Some ref is imported words (an imported TURN, one of its MESSAGEs or
-    /// its CONVERSATION) or a CLAIM whose source or taint is imported: the
-    /// claim is `Imported`, whatever meet a caller computed for it.
+    /// its CONVERSATION, or a foreign archive's CONVERSATION) or a CLAIM
+    /// whose source or taint is imported: the claim is `Imported`, whatever
+    /// meet a caller computed for it.
     pub(crate) imported: bool,
     /// The review of the latest import that landed the words the claim cites.
     pub(crate) review: Option<String>,
@@ -117,9 +118,12 @@ pub(crate) fn imported_evidence_in_txn(
                 continue;
             }
             // An imported conversation carries its turns' stamp, and names no
-            // review of its own either.
+            // review of its own either. A foreign archive's conversation is
+            // imported words whatever stamp it keeps: one whose TURNs hold
+            // their words inline keeps the absence of one (FIX 15412).
             ENTITY_TYPE_CONVERSATION => {
-                imported |= decode_turn_body(&body).imported;
+                imported |= decode_turn_body(&body).imported
+                    || crate::memory::admitted_foreign(ENTITY_TYPE_CONVERSATION, &body);
                 continue;
             }
             // A message's words were landed by the import that learned it. Its
