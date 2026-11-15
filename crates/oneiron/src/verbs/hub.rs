@@ -2,6 +2,7 @@
 //! Fetch, scanning, admission and hook authority stay in the existing hub engine.
 use serde::{Deserialize, Serialize};
 
+use crate::access_grant::AuditReader;
 use crate::consent::{AuthenticatedOwner, ConsentReceipt};
 use crate::memory::{Memory, MemoryResult};
 use crate::runtime_hooks::HookGrant;
@@ -264,15 +265,19 @@ pub fn hub_skill_proposal_settle_as_owner(
     })
 }
 
-pub fn hub_skill_receipts_as_owner(
+/// `vault.skills.receipts` for `reader`: the owner on his proof, or a holder
+/// of a live audit_read power (RULING AUDIT-READ-POWER-LIST = B).
+pub fn hub_skill_receipts_as_reader(
     vault: &Vault,
-    _owner: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: &HubSkillRequest,
 ) -> MemoryResult<HubSkillReceipts> {
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    reader.admit_in_txn(vault, &txn)?;
     hub_skill_receipts(vault, input)
 }
 
-/// [`hub_skill_receipts_as_owner`]'s read, which asks no proof of its own:
+/// [`hub_skill_receipts_as_reader`]'s read, which asks no proof of its own:
 /// for a library view whose door admitted its reader (FIX 8167).
 pub(crate) fn hub_skill_receipts(
     vault: &Vault,

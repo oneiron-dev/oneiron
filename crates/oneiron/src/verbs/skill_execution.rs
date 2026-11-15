@@ -2,6 +2,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::access_grant::AuditReader;
 use crate::consent::AuthenticatedOwner;
 use crate::learning::Anchor;
 use crate::memory::{MEMORY_CODE_NOT_FOUND, MemoryError, MemoryResult};
@@ -21,12 +22,15 @@ pub struct SkillPackReceipt {
     pub attribution: PackAttributionFields,
 }
 
-pub fn skill_pack_receipt_as_owner(
+/// `vault.skills.pack_receipt` for `reader`: the owner on his proof, or a
+/// holder of a live audit_read power (RULING AUDIT-READ-POWER-LIST = B).
+pub fn skill_pack_receipt_as_reader(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: &SkillPackReceiptRequest,
 ) -> MemoryResult<SkillPackReceipt> {
-    owner.revalidate(vault)?;
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    reader.admit_in_txn(vault, &txn)?;
     let receipt = crate::receipt::attempt_pack_receipt(vault, &input.attempt_receipt)?
         .ok_or_else(|| MemoryError::new(MEMORY_CODE_NOT_FOUND, "no stamped pack receipt", &[]))?;
     let loaded_skills = receipt.pack_manifest_skills().unwrap_or_default();

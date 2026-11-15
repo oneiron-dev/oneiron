@@ -6,6 +6,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
 use crate::Vault;
+use crate::access_grant::AuditReader;
 pub use crate::authority::{AuthorityClockRepair, AuthorityClockRepairOutcome};
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{MemoryError, MemoryResult};
@@ -15,12 +16,15 @@ pub use oneiron_verb_wire::verbs::authority_history::{
     AuthorityHistoryImported, SignedAuthorityHistory,
 };
 
-/// `vault.authority.history.export`: no local signing secret leaves.
-pub fn export_authority_history_as_owner(
+/// `vault.authority.history.export` for `reader`: the owner on his proof, or a
+/// holder of a live audit_read power (RULING AUDIT-READ-POWER-LIST = B). No
+/// local signing secret leaves.
+pub fn export_authority_history_as_reader(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    reader: &AuditReader,
 ) -> MemoryResult<SignedAuthorityHistory> {
-    owner.revalidate(vault)?;
+    let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+    reader.admit_in_txn(vault, &txn)?;
     let entries = vault
         .export_signed_authority_history()?
         .into_iter()

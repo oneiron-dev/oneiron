@@ -18,8 +18,8 @@ use oneiron::runtime_hooks::{HookRegenCancel, HookRegenReceipt};
 use oneiron::task_verb::sdk::{EmptyRequest, PackPutReceipt};
 
 use super::host_doors::no_hook_sandbox;
-use super::host_doors::support::Listed;
 use super::host_doors::support::owner_listing::as_owner;
+use super::host_doors::support::{Listed, credential_listing, refused};
 use crate::ai_host::hook_regen::ServedHookRegenerator;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -105,8 +105,17 @@ pub(crate) async fn vault_hooks_regen_history(
     auth: &CoreAuth,
     input: HookRegenHistoryRequest,
 ) -> Listed<Vec<HookRegenReceipt>> {
-    as_owner(server, auth, HISTORY_VERB, move |memory, owner| {
-        memory.hooks_regen_history_as(owner, input)
+    let reader =
+        match crate::api::facade::audit_read_doors::audit_reader(server, auth, HISTORY_VERB) {
+            Ok(reader) => reader,
+            Err(error) => return refused(error),
+        };
+    let caller = match super::facade_actor(server, auth) {
+        Ok(caller) => caller,
+        Err(error) => return refused(error.into_memory_error()),
+    };
+    credential_listing(server, auth, caller, HISTORY_VERB, move |_, _, memory| {
+        memory.hooks_regen_history_as_reader(&reader, input)
     })
     .await
 }

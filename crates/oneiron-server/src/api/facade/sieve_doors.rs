@@ -8,7 +8,7 @@ use oneiron::dreamer_wake::sieve_doors::{self, *};
 use oneiron::dreamer_wake::{SievePolicy, WakeRecipePolicy};
 use oneiron::memory::MemoryError;
 
-use super::host_doors::support::Listed;
+use super::host_doors::support::{Listed, internal, refused};
 use super::legal_hold_doors::as_owner_naming;
 use crate::auth::CoreAuth;
 use crate::server::SyncServer;
@@ -54,17 +54,23 @@ pub(crate) async fn vault_sieve_receipts(
     auth: &CoreAuth,
     input: SievePageRequest,
 ) -> Listed<SieveReceiptsPage> {
-    as_owner_naming(
+    let reader = match crate::api::facade::audit_read_doors::audit_reader(
         server,
         auth,
         "vault.sieve.receipts",
-        move |server, owner| {
-            sieve_doors::sieve_receipts_as_owner(server.vault(), owner, &input)
-                .map_err(MemoryError::from)
-        },
-        |_| Vec::new(),
-    )
+    ) {
+        Ok(reader) => reader,
+        Err(refusal) => return refused(refusal),
+    };
+    let server = Arc::clone(server);
+    let answer = crate::api::facade::clock_ingress::run_blocking(move || {
+        sieve_doors::sieve_receipts_as_reader(server.vault(), &reader, &input)
+            .map_err(MemoryError::from)
+    })
     .await
+    .map_err(|_| internal("vault.sieve.receipts"))
+    .and_then(|answer| answer);
+    (answer, Vec::new())
 }
 
 pub(crate) async fn vault_sieve_policy(

@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::{SievePolicy, SieveSpan, SpanBand, SpanKind, WakeRecipePolicy};
+use crate::access_grant::AuditReader;
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::DreamerRunnerStore;
 use crate::entity_id::bytes_to_hex_lower;
@@ -93,12 +94,15 @@ pub fn sieve_retained_as_owner(
     })
 }
 
-pub fn sieve_receipts_as_owner(
+/// `vault.sieve.receipts` for `reader`: the owner on his proof, or a holder of
+/// a live audit_read power (RULING AUDIT-READ-POWER-LIST = B).
+pub fn sieve_receipts_as_reader(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: &SievePageRequest,
 ) -> Result<SieveReceiptsPage> {
-    owner.revalidate(vault)?;
+    let txn = vault.store.env.read_txn()?;
+    reader.admit_in_txn(vault, &txn)?;
     let receipts = vault.sieve_consumed(page_limit(input.limit))?;
     Ok(SieveReceiptsPage {
         receipts: receipts

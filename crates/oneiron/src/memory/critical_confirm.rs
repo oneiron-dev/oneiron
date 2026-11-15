@@ -2,6 +2,7 @@
 //! The authority log is the receipt; no second confirmation ledger is kept.
 use serde::{Deserialize, Serialize};
 
+use crate::access_grant::AuditReader;
 use crate::authority::{
     CRITICAL_WRITE_CONFIRM_SCHEMA_VERSION, CriticalWriteConfirmAction,
     CriticalWriteConfirmDisposition, CriticalWriteConfirmMethod, CriticalWriteConfirmState,
@@ -226,10 +227,12 @@ impl Memory<'_> {
     }
 
     /// Reads the existing signed receipt from the authority fold, never
-    /// mutating or settling a pending claim as a side effect.
-    pub fn critical_write_confirm_receipt_as_owner(
+    /// mutating or settling a pending claim as a side effect. The owner reads
+    /// on his own handle, or a holder of a live audit_read power reads on its
+    /// own handle through its own lane (RULING AUDIT-READ-POWER-LIST = B).
+    pub fn critical_write_confirm_receipt_as_reader(
         &self,
-        owner: &AuthenticatedOwner,
+        reader: &AuditReader,
         input: &CriticalWriteConfirmReceiptRequest,
     ) -> MemoryResult<CriticalWriteConfirmReceipt> {
         let confirm_id = parse_hex::<32>(&input.confirm_id, "confirm_id")?;
@@ -240,7 +243,7 @@ impl Memory<'_> {
             .env
             .read_txn()
             .map_err(crate::Error::from)?;
-        self.critical_confirm_owner_in_txn(owner, &txn)?;
+        self.critical_confirm_reader_in_txn(reader, &txn)?;
         let fold = self.vault.authority_fold_readonly_in_txn(&txn)?;
         let state = fold
             .critical_write_confirms
@@ -270,6 +273,32 @@ impl Memory<'_> {
             ));
         }
         Ok(person)
+    }
+
+    /// The receipt read's reader in the door's own read `txn`: the owner on
+    /// [`Self::critical_confirm_owner_in_txn`], or a live audit_read holder
+    /// on its own handle (RULING AUDIT-READ-POWER-LIST = B).
+    fn critical_confirm_reader_in_txn(
+        &self,
+        reader: &AuditReader,
+        txn: &heed::RoTxn<'_>,
+    ) -> MemoryResult<EntityId> {
+        match reader {
+            AuditReader::Owner(owner) => self.critical_confirm_owner_in_txn(owner, txn),
+            AuditReader::Holder(holder) => {
+                if holder.actor() == self.actor
+                    && self.vault.audit_read_live_in_txn(txn, holder.actor())?
+                {
+                    Ok(holder.actor())
+                } else {
+                    Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "a critical confirmation is answered on its owner's own handle",
+                        &["Present the owner's own verified, unattenuated credential."],
+                    ))
+                }
+            }
+        }
     }
 
     fn critical_confirm_pending_in_txn(

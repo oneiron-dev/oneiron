@@ -21,6 +21,7 @@ use super::{
     MemoryError, MemoryResult,
 };
 use crate::EntityId;
+use crate::access_grant::AuditReader;
 use crate::consent::AuthenticatedOwner;
 use crate::runtime_hooks::{
     HookBodyRuntime, HookRegenActor, HookRegenCancel, HookRegenReceipt, HookRegenerator,
@@ -79,6 +80,34 @@ impl Memory<'_> {
             ));
         }
         Ok(())
+    }
+
+    /// The history read's reader: the owner on [`Self::hook_regen_owner`], or
+    /// a live audit_read holder on its own handle (RULING
+    /// AUDIT-READ-POWER-LIST = B).
+    fn hook_regen_history_reader(&self, reader: &AuditReader) -> MemoryResult<()> {
+        match reader {
+            AuditReader::Owner(owner) => self.hook_regen_owner(owner),
+            AuditReader::Holder(holder) => {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                if holder.actor() == self.actor
+                    && self.vault.audit_read_live_in_txn(&txn, holder.actor())?
+                {
+                    Ok(())
+                } else {
+                    Err(MemoryError::new(
+                        MEMORY_CODE_FORBIDDEN,
+                        "hook regeneration is read and adopted as the authenticated owner",
+                        &["Present the owner's own verified, unattenuated credential."],
+                    ))
+                }
+            }
+        }
     }
 
     /// The CALL behind the human stamp (DOOR-077): the owner's own adopt
@@ -239,13 +268,15 @@ impl Memory<'_> {
     }
 
     /// `vault.hooks.regen.history`: one page of a binding's regen receipts,
-    /// newest first, across the hook's rebinds. It changes nothing.
-    pub fn hooks_regen_history_as(
+    /// newest first, across the hook's rebinds. It changes nothing. The owner
+    /// reads on his own handle, or a holder of a live audit_read power reads
+    /// on its own handle through its own lane (RULING AUDIT-READ-POWER-LIST = B).
+    pub fn hooks_regen_history_as_reader(
         &self,
-        owner: &AuthenticatedOwner,
+        reader: &AuditReader,
         input: HookRegenHistoryRequest,
     ) -> MemoryResult<Vec<HookRegenReceipt>> {
-        self.hook_regen_owner(owner)?;
+        self.hook_regen_history_reader(reader)?;
         self.hook_regen_binding(input.binding)?;
         let limit = input
             .limit
