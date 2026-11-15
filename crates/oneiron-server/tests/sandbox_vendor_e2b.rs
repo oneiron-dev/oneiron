@@ -9,7 +9,9 @@
 //! the owner's key only to the control API and the sandbox's access token
 //! only to the daemon; and it kills the sandbox at the end. A refused
 //! create, a sandbox with no access token and a failed command stream never
-//! show a secret and leave no sandbox behind.
+//! show a secret and leave no sandbox behind. A run cancelled while the
+//! daemon holds its answer back ends soon after, not at the step's deadline,
+//! and kills its sandbox.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron-server --all-features
 //! --features oneiron/test-support --test sandbox_vendor_e2b`.
@@ -20,6 +22,7 @@
 mod fixture;
 
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Router;
 use axum::body::Bytes;
@@ -34,6 +37,7 @@ use oneiron::code_sandbox::microvm::{MicroVmExit, MicroVmSandboxAdapter, Sandbox
 use oneiron::code_sandbox::{
     SandboxProposalKind, SandboxProposalWrite, SandboxProvider, SandboxVendor,
 };
+use oneiron::engine_executor::StepCancellation;
 use oneiron_server::test_doors::sandbox_vendor::served_e2b_backends;
 use serde_json::{Value, json};
 
@@ -50,6 +54,8 @@ enum StreamEnd {
     Exited,
     /// No end event: the end of stream carries an error naming the token.
     Failed,
+    /// No answer at all until long past the step's deadline.
+    Silent,
 }
 
 /// How the stand-in answers.
@@ -133,6 +139,7 @@ fn command_stream(end: StreamEnd) -> Vec<u8> {
             ));
             stream.extend(envelope(0x02, &json!({})));
         }
+        StreamEnd::Silent => {}
         StreamEnd::Failed => stream.extend(envelope(
             0x02,
             &json!({ "error": {
@@ -185,11 +192,16 @@ async fn answer(
             (StatusCode::CREATED, axum::Json(made)).into_response()
         }
         ("DELETE", "/sandboxes/sb1") => StatusCode::NO_CONTENT.into_response(),
-        ("POST", "/envd/sb1/process.Process/Start") => (
-            [("content-type", "application/connect+json")],
-            command_stream(script.stream_end),
-        )
-            .into_response(),
+        ("POST", "/envd/sb1/process.Process/Start") => {
+            if matches!(script.stream_end, StreamEnd::Silent) {
+                tokio::time::sleep(Duration::from_secs(STEP_SECONDS * 4)).await;
+            }
+            (
+                [("content-type", "application/connect+json")],
+                command_stream(script.stream_end),
+            )
+                .into_response()
+        }
         ("POST", "/envd/sb1/files") => axum::Json(json!([{
             "path": "/tmp/oneiron-batch/host-frames",
             "name": "host-frames",
@@ -442,6 +454,58 @@ fn a_failed_command_stream_kills_the_sandbox_and_hides_the_token() {
     assert!(
         !text.contains(ACCESS_TOKEN),
         "the token is scrubbed: {text}"
+    );
+    assert_eq!(
+        fixture.calls(),
+        [
+            "POST /v2/sandboxes",
+            "POST /envd/sb1/process.Process/Start",
+            "DELETE /sandboxes/sb1",
+        ]
+    );
+}
+
+#[test]
+fn a_cancelled_run_stops_waiting_on_a_silent_daemon_and_kills_the_sandbox() {
+    let fixture = Fixture::new(Script {
+        refuse_create: false,
+        access_token: true,
+        stream_end: StreamEnd::Silent,
+        transcript: guest_frames(),
+    });
+    let cancel = StepCancellation::new();
+    // Cancels the step once the daemon holds a command's answer back.
+    let canceller = {
+        let calls = Arc::clone(&fixture.calls);
+        let cancel = cancel.clone();
+        std::thread::spawn(move || {
+            let waiting = Instant::now();
+            while !calls
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|call| call.path.ends_with("/process.Process/Start"))
+            {
+                assert!(
+                    waiting.elapsed() < Duration::from_secs(STEP_SECONDS),
+                    "the run never started a command"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            cancel.cancel();
+            Instant::now()
+        })
+    };
+    let ran = fixture
+        .vault
+        .run_cancellable(&*fixture.backends, &mut Console::default(), &cancel);
+    let ended = Instant::now();
+    let cancelled = canceller.join().expect("the canceller");
+    assert!(ran.is_err(), "a cancelled run ran");
+    let waited = ended.duration_since(cancelled);
+    assert!(
+        waited < Duration::from_secs(5),
+        "the run ends soon after its cancellation, not at its {STEP_SECONDS} s deadline: {waited:?}"
     );
     assert_eq!(
         fixture.calls(),

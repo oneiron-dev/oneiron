@@ -10,8 +10,8 @@
 //! directory as the VM's user; it starts every command of the run in a
 //! network namespace of its own, as a user and group of its own with no
 //! supplementary group and no new privilege; it stages the upload in the
-//! client's directory and copies it into place as the guest's file, and
-//! copies the guest's frames out as the guest before it downloads them; it
+//! client's directory and has the guest write it into place, and copies
+//! the guest's frames out as the guest before it downloads them; it
 //! sends the owner's key only to the API and moves each file through a
 //! signed URL with no key of ours; and it deletes the VM at the end,
 //! confirming its id. A refused create, a VM that fails to start, a lost
@@ -408,8 +408,7 @@ fn a_switched_run_goes_to_boat_with_the_key_only_at_its_api() {
         "mkdir -m 0700 /tmp/oneiron-client".to_owned(),
         format!("{CONFINED_PREFIX} mkdir -m 0700 /tmp/oneiron-batch /tmp/oneiron-batch/workspace"),
         format!(
-            "sudo -n install -o 70000 -g 70000 -m 0600 -T -- {UPLOAD_FILE} \
-             /tmp/oneiron-batch/host-frames"
+            "{CONFINED_PREFIX} tee -- /tmp/oneiron-batch/host-frames <{UPLOAD_FILE} >/dev/null"
         ),
         format!(
             "{CONFINED_PREFIX} /usr/local/bin/oneiron-guest --batch \
