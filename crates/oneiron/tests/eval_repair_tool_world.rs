@@ -268,6 +268,17 @@ fn the_state_grader_tests_the_intent() -> TestResult {
     let mut undeclared = repair_calls();
     undeclared.push(call("send_email", json!("Your parcel goes to Lyon.")));
     assert!(!task.grade_tool_calls(&undeclared));
+
+    // One grade applies at most 256 calls: 256 that make the repair grade
+    // true, and one call more grades false.
+    let mut at_cap = vec![call("set_city", json!("Lyon")); 255];
+    at_cap.push(call("add_note", json!(NOTE)));
+    assert_eq!(at_cap.len(), 256);
+    assert!(task.grade_tool_calls(&at_cap), "256 calls are applied");
+    let mut over_cap = vec![call("set_city", json!("Lyon")); 256];
+    over_cap.push(call("add_note", json!(NOTE)));
+    assert_eq!(task.apply_tool_calls(&over_cap), None, "257 calls are not");
+    assert!(!task.grade_tool_calls(&over_cap));
     Ok(())
 }
 
