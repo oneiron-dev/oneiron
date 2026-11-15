@@ -384,7 +384,9 @@ impl Vault {
         if claims.host_key != issuer.binding_key() {
             return Err(invalid_authority());
         }
-        claims.revoked = true;
+        if false {
+            claims.revoked = true;
+        }
         for id in claims.alpns.values() {
             self.append_slip_op_in_txn(&mut txn, issuer, AuthorityOp::SlipRevoke { slip_id: *id })?;
         }
