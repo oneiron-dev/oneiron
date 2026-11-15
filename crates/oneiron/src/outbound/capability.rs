@@ -49,16 +49,13 @@ pub const COMMON_OUTBOUND_VERB_KINDS: &[&str] = &[
     crate::calendar::invite::CALENDAR_INVITE_VERB,
 ];
 
-#[doc(hidden)]
-pub(crate) use oneiron_records::outbound::capability::OutboundReplaySafety;
-#[doc(hidden)]
-use oneiron_records::outbound::capability::SUPERSEDING_SEND_VERB;
-#[doc(hidden)]
-pub use oneiron_records::outbound::capability::{
-    OutboundCapabilityManifest, OutboundCapabilityPermission, OutboundDeliverySemantics,
-    OutboundDeliverySemanticsKind, OutboundInterruptionClass, OutboundPermissionState,
-    OutboundRetryClass, OutboundVerbContract,
-};
+/// Whether a verb may interrupt the recipient.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutboundInterruptionClass {
+    Ambient,
+    Interrupt,
+}
 
 impl From<OutboundInterruptionClass> for DeliveryWindowVerbClass {
     fn from(value: OutboundInterruptionClass) -> Self {
@@ -67,6 +64,65 @@ impl From<OutboundInterruptionClass> for DeliveryWindowVerbClass {
             OutboundInterruptionClass::Interrupt => Self::Interrupt,
         }
     }
+}
+
+#[doc(hidden)]
+pub(crate) use oneiron_records::outbound::capability::OutboundReplaySafety;
+#[doc(hidden)]
+use oneiron_records::outbound::capability::SUPERSEDING_SEND_VERB;
+#[doc(hidden)]
+pub use oneiron_records::outbound::capability::{
+    OutboundCapabilityPermission, OutboundDeliverySemantics, OutboundDeliverySemanticsKind,
+    OutboundPermissionState, OutboundRetryClass,
+};
+
+/// Seven-field outbound verb contract.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct OutboundVerbContract {
+    pub kind: String,
+    pub channel_call: String,
+    pub params: Value,
+    pub interruption_class: OutboundInterruptionClass,
+    pub delivery_semantics: OutboundDeliverySemantics,
+    pub retry_class: OutboundRetryClass,
+    #[serde(rename = "capability_vs_permission")]
+    pub capability_vs_permission: OutboundCapabilityPermission,
+}
+
+impl OutboundVerbContract {
+    /// This verb's replay safety (FIX 8814): a provider-native key, a
+    /// replacement that lands on a stable target, or neither. A superseding
+    /// send is reconciled before any resend.
+    pub(crate) fn replay_safety(&self) -> OutboundReplaySafety {
+        match self.retry_class {
+            OutboundRetryClass::IdempotentNative => OutboundReplaySafety::ProviderKey,
+            OutboundRetryClass::ReplaceIdempotent if self.kind == SUPERSEDING_SEND_VERB => {
+                OutboundReplaySafety::Reconcile
+            }
+            OutboundRetryClass::ReplaceIdempotent => OutboundReplaySafety::StableTarget,
+            OutboundRetryClass::IdempotentEmulated | OutboundRetryClass::NonIdempotentInterrupt => {
+                OutboundReplaySafety::Reconcile
+            }
+        }
+    }
+}
+
+/// Per-connector capability manifest.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct OutboundCapabilityManifest {
+    pub manifest_version: &'static str,
+    pub connector: String,
+    pub connector_family: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub family: Option<&'static str>,
+    pub verified_at: &'static str,
+    pub schema_on_demand: String,
+    pub foreign_content_posture: &'static str,
+    /// Message operations that project a delivered receipt to comm.last_touch.
+    /// Connector-owned data, not an engine union of raw verb names.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub message_verbs: Vec<String>,
+    pub verbs: Vec<OutboundVerbContract>,
 }
 
 /// Typed unsupported-capability error. Callers must surface this instead of

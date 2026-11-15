@@ -1,5 +1,4 @@
 pub use crate::booking::companion_preset::preset::CompanionConfirmationMode;
-pub use crate::booking::companion_preset::preset::CompanionPresetRow;
 pub use crate::booking::companion_preset::preset::ProposalCarrier;
 pub use crate::booking::companion_preset::proposal::ChoiceId;
 pub use crate::booking::companion_preset::proposal::CompanionProposal;
@@ -10,13 +9,10 @@ pub use crate::booking::companion_preset::proposal::ProposalTap;
 pub use crate::booking::companion_preset::proposal::TapAggregate;
 pub use crate::booking::config::BOOKING_EVENT_TYPE_PREDICATE;
 pub use crate::booking::config::BOOKING_EVENT_TYPE_SCHEMA_VERSION;
-pub use crate::booking::config::BookingEventTypeClaimValue;
-pub use crate::booking::config::EventTypeConfig;
 pub use crate::booking::config::HostAvailabilityConfig;
 pub use crate::booking::config::MAX_BOOKING_WINDOW_SECS;
 pub use crate::booking::config::RoutingMode;
 pub use crate::booking::config::WeeklyWallWindow;
-pub use crate::booking::config::decode_event_type_claim_value;
 pub use crate::booking::constraint::SlotHostBinding;
 pub use crate::booking::constraint::SlotMask;
 pub use crate::booking::constraint::SolveResult;
@@ -76,7 +72,6 @@ pub use oneiron_verb_wire::booking::constraint::EventTypeKey;
 pub use oneiron_verb_wire::booking::constraint::RankedSlot;
 
 pub mod agent_api;
-pub mod agent_front;
 pub mod anti_abuse;
 pub mod companion_preset;
 pub mod config;

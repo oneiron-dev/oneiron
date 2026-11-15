@@ -1,6 +1,4 @@
 pub use crate::dreamer_runner::program::types::LandedTurnRef;
-pub use crate::dreamer_runner::program::types::TurnProgramAdmissionOutcome;
-pub use crate::dreamer_runner::program::types::TurnProgramAdmissionReceipt;
 pub use oneiron_verb_wire::dreamer_runner::program::read::views::OwedWakeHoldView;
 pub use oneiron_verb_wire::dreamer_runner::program::read::views::ProgramAdmissionOutcomeView;
 pub use oneiron_verb_wire::dreamer_runner::program::read::views::ProgramCheckpointCallView;

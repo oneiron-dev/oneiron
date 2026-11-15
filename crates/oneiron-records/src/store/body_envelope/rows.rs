@@ -3,8 +3,6 @@
 
 use oneiron_base::error::Error;
 use oneiron_crypto::SuiteId;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub const AEAD: SuiteId = SuiteId::XCHACHA20POLY1305_V1;
 

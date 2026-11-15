@@ -8776,7 +8776,6 @@ dependencies = [
 name = "oneiron-records"
 version = "0.1.0"
 dependencies = [
- "base64 0.22.1",
  "blake3",
  "ed25519-dalek 2.2.0",
  "loro",

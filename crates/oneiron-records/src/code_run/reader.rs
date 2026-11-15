@@ -193,20 +193,6 @@ pub enum TaskWaitPolicy {
     NOf { n: u32 },
 }
 
-/// One wait over a parent's children, keyed by the parent and its step key.
-/// Its first done reduction is kept and answers every later call.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskWaitSet {
-    pub id: EntityId,
-    pub parent_run: EntityId,
-    pub tasks: Vec<EntityId>,
-    pub policy: TaskWaitPolicy,
-    pub until_ms: u64,
-    pub step_key: String,
-    pub settled_at_ms: Option<u64>,
-    pub settled: Option<TaskWaitSetResult>,
-}
-
 /// The actor a parent runs as, as its children's rows keep it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReaderActor {

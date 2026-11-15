@@ -7,7 +7,6 @@ use oneiron_store::attempt_result::AttemptResultRef;
 use oneiron_wake_contract::store::attempt_cancel::AttemptResumePoint;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeSet;
 
 /// The runtime's observation of one expired lease, captured in the writer
 /// that requeues it, before its stored lease owner and clock are cleared.

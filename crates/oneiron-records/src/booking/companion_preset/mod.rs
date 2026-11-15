@@ -1,5 +1,4 @@
 pub use crate::booking::companion_preset::preset::CompanionConfirmationMode;
-pub use crate::booking::companion_preset::preset::CompanionPresetRow;
 pub use crate::booking::companion_preset::preset::ProposalCarrier;
 pub use crate::booking::companion_preset::proposal::ChoiceId;
 pub use crate::booking::companion_preset::proposal::CompanionProposal;

@@ -8,7 +8,6 @@ pub use crate::skill_attribution::contribution_admission::UnmatchedReason;
 pub use crate::skill_attribution::contribution_targets::CheckedEdge;
 pub use crate::skill_attribution::credit_join::CreditAdjustmentReceipt;
 pub use crate::store::positive_skill_proposals::PositiveFinding;
-pub use crate::store::positive_skill_proposals::PositiveSkillProposal;
 pub use oneiron_skill_attribution::types::AttemptOutcome;
 pub use oneiron_skill_attribution::types::AttributionJudgment;
 pub use oneiron_skill_attribution::types::AttributionLane;

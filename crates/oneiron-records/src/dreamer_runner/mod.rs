@@ -1,7 +1,5 @@
 pub use crate::dreamer_runner::free_time::*;
 pub use crate::dreamer_runner::program::types::LandedTurnRef;
-pub use crate::dreamer_runner::program::types::TurnProgramAdmissionOutcome;
-pub use crate::dreamer_runner::program::types::TurnProgramAdmissionReceipt;
 pub use crate::dreamer_runner::seat_wait::ModelSeatAvailability;
 pub use crate::dreamer_runner::seat_wait::ModelSeatAvailableSource;
 pub use crate::dreamer_runner::seat_wait::ModelSeatSource;

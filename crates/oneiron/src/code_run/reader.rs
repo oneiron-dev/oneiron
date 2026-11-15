@@ -33,7 +33,7 @@ pub use self::origins::{DelegatedSource, ReaderFindingRef, ResultOrigins};
 pub use oneiron_records::code_run::reader::{
     DEFAULT_READER_FOLD_RESERVE_MS, ReaderActor, ReaderJobState, ReaderReportReceipt, ReaderRoute,
     ReaderSpawnReceipt, RunDeadline, SummarizeEffort, SummarizeReply, TaskWaitFailure,
-    TaskWaitFinding, TaskWaitPolicy, TaskWaitSet, TaskWaitSetCall, TaskWaitSetResult,
+    TaskWaitFinding, TaskWaitPolicy, TaskWaitSetCall, TaskWaitSetResult,
 };
 
 /// The longest spawn or wait key, in bytes.
@@ -292,6 +292,20 @@ pub struct SelfReaderReportCall {
     pub task: EntityId,
     pub result_ref: String,
     pub bound: Option<ReaderFindingRef>,
+}
+
+/// One wait over a parent's children, keyed by the parent and its step key.
+/// Its first done reduction is kept and answers every later call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskWaitSet {
+    pub id: EntityId,
+    pub parent_run: EntityId,
+    pub tasks: Vec<EntityId>,
+    pub policy: TaskWaitPolicy,
+    pub until_ms: u64,
+    pub step_key: String,
+    pub settled_at_ms: Option<u64>,
+    pub settled: Option<TaskWaitSetResult>,
 }
 
 /// A parent run's reader row: its clock, fixed at its first spawn, what its

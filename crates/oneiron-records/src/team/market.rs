@@ -4,7 +4,6 @@
 use oneiron_contracts::entity_id::EntityId;
 use serde::Deserialize;
 use serde::Serialize;
-use std::collections::BTreeMap;
 
 /// What kind of rule referees the market.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

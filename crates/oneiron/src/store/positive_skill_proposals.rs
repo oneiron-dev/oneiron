@@ -15,9 +15,19 @@ pub(crate) const POSITIVE_PROPOSAL: SideTable<u64, PositiveSkillProposal, Named>
     SideTable::new(&side_table::SKILL_ATTRIBUTION_POSITIVE_PROPOSAL);
 
 #[doc(hidden)]
-pub use oneiron_records::store::positive_skill_proposals::{
-    PositiveFinding, PositiveSkillProposal,
-};
+pub use oneiron_records::store::positive_skill_proposals::PositiveFinding;
+
+/// One positive skill proposal, cited to the receipt that earned it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PositiveSkillProposal {
+    pub evidence_sequence: u64,
+    pub skill: EntityId,
+    /// The executing actor whose departure or extra step worked.
+    pub actor: EntityId,
+    pub finding: PositiveFinding,
+    pub evidence_receipts: Vec<String>,
+    pub at: u64,
+}
 
 /// Deletes every pending positive proposal that names erased `entity` as
 /// its skill or its actor (FIX 8988): pending work whose authority ended

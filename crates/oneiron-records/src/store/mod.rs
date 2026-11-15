@@ -1,6 +1,4 @@
 pub use crate::store::gate_decision::*;
-pub use crate::store::invocation_claims::InvocationClaimRelease;
-pub use crate::store::invocation_claims::StoredPeerMachine;
 pub use crate::store::key_custody::protocol as custody_protocol;
 pub use crate::store::open_gates::*;
 pub use crate::store::pending_gate_consent::*;
@@ -107,7 +105,6 @@ pub mod embedding;
 pub mod executor_wait_delivery;
 pub mod gate_decision;
 pub mod healer_oversight;
-pub mod invocation_claims;
 pub mod key_custody;
 pub mod known_history;
 pub mod known_value_index;

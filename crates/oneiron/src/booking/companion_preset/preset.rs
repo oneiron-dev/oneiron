@@ -15,9 +15,22 @@ const COMPANION_PRESET_SCHEMA_VERSION: u8 = 1;
 const MAX_PRESET_ID_BYTES: usize = 64;
 #[doc(hidden)]
 pub use oneiron_records::booking::companion_preset::preset::{
-    CompanionConfirmationMode, CompanionPresetRow, ProposalCarrier,
+    CompanionConfirmationMode, ProposalCarrier,
 };
 
+/// The runtime preset: the pack-data row plus the caller-supplied synthetic
+/// configuration it runs the shared solver against.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct CompanionPresetRow {
+    pub id: String,
+    pub carrier: ProposalCarrier,
+    pub confirmation: CompanionConfirmationMode,
+    pub synthetic_event_type_config: EventTypeConfig,
+    pub personal_hours: bool,
+    pub generous_flex: bool,
+    pub email_otp_enabled: bool,
+    pub group_intersection: bool,
+}
 /// The pack-data envelope, in the manifest idiom the seeded-roster loader
 /// established: a pinned version and a `deny_unknown_fields` body.
 #[derive(Deserialize)]

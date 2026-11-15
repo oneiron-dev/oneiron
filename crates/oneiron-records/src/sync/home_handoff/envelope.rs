@@ -5,7 +5,6 @@ use crate::sync::home_handoff::refused;
 use ed25519_dalek::Signature;
 use oneiron_base::error::Result;
 use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 pub const HEADER_DOMAIN: &[u8] = b"oneiron/home-handoff/header/v1\0";
 

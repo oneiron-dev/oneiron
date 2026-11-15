@@ -28,7 +28,6 @@ pub use crate::code_run::reader::SummarizeReply;
 pub use crate::code_run::reader::TaskWaitFailure;
 pub use crate::code_run::reader::TaskWaitFinding;
 pub use crate::code_run::reader::TaskWaitPolicy;
-pub use crate::code_run::reader::TaskWaitSet;
 pub use crate::code_run::reader::TaskWaitSetCall;
 pub use crate::code_run::reader::TaskWaitSetResult;
 pub use crate::code_run::replay::CODE_RUN_RNG_SEED_LEN;

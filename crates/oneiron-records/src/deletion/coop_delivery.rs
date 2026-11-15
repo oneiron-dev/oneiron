@@ -11,8 +11,6 @@ pub use oneiron_store::deletion::coop_delivery::types::CooperativeDeleteRecordSt
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeDeletionRetention;
 pub use oneiron_store::deletion::coop_delivery::types::CooperativeRestrictionLiftAttestation;
 pub use oneiron_verb_wire::deletion::coop_delivery::types::CooperativeDeletionDispositionKind;
-use serde::Deserialize;
-use serde::Serialize;
 
 pub fn invalid(reason: &str) -> Error {
     Error::InvalidConfig(format!("courtesy delete: {reason}"))

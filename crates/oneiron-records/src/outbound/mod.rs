@@ -1,12 +1,9 @@
 pub use crate::outbound::ambient_alternative::OutboundAmbientAlternative;
-pub use crate::outbound::capability::OutboundCapabilityManifest;
 pub use crate::outbound::capability::OutboundCapabilityPermission;
 pub use crate::outbound::capability::OutboundDeliverySemantics;
 pub use crate::outbound::capability::OutboundDeliverySemanticsKind;
-pub use crate::outbound::capability::OutboundInterruptionClass;
 pub use crate::outbound::capability::OutboundPermissionState;
 pub use crate::outbound::capability::OutboundRetryClass;
-pub use crate::outbound::capability::OutboundVerbContract;
 pub use crate::outbound::connector_task::ConnectorSendTaskOutcome;
 pub use crate::outbound::connector_task::SendExecutorLease;
 pub use crate::outbound::connector_task::UncertainSendHold;

@@ -46,8 +46,34 @@ pub struct InvocationClaimEntry {
     pub reply_not_kept: bool,
 }
 
+/// The serializable form of [`oneiron::runtime_hooks::verb::InvocationRelease`].
 #[doc(hidden)]
-pub use oneiron_records::store::invocation_claims::{InvocationClaimRelease, StoredPeerMachine};
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InvocationClaimRelease {
+    pub peer: StoredPeerMachine,
+    /// JSON bytes of the answer before its first destination release.
+    pub value: Vec<u8>,
+    #[serde(default)]
+    pub rows: Option<Vec<EntityId>>,
+}
+
+/// `PeerMachine` deliberately has no serde surface; the claim row owns this
+/// stable manual encoding instead of widening authority's wire types.
+#[doc(hidden)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum StoredPeerMachine {
+    Unknown,
+    Proven { machine: EntityId, key: [u8; 32] },
+}
+
+impl From<PeerMachine> for StoredPeerMachine {
+    fn from(peer: PeerMachine) -> Self {
+        match peer {
+            PeerMachine::Unknown => Self::Unknown,
+            PeerMachine::Proven { machine, key } => Self::Proven { machine, key },
+        }
+    }
+}
 
 impl From<StoredPeerMachine> for PeerMachine {
     fn from(peer: StoredPeerMachine) -> Self {

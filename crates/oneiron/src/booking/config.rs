@@ -34,14 +34,12 @@ pub(super) use oneiron_records::booking::config::DAYS_PER_WEEK;
 pub(crate) use oneiron_records::booking::config::MINUTES_PER_DAY;
 #[doc(hidden)]
 pub use oneiron_records::booking::config::{
-    BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, BookingEventTypeClaimValue,
-    EventTypeConfig, HostAvailabilityConfig, MAX_BOOKING_WINDOW_SECS, RoutingMode,
-    WeeklyWallWindow, decode_event_type_claim_value,
+    BOOKING_EVENT_TYPE_PREDICATE, BOOKING_EVENT_TYPE_SCHEMA_VERSION, HostAvailabilityConfig,
+    MAX_BOOKING_WINDOW_SECS, RoutingMode, WeeklyWallWindow,
 };
 #[doc(hidden)]
 use oneiron_records::booking::config::{
-    decode_claim_value_shape, entity_ref_serde, entity_refs_serde, event_type_index_digest,
-    storage_failure,
+    entity_ref_serde, entity_refs_serde, event_type_index_digest, storage_failure,
 };
 
 /// Node-local `vault_meta` index prefix for the `(page_ref, key)` shortcut,
@@ -56,6 +54,101 @@ pub const DEFAULT_MIN_NOTICE_SECS: u64 = 24 * 3_600;
 
 /// Ratified high-value preset minimum notice: 48 hours.
 pub const HIGH_VALUE_MIN_NOTICE_SECS: u64 = 48 * 3_600;
+
+/// The full configuration for one event type on one booking page.
+///
+/// No `Eq`: the seam's [`EventTypeKey`] carries only `PartialEq`, and this
+/// module does not widen a seam derive it does not own.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EventTypeConfig {
+    pub key: EventTypeKey,
+    pub duration_min: u16,
+    /// Candidate starts are aligned to this step on a UTC grid anchored at the
+    /// epoch, so every host offers the same instants and routing is set algebra.
+    pub slot_step_min: u16,
+    /// Free time required before a meeting.
+    pub pre_buffer_min: u16,
+    /// Free time required after a meeting.
+    pub post_buffer_min: u16,
+    /// Earliest a visitor may book, measured from request time.
+    pub min_notice_secs: u64,
+    /// How far ahead the page opens, measured from request time.
+    pub booking_window_secs: u64,
+    /// Confirmed bookings allowed per visitor-local day.
+    pub daily_cap: Option<u16>,
+    /// Confirmed bookings allowed per visitor-local week (Monday-anchored).
+    pub weekly_cap: Option<u16>,
+    pub routing: RoutingMode,
+    pub hosts: Vec<HostAvailabilityConfig>,
+    /// Extra host-local windows offered only when ordinary availability is
+    /// empty. Interpreted in each host's own zone, exactly like working hours.
+    pub flex_windows: Vec<WeeklyWallWindow>,
+}
+
+impl EventTypeConfig {
+    /// The one defect table for a configuration.
+    ///
+    /// `None` means usable. Both public skins — [`Self::validate`] for the
+    /// solver and [`validate_event_type_claim`] for the claim write door — read
+    /// this table, so a configuration the write door accepted is one the solver
+    /// can run, by construction.
+    fn defect(&self) -> Option<&'static str> {
+        let key = self.key.0.as_str();
+        // A key of any length (ABC row 67): only a blank one is refused.
+        if key.trim().is_empty() {
+            return Some("booking.event_type key must be non-blank");
+        }
+        if self.duration_min == 0 {
+            return Some("booking.event_type duration_min must be positive");
+        }
+        if self.slot_step_min == 0 {
+            return Some("booking.event_type slot_step_min must be positive");
+        }
+        if self.booking_window_secs == 0 || self.booking_window_secs > MAX_BOOKING_WINDOW_SECS {
+            return Some("booking.event_type booking_window_secs must be 1 second to 366 days");
+        }
+        if self.hosts.is_empty() {
+            return Some("booking.event_type must configure at least one host");
+        }
+        if let Some(defect) = self
+            .hosts
+            .iter()
+            .find_map(HostAvailabilityConfig::defect)
+            .or_else(|| self.flex_windows.iter().find_map(WeeklyWallWindow::defect))
+        {
+            return Some(defect);
+        }
+        let mut hosts: Vec<&EntityId> = self.hosts.iter().map(|host| &host.host_ref).collect();
+        hosts.sort_unstable();
+        if hosts.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Some("booking.event_type host_ref must be unique");
+        }
+        None
+    }
+
+    /// Solver-facing validation.
+    ///
+    /// # Errors
+    ///
+    /// [`BookingError::InvalidConfig`] naming the first defect found.
+    pub fn validate(&self) -> std::result::Result<(), BookingError> {
+        self.defect().map_or(Ok(()), |reason| {
+            Err(BookingError::InvalidConfig(reason.to_owned()))
+        })
+    }
+}
+
+/// The stored `booking.event_type` claim value.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BookingEventTypeClaimValue {
+    pub schema_version: u64,
+    /// The booking page this configuration belongs to; equals the claim subject.
+    #[serde(with = "entity_ref_serde")]
+    pub page_ref: EntityId,
+    pub config: EventTypeConfig,
+}
 
 // -------------------------------------------------------------------------
 // Claim codec
@@ -79,6 +172,37 @@ pub fn encode_event_type_claim_value(
     rmpv::decode::read_value(&mut Cursor::new(bytes.as_slice())).map_err(|error| {
         BookingError::InvalidConfig(format!("booking.event_type value does not encode: {error}"))
     })
+}
+
+/// Decodes and structurally validates a stored claim value.
+///
+/// # Errors
+///
+/// [`BookingError::InvalidConfig`] on a malformed value, an unsupported schema
+/// version, or a configuration defect.
+pub fn decode_event_type_claim_value(
+    value: &rmpv::Value,
+) -> std::result::Result<BookingEventTypeClaimValue, BookingError> {
+    let decoded = decode_claim_value_shape(value)
+        .map_err(|reason| BookingError::InvalidConfig(reason.to_owned()))?;
+    decoded.config.validate()?;
+    Ok(decoded)
+}
+
+/// The shape half of the decode, sharing one reason table with the claim
+/// write door.
+fn decode_claim_value_shape(
+    value: &rmpv::Value,
+) -> std::result::Result<BookingEventTypeClaimValue, &'static str> {
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, value)
+        .map_err(|_| "booking.event_type value is not encodable MessagePack")?;
+    let decoded: BookingEventTypeClaimValue = rmp_serde::from_slice(&bytes)
+        .map_err(|_| "booking.event_type value does not match the pinned schema")?;
+    if decoded.schema_version != BOOKING_EVENT_TYPE_SCHEMA_VERSION {
+        return Err("booking.event_type schema_version is unsupported");
+    }
+    Ok(decoded)
 }
 
 // -------------------------------------------------------------------------
