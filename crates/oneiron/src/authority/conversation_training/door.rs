@@ -65,9 +65,10 @@ impl Vault {
     /// ([`ConversationTrainingView::revision`]); `None` takes the current
     /// one. `person_proof` is the person's own slip-key proof of the choice
     /// (row PERSON-TRAINING-CHOICE-PERSON-KEY-PROOF), `None` when they signed
-    /// none: with one, their opt back in lands through any carrier. The
-    /// statement's `seen` is the current revision. Refused while the vault's
-    /// setting does not let people opt out. The choice names the main-log
+    /// none: with one, their opt back in lands through any carrier. An
+    /// opt-out drops it unjudged and unstored. The statement's `seen` is the
+    /// current revision. Refused while the vault's setting does not let
+    /// people opt out. The choice names the main-log
     /// heads alone, whose fold carries this install's standing rows and every
     /// live choice of the person's (FIX 4987), so it supersedes all of them,
     /// and lands atomically or not at all. It stops new sharing of their
@@ -96,6 +97,9 @@ impl Vault {
         seen: Option<PolicyRevision>,
         person_proof: Option<PersonChoiceProof>,
     ) -> Result<ConversationTrainingView> {
+        // The proof answers only the opt back in: an opt-out lands with no
+        // proof, so it never fails on one and never stores one.
+        let person_proof = person_proof.filter(|_| !leave_out);
         let mut txn = self.store.env.write_txn()?;
         let person = owner.revalidate_person_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;

@@ -13,7 +13,9 @@
 //!
 //! The proof lets the act through the not-mine carrier's wait as an owner
 //! key's proof does, and it never answers the owner's asks. The vault owner
-//! proves with the owner key, never a slip key.
+//! proves with the owner key, never a slip key. A person's own opt-out lands
+//! with no proof, so the fold never judges a proof on it and the door drops
+//! one unstored: an opt-out never fails on a proof.
 
 use std::collections::BTreeMap;
 

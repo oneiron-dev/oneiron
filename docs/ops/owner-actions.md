@@ -1474,7 +1474,8 @@ owner key is enrolled or the setting is changed again. A person who is not the v
 instead prove the choice with their own slip key: the body's `"person_proof": {"slip": "<64 hex>",
 "signature": "<128 hex>"}` is their device's signature, with the binding key of one of their own
 live human slips, over the choice (`"seen"` is then required). With it, letting their messages back
-in lands from any machine. The vault owner proves with an owner key, never a slip key. A vault that
+in lands from any machine. An opt-out needs no proof: one sent with it is dropped unchecked, so it
+never refuses the opt-out. The vault owner proves with an owner key, never a slip key. A vault that
 never held an owner key takes it from any machine, as before.
 
 Turning the setting off, or opting out, stops new sharing: held offers are refused at release, and
