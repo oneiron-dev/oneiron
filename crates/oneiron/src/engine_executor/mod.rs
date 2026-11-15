@@ -25,7 +25,7 @@ pub mod reply_evidence;
 mod run_position;
 mod run_signals;
 mod self_brief;
-mod setting_keys;
+pub(crate) mod setting_keys;
 mod shadow_step;
 mod skill_call;
 mod stack_floor;
