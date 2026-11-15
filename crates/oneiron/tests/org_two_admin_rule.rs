@@ -19,6 +19,19 @@
 //!   the housekeeping pass marks it lapsed and tells the first admin, and a
 //!   lapsed act no longer lands.
 //!
+//! The Sol review of #8482 (legs/review-8482) added five:
+//! - A held delegate mint lands on a second admin's approve: the delegate is
+//!   minted from the first admin's parent grant under the approver's proof.
+//! - An approve cut short after its re-run's write (a crash before its
+//!   settle) has landed the act already: the write lands it, and its receipt
+//!   names the first admin as `first_admin`.
+//! - An approve cut short before its write leaves the act approving, and the
+//!   housekeeping pass lapses it with the notice: it never ran.
+//! - An Admin's lone admin ruling refuses with the hold's reason while the
+//!   rule is on (no held verb fronts it); an Owner's goes.
+//! - An Admin's held Steward add never lands, even on an Owner's approve: an
+//!   approval lifts only the rule, and the Steward role is an Owner's to give.
+//!
 //! On the base (#8259, a2cb32313b0) this file does not build: there is no
 //! `org.two_admin` key, no `MEMORY_CODE_ADMIN_ACT_HELD` and no held-act
 //! verbs.
@@ -34,20 +47,23 @@ use oneiron::authority::HostSlipIssuer;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{
     FederationGrantRole as Role, HeldAdminAct, HeldAdminActStatus, InitialSharedMember,
-    NOTIFICATION_PRODUCER_ADMIN_ACT_HELD, NOTIFICATION_PRODUCER_ADMIN_ACT_LAPSED,
+    NOTIFICATION_PRODUCER_ADMIN_ACT_HELD, NOTIFICATION_PRODUCER_ADMIN_ACT_LAPSED, Scope,
     SharedActExecutionReceipt,
 };
 use oneiron::inbox::{NotificationBody, NotificationKind, decode_notification_body};
 use oneiron::memory::{
     ADMIN_ACT_HELD_REASON_PREFIX, MEMORY_CODE_ADMIN_ACT_HELD, MemoryError, MemoryResult,
+    TWO_ADMIN_HOLD_REASON_CODE,
 };
 use oneiron::registry::{ENTITY_TYPE_NOTIFICATION, ENTITY_TYPE_PERSON};
 use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::store::GateDecisionId;
+use oneiron::test_doors::held_admin_act as cut_short;
 use oneiron::test_support::{bind_host_actor, bind_host_owner};
 use oneiron::verbs::{
-    HeldAdminActRequest, SharedMemberAddRequest, add_shared_member_as, approve_held_admin_act_as,
-    read_held_admin_acts, withdraw_held_admin_act_as,
+    FederationDelegateRequest, HeldAdminActRequest, SharedMemberAddRequest, add_shared_member_as,
+    approve_held_admin_act_as, create_federation_delegate_as, read_held_admin_acts,
+    withdraw_held_admin_act_as,
 };
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use serde_json::json;
@@ -60,6 +76,8 @@ struct Org {
     issuer: HostSlipIssuer,
     owner: EntityId,
     admin: EntityId,
+    /// The first Admin's own membership grant: the parent of their delegate.
+    admin_grant: EntityId,
     admin_b: EntityId,
     member: EntityId,
 }
@@ -83,7 +101,9 @@ fn proof(vault: &Vault, person: EntityId) -> AuthenticatedOwner {
 }
 
 /// `member` accepts its pending invitation to the shared vault at `role`.
-fn accept(vault: &Vault, member: EntityId, role: Role) {
+/// `member` accepts their founding invitation at `role`; answers the grant
+/// the accept minted.
+fn accept(vault: &Vault, member: EntityId, role: Role) -> EntityId {
     let member_proof = proof(vault, member);
     let invitation = vault
         .shared_invitations(&member_proof, SHARED)
@@ -91,9 +111,13 @@ fn accept(vault: &Vault, member: EntityId, role: Role) {
         .into_iter()
         .find(|open| open.role == role)
         .expect("the invitation");
-    vault
+    let receipt = vault
         .accept_shared_invitation(&member_proof, SHARED, &invitation.id)
         .expect("the member accepts");
+    let [grant] = receipt.grants.as_slice() else {
+        panic!("the accept mints one grant: {receipt:?}");
+    };
+    EntityId::from_hex(grant).expect("a grant id")
 }
 
 /// The id an `ADMIN_ACT_HELD` answer names in its one reason code.
@@ -139,19 +163,19 @@ impl Org {
                 1,
             )
             .expect("a shared vault with two Admins and a Member");
-        let org = Self {
+        let admin_grant = accept(&vault, admin, Role::Admin);
+        accept(&vault, admin_b, Role::Admin);
+        accept(&vault, member, Role::Member);
+        Self {
             _dir: dir,
             vault,
             issuer,
             owner,
             admin,
+            admin_grant,
             admin_b,
             member,
-        };
-        accept(&org.vault, admin, Role::Admin);
-        accept(&org.vault, admin_b, Role::Admin);
-        accept(&org.vault, member, Role::Member);
-        org
+        }
     }
 
     /// Runs `act` with the host key bound to `person`, then binds the key
@@ -416,4 +440,176 @@ fn a_held_act_lapses_with_a_notice_to_the_first_admin() {
     );
     assert!(org.approve(org.admin_b, &held).is_err());
     assert!(!org.invited_by(newcomer, org.admin_b));
+}
+
+/// The wall clock in seconds, as the store clock counts them.
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("the clock is past the epoch")
+        .as_secs()
+}
+
+#[test]
+fn a_held_delegate_lands_on_a_second_approval() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    let delegate = org.newcomer();
+    let request = FederationDelegateRequest {
+        parent_grant: org.admin_grant,
+        member_ref: delegate,
+        authority_scope: Scope::default(),
+        expires_at: now_secs() + 600,
+    };
+    let held = held_id(
+        &org.as_person(org.admin, || {
+            create_federation_delegate_as(&org.vault, &proof(&org.vault, org.admin), request)
+        })
+        .expect_err("an Admin's delegate mint is held"),
+    );
+
+    let output = org
+        .approve(org.admin_b, &held)
+        .expect("a second admin's approve mints the first admin's delegate");
+    assert!(
+        output.to_string().contains(&delegate.to_hex()),
+        "the minted delegate names its member: {output}"
+    );
+    assert_eq!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Landed {
+            approver: org.admin_b.to_hex()
+        }
+    );
+}
+
+#[test]
+fn an_approve_cut_short_after_its_write_has_landed_the_act() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    let newcomer = org.newcomer();
+    let held = held_id(&org.add(org.admin, newcomer).expect_err("held"));
+    let request = HeldAdminActRequest {
+        vault_id: SHARED,
+        held: held.clone(),
+    };
+
+    let receipt = org
+        .as_person(org.admin_b, || {
+            cut_short::approve_held_add_unsettled(
+                &org.vault,
+                &proof(&org.vault, org.admin_b),
+                &request,
+            )
+        })
+        .expect("the re-run ran, and the approve stopped before its settle");
+    // Its own write landed it: nothing was left for the settle, and nobody
+    // approves it again.
+    assert_eq!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Landed {
+            approver: org.admin_b.to_hex()
+        }
+    );
+    assert_eq!(receipt["actor"], json!(org.admin_b.to_hex()));
+    assert_eq!(receipt["first_admin"], json!(org.admin.to_hex()));
+    assert!(org.invited_by(newcomer, org.admin_b));
+    assert!(org.approve(org.owner, &held).is_err());
+}
+
+#[test]
+fn an_approve_cut_short_before_its_write_lapses_with_a_notice() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    org.owner_sets("org.two_admin_lapse_secs", json!(3));
+    let newcomer = org.newcomer();
+    let held = held_id(&org.add(org.admin, newcomer).expect_err("held"));
+    let request = HeldAdminActRequest {
+        vault_id: SHARED,
+        held: held.clone(),
+    };
+    let claimed = org
+        .as_person(org.admin_b, || {
+            cut_short::claim_held_admin_act(&org.vault, &proof(&org.vault, org.admin_b), &request)
+        })
+        .expect("the approve claims the act, then stops");
+    assert_eq!(
+        claimed.status,
+        HeldAdminActStatus::Approving {
+            approver: org.admin_b.to_hex()
+        }
+    );
+
+    std::thread::sleep(std::time::Duration::from_secs(4));
+    org.vault
+        .notify_matured_shared_acts()
+        .expect("the housekeeping pass");
+    assert_eq!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Lapsed
+    );
+    let notices = org.notices(org.admin, NOTIFICATION_PRODUCER_ADMIN_ACT_LAPSED);
+    assert_eq!(notices.len(), 1, "one lapse notice to the first admin");
+    assert_eq!(notices[0].source.result.as_deref(), Some(held.as_str()));
+    assert!(!org.invited_by(newcomer, org.admin_b));
+}
+
+#[test]
+fn an_admins_lone_ruling_refuses_while_the_rule_is_on() {
+    let org = Org::new();
+    let ruling = |by: EntityId, value: &str| {
+        org.as_person(by, || {
+            org.vault.append_admin_ruling(
+                &proof(&org.vault, by),
+                SHARED,
+                "setting",
+                json!(value),
+                2,
+            )
+        })
+    };
+    ruling(org.admin, "off").expect("with the rule off, an Admin's ruling goes at once");
+
+    org.owner_sets("org.two_admin", json!(true));
+    let refusal = MemoryError::from(ruling(org.admin, "alone").expect_err("held"));
+    assert!(
+        refusal
+            .reason_codes
+            .iter()
+            .any(|code| code == TWO_ADMIN_HOLD_REASON_CODE),
+        "an Admin's lone ruling refuses with the hold's reason: {refusal:?}"
+    );
+    ruling(org.owner, "owner").expect("an Owner's ruling is never held");
+}
+
+#[test]
+fn an_admins_held_steward_add_never_lands_by_an_owners_approve() {
+    let org = Org::new();
+    org.owner_sets("org.two_admin", json!(true));
+    let newcomer = org.newcomer();
+    let steward_add = |by: EntityId| {
+        org.as_person(by, || {
+            add_shared_member_as(
+                &org.vault,
+                &proof(&org.vault, by),
+                SharedMemberAddRequest {
+                    vault_id: SHARED,
+                    member: newcomer.to_hex(),
+                    role: Some(Role::Steward),
+                    check_in_ref: None,
+                },
+            )
+        })
+    };
+    let held = held_id(&steward_add(org.admin).expect_err("held"));
+
+    org.approve(org.owner, &held)
+        .expect_err("the Steward role is no Admin's to give, so an approve cannot land it");
+    assert_eq!(
+        org.held_as(org.owner, &held).status,
+        HeldAdminActStatus::Open
+    );
+    assert!(!org.invited_by(newcomer, org.owner));
+    steward_add(org.owner).expect("an Owner gives the Steward role at once");
+    assert!(org.invited_by(newcomer, org.owner));
 }
