@@ -66,6 +66,8 @@ pub(in crate::sync) use self::discard_projection::{
     DiscardInstall, discard_touched_in, install_discard_projection, owed_projections_in,
     projection_floor_in,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use self::discard_projection::{Projected, project_window_doc};
 pub(crate) use self::discard_projection::{
     forget_unprojected_in_txn, mark_base_windows_owed_in_txn, resync_projected_windows_in_txn,
 };

@@ -117,6 +117,8 @@ pub mod split_phrase_carrier;
 pub mod steward;
 pub mod stretch_pack_finalize;
 pub mod substrate_reads;
+#[cfg(feature = "sync")]
+pub mod sync_parted_row_binding;
 pub mod tray_answered_removal;
 pub mod turn_programs;
 pub mod uncertain_send_questions;
