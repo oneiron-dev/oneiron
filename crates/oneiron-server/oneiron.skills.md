@@ -1600,13 +1600,13 @@ Fully specified entries:
     "error_code": "UNAUTHORIZED",
     "human_message": "request is not authorized",
     "recovery_suggestions": [
-      "Send Authorization: Bearer credentials and retry."
+      "Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."
     ],
     "wire_fields": {
       "code": "UNAUTHORIZED",
       "message": "request is not authorized",
       "details": { "code": "UNAUTHORIZED" },
-      "suggestions": ["Send Authorization: Bearer credentials and retry."]
+      "suggestions": ["Send Authorization: Bearer credentials and a fresh x-oneiron-binding holder proof, then retry."]
     }
   },
   {
@@ -1674,7 +1674,7 @@ Codes the server's HTTP error type defines:
 
 ### Recovery Rules
 
-- Auth failures: send the logged `v2.slip.*` in `Authorization: Bearer` with a fresh `x-oneiron-binding` holder proof made for this request, then retry once. Never resend an earlier proof; the server's `UNAUTHORIZED` suggestion names only the bearer.
+- Auth failures: send the logged `v2.slip.*` in `Authorization: Bearer` with a fresh `x-oneiron-binding` holder proof made for this request, then retry once. Never resend an earlier proof.
 - Bad path ids: validate 32 lowercase hex characters before retrying entity or edge reads.
 - Bad vector query: send comma-separated `f32` values with no empty segments.
 - Invalid view: use `summary`, `standard`, or `full`.
