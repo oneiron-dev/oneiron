@@ -14,7 +14,7 @@ use super::kernel::{
     FIELD_MODEL, FIELD_RECEIPT_SCHEMA, FIELD_TASK_REF, FIELD_TRANSPORT_DISPATCHED, ReceiptKind,
     ReceiptRecord, ReceiptScan, hex_lower,
 };
-#[cfg(test)]
+#[cfg(any(test, oneiron_test_support))]
 use super::send_receipt_txn::persist_send_receipt_in_txn;
 use crate::Vault;
 use crate::attempt_queue::{AttemptId, AttemptRecord};
