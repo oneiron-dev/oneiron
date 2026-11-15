@@ -363,11 +363,56 @@ pub(super) fn causal_floors_of(
     ))
 }
 
+/// The sequence floors of a once fold: each row's own (`original`, what a
+/// capture keeps as the rows past a floor) and the floors the fold applies
+/// (`applied`), the original less what causal ancestry vouches for.
+pub(super) struct OnceFloors {
+    pub(super) original: BTreeMap<AuthorityEntryHash, u64>,
+    pub(super) applied: BTreeMap<AuthorityEntryHash, u64>,
+}
+
+/// Where a once fold with sequence floors on takes its floors from, given
+/// its well-signed rows, their ancestor index and its context.
+pub(super) type OnceFloorsOf = fn(
+    &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    FoldContext<'_>,
+) -> OnceFloors;
+
+/// Each row's floor from the rows (`rows_floor`), never from the order they
+/// arrived in, so every install folds them alike; then causal ancestry
+/// vouches for what it can (`sequence_ancestry`).
+fn rows_once_floors(
+    by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
+    ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
+    context: FoldContext<'_>,
+) -> OnceFloors {
+    let original = super::rows_floor::rows_sequence_floors(by_hash, ancestors);
+    let applied =
+        super::sequence_ancestry::causal_sequence_floors(by_hash, ancestors, &original, context);
+    OnceFloors { original, applied }
+}
+
 pub(super) fn fold_authority_log_once(
     entries: &[AuthorityLogEntry],
     context: FoldContext<'_>,
     handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
     capture: Option<&super::fold_resume::FoldCapture>,
+) -> AuthorityFold {
+    fold_authority_log_once_with(entries, context, handoffs, capture, rows_once_floors)
+}
+
+/// [`fold_authority_log_once`] with its floors from `floors_of` when
+/// sequence floors apply. Every fold takes them from the rows
+/// ([`rows_once_floors`]); a test door also folds by an install's arrival
+/// order, as before RULING SEQ-FLOOR-SHAPE, to show both agree where they
+/// must (`sequence_floor_door`).
+pub(super) fn fold_authority_log_once_with(
+    entries: &[AuthorityLogEntry],
+    context: FoldContext<'_>,
+    handoffs: Option<&BTreeSet<AuthorityEntryHash>>,
+    capture: Option<&super::fold_resume::FoldCapture>,
+    floors_of: OnceFloorsOf,
 ) -> AuthorityFold {
     let (by_hash, mut issues) = judged_entries(entries);
     let Some((entry_ancestors, counted_ancestor_pairs)) =
@@ -375,22 +420,12 @@ pub(super) fn fold_authority_log_once(
     else {
         return super::log_budget::memory_floor_fold(context.memory_floor_bytes);
     };
-    // Each row's floor comes from the rows (`rows_floor`), never from the
-    // order they arrived in, so every install folds them alike.
-    let rows_floors = context
+    let floors = context
         .sequence_floors
-        .map(|_| super::rows_floor::rows_sequence_floors(&by_hash, &entry_ancestors));
-    let original_floors = rows_floors.as_ref();
-    let causal_floors = rows_floors.as_ref().map(|rows_floors| {
-        super::sequence_ancestry::causal_sequence_floors(
-            &by_hash,
-            &entry_ancestors,
-            rows_floors,
-            context,
-        )
-    });
+        .map(|_| floors_of(&by_hash, &entry_ancestors, context));
+    let original_floors = floors.as_ref().map(|floors| &floors.original);
     let context = FoldContext {
-        sequence_floors: causal_floors.as_ref(),
+        sequence_floors: floors.as_ref().map(|floors| &floors.applied),
         entry_ancestors: Some(&entry_ancestors),
         ..context
     };

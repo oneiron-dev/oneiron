@@ -149,6 +149,8 @@ mod revoke_proof;
 mod rows_floor;
 mod seat_child_slip;
 mod sequence_ancestry;
+#[cfg(oneiron_test_support)]
+pub(crate) mod sequence_floor_door;
 mod sequence_observation;
 mod slip;
 mod slip_pairing;

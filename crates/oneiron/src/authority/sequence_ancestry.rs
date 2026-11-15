@@ -94,7 +94,7 @@ pub(super) fn causal_sequence_floors(
 /// the admitted peer consent roots — because those define what "folds" MEANS.
 /// A probe answering under different consent semantics than the fold it serves
 /// would quietly disagree with it about which history can vouch a sequence floor.
-fn entry_folds_on_available_ancestry(
+pub(super) fn entry_folds_on_available_ancestry(
     target_hash: AuthorityEntryHash,
     by_hash: &BTreeMap<AuthorityEntryHash, AuthorityLogEntry>,
     ancestors: &BTreeMap<AuthorityEntryHash, BTreeSet<AuthorityEntryHash>>,
