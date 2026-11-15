@@ -159,57 +159,84 @@ impl Vault {
         label: Option<&str>,
     ) -> Result<SecretHandleLabelSet> {
         self.with_write_txn_grouped(|txn| {
-            let actor = live_owner_in_txn(self, owner, txn, "only the vault owner names a handle")?;
-            let (handle, custody) =
-                crate::secret_custody::reveal::resolve_handle_in_txn(&self.store, txn, handle)?;
-            let trimmed = label.map(str::trim).filter(|text| !text.is_empty());
-            if let Some(text) = trimmed {
-                if text.len() > SECRET_NAME_MAX_BYTES {
-                    return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "a handle label is longer than a secret name may be",
-                    )));
-                }
-                if text.contains(['\n', '\r', '\0']) {
-                    return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "a handle label is one line without NUL",
-                    )));
-                }
-                let decision =
-                    append_label_ruling_in_txn(self, txn, actor, &handle, &custody, true)?;
-                let receipt = gate_ref(decision);
-                LABEL.put(
-                    &self.store,
-                    txn,
-                    &custody,
-                    &SecretHandleLabel {
-                        label: text.to_owned(),
-                        receipt: receipt.clone(),
-                    },
-                )?;
-                Ok(SecretHandleLabelSet {
-                    label: Some(text.to_owned()),
-                    suggested_label: suggested_secret_handle_label_in_txn(
-                        &self.store,
-                        txn,
-                        &custody,
-                    )?,
-                    receipt,
-                })
-            } else {
-                let decision =
-                    append_label_ruling_in_txn(self, txn, actor, &handle, &custody, false)?;
-                LABEL.delete(&self.store, txn, &custody)?;
-                Ok(SecretHandleLabelSet {
-                    label: None,
-                    suggested_label: suggested_secret_handle_label_in_txn(
-                        &self.store,
-                        txn,
-                        &custody,
-                    )?,
-                    receipt: gate_ref(decision),
-                })
-            }
+            self.set_secret_handle_label_in_txn(txn, owner, handle, label)
         })
+    }
+
+    /// The secret a display-edit proposal names (Engine RULING
+    /// DISPLAY-EDIT-PROPOSAL-SCOPE = A): any handle the reveal door resolves
+    /// for the proposing agent, refused as the reveal door refuses it. Answers
+    /// the bare handle and the custody record.
+    ///
+    /// # Errors
+    /// What handle resolution returns for a handle no live custody record
+    /// names. [`SecretError::SecretBindingDenied`](crate::error::SecretError::SecretBindingDenied)
+    /// for a secret a run found, named by another run (FIX 8028).
+    pub(crate) fn display_edit_secret_subject_in_txn(
+        &self,
+        txn: &RoTxn<'_>,
+        handle: &str,
+        attempt: Option<&crate::AttemptId>,
+    ) -> Result<(String, EntityId)> {
+        let (handle, custody) =
+            crate::secret_custody::reveal::resolve_handle_in_txn(&self.store, txn, handle)?;
+        let record = super::read_secret_custody_admission_in_txn(&self.store, txn, &custody)?
+            .ok_or_else(|| super::reveal::unknown(&handle))?;
+        super::run_bound::reveal_run_admission(&record.name, &handle, attempt)?;
+        Ok((handle, custody))
+    }
+
+    /// [`Self::set_secret_handle_label`] inside the caller's writer: the
+    /// owner's proof is rechecked in `txn`, as the door does. An accepted
+    /// display-edit proposal applies the owner's answer through it, so the
+    /// proposal closes in the same writer ([`crate::display_edits`]).
+    pub(crate) fn set_secret_handle_label_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        handle: &str,
+        label: Option<&str>,
+    ) -> Result<SecretHandleLabelSet> {
+        let actor = live_owner_in_txn(self, owner, txn, "only the vault owner names a handle")?;
+        let (handle, custody) =
+            crate::secret_custody::reveal::resolve_handle_in_txn(&self.store, txn, handle)?;
+        let trimmed = label.map(str::trim).filter(|text| !text.is_empty());
+        if let Some(text) = trimmed {
+            if text.len() > SECRET_NAME_MAX_BYTES {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "a handle label is longer than a secret name may be",
+                )));
+            }
+            if text.contains(['\n', '\r', '\0']) {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "a handle label is one line without NUL",
+                )));
+            }
+            let decision = append_label_ruling_in_txn(self, txn, actor, &handle, &custody, true)?;
+            let receipt = gate_ref(decision);
+            LABEL.put(
+                &self.store,
+                txn,
+                &custody,
+                &SecretHandleLabel {
+                    label: text.to_owned(),
+                    receipt: receipt.clone(),
+                },
+            )?;
+            Ok(SecretHandleLabelSet {
+                label: Some(text.to_owned()),
+                suggested_label: suggested_secret_handle_label_in_txn(&self.store, txn, &custody)?,
+                receipt,
+            })
+        } else {
+            let decision = append_label_ruling_in_txn(self, txn, actor, &handle, &custody, false)?;
+            LABEL.delete(&self.store, txn, &custody)?;
+            Ok(SecretHandleLabelSet {
+                label: None,
+                suggested_label: suggested_secret_handle_label_in_txn(&self.store, txn, &custody)?,
+                receipt: gate_ref(decision),
+            })
+        }
     }
 }
 

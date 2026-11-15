@@ -95,6 +95,7 @@ mod deck_creation_doors;
 mod default_facet_doors;
 mod device_succession_doors;
 mod disclosure_doors;
+mod display_edit_doors;
 mod dispatch {
     include!(concat!(env!("OUT_DIR"), "/dispatch.rs"));
 }

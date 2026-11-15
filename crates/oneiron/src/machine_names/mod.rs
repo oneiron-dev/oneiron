@@ -168,49 +168,60 @@ impl Vault {
         name: Option<&str>,
     ) -> Result<MachineOwnerNameSet> {
         self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let serving = self.serving_machine_in_txn(txn)?;
-            let this_install = serving == Some(machine);
-            let folded = self
-                .authority_view_readonly_in_txn(txn)?
-                .machine(machine)
-                .cloned()
-                .ok_or(Error::EntityNotFound)?;
-            let trimmed = name.map(str::trim).filter(|text| !text.is_empty());
-            if let Some(text) = trimmed {
-                if text.len() > MACHINE_NAME_MAX_BYTES {
-                    return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "a machine name is at most 128 bytes",
-                    )));
-                }
-                if text.contains(['\n', '\r', '\0']) {
-                    return Err(Error::Gate(GateError::InvalidConsentBound(
-                        "a machine name is one line without NUL",
-                    )));
-                }
+            self.set_machine_owner_name_in_txn(txn, owner, machine, name)
+        })
+    }
+
+    /// [`Self::set_machine_owner_name`] inside the caller's writer: the
+    /// owner's proof is rechecked in `txn`, as the door does. An accepted
+    /// display-edit proposal applies the owner's answer through it, so the
+    /// proposal closes in the same writer ([`crate::display_edits`]).
+    pub(crate) fn set_machine_owner_name_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        machine: EntityId,
+        name: Option<&str>,
+    ) -> Result<MachineOwnerNameSet> {
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let serving = self.serving_machine_in_txn(txn)?;
+        let this_install = serving == Some(machine);
+        let folded = self
+            .authority_view_readonly_in_txn(txn)?
+            .machine(machine)
+            .cloned()
+            .ok_or(Error::EntityNotFound)?;
+        let trimmed = name.map(str::trim).filter(|text| !text.is_empty());
+        if let Some(text) = trimmed {
+            if text.len() > MACHINE_NAME_MAX_BYTES {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "a machine name is at most 128 bytes",
+                )));
             }
-            let decision =
-                append_owner_name_ruling_in_txn(self, txn, actor, machine, trimmed.is_some())?;
-            let held = OWNER_NAME.get(&self.store, txn, &machine)?;
-            let written_at = exchange::written_at_past_in_txn(
-                self,
-                txn,
-                held.as_ref().map(|held| held.written_at),
-            )?;
-            let row = MachineOwnerName {
-                name: trimmed.unwrap_or_default().to_owned(),
-                receipt: decision.as_bytes(),
-                written_at,
-                writer: serving,
-            };
-            put_owner_name_in_txn(self, txn, machine, held.as_ref(), &row)?;
-            let listing = self
-                .machine_listing_in_txn(txn, machine, &folded, this_install)?
-                .ok_or(Error::EntityNotFound)?;
-            Ok(MachineOwnerNameSet {
-                machine: listing,
-                receipt: format!("gate:{}", decision.to_hex()),
-            })
+            if text.contains(['\n', '\r', '\0']) {
+                return Err(Error::Gate(GateError::InvalidConsentBound(
+                    "a machine name is one line without NUL",
+                )));
+            }
+        }
+        let decision =
+            append_owner_name_ruling_in_txn(self, txn, actor, machine, trimmed.is_some())?;
+        let held = OWNER_NAME.get(&self.store, txn, &machine)?;
+        let written_at =
+            exchange::written_at_past_in_txn(self, txn, held.as_ref().map(|held| held.written_at))?;
+        let row = MachineOwnerName {
+            name: trimmed.unwrap_or_default().to_owned(),
+            receipt: decision.as_bytes(),
+            written_at,
+            writer: serving,
+        };
+        put_owner_name_in_txn(self, txn, machine, held.as_ref(), &row)?;
+        let listing = self
+            .machine_listing_in_txn(txn, machine, &folded, this_install)?
+            .ok_or(Error::EntityNotFound)?;
+        Ok(MachineOwnerNameSet {
+            machine: listing,
+            receipt: format!("gate:{}", decision.to_hex()),
         })
     }
 

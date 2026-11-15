@@ -47,36 +47,50 @@ impl Vault {
         purpose: Option<&str>,
     ) -> Result<SecretHandlePurposeSet> {
         self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let (handle, custody) = super::reveal::resolve_handle_in_txn(&self.store, txn, handle)?;
-            let purpose = purpose.filter(|text| !text.trim().is_empty());
-            let decision =
-                append_purpose_ruling(self, txn, actor, &handle, &custody, purpose.is_some())?;
-            let receipt = format!("gate:{}", decision.to_hex());
-            let purpose = if let Some(text) = purpose {
-                PURPOSE.put(
-                    self,
-                    txn,
-                    &custody,
-                    &SecretHandlePurpose {
-                        purpose: text.to_owned(),
-                        receipt: decision.as_bytes(),
-                    },
-                )?;
-                Some(
-                    PURPOSE
-                        .get(&self.store, txn, &custody)?
-                        .ok_or(Error::InvariantViolation("stored handle purpose missing"))?
-                        .purpose,
-                )
-            } else {
-                crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
-                    self, txn, &custody,
-                )?;
-                None
-            };
-            Ok(SecretHandlePurposeSet { purpose, receipt })
+            self.set_secret_handle_purpose_in_txn(txn, owner, handle, purpose)
         })
+    }
+
+    /// [`Self::set_secret_handle_purpose`] inside the caller's writer: the
+    /// owner's proof is rechecked in `txn`, as the door does. An accepted
+    /// display-edit proposal applies the owner's answer through it, so the
+    /// proposal closes in the same writer ([`crate::display_edits`]).
+    pub(crate) fn set_secret_handle_purpose_in_txn(
+        &self,
+        txn: &mut RwTxn<'_>,
+        owner: &AuthenticatedOwner,
+        handle: &str,
+        purpose: Option<&str>,
+    ) -> Result<SecretHandlePurposeSet> {
+        let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+        let (handle, custody) = super::reveal::resolve_handle_in_txn(&self.store, txn, handle)?;
+        let purpose = purpose.filter(|text| !text.trim().is_empty());
+        let decision =
+            append_purpose_ruling(self, txn, actor, &handle, &custody, purpose.is_some())?;
+        let receipt = format!("gate:{}", decision.to_hex());
+        let purpose = if let Some(text) = purpose {
+            PURPOSE.put(
+                self,
+                txn,
+                &custody,
+                &SecretHandlePurpose {
+                    purpose: text.to_owned(),
+                    receipt: decision.as_bytes(),
+                },
+            )?;
+            Some(
+                PURPOSE
+                    .get(&self.store, txn, &custody)?
+                    .ok_or(Error::InvariantViolation("stored handle purpose missing"))?
+                    .purpose,
+            )
+        } else {
+            crate::store::secret_handle_purpose::erase_secret_handle_purpose_in_txn(
+                self, txn, &custody,
+            )?;
+            None
+        };
+        Ok(SecretHandlePurposeSet { purpose, receipt })
     }
 }
 

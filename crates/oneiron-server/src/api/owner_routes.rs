@@ -68,6 +68,7 @@ pub(super) mod desktop_takeover_routes;
 mod device_succession_routes;
 pub(super) mod diary_routes;
 mod disclosure_routes;
+mod display_edit_routes;
 pub(super) mod dreamer_maintenance_routes;
 pub(super) mod dreamer_routes;
 pub(super) mod embedding_space_routes;
@@ -159,6 +160,7 @@ fn owner_tables() -> OwnerTable {
         connector_subscription_routes::owner_table(),
         diary_routes::owner_table(),
         disclosure_routes::owner_table(),
+        display_edit_routes::owner_table(),
         dreamer_maintenance_routes::owner_table(),
         harness_evaluation_routes::owner_table(),
         dreamer_routes::owner_table(),

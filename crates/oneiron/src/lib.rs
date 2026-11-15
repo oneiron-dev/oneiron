@@ -20,6 +20,7 @@ pub use oneiron_store::config;
 pub mod deletion;
 /// The derivation transaction (untangle 6.7, primitive C).
 pub mod derive;
+pub mod display_edits;
 pub(crate) mod engine_store_hooks;
 pub mod edge {
     //! Edge kinds, layouts, value codec, strict edge-record parsing, `EdgeInfo`:
