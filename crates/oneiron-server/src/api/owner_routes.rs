@@ -52,7 +52,6 @@ pub(super) mod checkpoint_policy_routes;
 mod claim_refinement_routes;
 mod cleanup_decide;
 pub(super) mod code_run_secret_lift_routes;
-mod commitment_routes;
 pub(super) mod concern_routes;
 pub(super) mod conflict_routes;
 pub(crate) mod connector_admission_routes;
@@ -149,7 +148,6 @@ fn owner_tables() -> OwnerTable {
         budget_hold_routes::owner_table(),
         checkpoint_policy_routes::owner_table(),
         claim_refinement_routes::owner_table(),
-        commitment_routes::owner_table(),
         curator_rubric_routes::owner_table(),
         conflict_routes::owner_table(),
         connector_admission_routes::owner_table(),

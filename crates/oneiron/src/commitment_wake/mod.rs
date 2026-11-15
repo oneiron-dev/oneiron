@@ -72,7 +72,7 @@ pub use self::wake_proposal::{
     CommitmentWakeProposalSkip, commitment_wake_proposal_claim_id,
 };
 
-pub(crate) mod tables;
+pub(crate) mod setting_keys;
 // FIX [LIBTEST-QUARANTINE-COMMITMENT-WAKE-TESTS]: the lib test target's type check fails here (5 errors: E0061 x3, E0063 x1, E0599 x1); port it, then drop this gate
 #[cfg(any())]
 #[cfg(test)]

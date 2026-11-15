@@ -1,5 +1,6 @@
 //! Web provider selection and content-free usage vocabulary.
 use oneiron_base::error::{Error, Result};
+use oneiron_setting_contract::SettingValue;
 use serde::{Deserialize, Serialize};
 
 pub mod provider;
@@ -89,6 +90,15 @@ impl WebConnectorSetting {
             }
             _ => Ok(()),
         }
+    }
+}
+
+/// The engine's catalogue key `connectors.web` holds the switch; a value is
+/// checked as the owner's setter checked it.
+impl SettingValue for WebConnectorSetting {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
     }
 }
 

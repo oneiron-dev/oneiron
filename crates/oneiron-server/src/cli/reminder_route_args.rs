@@ -1,12 +1,12 @@
 //! `oneiron reminder-route`: the owner's commitment reminder route on a stopped
-//! vault (`oneiron::commitment_wake::CommitmentReminderRoute`); a running server
-//! answers the same at `/v1/owner/commitments/reminder-route`, and the SDK at
-//! `vault.commitments.reminder_route.get` and `.set`.
+//! vault, the catalogue key `commitments.reminder_route`
+//! (`oneiron::commitment_wake::CommitmentReminderRoute`); a running server and
+//! the SDK answer the same at `vault.settings.get` and `vault.settings.set`.
 //!
 //! Set takes the full native route. `--persona-ref` implies voice: either
 //! `--voice` or a persona makes `Some(voice)`, neither makes `None`. There is
-//! no new default: native validation owns channel, verb, target, the UTC
-//! offset range, timezone labels and voice labels.
+//! no new default: the key's check owns channel, verb, target, the UTC offset
+//! range, timezone labels and voice labels.
 
 use clap::{Args, Subcommand};
 

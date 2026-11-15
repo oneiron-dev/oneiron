@@ -9042,6 +9042,7 @@ dependencies = [
  "oneiron-crypto",
  "oneiron-docedit",
  "oneiron-model",
+ "oneiron-setting-contract",
  "oneiron-skill-attribution",
  "oneiron-vault-contract",
  "rand 0.8.8",

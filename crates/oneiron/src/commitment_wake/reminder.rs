@@ -27,21 +27,17 @@ use crate::attempt_queue::AttemptId;
 use crate::claim::dispatch_target::AgentDispatchTarget;
 use crate::commitment::{CommitmentInstanceState, CommitmentObligorKind, CommitmentRecord};
 use crate::config::context_spec::{CONTEXT_SPEC_MAX_TEXT_BYTES, ContextSpec};
-use crate::consent::AuthenticatedOwner;
 use crate::delivery_window::OutboundScheduleContext;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
-use crate::side_table::{self, Named, SideTable};
+use crate::setting::SettingValue;
 
 use super::reminder_wording::{
     CommitmentReminderVoice, queue_commitment_reminder_wording, split_wording_pin,
 };
+use super::setting_keys::REMINDER_ROUTE;
 use super::wake_event::{CommitmentWakeEvent, CommitmentWakePhase, validate_wake_string};
 use super::wake_proposal::{CommitmentWakeProposalDraft, CommitmentWakeProposalPlanner};
-
-/// The owner's reminder route. Key: ().
-const REMINDER_ROUTE: SideTable<(), CommitmentReminderRoute, Named> =
-    SideTable::new(&side_table::COMMITMENT_REMINDER_ROUTE);
 
 /// Every reminder's content ref starts with this; the rest names the instance,
 /// the phase and the instant it is owed, so the text is a pure function of it.
@@ -139,6 +135,16 @@ impl CommitmentReminderRoute {
     }
 }
 
+/// The catalogue key `commitments.reminder_route` holds an optional route
+/// ([`super::setting_keys::REMINDER_ROUTE`]); a route is checked as the
+/// owner's setter checked it.
+impl SettingValue for CommitmentReminderRoute {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
+    }
+}
+
 /// The UTC offset, in whole minutes, the IANA `zone` observes at `at`; `None`
 /// for a zone the embedded database does not know.
 pub(crate) fn zone_offset_minutes_at(zone: &str, at: u64) -> Option<i16> {
@@ -154,30 +160,14 @@ impl Vault {
         self.commitment_reminder_route_in_txn(&txn)
     }
 
+    /// [`Self::commitment_reminder_route`] in `txn`. The owner sets it through
+    /// `vault.settings.set` (key `commitments.reminder_route`); a change
+    /// approves no reminder and changes none already approved.
     pub(crate) fn commitment_reminder_route_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
     ) -> Result<Option<CommitmentReminderRoute>> {
-        REMINDER_ROUTE.get(&self.store, txn, &())
-    }
-
-    /// Sets (or, with `None`, clears) where the owner's reminders go. Only the
-    /// authenticated owner sets it; it changes no reminder already approved.
-    pub fn set_commitment_reminder_route(
-        &self,
-        owner: &AuthenticatedOwner,
-        route: Option<&CommitmentReminderRoute>,
-    ) -> Result<()> {
-        if let Some(route) = route {
-            route.validate()?;
-        }
-        self.with_write_txn(|txn| {
-            owner.revalidate_in_txn(self, &*txn)?;
-            match route {
-                Some(route) => REMINDER_ROUTE.put(&self.store, txn, &(), route),
-                None => REMINDER_ROUTE.delete(&self.store, txn, &()).map(|_| ()),
-            }
-        })
+        Ok(REMINDER_ROUTE.read_in_txn(self, txn, &[], None)?.value)
     }
 
     /// The text a channel sends for a reminder content ref, `Ok(None)` when
