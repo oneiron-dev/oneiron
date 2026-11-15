@@ -22,12 +22,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
     AUTHORITY_LOG_SCHEMA_VERSION, ActSurface, AuthorityAttestation, AuthorityEntryHash,
-    AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature,
-    AuthorityTier, AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep,
-    MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass,
-    MachineEncryptionKey, MachineProfile, MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN,
-    ROLE_CLOUD, ROLE_OWNER, authority_entry_hash, authority_transcript, fold_authority_log,
-    fold_authority_log_for_posture, genesis_vault_id, machine_profile_proof_transcript,
+    AuthorityFold, AuthorityKey, AuthorityLogEntry, AuthorityOp, AuthoritySignature, AuthorityTier,
+    AuthorityVaultId, DeviceAuthority, GenesisRecoveryStep, MACHINE_ENCRYPTION_KEY_LEN,
+    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey, MachineProfile,
+    MachineRole, OwnerAct, OwnerActKind, ROLE_ADMIN, ROLE_CLOUD, ROLE_OWNER, authority_entry_hash,
+    authority_transcript, fold_authority_log, fold_authority_log_for_posture, genesis_vault_id,
+    machine_profile_proof_transcript,
 };
 use oneiron::{EntityId, HostingPrivacyPosture};
 use oneiron_authority::authority::{
@@ -280,7 +280,14 @@ impl OwnerKeyVault {
                 roles: ROLE_OWNER,
             },
         });
-        let row = signed(Some(vault_id), seq, vec![parent], op, &self.root, &[&self.node]);
+        let row = signed(
+            Some(vault_id),
+            seq,
+            vec![parent],
+            op,
+            &self.root,
+            &[&self.node],
+        );
         let entry = hash(&row);
         self.rows.push(row);
         entry

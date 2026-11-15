@@ -84,40 +84,6 @@ pub(super) fn not_mine_carriers_need_proof(state: &FoldState) -> bool {
         .any(|key| proves_for_the_owner(state, key))
 }
 
-/// Whether `op`, signed by `participants` (its signer and every cosign),
-/// may count at its parent state `state` as far as the owner keys it ends go
-/// (row HOSTED-ROOT-REVOKES-OWNER-KEY; the lead, 15 Nov 20:41: "a revoke of
-/// an owner key needs an owner key's signature, never only the custodial
-/// root").
-///
-/// A `RevokeDevice` of a key that proves for the owner
-/// ([`proves_for_the_owner`]) widens: it lowers the proof the vault can ask
-/// of its owner, and on a hosted vault the last one turns
-/// [`not_mine_carriers_need_proof`] off. Only the owner may make it, and a
-/// participant that proves for the owner is his proof. A managed host's
-/// custodial root, which a hosted fold admits for consent, proves only
-/// itself, and so does an admin-only key. A revoke of a key the parents do
-/// not hold needs the same proof: the roster merge keeps a revocation on
-/// every branch, so a revoke parented before a key's enrolment would
-/// otherwise end that owner key unproved. Every other op passes.
-///
-/// The act rule (A0, `act_rule.rs`) takes this over in one line: the
-/// participants' reading is `AnyMove` when one proves for the owner and
-/// `Nothing` otherwise, and the revoke counts when that admits
-/// `Direction::Widens`.
-pub(super) fn owner_key_revoke_proved(
-    state: &FoldState,
-    op: &AuthorityOp,
-    participants: &BTreeSet<AuthorityKey>,
-) -> bool {
-    let AuthorityOp::RevokeDevice { revoked_key } = op else {
-        return true;
-    };
-    let ends_owner_key =
-        proves_for_the_owner(state, revoked_key) || !state.roster.contains_key(revoked_key);
-    !ends_owner_key || participants.iter().any(|key| proves_for_the_owner(state, key))
-}
-
 /// Whether a carried machine answer needs the proof (items 1 and 2), judged
 /// at its parent state. `carrier_is_mine`: the carrier's install key that
 /// signed is its trusted mine key there; `target_key`: the target machine's
@@ -137,6 +103,43 @@ pub(super) fn machine_answer_needs_proof(
     let makes_mine = profile.role == MachineRole::Owned(MachineOwnership::Yours)
         && !(carrier_is_mine && target_key == Some(profile.machine_key));
     makes_mine || (!carrier_is_mine && not_mine_carriers_need_proof(state))
+}
+
+/// Whether `op`, signed by `participants` (its signer and every cosign),
+/// may count at its parent state `state` as far as the owner keys it ends go
+/// (row HOSTED-ROOT-REVOKES-OWNER-KEY; the lead, 15 Nov 20:41: "a revoke of
+/// an owner key needs an owner key's signature, never only the custodial
+/// root").
+///
+/// A `RevokeDevice` of a key that proves for the owner
+/// ([`proves_for_the_owner`]) widens: it lowers the proof the vault can ask
+/// of its owner. Only the owner may make it, and a participant that proves
+/// for the owner is the owner's proof, as the primary signer or as a cosign.
+/// A managed host's custodial root, which a hosted fold admits for consent,
+/// proves only itself, and so does an admin-only key. A revoke of a key the
+/// parents do not hold needs the same proof: the roster merge keeps a
+/// revocation on every branch, so a revoke parented before a key's
+/// enrolment would otherwise end that owner key unproved. Every other op
+/// passes.
+///
+/// The act rule (A0, `act_rule.rs`) takes this over in one line: the
+/// participants' reading is `AnyMove` when one proves for the owner and
+/// `Nothing` otherwise, and the revoke counts when that admits
+/// `Direction::Widens`.
+pub(super) fn owner_key_revoke_proved(
+    state: &FoldState,
+    op: &AuthorityOp,
+    participants: &BTreeSet<AuthorityKey>,
+) -> bool {
+    let AuthorityOp::RevokeDevice { revoked_key } = op else {
+        return true;
+    };
+    let ends_owner_key =
+        proves_for_the_owner(state, revoked_key) || !state.roster.contains_key(revoked_key);
+    !ends_owner_key
+        || participants
+            .iter()
+            .any(|key| proves_for_the_owner(state, key))
 }
 
 /// One held answer in a fold state: the answer as it folded, and whether the
