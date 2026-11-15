@@ -253,6 +253,11 @@ pub(in crate::api::facade) fn door_admits(
         Proof::PolicyPutter => {
             crate::api::facade::gate_policy_doors::policy_putter(server, auth, verb).map(drop)
         }
+        // A ramp demotion by the owner or a person holding the ramp demotion power (census L7-33), which
+        // the demotion writer checks again.
+        Proof::RampDemoter => {
+            crate::api::facade::graduation_doors::ramp_demoter(server, auth, verb).map(drop)
+        }
         // A publish or repoint as the caller on its own slip (FIX 8161), which the outbound Gate judges.
         Proof::ArtifactPublisher => {
             crate::api::facade::artifact_hosting_doors::publisher(server, auth, verb).map(drop)
