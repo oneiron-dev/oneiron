@@ -37,6 +37,10 @@ fn empty_banner() -> String {
     String::new()
 }
 
+fn no_mode() -> Option<u64> {
+    None
+}
+
 fn channel(item: &str) -> bool {
     matches!(item, "mail" | "chat")
 }
@@ -89,5 +93,10 @@ crate::setting::setting_keys! {
     pub TEST_HOOKED: u64 = "test.hooked" {
         kind: Kind::new(zero),
         on_change: Some(count_change),
+    };
+    /// A mode that is off until the owner sets one: an optional value.
+    pub TEST_OPTIONAL_MODE: Option<u64> = "test.optional_mode" {
+        kind: Kind::new(no_mode),
+        scopes: &[ScopeKind::Vault, ScopeKind::Project],
     };
 }
