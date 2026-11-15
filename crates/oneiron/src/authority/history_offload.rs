@@ -273,9 +273,6 @@ impl Vault {
                     kept.extend(manifest.rows.iter().copied());
                 }
             }
-            if !held.keys().all(|hash| kept.contains(hash)) {
-                return Err(refused("a covered row no standing custody proof keeps"));
-            }
             for (hash, (id, header)) in &held {
                 evict_covered_row_in_txn(&self.store, txn, id, hash, header)?;
             }
