@@ -13,18 +13,37 @@
 //! Only a whole read seeds it: landing a backup does not, so bytes changed
 //! between the landing and the marker are still read and refused. The
 //! identity is trusted only where the file system keeps fine-grained times
-//! (see [`FileIdentity::of`]); where it keeps coarse times, and off unix,
-//! every held read is whole.
+//! (see [`FileIdentity::of`]); where it keeps coarse times every held read
+//! is whole.
 //!
 //! A file's times do not prove its bytes: two writes inside one tick of the
 //! kernel's coarse clock, or stores through a page already mapped writable,
-//! change the bytes and leave the times (Astra review of #8317). So a read
-//! seeds the memo only from a settled file: last changed at least
-//! [`SETTLED_SECS`] before the read began (by then such a write's tick has
-//! passed, and the page cache has written a dirtied mapped page back, so
-//! the next store moves the times), and with its identity unchanged by the
-//! read. An entry is trusted for [`TRUSTED_FOR`] at most; the next held read
-//! after that is whole again.
+//! change the bytes and leave the times (Astra review of #8317). So a whole
+//! read seeds the memo only through [`prepare_seed`], before the read, and
+//! [`remember_read`], after it (Engine RULING
+//! FIX-PERF-6729-IDENTITY-NOT-CONTENT = A, 21:39):
+//! - the file last changed at least [`SETTLED_FOR`] before the read began,
+//!   so a write in the same tick as its times has passed;
+//! - it lies on a Linux file system that writes dirty pages back
+//!   ([`WRITTEN_BACK`]): tmpfs and ramfs never do, so a page once mapped
+//!   writable there takes stores that move no time (Astra round 2). Every
+//!   other file system, and every file off Linux, is read whole each time;
+//! - its dirty pages are written back through the open file before the read.
+//!   Write-back write-protects every mapping of a page it cleans, so a store
+//!   after it faults and moves the file's times, whatever the system's
+//!   write-back tunables or laptop mode would have delayed;
+//! - an fstat of the same open file after the read names the same identity.
+//!
+//! An entry answers for [`TRUSTED_FOR`] at most, by the monotonic clock and
+//! by the wall clock both: the monotonic clock stops while the host is
+//! suspended, the wall clock does not.
+//!
+//! What this does not see (named in #8317): acts that need root (stepping
+//! the clock, writing the block device, XFS open-by-handle I/O that moves no
+//! time), writes through a page pinned for writing before the read began (a
+//! direct-I/O or io_uring pin takes no fault when it writes), and bitrot of
+//! the stored blocks inside the hour (a whole read of a cached file reads
+//! the cached pages too).
 
 use std::collections::BTreeMap;
 use std::fs::{File, Metadata};
@@ -36,11 +55,18 @@ use std::time::{Duration, Instant, SystemTime};
 const HELD_MAX: usize = 64;
 
 /// How long before a whole read began the file must have last changed for
-/// the read to seed the memo, in seconds.
-const SETTLED_SECS: i64 = 60;
+/// the read to seed the memo.
+const SETTLED_FOR: Duration = Duration::from_secs(60);
 
 /// How long an entry answers held reads before the next one is whole.
 const TRUSTED_FOR: Duration = Duration::from_secs(60 * 60);
+
+/// The file systems whose files may seed the memo, by their `statfs` magic:
+/// ext2, ext3 and ext4 (one magic), XFS, Btrfs and F2FS. Each writes a dirty
+/// page back, write-protects its mappings as it does, and moves the file's
+/// times at the next store through one.
+#[cfg(target_os = "linux")]
+const WRITTEN_BACK: [u64; 4] = [0xEF53, 0x5846_5342, 0x9123_683E, 0xF2F5_2010];
 
 /// What a held read compares: the marker's commitment digest, the BLAKE3 of
 /// the artifact's every byte (both hex) and its size.
@@ -87,29 +113,50 @@ impl FileIdentity {
         None
     }
 
-    /// Whether the file last changed at least [`SETTLED_SECS`] before
-    /// `started`, by the wall clock; a clock before the epoch is not.
+    /// Whether the file last changed at least [`SETTLED_FOR`] before
+    /// `started`, by the wall clock to the nanosecond; a time before the
+    /// epoch is not.
     fn settled_before(self, started: SystemTime) -> bool {
-        let Some(started) = started
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .ok()
-            .and_then(|since| i64::try_from(since.as_secs()).ok())
-        else {
+        let since_epoch = |(seconds, nanoseconds): (i64, i64)| {
+            Some(Duration::new(
+                u64::try_from(seconds).ok()?,
+                u32::try_from(nanoseconds).ok()?,
+            ))
+        };
+        let (Some(modified), Some(changed), Ok(started)) = (
+            since_epoch(self.modified),
+            since_epoch(self.changed),
+            started.duration_since(SystemTime::UNIX_EPOCH),
+        ) else {
             return false;
         };
-        let last = self.modified.0.max(self.changed.0);
-        last.checked_add(SETTLED_SECS)
+        modified
+            .max(changed)
+            .checked_add(SETTLED_FOR)
             .is_some_and(|settled| settled <= started)
     }
 }
 
-/// One file found whole: where, as what, with which evidence, and when.
+/// One file found whole: where, as what, with which evidence, and when by
+/// the monotonic and the wall clock.
 struct Held {
     path: PathBuf,
     identity: FileIdentity,
     outer_blake3: String,
     size: u64,
-    seeded: Instant,
+    seeded_monotonic: Instant,
+    seeded_wall: SystemTime,
+}
+
+impl Held {
+    /// Whether neither clock has passed [`TRUSTED_FOR`] since the seed and
+    /// the wall clock has not gone back before it.
+    fn trusted(&self) -> bool {
+        self.seeded_monotonic.elapsed() < TRUSTED_FOR
+            && SystemTime::now()
+                .duration_since(self.seeded_wall)
+                .is_ok_and(|since| since < TRUSTED_FOR)
+    }
 }
 
 /// By commitment digest.
@@ -141,26 +188,52 @@ pub(super) fn holds(evidence: &Evidence<'_>, path: &Path, identity: FileIdentity
                 && held.identity == identity
                 && held.outer_blake3 == evidence.outer_blake3
                 && held.size == evidence.size
-                && held.seeded.elapsed() < TRUSTED_FOR
+                && held.trusted()
         })
 }
 
-/// Keeps that the file at `path`, as `identity` named it when a whole read
-/// of `file` began at `started`, is the backup `evidence` describes, as that
-/// read found: only when the file was settled then and the read left its
-/// identity unchanged.
-pub(super) fn remember_read(
-    evidence: &Evidence<'_>,
-    path: PathBuf,
+/// A whole read that may seed the memo, made ready by [`prepare_seed`].
+pub(super) struct Seed {
     identity: FileIdentity,
+}
+
+/// Before a whole read of `file` that begins at `started`, with `identity`
+/// read from the open file: a [`Seed`] when the file had settled by then
+/// and lies on a file system in [`WRITTEN_BACK`], once its dirty pages are
+/// written back through it (which write-protects every mapping of them);
+/// `None` otherwise, and when the write-back fails.
+pub(super) fn prepare_seed(
     file: &File,
+    identity: FileIdentity,
     started: SystemTime,
-) {
+) -> Option<Seed> {
+    (identity.settled_before(started) && written_back(file) && file.sync_data().is_ok())
+        .then_some(Seed { identity })
+}
+
+/// Whether the open `file` lies on a file system in [`WRITTEN_BACK`].
+#[cfg(target_os = "linux")]
+fn written_back(file: &File) -> bool {
+    rustix::fs::fstatfs(file)
+        .ok()
+        .and_then(|stats| u64::try_from(stats.f_type).ok())
+        .is_some_and(|magic| WRITTEN_BACK.contains(&(magic & 0xFFFF_FFFF)))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn written_back(_: &File) -> bool {
+    false
+}
+
+/// Keeps that the file at `path` is the backup `evidence` describes, as the
+/// whole read of `file` that `seed` readied found it: only when an fstat of
+/// `file` after the read names the identity the seed was readied with.
+pub(super) fn remember_read(evidence: &Evidence<'_>, path: PathBuf, seed: Seed, file: &File) {
     let after = file
         .metadata()
         .ok()
         .and_then(|after| FileIdentity::of(&after));
-    if after != Some(identity) || !identity.settled_before(started) {
+    if after != Some(seed.identity) {
         return;
     }
     let mut held = HELD.lock().unwrap_or_else(PoisonError::into_inner);
@@ -171,10 +244,11 @@ pub(super) fn remember_read(
         evidence.commitment_digest.to_owned(),
         Held {
             path,
-            identity,
+            identity: seed.identity,
             outer_blake3: evidence.outer_blake3.to_owned(),
             size: evidence.size,
-            seeded: Instant::now(),
+            seeded_monotonic: Instant::now(),
+            seeded_wall: SystemTime::now(),
         },
     );
 }
