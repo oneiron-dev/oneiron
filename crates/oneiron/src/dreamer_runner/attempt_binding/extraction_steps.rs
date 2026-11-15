@@ -22,6 +22,12 @@ use oneiron_model::llm::BudgetGuard;
 pub struct ExtractionStepRequest {
     /// Lists the pinned evidence entries in their transcript order.
     pub evidence: Vec<TurnEvidence>,
+    /// Names the zero-based listing page the step shows when its slice pages.
+    ///
+    /// Absent means the only page. A slice whose listing pages refuses
+    /// without a valid page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub page: Option<usize>,
 }
 
 /// Borrows the extraction role and the original attempt's pass resources for one step.
@@ -33,6 +39,9 @@ pub struct ExtractionStepLoan<'a> {
     pub call: RoleCall<'a>,
     /// Borrows the host's extraction prompt, the words the native pass asks in.
     pub prompt: &'a ExtractionPrompt,
+    /// Holds the material this wake's admitted `host.wake` pre-hooks
+    /// added, FIX 10665, which native's slices lead with.
+    pub material: &'a [String],
     /// Borrows the admitted attempt's own pass guard.
     pub guard: &'a BudgetGuard,
     /// Borrows the original wake-pass deadline and finalize window.

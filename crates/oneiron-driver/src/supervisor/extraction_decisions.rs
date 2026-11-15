@@ -72,6 +72,8 @@ pub struct ExtractionAttemptLender {
     deadline: WakePassDeadline,
     /// Preserves the admitted attempt's frozen Unix time in milliseconds.
     now_ms: u64,
+    /// Retains the material this wake's admitted pre-hooks already added.
+    material: Vec<String>,
     /// Retains all terminal generation charges until the job hands off its outcome.
     charges: Mutex<StepChargeTally>,
 }
@@ -91,6 +93,7 @@ impl ExtractionAttemptLender {
             resources,
             deadline: context.deadline.clone(),
             now_ms: context.now_ms,
+            material: context.hook_material().to_vec(),
             charges: Mutex::new(StepChargeTally::new()),
         }
     }
@@ -162,6 +165,7 @@ impl DreamerDecisionLender for ExtractionAttemptLender {
         step(ExtractionStepLoan {
             call,
             prompt: &resources.decisions.extraction_prompt,
+            material: &self.material,
             guard: &resources.guard,
             deadline: &self.deadline,
             now_ms: self.now_ms,

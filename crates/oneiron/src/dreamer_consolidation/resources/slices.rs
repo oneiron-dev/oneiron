@@ -1,5 +1,6 @@
 //! Read-only extraction children attenuated from one prepared branch.
 use super::*;
+use crate::dreamer_consolidation::branch::QueuedBranch;
 use crate::dreamer_consolidation::call_labels::{CallLabelMap, LabelKind};
 
 pub(in crate::dreamer_consolidation) struct ExtractionSlice {
@@ -23,6 +24,19 @@ pub(in crate::dreamer_consolidation) struct ExtractionSlice {
     pub(in crate::dreamer_consolidation) sources: Vec<EntityId>,
 }
 
+/// Maps each queued TURN to its part line, so native slices and the
+/// bound step group by the same line.
+///
+/// A nightly thing's parts share a line where their exposure agrees,
+/// and any other part is a line of its own.
+pub(super) fn branch_turn_lines(branch: &QueuedBranch) -> BTreeMap<EntityId, u32> {
+    branch
+        .parts
+        .iter()
+        .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
+        .collect()
+}
+
 impl BranchResources<'_> {
     /// Group by slice line (FIX 8724) and co-mentioned known entities, then
     /// chunk each group. Every TURN appears in one chunk, and every child sees
@@ -44,11 +58,7 @@ impl BranchResources<'_> {
         type Group = Vec<(EntityId, TurnBodyFacts)>;
         let mut groups = BTreeMap::<(u32, Vec<EntityId>), Group>::new();
         let lines: BTreeMap<EntityId, u32> = match &self.origin {
-            ResourceOrigin::Branch(branch) => branch
-                .parts
-                .iter()
-                .flat_map(|part| part.turns.iter().map(move |turn| (*turn, part.line)))
-                .collect(),
+            ResourceOrigin::Branch(branch) => branch_turn_lines(branch),
             ResourceOrigin::Root(_) => self.turns.keys().map(|turn| (*turn, 0)).collect(),
         };
         let mut serial_width = self.priors.values().any(serial_width_prior);
@@ -56,27 +66,26 @@ impl BranchResources<'_> {
             let facts = self.turn(self.scope(), id)?;
             serial_width |= facts.imported;
             let (_, body) = self.source(self.scope(), id)?;
-            let mentioned = self.known.mentioned(&body, facts.text.as_deref());
             let line = lines.get(id).copied().unwrap_or_default();
-            groups
-                .entry((line, mentioned))
-                .or_default()
-                .push((*id, facts));
+            let key = crate::dreamer_consolidation::extraction_step::slice_group_key(
+                &self.known,
+                line,
+                &body,
+                facts.text.as_deref(),
+            );
+            groups.entry(key).or_default().push((*id, facts));
         }
         // The material the wake's admitted `host.wake` hooks added leads
         // every slice's input (FIX 10665): context for the call, never a
         // turn, so no label names it and nothing cites it. The material does
         // not say which hook added it, so a slice that carries any is
         // low-trust, kept off a thing agent's clean loan.
-        let mut material = String::new();
-        for text in self.prepared_wake.map_or(
-            &[][..],
-            crate::dreamer_consolidation::PreparedWake::hook_material,
-        ) {
-            material.push_str("[host material] ");
-            material.push_str(text);
-            material.push('\n');
-        }
+        let material = crate::dreamer_consolidation::extraction_step::render_host_material(
+            self.prepared_wake.map_or(
+                &[][..],
+                crate::dreamer_consolidation::PreparedWake::hook_material,
+            ),
+        );
         let mut slices = Vec::new();
         for ((_, entities), group) in groups {
             let known = self.known.slice(&entities);

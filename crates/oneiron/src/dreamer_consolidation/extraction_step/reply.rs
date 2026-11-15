@@ -1,5 +1,7 @@
 //! Checks and decodes a bound reply through the native wire and quote binder.
 
+use std::collections::BTreeSet;
+
 use oneiron_model::llm::LlmResponse;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -104,6 +106,8 @@ struct BoundReplySources<'p> {
     labels: &'p CallLabelMap,
     /// Borrows the single served piece and source pin for each TURN.
     pieces: &'p [ExtractionStepPiece],
+    /// Borrows the frozen Entity ids whose step scope holds a correctable claim.
+    correctable: &'p BTreeSet<EntityId>,
 }
 
 impl CallSources for BoundReplySources<'_> {
@@ -126,8 +130,9 @@ impl CallSources for BoundReplySources<'_> {
 enum CandidateReplyFault {
     /// Leaves a candidate that decode cannot take as a skip.
     Skipped(String),
-    /// Refuses an otherwise decoded candidate whose quote bound nothing.
-    Unbound(&'static str),
+    /// Refuses an otherwise decoded candidate whose quote bound
+    /// nothing, with its Listed subject when it has one.
+    Unbound(&'static str, Option<EntityId>),
 }
 
 impl BoundReplySources<'_> {
@@ -233,6 +238,10 @@ impl BoundReplySources<'_> {
             ));
         }
         let subject = self.subject(item, persons)?;
+        let subject_id = match &subject {
+            BoundExtractionSubject::Listed(hex) => EntityId::from_hex(hex).ok(),
+            BoundExtractionSubject::Declared(_) => None,
+        };
         let predicate = item
             .get("predicate")
             .and_then(Value::as_str)
@@ -264,7 +273,7 @@ impl BoundReplySources<'_> {
                 .map_err(|error| CandidateReplyFault::Skipped(error.to_string()))?;
             let locator = bound
                 .locator
-                .map_err(|fault| CandidateReplyFault::Unbound(fault.name()))?;
+                .map_err(|fault| CandidateReplyFault::Unbound(fault.name(), subject_id))?;
             let reference = locator.reference();
             let piece = self
                 .pieces
@@ -321,8 +330,15 @@ impl BoundReplySources<'_> {
                     continue;
                 }
                 Err(CandidateReplyFault::Skipped(reason)) => reason,
-                Err(CandidateReplyFault::Unbound(reason)) if authored => reason.to_owned(),
-                Err(CandidateReplyFault::Unbound(reason)) => {
+                Err(CandidateReplyFault::Unbound(reason, _)) if authored => reason.to_owned(),
+                Err(CandidateReplyFault::Unbound(reason, Some(id)))
+                    if self.correctable.contains(&id) =>
+                {
+                    format!(
+                        "quote unbound ({reason}); the subject holds a correctable claim, skipped like native"
+                    )
+                }
+                Err(CandidateReplyFault::Unbound(reason, _)) => {
                     return Err(format!(
                         "extraction candidate {index} cites outside its source: {reason}",
                     ));
@@ -336,12 +352,14 @@ impl BoundReplySources<'_> {
     }
 }
 
-/// Owns a checked call's labels and pieces so the durable check can outlive this borrow.
+/// Owns a checked call's labels, pieces and correctable set so the
+/// durable check can outlive this borrow.
 pub(super) fn check_bound_reply(
     prepared: &PreparedExtractionStep,
 ) -> impl Fn(&LlmResponse) -> Result<(), String> + Send + Sync + 'static {
     let labels = prepared.labels.clone();
     let pieces = prepared.pieces.clone();
+    let correctable = prepared.correctable.clone();
     move |response| {
         check_extraction_reply(response)?;
         if authored_fallback(response) {
@@ -350,6 +368,7 @@ pub(super) fn check_bound_reply(
         BoundReplySources {
             labels: &labels,
             pieces: &pieces,
+            correctable: &correctable,
         }
         .decode(response)
         .map(|_| ())
@@ -364,6 +383,7 @@ pub(super) fn decode_bound_reply(
     let reply = BoundReplySources {
         labels: &prepared.labels,
         pieces: &prepared.pieces,
+        correctable: &prepared.correctable,
     }
     .decode(response)
     .map_err(MemoryError::bad_request)?;

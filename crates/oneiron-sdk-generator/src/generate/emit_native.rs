@@ -179,7 +179,7 @@ pub(crate) fn native_boundary(
         let name = name_of(&first)?;
         setup = if language == "napi" {
             format!(
-                "let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!(\"invalid keyed request: {{error}}\"), suggestions: vec![\"Use the documented keyed DTO.\".to_owned()], successor_short_id: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None, resets_at: Vec::new(), reason_codes: Vec::new(), legal_hold: None, room_join_hold: None }}))?;"
+                "let input: serde_json::Value = serde_json::from_str(&{name}).map_err(|error| facade_error(oneiron::memory::MemoryError {{ code: oneiron::memory::MEMORY_CODE_BAD_REQUEST.to_owned(), message: format!(\"invalid keyed request: {{error}}\"), suggestions: vec![\"Use the documented keyed DTO.\".to_owned()], successor_short_id: None, extraction_layout: None, gate_denial: None, read_receipt: None, policy_denial: None, wrong_root: None, hook: None, retry_after: None, resets_at: Vec::new(), reason_codes: Vec::new(), legal_hold: None, room_join_hold: None }}))?;"
             )
         } else {
             format!("let input: serde_json::Value = decode({name}, \"{row_name}\")?;")

@@ -114,6 +114,7 @@ fn refused_block() -> MemoryError {
         message: "Context Board block scope or admission does not match".to_owned(),
         suggestions: vec!["Use the bound actor and a live registered board section.".to_owned()],
         successor_short_id: None,
+        extraction_layout: None,
         gate_denial: None,
         read_receipt: None,
         policy_denial: None,

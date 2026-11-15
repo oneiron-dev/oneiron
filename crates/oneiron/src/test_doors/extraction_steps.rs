@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, PoisonError};
 
 use super::extraction_verdict::{
     ExtractionVerdictFixture, NativePackSpent, fixture_charge_binding_count, fixture_charge_units,
@@ -16,6 +17,7 @@ use super::extraction_verdict::{
 use crate::attempt_queue::AttemptId;
 use crate::dreamer_consolidation::{DREAMER_EXTRACTION_ROLE, RoleBackend, RoleBackends, RoleCall};
 use crate::dreamer_runner::{DreamerAttemptBinding, DreamerDecisionLender, ExtractionStepLoan};
+use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::decision::{DecisionBandPolicy, DecisionLadder, TypedDecision};
 use crate::llm::model_step::ModelStepReceipt;
@@ -29,6 +31,8 @@ pub struct ExtractionStepFixture {
     verdict: Arc<ExtractionVerdictFixture>,
     /// Lends the extraction step while true; lends nothing while false.
     lend: AtomicBool,
+    /// Holds the host material this wake's admitted pre-hooks added, lent to each step.
+    material: Mutex<Vec<String>>,
 }
 
 impl ExtractionStepFixture {
@@ -43,12 +47,18 @@ impl ExtractionStepFixture {
         Ok(Arc::new(Self {
             verdict,
             lend: AtomicBool::new(true),
+            material: Mutex::new(Vec::new()),
         }))
     }
 
     /// Stops lending the extraction step; receipts still answer without a loan.
     pub fn lend_nothing(&self) {
         self.lend.store(false, Ordering::SeqCst);
+    }
+
+    /// Stores `material` as this wake's admitted host material, lent to each later step lend.
+    pub fn set_hook_material(&self, material: Vec<String>) {
+        *self.material.lock().unwrap_or_else(PoisonError::into_inner) = material;
     }
 }
 
@@ -102,9 +112,16 @@ impl DreamerDecisionLender for FixtureStepLender {
             &binding,
             Some(&allow_extraction_step_egress),
         );
+        let material = self
+            .fixture
+            .material
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         step(ExtractionStepLoan {
             call,
             prompt: &resources.decisions.extraction_prompt,
+            material: &material,
             guard: &resources.guard,
             deadline: &resources.deadline,
             now_ms: resources.now_ms,
@@ -123,6 +140,41 @@ pub fn attach_extraction_step_lender(
     binding.lend_decisions(Arc::new(FixtureStepLender {
         fixture: Arc::clone(fixture),
     }))
+}
+
+/// One native extraction slice over the cited turns: its turns with its exact transcript.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NativeExtractionSlice {
+    /// Holds the slice's turns in native chunk order.
+    pub turns: Vec<EntityId>,
+    /// Holds the slice's exact transcript, host material first when any rode along.
+    pub transcript: String,
+}
+
+/// Renders the native extraction slices over `turns` of `attempt` with `material` as this wake's
+/// admitted host material, in native slice order, without running any model.
+///
+/// The helper inside the consolidation module prepares only this attempt, carries the material on
+/// its prepared wake, and calls native grouping, paging and rendering, so each transcript is the
+/// exact input a native extraction call would read. A bound step over the same turns and material
+/// must render the same bytes.
+///
+/// # Errors
+///
+/// An attempt the wake did not prepare, or the native slice build's own failures.
+pub fn native_extraction_slice_transcripts(
+    vault: &Vault,
+    attempt: AttemptId,
+    turns: &[EntityId],
+    material: &[String],
+) -> MemoryResult<Vec<NativeExtractionSlice>> {
+    let slices = crate::dreamer_consolidation::extraction_step::native_slice_transcripts_for_test(
+        vault, attempt, turns, material,
+    )?;
+    Ok(slices
+        .into_iter()
+        .map(|(turns, transcript)| NativeExtractionSlice { turns, transcript })
+        .collect())
 }
 
 /// Returns every spent generation the step legs accounted, in order.

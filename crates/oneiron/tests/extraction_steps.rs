@@ -32,9 +32,9 @@ use support::{
     read_bound_extraction_page, step_plain_reply,
 };
 
-/// Two served refs, one with a byte range, run on the served words only: the submit finishes with
-/// the scripted output and a claim ref, the backend saw one request holding the cited spans and no
-/// uncited word, the bound receipt replays the same result, and the same submit again replays its
+/// One served byte range runs as one native slice on the served words only: the submit finishes
+/// with the scripted output and a claim ref, the backend saw one request holding the cited span
+/// and no uncited word, the bound receipt replays the same result, and the same submit replays its
 /// memo with no second generation and one terminal charge. A key the attempt never ran answers
 /// not-found.
 #[test]
@@ -45,7 +45,11 @@ fn a_bound_step_runs_on_served_words_and_replays_its_memo() -> ExtractionStepTes
     stand_steward_grant(&vault, actor, &STEWARD_VERBS)?;
     let witnessed = witness_extraction_turns(
         &vault,
-        &["owen likes tea", "owen likes coffee", "yuki likes tea"],
+        &[
+            "before owen likes tea and coffee after",
+            "owen likes coffee",
+            "yuki likes tea",
+        ],
     )?;
     let (id, admitted) = enqueue_admitted_extraction_attempt(&vault, &witnessed.turns, QUEUE_NOW)?;
     let binding = bind_extraction(&vault, &admitted)?;
@@ -55,14 +59,11 @@ fn a_bound_step_runs_on_served_words_and_replays_its_memo() -> ExtractionStepTes
     let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
     let fixture = ExtractionStepFixture::new(backend.clone())?;
     let binding = attach_extraction_step_lender(bind_extraction(&vault, &admitted)?, &fixture);
-    let request = extraction_step_request(json!([
-        extraction_step_evidence(&turns[0].0, turns[0].1.clone(), None),
-        extraction_step_evidence(
-            &turns[1].0,
-            turns[1].1.clone(),
-            Some(json!({"start": 11, "end": 17})),
-        ),
-    ]));
+    let request = extraction_step_request(json!([extraction_step_evidence(
+        &turns[0].0,
+        turns[0].1.clone(),
+        Some(json!({"start": 7, "end": 32})),
+    )]));
     let submit = invoke_bound_step(&binding, request.clone()).expect("the served step finishes");
     assert_eq!(submit["result"]["status"], json!("finished"));
     assert_eq!(submit["result"]["memoized"], json!(false));
@@ -88,7 +89,7 @@ fn a_bound_step_runs_on_served_words_and_replays_its_memo() -> ExtractionStepTes
     );
     assert!(submit.get("retry").is_some());
     assert_eq!(backend.call_count(), 1);
-    let texts = backend.request_texts();
+    let texts = backend.request_transcripts();
     assert_eq!(texts.len(), 1);
     assert!(
         texts[0].contains("owen likes tea"),
@@ -103,6 +104,16 @@ fn a_bound_step_runs_on_served_words_and_replays_its_memo() -> ExtractionStepTes
     assert!(
         !texts[0].contains("yuki likes tea"),
         "uncited words never render: {}",
+        texts[0]
+    );
+    assert!(
+        texts[0].contains("entity P1\n"),
+        "the slice lists its source author: {}",
+        texts[0]
+    );
+    assert!(
+        !texts[0].contains("before") && !texts[0].contains("after"),
+        "unserved words in the cited TURN never render: {}",
         texts[0]
     );
     assert!(extraction_step_state_present(&vault, id)?);
@@ -250,10 +261,12 @@ fn a_bound_step_without_a_loan_refuses() -> ExtractionStepTestResult<()> {
     let backend = Arc::new(CapturingStepBackend::new(step_plain_reply(), 100, 50));
     let fixture = ExtractionStepFixture::new(backend.clone())?;
     let binding = attach_extraction_step_lender(bind_extraction(&vault, &admitted)?, &fixture);
-    let request = extraction_step_request(json!([
-        extraction_step_evidence(&turns[0].0, turns[0].1.clone(), None),
-        extraction_step_evidence(&turns[1].0, turns[1].1.clone(), None),
-    ]));
+    // Submit one native slice while the other author's TURN stays queued.
+    let request = extraction_step_request(json!([extraction_step_evidence(
+        &turns[0].0,
+        turns[0].1.clone(),
+        None,
+    )]));
     let submit = invoke_bound_step(&binding, request.clone()).expect("the lent step finishes");
     let step_ref = submit["step_ref"]
         .as_str()

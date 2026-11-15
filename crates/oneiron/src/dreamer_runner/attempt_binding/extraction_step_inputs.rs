@@ -77,8 +77,7 @@ impl DreamerAttemptBinding {
                 },
             )
             .map_err(bound_branch_error)?;
-            let prepared = prepare_bound_step(vault, txn, &read, &bound, &pieces)
-                .map_err(bound_branch_error)?;
+            let prepared = prepare_bound_step(vault, txn, &read, &bound, &pieces, input.page)?;
             Ok((prepared, branch.subject().unwrap_or_else(|| self.attempt())))
         })?;
         Ok(checked.value)

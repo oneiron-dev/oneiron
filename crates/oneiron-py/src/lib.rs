@@ -155,6 +155,7 @@ fn decode<'de, T: Deserialize<'de>>(json: &'de str, what: &str) -> PyResult<T> {
                 "Check the {what} keys against the oneiron type stubs."
             )],
             successor_short_id: None,
+            extraction_layout: None,
             gate_denial: None,
             read_receipt: None,
             policy_denial: None,
@@ -176,6 +177,7 @@ fn encode_error(error: serde_json::Error) -> PyErr {
         message: format!("could not serialize the response: {error}"),
         suggestions: vec!["This is an Oneiron SDK bug; please report it.".to_owned()],
         successor_short_id: None,
+        extraction_layout: None,
         gate_denial: None,
         read_receipt: None,
         policy_denial: None,
