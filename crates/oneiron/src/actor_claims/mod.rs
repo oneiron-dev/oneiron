@@ -118,6 +118,8 @@ pub use self::validate::{actor_claim_lineage, is_actor_claim_predicate};
 pub(crate) use self::write::actor_claim_facet_in_txn;
 pub use self::write::{project_actor_claims_from_judgments, skill_fit_for, write_actor_claim};
 
+#[cfg(oneiron_test_support)]
+pub(crate) use self::candidate::verdict_stamp;
 pub use self::candidate::{
     CraftCandidateAnswer, CraftCandidateView, CraftCandidatesRequest, CraftCandidatesView,
     CraftVerdict, CraftVerdictView, answer_craft_candidate_as_owner, craft_candidates_as_owner,

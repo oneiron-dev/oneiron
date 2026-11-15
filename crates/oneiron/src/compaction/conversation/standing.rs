@@ -14,7 +14,6 @@ use super::storage::{ConversationLandingReceipt, conversation_receipts_in};
 use crate::claim::ScopedRead;
 use crate::compaction::decode_epoch_summary_body;
 use crate::compaction::home_pins::home_pins_stand_in;
-use crate::compaction::self_writer::hex32;
 use crate::dreamer_consolidation::conversation_span_text_in;
 use crate::store::conversation_span::ConversationSpanRead;
 use crate::{EntityId, Result};
@@ -30,7 +29,7 @@ fn evidence_reads_as_pinned(
 ) -> Result<bool> {
     let Some(pins) = spans
         .iter()
-        .map(|span| Some((span.turn, hex32(&span.fingerprint)?)))
+        .map(|span| Some((span.turn, span.pinned_fingerprint()?)))
         .collect::<Option<Vec<_>>>()
     else {
         return Ok(false);

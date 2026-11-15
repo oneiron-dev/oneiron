@@ -53,7 +53,7 @@ pub fn resume_fanout_launch_as(
     Ok(memory
         .resume_task_fanout(
             input.launch_ref,
-            plan_digest(&input.plan_digest)?,
+            decode_plan_digest(&input.plan_digest)?,
             launch_choice(input.ruling),
             owner,
             input.remembered_cap,
@@ -80,7 +80,7 @@ pub fn resume_fanout_launch_as_holder(
     Ok(memory
         .resume_task_fanout_as(
             input.launch_ref,
-            plan_digest(&input.plan_digest)?,
+            decode_plan_digest(&input.plan_digest)?,
             launch_choice(input.ruling),
             holder,
             input.remembered_cap,
@@ -115,7 +115,7 @@ pub fn ack_fanout_check_as(
     Ok(memory
         .ack_task_fanout_check(
             input.launch_ref,
-            plan_digest(&input.plan_digest)?,
+            decode_plan_digest(&input.plan_digest)?,
             input.answer,
             owner,
             input.remembered_cap,
@@ -124,7 +124,7 @@ pub fn ack_fanout_check_as(
 }
 
 /// Exactly 32 lowercase hex bytes.
-fn plan_digest(hex: &str) -> MemoryResult<[u8; 32]> {
+pub(crate) fn decode_plan_digest(hex: &str) -> MemoryResult<[u8; 32]> {
     let malformed = || MemoryError::bad_request("plan_digest must be 64 lowercase hex digits");
     if hex.len() != 64 {
         return Err(malformed());

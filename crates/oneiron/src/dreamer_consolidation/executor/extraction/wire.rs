@@ -261,7 +261,7 @@ fn prospective_queries(candidate: &serde_json::Value) -> Result<Vec<String>> {
 
 /// A 32-hex id. Only a candidate's `rel` that names no listed relationship
 /// label still reads one (FIX 7575).
-pub(super) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
+pub(crate) fn entity_id_from_hex(hex: &str) -> Option<EntityId> {
     let hex = hex.trim();
     if hex.len() != 32 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         return None;

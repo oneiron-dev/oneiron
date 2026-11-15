@@ -130,7 +130,7 @@ impl ConversationCheckDeclaration {
     fn pins(&self) -> Option<Vec<(EntityId, [u8; 32])>> {
         self.turns
             .iter()
-            .map(|span| Some((span.turn, hex32(&span.fingerprint)?)))
+            .map(|span| Some((span.turn, span.pinned_fingerprint()?)))
             .collect()
     }
 
@@ -514,16 +514,4 @@ fn record(
         settled.verdict,
         now,
     )
-}
-
-/// A 64-character lowercase hex digest's bytes.
-fn hex32(hex: &str) -> Option<[u8; 32]> {
-    if hex.len() != 64 {
-        return None;
-    }
-    let mut out = [0_u8; 32];
-    for (index, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(hex.get(index * 2..index * 2 + 2)?, 16).ok()?;
-    }
-    Some(out)
 }

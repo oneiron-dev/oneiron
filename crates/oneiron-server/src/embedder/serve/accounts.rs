@@ -54,7 +54,7 @@ impl Caller {
 
 /// One account's row: its id, its key's digest and its soft quota.
 #[derive(Debug, PartialEq, Eq)]
-struct AccountKey {
+pub(crate) struct AccountKey {
     id: Arc<str>,
     key_sha256: [u8; 32],
     daily_input_tokens: Option<u64>,
@@ -249,7 +249,7 @@ fn toml_refusal(text: &str, error: &toml::de::Error) -> anyhow::Error {
 /// The rows of an accounts file's text: each id non-empty and named once,
 /// each digest 64 hex digits, not an empty key's, and given to one account
 /// only, and each soft quota, if set, at least one token.
-fn parse_rows(text: &str) -> anyhow::Result<Vec<AccountKey>> {
+pub(crate) fn parse_rows(text: &str) -> anyhow::Result<Vec<AccountKey>> {
     let file: AccountsFile = toml::from_str(text).map_err(|error| toml_refusal(text, &error))?;
     let empty_key: [u8; 32] = Sha256::digest(b"").into();
     let mut rows: Vec<AccountKey> = Vec::with_capacity(file.accounts.len());

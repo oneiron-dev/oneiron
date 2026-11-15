@@ -337,7 +337,7 @@ pub(super) fn decode_graph(id: &EntityId, body: &ClaimBody) -> Result<RepoProjec
         .collect::<Result<Vec<_>>>()?;
     let known_history = match field(map, "known_history")? {
         Value::Nil => None,
-        value => Some(digest_of(value)?),
+        value => Some(digest_from_value(value)?),
     };
     let audience = match text(field(map, "audience")?)? {
         AUDIENCE_MASKED => RepoProjectionAudience::Masked,
@@ -390,7 +390,8 @@ pub(super) fn digest_value(digest: &[u8; 32]) -> Value {
     Value::from(crate::entity_id::bytes_to_hex_lower(digest))
 }
 
-pub(super) fn digest_of(value: &Value) -> Result<[u8; 32]> {
+/// The digest a [`digest_value`] holds.
+pub(crate) fn digest_from_value(value: &Value) -> Result<[u8; 32]> {
     let hex = text(value)?.as_bytes();
     let mut digest = [0_u8; 32];
     if hex.len() != 64 {

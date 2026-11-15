@@ -100,7 +100,7 @@ fn deliver(
             return NOT_CONFIGURED;
         }
     };
-    let Some(expected) = signature.as_deref().and_then(decode_hex) else {
+    let Some(expected) = signature.as_deref().and_then(signature_bytes) else {
         return UNSIGNED;
     };
     match crate::builtin_host::hmac_matches(
@@ -159,7 +159,8 @@ fn refused(error: &LinearSyncError) -> Reply {
     }
 }
 
-fn decode_hex(text: &str) -> Option<Vec<u8>> {
+/// A signature header's bytes.
+pub(crate) fn signature_bytes(text: &str) -> Option<Vec<u8>> {
     let text = text.trim();
     if text.len() % 2 != 0 || !text.is_ascii() {
         return None;

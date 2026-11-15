@@ -102,6 +102,8 @@ pub(crate) use attempt_reads::{declare_attempt_reads, record_attempt_reads};
 pub use branch::{BranchTurn, ConsolidationBranchPlan, ConversationPart};
 pub(crate) use conflict::topic_key_canonical_bytes;
 pub use conflict::*;
+#[cfg(oneiron_test_support)]
+pub(crate) use executor::extraction::entity_id_from_hex;
 pub use executor::*;
 pub(crate) use extracted_people::{delete_lineage_origin_in_txn, pin_lineage_origin_in_txn};
 pub use gap::*;

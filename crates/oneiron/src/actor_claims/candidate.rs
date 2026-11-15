@@ -613,7 +613,7 @@ fn candidate_card(
 }
 
 /// What an owner's verdict row says, read back from its evidence.
-struct VerdictStamp {
+pub(crate) struct VerdictStamp {
     candidate: String,
     candidate_hash: String,
     verdict: CraftVerdict,
@@ -625,7 +625,7 @@ struct VerdictStamp {
 /// whose evidence is exactly the candidate's dreaming evidence plus the
 /// candidate, its hash, the verdict its approval says, the owner and the
 /// receipt, each once.
-fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
+pub(crate) fn verdict_stamp(body: &ClaimBody) -> Option<VerdictStamp> {
     if !matches!(
         body.predicate.as_str(),
         PREDICATE_ACTOR_LESSON | PREDICATE_ACTOR_FAILURE_MODE
