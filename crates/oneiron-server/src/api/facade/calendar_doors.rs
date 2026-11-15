@@ -74,8 +74,8 @@ pub(crate) async fn vault_calendar_instances_move(
 }
 
 use oneiron::calendar::connectors::door::{
-    self as connector, CalendarConnectorConfigureRequest, CalendarConnectorKillRequest,
-    CalendarConnectorRegistration, CalendarConnectorRequest, CalendarConnectorWriteRequest,
+    self as connector, CalendarConnectorKillRequest, CalendarConnectorRegistration,
+    CalendarConnectorRequest, CalendarConnectorWriteRequest,
 };
 use oneiron::calendar::{CalDavConnector, CalendarSyncOutcome, RemoteWriteReceipt};
 use oneiron::consent::AuthenticatedOwner;
@@ -101,20 +101,6 @@ async fn as_owner<T: Send + 'static>(
         (actor, EdgeActorClass::Human),
         verb,
         move |server, _, memory| act(server, memory, owner),
-    )
-    .await
-}
-
-pub(crate) async fn calendar_connector_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarConnectorConfigureRequest,
-) -> Listed<CalendarConnectorRegistration> {
-    as_owner(
-        server,
-        auth,
-        "calendar.connector.configure",
-        move |_, memory, owner| connector::configure(&memory, &owner, &input),
     )
     .await
 }
@@ -237,23 +223,8 @@ pub(crate) async fn calendar_connector_write(
 
 use oneiron::calendar::ingest::CustodyDoorIcsFeedFetcher;
 use oneiron::calendar::ingest::feed_door::{
-    self as feed, CalendarIcsFeedConfigureRequest, CalendarIcsFeedRegistration,
-    CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
+    self as feed, CalendarIcsFeedRequest, CalendarIcsFeedStatus, CalendarIcsPollCompletion,
 };
-
-pub(crate) async fn calendar_ics_configure(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    input: CalendarIcsFeedConfigureRequest,
-) -> Listed<CalendarIcsFeedRegistration> {
-    as_owner(
-        server,
-        auth,
-        "calendar.ics.configure",
-        move |_, memory, owner| feed::configure(&memory, &owner, &input),
-    )
-    .await
-}
 
 pub(crate) async fn calendar_ics_status(
     server: &Arc<SyncServer>,

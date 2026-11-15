@@ -48,10 +48,11 @@ header, or a bare bearer token. No credential is stored in an endpoint URL.
 
 ## CalDAV
 
-`calendar.connector.configure` accepts:
+A seat is the setting `calendar.connector_seat`, one item per seat ref. The owner
+installs it with `vault.settings.set`:
 
 ```json
-{"config":{"seat_ref":"work","secret_ref":"caldav-work","system":"caldav-work","calendar_ref":"Personal","cadence_jitter_min_seconds":300,"cadence_jitter_max_seconds":900},"endpoint":"https://dav.example.test/"}
+{"key":"calendar.connector_seat","item":"work","scope":{"kind":"vault"},"value":{"config":{"seat_ref":"work","secret_ref":"caldav-work","system":"caldav-work","calendar_ref":"Personal","cadence_jitter_min_seconds":300,"cadence_jitter_max_seconds":900},"endpoint":"https://dav.example.test/"}}
 ```
 
 The config is the engine's existing `CalendarConnectorSeatConfig`. This host
@@ -59,7 +60,8 @@ supports its CalDAV provider. Give the credential a read binding for effector
 `calendar.caldav:<seat_ref>`. Store an app-password credential as a complete
 Basic Authorization header. `calendar_ref` selects the exact collection href,
 absolute collection URL or DAV display name found by principal/home discovery.
-An identical setup is idempotent; a different configuration uses a new seat ref.
+The item is the config's `seat_ref`. An identical setup is idempotent; an installed
+seat is never changed or cleared, so a different configuration uses a new seat ref.
 
 - `calendar.connector.get({seat_ref})` returns the installed endpoint, seat
   config, real cursor, kill-switch state and last sync observation, or `null`.

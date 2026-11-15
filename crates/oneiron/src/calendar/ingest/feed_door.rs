@@ -1,24 +1,25 @@
-//! Owner-installed ICS feeds and public observations of completed polls.
+//! Owner-installed ICS feeds and public observations of completed polls. A feed's
+//! configuration is the `calendar.ics_feed` setting, one item per system; this module keeps
+//! each feed's last completed poll.
 use serde::{Deserialize, Serialize};
 
+use super::poll::enqueue_ics_feed_poll_in_txn;
 use super::{
     IcsFeedCursorSnapshot, IcsFeedFetcher, IcsFeedPollConfig, IcsPollRunState,
-    enqueue_ics_feed_poll, ics_feed_cursor_snapshot, run_ics_feed_poll_with_screener,
+    ics_feed_cursor_snapshot, run_ics_feed_poll_with_screener,
 };
 use crate::calendar::safeguard::{CALENDAR_SAFEGUARD_CONFIG_KEY, CalendarBodyScreener};
+use crate::calendar::setting_keys::ICS_FEED;
 use crate::consent::AuthenticatedOwner;
 use crate::memory::{KeyValueAddress, Memory, MemoryError, MemoryResult};
+use crate::setting::{Kind, SettingChange, SettingMode};
 use crate::side_table::{self, Named, SideTable};
 use crate::{EdgeActorClass, Vault};
+use oneiron_verb_wire::calendar::ingest::poll::MAX_SYSTEM_BYTES;
 
-const FEEDS: SideTable<String, CalendarIcsFeedRegistration, Named> =
-    SideTable::new(&side_table::CALENDAR_ICS_FEED_CONFIG);
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct CalendarIcsFeedConfigureRequest {
-    pub config: IcsFeedPollConfig,
-}
+/// Each feed's last completed poll, by system. The configuration is the setting's.
+const POLLS: SideTable<String, CalendarIcsPollCompletion, Named> =
+    SideTable::new(&side_table::CALENDAR_ICS_FEED_POLL);
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::calendar::ingest::feed_door::{
@@ -53,41 +54,81 @@ fn check_owner(
     Ok(())
 }
 
-/// A system names exactly one complete feed: two feeds sharing a system would
-/// otherwise cancel each other's absent UIDs. Reconfiguration cannot change it.
-/// Installation starts the feed's poll chain, due at once; a chain already
+/// The systems `calendar.ics_feed` admits as items: the names a feed config itself admits.
+pub(crate) fn is_feed_system(item: &str) -> bool {
+    !item.is_empty() && item.len() <= MAX_SYSTEM_BYTES && !item.chars().any(char::is_control)
+}
+
+/// The installed feed of `system` with its last completed poll, or none when no feed is
+/// installed there (or its configuration row does not read).
+pub(crate) fn registration_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    system: &str,
+) -> crate::Result<Option<CalendarIcsFeedRegistration>> {
+    if !is_feed_system(system) {
+        return Ok(None);
+    }
+    let Some(config) = ICS_FEED.read_in_txn(vault, txn, &[], Some(system))?.value else {
+        return Ok(None);
+    };
+    let last_poll = POLLS.get(&vault.store, txn, &config.system)?;
+    Ok(Some(CalendarIcsFeedRegistration { config, last_poll }))
+}
+
+/// The `calendar.ics_feed` hook, in the write that changes a feed's row. It keeps the rules the
+/// configure door had: a system names exactly one complete feed (two feeds sharing a system
+/// would otherwise cancel each other's absent UIDs), so a value row sits at its own system,
+/// once; an installed feed is immutable (a change or a clear is refused; a new configuration
+/// takes a new system), and a system an earlier feed polled under is never installed again.
+/// Installing a feed starts its poll chain, due at once, in the same write; a chain already
 /// pending for the feed is adopted, never forked.
-pub fn configure(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: &CalendarIcsFeedConfigureRequest,
-) -> MemoryResult<CalendarIcsFeedRegistration> {
-    input
-        .config
-        .validate()
-        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    let row = memory.with_verified_actor_write_txn(|txn| {
-        check_owner(memory, owner, txn)?;
-        let vault = memory.vault();
-        if let Some(row) = FEEDS.get(&vault.store, txn, &input.config.system)? {
-            if row.config == input.config {
-                return Ok(row);
-            }
-            return Err(MemoryError::bad_request(
-                "an installed ICS feed is immutable; use a new system",
-            ));
-        }
-        let row = CalendarIcsFeedRegistration {
-            config: input.config.clone(),
-            last_poll: None,
-        };
-        FEEDS.put(&vault.store, txn, &input.config.system, &row)?;
-        Ok(row)
-    })?;
-    let vault = memory.vault();
-    enqueue_ics_feed_poll(vault, row.config.clone(), vault.now_recorded_at())
-        .map_err(|error| MemoryError::bad_request(error.to_string()))?;
-    Ok(row)
+///
+/// # Errors
+///
+/// `InvalidConfig` for a pin, a row with no system, a value naming another system, a change to
+/// an installed feed, or a system used before; storage errors.
+pub(crate) fn ics_feed_changed_in_txn(
+    vault: &Vault,
+    txn: &mut heed::RwTxn<'_>,
+    change: &SettingChange,
+) -> crate::Result<()> {
+    if change.mode != SettingMode::Value {
+        return Err(crate::Error::InvalidConfig(
+            "an ICS feed takes no pin".into(),
+        ));
+    }
+    let Some(system) = change.item.as_deref() else {
+        return Err(crate::Error::InvalidConfig(
+            "calendar.ics_feed is set per feed: name the system as the item".into(),
+        ));
+    };
+    let decode = |value: Option<&crate::setting::EncodedValue>| {
+        value
+            .and_then(Kind::<Option<IcsFeedPollConfig>>::decode)
+            .flatten()
+    };
+    if decode(change.prior.as_ref()).is_some() {
+        return Err(crate::Error::InvalidConfig(
+            "an installed ICS feed is immutable; use a new system".into(),
+        ));
+    }
+    let config = decode(change.value.as_ref());
+    let Some(config) = config else {
+        return Ok(());
+    };
+    if config.system != system {
+        return Err(crate::Error::InvalidConfig(
+            "the feed's system must be the setting's item".into(),
+        ));
+    }
+    if POLLS.contains(&vault.store, &*txn, &config.system)? {
+        return Err(crate::Error::InvalidConfig(
+            "this system named an earlier feed; use a new system".into(),
+        ));
+    }
+    enqueue_ics_feed_poll_in_txn(vault, txn, &config, change.at)?;
+    Ok(())
 }
 
 pub fn get(
@@ -98,7 +139,7 @@ pub fn get(
     let vault = memory.vault();
     let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
     check_owner(memory, owner, &txn)?;
-    Ok(FEEDS.get(&vault.store, &txn, &input.system)?)
+    Ok(registration_in_txn(vault, &txn, &input.system)?)
 }
 
 pub fn status(
@@ -127,10 +168,7 @@ pub fn check_installed_feed(
 ) -> crate::Result<()> {
     let txn = vault.store.env.read_txn()?;
     owner.revalidate_in_txn(vault, &txn)?;
-    if FEEDS
-        .get(&vault.store, &txn, &config.system)?
-        .is_none_or(|row| row.config != *config)
-    {
+    if registration_in_txn(vault, &txn, &config.system)?.is_none_or(|row| row.config != *config) {
         return Err(crate::Error::InvalidConfig(
             "ICS feed is not installed".into(),
         ));
@@ -160,8 +198,7 @@ pub fn observe_poll(
     memory.with_verified_actor_write_txn(|txn| {
         check_owner(memory, owner, txn)?;
         let vault = memory.vault();
-        let mut row = FEEDS
-            .get(&vault.store, txn, &config.system)?
+        let row = registration_in_txn(vault, txn, &config.system)?
             .ok_or_else(|| MemoryError::not_found("ICS feed is not configured"))?;
         if row.config != *config {
             return Err(MemoryError::bad_request("ICS feed moved during poll"));
@@ -172,8 +209,7 @@ pub fn observe_poll(
             result,
             cursor,
         };
-        row.last_poll = Some(completion.clone());
-        FEEDS.put(&vault.store, txn, &config.system, &row)?;
+        POLLS.put(&vault.store, txn, &config.system, &completion)?;
         Ok(completion)
     })
 }
