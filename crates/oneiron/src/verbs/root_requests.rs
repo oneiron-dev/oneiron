@@ -5,11 +5,13 @@
 //! 5598): `vault.roots.requests.create` over [`Vault::request_root_change`]
 //! (`POST /v1/owner/roots/requests`), `vault.roots.requests.list` over
 //! [`Vault::pending_root_requests`] (`GET /v1/owner/roots/requests`) and
-//! `vault.owner_work.get` over [`Vault::owner_work_receipt`]
-//! (`GET /v1/owner/owner-work/{request}`). A server hands each the owner's
-//! in-request proof, as `/v1/owner` takes it, and where his say-so reached
-//! this install, for the act's audit record only; an embedded handle
-//! answers as its own owner, on this install. Ids only: no seed, piece,
+//! `vault.owner_work.get` over [`Vault::owner_work_receipt_as`]
+//! (`GET /v1/owner/owner-work/{request}`), which also reads for a live
+//! audit_read holder. A server hands each the owner's in-request proof, as
+//! `/v1/owner` takes it, and where his say-so reached this install, for the
+//! act's audit record only; an embedded handle answers as its own owner, on
+//! this install, or as a holder for `vault.owner_work.get`. Ids only: no
+//! seed, piece,
 //! passphrase, enrolment code or carry list is asked for; the material a
 //! change needs stays on the target's own route
 //! (`POST /v1/owner/roots/requests/run`). They add no state, no gate and no
@@ -18,6 +20,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::Vault;
+use crate::access_grant::AuditReader;
 use crate::authority::{ActSurface, RecoveryRootId, RootChange, authority_log_entity_id_from_hash};
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
@@ -217,22 +220,23 @@ pub fn list_root_requests_as(
 }
 
 /// `vault.owner_work.get` (FIX 5598): the receipt of the owner work request
-/// signed as entry `request`, as this install's fold stands, through
-/// [`Vault::owner_work_receipt`].
+/// signed as entry `request`, as this install's fold stands, for the owner
+/// or a holder of a live audit_read power (RULING AUDIT-READ-POWER-LIST =
+/// B), through [`Vault::owner_work_receipt_as`].
 ///
 /// # Errors
 ///
 /// `BAD_REQUEST` for a `request` that is not 64 lower-case hex; `NOT_FOUND`
-/// when this install folds no such request; a stale owner proof; storage
-/// errors.
+/// when this install folds no such request; a reader that is neither the
+/// owner nor a live holder; storage errors.
 pub fn owner_work_receipt_as(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: &OwnerWorkGetRequest,
 ) -> MemoryResult<OwnerWorkView> {
     let request = request_entry(&input.request)?;
     vault
-        .owner_work_receipt(owner, request)?
+        .owner_work_receipt_as(reader, request)?
         .map(OwnerWorkView::from)
         .ok_or_else(|| {
             MemoryError::not_found(format!(

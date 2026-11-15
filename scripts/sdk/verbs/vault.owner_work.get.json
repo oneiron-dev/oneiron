@@ -1,9 +1,9 @@
 {
   "name": "vault.owner_work.get",
-  "description": "The owner reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it.",
+  "description": "The owner or an audit_read holder reads where one owner work request stands, by its signed entry: recorded and awaiting its holder, enacted, refused, cancelled or superseded, as this install's fold derives it.",
   "input": "crate::task_verb::sdk::OwnerWorkGetRequest",
   "output": "crate::task_verb::sdk::OwnerWorkView",
-  "call": "crate::task_verb::sdk::owner_work_receipt_as(memory.vault(), &memory.embedded_owner(\"vault.owner_work.get\")?, &input)?",
+  "call": "crate::task_verb::sdk::owner_work_receipt_as(memory.vault(), &memory.audit_reader(\"vault.owner_work.get\")?, &input)?",
   "host_door": true,
   "host_door_lists": true,
   "scope": "Read",
@@ -13,5 +13,5 @@
   },
   "section": false,
   "openapi": true,
-  "host_door_proof": "owner"
+  "host_door_proof": "audit_reader"
 }

@@ -4,7 +4,8 @@
 //! kept (FIX 7036). HTTP, MCP and the SDK reach the
 //! engine writer the owner's routes reach, which admits the caller's own
 //! owner proof or an agent's own Grant that names the verb, in the write
-//! itself. The scope is the vault this server's meter is bound to, never a
+//! itself, and for the receipts also a live audit_read holder. The scope is
+//! the vault this server's meter is bound to, never a
 //! caller's: every billing owner's rows in it, the vault owner's and each
 //! room-paid payer account's (FIX 7035). The answers derive from host rows,
 //! which are no entity's: the doors list none.
@@ -68,8 +69,9 @@ async fn repair<T: Send + 'static>(
 /// The usage repair rows' early authority check (FIX 7039): the caller
 /// [`repair`] acts as, and its writer's own admission of it for `verb`
 /// (the owner's own proof on an owner-grade credential, else an agent's own
-/// Grant that names the verb), judged before the row's verb hooks fire. The
-/// writer admits the caller again when it acts.
+/// Grant that names the verb, or for the receipts a live audit_read holder),
+/// judged before the row's verb hooks fire. The writer admits the caller
+/// again when it acts.
 pub(super) fn repair_admits(
     server: &SyncServer,
     auth: &CoreAuth,
@@ -131,7 +133,9 @@ pub(crate) async fn vault_usage_events_remove_undecodable(
 }
 
 /// `vault.usage.repair.receipts` (FIX 7036): every receipt a removal kept for
-/// the metering scope, under the repair's own admission for this verb.
+/// the metering scope, under the repair's own admission for this verb: the
+/// owner, an agent whose Grant names it or a live audit_read holder (RULING
+/// AUDIT-READ-POWER-LIST = B).
 pub(crate) async fn vault_usage_repair_receipts(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,

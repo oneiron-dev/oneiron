@@ -91,7 +91,8 @@ pub(crate) async fn vault_roots_requests_list(
 }
 
 /// `vault.owner_work.get` (FIX 5598): where one owner work request stands,
-/// any kind; it names the rows its receipt reads.
+/// any kind, for the owner or a live audit_read holder (RULING
+/// AUDIT-READ-POWER-LIST = B); it names the rows its receipt reads.
 pub(crate) async fn vault_owner_work_get(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
@@ -101,8 +102,8 @@ pub(crate) async fn vault_owner_work_get(
     as_person_naming(
         server,
         VERB,
-        owner_proof(auth, server, VERB),
-        move |server, owner| sdk::owner_work_receipt_as(server.vault(), &owner, &input),
+        super::audit_read_doors::audit_reader(server, auth, VERB),
+        move |server, reader| sdk::owner_work_receipt_as(server.vault(), &reader, &input),
         |receipt| Some(root_request_receipt_rows(&receipt.receipt)),
     )
     .await

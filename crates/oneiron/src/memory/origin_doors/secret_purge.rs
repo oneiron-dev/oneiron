@@ -3,11 +3,13 @@
 //! purge of marked keys from one served repository's history and shows
 //! what it affects, `vault.code.secrets.purge.get` reads a plan and its
 //! receipt, and `vault.code.secrets.purge.execute` is the owner's
-//! confirmation of one plan. Owner-only, as every origin door is
-//! (`Memory::origin_owner`); a plan is read and executed only by the owner
-//! who made it. No door reads, returns or logs a value, span or excerpt.
+//! confirmation of one plan. Request and execute are owner-only, as every
+//! origin door is (`Memory::origin_owner`); get reads for the owner who
+//! made the plan or a live audit_read holder, whatever its owner. No door
+//! reads, returns or logs a value, span or excerpt.
 
 use super::*;
+use crate::access_grant::AuditReader;
 use crate::origin::secret_purge::{
     RepoSecretPurgeIdRequest, RepoSecretPurgePlan, RepoSecretPurgeReceipt, RepoSecretPurgeRequest,
     RepoSecretPurgeView,
@@ -25,15 +27,34 @@ impl Memory<'_> {
         Ok(self.vault.plan_repo_secret_purge(owner, &input)?)
     }
 
-    /// `vault.code.secrets.purge.get`: one plan of this owner's, and its
-    /// receipt once executed.
+    /// `vault.code.secrets.purge.get`: one plan and its receipt once
+    /// executed, for the owner who made it or a holder of a live audit_read
+    /// power (RULING AUDIT-READ-POWER-LIST = B). A holder reads a plan
+    /// whatever its owner. The view holds no secret value.
     pub fn code_secrets_purge_get_as(
         &self,
-        owner: &AuthenticatedOwner,
+        reader: &AuditReader,
         input: RepoSecretPurgeIdRequest,
     ) -> MemoryResult<RepoSecretPurgeView> {
-        let actor = self.origin_owner(owner)?;
-        self.owned_purge(actor, input.plan)
+        match reader {
+            AuditReader::Owner(owner) => {
+                let actor = self.origin_owner(owner)?;
+                self.owned_purge(actor, input.plan)
+            }
+            AuditReader::Holder(_) => {
+                let txn = self
+                    .vault
+                    .store
+                    .env
+                    .read_txn()
+                    .map_err(crate::Error::from)?;
+                reader.admit_in_txn(self.vault, &txn)?;
+                match self.vault.repo_secret_purge(input.plan)? {
+                    Some(view) => Ok(view),
+                    None => Err(MemoryError::not_found("repo secret purge plan not found")),
+                }
+            }
+        }
     }
 
     /// `vault.code.secrets.purge.execute`: runs this owner's plan, under

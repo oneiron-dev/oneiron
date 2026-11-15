@@ -80,7 +80,9 @@ async fn setup() -> (Fixture, Agent, Agent) {
                 ..Default::default()
             },
         )
-        .expect("create server"),
+        .expect("create server")
+        .with_usage_metering("billing-owner")
+        .expect("bind the usage meter"),
     );
     let issuer = vault.load_host_slip_issuer().expect("host slip issuer");
     let owner_slip = vault
@@ -360,5 +362,41 @@ fn an_audit_read_holder_reads_the_owners_call_receipt() {
             Value::Null,
             "after the revoke"
         );
+    });
+}
+
+/// `vault.usage.repair.receipts` on the served facade: every receipt a
+/// removal kept reads for a live audit_read holder on its own credential,
+/// and is refused before the grant, for another agent, and after the revoke.
+/// The metering scope holds no removal yet, so the holder reads an empty
+/// list.
+#[test]
+fn an_audit_read_holder_reads_the_usage_repair_receipts() {
+    run_on_engine_stack("audit-read-usage-repair-receipts", || async {
+        let (fixture, auditor, other) = setup().await;
+        let (status, body) =
+            as_agent(&fixture, &auditor, "vault.usage.repair.receipts", json!({})).await;
+        assert_forbidden(status, &body, "the receipts before any grant");
+
+        owner_changes(&fixture, "vault.audit_read.grant", &auditor).await;
+        let (status, body) =
+            as_agent(&fixture, &auditor, "vault.usage.repair.receipts", json!({})).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "the holder reads the receipts: {body}"
+        );
+        assert!(
+            body["receipts"].is_array(),
+            "the holder reads a list: {body}"
+        );
+        let (status, body) =
+            as_agent(&fixture, &other, "vault.usage.repair.receipts", json!({})).await;
+        assert_forbidden(status, &body, "the receipts for an agent without the power");
+
+        owner_changes(&fixture, "vault.audit_read.revoke", &auditor).await;
+        let (status, body) =
+            as_agent(&fixture, &auditor, "vault.usage.repair.receipts", json!({})).await;
+        assert_forbidden(status, &body, "the receipts after the revoke");
     });
 }

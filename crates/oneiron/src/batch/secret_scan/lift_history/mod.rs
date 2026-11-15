@@ -39,7 +39,7 @@ mod side_rows;
 mod sync_text;
 
 pub(crate) use self::frontier::{propose_typed_body_at_in_txn, typed_body_at_proposal_due_in_txn};
-pub use self::projection::secret_lift_as_owner_toward;
+pub use self::projection::{secret_lift_as_owner_toward, secret_lift_as_reader_toward};
 /// A masked repo read checks a blob's own record as the sweep does (FIX 8966).
 pub(in crate::batch::secret_scan) use self::proposals::owner_kept_in_txn;
 pub(crate) use self::sync_text::propose_sync_text_in_txn;
@@ -52,6 +52,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{SecretScanMode, secret_scan_mode_in_txn};
 use crate::Vault;
+use crate::access_grant::AuditReader;
 use crate::consent::AuthenticatedOwner;
 use crate::entity_id::EntityId;
 use crate::error::{Error, ErrorKind, GateError, Result};
@@ -1057,28 +1058,50 @@ fn live_owner_in_txn(
     Ok(actor)
 }
 
-/// `vault.secrets.lift_history`: the sweep's state for the owner, after
+/// `vault.secrets.lift_history`: the sweep's state for the owner or a holder
+/// of a live audit_read power (RULING AUDIT-READ-POWER-LIST = B), after
 /// closing the proposal `input.close` names and queueing a run when
-/// `input.start` asks for one.
+/// `input.start` asks for one. Close and start stay the owner's: a holder
+/// asking for either is refused.
 ///
 /// # Errors
-/// As [`Vault::close_secret_lift_proposal`] and [`Vault::start_secret_lift`].
-pub fn secret_lift_as_owner(
+/// As [`Vault::close_secret_lift_proposal`] and [`Vault::start_secret_lift`];
+/// a holder's close or start; or a reader that is neither the owner nor a
+/// live holder.
+pub fn secret_lift_as_reader(
     vault: &Vault,
-    owner: &AuthenticatedOwner,
+    reader: &AuditReader,
     input: &SecretLiftRequest,
 ) -> Result<SecretLiftStatus> {
-    if let Some(close) = &input.close {
-        vault.close_secret_lift_proposal(owner, &close.proposal, close.reason)?;
+    match reader {
+        AuditReader::Owner(owner) => {
+            if let Some(close) = &input.close {
+                vault.close_secret_lift_proposal(owner, &close.proposal, close.reason)?;
+            }
+            if input.start {
+                return vault.start_secret_lift(owner, vault.now_recorded_at());
+            }
+            {
+                // Every result body is pinned before the snapshot opens (FIX 7201).
+                let _bodies = vault.pin_all_result_bodies();
+                let txn = vault.store.env.read_txn()?;
+                live_owner_in_txn(vault, owner, &txn)?;
+            }
+            vault.secret_lift_status()
+        }
+        AuditReader::Holder(_) => {
+            if input.close.is_some() || input.start {
+                return Err(Error::Gate(GateError::ConsentOwnerNotAuthenticated(
+                    "only the vault owner runs the secret lift sweep",
+                )));
+            }
+            {
+                // Every result body is pinned before the snapshot opens (FIX 7201).
+                let _bodies = vault.pin_all_result_bodies();
+                let txn = vault.store.env.read_txn()?;
+                reader.admit_in_txn(vault, &txn).map(|_| ())?;
+            }
+            vault.secret_lift_status()
+        }
     }
-    if input.start {
-        return vault.start_secret_lift(owner, vault.now_recorded_at());
-    }
-    {
-        // Every result body is pinned before the snapshot opens (FIX 7201).
-        let _bodies = vault.pin_all_result_bodies();
-        let txn = vault.store.env.read_txn()?;
-        live_owner_in_txn(vault, owner, &txn)?;
-    }
-    vault.secret_lift_status()
 }

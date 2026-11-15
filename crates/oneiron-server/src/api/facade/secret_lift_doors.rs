@@ -1,14 +1,14 @@
-//! The host door of the owner's historical secret lift sweep,
+//! The host door of the historical secret lift sweep,
 //! `vault.secrets.lift_history` (OF-067). `host_doors` re-exports it, so the
 //! generated HTTP facade handler and the MCP dispatcher call it by the name
-//! every host door has. It takes the vault owner's proof as `/v1/owner` takes
-//! it (`owner_routes::owner`); the engine checks the owner again in its own
-//! transaction.
+//! every host door has. It takes the reader `audit_read_doors::audit_reader`
+//! admits: the vault owner's proof, or a live audit_read holder's credential;
+//! the engine checks the reader again in its own transaction.
 use std::sync::Arc;
 
 use oneiron::EntityId;
 use oneiron::memory::MemoryError;
-use oneiron::policy_model::{SecretLiftRequest, SecretLiftStatus, secret_lift_as_owner_toward};
+use oneiron::policy_model::{SecretLiftRequest, SecretLiftStatus, secret_lift_as_reader_toward};
 
 use super::host_doors::support::{Listed, internal, refused};
 use crate::auth::CoreAuth;
@@ -17,27 +17,29 @@ use crate::server::SyncServer;
 const VERB: &str = "vault.secrets.lift_history";
 
 /// `vault.secrets.lift_history`: the sweep's run in progress, its last
-/// receipt and the lift proposals still open, after queueing a run when the
-/// input's `start` asks for one. It lists each record a proposal it shows
-/// was filed from (`record:<id>`): the proposal's reason and suggested name
-/// come from that record. The run, its receipt, its counts and the proposals
-/// live in the sweep's side tables, which hold no row. Off this device a
-/// proposal filed from a record a world withheld from the caller's
-/// destination keeps is left out of the proposals and their counts, at the
-/// producer (FIX 8165); a queued run or a close it asked for stays.
+/// receipt and the lift proposals still open, for the owner or a live
+/// audit_read holder (RULING AUDIT-READ-POWER-LIST = B), after queueing a run
+/// when the input's `start` asks for one. Close and start stay the owner's.
+/// It lists each record a proposal it shows was filed from (`record:<id>`):
+/// the proposal's reason and suggested name come from that record. The run,
+/// its receipt, its counts and the proposals live in the sweep's side tables,
+/// which hold no row. Off this device a proposal filed from a record a world
+/// withheld from the caller's destination keeps is left out of the proposals
+/// and their counts, at the producer (FIX 8165); a queued run or a close it
+/// asked for stays.
 pub(crate) async fn vault_secrets_lift_history(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SecretLiftRequest,
 ) -> Listed<SecretLiftStatus> {
-    let owner = match super::owner_binding::facade_owner(server, auth, VERB) {
-        Ok(owner) => owner,
+    let reader = match super::audit_read_doors::audit_reader(server, auth, VERB) {
+        Ok(reader) => reader,
         Err(refusal) => return refused(refusal),
     };
     let server = Arc::clone(server);
     let destination = auth.destination();
     let answer = super::clock_ingress::run_blocking(move || {
-        secret_lift_as_owner_toward(server.vault(), &owner, &input, &destination)
+        secret_lift_as_reader_toward(server.vault(), &reader, &input, &destination)
             .map_err(MemoryError::from)
     })
     .await

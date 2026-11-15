@@ -4,6 +4,7 @@
 use ed25519_dalek::SigningKey;
 
 use super::OwnerWorkReceipt;
+use crate::access_grant::AuditReader;
 use crate::authority::{
     AuthorityEntryHash, AuthorityKey, AuthorityOp, FrontierSigner, MAX_PARENTS, OwnerWorkOutcome,
     OwnerWorkResult, authority_entry_hash, invalid_authority, next_sequence,
@@ -113,8 +114,22 @@ impl Vault {
         owner: &AuthenticatedOwner,
         request: AuthorityEntryHash,
     ) -> Result<Option<OwnerWorkReceipt>> {
+        self.owner_work_receipt_as(&AuditReader::Owner(owner.clone()), request)
+    }
+
+    /// [`Self::owner_work_receipt`] for `reader`: the owner on his proof, or
+    /// a holder of a live audit_read power (RULING AUDIT-READ-POWER-LIST =
+    /// B), admitted in the receipt's own read.
+    ///
+    /// # Errors
+    /// The reader is neither the owner nor a live holder, or a read fails.
+    pub fn owner_work_receipt_as(
+        &self,
+        reader: &AuditReader,
+        request: AuthorityEntryHash,
+    ) -> Result<Option<OwnerWorkReceipt>> {
         let txn = self.store.env.read_txn()?;
-        owner.revalidate_in_txn(self, &txn)?;
+        reader.admit_in_txn(self, &txn)?;
         let fold = self.authority_view_readonly_in_txn(&txn)?;
         Ok(OwnerWorkReceipt::of(&fold, request))
     }

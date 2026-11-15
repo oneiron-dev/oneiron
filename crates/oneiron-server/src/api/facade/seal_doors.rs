@@ -2,6 +2,7 @@
 use std::sync::Arc;
 
 use oneiron::EntityId;
+use oneiron::access_grant::AuditReader;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::self_heal::audit::doors::{
@@ -31,6 +32,28 @@ async fn as_owner<T: Send + 'static>(
             .await
             .map_err(|_| internal(verb))
             .and_then(|answer| answer);
+    let listed = answer.as_ref().map_or_else(|_| Vec::new(), rows);
+    (answer, listed)
+}
+
+async fn as_reader<T: Send + 'static>(
+    server: &Arc<SyncServer>,
+    auth: &CoreAuth,
+    verb: &'static str,
+    act: impl FnOnce(&SyncServer, &AuditReader) -> oneiron::Result<T> + Send + 'static,
+    rows: impl FnOnce(&T) -> Vec<EntityId>,
+) -> Listed<T> {
+    let reader = match super::audit_read_doors::audit_reader(server, auth, verb) {
+        Ok(reader) => reader,
+        Err(error) => return refused(error),
+    };
+    let server = Arc::clone(server);
+    let answer: MemoryResult<T> = super::clock_ingress::run_blocking(move || {
+        act(&server, &reader).map_err(MemoryError::from)
+    })
+    .await
+    .map_err(|_| internal(verb))
+    .and_then(|answer| answer);
     let listed = answer.as_ref().map_or_else(|_| Vec::new(), rows);
     (answer, listed)
 }
@@ -69,20 +92,21 @@ pub(crate) async fn vault_seal_audit(
     .await
 }
 
-/// `vault.seal.receipt`: the stored receipt, listing every row its content
-/// was derived from (FIX 8164): its subject, the attempt's TASK and result,
-/// and the rows its producers recorded its inputs read from. The facade's
-/// release judges it by them right before it is sent.
+/// `vault.seal.receipt`: the stored receipt for the owner or a live
+/// audit_read holder (RULING AUDIT-READ-POWER-LIST = B), listing every row
+/// its content was derived from (FIX 8164): its subject, the attempt's TASK
+/// and result, and the rows its producers recorded its inputs read from.
+/// The facade's release judges it by them right before it is sent.
 pub(crate) async fn vault_seal_receipt(
     server: &Arc<SyncServer>,
     auth: &CoreAuth,
     input: SealAttemptRequest,
 ) -> Listed<Option<SealReceiptView>> {
-    let (answer, rows) = as_owner(
+    let (answer, rows) = as_reader(
         server,
         auth,
         "vault.seal.receipt",
-        move |server, owner| doors::receipt_sourced_as_owner(server.vault(), owner, &input),
+        move |server, reader| doors::receipt_sourced_as_reader(server.vault(), reader, &input),
         |(_, rows)| rows.clone(),
     )
     .await;

@@ -9,7 +9,9 @@
 //! own proof, or an agent by its own live Grant from a live owner that names
 //! the verb. The right to list never admits a removal, and a host's
 //! operator root alone acts as nobody (FIX 2222). The receipts each removal
-//! kept are read under the same admission, by their own verb (FIX 7036).
+//! kept are read under the same admission, by their own verb (FIX 7036),
+//! or by a holder of a live audit_read power, judged in that same writer
+//! (RULING AUDIT-READ-POWER-LIST = B).
 
 use crate::authority::{NoStanding, PACT_STANDING_LAPSED, principal_standing_or_lapse_in_txn};
 use crate::consent::AuthenticatedOwner;
@@ -29,7 +31,8 @@ pub use oneiron_verb_wire::memory::usage_repair::{
 pub enum UsageRepairVerb {
     List,
     Remove,
-    /// The read of the receipts removals kept (FIX 7036).
+    /// The read of the receipts removals kept (FIX 7036), for the owner,
+    /// a Grant holder or a live audit_read holder.
     Receipts,
 }
 
@@ -84,9 +87,10 @@ impl Memory<'_> {
     /// too), and this handle's own human actor. Without one, the caller is
     /// this handle's agent, and one live Grant a live owner gave it must
     /// confer now and list `verb` by name; the credential it presented must
-    /// still be live. `act` reads and writes the host's rows in that same
-    /// writer, so what it removes is what its caller reviewed. A refusal
-    /// runs nothing.
+    /// still be live. For `Receipts`, a holder of a live audit_read power
+    /// also acts, judged in that same writer. `act` reads and writes the
+    /// host's rows in that same writer, so what it removes is what its
+    /// caller reviewed. A refusal runs nothing.
     pub fn with_usage_repair_txn<T>(
         &self,
         owner: Option<&AuthenticatedOwner>,
@@ -144,31 +148,37 @@ impl Memory<'_> {
                 {
                     return Err(refused(verb, "the caller's credential is no longer live"));
                 }
-                let standing = match self.actor_class() {
-                    EdgeActorClass::Agent | EdgeActorClass::System => {
-                        principal_standing_or_lapse_in_txn(
-                            self.vault(),
-                            txn,
-                            self.actor(),
-                            self.actor_class(),
-                            verb.name(),
-                        )?
-                    }
-                    EdgeActorClass::Human => Err(NoStanding::NotStanding),
-                };
-                let grant = match standing.map(|standing| standing.grant) {
-                    Ok(Some(grant)) => grant,
-                    Err(NoStanding::PactStandingLapsed) => {
-                        return Err(refused(verb, PACT_STANDING_LAPSED));
-                    }
-                    Ok(None) | Err(NoStanding::NotStanding) => {
-                        return Err(refused(
-                            verb,
-                            "no live Grant from a live owner names this agent and lists the verb",
-                        ));
-                    }
-                };
-                UsageRepairAuthority::Grant(grant.to_hex())
+                if verb == UsageRepairVerb::Receipts
+                    && self.vault().audit_read_live_in_txn(txn, self.actor())?
+                {
+                    UsageRepairAuthority::AuditRead(self.actor().to_hex())
+                } else {
+                    let standing = match self.actor_class() {
+                        EdgeActorClass::Agent | EdgeActorClass::System => {
+                            principal_standing_or_lapse_in_txn(
+                                self.vault(),
+                                txn,
+                                self.actor(),
+                                self.actor_class(),
+                                verb.name(),
+                            )?
+                        }
+                        EdgeActorClass::Human => Err(NoStanding::NotStanding),
+                    };
+                    let grant = match standing.map(|standing| standing.grant) {
+                        Ok(Some(grant)) => grant,
+                        Err(NoStanding::PactStandingLapsed) => {
+                            return Err(refused(verb, PACT_STANDING_LAPSED));
+                        }
+                        Ok(None) | Err(NoStanding::NotStanding) => {
+                            return Err(refused(
+                                verb,
+                                "no live Grant from a live owner names this agent and lists the verb",
+                            ));
+                        }
+                    };
+                    UsageRepairAuthority::Grant(grant.to_hex())
+                }
             }
         };
         Ok(UsageRepairCaller {
@@ -182,14 +192,19 @@ impl Memory<'_> {
 
 /// The repair's refusal of a caller it does not admit.
 fn refused(verb: UsageRepairVerb, why: &str) -> MemoryError {
+    let (takes, hint) = match verb {
+        UsageRepairVerb::Receipts => (
+            "takes the vault owner's own proof, an agent's own Grant that names it or a live audit_read power",
+            "Call with your own owner credential, have the owner grant this agent the verb by name, or hold a live audit_read power.",
+        ),
+        _ => (
+            "takes the vault owner's own proof or an agent's own Grant that names it",
+            "Call with your own owner credential, or have the owner grant this agent the verb by name.",
+        ),
+    };
     MemoryError::new(
         MEMORY_CODE_FORBIDDEN,
-        format!(
-            "{} takes the vault owner's own proof or an agent's own Grant that names it: {why}",
-            verb.name()
-        ),
-        &[
-            "Call with your own owner credential, or have the owner grant this agent the verb by name.",
-        ],
+        format!("{} {takes}: {why}", verb.name()),
+        &[hint],
     )
 }
