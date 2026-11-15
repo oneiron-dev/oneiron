@@ -481,9 +481,10 @@ pub(crate) fn move_side_row_custody_in_txn(
                     held.found_at = held.found_at.min(key.found_at);
                     // One custody holds its value one way. A row noted
                     // before keys recorded the form reads Raw, so a row that
-                    // says Encoded names the custody's form (REVIEW-7873 P3).
-                    if key.held == HeldForm::Encoded {
-                        held.held = HeldForm::Encoded;
+                    // names an encoding names the custody's form
+                    // (REVIEW-7873 P3).
+                    if !key.held.is_raw() {
+                        held.held = key.held;
                     }
                 }
                 None => merged.keys.push(key),

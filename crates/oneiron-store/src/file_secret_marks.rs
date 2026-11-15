@@ -133,8 +133,13 @@ pub enum HeldForm {
     Raw,
     /// The MessagePack encoding of a whole value that is neither text nor
     /// bytes: a credential field's array, map or number the mask sealed,
-    /// or a whole message part kept sealed.
+    /// a value sealed whole out of a MessagePack body or a claim, or a
+    /// whole message part kept sealed.
     Encoded,
+    /// The JSON text of a whole value that is neither text nor bytes,
+    /// sealed whole out of a JSON body: custody holds it as the body wrote
+    /// it, so a revealed value reads as JSON (FIX SEAL-WHOLE-VALUE-HELD-RAW).
+    Json,
 }
 
 impl HeldForm {
@@ -190,8 +195,9 @@ pub fn unmask_value(
 }
 
 /// One string of a body with the value back: the whole of it when it is the
-/// handle a credential field keeps (the decoded value when custody holds
-/// its encoding), each span's text form within it otherwise.
+/// handle a credential field or a value sealed whole keeps (the decoded
+/// value when custody holds its encoding or its JSON text), each span's
+/// text form within it otherwise.
 fn unmasked_text(
     text: &str,
     handle: &str,
@@ -202,6 +208,7 @@ fn unmasked_text(
     if text == handle {
         return Ok(Some(match held {
             HeldForm::Encoded => decoded_whole(value)?,
+            HeldForm::Json => json_whole(value)?,
             HeldForm::Raw => match std::str::from_utf8(value) {
                 Ok(value) => Value::from(value),
                 Err(_) => Value::Binary(value.to_vec()),
@@ -224,6 +231,13 @@ fn decoded_whole(encoded: &[u8]) -> Result<Value> {
             "a sealed value's encoding is not one whole value",
         )),
     }
+}
+
+/// The one whole value `json` holds, as the seal held a value it sealed
+/// whole out of a JSON body.
+fn json_whole(json: &[u8]) -> Result<Value> {
+    serde_json::from_slice(json)
+        .map_err(|_| Error::InvariantViolation("a sealed value's JSON text is not one whole value"))
 }
 
 pub fn as_text(value: &[u8]) -> Result<&str> {
