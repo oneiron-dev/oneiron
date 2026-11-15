@@ -47,6 +47,25 @@ a required floor from a measured engine baseline. The measured sentinel run caug
 `scripts/audit/mutation-evidence.json` records the outcomes and source hashes.
 The minimum count remains one so a touched-crate subset can run independently.
 
+`python3 scripts/audit/mutant_screen.py` is the prune's mutant screen (L8-02;
+canon `#tests-mutant-screen`: the prune loses nothing). It runs the same mutants
+under two suites: the old suite (the Rust tests at `--old`, the prune plan's
+census base `65a9a904107f`) and the pruned suite (`--pruned`, default
+`origin/main`). No commit holds the old suite in a runnable state, so the old
+suite is the pruned tree with every deleted test put back in its file and
+module; production code is the same bytes in both trees. Crates are ranked by
+deleted tests (`--crates` overrides); about 10 mutants per crate are drawn from
+the files that held them, seeded by the pruned commit, and pinned cargo-mutants
+runs them in each tree with the crate's whole suite. A mutant the old suite
+catches and the pruned suite misses is lost: the run exits 1 and names the
+restored tests that caught it. `--plan-only` reads git objects only and prints
+the deleted tests, the ranked crates and their files; run it before booking a
+full screen, which is hours of test builds on a 36 GiB fleet host and never a
+CI job. `--report report.json` re-judges a saved run, and `--old-outcomes` /
+`--pruned-outcomes` judge two sets of cargo-mutants `outcomes.json` files; both
+run without Cargo. The mutation audit above is a different check: a pinned
+sentinel corpus against a score floor.
+
 `python3 scripts/audit/coverage.py --collect --toolchain nightly` collects disjoint full-tier nextest,
 featureless libtest and doctest lanes with pinned cargo-llvm-cov. The doctest lane
 requires an already installed nightly toolchain with LLVM doctest instrumentation

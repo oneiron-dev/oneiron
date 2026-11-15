@@ -12,7 +12,7 @@ mod tests;
 use rmpv::Value;
 
 use crate::compaction::output::OutputRef;
-use crate::{EntityId, Error, Result};
+use crate::{EntityId, Result};
 pub use approval::{
     ApprovedRepresentation, RepresentationReview, schedule_approved_representation,
 };
@@ -24,14 +24,12 @@ pub const REPRESENTATION_FACET: &str = "dreamer.representation";
 const PREDICATE: &str = "dreamer.representation.proposal";
 use crate::attempt_queue::maintenance_predicate::CONTENT_PREFIX;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum RepresentationKind {
-    FollowUp,
-    Reply,
-    Introduction,
-    Post,
-}
+#[doc(hidden)]
+use oneiron_records::dreamer_runner::maintenance::representation::invalid;
+#[doc(hidden)]
+pub use oneiron_records::dreamer_runner::maintenance::representation::{
+    RepresentationCitation, RepresentationKind,
+};
 
 /// The host selects a bounded source set, never a new read grant. Both sets
 /// are read under the vault's Dreamer principal and current scoped-read policy.
@@ -50,26 +48,6 @@ pub struct RepresentationRequest {
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::dreamer_runner::maintenance::representation::RepresentationSourceRef;
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct RepresentationCitation {
-    #[serde(with = "crate::serialize::entity_ref")]
-    pub claim: EntityId,
-    pub revision: [u8; 32],
-    pub quote: String,
-}
-impl RepresentationCitation {
-    /// A stable in-text marker. The quote is validated against the cited
-    /// claim's exact revision, not accepted as a planner assertion.
-    pub fn marker(&self) -> String {
-        format!(
-            "[{}@{}]",
-            self.claim.to_hex(),
-            crate::entity_id::bytes_to_hex_lower(&self.revision)
-        )
-    }
-}
 
 /// A request as its packet keeps it: everything but the owner, so neither
 /// the packet's hash nor the claim it lands as names them (FIX 4512). The
@@ -154,10 +132,6 @@ impl Packet {
         Ok(format!("{CONTENT_PREFIX}{}", self.id()?.to_hex()))
     }
 }
-fn invalid() -> Error {
-    Error::InvalidClaimBody("invalid or stale representation proposal")
-}
-
 /// Every entity row a queued plan's input names: its packet's requested
 /// evidence and voice sources, its validated citations, and the reach-out a
 /// follow-up drafts from. The owner is not among them: they stand in the
