@@ -9,8 +9,9 @@
 //! out unless the owner set a home clearance for `OTHER` at or above their
 //! band; the unstamped and the public claim stay in; the audience's own
 //! clearance still applies on top, and this vault's own id is this vault.
-//! A pinned revision meets that clearance by its own stamp, not the live
-//! row's (the Sol review of PR 1).
+//! A pinned revision meets that clearance by its own stamp, which is its
+//! live row's: a rewrite that moves a claim's stamp is refused (the Sol
+//! review of PR 1).
 //!
 //! On main the file does not compile: `ConversationHome`, `homed_in` and the
 //! home-clearance doors do not exist.
@@ -434,6 +435,12 @@ fn the_vaults_own_id_is_homed_here() -> TestResult {
     Ok(())
 }
 
+/// The Sol review of PR 1 asked for a pinned sensitive revision under a live
+/// public rewrite. That pair cannot be written: a CLAIM's stamp is fixed at its
+/// birth, and a rewrite that moves it is refused (a changed sensitivity is a
+/// fork with a new id, `record_scope/stamping.rs`). So a pinned revision
+/// carries the stamp of its live row, and the audience's own clearance still
+/// withholds it, homed here and homed elsewhere.
 #[test]
 fn a_pinned_revision_meets_the_audience_by_its_own_stamp() -> TestResult {
     let fixture = fixture()?;
@@ -449,12 +456,29 @@ fn a_pinned_revision_meets_the_audience_by_its_own_stamp() -> TestResult {
         Some("sensitive"),
     )?;
     let revision = fixture.vault.pin_entity_revision(&rewritten)?;
-    write_claim(
+    let restamp = write_claim(
         &fixture.vault,
         rewritten,
         subject,
         "lighthouse pinned public note",
         Some("public"),
+    )
+    .expect_err("a rewrite that moves the claim's stamp is refused");
+    assert!(
+        matches!(
+            restamp.downcast_ref::<oneiron::Error>(),
+            Some(oneiron::Error::InvalidClaimBody(
+                "record scope restamp refused"
+            ))
+        ),
+        "the public rewrite is refused as a restamp, got {restamp}",
+    );
+    write_claim(
+        &fixture.vault,
+        rewritten,
+        subject,
+        "lighthouse pinned sensitive rewrite",
+        Some("sensitive"),
     )?;
     let pinned_ids = |ctx: DisclosureContext| -> TestResult<Vec<EntityId>> {
         let pack = fixture
@@ -471,12 +495,6 @@ fn a_pinned_revision_meets_the_audience_by_its_own_stamp() -> TestResult {
             .map(|entity| entity.id)
             .collect())
     };
-    assert!(
-        fixture
-            .pack_ids(fixture.with_contact()?)?
-            .contains(&rewritten),
-        "the live public rewrite reaches the contact",
-    );
     assert!(
         pinned_ids(DisclosureContext::resolve(
             &fixture.vault,
