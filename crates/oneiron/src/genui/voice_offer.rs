@@ -10,6 +10,7 @@ use crate::consent::{
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::GateError;
 use crate::genui::ConsentSurface;
+use crate::genui::setting_keys::VOICE_OFFER_LIFETIME;
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{Error, Result, Vault};
 use rand_core::{OsRng, RngCore};
@@ -17,7 +18,6 @@ use serde::{Deserialize, Serialize};
 
 const OFFERS: SideTable<Vec<u8>, StoredVoiceOffer, LegacyJson> =
     SideTable::new(&side_table::GENUI_VOICE_GRANT_OFFER);
-const OFFER_LIFETIME_SECONDS: u64 = 600;
 
 #[doc(hidden)]
 pub use oneiron_records::genui::voice_offer::VoiceGrantOffer;
@@ -83,9 +83,17 @@ impl Vault {
         // segment can still be displayed as an offer, with verification false.
         let owner_voice_print_verified =
             self.voice_owner_print_verified(voice_session_ref, segment_id, owner_actor)?;
+        // The owner's `genui.voice.offer_lifetime_secs`, ten minutes by
+        // default.
+        let lifetime = {
+            let txn = self.store.env.read_txn()?;
+            VOICE_OFFER_LIFETIME
+                .read_in_txn(self, &txn, &[], None)?
+                .value
+        };
         let expires_at = self
             .now_recorded_at()
-            .checked_add(OFFER_LIFETIME_SECONDS)
+            .checked_add(u64::from(lifetime.0))
             .ok_or(Error::ArithmeticOverflow("voice offer expiry"))?;
         let mut random = [0_u8; 32];
         OsRng.fill_bytes(&mut random);

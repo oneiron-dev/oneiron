@@ -14,6 +14,7 @@ use crate::store::GateSystemNoticeRecord;
 use crate::{EdgeActorClass, EntityId, Vault};
 
 use super::retrieval::invalid;
+use super::setting_keys::{IDENTITY_ASK_SECS, ROOM_CANDIDATES_MAX};
 use super::{
     AsrEvent, AsrEventKind, BrainEvent, BrainRequest, ControlEvent, GenerationEpoch, OutputStop,
     PartialEnricher, PartialRetrieval, PcmFrame, SafeguardRequest, SentenceEnforcement,
@@ -25,12 +26,14 @@ mod preparation;
 pub use preparation::PreparedAsr;
 
 /// How long a bound session's "who is this?" ask for a speaker it could
-/// not place stays open: the ask door's own default for an ask with no
-/// class (CALLS.md: FIX 1388 ask expiry).
-pub const VOICE_IDENTITY_ASK_SECONDS: u64 = 24 * 60 * 60;
+/// not place stays open while the owner has not set
+/// `voice.session.identity_ask_secs`: the ask door's own default for an ask
+/// with no class (CALLS.md: FIX 1388 ask expiry).
+pub const VOICE_IDENTITY_ASK_SECONDS: u32 = 24 * 60 * 60;
 
 /// The live contacts a speaker's "who is this?" ask offers at most, in the
-/// host's order (FIX 1388).
+/// host's order, while the owner has not set
+/// `voice.session.room_candidates_max` (FIX 1388).
 pub const VOICE_ROOM_CANDIDATES_MAX: u32 = 32;
 
 /// How long the person's speech over the agent's output runs before it
@@ -60,22 +63,32 @@ pub struct VoiceContainerBinding {
 impl VoiceContainerBinding {
     /// The binding of a session heard in the room `container`, recorded by
     /// `writer`, the session's authenticated person: each distinct contact of
-    /// `contacts`, in the host's order, up to [`VOICE_ROOM_CANDIDATES_MAX`],
-    /// is a candidate an unplaced speaker's ask offers, and each ask stays
-    /// open [`VOICE_IDENTITY_ASK_SECONDS`].
+    /// `contacts`, in the host's order, up to the owner's
+    /// `voice.session.room_candidates_max` ([`VOICE_ROOM_CANDIDATES_MAX`] by
+    /// default), is a candidate an unplaced speaker's ask offers, and each
+    /// ask stays open the owner's `voice.session.identity_ask_secs`
+    /// ([`VOICE_IDENTITY_ASK_SECONDS`] by default).
     ///
     /// # Errors
     ///
-    /// None today; the signature keeps the room's reads.
+    /// Storage errors reading the two keys.
     pub fn for_room(
         vault: &Vault,
         container: EntityId,
         writer: EntityId,
         contacts: impl IntoIterator<Item = EntityId>,
     ) -> Result<Self> {
-        let _ = vault;
+        let (ask, most) = {
+            let txn = vault.store.env.read_txn()?;
+            (
+                IDENTITY_ASK_SECS.read_in_txn(vault, &txn, &[], None)?.value,
+                ROOM_CANDIDATES_MAX
+                    .read_in_txn(vault, &txn, &[], None)?
+                    .value,
+            )
+        };
         let mut candidates = Vec::new();
-        let most = usize::try_from(VOICE_ROOM_CANDIDATES_MAX).unwrap_or(usize::MAX);
+        let most = usize::try_from(most).unwrap_or(usize::MAX);
         for contact in contacts {
             if candidates.len() >= most {
                 break;
@@ -89,7 +102,7 @@ impl VoiceContainerBinding {
             writer,
             writer_class: EdgeActorClass::Human,
             candidates,
-            ask_seconds: VOICE_IDENTITY_ASK_SECONDS,
+            ask_seconds: u64::from(ask.0),
         })
     }
 }

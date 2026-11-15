@@ -71,6 +71,7 @@ mod protocol;
 mod retrieval;
 mod safeguard;
 mod session;
+pub(crate) mod setting_keys;
 mod speakable;
 mod stream;
 pub use stream::{VoiceStreamConfig, VoiceStreamFailure, drive_voice_stream};
