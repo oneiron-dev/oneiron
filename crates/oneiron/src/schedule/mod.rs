@@ -113,12 +113,18 @@ pub struct JobPass<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct JobResult {
     pub ran: Ran,
-    /// For a repeating job that ran to its end: due again no later than this, whatever its
-    /// trigger says (work it saw coming before its next occurrence), but never sooner than its
-    /// first retry after the run's end. Ignored otherwise.
+    /// For a run that ended done: due again no later than this, but never sooner than its first
+    /// retry after the run's end. A repeating job keeps its trigger and is due at the earlier of
+    /// this and its next occurrence (work it saw coming before then). A one-time job
+    /// ([`Trigger::At`]) stays armed, due then (work it is still owed); with no `due_by` it is
+    /// done and its row goes. Ignored for a run that did not end done.
     pub due_by: Option<u64>,
     /// A housekeeping sweep's account of its work, for the housekeeping report.
     pub sweep_work: Option<SweepWork>,
+    /// The one-time rows a run that ended done served, each by its job's code and subject: the
+    /// write that records the run disarms them, so the run and what it covered commit together.
+    /// Ignored for a run that did not end done.
+    pub served: Vec<(&'static str, EntityId)>,
 }
 
 impl JobResult {
@@ -129,6 +135,7 @@ impl JobResult {
             ran,
             due_by: None,
             sweep_work: None,
+            served: Vec::new(),
         }
     }
 }

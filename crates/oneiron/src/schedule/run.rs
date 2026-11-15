@@ -5,7 +5,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use serde::{Deserialize, Serialize};
 
 use super::arm::{
-    ARM_VERB, DUE, ROWS, ScheduleRow, due_key, parse_row_key, row_key, store_row_in_txn,
+    ARM_VERB, DUE, ROWS, ScheduleRow, disarm_in_txn, due_key, parse_row_key, row_key,
+    store_row_in_txn,
 };
 use super::{
     ArmBy, Armed, EngineZones, JobPass, JobResult, JobSpec, Late, Ran, job_named, retry_after,
@@ -303,6 +304,12 @@ impl Vault {
             Ok(Err(_)) | Err(_) => JobResult::of(Ran::Failed),
         };
         self.with_write_txn_grouped(|txn| {
+            // A run that ended done and what it served commit together.
+            if matches!(ran.ran, Ran::Done) {
+                for (job, subject) in &ran.served {
+                    disarm_in_txn(&self.store, txn, job, Some(*subject))?;
+                }
+            }
             let Some(row) = ROWS.get(&self.store, txn, &key.to_vec())? else {
                 // Disarmed while it ran.
                 return Ok(());

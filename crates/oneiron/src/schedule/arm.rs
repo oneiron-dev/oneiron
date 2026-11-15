@@ -323,8 +323,7 @@ impl Vault {
                     "disarming needs the owner, the agent that armed it, or its class",
                 ));
             }
-            store_row_in_txn(&self.store, txn, &key, Some(&prior), None)?;
-            Ok(true)
+            disarm_in_txn(&self.store, txn, spec.code, subject)
         })
     }
 
@@ -463,8 +462,10 @@ pub(crate) fn disarm_in_txn(
 }
 
 /// The deadlines of `job` due by `until`: the subject and time of each of its rows armed at a
-/// time ([`Trigger::At`]) no later than `until`, in key order, at most `limit`. The job whose
-/// run serves them lists them before it starts, and disarms the ones its run covered.
+/// time ([`Trigger::At`]) no later than `until`, at most `limit`. It scans the job's key prefix
+/// in key order and skips a row armed with any other trigger. The job whose run serves them
+/// lists them before it starts, and its run's result names the ones it covered
+/// ([`super::JobResult::served`]).
 ///
 /// # Errors
 ///

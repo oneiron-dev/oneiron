@@ -6,11 +6,12 @@
 //! job, a one-time job at the deadline about a fresh id, so two notes of the
 //! same deadline are two rows, and the schedule's due index is the only index
 //! of them (DESIGN 15-setting-primitive, stage 5b). The note also makes the
-//! sweep's job due by its deadline. A run that covered deadlines disarms
-//! exactly the rows it listed before it started; a row noted since stays for
-//! the next run. A row whose time comes before a run covered it runs: it makes
-//! the sweep due and waits for the run that covers it. A deadline that moved or
-//! was settled early leaves a row that costs one run that finds nothing.
+//! sweep's job due by its deadline. A run that covered deadlines serves
+//! exactly the rows it listed before it started, and the write that records
+//! the run disarms them; a row noted since stays for the next run. A row whose
+//! time comes before a run covered it runs: it makes the sweep due and waits
+//! for the run that covers it. A deadline that moved or was settled early
+//! leaves a row that costs one run that finds nothing.
 //!
 //! Live-body edits also note the annotation follow sweep as due for the next
 //! running-host pass. That sweep's deadlines do not wake a stopped vault.
@@ -25,7 +26,9 @@ use crate::schedule::Trigger;
 use crate::store::Store;
 use crate::store::housekeeping_schedule::HousekeepingSweep;
 
-/// Deadlines one covering run disarms at most; the rest go with the next run.
+/// Deadlines one covering run serves at most. The rest run as deadlines no run
+/// covered, and each makes the sweep due once more: about one more run per this
+/// many rows.
 const CLEAR_LIMIT: usize = 4096;
 
 /// Notes that `sweep` has work due at `at`, in the caller's transaction, so
@@ -60,22 +63,21 @@ pub(crate) fn due_by(
     crate::schedule::deadlines_in_txn(&vault.store, &txn, deadline.code, now, CLEAR_LIMIT)
 }
 
-/// Disarms the deadlines of `sweep` a covering run listed before it started.
-pub(crate) fn clear(
-    vault: &Vault,
+/// The deadlines of `sweep` that a run which ended done served, out of those it
+/// listed before it started: each one due by `covered_until`, the time from
+/// which its walk saw everything, when that is not the run's start. The write
+/// that records the run disarms them.
+pub(crate) fn served(
     sweep: HousekeepingSweep,
-    covered: &[(EntityId, u64)],
-) -> Result<()> {
+    listed: Vec<(EntityId, u64)>,
+    covered_until: Option<u64>,
+) -> Vec<(&'static str, EntityId)> {
     let Some(deadline) = deadline_job(sweep) else {
-        return Ok(());
+        return Vec::new();
     };
-    if covered.is_empty() {
-        return Ok(());
-    }
-    vault.with_write_txn_grouped(|txn| {
-        for (id, _) in covered {
-            crate::schedule::disarm_in_txn(&vault.store, txn, deadline.code, Some(*id))?;
-        }
-        Ok(())
-    })
+    listed
+        .into_iter()
+        .filter(|&(_, at)| covered_until.is_none_or(|until| at <= until))
+        .map(|(id, _)| (deadline.code, id))
+        .collect()
 }

@@ -2,4 +2,4 @@
 //! job.
 
 pub(crate) use crate::store::housekeeping_wake::note_wake_in_txn;
-pub(super) use crate::store::housekeeping_wake::{clear, due_by};
+pub(super) use crate::store::housekeeping_wake::{due_by, served};

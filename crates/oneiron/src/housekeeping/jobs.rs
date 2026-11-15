@@ -11,9 +11,10 @@
 //! One run of a sweep:
 //! - a sweep starts at most once in a pass ([`JobSpec::once_per_pass`]), as it did before: a run
 //!   that stopped at its bound is due again at once and goes on at the next pass;
-//! - the deadlines it covers are those noted before it started and due by then; a run that
-//!   finished with nothing failed disarms them. A deadline whose time comes before a run covered
-//!   it runs: it makes the sweep due by then, and waits for the sweep's next due time;
+//! - the deadlines it covers are those noted before it started and due by then; the write that
+//!   records a run that finished with nothing failed disarms them. A deadline whose time comes
+//!   before a run covered it runs: it makes the sweep due by then, and waits for the sweep's next
+//!   due time;
 //! - an unfinished walk keeps in its cursor whether an earlier page left items, and answers
 //!   [`Ran::ItemsFailed`] at its end if one did;
 //! - the erasure sweep runs as the owner's when its run answers a "run now" (the owner's
@@ -215,6 +216,8 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
     // The deadlines this run covers: noted before it started and due by then. A deadline noted
     // while it runs stays for the next run.
     let covered = wake::due_by(vault, sweep, start).unwrap_or_default();
+    #[cfg(oneiron_test_support)]
+    crate::test_doors::schedule::note_planted_deadline(vault, sweep)?;
     #[cfg(test)]
     match super::tests::injected(sweep) {
         Some(super::tests::Injected::Fail) => {
@@ -244,6 +247,7 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
                 || work.windows_deferred_unproved > 0
                 || work.windows_deferred_held > 0);
     let items_failed = earlier_failed || run.work.items_failed() > 0 || owner_left;
+    let mut served = Vec::new();
     let ran = if !run.complete {
         Ran::More {
             cursor: write_cursor(items_failed, run.cursor.as_deref()),
@@ -252,12 +256,8 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
         Ran::ItemsFailed
     } else {
         // A walk that began before this run covers the deadlines due by when it began. A
-        // deadline the clear leaves behind runs at its time and waits for the run that covers it.
-        let mut covered = covered;
-        if let Some(until) = run.covered_until {
-            covered.retain(|&(_, at)| at <= until);
-        }
-        let _ = wake::clear(vault, sweep, &covered);
+        // deadline left behind runs at its time and waits for the run that covers it.
+        served = wake::served(sweep, covered, run.covered_until);
         Ran::Done
     };
     let due_by = match ran {
@@ -268,6 +268,7 @@ fn run_sweep_job(vault: &Vault, armed: &Armed, pass: &JobPass<'_>) -> Result<Job
         ran,
         due_by,
         sweep_work: Some(run.work),
+        served,
     })
 }
 
@@ -299,9 +300,8 @@ fn run_deadline_job(vault: &Vault, armed: &Armed, _pass: &JobPass<'_>) -> Result
         Ok(crate::schedule::due_at_in_txn(&vault.store, txn, &job, None)?.unwrap_or(now))
     })?;
     Ok(JobResult {
-        ran: Ran::Done,
         due_by: Some(due),
-        sweep_work: None,
+        ..JobResult::of(Ran::Done)
     })
 }
 

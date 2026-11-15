@@ -2,11 +2,14 @@
 //! row of that sweep's deadline job (`housekeeping.<sweep>.deadline`), a one-time job at the
 //! deadline, and the schedule's due index is the only index of them.
 //! - each note is its own row, due at the deadline, and a stopped vault wakes for it;
-//! - the run of the sweep that covers a deadline disarms its rows, and the sweep goes on a cadence
-//!   after it, with no run more;
+//! - the run of the sweep that covers a deadline disarms its rows in the write that records it,
+//!   and the sweep goes on a cadence after it, with no run more; a deadline noted while that run
+//!   goes on survives it, and the next run serves it;
 //! - a deadline whose time comes while its sweep backs off waits for the sweep's retry, and the
 //!   sweep's run then disarms it;
-//! - the annotation follow sweep's deadlines never wake a stopped vault.
+//! - the annotation follow sweep's deadlines never wake a stopped vault;
+//! - the runner: a one-time job that ends done with a `due_by` stays armed until then, and one
+//!   that ends done without one is disarmed.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test sweep_deadline_rows`.
 #![cfg(oneiron_test_support)]
@@ -19,9 +22,13 @@ use oneiron::housekeeping::{
     HousekeepingBudget, HousekeepingReport, HousekeepingSweep, SweepOutcome,
 };
 use oneiron::memory::Memory;
+use oneiron::schedule::Trigger;
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
-use oneiron::test_doors::schedule::{due_at, note_sweep_deadline, plant_start_marker};
+use oneiron::test_doors::schedule::{
+    arm_as_engine, due_at, note_deadline_during_next_run, note_sweep_deadline, plant_start_marker,
+    seen, set_cadence_due_by,
+};
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_store::ports::manual_clock::ManualClock;
@@ -231,4 +238,87 @@ fn an_annotation_follow_deadline_never_wakes_a_stopped_vault() {
     note_sweep_deadline(&fx.vault, sweep, deadline).expect("a live-body edit notes the sweep");
     assert_eq!(fx.deadlines(sweep), vec![deadline], "the note is a row");
     assert_eq!(fx.wake(), before, "it does not wake a stopped vault");
+}
+
+#[test]
+fn a_deadline_noted_while_its_sweep_runs_survives_that_run_and_the_next_run_serves_it() {
+    let fx = Fixture::rooted();
+    let sweep = HousekeepingSweep::SecretLeaseExpiry;
+    fx.pass();
+
+    let deadline = T0 + 10 * MINUTE;
+    note_sweep_deadline(&fx.vault, sweep, deadline).expect("a door notes a deadline");
+    // A door notes a second deadline, due by then too, while the run is going on.
+    note_deadline_during_next_run(&fx.vault, sweep, deadline);
+    fx.at(deadline);
+    let report = fx.pass();
+    assert!(ran_to_its_end(&report, sweep), "{report:#?}");
+    assert_eq!(
+        fx.deadlines(sweep),
+        vec![deadline + MINUTE],
+        "the run served only the deadline it listed before it started; the other one ran, made \
+         the sweep due and waits for the next run"
+    );
+    assert_eq!(fx.due(sweep), Some(deadline), "the sweep is due again");
+
+    fx.at(deadline + MINUTE);
+    let report = fx.pass();
+    assert!(ran_to_its_end(&report, sweep), "{report:#?}");
+    assert!(
+        fx.deadlines(sweep).is_empty(),
+        "the next run served the deadline"
+    );
+    assert_eq!(fx.due(sweep), Some(deadline + HOUR));
+}
+
+#[test]
+fn a_one_time_job_that_ends_done_with_a_due_by_stays_armed_until_then() {
+    let fx = Fixture::rooted();
+    let job = "test.due_by";
+    let subject = Some(fx.owner);
+    arm_as_engine(&fx.vault, job, subject, Trigger::At { at: T0 + MINUTE }).expect("armed");
+    set_cadence_due_by(&fx.vault, Some(T0 + 10 * MINUTE));
+
+    fx.at(T0 + MINUTE);
+    fx.vault
+        .run_due(HousekeepingBudget::unbounded())
+        .expect("the runner");
+    assert_eq!(seen(&fx.vault, job).len(), 1);
+    assert_eq!(
+        due_at(&fx.vault, job, subject).expect("the due time"),
+        Some(T0 + 10 * MINUTE),
+        "the row stays, due at its due_by"
+    );
+
+    // A due_by already past means soon: the first retry after the run's end.
+    set_cadence_due_by(&fx.vault, Some(T0));
+    fx.at(T0 + 10 * MINUTE);
+    fx.vault
+        .run_due(HousekeepingBudget::unbounded())
+        .expect("the runner");
+    assert_eq!(seen(&fx.vault, job).len(), 2);
+    assert_eq!(
+        due_at(&fx.vault, job, subject).expect("the due time"),
+        Some(T0 + 11 * MINUTE)
+    );
+}
+
+#[test]
+fn a_one_time_job_that_ends_done_without_a_due_by_is_disarmed() {
+    let fx = Fixture::rooted();
+    let job = "test.due_by";
+    let subject = Some(fx.owner);
+    arm_as_engine(&fx.vault, job, subject, Trigger::At { at: T0 + MINUTE }).expect("armed");
+    set_cadence_due_by(&fx.vault, None);
+
+    fx.at(T0 + MINUTE);
+    fx.vault
+        .run_due(HousekeepingBudget::unbounded())
+        .expect("the runner");
+    assert_eq!(seen(&fx.vault, job).len(), 1);
+    assert_eq!(
+        due_at(&fx.vault, job, subject).expect("the due time"),
+        None,
+        "the row is gone"
+    );
 }
