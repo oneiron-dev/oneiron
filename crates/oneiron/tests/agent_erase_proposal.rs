@@ -9,10 +9,11 @@
 //!
 //! The ask erases nothing, and asking again answers the same ask; in a shared
 //! vault an ask the Owner declined answers too, so the agent does not ask the
-//! Owners again what they declined (Astra review of #8340). A record
-//! the agent's Grant does not read, and one that is not live, are refused
-//! alike, and no one is asked. An agent the owner switched off asks nothing,
-//! though its Grant still reads the record.
+//! Owners again what they declined. A record the agent's Grant does not read,
+//! and one that is not live, are refused alike, and no one is asked; a record
+//! only the owner's policy reads to the agent is outside its own Grant and is
+//! refused too (Astra review of #8340). An agent the owner switched off asks
+//! nothing, though its Grant still reads the record.
 //!
 //! On main every case fails at its first call: no verb row is named
 //! `vault.records.erase_propose`, so the agent has no door to ask through
@@ -33,8 +34,10 @@ use oneiron::federation::{
 };
 use oneiron::inbox::NotificationKind;
 use oneiron::memory::MEMORY_CODE_FORBIDDEN;
+use oneiron::registry::ENTITY_TYPE_CLAIM;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::coach::{define_agent, write_root_goal};
+use oneiron::test_doors::derive::grant_core_read_of_kinds;
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::verbs::{AgentGrantMintRequest, mint_agent_grant_as};
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault};
@@ -102,12 +105,15 @@ impl Fixture {
     /// A fresh agent holding the owner's live `read` Grant over projects
     /// alone: it reads the project, not its goal claim.
     fn project_reader(&self) -> EntityId {
+        self.reader_of(self.vault.project_type_byte().expect("project type"))
+    }
+
+    /// A fresh agent holding the owner's live `read` Grant over rows of type
+    /// `band` alone.
+    fn reader_of(&self, band: u8) -> EntityId {
         let agent = define_agent(&self.vault).expect("an agent");
         let mut authority_scope = Scope::top();
-        authority_scope.bands = ScopeAxis::Some(BTreeSet::from([self
-            .vault
-            .project_type_byte()
-            .expect("project type")]));
+        authority_scope.bands = ScopeAxis::Some(BTreeSet::from([band]));
         authority_scope.verbs = ScopeAxis::Some(BTreeSet::from(["read".to_owned()]));
         let minted = mint_agent_grant_as(
             &self.vault,
@@ -239,6 +245,28 @@ fn an_agent_without_read_cannot_open_an_erase_proposal() {
     assert!(
         fx.owner_asks(PERSONAL_PRODUCER).is_empty(),
         "no one is asked"
+    );
+}
+
+#[test]
+fn an_agent_cannot_propose_a_record_only_the_policy_reads_to_it() {
+    let fx = Fixture::new(false);
+    // Its own owner Grant reads claims alone; the owner's policy also reads
+    // projects to it, so its plain read lane admits the project.
+    let agent = fx.reader_of(ENTITY_TYPE_CLAIM);
+    grant_core_read_of_kinds(
+        &fx.vault,
+        agent,
+        &[fx.vault.project_type_byte().expect("project type")],
+    )
+    .expect("the owner's policy reads projects to the agent");
+    let refused = fx
+        .propose(agent, fx.project)
+        .expect_err("a record no live owner Grant of the agent reads");
+    assert_eq!(refused.code, MEMORY_CODE_FORBIDDEN, "{refused:?}");
+    assert!(
+        fx.owner_asks(PERSONAL_PRODUCER).is_empty(),
+        "and no one is asked"
     );
 }
 
