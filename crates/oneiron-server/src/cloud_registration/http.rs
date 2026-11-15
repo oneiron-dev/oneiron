@@ -77,19 +77,21 @@ impl Http {
     }
 
     /// `POST url` with the JSON `body` and `bearer` as its `Authorization`.
+    /// The body owns its buffer until reqwest drops it, and is wiped then.
     pub(crate) fn post_json(
         &self,
         url: &Url,
-        body: Vec<u8>,
+        body: Zeroizing<Vec<u8>>,
         bearer: &str,
     ) -> Result<Reply, Failure> {
+        let len = body.len() as u64;
         let request = self
             .client
             .post(url.clone())
             .bearer_auth(bearer)
             .header(reqwest::header::ACCEPT, "application/json")
             .header(reqwest::header::CONTENT_TYPE, "application/json")
-            .body(body);
+            .body(Body::sized(Cursor::new(body), len));
         send(request)
     }
 

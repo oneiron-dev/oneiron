@@ -32,6 +32,15 @@ use super::{CloudRegistration, Status, held_token, jwt, unix_now};
 /// and the vault's linked-peer row.
 const PEER_ID_MAX_BYTES: usize = 128;
 
+/// The bytes of `{"pairing_link":""}` around the link.
+const PEER_CREATE_FRAME_BYTES: usize = 19;
+
+/// The peer request's body.
+#[derive(Serialize)]
+struct PeerCreate<'a> {
+    pairing_link: &'a str,
+}
+
 /// A hosted peer's state at the control plane.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -115,7 +124,14 @@ impl PeerControl for CloudPeers {
     }
 
     fn create(&self, pairing_link: &str) -> Result<String, Failure> {
-        let body = serde_json::to_vec(&serde_json::json!({ "pairing_link": pairing_link }))
+        // The link's code is the peer's enrolment grant until it is spent:
+        // the body is sized first, as the form body is, so it never grows and
+        // leaves no partial copy behind (JSON writes one byte as six at
+        // most), and it is wiped when it goes.
+        let mut body = Zeroizing::new(Vec::with_capacity(
+            PEER_CREATE_FRAME_BYTES.saturating_add(pairing_link.len().saturating_mul(6)),
+        ));
+        serde_json::to_writer(&mut *body, &PeerCreate { pairing_link })
             .map_err(|_| Failure::OffWire("the peer request did not encode".to_owned()))?;
         let reply = self
             .http

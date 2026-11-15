@@ -1,9 +1,9 @@
-//! Doors for `tests/owner_link_routes.rs` (L10-16): the hosted-peer link
+//! Doors for `tests/hosted_peer_link.rs` (L10-16): the hosted-peer link
 //! act (`crate::linked_peer`) over a control plane the test scripts. No
 //! test can pin an https issuer, so no test registration is live, and an
 //! in-process server binds no mesh listener; these doors pass the act a
 //! scripted control plane and a running mesh listener, and the routes' own
-//! gates before them are tested over HTTP.
+//! gates before them are tested over HTTP (`tests/owner_link_routes.rs`).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -18,7 +18,10 @@
 //! asked to remove the peer, at which it erases the peer's live copy and its
 //! keys; backups age out on the disaster-recovery schedule of 90 days or
 //! less, and the unlink's receipt says so. A removal the control plane did
-//! not take keeps the row, and the next unlink asks again.
+//! not take keeps the row, and the next unlink asks again. So does a machine
+//! removal the roster refused (this install carrying no live profile to sign
+//! the owner's act, for one): the peer's slips are revoked all the same, and
+//! the control plane is still asked.
 
 use oneiron::authority::{
     ActSurface, FoldedMachine, LinkedPeer, LinkedPeerIssued, MachineRole,
@@ -26,6 +29,7 @@ use oneiron::authority::{
 };
 use oneiron::consent::AuthenticatedOwner;
 use serde::Serialize;
+use zeroize::Zeroizing;
 
 use crate::cloud_registration::{PeerControl, PeerReport};
 use crate::server::SyncServer;
@@ -82,7 +86,7 @@ impl PeerMachine {
             hosted_node: roster
                 .is_some_and(|roster| matches!(roster.profile.role, MachineRole::HostedNode)),
             live: roster.is_some_and(oneiron::authority::MachineRevision::is_live),
-            removed: roster.is_some_and(|roster| roster.removed),
+            removed: folded.is_some_and(machine_removed),
             mine: folded.is_some_and(|folded| folded.is_mine(None)),
         }
     }
@@ -100,7 +104,8 @@ pub(crate) enum LinkRefusal {
     /// over the mesh (canon 0024: "The link rides the iroh mesh").
     MeshListenerRequired,
     /// The origin is neither `https://` nor `http://` on this machine, so
-    /// no peer's redeem would go there.
+    /// no peer's redeem would go there, or it carries a query or a fragment,
+    /// which the one-line link cannot.
     OriginNotRedeemable,
     /// The host holds no slip issuer, so no link can be signed.
     NoHostIssuer,
@@ -122,7 +127,8 @@ pub(crate) enum LinkStatus {
         cloud_error: Option<String>,
     },
     /// An unlink revoked the peer here; its removal is still owed to the
-    /// control plane, and the next unlink asks again.
+    /// control plane, or its machine's removal to this roster, and the next
+    /// unlink asks again.
     UnlinkOwed {
         peer: LinkedPeerView,
         machine: Option<PeerMachine>,
@@ -144,6 +150,25 @@ pub(crate) enum PeerRemoval {
     NotAsked { reason: String },
 }
 
+/// What an unlink did with the peer's machine in this vault's roster.
+#[derive(Debug, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub(crate) enum MachineRemoval {
+    /// No machine of the peer stands in the roster: it never redeemed its
+    /// link, or the roster holds no revision of the machine its redeem
+    /// recorded.
+    NoMachine,
+    /// Removed now.
+    Removed,
+    /// Removed before: by an earlier unlink, the owner, or an unlink that
+    /// ran at the same time.
+    AlreadyRemoved,
+    /// The roster refused the removal, and why (this install carries no live
+    /// profile to sign the owner's act, for one). The peer's slips are
+    /// revoked all the same, and the next unlink removes it again.
+    Refused { reason: String },
+}
+
 /// The unlink's receipt.
 #[derive(Debug, Serialize)]
 pub(crate) struct UnlinkReceipt {
@@ -151,6 +176,8 @@ pub(crate) struct UnlinkReceipt {
     /// The peer's machine as the roster holds it after the unlink; `None`
     /// when the peer never redeemed, and its link was spent unread.
     machine: Option<PeerMachine>,
+    /// What the unlink did with that machine in the roster.
+    machine_removal: MachineRemoval,
     /// Whether the machine's mesh pairing and grants were revoked now.
     mesh_revoked: bool,
     /// How many live slips of the peer's holder were revoked now.
@@ -186,10 +213,15 @@ pub(crate) fn link(
     if !mesh_listener {
         return Ok(Err(LinkRefusal::MeshListenerRequired));
     }
-    let Ok(origin_url) = reqwest::Url::parse(origin) else {
+    let Ok(origin) = reqwest::Url::parse(origin) else {
         return Ok(Err(LinkRefusal::OriginNotRedeemable));
     };
-    if !crate::device_sync::enrolment::redeemable(&origin_url) {
+    // The peer redeems at the origin's path, as `oneiron device enrol` does;
+    // a query or a fragment would not survive the one-line link.
+    if !crate::device_sync::enrolment::redeemable(&origin)
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+    {
         return Ok(Err(LinkRefusal::OriginNotRedeemable));
     }
     let Some(issuer) = server.host_issuer() else {
@@ -200,8 +232,16 @@ pub(crate) fn link(
             LinkedPeerIssued::Issued { link, holder } => (link, holder),
             LinkedPeerIssued::AlreadyLinked(_) => return Ok(Err(LinkRefusal::AlreadyLinked)),
         };
-    let line = format_pinned_pairing_link(origin, &link.code, &holder.to_hex(), link.pin.as_ref());
-    match control.create(&line) {
+    // The code is the peer's enrolment grant until it is spent: this act's
+    // copies of it are wiped when they go.
+    let code = Zeroizing::new(link.code);
+    let line = Zeroizing::new(format_pinned_pairing_link(
+        origin.as_str(),
+        &code,
+        &holder.to_hex(),
+        link.pin.as_ref(),
+    ));
+    match control.create(line.as_str()) {
         Ok(peer_id) => match vault.record_linked_peer_id_as_owner(owner, &peer_id)? {
             Some(peer) => Ok(Ok(LinkedPeerView::from(&peer))),
             // An unlink ran while the request did: the peer it made goes too.
@@ -265,8 +305,9 @@ pub(crate) fn status(
 /// plane to remove it; `None` when the vault has no linked peer.
 ///
 /// # Errors
-/// The owner proof's own; the machine removal's and the revokes' own;
-/// storage faults.
+/// The owner proof's own; the revokes' own; storage faults. A machine
+/// removal the roster refuses is not one: the receipt names it, and the row
+/// stays owed.
 pub(crate) fn unlink(
     server: &SyncServer,
     owner: &AuthenticatedOwner,
@@ -286,19 +327,16 @@ pub(crate) fn unlink(
         None => 0,
     };
     let mut mesh_revoked = false;
-    if let Some(machine) = peer.machine {
-        let removed = vault
-            .authority_fold()?
-            .machine(machine)
-            .and_then(|folded| folded.roster.as_ref())
-            .is_some_and(|roster| roster.removed);
-        if !removed {
-            vault.set_machine_role(owner, surface, machine, MachineRole::Removed, None)?;
+    let machine_removal = match peer.machine {
+        None => MachineRemoval::NoMachine,
+        Some(machine) => {
+            let removal = remove_machine(vault, owner, surface, machine)?;
+            if let Some(issuer) = issuer {
+                mesh_revoked = vault.revoke_removed_machine_mesh(issuer, machine)?;
+            }
+            removal
         }
-        if let Some(issuer) = issuer {
-            mesh_revoked = vault.revoke_removed_machine_mesh(issuer, machine)?;
-        }
-    }
+    };
     let removal = match (&peer.peer_id, control) {
         (None, _) => PeerRemoval::NothingToRemove,
         (Some(peer_id), Ok(control)) => match control.remove(peer_id) {
@@ -312,7 +350,8 @@ pub(crate) fn unlink(
     if matches!(
         removal,
         PeerRemoval::Accepted | PeerRemoval::NothingToRemove
-    ) {
+    ) && !matches!(machine_removal, MachineRemoval::Refused { .. })
+    {
         vault.forget_linked_peer_as_owner(owner)?;
     }
     let fold = vault.authority_fold()?;
@@ -321,9 +360,58 @@ pub(crate) fn unlink(
         machine: peer
             .machine
             .map(|machine| PeerMachine::of(machine, fold.machine(machine))),
+        machine_removal,
         mesh_revoked,
         slips_revoked,
         removal,
         erasure: PEER_ERASURE,
     }))
+}
+
+/// Removes the peer's machine from the roster, unless a removal already
+/// stands or no revision names it. A refusal that a removal made meanwhile
+/// explains (an unlink at the same time) reads as that removal; any other
+/// refusal is the answer, not an error, so the unlink goes on to the
+/// control plane.
+fn remove_machine(
+    vault: &oneiron::Vault,
+    owner: &AuthenticatedOwner,
+    surface: ActSurface,
+    machine: oneiron::EntityId,
+) -> oneiron::Result<MachineRemoval> {
+    match machine_removed_in_roster(vault, machine)? {
+        None => return Ok(MachineRemoval::NoMachine),
+        Some(true) => return Ok(MachineRemoval::AlreadyRemoved),
+        Some(false) => {}
+    }
+    match vault.set_machine_role(owner, surface, machine, MachineRole::Removed, None) {
+        Ok(_) => Ok(MachineRemoval::Removed),
+        Err(error) => Ok(
+            if machine_removed_in_roster(vault, machine)? == Some(true) {
+                MachineRemoval::AlreadyRemoved
+            } else {
+                MachineRemoval::Refused {
+                    reason: error.to_string(),
+                }
+            },
+        ),
+    }
+}
+
+/// Whether the roster holds `machine` removed; `None` when no revision
+/// names it.
+fn machine_removed_in_roster(
+    vault: &oneiron::Vault,
+    machine: oneiron::EntityId,
+) -> oneiron::Result<Option<bool>> {
+    Ok(vault
+        .authority_fold()?
+        .machine(machine)
+        .map(machine_removed))
+}
+
+/// Whether any chain of `folded` removed it: the roster's or an anchor's, as
+/// the roster refuses a second removal and the mesh revoke reads it.
+fn machine_removed(folded: &FoldedMachine) -> bool {
+    folded.chains().any(|(_, chain)| chain.removed)
 }

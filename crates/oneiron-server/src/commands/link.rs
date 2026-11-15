@@ -44,7 +44,9 @@ pub fn link(args: LinkArgs) -> anyhow::Result<()> {
         Method::POST,
         Some(json!({ "origin": origin })),
     )?)?;
-    let deadline = Instant::now() + Duration::from_secs(args.wait_secs);
+    // A wait past the clock's range has no deadline: it ends when the peer
+    // enrols or fails.
+    let deadline = Instant::now().checked_add(Duration::from_secs(args.wait_secs));
     loop {
         let status = call(&args.server, Method::GET, None)?;
         if status["machine"]["live"] == Value::Bool(true) {
@@ -54,7 +56,7 @@ pub fn link(args: LinkArgs) -> anyhow::Result<()> {
             print(&status)?;
             anyhow::bail!("the control plane says the hosted peer failed");
         }
-        if Instant::now() >= deadline {
+        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             print(&status)?;
             anyhow::bail!(
                 "the hosted peer did not enrol within {} s; `oneiron link status` shows where \

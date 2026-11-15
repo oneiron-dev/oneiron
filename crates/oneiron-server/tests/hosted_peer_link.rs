@@ -12,9 +12,12 @@
 //! removed, every slip of its holder revoked), asks the control plane to
 //! remove it, and says the control plane erases the peer's copy and keys
 //! while backups age out; the local vault is untouched. A removal the
-//! control plane lost is asked again by the next unlink. A link the control
-//! plane refuses, or one unlinked before it is redeemed, can no longer be
-//! redeemed. A vault holds one hosted peer at a time.
+//! control plane lost is asked again by the next unlink, and so is a machine
+//! removal this install could not sign, while the control plane is still
+//! asked. A link the control plane refuses, or one unlinked before it is
+//! redeemed, can no longer be redeemed. The link keeps its origin's path;
+//! an origin with a query or a fragment is refused before anything is
+//! minted. A vault holds one hosted peer at a time.
 //!
 //! On unmodified main the file does not build: there is no
 //! `test_doors::linked_peer`.
@@ -52,8 +55,8 @@ use serde_json::Value;
 const ORIGIN: &str = "https://laptop.example";
 
 /// The person's own machine, serving the vault: rooted from its install's
-/// keystore, its install profiled as a serving start leaves it, with one
-/// row of its own.
+/// keystore, its install profiled as a serving start leaves it (or not yet,
+/// so it carries no owner act), with one row of its own.
 struct Host {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
@@ -65,6 +68,10 @@ struct Host {
 }
 
 fn host() -> Host {
+    serving_host(true)
+}
+
+fn serving_host(install_profiled: bool) -> Host {
     let dir = tempfile::tempdir().expect("temporary vault directory");
     let vault = Arc::new(Vault::open(dir.path(), VaultConfig::device()).expect("open vault"));
     vault.install_device_keystore(Arc::new(MemoryKeystore::new()));
@@ -82,9 +89,11 @@ fn host() -> Host {
     vault
         .ensure_host_root_slip(&issuer)
         .expect("FIXTURE: the owner's root slip");
-    vault
-        .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
-        .expect("FIXTURE: this install's live machine profile");
+    if install_profiled {
+        vault
+            .ensure_serving_install_profile(&issuer, MachineRole::Unanswered)
+            .expect("FIXTURE: this install's live machine profile");
+    }
     let person = vault
         .ensure_embedded_owner_actor()
         .expect("FIXTURE: the embedded owner");
@@ -263,6 +272,7 @@ fn an_unlink_revokes_the_peer_at_once_and_leaves_the_local_vault_whole() {
         );
         assert_eq!(receipt["machine"]["removed"], true, "{receipt}");
         assert_eq!(receipt["machine"]["live"], false, "{receipt}");
+        assert_eq!(receipt["machine_removal"]["state"], "removed", "{receipt}");
         assert!(receipt["slips_revoked"].as_u64() >= Some(1), "{receipt}");
         assert_eq!(receipt["removal"]["state"], "accepted", "{receipt}");
         let erasure = receipt["erasure"]
@@ -324,6 +334,10 @@ fn a_removal_the_control_plane_lost_is_asked_again_by_the_next_unlink() {
         let receipt = host.unlink(&control);
         assert_eq!(receipt["removal"]["state"], "accepted", "{receipt}");
         assert_eq!(
+            receipt["machine_removal"]["state"], "already_removed",
+            "{receipt}"
+        );
+        assert_eq!(
             receipt["machine"]["machine"],
             peer.machine.to_hex(),
             "{receipt}"
@@ -366,6 +380,10 @@ fn an_unlink_before_the_peer_redeems_spends_its_link() {
         host.link(&control).expect("the owner links a hosted peer");
         let receipt = host.unlink(&control);
         assert_eq!(receipt["machine"], Value::Null, "{receipt}");
+        assert_eq!(
+            receipt["machine_removal"]["state"], "no_machine",
+            "{receipt}"
+        );
         assert_eq!(receipt["removal"]["state"], "accepted", "{receipt}");
         let (peer, request) = Peer::new(&host);
         assert!(
@@ -388,5 +406,89 @@ fn a_vault_holds_one_hosted_peer_at_a_time() {
         host.link(&control).expect("the owner links a hosted peer");
         assert_eq!(host.link(&control), Err("AlreadyLinked".to_owned()));
         assert_eq!(control.links.lock().expect("scripted links").len(), 1);
+    });
+}
+
+#[test]
+fn a_machine_removal_this_install_cannot_sign_still_asks_the_control_plane_and_stays_owed() {
+    run_on_engine_stack(async {
+        // No serving start profiled this install: the peer's redeem takes the
+        // bootstrap arm, but the owner's removal has no carrier here.
+        let host = serving_host(false);
+        let control = ScriptedControlPlane::default();
+        host.link(&control).expect("the owner links a hosted peer");
+        let (peer, request) = Peer::new(&host);
+        let slip = redeem(&host, &handed_link(&control), &request).expect("the peer redeems");
+
+        let receipt = host.unlink(&control);
+        assert_eq!(receipt["machine_removal"]["state"], "refused", "{receipt}");
+        let reason = receipt["machine_removal"]["reason"]
+            .as_str()
+            .expect("the refusal says why");
+        assert!(reason.contains("no live machine profile"), "{reason}");
+        assert_eq!(
+            receipt["removal"]["state"], "accepted",
+            "the control plane is asked all the same: {receipt}"
+        );
+        assert!(
+            !host.slip_is_live(&slip),
+            "the peer's slip is revoked at once all the same"
+        );
+        let status = host.status(&control);
+        assert_eq!(status["state"], "unlink_owed", "{status}");
+        assert_eq!(status["machine"]["removed"], false, "{status}");
+
+        host.vault
+            .ensure_serving_install_profile(&host.issuer, MachineRole::Unanswered)
+            .expect("FIXTURE: this install's live machine profile");
+        let receipt = host.unlink(&control);
+        assert_eq!(receipt["machine_removal"]["state"], "removed", "{receipt}");
+        assert_eq!(
+            receipt["machine"]["machine"],
+            peer.machine.to_hex(),
+            "{receipt}"
+        );
+        assert_eq!(receipt["machine"]["removed"], true, "{receipt}");
+        assert_eq!(receipt["removal"]["state"], "accepted", "{receipt}");
+        assert_eq!(
+            *control.removals.lock().expect("scripted removals"),
+            vec!["peer-1".to_owned(), "peer-1".to_owned()],
+            "each unlink asked the control plane"
+        );
+        assert_eq!(host.status(&control)["state"], "not_linked");
+    });
+}
+
+#[test]
+fn a_link_keeps_its_origins_path_and_refuses_a_query_or_fragment() {
+    run_on_engine_stack(async {
+        let host = host();
+        let control = ScriptedControlPlane::default();
+        for origin in [
+            "https://laptop.example#pair",
+            "https://laptop.example/?via=mail",
+        ] {
+            assert_eq!(
+                linked_peer::link(&host.server, &host.owner, origin, &control),
+                Err("OriginNotRedeemable".to_owned()),
+                "{origin}"
+            );
+        }
+        assert!(
+            control.links.lock().expect("scripted links").is_empty(),
+            "nothing was handed to the control plane"
+        );
+        assert_eq!(host.status(&control)["state"], "not_linked");
+
+        linked_peer::link(
+            &host.server,
+            &host.owner,
+            "https://laptop.example/oneiron/",
+            &control,
+        )
+        .expect("the owner links a hosted peer");
+        let (origin, ..) =
+            parse_pinned_pairing_link(&handed_link(&control)).expect("the handed link parses");
+        assert_eq!(origin, "https://laptop.example/oneiron");
     });
 }
