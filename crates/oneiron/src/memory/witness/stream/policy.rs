@@ -31,6 +31,14 @@ pub(super) fn policy_for(
         .read_in_txn(vault, &txn, &[], None)?
         .value
         .0;
+    // The keys' checks ran when each row was set; a stored row they refuse
+    // is refused on read, as the old table's validation was.
+    if idle_timeout_ms == 0 {
+        return Err(MessageStreamError::InvalidRequest(
+            "idle timeout must be positive",
+        ));
+    }
+    default_mode.validate()?;
     Ok(MessageStreamPolicy {
         default_mode,
         idle_timeout_ms,

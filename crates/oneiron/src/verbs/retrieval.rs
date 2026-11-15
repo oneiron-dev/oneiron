@@ -20,8 +20,8 @@ pub use crate::retrieval_depth::RecallTelemetry;
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::verbs::retrieval::{
-    RetrievalPolicyDisposition, RetrievalPolicyPinRequest, RetrievalRoutingPin,
-    RetrievalRunsRequest, RetrievalTraceRequest, RetrievalTurnRequest,
+    RetrievalPolicyDisposition, RetrievalRoutingPin, RetrievalRunsRequest, RetrievalTraceRequest,
+    RetrievalTurnRequest,
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -418,20 +418,6 @@ pub fn retrieval_policy_get_as_owner(
     _input: super::EmptyRequest,
 ) -> MemoryResult<RetrievalPolicyView> {
     admitted(memory, owner)?;
-    policy_view(memory)
-}
-
-/// A pin takes effect on the served weights at once and binds every later
-/// learned update; derived rewards still write no facts.
-pub fn retrieval_policy_pin_as_owner(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: RetrievalPolicyPinRequest,
-) -> MemoryResult<RetrievalPolicyView> {
-    admitted(memory, owner)?;
-    memory
-        .vault()
-        .put_retrieval_policy_pin(input.signal, input.value)?;
     policy_view(memory)
 }
 

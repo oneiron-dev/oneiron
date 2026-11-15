@@ -23,11 +23,6 @@ crate::side_table::side_tables! {
     /// signer. Key: string.
     AUTHLOG_INGEST_COUNT: SyncState b"authlog:ingest_count:" Raw
         [restore: live] [family: unclassified] [tier: canonical];
-    /// Device-local authority observation policy: stale-roster window, ingest window, ingest check
-    /// threshold, log signer bound, log headroom rows, handoffs and ancestor pairs, and the fold's
-    /// memory floor (8x u64be; a 3x or 6x row reads with the default bounds). Key: ().
-    AUTHLOG_OBSERVATION_POLICY: SyncState b"authlog:observation_policy:duration_v1" Raw
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Durable high-water mark (u64be) of a signer's highest observed authority-log sequence number.
     /// Key: string.
     AUTHLOG_SEQ_HWM: SyncState b"authlog:seq_hwm:" Raw
@@ -843,12 +838,6 @@ crate::side_table::side_tables! {
     /// module's own `encode_retrieval_outcome`/`decode_retrieval_outcome`.
     RETRIEVAL_OUTCOME: VaultMeta b"retr_out:v0:" Raw
         [restore: not_imaged] [family: not_imaged] [tier: runtime];
-    /// Owner-pinned retrieval blend weights no learned update may move. Key: ().
-    RETRIEVAL_POLICY_PINS: VaultMeta b"retr_policy_pins:v1:" Named
-        // Restore class: The owner's pins go with the blend weights they hold
-        // (RETRIEVAL_BLEND_WEIGHTS_ACTIVE, content), so a restore gives back one weight state
-        // (FIX 22408).
-        [restore: content] [family: unclassified] [tier: canonical];
     /// Account-local contextual retrieval posterior, updated by the Coach at sleep. Key: ().
     RETRIEVAL_POLICY_POSTERIOR: VaultMeta b"retr_policy_posterior:v1:" Named
         // Restore class: Learned retrieval state, content as the active blend weights it goes with

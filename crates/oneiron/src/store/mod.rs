@@ -653,6 +653,7 @@ pub(crate) mod ppr_cache_invalidation;
 pub(crate) use oneiron_store::record_links;
 pub(crate) use oneiron_store::record_references;
 pub(crate) mod scan_count;
+pub(crate) mod setting_keys;
 pub(crate) mod skill_resident;
 pub(crate) mod tables;
 

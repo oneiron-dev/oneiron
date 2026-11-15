@@ -59,7 +59,6 @@ static LEAVE_KEPT_FAMILIES: &[&SideTableDecl] = &[
     &side_table::AUTHLOG_FIRST_SEEN_SIDECAR,
     &side_table::AUTHLOG_INGEST_CHECK,
     &side_table::AUTHLOG_INGEST_COUNT,
-    &side_table::AUTHLOG_OBSERVATION_POLICY,
     &side_table::AUTHLOG_SEQ_HWM,
     &side_table::AUTHLOG_SEQ_OBSERVATION,
     &side_table::AUTHLOG_STORE_ORDER,

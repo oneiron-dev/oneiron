@@ -1,10 +1,15 @@
-//! DESIGN 15-setting-primitive, stage 1 (SETTING-KEYED-B, KB1): the message-stream policy's
-//! table becomes catalogue keys, read through the kept public reader.
-//! - each moved key is in the catalogue and reads its old default until a row stands;
-//! - the owner's rows, set through `vault.settings.set`, are what `Vault::message_stream_policy`
-//!   reads; an agent's own write-mode row decides for that agent only;
-//! - the old checks refuse what they refused: a zero idle timeout, a zero streaming window;
-//! - an agent's change waits on a check-in under its own Grant.
+//! DESIGN 15-setting-primitive, stage 1 (SETTING-KEYED-B, KB1): three setting tables become
+//! catalogue keys, each read through its kept public reader.
+//! - the message-stream policy: `memory.message_stream.mode` (vault and agent rows) and
+//!   `memory.message_stream.idle_timeout_ms`, read by `Vault::message_stream_policy`;
+//! - the owner's retrieval pins: `retrieval.policy_pins`, read by `Vault::retrieval_policy_pins`;
+//!   a change holds the served blend weights to the pins in its own write;
+//! - this machine's authority observation policy: `authority.observation_policy`, read by
+//!   `Vault::authority_observation_policy`.
+//!
+//! For each: the key reads its old default until a row stands; the owner's row, set through
+//! `vault.settings.set`, is what the kept reader returns; the old check refuses what it refused;
+//! an agent's change waits on a check-in under its own Grant.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_keyed_b_1`.
 #![cfg(oneiron_test_support)]
@@ -13,14 +18,16 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use oneiron::authority::{ActSurface, MachineRole};
+use oneiron::authority::{ActSurface, AuthorityObservationPolicy, MachineRole};
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{
     DEFAULT_MESSAGE_STREAM_IDLE_MS, Memory, MessageStreamPolicy, MessageWriteMode, StreamCadence,
     StreamSyncVisibility,
 };
-use oneiron::store::GateDecisionId;
+use oneiron::store::{
+    GateDecisionId, RetrievalBlendSignal, RetrievalPolicyPin, RetrievalPolicyPins,
+};
 use oneiron::task_verb::sdk::invoke;
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -35,6 +42,8 @@ const GET: &str = "vault.settings.get";
 const SET: &str = "vault.settings.set";
 const MODE: &str = "memory.message_stream.mode";
 const IDLE: &str = "memory.message_stream.idle_timeout_ms";
+const PINS: &str = "retrieval.policy_pins";
+const OBSERVATION: &str = "authority.observation_policy";
 const T0: u64 = 1_790_000_000;
 
 struct Fixture {
@@ -306,5 +315,188 @@ fn an_agents_change_of_the_policy_waits_on_a_check_in() {
             .idle_timeout_ms,
         DEFAULT_MESSAGE_STREAM_IDLE_MS,
         "a waiting change writes nothing"
+    );
+}
+
+#[test]
+fn the_retrieval_pins_read_their_old_default_and_the_owners_row() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+
+    let unset = get(&me, PINS, json!([]));
+    assert_eq!(unset["value"], json!({ "pins": [] }), "{unset}");
+    assert_eq!(unset["source"], json!({ "from": "default" }));
+    assert_eq!(
+        fx.vault.retrieval_policy_pins().expect("pins"),
+        RetrievalPolicyPins::default()
+    );
+
+    let applied = call(
+        &me,
+        SET,
+        set(
+            PINS,
+            vault_scope(),
+            json!({ "pins": [{ "signal": "recency", "value": 0.5 }] }),
+        ),
+    );
+    assert_eq!(applied["status"], json!("applied"), "{applied}");
+    assert_eq!(
+        fx.vault.retrieval_policy_pins().expect("pins"),
+        RetrievalPolicyPins {
+            pins: vec![RetrievalPolicyPin {
+                signal: RetrievalBlendSignal::Recency,
+                value: 0.5,
+            }],
+        }
+    );
+    let served = fx
+        .vault
+        .retrieval_blend_weight_table()
+        .expect("served weights");
+    assert!(
+        (served.weights.recency - 0.5).abs() < 1e-6,
+        "the change held the served weights to the pin in its own write: {served:?}"
+    );
+    assert_eq!(
+        served.provenance.get("owner_pins").map(String::as_str),
+        Some("1")
+    );
+}
+
+#[test]
+fn the_retrieval_pins_check_refuses_what_it_refused() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+
+    let over = refused(
+        &me,
+        SET,
+        set(
+            PINS,
+            vault_scope(),
+            json!({ "pins": [{ "signal": "recency", "value": 1.5 }] }),
+        ),
+    );
+    assert!(over.contains("0..=1"), "{over}");
+    let twice = refused(
+        &me,
+        SET,
+        set(
+            PINS,
+            vault_scope(),
+            json!({ "pins": [{ "signal": "gravity", "value": 0.2 }, { "signal": "gravity", "value": 0.3 }] }),
+        ),
+    );
+    assert!(twice.contains("each signal once"), "{twice}");
+    assert_eq!(
+        fx.vault.retrieval_policy_pins().expect("pins"),
+        RetrievalPolicyPins::default(),
+        "nothing refused was written"
+    );
+}
+
+#[test]
+fn an_agents_change_of_the_retrieval_pins_waits_on_a_check_in() {
+    let fx = Fixture::rooted();
+    let agent = fx.agent();
+    fx.grant(agent, &[SET, GET]);
+    let it = fx.as_agent(agent);
+
+    let asked = call(
+        &it,
+        SET,
+        set(
+            PINS,
+            vault_scope(),
+            json!({ "pins": [{ "signal": "salience", "value": 0.3 }] }),
+        ),
+    );
+    assert_eq!(asked["status"], json!("pending"), "{asked}");
+    assert_eq!(
+        fx.vault.retrieval_policy_pins().expect("pins"),
+        RetrievalPolicyPins::default(),
+        "a waiting change writes nothing"
+    );
+}
+
+fn observation_json(policy: &AuthorityObservationPolicy) -> Value {
+    json!({
+        "stale_roster_window_secs": policy.stale_roster_window_secs,
+        "ingest_window_secs": policy.ingest_window_secs,
+        "ingest_check_threshold": policy.ingest_check_threshold,
+        "log_signer_bound": policy.log_signer_bound,
+        "log_headroom_rows": policy.log_headroom_rows,
+        "log_headroom_handoffs": policy.log_headroom_handoffs,
+        "log_headroom_ancestor_pairs": policy.log_headroom_ancestor_pairs,
+        "log_fold_memory_floor_bytes": policy.log_fold_memory_floor_bytes,
+    })
+}
+
+#[test]
+fn the_observation_policy_reads_its_old_default_and_the_owners_row() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+
+    let unset = get(&me, OBSERVATION, json!([]));
+    assert_eq!(
+        unset["value"],
+        observation_json(&AuthorityObservationPolicy::default()),
+        "{unset}"
+    );
+    assert_eq!(unset["source"], json!({ "from": "default" }));
+    assert_eq!(
+        fx.vault.authority_observation_policy().expect("policy"),
+        AuthorityObservationPolicy::default()
+    );
+
+    let chosen = AuthorityObservationPolicy {
+        ingest_window_secs: 30,
+        log_signer_bound: 4_096,
+        log_fold_memory_floor_bytes: Some(2 * 1024 * 1024 * 1024),
+        ..AuthorityObservationPolicy::default()
+    };
+    let applied = call(
+        &me,
+        SET,
+        set(OBSERVATION, vault_scope(), observation_json(&chosen)),
+    );
+    assert_eq!(applied["status"], json!("applied"), "{applied}");
+    assert_eq!(
+        fx.vault.authority_observation_policy().expect("policy"),
+        chosen
+    );
+}
+
+#[test]
+fn the_observation_policy_check_refuses_what_it_refused() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+
+    for bad in [
+        AuthorityObservationPolicy {
+            ingest_window_secs: 0,
+            ..AuthorityObservationPolicy::default()
+        },
+        AuthorityObservationPolicy {
+            log_signer_bound: 0,
+            ..AuthorityObservationPolicy::default()
+        },
+        AuthorityObservationPolicy {
+            log_fold_memory_floor_bytes: Some(0),
+            ..AuthorityObservationPolicy::default()
+        },
+    ] {
+        let error = refused(
+            &me,
+            SET,
+            set(OBSERVATION, vault_scope(), observation_json(&bad)),
+        );
+        assert!(error.contains("must be positive"), "{error}");
+    }
+    assert_eq!(
+        fx.vault.authority_observation_policy().expect("policy"),
+        AuthorityObservationPolicy::default(),
+        "nothing refused was written"
     );
 }

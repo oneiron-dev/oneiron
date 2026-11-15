@@ -1,8 +1,12 @@
-//! Device-local authority observation policy and its versioned duration row.
+//! Device-local authority observation policy: the `authority.observation_policy` Setting key
+//! (DESIGN 15-setting-primitive, stage 1), an install key.
 
+use serde::{Deserialize, Serialize};
+
+use super::setting_keys::AUTHORITY_OBSERVATION_POLICY;
 use crate::Vault;
 use crate::error::{Error, Result};
-use crate::side_table::{self, CodecError, Raw, RawValue, SideTable};
+use crate::setting::SettingValue;
 use crate::store::Store;
 
 /// Named maximum age of an approval based on a subsequently revoked roster.
@@ -33,14 +37,10 @@ pub const DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS: u64 = 8 * 1024 * 1024;
 /// at 4,000 rows.
 pub const DEFAULT_AUTHORITY_LOG_FOLD_MEMORY_FLOOR_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 
-/// Device-local authority observation policy durations. Key: ().
-const POLICY: SideTable<(), AuthorityObservationPolicy, Raw> =
-    SideTable::new(&side_table::AUTHLOG_OBSERVATION_POLICY);
-
-/// Version-one local observation policy. Durations use elapsed monotonic time,
-/// never an entry timestamp. The ingest threshold raises a check, not a stop.
-/// A row written before the log's bounds existed reads with their defaults.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// This machine's authority observation policy. Durations use elapsed monotonic
+/// time, never an entry timestamp. The ingest threshold raises a check, not a
+/// stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct AuthorityObservationPolicy {
     /// Inclusive age at which a pre-revocation approval remains usable.
     pub stale_roster_window_secs: u64,
@@ -101,65 +101,12 @@ impl AuthorityObservationPolicy {
     }
 }
 
-impl RawValue for AuthorityObservationPolicy {
-    fn to_raw(&self) -> std::result::Result<Vec<u8>, CodecError> {
-        let mut raw = Vec::with_capacity(64);
-        for value in [
-            self.stale_roster_window_secs,
-            self.ingest_window_secs,
-            self.ingest_check_threshold,
-            self.log_signer_bound,
-            self.log_headroom_rows,
-            self.log_headroom_handoffs,
-            self.log_headroom_ancestor_pairs,
-            // Zero: no row, the machine's floor.
-            self.log_fold_memory_floor_bytes.unwrap_or(0),
-        ] {
-            raw.extend_from_slice(&value.to_be_bytes());
-        }
-        Ok(raw)
-    }
-
-    fn from_raw(raw: &[u8]) -> std::result::Result<Self, CodecError> {
-        // Rows written before the log's bounds (24 bytes) or before its
-        // fold's pair and memory rows (48) read with their defaults.
-        if ![24, 48, 64].contains(&raw.len()) {
-            return Err(Error::CorruptedIndex("authority observation policy").into());
-        }
-        let mut values = [
-            0,
-            0,
-            0,
-            DEFAULT_AUTHORITY_LOG_SIGNER_BOUND,
-            DEFAULT_AUTHORITY_LOG_HEADROOM_ROWS,
-            DEFAULT_AUTHORITY_LOG_HEADROOM_HANDOFFS,
-            DEFAULT_AUTHORITY_LOG_HEADROOM_ANCESTOR_PAIRS,
-            0,
-        ];
-        for (slot, bytes) in values.iter_mut().zip(raw.chunks_exact(8)) {
-            *slot = u64::from_be_bytes(
-                bytes
-                    .try_into()
-                    .map_err(|_| Error::CorruptedIndex("authority observation policy"))?,
-            );
-        }
-        let policy = Self {
-            stale_roster_window_secs: values[0],
-            ingest_window_secs: values[1],
-            ingest_check_threshold: values[2],
-            log_signer_bound: values[3],
-            log_headroom_rows: values[4],
-            log_headroom_handoffs: values[5],
-            log_headroom_ancestor_pairs: values[6],
-            log_fold_memory_floor_bytes: (values[7] != 0).then_some(values[7]),
-        };
-        // The write door validates every policy it stores, so a stored row
-        // that fails the check is store damage, not a setting to refuse
-        // (ARCH-0006a #list-read-built).
-        policy
-            .validate()
-            .map_err(|_| Error::CorruptedIndex("authority observation policy"))?;
-        Ok(policy)
+/// The policy is a Setting value (`authority.observation_policy`, DESIGN 15-setting-primitive,
+/// stage 1): its validation is the check.
+impl SettingValue for AuthorityObservationPolicy {
+    fn check(self) -> Result<Self> {
+        self.validate()?;
+        Ok(self)
     }
 }
 
@@ -167,26 +114,24 @@ pub(super) fn authority_observation_policy_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<AuthorityObservationPolicy> {
-    Ok(POLICY.get(store, txn, &())?.unwrap_or_default())
+    let policy = AUTHORITY_OBSERVATION_POLICY
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value;
+    // The setting door checks every policy it stores, so a stored row that
+    // fails the check is store damage, not a setting to refuse (ARCH-0006a
+    // #list-read-built).
+    policy
+        .validate()
+        .map_err(|_| Error::CorruptedIndex("authority observation policy"))?;
+    Ok(policy)
 }
 
 impl Vault {
-    /// Reads the local duration-v1 authority observation policy.
+    /// Reads this machine's authority observation policy. The owner changes it
+    /// through `vault.settings.set`; it never changes signed entries or their
+    /// advisory `ts`.
     pub fn authority_observation_policy(&self) -> Result<AuthorityObservationPolicy> {
         let txn = self.store.env.read_txn()?;
         authority_observation_policy_in_txn(&self.store, &txn)
-    }
-
-    /// Writes duration-v1 policy for subsequent folds and observations. This
-    /// local configuration never changes signed entries or their advisory `ts`.
-    pub fn set_authority_observation_policy(
-        &self,
-        policy: AuthorityObservationPolicy,
-    ) -> Result<()> {
-        policy.validate()?;
-        self.with_write_txn_grouped(|txn| {
-            POLICY.put(&self.store, txn, &(), &policy)?;
-            Ok(())
-        })
     }
 }
