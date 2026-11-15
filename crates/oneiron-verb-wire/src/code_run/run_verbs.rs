@@ -135,20 +135,24 @@ pub struct LeaderSplitInput {
     pub slice: Option<oneiron_model::llm::Scope>,
 }
 
-/// `summarize(r, {effort?, group?, defer?})`: one model call over a result
-/// and the results after it, made by a host job, never inside a step, and
-/// memoised by its members' occurrences and its recipe: the same call again
-/// answers the same summary.
+/// `summarize(r, {effort?, group?, note_refs?, defer?})`: one model call
+/// over a result, the results after it and the NOTEs named by id, made by a
+/// host job, never inside a step, and memoised by its members' occurrences
+/// and its recipe: the same call again answers the same summary.
 #[derive(Debug, Clone, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SummarizeInput {
-    /// The result to summarize: a name, a handle or a range ref.
+    /// The result to summarize: a name, a handle or a range ref; absent
+    /// when the call summarizes NOTEs alone.
     #[serde(rename = "ref")]
-    pub r#ref: String,
+    pub r#ref: Option<String>,
     /// How hard the summary works; `medium` by default.
     pub effort: Option<SummarizeInputEffort>,
     /// More results summarized with it, after it, in order.
     pub group: Option<Vec<String>>,
+    /// NOTEs summarized after the results, in order, by id: each one the
+    /// caller reads, or the whole call is refused.
+    pub note_refs: Option<Vec<String>>,
     /// Answer `{task, state}` at once instead of waiting for the summary;
     /// wait for it with `tasks.wait`.
     pub defer: Option<bool>,

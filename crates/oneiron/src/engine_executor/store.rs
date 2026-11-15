@@ -723,6 +723,16 @@ pub(crate) fn bridge_result_output_path(bridge_seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
 }
 
+/// A NOTE's text a summarize call read, named by the NOTE and the text's
+/// digest: the same NOTE with the same words is one output of the run.
+pub(crate) fn summarize_note_output_path(note: EntityId, digest: &[u8; 32]) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/summarize/{}.{}.md",
+        note.to_hex(),
+        crate::entity_id::bytes_to_hex_lower(digest)
+    )
+}
+
 /// A value a program passed to `store`, named by its digest and the run's
 /// output ordinal: the same bytes stored twice are two outputs. The body
 /// bytes are still stored once by content.
@@ -734,8 +744,9 @@ pub(crate) fn store_result_output_path(digest: &[u8; 32], ordinal: usize) -> Str
 }
 
 /// Whether `path` names a result of the run the guest may read back: a
-/// stored bridge result, a stored value, the reply a parked call resumed
-/// with, a step's observation, or a file a step wrote.
+/// stored bridge result, a stored value, a NOTE's text a summarize call
+/// read, the reply a parked call resumed with, a step's observation, or a
+/// file a step wrote.
 pub(crate) fn is_result_output_path(path: &str) -> bool {
     let Some(rest) = path.strip_prefix(SCRIPT_OUTPUT_DIR) else {
         return false;
@@ -745,6 +756,9 @@ pub(crate) fn is_result_output_path(path: &str) -> bool {
         || rest
             .strip_prefix("/store/")
             .is_some_and(|rest| rest.ends_with(".result"))
+        || rest
+            .strip_prefix("/summarize/")
+            .is_some_and(|rest| rest.ends_with(".md"))
         || resumed_output_wait(path).is_some()
         || is_observation_output_path(path)
         || is_runtime_output_path(path)

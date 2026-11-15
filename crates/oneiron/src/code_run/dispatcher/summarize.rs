@@ -5,9 +5,11 @@
 //! and answers or parks.
 
 use super::{ExecutorCallSite, HostSelfDispatcher};
-use crate::code_run::storage::{NewReaderJob, SpawnAdmission};
+use crate::claim::ClaimReadStatus;
+use crate::code_run::storage::{ExecutorStorage, NewReaderJob, SpawnAdmission};
 use crate::code_run::types::{
-    SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect, SelfFailedResult,
+    RunCall, SelfDispatchOutcome, SelfDurableWait, SelfDurableWaitReason, SelfEffect,
+    SelfFailedResult,
 };
 use crate::code_run::{
     ReaderActor, ReaderJob, ReaderJobKind, ReaderJobState, ReaderRoute, SelfSummarizeCall,
@@ -23,7 +25,73 @@ const SUMMARIZE_PROMPT: &str = "summarize:";
 /// The ask a summary job's row keeps, in place of a reader child's.
 const SUMMARIZE_JOB_ASK: &str = "summarize";
 
+/// The refusal a summarize call answers when it names a NOTE its caller
+/// does not read. A missing id, a withheld or held row and a record that is
+/// not a NOTE answer it alike, so it tells nothing of what the vault holds.
+pub(crate) const SUMMARIZE_NOTE_UNREADABLE: &str = "summarize_note_unreadable";
+
+/// The refusal a summarize call answers when it names NOTEs from a run
+/// bound to an off-record session: a room NOTE reads through the room's
+/// view, which this read does not take.
+pub(crate) const SUMMARIZE_NOTES_OFF_RECORD: &str = "summarize_notes_off_record";
+
+/// The reason a NOTE a summarize call names is read with, where a private
+/// or diary NOTE's read asks for one.
+const SUMMARIZE_NOTE_READ_REASON: &str = "summarize";
+
 impl HostSelfDispatcher<'_> {
+    /// The whole live text of the NOTE `note_ref` names, as this run's
+    /// caller reads it through `vault.notes.read`: on the key its door
+    /// admits a summarize with (the run's own turn key when it binds no
+    /// door), with the NOTE's kind policy, grants and diary gate, its lifted
+    /// keys masked as the run's actor reads them. `Err` is the refusal the
+    /// whole call answers: the door's own, [`SUMMARIZE_NOTE_UNREADABLE`] for
+    /// an id that names no NOTE the caller reads, or
+    /// [`SUMMARIZE_NOTES_OFF_RECORD`] in an off-record run.
+    ///
+    /// # Errors
+    ///
+    /// The store's own errors, and a door's refusal spelled as a gate's.
+    pub(crate) fn summarize_note_text(
+        &self,
+        note_ref: &str,
+    ) -> Result<std::result::Result<(EntityId, String), String>> {
+        let unreadable = || Ok(Err(SUMMARIZE_NOTE_UNREADABLE.to_owned()));
+        let ExecutorStorage::Canonical(vault) = &self.storage else {
+            return Ok(Err(SUMMARIZE_NOTES_OFF_RECORD.to_owned()));
+        };
+        let key = match self.admit_run_call(RunCall::Bridge(SelfEffect::Summarize))? {
+            Ok(read_as) => read_as.unwrap_or_else(|| self.host_turn_read_key()),
+            Err(refusal) => return Ok(Err(refusal.code)),
+        };
+        let Ok(note) = crate::vault::entity_refs::resolve_entity_ref(vault, note_ref) else {
+            return unreadable();
+        };
+        let lane = vault
+            .scoped_read(key)
+            .with_claim_status(ClaimReadStatus::Recorded);
+        let _pins = lane.prepare_point_read::<crate::Error>()?;
+        let memory = vault.memory(self.actor.entity_ref(), self.actor.actor_class());
+        // The snapshot closes before the diary gate finishes the read.
+        let prepared = {
+            let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
+            memory.read_live_note_in_txn(
+                &lane,
+                &txn,
+                note,
+                SUMMARIZE_NOTE_READ_REASON,
+                &vault.store.pending_scan_checks,
+            )
+        };
+        match prepared.and_then(|prepared| prepared.finish(&memory)) {
+            Ok(read) => match read.value {
+                Some(view) => Ok(Ok((note, view.markdown))),
+                None => unreadable(),
+            },
+            Err(_) => unreadable(),
+        }
+    }
+
     /// `summarize`: the members the host bound, in order, by the call's
     /// recipe. A memo hit answers the summary's card. Otherwise the run's
     /// summary job over them is queued (or found), under the seat a spawn

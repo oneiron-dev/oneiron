@@ -297,20 +297,20 @@ fn repo_request_value(call: &crate::code_run::RepoRunCall) -> Result<Value> {
     ]))
 }
 
-/// The request value of a summarize call: the guest call alone.
+/// The request value of a summarize call: the guest call alone. Its NOTEs
+/// are named only when it names some, so a call that names none keeps the
+/// request value it always had.
 fn summarize_request_value(call: &crate::code_run::SelfSummarizeCall) -> Value {
-    request_map(vec![(
-        "call",
-        Value::from(
-            serde_json::json!({
-                "ref": call.reference,
-                "effort": call.effort.map(super::SummarizeEffort::as_str),
-                "group": call.group,
-                "defer": call.defer,
-            })
-            .to_string(),
-        ),
-    )])
+    let mut guest = serde_json::json!({
+        "ref": call.reference,
+        "effort": call.effort.map(super::SummarizeEffort::as_str),
+        "group": call.group,
+        "defer": call.defer,
+    });
+    if let Some(note_refs) = &call.note_refs {
+        guest["note_refs"] = serde_json::json!(note_refs);
+    }
+    request_map(vec![("call", Value::from(guest.to_string()))])
 }
 
 /// The request value of a leader split call: its leader and its slice.

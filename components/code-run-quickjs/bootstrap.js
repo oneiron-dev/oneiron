@@ -183,12 +183,14 @@
         return send("store", sent);
       }).then(decode).then(card);
     };
-    // `summarize(r, {effort?, group?, defer?})`: the row takes its ref and
-    // group as refs. A made summary answers its card; a deferred one its
-    // task and state.
+    // `summarize(r, {effort?, group?, note_refs?, defer?})`: the row takes
+    // its ref and group as refs and its NOTEs by id; a null `r` names NOTEs
+    // alone. A made summary answers its card; a deferred one its task and
+    // state.
     const summarizeVerb = bare.summarize;
     if (summarizeVerb) bare.summarize = (r, options = {}) => {
-      const input = {...options, ref: refOf(r)};
+      const input = {...options};
+      if (r !== null && r !== undefined) input.ref = refOf(r);
       if (options.group !== undefined) input.group = listOf(options.group, refOf);
       return summarizeVerb(input).then(reply =>
         reply && typeof reply.handle === "string" ? card(reply) : reply);

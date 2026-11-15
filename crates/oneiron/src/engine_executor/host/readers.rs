@@ -160,22 +160,37 @@ impl RecordingJsHost<'_, '_> {
         ))
     }
 
-    /// `summarize(r, {group?, ...})`: every member resolved in this run and
-    /// read-checked as a read of it is, in order, then the call dispatched
-    /// with them bound; the run's record keeps the guest's call. A tainted
-    /// member answers the reply its read would, so a withheld body is never
-    /// summarized; any other refusal answers its own reason. A reader
-    /// child's call goes straight to its refusal. Each member's origins are
-    /// this run's ledger as its read left it, frozen then: a member another
-    /// run holds noted its own frozen origins there in that read (FIX 7084).
+    /// `summarize(r, {group?, note_refs?, ...})`: every result member
+    /// resolved in this run and read-checked as a read of it is, in order,
+    /// then each NOTE it names read as its caller reads it, then the call
+    /// dispatched with them bound; the run's record keeps the guest's call. A
+    /// tainted member answers the reply its read would, so a withheld body is
+    /// never summarized; any other refusal answers its own reason, and one
+    /// NOTE the caller does not read refuses the whole call. A reader
+    /// child's call goes straight to its refusal. Each result member's
+    /// origins are this run's ledger as its read left it, frozen then: a
+    /// member another run holds noted its own frozen origins there in that
+    /// read (FIX 7084).
     pub(super) fn summarize(
         &mut self,
         seq: u64,
         mut call: SelfSummarizeCall,
     ) -> Result<(SelfDispatchOutcome, Option<SelfCall>)> {
+        let denied = |code: String| {
+            (
+                SelfDispatchOutcome::Denied(SelfDeniedResult {
+                    hook_notice: None,
+                    effect: SelfEffect::Summarize,
+                    outcome: code,
+                    reason_codes: Vec::new(),
+                }),
+                None,
+            )
+        };
         if self.gated_write.reader_child().is_none() {
             let members: Vec<String> = call.members().into_iter().map(str::to_owned).collect();
-            let mut bound = Vec::with_capacity(members.len());
+            let note_refs = call.note_refs.clone().unwrap_or_default();
+            let mut bound = Vec::with_capacity(members.len() + note_refs.len());
             for member in &members {
                 let (read, rows) = match self.checked_read(&JsResultTarget::parse(member))? {
                     Ok(found) => found,
@@ -184,15 +199,7 @@ impl RecordingJsHost<'_, '_> {
                             .get("denied")
                             .and_then(serde_json::Value::as_str)
                             .unwrap_or("denied");
-                        return Ok((
-                            SelfDispatchOutcome::Denied(SelfDeniedResult {
-                                hook_notice: None,
-                                effect: SelfEffect::Summarize,
-                                outcome: code.to_owned(),
-                                reason_codes: Vec::new(),
-                            }),
-                            None,
-                        ));
+                        return Ok(denied(code.to_owned()));
                     }
                 };
                 if read.is_tainted() {
@@ -212,6 +219,21 @@ impl RecordingJsHost<'_, '_> {
                     rows,
                     origins: self.gated_write.frozen_result_origins(self.run_id),
                 });
+            }
+            for note_ref in &note_refs {
+                let (note, text) = match self.gated_write.summarize_note_text(note_ref)? {
+                    Ok(found) => found,
+                    Err(code) => return Ok(denied(code)),
+                };
+                match self.summarize_note_member(note, &text)? {
+                    Ok(member) => bound.push(member),
+                    Err(reply) => {
+                        return Ok((
+                            SelfDispatchOutcome::Summarize(SummarizeReply::Withheld { reply }),
+                            None,
+                        ));
+                    }
+                }
             }
             call.bound = Some(bound);
             let effort = call.effort.unwrap_or_default();
@@ -233,6 +255,54 @@ impl RecordingJsHost<'_, '_> {
                 .0,
             None,
         ))
+    }
+
+    /// The text of `note`, as its caller read it, as one of this run's
+    /// outputs and a summarize member: at a path named by the NOTE and the
+    /// text's digest, so the same NOTE read again with the same words is the
+    /// same occurrence and its summary's memo holds. The output copies the
+    /// NOTE's words, so it is published as a dependent of it (FIX 18924), and
+    /// its rows are the NOTE alone. Its origins are unknown (FIX 7084): no
+    /// read the run's ledger noted proves the NOTE's worlds. `Err` is the
+    /// typed unavailable content that stands in for text with a secret no
+    /// handle can stand for, of which nothing is stored.
+    fn summarize_note_member(
+        &mut self,
+        note: EntityId,
+        text: &str,
+    ) -> Result<std::result::Result<DelegatedSource, serde_json::Value>> {
+        let storage = self.storage.ok_or(Error::InvalidConfig(
+            "executor result storage unavailable".into(),
+        ))?;
+        let path = summarize_note_output_path(note, blake3::hash(text.as_bytes()).as_bytes());
+        let held = self
+            .results
+            .iter()
+            .chain(&self.captured)
+            .find(|held| held.path == path)
+            .cloned();
+        let output = match held {
+            Some(output) => output,
+            None => {
+                let mut spool = storage.code_run_reply_spool()?;
+                spool.write(text.as_bytes())?;
+                match storage.publish_code_run_reply(path, spool, self.run_id, &[note], None)? {
+                    Ok(output) => {
+                        self.captured.push(output.clone());
+                        output
+                    }
+                    Err(unavailable) => return Ok(Err(unavailable)),
+                }
+            }
+        };
+        Ok(Ok(DelegatedSource {
+            owner: self.run_id,
+            path: output.path.clone(),
+            handle: output.handle.clone(),
+            range: (0, output.raw_len),
+            rows: Some(vec![note]),
+            origins: None,
+        }))
     }
 
     /// A reader child's `tasks.update({task_ref, resultRef})`: its finding
