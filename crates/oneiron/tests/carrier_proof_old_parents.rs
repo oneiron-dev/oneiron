@@ -1361,3 +1361,48 @@ fn an_enrolment_its_own_line_lets_a_row_prune_keeps_its_line() {
         fold.issues
     );
 }
+
+/// Test 17 of the row (Astra review OP-03, 16 Nov 01:3x): a covered revoke
+/// of an owner key on parents that do not hold it leaves the tail guard the
+/// enrolment. From P, E enrols K, and the root's sibling R revokes K on P,
+/// where K is absent: R's state holds K with no role, so the merge of E's
+/// and R's states strips K's owner role, and the merged roster shows no
+/// owner key. M carries an unproven home pick U on P. U lies outside E's
+/// line, so the whole log makes it wait, and a fold past the image leaves U
+/// to the whole log. R counts at this row's head; row
+/// HOSTED-ROOT-REVOKES-OWNER-KEY refuses it (a revoke of a key the parents do
+/// not hold needs the owner's proof), and the guard answers the same.
+#[test]
+fn an_owner_key_revoked_where_absent_leaves_the_tail_to_the_whole_log() {
+    let mut vault = OldParents::new();
+    let p = hash(&vault.rows[1]);
+    let (vault_id, machine) = (vault.vault_id(), vault.machine);
+    let k_signing = signing(OWNER_KEY_SEED);
+    let k = key_of(&k_signing);
+    let e = vault.enrol_owner_key_on(p, &k_signing, machine);
+    vault.push_root_row(vec![p], AuthorityOp::RevokeDevice { revoked_key: k });
+    let covered = vault.fold();
+    assert!(
+        covered.valid_entries.contains(&e),
+        "E counts in the covered fold: {:?}",
+        covered.issues
+    );
+    let covered_rows = vault.rows.clone();
+    let u = vault.carry(vec![p], home_pick_op(vault_id, machine, PICKED_NODE));
+    let whole = vault.fold();
+    assert!(
+        waits(&whole, &u),
+        "U waits in the whole log: {:?}",
+        whole.issues
+    );
+    assert!(
+        !in_force_home_pick(&whole),
+        "no pick is in force: {:?}",
+        whole.issues
+    );
+    let tail = vault.rows.last().expect("U's row").clone();
+    assert!(
+        tail_goes_to_the_whole_log(&covered_rows, &[tail]).expect("the guard's read"),
+        "a fold past the image leaves U to the whole log"
+    );
+}
