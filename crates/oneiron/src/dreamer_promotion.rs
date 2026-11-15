@@ -291,10 +291,14 @@ pub const PROMOTION_PROVENANCE_CHAIN_KEY: &str = "peer_answer_chain";
 /// write (ARCH-0076): each whole decision, and the ask it went up as.
 pub const PROMOTION_PROVENANCE_DECISIONS_KEY: &str = "decisions";
 
-/// The same typed evidence decision returned by the public evidence read.
-fn evidence_ref_admissible(vault: &Vault, entry: &EntityId) -> Result<bool> {
-    let txn = vault.store.env.read_txn()?;
-    Ok(evidence_ref_refusal_in_txn(vault, &txn, entry)?.is_none())
+/// The same typed evidence decision returned by the public evidence read,
+/// in the caller's snapshot.
+fn evidence_ref_admissible_in_txn(
+    vault: &Vault,
+    txn: &heed::RoTxn<'_>,
+    entry: &EntityId,
+) -> Result<bool> {
+    Ok(evidence_ref_refusal_in_txn(vault, txn, entry)?.is_none())
 }
 
 /// Appends the engine-owned `evidence_taint` scope entry, preserving the
@@ -410,5 +414,6 @@ mod tests;
 
 #[cfg(test)]
 pub(crate) fn evidence_ref_admissible_for_test(vault: &Vault, entry: &EntityId) -> Result<bool> {
-    evidence_ref_admissible(vault, entry)
+    let txn = vault.store.env.read_txn()?;
+    evidence_ref_admissible_in_txn(vault, &txn, entry)
 }

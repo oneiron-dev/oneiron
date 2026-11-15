@@ -140,12 +140,13 @@ pub(super) struct PreparedPromotion<'a> {
 /// Every read and pure computation `promote_one_answering` ran from the
 /// `public_evidence_refs` call through the hints and the birth text, in
 /// the same order, unchanged: evidence admission, source meet, envelope,
-/// birth, scope, signature, rate, hints and text. Each read opens the
-/// transaction it opened there. It answers the prepared write with the
-/// candidate the batch writes: its sealed evidence and its tainted scope
-/// are set.
+/// birth, scope, signature, rate, hints and text. It opens no transaction
+/// of its own; every read uses `txn`, the caller's one preparation
+/// snapshot. It answers the prepared write with the candidate the batch
+/// writes: its sealed evidence and its tainted scope are set.
 pub(super) fn prepare_promotion<'a>(
     vault: &Vault,
+    txn: &heed::RoTxn<'_>,
     run: &DreamerRunContext,
     candidate: PromotionCandidate,
     verified: Option<&'a VerifiedEvidenceSet>,
@@ -154,21 +155,16 @@ pub(super) fn prepare_promotion<'a>(
     let public_refs = public_evidence_refs(candidate.candidate.evidence())
         .map_err(|error| PromotionRejection::engine_in("invalid document evidence", error))?;
     let pinned_sources = {
-        let txn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(PromotionRejection::store)?;
         public_refs
             .iter()
             .map(|reference| {
-                crate::entity_doc::promotion_evidence_source_in_txn(vault, &txn, reference)
+                crate::entity_doc::promotion_evidence_source_in_txn(vault, txn, reference)
             })
             .collect::<Result<Vec<_>>>()
             .map_err(|error| PromotionRejection::engine_in("document evidence refused", error))?
     };
     let default_facet = vault
-        .default_facet()
+        .default_facet_in_txn(txn)
         .map_err(|error| PromotionRejection::engine_in("default facet read failed", error))?;
     // 1. Evidence admission (GATE-11 write-path consumption): drop refs
     // resolving to evidence-inadmissible CLAIM entities and refs that do
@@ -176,7 +172,7 @@ pub(super) fn prepare_promotion<'a>(
     let mut surviving: Vec<EntityId> = Vec::new();
     let mut dropped: Vec<EntityId> = Vec::new();
     for entry in &candidate.evidence_turn_refs {
-        match evidence_ref_admissible(vault, entry) {
+        match evidence_ref_admissible_in_txn(vault, txn, entry) {
             Ok(true) => surviving.push(*entry),
             Ok(false) => dropped.push(*entry),
             Err(error) => {
@@ -218,7 +214,7 @@ pub(super) fn prepare_promotion<'a>(
     // engine-owned taint stamp.
     let old_head_taint = match candidate.supersedes.as_ref() {
         Some(old_id) => vault
-            .get_claim(old_id)
+            .get_claim_in_txn(txn, old_id)
             .map_err(|error| PromotionRejection::engine_in("supersedes head read failed", error))?
             .as_ref()
             .and_then(claim_evidence_taint),
@@ -230,14 +226,9 @@ pub(super) fn prepare_promotion<'a>(
     // cited words came from.
     let import = {
         let cited = verified.map(VerifiedEvidenceSet::cited_messages);
-        let txn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(PromotionRejection::store)?;
         crate::ingest::history::imported_evidence_in_txn(
             vault,
-            &txn,
+            txn,
             &surviving,
             cited.as_deref().unwrap_or_default(),
         )
@@ -379,15 +370,11 @@ pub(super) fn prepare_promotion<'a>(
     if let Some(review) = import_review.as_deref().filter(|_| {
         !is_conflict_marker && probe_body.predicate != crate::claim::PREDICATE_CONFLICT_RESOLVED
     }) {
-        let txn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(PromotionRejection::store)?;
-        scope = crate::federation::record_scope::stamp_import_audience_birth(
-            vault, &txn, scope, review,
-        )
-        .map_err(|error| PromotionRejection::engine_in("import audience read failed", error))?;
+        scope =
+            crate::federation::record_scope::stamp_import_audience_birth(vault, txn, scope, review)
+                .map_err(|error| {
+                    PromotionRejection::engine_in("import audience read failed", error)
+                })?;
     }
     let mut prospective_queries = candidate.candidate.lexical_hints().to_vec();
     let claim_candidate = candidate
@@ -414,14 +401,9 @@ pub(super) fn prepare_promotion<'a>(
     // The Dreamer is a MACHINE writer: its host-held key signs the exact
     // candidate the write door below admits.
     {
-        let txn = vault
-            .store
-            .env
-            .read_txn()
-            .map_err(PromotionRejection::store)?;
         vault
             .sign_retained_machine_claim_in_txn(
-                &txn,
+                txn,
                 &candidate.claim_id,
                 &claim_candidate,
                 &mut envelope,
@@ -704,7 +686,14 @@ pub(super) fn promote_one_answering(
     {
         return Ok(ClaimApprovalStatus::Proposed);
     }
-    let (prepared, claim_candidate) = prepare_promotion(vault, run, candidate, verified, answers)?;
+    let (prepared, claim_candidate) = {
+        let txn = vault
+            .store
+            .env
+            .read_txn()
+            .map_err(PromotionRejection::store)?;
+        prepare_promotion(vault, &txn, run, candidate, verified, answers)?
+    };
     // The checker's turn, waited for here, before the batch announces its
     // write (FIX 8751, 8701): the gate inside never waits for capacity.
     let checker = checker
