@@ -30,6 +30,13 @@
 //! A choice door refuses a choice it cannot prove, storing nothing, only
 //! where the vault holds an owner key and this install holds none (ruling
 //! CARRIER-CHOICE-DOOR-WAIT-OR-REFUSE = B and the lead's amendment).
+//!
+//! A person's own choice (rulings CARRIER-PERSON-OPT-OUT = A and
+//! CARRIER-PERSON-OPT-BACK-IN = A, the lead's AUTH-4 PERSON-PROOF-RUNG = A):
+//! their opt-out of conversation training narrows their own row, so it lands
+//! through any carrier. Their opt back in widens it, and a carrier proves
+//! only itself: through a machine that is not the owner's it waits where the
+//! vault holds an owner key, and the person's door refuses it there.
 
 #![cfg(oneiron_test_support)]
 
@@ -57,7 +64,7 @@ use oneiron::error::{OWNER_KEY_REQUIRED, RecordError};
 use oneiron::memory::{MEMORY_CODE_INVALID_STATE, MemoryResult};
 use oneiron::origin::residence::{OriginAuthority, OriginResidence};
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::conversation_training_fold::leaves_out;
+use oneiron::test_doors::conversation_training_fold::{leaves_out, training_revision};
 use oneiron::test_doors::device_succession_fold::successor;
 use oneiron::test_doors::held_answer_confirm::confirming_answer;
 use oneiron::test_doors::home_pick_fold::home_pick_in_force;
@@ -1403,7 +1410,7 @@ fn a_members_own_opt_out_lands_through_a_not_mine_carrier() {
     assert_eq!(
         fold.waiting_owner_choices(),
         &BTreeSet::new(),
-        "a person's own choice never waits for the vault owner's proof"
+        "a person's own opt-out never waits for the vault owner's proof"
     );
 }
 
@@ -1458,6 +1465,138 @@ fn a_training_choice_for_another_person_is_still_refused() {
         "a choice for another person is an invalid entry: {:?}",
         fold.issues
     );
+}
+
+/// The member's own conversation-training choice `leave_out`, carried by
+/// `machine`, having seen the revision `seen` of their live choices.
+fn members_own_choice(machine: EntityId, leave_out: bool, seen: [u8; 32]) -> AuthorityOp {
+    AuthorityOp::ConversationTrainingSet(ConversationTrainingSet {
+        act: OwnerAct::by_owner(
+            member(),
+            OwnerActKind::ConversationTraining,
+            member(),
+            ActSurface::ThisInstall,
+            seen,
+        ),
+        machine,
+        leave_out,
+    })
+}
+
+/// The hosted node carries the member's own opt-out on the newest row, with
+/// no proof, and it lands. Returns the revision their next choice names as
+/// seen.
+fn node_carries_the_members_opt_out(answer: &mut HostedNodeAnswer) -> [u8; 32] {
+    let newest = hash(answer.rows.last().expect("a row"));
+    let opt_out = signed(
+        Some(answer.vault_id()),
+        1,
+        vec![newest],
+        members_own_choice(answer.machine, true, [0; 32]),
+        &answer.node,
+        &[],
+    );
+    answer.rows.push(opt_out);
+    let fold = answer.fold();
+    assert!(
+        leaves_out(&fold, member()),
+        "guard: the member's own opt-out lands: {:?}",
+        fold.issues
+    );
+    training_revision(&fold, member())
+}
+
+/// The member opts out through the hosted node, then opts back in over that
+/// opt-out: `carrier` carries the opt back in under its install key `key` at
+/// `seq`, with one cosign by each of `cosigners`. Returns the fold and the
+/// opt back in's entry.
+fn member_opts_back_in(
+    mut answer: HostedNodeAnswer,
+    (carrier, key, seq): (EntityId, &SigningKey, u64),
+    cosigners: &[&SigningKey],
+) -> (AuthorityFold, AuthorityEntryHash) {
+    let seen = node_carries_the_members_opt_out(&mut answer);
+    let newest = hash(answer.rows.last().expect("a row"));
+    let back_in = signed(
+        Some(answer.vault_id()),
+        seq,
+        vec![newest],
+        members_own_choice(carrier, false, seen),
+        key,
+        cosigners,
+    );
+    let entry = hash(&back_in);
+    answer.rows.push(back_in);
+    (answer.fold(), entry)
+}
+
+/// The opt back in landed: the member is not left out, and nothing waits.
+fn assert_let_back_in(fold: &AuthorityFold) {
+    assert!(
+        !leaves_out(fold, member()),
+        "the opt back in lands: {:?}",
+        fold.issues
+    );
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::new(),
+        "a landed opt back in does not wait"
+    );
+}
+
+/// Ruling CARRIER-PERSON-OPT-BACK-IN = A (the lead's AUTH-4
+/// PERSON-PROOF-RUNG = A): a person's opt back in widens their own row, and
+/// a carrier proves only itself. Carried with no proof by a machine that is
+/// not the owner's, on a vault that holds an owner key, it waits, and the
+/// member stays left out. Before: it landed, so any admitted machine could
+/// turn a person's training back on in their name.
+#[test]
+fn a_persons_opt_back_in_through_a_not_mine_carrier_waits() {
+    let answer = HostedNodeAnswer::new();
+    let (machine, node) = (answer.machine, answer.node.clone());
+    let (fold, entry) = member_opts_back_in(answer, (machine, &node, 2), &[]);
+    assert_eq!(
+        fold.waiting_owner_choices(),
+        &BTreeSet::from([entry]),
+        "the unproven opt back in waits: {:?}",
+        fold.issues
+    );
+    assert!(
+        leaves_out(&fold, member()),
+        "the member's opt-out stays in force"
+    );
+}
+
+/// Guard: the same opt back in with an owner key's proof lands.
+#[test]
+fn an_owner_key_cosigned_opt_back_in_through_a_not_mine_carrier_lands() {
+    let answer = HostedNodeAnswer::new();
+    let (machine, node, root) = (answer.machine, answer.node.clone(), answer.root.clone());
+    let (fold, _) = member_opts_back_in(answer, (machine, &node, 2), &[&root]);
+    assert_let_back_in(&fold);
+}
+
+/// Guard: carried by the owner's own machine, the opt back in lands with no
+/// cosign.
+#[test]
+fn a_persons_opt_back_in_carried_by_the_owners_machine_lands() {
+    let LaptopBesideNode {
+        node,
+        laptop,
+        laptop_machine,
+    } = LaptopBesideNode::new();
+    let (fold, _) = member_opts_back_in(node, (laptop_machine, &laptop, 1), &[]);
+    assert_let_back_in(&fold);
+}
+
+/// Guard: a managed host's vault with no owner device key keeps today's opt
+/// back in, since no key there could prove it.
+#[test]
+fn a_persons_opt_back_in_lands_on_a_hosted_vault_with_no_owner_device_key() {
+    let answer = HostedNodeAnswer::on_a_hosted_vault();
+    let (machine, node) = (answer.machine, answer.node.clone());
+    let (fold, _) = member_opts_back_in(answer, (machine, &node, 2), &[]);
+    assert_let_back_in(&fold);
 }
 
 /// One vault as a managed host serves it: the Hosted posture, rooted under
@@ -1653,6 +1792,31 @@ impl ServedVault {
         self.vault
             .conversation_learning_status()
             .expect("conversation learning status")
+    }
+
+    /// The owner turns training on and lets people opt out, through this
+    /// install.
+    fn let_people_opt_out(&self) {
+        self.vault
+            .set_conversation_learning(&self.owner, ActSurface::ThisInstall, true, true, None)
+            .expect("the setting that lets people opt out lands");
+    }
+
+    /// The authenticated person leaves their own messages out of training,
+    /// or lets them back in, through this install. Returns whether they are
+    /// left out.
+    fn leave_my_messages_out(&self, leave_out: bool) -> oneiron::Result<bool> {
+        self.vault
+            .set_conversation_training(&self.owner, ActSurface::ThisInstall, leave_out, None)
+            .map(|view| view.leave_out)
+    }
+
+    /// Whether the authenticated person's own messages are left out.
+    fn my_messages_are_left_out(&self) -> bool {
+        self.vault
+            .conversation_training_view(&self.owner)
+            .expect("the person's own training view")
+            .leave_out
     }
 
     /// This install serves one repository bound to a CODE anchor under the
@@ -1978,6 +2142,72 @@ fn the_vault_training_door_lands_with_the_owners_key_on_this_install() {
     served.enrol_owner_key();
     let view = served.set_learning(true).expect("the proven setting lands");
     assert!(view.on, "the setting is on: {view:?}");
+}
+
+/// The person's own training door, the narrowing (ruling
+/// CARRIER-PERSON-OPT-OUT = A): an opt-out lands beside an owner key this
+/// install does not hold.
+#[test]
+fn the_persons_training_door_takes_an_opt_out_beside_an_owner_key_it_does_not_hold() {
+    let served = ServedVault::hosted();
+    served.let_people_opt_out();
+    served.owner_key_held_on_another_install();
+    assert!(!served.install_is_mine(), "guard: not the owner's machine");
+    let left_out = served
+        .leave_my_messages_out(true)
+        .expect("the opt-out lands");
+    assert!(left_out, "the person is left out");
+}
+
+/// The widening (ruling CARRIER-PERSON-OPT-BACK-IN = A): beside an owner key
+/// this install does not hold, the door refuses the opt back in and stores
+/// nothing, and the person stays left out. Before: the opt back in landed.
+#[test]
+fn the_persons_training_door_refuses_an_opt_back_in_once_another_install_holds_the_owners_key() {
+    let served = ServedVault::hosted();
+    served.let_people_opt_out();
+    served
+        .leave_my_messages_out(true)
+        .expect("guard: the opt-out lands");
+    served.owner_key_held_on_another_install();
+    let rows = served.stored_rows();
+    assert_owner_key_refusal(served.leave_my_messages_out(false));
+    served.assert_nothing_stored_since(rows);
+    assert!(
+        served.my_messages_are_left_out(),
+        "the person stays left out"
+    );
+}
+
+/// Guard: no owner key in the vault, so the opt back in lands as it does
+/// today from an install that is not the owner's machine.
+#[test]
+fn the_persons_training_door_takes_an_opt_back_in_where_the_vault_holds_no_owner_key() {
+    let served = ServedVault::hosted();
+    served.let_people_opt_out();
+    served
+        .leave_my_messages_out(true)
+        .expect("guard: the opt-out lands");
+    let left_out = served
+        .leave_my_messages_out(false)
+        .expect("the opt back in lands as it does today");
+    assert!(!left_out, "the person is let back in");
+}
+
+/// Guard: from an install that holds the owner's key, the opt back in is
+/// proven and lands.
+#[test]
+fn the_persons_training_door_takes_an_opt_back_in_with_the_owners_key_on_this_install() {
+    let served = ServedVault::hosted();
+    served.let_people_opt_out();
+    served.enrol_owner_key();
+    served
+        .leave_my_messages_out(true)
+        .expect("guard: the opt-out lands");
+    let left_out = served
+        .leave_my_messages_out(false)
+        .expect("the proven opt back in lands");
+    assert!(!left_out, "the person is let back in");
 }
 
 /// The origin cutover door under the first guard: no owner key in the vault,
