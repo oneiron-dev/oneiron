@@ -168,7 +168,7 @@ pub(super) fn print_root_move_report(
     steps: Vec<String>,
 ) -> anyhow::Result<()> {
     let report = json!({
-        "vault_id": hex(&moved.vault_id),
+        "vault_id": oneiron_hex::encode(&moved.vault_id),
         "engine_writers_enrolled": moved.writers_enrolled,
         "machines_carried": moved.machines_carried,
         "machine_histories_carried": moved.histories_carried,
@@ -177,7 +177,7 @@ pub(super) fn print_root_move_report(
             .retired_slips
             .iter()
             .map(|slip| json!({
-                "slip_id": hex(&slip.slip_id),
+                "slip_id": oneiron_hex::encode(&slip.slip_id),
                 "holder_ref": slip.holder_ref,
                 "actor_class": slip.actor_class,
             }))
@@ -208,8 +208,4 @@ fn read_secret_file(path: &Path) -> anyhow::Result<Zeroizing<String>> {
     });
     anyhow::ensure!(!secret.is_empty(), "{} holds no secret", path.display());
     Ok(Zeroizing::new(secret.to_owned()))
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }

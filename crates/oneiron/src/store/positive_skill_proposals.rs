@@ -14,15 +14,8 @@ use crate::side_table::{self, Named, SideTable};
 pub(crate) const POSITIVE_PROPOSAL: SideTable<u64, PositiveSkillProposal, Named> =
     SideTable::new(&side_table::SKILL_ATTRIBUTION_POSITIVE_PROPOSAL);
 
-/// What a succeeded attempt taught its skill.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum PositiveFinding {
-    /// The actor departed from the skill for `reason`, and the attempt won.
-    DeviationWorked { reason: String },
-    /// The actor performed a step the skill did not cover, and the attempt won.
-    UncoveredStepWorked,
-}
+#[doc(hidden)]
+pub use oneiron_records::store::positive_skill_proposals::PositiveFinding;
 
 /// One positive skill proposal, cited to the receipt that earned it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

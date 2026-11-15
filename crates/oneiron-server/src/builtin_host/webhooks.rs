@@ -27,6 +27,7 @@ use oneiron::channel_identity_provider::{
 use oneiron::surface_event::{
     InboundSurfaceEventInput, SurfaceEventAction, SurfaceEventAdmission, SurfaceInteractionKind,
 };
+use oneiron_base::unix_seconds_now;
 use serde_json::Value;
 use sha2::Sha256;
 
@@ -142,7 +143,7 @@ fn slack_event(
     request: SlackDelivery,
     body: &[u8],
 ) -> oneiron::Result<Reply> {
-    let now = unix_now();
+    let now = unix_seconds_now();
     let unsigned = Reply::Refused(
         StatusCode::UNAUTHORIZED,
         "the request is not signed by Slack",
@@ -408,7 +409,7 @@ fn line_events(
     signature: Option<String>,
     body: &[u8],
 ) -> oneiron::Result<Reply> {
-    let now = unix_now();
+    let now = unix_seconds_now();
     let unsigned = Reply::Refused(
         StatusCode::UNAUTHORIZED,
         "the request is not signed by LINE",
@@ -701,10 +702,4 @@ fn decode_hex(text: &str) -> Option<Vec<u8>> {
         .step_by(2)
         .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
         .collect()
-}
-
-fn unix_now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
 }
