@@ -32,17 +32,43 @@ use crate::outbound_intent_ledger::{
 };
 use crate::ports::TombstoneStore;
 
+/// The code run whose change journal an effect's gate receipts join
+/// (ARCH-0040 #revert-run), and the held call the effect is, when its gate
+/// input names one: its approval target's digest, so a later decision on
+/// that same call folds into the receipt the run lists for it, and a
+/// decision on another call of the same effect binding is listed apart.
+struct EffectJournal {
+    run: Option<String>,
+    call: Option<String>,
+}
+
+impl EffectJournal {
+    fn of(prepared: &PreparedEffect) -> Self {
+        let run = prepared.run_ref.clone();
+        let call = run
+            .as_ref()
+            .and_then(|_| gate::ApprovalTarget::held_digest(&prepared.gate));
+        Self { run, call }
+    }
+}
+
 /// Joins the gate receipt `decision` to the change journal of the code run
-/// `run_ref` names (ARCH-0040 #revert-run), in `wtxn`, the receipt's own
-/// write. An effect no code run asks records nothing.
+/// `journal` names, in `wtxn`, the receipt's own write. An effect no code
+/// run asks records nothing.
 fn journal_effect_receipt_in_txn(
     vault: &Vault,
     wtxn: &mut heed::RwTxn<'_>,
-    run_ref: Option<&str>,
+    journal: &EffectJournal,
     decision: crate::store::GateDecisionId,
 ) -> Result<(), OutboundEffectError> {
-    if let Some(run) = run_ref {
-        crate::memory::run_review::record_run_effect_in_txn(&vault.store, wtxn, run, decision)?;
+    if let Some(run) = &journal.run {
+        crate::memory::run_review::record_run_effect_in_txn(
+            &vault.store,
+            wtxn,
+            run,
+            decision,
+            journal.call.as_deref(),
+        )?;
     }
     Ok(())
 }
@@ -64,7 +90,7 @@ fn parked_refusal(
     if decision.outcome() != GateOutcome::Deny {
         return Ok(None);
     }
-    journal_effect_receipt_in_txn(vault, &mut wtxn, prepared.run_ref.as_deref(), decision_id)?;
+    journal_effect_receipt_in_txn(vault, &mut wtxn, &EffectJournal::of(prepared), decision_id)?;
     wtxn.commit().map_err(Error::from)?;
     vault.store.notify_attempt_observers();
     Ok(Some(gate_rejection(intent_id, decision_id, decision)))
@@ -87,7 +113,7 @@ fn ceiling_hold(
     let policy = gate::resolve_policy_manifest(&vault.store, &wtxn)?;
     let (decision_id, decision) =
         gate::record_held_external_effect_policy(&vault.store, &mut wtxn, &effect, &policy)?;
-    journal_effect_receipt_in_txn(vault, &mut wtxn, prepared.run_ref.as_deref(), decision_id)?;
+    journal_effect_receipt_in_txn(vault, &mut wtxn, &EffectJournal::of(prepared), decision_id)?;
     wtxn.commit().map_err(Error::from)?;
     vault.store.notify_attempt_observers();
     let denied = decision.outcome() == GateOutcome::Deny;
@@ -452,7 +478,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             journal_effect_receipt_in_txn(
                 vault,
                 &mut wtxn,
-                prepared.run_ref.as_deref(),
+                &EffectJournal::of(&prepared),
                 decision_id,
             )?;
             wtxn.commit().map_err(Error::from)?;
@@ -468,7 +494,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
 
     // The code run that asks the effect: each receipt below joins its
     // change journal in the receipt's own write (ARCH-0040 #revert-run).
-    let run_ref = prepared.run_ref.clone();
+    let journal = EffectJournal::of(&prepared);
     let fresh = fresh_admission_in_txn(vault, &wtxn, &prepared, invite_admission.as_ref())?;
     let approval_context = fresh.approval_context();
     let FreshAdmission {
@@ -490,7 +516,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         let ask_consent = governance.ask_consent().cloned();
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
-        journal_effect_receipt_in_txn(vault, &mut wtxn, run_ref.as_deref(), decision_id)?;
+        journal_effect_receipt_in_txn(vault, &mut wtxn, &journal, decision_id)?;
         wtxn.commit().map_err(Error::from)?;
         let mut result = gate_rejection(intent_id, decision_id, decision)
             .held_by_outside_code_wait(&posting_gate, code_wait.is_some());
@@ -523,7 +549,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
             if co.outcome() != GateOutcome::Allow {
                 let (decision_id, decision) =
                     gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
-                journal_effect_receipt_in_txn(vault, &mut wtxn, run_ref.as_deref(), decision_id)?;
+                journal_effect_receipt_in_txn(vault, &mut wtxn, &journal, decision_id)?;
                 wtxn.commit().map_err(Error::from)?;
                 return Ok(gate_rejection(intent_id, decision_id, decision).held_by(&bound.effect));
             }
@@ -695,7 +721,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     if co_exhausted && let Some(co) = co_governance.take() {
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, co)?;
-        journal_effect_receipt_in_txn(vault, &mut wtxn, run_ref.as_deref(), decision_id)?;
+        journal_effect_receipt_in_txn(vault, &mut wtxn, &journal, decision_id)?;
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
@@ -717,7 +743,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         governance.deny_budget_exhausted();
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
-        journal_effect_receipt_in_txn(vault, &mut wtxn, run_ref.as_deref(), decision_id)?;
+        journal_effect_receipt_in_txn(vault, &mut wtxn, &journal, decision_id)?;
         wtxn.commit().map_err(Error::from)?;
         return Ok(gate_rejection(intent_id, decision_id, decision));
     }
@@ -733,7 +759,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
         governance.deny_budget_exhausted();
         let (decision_id, decision) =
             gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
-        journal_effect_receipt_in_txn(vault, &mut wtxn, run_ref.as_deref(), decision_id)?;
+        journal_effect_receipt_in_txn(vault, &mut wtxn, &journal, decision_id)?;
         wtxn.commit().map_err(Error::from)?;
         let mut result = gate_rejection(intent_id, decision_id, decision);
         result.budget_charge = budget_charge;
@@ -864,7 +890,7 @@ pub(crate) fn execute_outbound_effect<T: OutboundTransport>(
     }
     let (decision_id, decision) =
         gate::record_external_effect_policy(&vault.store, &mut wtxn, governance)?;
-    journal_effect_receipt_in_txn(vault, &mut wtxn, run_ref.as_deref(), decision_id)?;
+    journal_effect_receipt_in_txn(vault, &mut wtxn, &journal, decision_id)?;
     let mut co_spent = None;
     if let Some(co) = co_governance {
         co_spent = co.spent_press_digest().zip(co_keep);

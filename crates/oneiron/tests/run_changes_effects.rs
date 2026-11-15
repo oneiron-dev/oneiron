@@ -31,6 +31,7 @@ use oneiron::code_run::{
 use oneiron::memory::HostWriteOrigin;
 use oneiron::runtime_hooks::InvocationId;
 use oneiron::task_verb::sdk::{AgentVerb, invoke};
+use oneiron::test_doors::run_changes::{append_effect_receipt, journal_run_effect};
 use oneiron::test_support::{
     bind_host_owner, provision_engine_machines, put_policy_manifest_bytes,
 };
@@ -416,5 +417,64 @@ fn revert_all_reports_a_runs_effects_without_replaying_them() -> TestResult {
             .collect();
         assert_eq!(reported, expected, "newest first");
     }
+    Ok(())
+}
+
+/// Two held calls of one AlwaysAsk tool that differ only in their arguments
+/// share one effect binding, which names no call, so the gate hands the
+/// second call the first call's pending receipt
+/// (`gate_decision_matches_pending_candidate`). The run lists that receipt
+/// for its first call and folds the first call's answer into it; it lists
+/// the second call's answer for itself. Each reads its own call's answer:
+/// the first call ran, so the revert reports it one-way, though the newest
+/// decision on the binding is the second call's refusal, which never
+/// landed. An effect whose gate input names no call folds its answer by its
+/// binding, as before.
+#[test]
+fn a_runs_two_held_calls_of_one_binding_list_apart_under_their_own_answers() -> TestResult {
+    let f = Fixture::open()?;
+    let run = "run-effects-calls";
+    let binding = b"one AlwaysAsk tool's effect binding".as_slice();
+    let (first, second) = ("a1".repeat(32), "b2".repeat(32));
+    let held = append_effect_receipt(&f.vault, "pending", binding)?;
+    journal_run_effect(&f.vault, run, &held, Some(&first))?;
+    let ran = append_effect_receipt(&f.vault, "allow", binding)?;
+    journal_run_effect(&f.vault, run, &ran, Some(&first))?;
+    journal_run_effect(&f.vault, run, &held, Some(&second))?;
+    let refused = append_effect_receipt(&f.vault, "deny", binding)?;
+    journal_run_effect(&f.vault, run, &refused, Some(&second))?;
+
+    let listed: Vec<String> = effects(&f, run)?;
+    assert_eq!(
+        listed,
+        vec![held.clone(), refused.clone()],
+        "the first call's receipt, then the second call's answer"
+    );
+    let outcome = f.revert_all(run)?;
+    assert_eq!(
+        rows(&outcome, "not_undone", "reason")?,
+        vec![
+            (refused, "not_landed".to_owned()),
+            (held, "one_way".to_owned()),
+        ],
+        "newest first, each under its own call's answer"
+    );
+    assert!(rows(&outcome, "compensated", "receipt")?.is_empty());
+
+    let plain = "run-effects-binding";
+    let binding = b"a send's own effect binding".as_slice();
+    let sent = append_effect_receipt(&f.vault, "pending", binding)?;
+    journal_run_effect(&f.vault, plain, &sent, None)?;
+    let answer = append_effect_receipt(&f.vault, "allow", binding)?;
+    journal_run_effect(&f.vault, plain, &answer, None)?;
+    assert_eq!(
+        effects(&f, plain)?,
+        vec![sent.clone()],
+        "one effect, its answer folded"
+    );
+    assert_eq!(
+        rows(&f.revert_all(plain)?, "not_undone", "reason")?,
+        vec![(sent, "one_way".to_owned())]
+    );
     Ok(())
 }

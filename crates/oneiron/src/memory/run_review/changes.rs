@@ -50,6 +50,23 @@ struct RunChangeRow {
     unrestored: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     note_undo: Option<crate::note::RunNoteUndo>,
+    /// For an external effect a held call asked: that call, and the newest
+    /// later decision on it, which the effect's verdict follows. `None` for
+    /// every other change and for an effect whose gate input names no call.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    effect_call: Option<EffectCall>,
+}
+
+/// The held call an external-effect receipt stands for: its approval
+/// target's digest (`ApprovalTarget::held_digest`: the call's attempt, call
+/// sequence and frozen payload), which the gate's effect binding leaves out,
+/// so two calls of one AlwaysAsk tool share a binding and its pending
+/// receipt. `answer` is the newest later decision on this same call.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct EffectCall {
+    call: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    answer: Option<String>,
 }
 
 /// A journal row's key: the run's hashed head and the change's write order.
@@ -165,10 +182,15 @@ pub(crate) fn record_run_deletion_in_txn(
 }
 
 /// Records that `run` asked the external effect whose gate receipt is
-/// `decision`, in the receipt's own write. A receipt the run already lists is
-/// not listed again, nor is a later decision on an effect whose pending
-/// receipt the run lists: that pending receipt stands for the effect, and its
-/// verdict follows the newest decision on it (FIX 11478). A revert never
+/// `decision`, in the receipt's own write. `call` is the held call the effect
+/// is, when its gate input names one: its approval target's digest. A receipt
+/// the run already lists is not listed again. Nor is a later decision on an
+/// effect whose pending receipt the run lists for the same call, or, when
+/// neither names a call, for the same effect binding: that pending receipt
+/// stands for the effect (FIX 11478). For a named call its row keeps that
+/// newest decision, which its verdict follows. A decision on another call
+/// of the same binding is listed for itself, with its own verdict, though
+/// the gate's binding does not tell the two calls apart. A revert never
 /// replays an effect; it reports one that ran as one-way.
 ///
 /// # Errors
@@ -178,12 +200,14 @@ pub(crate) fn record_run_effect_in_txn(
     txn: &mut heed::RwTxn<'_>,
     run: &str,
     decision: crate::store::GateDecisionId,
+    call: Option<&str>,
 ) -> crate::Result<()> {
     let run = run.strip_prefix("run:").unwrap_or(run);
     let receipt_ref = format!("gate:{}", decision.to_hex());
     let record = store.gate_decision_in_txn(&*txn, decision)?;
+    let mut answered = None;
     for row in CHANGES.iter_from(store, &*txn, &run_hash(run))? {
-        let (_, row) = row?;
+        let (key, row) = row?;
         let RunReviewChange::ExternalEffect {
             receipt_ref: listed,
         } = &row.change
@@ -195,6 +219,9 @@ pub(crate) fn record_run_effect_in_txn(
         }
         if *listed == receipt_ref {
             return Ok(());
+        }
+        if row.effect_call.as_ref().map(|listed| listed.call.as_str()) != call {
+            continue;
         }
         let Some(record) = &record else {
             continue;
@@ -215,14 +242,27 @@ pub(crate) fn record_run_effect_in_txn(
                 && !record.diff_handle.is_empty()
                 && listed.diff_handle == record.diff_handle
         }) {
-            return Ok(());
+            answered = Some((key, row));
+            break;
         }
     }
-    record_change_in_txn(
+    if let Some((key, mut row)) = answered {
+        if let Some(effect_call) = &mut row.effect_call {
+            effect_call.answer = Some(receipt_ref);
+            CHANGES.put(store, txn, &key, &row)?;
+        }
+        return Ok(());
+    }
+    append_row_in_txn(
         store,
         txn,
         run,
         RunReviewChange::ExternalEffect { receipt_ref },
+        None,
+        call.map(|call| EffectCall {
+            call: call.to_owned(),
+            answer: None,
+        }),
     )
 }
 
@@ -289,6 +329,7 @@ pub(crate) fn record_run_note_landing_in_txn(
                 fork_ref,
             },
             Some(undo.clone()),
+            None,
         ),
     }
 }
@@ -314,17 +355,18 @@ fn record_change_in_txn(
     run: &str,
     change: RunReviewChange,
 ) -> crate::Result<()> {
-    append_row_in_txn(store, txn, run, change, None)
+    append_row_in_txn(store, txn, run, change, None, None)
 }
 
-/// Appends `change`, with a NOTE landing's `note_undo`, after the run's last
-/// recorded change.
+/// Appends `change` after the run's last recorded change, with a NOTE
+/// landing's `note_undo`, or the held call an external effect stands for.
 fn append_row_in_txn(
     store: &crate::store::Store,
     txn: &mut heed::RwTxn<'_>,
     run: &str,
     change: RunReviewChange,
     note_undo: Option<crate::note::RunNoteUndo>,
+    effect_call: Option<EffectCall>,
 ) -> crate::Result<()> {
     let run = run.strip_prefix("run:").unwrap_or(run);
     let head = run_hash(run);
@@ -345,6 +387,7 @@ fn append_row_in_txn(
             compensation: None,
             unrestored: Vec::new(),
             note_undo,
+            effect_call,
         },
     )
 }
@@ -377,6 +420,32 @@ pub(super) fn run_changes_in_txn(
         .into_iter()
         .map(|(_, row)| row.change)
         .collect())
+}
+
+/// The verdict of each external-effect receipt of `run` that a held call
+/// asked, read from that call's own answer (`call_effect_verdict_in_txn`),
+/// by change ref: a review reads these in place of the effect binding's
+/// newest decision, which another call of that binding may have made.
+pub(super) fn call_effect_verdicts_in_txn(
+    memory: &Memory<'_>,
+    txn: &heed::RoTxn<'_>,
+    run: &str,
+) -> MemoryResult<std::collections::BTreeMap<String, RunChangeVerdict>> {
+    let mut verdicts = std::collections::BTreeMap::new();
+    for (_, row) in first_rows_in_txn(&memory.vault().store, txn, run)? {
+        if let (RunReviewChange::ExternalEffect { receipt_ref }, Some(call)) =
+            (&row.change, &row.effect_call)
+        {
+            let verdict = super::snapshot::call_effect_verdict_in_txn(
+                memory.vault(),
+                txn,
+                receipt_ref,
+                call.answer.as_deref(),
+            )?;
+            verdicts.insert(receipt_ref.clone(), verdict);
+        }
+    }
+    Ok(verdicts)
 }
 
 /// The run's journal as revert members, for a run nobody settled (ARCH-0040
@@ -417,8 +486,17 @@ fn journal_member_in_txn(
         // reports one that ran as one-way. A receipt redacted since may have
         // gone out, so it reads as landed.
         RunReviewChange::ExternalEffect { receipt_ref } => (
-            super::snapshot::effect_receipt_in_txn(memory.vault(), txn, receipt_ref)?
-                .map_or(RunChangeVerdict::Landed, |(_, verdict)| verdict),
+            match &row.effect_call {
+                // A held call's receipt reads its own call's answer.
+                Some(call) => super::snapshot::call_effect_verdict_in_txn(
+                    memory.vault(),
+                    txn,
+                    receipt_ref,
+                    call.answer.as_deref(),
+                )?,
+                None => super::snapshot::effect_receipt_in_txn(memory.vault(), txn, receipt_ref)?
+                    .map_or(RunChangeVerdict::Landed, |(_, verdict)| verdict),
+            },
             None,
         ),
         RunReviewChange::Note { note_ref, fork_ref } => {
@@ -548,10 +626,11 @@ pub(super) fn undo_journal_member_in_txn(
     let row = CHANGES
         .get(store, &*txn, key)?
         .ok_or_else(|| MemoryError::bad_request("change left the run"))?;
-    let (run, fresh, note_undo) = (
+    let (run, fresh, note_undo, effect_call) = (
         row.run.clone(),
         row.compensation.is_none(),
         row.note_undo.clone(),
+        row.effect_call.clone(),
     );
     let mut member = journal_member_in_txn(memory, &*txn, row)?;
     let undone = super::revert::undo_member_in_txn(memory, txn, owner, actor, &mut member)?;
@@ -566,6 +645,7 @@ pub(super) fn undo_journal_member_in_txn(
                 compensation: member.compensation,
                 unrestored: member.unrestored,
                 note_undo,
+                effect_call,
             },
         )?;
     }
