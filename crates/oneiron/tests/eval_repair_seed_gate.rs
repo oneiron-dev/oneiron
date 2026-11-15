@@ -15,9 +15,10 @@ use std::sync::Arc;
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::ingest::{AgUiCustomMapping, AgUiFileImport, AgUiObservationKind};
 use oneiron::skill_optimize::{
-    EvalArmPin, EvalLabel, EvalLabelKind, EvalRepairLegAnswer, EvalRepairSeed, EvalRepairSeedLegs,
-    EvalRepairSeedRefusal, EvalRepairSeedRequest, EvalRepairSeedState, EvalRepairTaskSource,
-    EvalRepairToolCall, EvalSeat, FamilyPurpose, eval_authoring_inventory,
+    CutDecision, EvalArmPin, EvalCohortSetup, EvalLabel, EvalLabelKind, EvalRepairLegAnswer,
+    EvalRepairSeed, EvalRepairSeedLegs, EvalRepairSeedRefusal, EvalRepairSeedRequest,
+    EvalRepairSeedState, EvalRepairTaskSource, EvalRepairToolCall, EvalSeat, FamilyPurpose,
+    eval_authoring_inventory, setup_eval_cohorts,
 };
 use oneiron::test_doors::label_writers::embedded_owner;
 use oneiron::{EdgeActorClass, EntityId, Vault, VaultConfig};
@@ -836,5 +837,174 @@ fn seed_label_refuses_a_leaked_or_unbounded_answer() -> TestResult {
         .is_err()
     );
     assert_eq!(fixture.vault.eval_repair_seed(&observed)?, Some(proposed));
+    Ok(())
+}
+
+/// The companion seat's sealed families as one owner cut takes them: every
+/// family whose cases all fall before `until`.
+fn cut_before(fixture: &Fixture, until: u64) -> TestResult<usize> {
+    let inventory = eval_authoring_inventory(&fixture.vault, 3_000)?;
+    let report = setup_eval_cohorts(
+        &fixture.vault,
+        &fixture.proof,
+        EvalCohortSetup {
+            inventory_at: 3_000,
+            inventory_digest: inventory.inventory_digest,
+            families: Vec::new(),
+            cases: Vec::new(),
+            cuts: vec![CutDecision {
+                seat: EvalSeat::Companion,
+                from: 0,
+                until,
+                rubric_revision: "fixture/rubric-v1".to_owned(),
+                reference: false,
+            }],
+        },
+        3_000,
+    )?;
+    Ok(report.cohorts_cut.len())
+}
+
+#[test]
+fn a_repair_from_a_family_a_cohort_holds_is_not_held_out() -> TestResult {
+    let fixture = fixture()?;
+    // One failure carries three contracts: three task sources that share the
+    // capture's root, and so its family.
+    let contracts = json!({
+        "first": text_task(clean_state()),
+        "alt": text_task(json!({ "orders": [{ "id": "A-2", "city": "Nice" }] })),
+        "third": text_task(json!({ "orders": [{ "id": "A-3", "city": "Metz" }] })),
+    });
+    let captured = capture(&fixture, contracts, json!({ "response": ANSWER }))?;
+    let at_pointer = |pointer: &str| EvalRepairTaskSource {
+        task_pointer: pointer.to_owned(),
+        ..captured.clone()
+    };
+    let first = at_pointer("/value/task/first");
+    let (held, late) = (
+        at_pointer("/value/task/alt"),
+        at_pointer("/value/task/third"),
+    );
+    propose(&fixture, &first).map_err(|refusal| format!("refused: {refusal}"))?;
+    let waiting = propose(&fixture, &held).map_err(|refusal| format!("refused: {refusal}"))?;
+    settle(
+        &fixture,
+        &first,
+        &response("wrong answer"),
+        &response(ANSWER),
+    )?;
+    assert_eq!(cut_before(&fixture, 1_500)?, 1, "the cut holds the family");
+    // A seed proposed before the cut is refused at its gate: its case would
+    // join a family the cohort holds, outside the cohort's membership.
+    let seed = settle(
+        &fixture,
+        &held,
+        &response("wrong answer"),
+        &response(ANSWER),
+    )?;
+    // By its wire name: the red head has no such refusal to name.
+    let EvalRepairSeedState::Refused { reason, at } = &seed.state else {
+        panic!("the gate refuses the seed: {:?}", seed.state);
+    };
+    assert_eq!(serde_json::to_value(reason)?, json!("family_held"));
+    assert_eq!(*at, SETTLED_AT);
+    assert_eq!(seed.family, waiting.family);
+    // A seed proposed after the cut is refused at once.
+    let refusal = propose(&fixture, &late).expect_err("a held family takes no new seed");
+    assert!(refusal.contains("a cohort already holds"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&late)?.is_none());
+    assert_eq!(
+        uncut_sealed_cases(&fixture)?,
+        0,
+        "no case outside the cohort"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_withheld_capture_reveals_no_seed() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let coach = fixture.vault.coach_authority()?;
+    let reader = fixture
+        .vault
+        .memory(coach.entity_ref(), coach.actor_class());
+    let attempt = |source: &EvalRepairTaskSource| {
+        reader.settle_eval_repair_seed(
+            source,
+            &response("wrong answer"),
+            &response(ANSWER),
+            &legs(),
+            SETTLED_AT,
+        )
+    };
+    // No seed yet: the withheld reader learns nothing, not even that.
+    let before = attempt(&source)?;
+    assert!(before.seed.is_none(), "{:?}", before.seed);
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let after = attempt(&source)?;
+    assert!(after.seed.is_none(), "{:?}", after.seed);
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn seed_label_refuses_an_answer_in_its_reference() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let label = EvalLabel {
+        reference: format!("audit:{ANSWER}"),
+        ..audit(EvalLabelKind::AdjudicatedAudit, ANSWER)
+    };
+    let refusal = label_seed(&fixture, &source, &label).expect_err("the reference holds it");
+    assert!(refusal.contains("reference holds its answer"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn a_task_whose_intent_holds_the_answer_is_refused() -> TestResult {
+    let fixture = fixture()?;
+    let told = format!("Reply with exactly this: {ANSWER}");
+    // An observed answer the intent shows the candidate: no task.
+    let mut observed = text_task(clean_state());
+    observed["intent"] = json!(told);
+    let source = capture(&fixture, observed, json!({ "response": ANSWER }))?;
+    let refusal = propose(&fixture, &source).expect_err("the intent holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert!(fixture.vault.eval_repair_seed(&source)?.is_none());
+    // An adjudicated answer the intent shows the candidate: no label.
+    let mut adjudicated = adjudicated_task(clean_state());
+    adjudicated["intent"] = json!(told);
+    let source = capture(&fixture, adjudicated, json!({ "status": "resolved" }))?;
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let refusal = label_seed(
+        &fixture,
+        &source,
+        &audit(EvalLabelKind::AdjudicatedAudit, ANSWER),
+    )
+    .expect_err("the intent holds the answer");
+    assert!(refusal.contains("leaked"), "{refusal}");
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
+    Ok(())
+}
+
+#[test]
+fn a_withheld_capture_takes_no_label() -> TestResult {
+    let fixture = fixture()?;
+    let source = adjudicated_capture(&fixture, clean_state())?;
+    let coach = fixture.vault.coach_authority()?;
+    let reader = fixture
+        .vault
+        .memory(coach.entity_ref(), coach.actor_class());
+    let label = audit(EvalLabelKind::AdjudicatedAudit, ANSWER);
+    // No seed yet: the withheld reader learns nothing, not even that.
+    let before = reader.label_eval_repair_seed(&source, &label)?;
+    assert!(before.seed.is_none(), "{:?}", before.seed);
+    let proposed = propose(&fixture, &source).map_err(|refusal| format!("refused: {refusal}"))?;
+    let after = reader.label_eval_repair_seed(&source, &label)?;
+    assert!(after.seed.is_none(), "{:?}", after.seed);
+    assert_eq!(fixture.vault.eval_repair_seed(&source)?, Some(proposed));
     Ok(())
 }
