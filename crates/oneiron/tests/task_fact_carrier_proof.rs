@@ -9,9 +9,12 @@
 //! `a_replayed_unsigned_cancel_leaves_the_task_open`; the forged signed cancel fails the read
 //! in `a_cancel_signed_by_a_key_the_fold_never_admitted_leaves_the_task_open`; the forged
 //! second owner forks the owner in `a_fact_the_hosts_machine_signed_counts_on_the_device`;
-//! the ask record and the malformed fact fail the read in their tests. Green on the head.
+//! the ask record fails the read in its test. Green on the head.
 //! `a_row_replaced_under_an_indexed_id_does_not_count` is red on the base when the replay
 //! door lands the new body (the forger owns the task), and a guard when it refuses it.
+//! `a_malformed_fact_from_another_install_does_not_fail_its_read` is a guard on both: the
+//! owner index decodes every TASK row it stores, so the replay door refuses a fact body it
+//! cannot decode, and the read skips one that lands.
 //! `an_unrooted_vault_counts_the_facts_its_own_door_wrote` passes on both: this install's own
 //! facts count here with no carrier.
 //!
@@ -433,7 +436,15 @@ fn a_malformed_fact_from_another_install_does_not_fail_its_read() {
         host.vault.now_recorded_at(),
     );
     entries.push((Value::from("unknown_key"), Value::from(1)));
-    land_replicated_fact(&host.vault, forged, task, &encode(entries));
+    // The owner index decodes every TASK row it stores, so the replay door may refuse the
+    // row; if it lands, the read skips it.
+    if replay_task_row(&host.vault, forged, &encode(entries)).is_ok() {
+        host.vault
+            .batch()
+            .edge(&forged, EdgeKind::ScopedTo, &task, SCOPED_TO_WEIGHT)
+            .commit()
+            .expect("the row's link to its task");
+    }
     let state = host
         .vault
         .task_authority_state(task)
