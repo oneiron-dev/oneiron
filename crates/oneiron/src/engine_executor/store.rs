@@ -723,22 +723,22 @@ pub(crate) fn bridge_result_output_path(bridge_seq: u64) -> String {
     format!("{SCRIPT_OUTPUT_DIR}/bridge/{bridge_seq:06}.result.json")
 }
 
-/// A NOTE's text a summarize call read, named by the NOTE and the text's
-/// digest: the same NOTE with the same words is one output of the run.
-pub(crate) fn summarize_note_output_path(note: EntityId, digest: &[u8; 32]) -> String {
-    format!(
-        "{SCRIPT_OUTPUT_DIR}/summarize/{}.{}.md",
-        note.to_hex(),
-        crate::entity_id::bytes_to_hex_lower(digest)
-    )
-}
-
 /// A value a program passed to `store`, named by its digest and the run's
 /// output ordinal: the same bytes stored twice are two outputs. The body
 /// bytes are still stored once by content.
 pub(crate) fn store_result_output_path(digest: &[u8; 32], ordinal: usize) -> String {
     format!(
         "{SCRIPT_OUTPUT_DIR}/store/{}.{ordinal:06}.result",
+        crate::entity_id::bytes_to_hex_lower(digest)
+    )
+}
+
+/// A NOTE's text a summarize call read, named by the NOTE and the text's
+/// digest: the same NOTE with the same words is one output of the run.
+pub(crate) fn summarize_note_output_path(note: EntityId, digest: &[u8; 32]) -> String {
+    format!(
+        "{SCRIPT_OUTPUT_DIR}/summarize/{}.{}.md",
+        note.to_hex(),
         crate::entity_id::bytes_to_hex_lower(digest)
     )
 }

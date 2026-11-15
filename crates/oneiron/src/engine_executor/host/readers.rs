@@ -278,7 +278,8 @@ impl RecordingJsHost<'_, '_> {
         // with these words is reused, and the spool is dropped unpublished.
         let mut spool = storage.code_run_reply_spool()?;
         spool.write(text.as_bytes())?;
-        let path = summarize_note_output_path(note, &spool.digest()?);
+        let path =
+            crate::engine_executor::store::summarize_note_output_path(note, &spool.digest()?);
         let held = self
             .results
             .iter()
