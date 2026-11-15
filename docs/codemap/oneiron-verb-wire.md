@@ -134,7 +134,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/channel_identity_selection/mod.rs` | src | s | 2 mod · 11 re-export | — | — |
 | `src/channel_identity_selection/selection_resolution.rs` | src | s | 1 struct · 2 enum · 4 fn · 1 type | ChannelIdentitySelectionDecision, ChannelIdentitySelectionError, SelectionRuleScope | Moved from `crates/oneiron/src/channel_identity_selection/selection_resolution.rs` (lib split W1: wire types… |
 | `src/channel_identity_selection/selection_rules.rs` | src | s | 2 struct · 5 fn · 1 const | ChannelIdentitySelectionRule, ChannelIdentitySelectionRuleSet | Moved from `crates/oneiron/src/channel_identity_selection/selection_rules.rs` (lib split W1: wire types… |
-| `src/check_in/mod.rs` | src | s | 1 mod · 1 re-export | — | — |
+| `src/check_in/effect.rs` | src | s | 1 struct | CheckInDecision | Moved from `crates/oneiron/src/check_in/effect.rs` (P2.5 2k3 main merge: the step-up reset receipts, wire… |
+| `src/check_in/mod.rs` | src | s | 2 mod · 2 re-export | — | — |
 | `src/check_in/pending.rs` | src | s | 1 enum | HolderKind | Moved from `crates/oneiron/src/check_in/pending.rs` (lib split W1: wire types below the lib) |
 | `src/claim/aging_profiles.rs` | src | s | 1 struct · 3 fn | ClaimAgingProfiles | Moved from `crates/oneiron/src/claim/aging_profiles.rs` (lib split W2: wire types below the lib) |
 | `src/claim/decay.rs` | src | s | 1 struct · 1 enum · 2 fn · 5 const | AccessFactorPolicy, ClaimAgingClass | Moved from `crates/oneiron/src/claim/decay.rs` (lib split W2: wire types below the lib) |

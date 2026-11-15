@@ -381,7 +381,9 @@ impl StepRunner {
         // out, never refused.
         let selected =
             AgentDispatcher::new(vault).render_workflow_step_context(&step.attempt, &context);
-        if let Err(error) = selected.record_manifest(vault, &step.attempt, super::unix_now()) {
+        if let Err(error) =
+            selected.record_manifest(vault, &step.attempt, super::unix_seconds_now())
+        {
             tracing::warn!(
                 attempt = ?step.attempt.id,
                 %error,
@@ -670,7 +672,7 @@ impl StepRunner {
                 true,
             )
         } else {
-            let now = super::unix_now();
+            let now = super::unix_seconds_now();
             // The planner craft rows the call shows (FIX 6934): kept beside the
             // joined text for the attempt's read set, `None` when not known
             // complete. A planner with no craft shows none.
@@ -1071,7 +1073,7 @@ impl StepRunner {
                     route: binding.route.clone(),
                 }),
             };
-            let park_at = progress.wait.is_some().then(super::unix_now);
+            let park_at = progress.wait.is_some().then(super::unix_seconds_now);
             checkpoints
                 .as_mut()
                 .ok_or_else(|| {

@@ -30,32 +30,10 @@ mod source_binding;
 
 pub const LINKEDIN_LEAD_CORPUS_SCHEMA_VERSION: u16 = 1;
 
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LinkedInLeadCorpus {
-    pub schema_version: u16,
-    pub companies: Vec<LinkedInCompanySeed>,
-    pub contacts: Vec<LinkedInContactSeed>,
-}
-
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LinkedInCompanySeed {
-    pub external_id: String,
-    pub display_name: String,
-    pub profile_url: Option<String>,
-    pub website_domain: Option<String>,
-}
-
-#[derive(Clone, Debug, serde::Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct LinkedInContactSeed {
-    pub external_id: String,
-    pub display_name: String,
-    pub company_external_id: String,
-    pub title: Option<String>,
-    pub profile_url: Option<String>,
-}
+#[doc(hidden)]
+pub use oneiron_records::linkedin_lead_preload::{
+    LinkedInCompanySeed, LinkedInContactSeed, LinkedInLeadCorpus,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LinkedInEntityKind {

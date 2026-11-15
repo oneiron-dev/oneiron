@@ -15,9 +15,25 @@
 //!
 //! The reset a refusal states also rides out with it: the attempt's Retry
 //! park comes due at that reset ([`stated_reset_at`]).
+//!
+//! An attempt held unsent because its offer rests for its provider's health,
+//! or because its one probation request is out, spends no attempt (FIX
+//! 11226): the declared schedule counts sends. The call waits for the offer
+//! back, within its rest wait, and asks again; the rest still holds every
+//! other call off the offer. A rest past what is left of that wait returns at
+//! once, unsent, and the step parks with the sends it made
+//! ([`TransportRetries::sends`]); its resume starts from them. Each send is
+//! counted before it goes, and a refusal met before it went, a rest or a
+//! budget refusal, gives its count back. A plan that keeps its count
+//! ([`TransportRetries::keeping`]) keeps it there too, so a pass stopped
+//! while a send is out, or in the wait after it, resumes with that send
+//! spent, and a send whose count does not keep is not made. A resume that
+//! finds every declared attempt sent sends no more: the last one went out
+//! and a stop lost its reply, an `io_after_send` cut.
 
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 use std::time::{Duration, Instant};
@@ -37,26 +53,152 @@ pub(super) fn retry_delay_ms(retry: usize) -> u64 {
         .unwrap_or(0)
 }
 
+/// How often a call held unsent by its offer's health asks again when no
+/// reset is stated (a probation request is out), and the least it waits for
+/// one that is: the schedule's first interval.
+const HEALTH_REST_POLL_MS: u64 = 250;
+
+/// Keeps a step's sends where its next pass reads them (FIX 11226), and
+/// answers whether they kept.
+pub(super) type KeepSends<'a> = &'a (dyn Fn(usize) -> bool + Send + Sync);
+
+/// One durable call's transport retries: the retries its schedule makes
+/// after the first send (FIX 9930), how long it waits in all, unsent, for its
+/// offer back from a health rest, and the sends it has made, which a step
+/// keeps for its resume (FIX 11226).
+pub(super) struct TransportRetries<'a> {
+    pub(super) max: usize,
+    pub(super) rest_wait: Duration,
+    sends: AtomicUsize,
+    keep: Option<KeepSends<'a>>,
+}
+
+impl<'a> TransportRetries<'a> {
+    /// `max` retries on the schedule, and no wait for a health rest: a
+    /// backend that walks its own ladder waits for its offers itself.
+    pub(super) fn schedule(max: usize) -> Self {
+        Self::resumed(max, Duration::ZERO, 0)
+    }
+
+    /// `max` retries, after the `sends` an earlier pass made, and
+    /// `rest_wait` for its offer back.
+    pub(super) fn resumed(max: usize, rest_wait: Duration, sends: usize) -> Self {
+        Self {
+            max,
+            rest_wait,
+            sends: AtomicUsize::new(sends),
+            keep: None,
+        }
+    }
+
+    /// The same plan, each send kept by `keep` before it goes: a stop while
+    /// it is out then resumes with it spent, not only the sends of a pass
+    /// that returned.
+    pub(super) fn keeping(self, keep: KeepSends<'a>) -> Self {
+        Self {
+            keep: Some(keep),
+            ..self
+        }
+    }
+
+    /// The sends made so far, an earlier pass's included: once the call
+    /// parks unsent, the ones its step keeps.
+    pub(super) fn sends(&self) -> usize {
+        self.sends.load(Ordering::Acquire)
+    }
+
+    /// The same plan for another call of the step, a correction: its own
+    /// count, from none, kept nowhere.
+    pub(super) fn for_another_call(&self) -> Self {
+        Self::resumed(self.max, self.rest_wait, 0)
+    }
+
+    /// Counts `sends` sends made, kept where the plan keeps them. Whether
+    /// they kept: a send whose count did not keep is not made.
+    fn count_sends(&self, sends: usize) -> bool {
+        self.sends.store(sends, Ordering::Release);
+        self.keep.is_none_or(|keep| keep(sends))
+    }
+}
+
 pub(super) async fn generate_with_retry(
     backend: &dyn LlmBackend,
     request: &LlmRequest,
     lease: &super::BudgetLease,
-    max_retries: usize,
+    plan: &TransportRetries<'_>,
 ) -> LlmResult<LlmResponse> {
-    let mut retries = 0_usize;
+    let max_retries = plan.max;
+    let mut rested = Duration::ZERO;
     loop {
+        // The sends before this one, an earlier pass's included.
+        let sent = plan.sends();
+        // Every declared attempt went out, and a stop lost the last one's
+        // reply: a resume sends no more (FIX 11226).
+        if sent > max_retries {
+            return Err(LlmError::Retryable(RetryableLlmError::io_after_send(
+                "model_step_send",
+                "every declared attempt was sent; the last reply was not kept",
+            )));
+        }
+        // The send is counted before it goes, so a stop while it is out
+        // resumes with it spent.
+        if !plan.count_sends(sent + 1) {
+            return Err(LlmError::Retryable(RetryableLlmError::not_sent(
+                "model_step_send_count",
+                "the step's send count did not keep",
+            )));
+        }
         match backend.generate(request.clone(), lease).await {
             Ok(response) => return Ok(response),
-            Err(LlmError::Retryable(error)) => {
-                if retries >= max_retries || waits_past_schedule(&error, retries, max_retries) {
+            // A budget refusal is met before the send goes: its count is
+            // given back. A give-back that does not keep leaves the step one
+            // attempt fewer, never one more.
+            Err(error @ LlmError::BudgetDenied(_)) => {
+                let _kept = plan.count_sends(sent);
+                return Err(error);
+            }
+            // Nothing went out: its count is given back, and no attempt is
+            // spent (FIX 11226).
+            Err(LlmError::Retryable(error @ RetryableLlmError::HealthRest { .. })) => {
+                let _kept = plan.count_sends(sent);
+                let wait = health_rest_wait(&error, unix_now_ms());
+                if rested.saturating_add(wait) > plan.rest_wait {
                     return Err(LlmError::Retryable(error));
                 }
-                sleep_ms(retry_delay_ms(retries)).await;
-                retries += 1;
+                sleep_ms(u64::try_from(wait.as_millis()).unwrap_or(u64::MAX)).await;
+                rested = rested.saturating_add(wait);
+            }
+            Err(LlmError::Retryable(error)) => {
+                if sent >= max_retries || waits_past_schedule(&error, sent, max_retries) {
+                    return Err(LlmError::Retryable(error));
+                }
+                sleep_ms(retry_delay_ms(sent)).await;
             }
             Err(error) => return Err(error),
         }
     }
+}
+
+/// How long, from `now_ms` (Unix milliseconds), until the offer a health
+/// rest names is back: to the start of the first second it states still
+/// ahead, at least [`HEALTH_REST_POLL_MS`]. A probation request's end, which
+/// no clock states, is asked for each [`HEALTH_REST_POLL_MS`].
+fn health_rest_wait(error: &RetryableLlmError, now_ms: u64) -> Duration {
+    let RetryableLlmError::HealthRest {
+        retry_after,
+        resets_at,
+    } = error
+    else {
+        return Duration::from_millis(HEALTH_REST_POLL_MS);
+    };
+    let now = now_ms / 1000;
+    let back_ms = resets_at
+        .iter()
+        .find(|at| **at > now)
+        .map(|at| at.saturating_mul(1000).saturating_sub(now_ms))
+        .or_else(|| retry_after.map(|secs| secs.saturating_mul(1000)))
+        .unwrap_or(0);
+    Duration::from_millis(back_ms.max(HEALTH_REST_POLL_MS))
 }
 
 /// Whether `error`, met before retry `retry` of `max_retries`, waits past every interval
@@ -119,9 +261,15 @@ pub(crate) fn stated_reset_at(error: &LlmError) -> Option<u64> {
 }
 
 fn unix_now() -> u64 {
+    unix_now_ms() / 1000
+}
+
+fn unix_now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs())
+        .map_or(0, |since| {
+            u64::try_from(since.as_millis()).unwrap_or(u64::MAX)
+        })
 }
 
 /// std-only timer future (zero-new-deps pin, design D1): a helper thread

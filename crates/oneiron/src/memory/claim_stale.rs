@@ -119,7 +119,10 @@ impl Memory<'_> {
     /// narrowed against the actor ceiling in the lane. Unlike the record
     /// list, this door serves only what retrieval may surface: approved
     /// or auto, active, and stale only when the applied filter includes
-    /// stale claims. The receipt states requested, ceiling and applied.
+    /// stale claims. Non-empty `project_refs` keep only the claims stamped
+    /// with one of those projects or a project below one, as recall's
+    /// scope does; that only narrows. The receipt states requested,
+    /// ceiling and applied.
     pub fn claim_list_filtered(
         &self,
         request: &ClaimFilteredListRequest,
@@ -138,6 +141,7 @@ impl Memory<'_> {
             })?),
             None => None,
         };
+        let projects = self.projects_at_or_below(&request.project_refs)?;
         let filter = request.filter.as_ref().map(ReadFilterInput::to_filter);
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let ids = match &request.subject_ref {
@@ -172,6 +176,7 @@ impl Memory<'_> {
                     .as_ref()
                     .is_some_and(|predicate| body.predicate != *predicate)
                     || lifecycle.is_some_and(|lifecycle| body.lifecycle != lifecycle)
+                    || !projects.matches(body.scope_project)
                 {
                     continue;
                 }
@@ -189,12 +194,14 @@ impl Memory<'_> {
     }
 
     /// Reads one claim as retrieval would surface it, under the caller's
-    /// retrieval filter met with the actor ceiling. `None` when absent
-    /// or withheld; the receipt says which axes narrowed.
+    /// retrieval filter met with the actor ceiling. `None` when absent,
+    /// withheld, or stamped outside non-empty `project_refs` (and every
+    /// project below them); the receipt says which axes narrowed.
     pub fn claim_read_filtered(
         &self,
         request: &ClaimFilteredReadRequest,
     ) -> MemoryResult<ScopedReadResult<Option<ClaimView>>> {
+        let projects = self.projects_at_or_below(&request.project_refs)?;
         let filter = request.filter.as_ref().map(ReadFilterInput::to_filter);
         let lane = self.read_lane(ClaimReadStatus::Surfaceable)?;
         let id = self.resolve_ref_in_lane(&lane, &request.claim_ref)?;
@@ -204,7 +211,13 @@ impl Memory<'_> {
             Some(row) => match row.body.as_deref() {
                 Some(bytes) => {
                     let body = crate::claim::decode_claim_body(bytes, true)?;
-                    Some(self.served_claim_view(&row.id, &body)?)
+                    // Outside the caller's projects the claim reads as
+                    // absent, the same answer as a withheld row.
+                    if projects.matches(body.scope_project) {
+                        Some(self.served_claim_view(&row.id, &body)?)
+                    } else {
+                        None
+                    }
                 }
                 None => None,
             },
