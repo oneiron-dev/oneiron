@@ -26,7 +26,7 @@ mod items;
 pub(super) mod sieve_audit;
 
 /// One section a weave report asks for, in the reader's own recipe.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveSectionInput {
     pub kind: WeaveSectionKind,
@@ -385,35 +385,24 @@ impl WeaveReaderRef {
     }
 }
 
-/// One reader's schedule row on the owner's wire.
+/// One reader's schedule on the owner's wire: its setting joined with its
+/// due state. The owner sets a schedule with `vault.settings.set` on
+/// `weave.digest.owner_schedule` or `weave.digest.reader_schedule`.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct WeaveScheduleView {
     pub reader: WeaveReaderRef,
     pub cadence: WeaveDigestCadence,
-    /// The first due Unix second.
+    /// The next due Unix second.
     pub next_due_at: u64,
     pub sections: Vec<WeaveSectionInput>,
-    /// Answer only: the timer left this row until `held.until`, after an
-    /// owner's due notice or a refused render. A write ignores it.
+    /// The timer left this row until `held.until`, after an owner's due
+    /// notice or a refused render.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held: Option<WeaveScheduleHold>,
 }
 
 impl WeaveScheduleView {
-    pub fn into_schedule(self) -> MemoryResult<WeaveDigestSchedule> {
-        Ok(WeaveDigestSchedule {
-            reader: self.reader.reader()?,
-            cadence: self.cadence,
-            next_due_at: self.next_due_at,
-            recipe: self
-                .sections
-                .iter()
-                .map(WeaveSectionInput::spec)
-                .collect::<MemoryResult<Vec<_>>>()?,
-        })
-    }
-
     #[must_use]
     pub fn from_schedule(row: &WeaveDigestSchedule, held: Option<WeaveScheduleHold>) -> Self {
         Self {

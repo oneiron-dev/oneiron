@@ -15,14 +15,14 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::agent_inbox_lens::{InboxLensPage, InboxLensRequest, InboxRunGroupsRequest};
 use oneiron::claim::{
     WeaveDigestFeedback, WeaveDigestRendered, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
-    WeaveDigestSettingUndo, WeaveReaderRef, WeaveScheduleView,
+    WeaveDigestSettingUndo, WeaveScheduleView,
 };
 use oneiron::inbox::UnifiedInboxGroupPage;
 use oneiron::lens::{GeneratedUiSurfaceCapabilities, LensFrameCard, WeaveLensRequest};
 use oneiron::memory::DreamerAttemptRef;
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
 use oneiron::runtime_hooks::InvocationId;
-use oneiron::task_verb::sdk::{EmptyRequest, WeaveEnqueueRequest, WeaveScheduleCleared};
+use oneiron::task_verb::sdk::{EmptyRequest, WeaveEnqueueRequest};
 use oneiron::{EdgeActorClass, EntityId};
 
 use super::host_doors::support::{Listed, credential_listing, off_runtime_listing, refused};
@@ -324,42 +324,6 @@ pub(crate) async fn vault_weave_schedules_list(
     };
     credential_listing(server, auth, caller, VERB, move |_, _, memory| {
         oneiron::task_verb::sdk::weave_schedules(&memory, &owner)
-    })
-    .await
-}
-
-pub(crate) async fn vault_weave_schedules_put(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass),
-    _invocation: Option<InvocationId>,
-    input: WeaveScheduleView,
-) -> Listed<WeaveScheduleView> {
-    const VERB: &str = "vault.weave.schedules.put";
-    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
-        Ok(owner) => owner,
-        Err(error) => return refused(error),
-    };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        oneiron::task_verb::sdk::weave_schedule_put(&memory, &owner, input)
-    })
-    .await
-}
-
-pub(crate) async fn vault_weave_schedules_clear(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    caller: (EntityId, EdgeActorClass),
-    _invocation: Option<InvocationId>,
-    input: WeaveReaderRef,
-) -> Listed<WeaveScheduleCleared> {
-    const VERB: &str = "vault.weave.schedules.clear";
-    let owner = match super::host_doors::support::owner_proof(auth, server, VERB) {
-        Ok(owner) => owner,
-        Err(error) => return refused(error),
-    };
-    credential_listing(server, auth, caller, VERB, move |_, _, memory| {
-        oneiron::task_verb::sdk::weave_schedule_clear(&memory, &owner, input)
     })
     .await
 }

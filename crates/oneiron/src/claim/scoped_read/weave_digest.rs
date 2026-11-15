@@ -9,7 +9,8 @@
 //! Glossary: `WeaveDigestSchedule` is one reader's digest cadence and due
 //! time; it is not the commitment `Schedule` in `crate::commitment_schedule`.
 use super::weave_lens::{
-    KeptLiveLens, WeaveLensRefusal, WeaveLensRender, settle_live_weave_lens, settle_weave_lens_axes,
+    KeptLiveLens, WeaveLensRefusal, WeaveLensRender, settle_live_weave_lens,
+    settle_weave_lens_axes, settle_weave_lens_axes_in_txn,
 };
 use super::{
     ScopedRead, ScopedReadResult, WeaveItem, WeaveReader, WeaveReport, WeaveSectionKind,
@@ -49,18 +50,23 @@ mod rerender;
 mod rewrite;
 // A due Owner schedule renders as its recorded live Owner (FIX 1259).
 pub(super) mod scheduled_owner;
+// Each reader's digest rhythm, recipe and clock start: two catalogue keys (DESIGN
+// 15-setting-primitive, stage 4).
+pub(crate) mod setting_keys;
 mod settings;
 // A saved schedule's and period's stored rows and their conversions.
 mod wire;
 pub use admin::WeaveAdminKey;
 pub use changes::WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER;
 pub use coach::WeaveDigestSettingsDrafter;
-use settings::SettingsEdit;
 pub use settings::{
     WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
     WeaveDigestSettingChangeStatus, WeaveDigestSettingUndo, WeaveDigestSettings,
 };
-use wire::{WireDigest, WireSchedule, report_sources, source_key};
+use wire::{
+    WireDigest, WireDue, WireSchedule, put_due_in_txn, report_sources, schedule_bytes_in_txn,
+    source_key,
+};
 
 #[doc(hidden)]
 use oneiron_verb_wire::claim::scoped_read::weave_digest::SCHEDULE_PREFIX;
@@ -344,92 +350,29 @@ fn sources_live_in_txn(store: &Store, txn: &heed::RoTxn<'_>, report: &WeaveRepor
 }
 
 impl Vault {
-    /// Owner-authorized local schedule. Hosts enqueue due rows; this door owns no timer.
-    /// The owner's own schedule writes through the one writer his settings
-    /// have (FIX 5495), which bumps their generation in this same write.
-    pub fn set_weave_digest_schedule(
+    /// A stopped digest's newest rendered period settles on the weave-report skill's axes in the
+    /// write that stops it, since no next period will render to settle it (CALLS: OF-499 stopped
+    /// digest settles at stop). Its saved digests stay. Evidence about the skill, never a gate on
+    /// the stop: a failure is logged and the stop goes on.
+    pub(super) fn settle_stopped_weave_digest_in_txn(
         &self,
-        owner: &AuthenticatedOwner,
-        row: &WeaveDigestSchedule,
-    ) -> Result<()> {
-        if row.recipe.is_empty() {
-            return Err(invalid());
-        }
-        let bytes = serde_json::to_vec(&WireSchedule::from_row(row)).map_err(|_| invalid())?;
-        let now = self.store.clock.now_recorded_at();
-        self.with_write_txn_grouped(|txn| {
-            let actor = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
-            let reader = match row.reader {
-                WeaveDigestReader::Person(id) => WeaveReader::Person(id),
-                WeaveDigestReader::Owner(id) if id == actor => WeaveReader::Owner(owner),
-                WeaveDigestReader::Owner(_) => return Err(invalid()),
-                WeaveDigestReader::Agent(id) => WeaveReader::Agent(id),
-                // No Admin schedule: an Admin reads in the foreground only,
-                // and an Owner proof never stands for an Admin's (OF-499 A3).
-                WeaveDigestReader::Admin(_) => return Err(invalid()),
-            };
-            let policy = crate::gate::resolve_policy_manifest(&self.store, txn)?;
-            super::weave_report::validate_weave_recipe(self, txn, &policy, &reader, &row.recipe)?;
-            if let WeaveDigestReader::Owner(id) = row.reader {
-                self.put_owner_weave_digest_schedule_in_txn(
-                    txn,
-                    id,
-                    &bytes,
-                    SettingsEdit::Owner,
-                    now,
-                )?;
-                return Ok(());
-            }
-            self.store
-                .vault_meta
-                .put(txn, &row.reader.key(SCHEDULE_PREFIX), &bytes)?;
-            Ok(())
-        })?;
-        // The deadline timer re-reads committed rows on this signal.
-        self.store.notify_proactivity_changes();
-        Ok(())
-    }
-
-    /// Owner-only: stop one reader's digests. Its saved digests stay, and
-    /// its newest rendered period settles on the weave-report skill's axes
-    /// now, since no next period will render to settle it (CALLS: OF-499
-    /// stopped digest settles at stop).
-    pub fn clear_weave_digest_schedule(
-        &self,
-        owner: &AuthenticatedOwner,
+        txn: &mut heed::RwTxn<'_>,
         reader: WeaveDigestReader,
-    ) -> Result<bool> {
-        let now = self.store.clock.now_recorded_at();
-        let cleared = self.with_write_txn_grouped(|txn| {
-            owner.revalidate_in_txn(self, txn)?;
-            let cleared = self
-                .store
-                .vault_meta
-                .delete(txn, &reader.key(SCHEDULE_PREFIX))?;
-            // Stopping an owner's digest is his own settings edit (FIX 5495).
-            if cleared && let WeaveDigestReader::Owner(id) = reader {
-                self.bump_weave_digest_settings_in_txn(txn, id, SettingsEdit::Owner, now)?;
+        now: u64,
+    ) {
+        let settled = match previous_weave_lens_in_txn(&self.store, txn, reader, u64::MAX) {
+            Ok(Some((at, report, last))) => {
+                settle_weave_lens_axes_in_txn(self, txn, reader, at, &report, &last, now)
             }
-            Ok(cleared)
-        })?;
-        self.store.notify_proactivity_changes();
-        if cleared && let Some((at, report, last)) = self.previous_weave_lens(reader, u64::MAX)? {
-            // Evidence about the skill, never a gate on the stop.
-            if let Err(error) = settle_weave_lens_axes(
-                self,
-                reader,
-                at,
-                &report,
-                &last,
-                self.store.clock.now_recorded_at(),
-            ) {
-                tracing::warn!(
-                    ?error,
-                    "the stopped weave digest's last period did not settle"
-                );
-            }
+            Ok(None) => Ok(()),
+            Err(error) => Err(error),
+        };
+        if let Err(error) = settled {
+            tracing::warn!(
+                ?error,
+                "the stopped weave digest's last period did not settle"
+            );
         }
-        Ok(cleared)
     }
 
     /// Owner-only: every reader's schedule, in key order. An undecodable
@@ -442,8 +385,11 @@ impl Vault {
         owner.revalidate_in_txn(self, &txn)?;
         let mut rows = Vec::new();
         for row in self.store.vault_meta.prefix_iter(&txn, SCHEDULE_PREFIX)? {
-            let (key, bytes) = row?;
-            let Some(reader) = WeaveDigestReader::from_schedule_key(&key) else {
+            let (key, _) = row?;
+            let Some(reader) = WeaveDigestReader::from_schedule_key(key) else {
+                continue;
+            };
+            let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, key)? else {
                 continue;
             };
             if let Ok(mut wire) = serde_json::from_slice::<WireSchedule>(&bytes) {
@@ -469,7 +415,10 @@ impl Vault {
         }
         let mut next: Option<u64> = None;
         for row in self.store.vault_meta.prefix_iter(&txn, SCHEDULE_PREFIX)? {
-            let (_, bytes) = row?;
+            let (key, _) = row?;
+            let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, key)? else {
+                continue;
+            };
             // An undecodable row must not arm an instantly repeating deadline.
             let Ok(wire) = serde_json::from_slice::<WireSchedule>(&bytes) else {
                 continue;
@@ -504,12 +453,13 @@ impl Vault {
             let txn = self.store.env.read_txn()?;
             let mut due = Vec::new();
             for row in self.store.vault_meta.prefix_iter(&txn, SCHEDULE_PREFIX)? {
-                let (key, bytes) = row?;
-                if let Some(reader) = WeaveDigestReader::from_schedule_key(&key)
+                let (key, _) = row?;
+                if let Some(reader) = WeaveDigestReader::from_schedule_key(key)
+                    && let Some(bytes) = schedule_bytes_in_txn(&self.store, &txn, key)?
                     && let Ok(wire) = serde_json::from_slice::<WireSchedule>(&bytes)
                     && wire.serve_at() <= now
                 {
-                    due.push((reader, key.to_vec(), bytes.to_vec()));
+                    due.push((reader, key.to_vec(), bytes));
                 }
             }
             due
@@ -581,15 +531,14 @@ impl Vault {
         let Ok(wire) = serde_json::from_slice::<WireSchedule>(saved) else {
             return Ok(());
         };
-        let held = serde_json::to_vec(&WireSchedule {
+        let held = WireDue {
+            next_due_at: wire.next_due_at,
             held_until: Some(wire.next_boundary_after(now)?),
             held_because: because,
-            ..wire
-        })
-        .map_err(|_| invalid())?;
+        };
         self.with_write_txn_grouped(|txn| {
-            if self.store.vault_meta.get(&*txn, key)?.as_deref() == Some(saved) {
-                self.store.vault_meta.put(txn, key, &held)?;
+            if schedule_bytes_in_txn(&self.store, txn, key)?.as_deref() == Some(saved) {
+                put_due_in_txn(&self.store, txn, key, &held)?;
             }
             Ok(())
         })
@@ -603,9 +552,7 @@ impl Vault {
     ) -> Result<Option<WeaveDigestSchedule>> {
         let txn = self.store.env.read_txn()?;
         owner.revalidate_in_txn(self, &txn)?;
-        self.store
-            .vault_meta
-            .get(&txn, &reader.key(SCHEDULE_PREFIX))?
+        schedule_bytes_in_txn(&self.store, &txn, &reader.key(SCHEDULE_PREFIX))?
             .map(|bytes| {
                 serde_json::from_slice::<WireSchedule>(&bytes)
                     .map_err(|_| invalid())?
@@ -783,27 +730,37 @@ impl Vault {
         scheduled_for: u64,
     ) -> Result<Option<(u64, WeaveReport, WeaveLensRender)>> {
         let txn = self.store.env.read_txn()?;
-        let prefix = reader.key(DIGEST_PREFIX);
-        let mut previous = None;
-        for row in self.store.vault_meta.prefix_iter(&txn, &prefix)? {
-            let (key, bytes) = row?;
-            let Some(at) = key
-                .strip_prefix(prefix.as_slice())
-                .and_then(|at| <[u8; 8]>::try_from(at).ok())
-                .map(u64::from_be_bytes)
-            else {
-                continue;
-            };
-            if at >= scheduled_for {
-                break;
-            }
-            let mut wire: WireDigest = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-            if let Some(lens) = wire.lens.take() {
-                previous = Some((at, wire.into_report()?.value, lens));
-            }
-        }
-        Ok(previous)
+        previous_weave_lens_in_txn(&self.store, &txn, reader, scheduled_for)
     }
+}
+
+/// [`Vault::previous_weave_lens`] in the caller's transaction.
+fn previous_weave_lens_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    reader: WeaveDigestReader,
+    scheduled_for: u64,
+) -> Result<Option<(u64, WeaveReport, WeaveLensRender)>> {
+    let prefix = reader.key(DIGEST_PREFIX);
+    let mut previous = None;
+    for row in store.vault_meta.prefix_iter(txn, &prefix)? {
+        let (key, bytes) = row?;
+        let Some(at) = key
+            .strip_prefix(prefix.as_slice())
+            .and_then(|at| <[u8; 8]>::try_from(at).ok())
+            .map(u64::from_be_bytes)
+        else {
+            continue;
+        };
+        if at >= scheduled_for {
+            break;
+        }
+        let mut wire: WireDigest = serde_json::from_slice(bytes).map_err(|_| invalid())?;
+        if let Some(lens) = wire.lens.take() {
+            previous = Some((at, wire.into_report()?.value, lens));
+        }
+    }
+    Ok(previous)
 }
 
 fn digest_key(reader: WeaveDigestReader, scheduled_for: u64) -> Vec<u8> {
@@ -1100,11 +1057,7 @@ impl ScopedRead<'_> {
         let key = id.key(SCHEDULE_PREFIX);
         let saved = {
             let txn = self.vault.store.env.read_txn()?;
-            self.vault
-                .store
-                .vault_meta
-                .get(&txn, &key)?
-                .map(|b| b.to_vec())
+            schedule_bytes_in_txn(&self.vault.store, &txn, &key)?
         };
         let Some(saved) = saved else {
             return Ok(None);
@@ -1129,11 +1082,11 @@ impl ScopedRead<'_> {
         let sources = dependencies::indexed_sources(&report.value)?;
         let wire = WireDigest::from_report(now, &report)?;
         let bytes = serde_json::to_vec(&wire).map_err(|_| invalid())?;
-        let next = serde_json::to_vec(&WireSchedule {
+        let next = WireDue {
             next_due_at,
-            ..WireSchedule::from_row(&row)
-        })
-        .map_err(|_| invalid())?;
+            held_until: None,
+            held_because: None,
+        };
         let digest_key = [
             id.key(DIGEST_PREFIX),
             row.next_due_at.to_be_bytes().to_vec(),
@@ -1147,7 +1100,9 @@ impl ScopedRead<'_> {
             // Re-run the identical scoped lens in this writer's snapshot.
             // Its claim, project, budget, link and edge-endpoint checks must
             // all still produce the report and receipt we intend to save.
-            if self.vault.store.vault_meta.get(&*txn, &key)?.as_deref() != Some(saved.as_slice()) {
+            if schedule_bytes_in_txn(&self.vault.store, txn, &key)?.as_deref()
+                != Some(saved.as_slice())
+            {
                 return Ok(None);
             }
             if !sources_live_in_txn(&self.vault.store, txn, &report.value)? {
@@ -1171,7 +1126,7 @@ impl ScopedRead<'_> {
                 index_source_in_txn(&self.vault.store, txn, source, &digest_key, true)?;
             }
             put_digest_row_in_txn(&self.vault.store, txn, &digest_key, &bytes)?;
-            self.vault.store.vault_meta.put(txn, &key, &next)?;
+            put_due_in_txn(&self.vault.store, txn, &key, &next)?;
             // Delivery is the reader's inbox, in this same write, for a
             // digest with anything in it. An owner's notice went out when
             // its digest fell due, and the owner is the one opening it now.

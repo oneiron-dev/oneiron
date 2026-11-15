@@ -1,7 +1,7 @@
 //! Typed owner setup for weave work and the inbox's real producers.
 use crate::claim::{
     WeaveDigestFeedback, WeaveDigestSettingAnswer, WeaveDigestSettingChange,
-    WeaveDigestSettingUndo, WeaveReaderRef, WeaveScheduleView,
+    WeaveDigestSettingUndo, WeaveScheduleView,
 };
 use crate::consent::AuthenticatedOwner;
 use crate::dreamer_runner::maintenance::agent_health::COACH_AGENT_HEALTH_FACET;
@@ -13,7 +13,7 @@ use crate::memory::{DreamerAttemptRef, Memory, MemoryError, MemoryResult};
 use crate::{EdgeActorClass, EntityId};
 
 #[doc(hidden)]
-pub use oneiron_verb_wire::verbs::weave::{WeaveEnqueueRequest, WeaveScheduleCleared};
+pub use oneiron_verb_wire::verbs::weave::WeaveEnqueueRequest;
 
 fn owner_handle(memory: &Memory<'_>, owner: &AuthenticatedOwner) -> MemoryResult<()> {
     if memory.actor_class() != EdgeActorClass::Human
@@ -71,30 +71,6 @@ pub fn weave_schedules(
         .into_iter()
         .map(|(row, held)| WeaveScheduleView::from_schedule(&row, held))
         .collect())
-}
-
-pub fn weave_schedule_put(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: WeaveScheduleView,
-) -> MemoryResult<WeaveScheduleView> {
-    owner_handle(memory, owner)?;
-    let row = input.into_schedule()?;
-    memory.vault().set_weave_digest_schedule(owner, &row)?;
-    Ok(WeaveScheduleView::from_schedule(&row, None))
-}
-
-pub fn weave_schedule_clear(
-    memory: &Memory<'_>,
-    owner: &AuthenticatedOwner,
-    input: WeaveReaderRef,
-) -> MemoryResult<WeaveScheduleCleared> {
-    owner_handle(memory, owner)?;
-    Ok(WeaveScheduleCleared {
-        cleared: memory
-            .vault()
-            .clear_weave_digest_schedule(owner, input.reader()?)?,
-    })
 }
 
 fn change_ref(value: &str) -> MemoryResult<EntityId> {

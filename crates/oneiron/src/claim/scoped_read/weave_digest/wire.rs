@@ -13,6 +13,7 @@ use super::{
 };
 use crate::claim::{ClaimSubject, decode_claim_body, encode_claim_body};
 use crate::error::Result;
+use crate::store::Store;
 use crate::{EdgeKind, EntityId};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
@@ -25,19 +26,102 @@ pub(super) struct WireSectionSpec {
     pub(super) edge_kinds: Vec<u8>,
 }
 
+/// One reader's due state, the row `WEAVE_DIGEST_SCHEDULE` keeps: when the timer next serves
+/// the digest, and a hold. Its rhythm and recipe are the reader's setting (`setting_keys.rs`).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WireDue {
+    pub(super) next_due_at: u64,
+    /// The timer leaves this row until then: an owner's notice went out, or
+    /// its render failed. The next render or the owner's own change clears it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) held_until: Option<u64>,
+    /// The refused render that set `held_until`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) held_because: Option<String>,
+}
+
+/// One reader's schedule as one snapshot: the setting in force (its rhythm, recipe, clock start
+/// and its row's revision) joined with the reader's due row. Never stored: a writer of the due
+/// row compares this snapshot's bytes, so a change to either part since its read stops it.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct WireSchedule {
     pub(super) cadence: WeaveDigestCadence,
     pub(super) next_due_at: u64,
     pub(super) recipe: Vec<WireSectionSpec>,
-    /// The timer leaves this row until then: an owner's notice went out, or
-    /// its render failed. The next render or schedule write clears it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) held_until: Option<u64>,
-    /// The refused render that set `held_until`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) held_because: Option<String>,
+    /// The setting's clock start.
+    pub(super) starts_at: u64,
+    /// The setting row's revision: the change sequence that wrote it, which only grows.
+    pub(super) revision: u64,
+}
+
+/// The due row at `key`, decoded; `None` when there is none or it does not decode.
+pub(super) fn due_row_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+) -> Result<Option<WireDue>> {
+    Ok(store
+        .vault_meta
+        .get(txn, key)?
+        .and_then(|bytes| serde_json::from_slice::<WireDue>(bytes).ok()))
+}
+
+/// Writes the due row at `key`.
+pub(super) fn put_due_in_txn(
+    store: &Store,
+    txn: &mut heed::RwTxn<'_>,
+    key: &[u8],
+    due: &WireDue,
+) -> Result<()> {
+    let bytes = serde_json::to_vec(due).map_err(|_| invalid())?;
+    store.vault_meta.put(txn, key, &bytes)?;
+    Ok(())
+}
+
+/// The schedule at the due row key `key` in `txn`, as its snapshot bytes ([`WireSchedule`]).
+/// `None`: no due row, or no setting in force for its reader (a due row a restore or a sync left
+/// behind schedules nothing). A due row that does not decode, or a setting whose recipe no
+/// longer converts, comes back as the due row's own bytes, which decode as no schedule, as an
+/// undecodable row always did.
+pub(super) fn schedule_bytes_in_txn(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    key: &[u8],
+) -> Result<Option<Vec<u8>>> {
+    let Some(raw) = store.vault_meta.get(txn, key)? else {
+        return Ok(None);
+    };
+    let raw = raw.to_vec();
+    let (Some(reader), Ok(due)) = (
+        WeaveDigestReader::from_schedule_key(key),
+        serde_json::from_slice::<WireDue>(&raw),
+    ) else {
+        return Ok(Some(raw));
+    };
+    let Some((setup, revision)) = super::setting_keys::schedule_setup_in_txn(store, txn, reader)?
+    else {
+        return Ok(None);
+    };
+    let Ok(recipe) = super::setting_keys::wire_recipe(&setup) else {
+        return Ok(Some(raw));
+    };
+    serde_json::to_vec(&WireSchedule {
+        cadence: setup.cadence,
+        next_due_at: due.next_due_at,
+        recipe,
+        held_until: due.held_until,
+        held_because: due.held_because,
+        starts_at: setup.starts_at,
+        revision,
+    })
+    .map(Some)
+    .map_err(|_| invalid())
 }
 
 impl WireSchedule {
@@ -59,23 +143,6 @@ impl WireSchedule {
             .ok_or_else(invalid)
     }
 
-    pub(super) fn from_row(row: &WeaveDigestSchedule) -> Self {
-        Self {
-            cadence: row.cadence,
-            next_due_at: row.next_due_at,
-            held_until: None,
-            held_because: None,
-            recipe: row
-                .recipe
-                .iter()
-                .map(|s| WireSectionSpec {
-                    kind: s.kind,
-                    predicates: s.predicates.clone(),
-                    edge_kinds: s.edge_kinds.iter().map(|k| *k as u8).collect(),
-                })
-                .collect(),
-        }
-    }
     pub(super) fn into_row(self, reader: WeaveDigestReader) -> Result<WeaveDigestSchedule> {
         Ok(WeaveDigestSchedule {
             reader,

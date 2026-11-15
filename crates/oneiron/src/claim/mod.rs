@@ -103,7 +103,8 @@ mod read;
 pub mod relationship_predicates;
 mod scope;
 mod scope_stamp;
-mod scoped_read;
+// The setting catalogue names `scoped_read::weave_digest::setting_keys`.
+pub(crate) mod scoped_read;
 mod source_trust;
 pub(crate) mod supersession_diff;
 mod supersession_provenance;

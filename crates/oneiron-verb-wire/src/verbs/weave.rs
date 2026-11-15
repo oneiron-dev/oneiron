@@ -14,8 +14,3 @@ pub struct WeaveEnqueueRequest {
     pub subject_ref: String,
     pub evidence_ref: String,
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct WeaveScheduleCleared {
-    pub cleared: bool,
-}

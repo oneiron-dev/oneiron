@@ -56,11 +56,14 @@ crate::side_table::side_tables! {
     /// (owner) + id16 (change).
     WEAVE_DIGEST_SETTING_CHANGE: VaultMeta b"weave:digest_setting_change:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// An owner's digest settings generation, the Coach's last evaluation of him and his own
-    /// feedback (FIX 5495). Key: id16 (owner).
+    /// The Coach's last evaluation of an owner and his own feedback to it (FIX 5495); his
+    /// digest settings are his `weave.digest.owner_schedule` setting. Key: id16 (owner).
     WEAVE_DIGEST_SETTINGS: VaultMeta b"weave:digest_settings:v1:" Named
         [restore: content] [family: unclassified] [tier: canonical];
-    /// Weave digest schedule of one reader. Key: reader kind byte + id16.
+    /// The due state of one reader's weave digest: its next due second and a hold. Its rhythm,
+    /// recipe and clock start are the reader's `weave.digest.owner_schedule` or
+    /// `weave.digest.reader_schedule` setting, whose hook writes this row. Key: reader kind byte
+    /// + id16.
     WEAVE_DIGEST_SCHEDULE: VaultMeta b"weave:schedule:v1:" Raw
         [restore: content] [family: unclassified] [tier: canonical];
     /// One immutable wrong-item label filed from a live weave report. Key: family byte

@@ -1,21 +1,30 @@
-//! The owner's own digest settings record (FIX 5495): the generation every
-//! change to his Owner schedule bumps, the one writer those changes go
-//! through, what he told the Coach, and his own behaviour with his digests
-//! (when a period's due notice reached him and when he first opened it).
+//! The owner's own digest settings record (FIX 5495): the one writer the
+//! Coach's flow changes his Owner schedule through (his
+//! `weave.digest.owner_schedule` setting, whose row revision is the guard a
+//! stale accept or undo is refused by), what he told the Coach, and his own
+//! behaviour with his digests (when a period's due notice reached him and
+//! when he first opened it).
 //! Nothing here holds digest text, and nothing reads another reader's
 //! behaviour. A failure in the behaviour notes is logged and skipped: it
 //! never fails or delays the owner's read or the timer's notice.
 
-use super::{WeaveDigestCadence, WeaveDigestReader, WeaveSectionKind, WireSchedule, invalid};
+use super::setting_keys::{OWNER_SCHEDULE, WeaveDigestScheduleSetup};
+use super::{
+    SCHEDULE_PREFIX, WeaveDigestCadence, WeaveDigestReader, WeaveSectionKind, WireSchedule,
+    invalid, schedule_bytes_in_txn,
+};
 use crate::consent::AuthenticatedOwner;
-use crate::error::Result;
+use crate::error::{Error, Result};
+use crate::setting::{
+    EngineSetting, SetSetting, SetSettingOutcome, SettingCaller, SettingMode, SettingScope,
+};
 use crate::side_table::{self, Named, Raw, SideTable};
 use crate::store::Store;
 use crate::{EntityId, Vault};
 use serde::{Deserialize, Serialize};
 
-/// The Owner schedule rows, read and written here through the typed door.
-/// Key: the reader kind byte, then the owner.
+/// The due rows of the readers' schedules, listed here for the Owner ones.
+/// Key: the reader kind byte, then the reader.
 pub(super) const SCHEDULES: SideTable<([u8; 1], EntityId), Vec<u8>, Raw> =
     SideTable::new(&side_table::WEAVE_DIGEST_SCHEDULE);
 /// The kind byte of an Owner reader's schedule key.
@@ -72,7 +81,9 @@ pub struct WeaveDigestSettingChange {
     /// for a proposal.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub grant_ref: Option<String>,
-    /// The settings generation it was proposed against.
+    /// The settings generation it was proposed against: the revision of the
+    /// owner's `weave.digest.owner_schedule` row, which every change to it
+    /// moves on.
     pub base_generation: u64,
     /// The generation its apply or accept wrote; its undo needs it current.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -108,13 +119,11 @@ pub struct WeaveDigestFeedback {
     pub keep_current: bool,
 }
 
-/// One owner's settings row.
+/// One owner's settings row: the Coach's state and his own input to it. His
+/// settings themselves are his `weave.digest.owner_schedule` row.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct SettingsRow {
-    /// Bumped by every write of the owner's settings, even to the same
-    /// value: the guard a stale accept or undo is refused by.
-    pub(super) generation: u64,
     /// When the Coach last evaluated this owner.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) last_evaluated_at: Option<u64>,
@@ -122,7 +131,8 @@ pub(super) struct SettingsRow {
     pub(super) feedback: Option<StoredFeedback>,
 }
 
-/// The owner's feedback, with when and under which generation he gave it.
+/// The owner's feedback, with when and under which generation (his owner
+/// schedule row's revision) he gave it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct StoredFeedback {
@@ -152,27 +162,19 @@ pub(super) struct PeriodRow {
     pub(super) opened_at: Option<u64>,
 }
 
-/// Who moved an Owner schedule's settings.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SettingsEdit {
-    /// The owner's own set or clear: it wins over a pending Coach change,
-    /// which it supersedes, and it retires his feedback.
-    Owner,
-    /// A Coach change applied under a Grant, accepted, or undone; its change
-    /// row records it.
-    Change,
-}
-
-/// The owner's Owner schedule row, decoded.
+/// The owner's Owner schedule: his setting in force joined with his due row.
 pub(super) fn owner_wire_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
     owner: EntityId,
 ) -> Result<Option<WireSchedule>> {
-    SCHEDULES
-        .get(store, txn, &(OWNER_TAG, owner))?
-        .map(|bytes| serde_json::from_slice::<WireSchedule>(&bytes).map_err(|_| invalid()))
-        .transpose()
+    schedule_bytes_in_txn(
+        store,
+        txn,
+        &WeaveDigestReader::Owner(owner).key(SCHEDULE_PREFIX),
+    )?
+    .map(|bytes| serde_json::from_slice::<WireSchedule>(&bytes).map_err(|_| invalid()))
+    .transpose()
 }
 
 /// The owner's changes, in key order. A row that does not decode is left out:
@@ -236,11 +238,11 @@ pub(super) fn erase_owner_weave_digest_settings_in_txn(
 }
 
 /// The owner's settings row as the Coach and his own answers read it: an
-/// absent row reads as new, and a row that no longer decodes is rebuilt
-/// with its generation restarted above every generation his changes name,
-/// so no stale change matches it (FIX 5633). The caller's next put writes
-/// the rebuilt row; what the damaged row held (his feedback, the Coach's
-/// last evaluation) is gone with it.
+/// absent row reads as new, and a row that no longer decodes is rebuilt new
+/// (FIX 5633). The caller's next put writes the rebuilt row; what the
+/// damaged row held (his feedback, the Coach's last evaluation) is gone with
+/// it. The stale guard is his setting row's revision, which no damage here
+/// moves.
 pub(super) fn settings_row_in_txn(
     store: &Store,
     txn: &heed::RoTxn<'_>,
@@ -253,84 +255,64 @@ pub(super) fn settings_row_in_txn(
         return Ok(row);
     }
     tracing::warn!(owner = %owner.to_hex(), "an owner's digest settings row did not decode; it is rebuilt");
-    Ok(SettingsRow {
-        generation: newest_change_generation_in_txn(store, txn, owner)?
-            .checked_add(1)
-            .ok_or_else(invalid)?,
-        ..SettingsRow::default()
-    })
-}
-
-/// The highest generation any of the owner's changes names, so a settings
-/// row that no longer decodes restarts above them all.
-fn newest_change_generation_in_txn(
-    store: &Store,
-    txn: &heed::RoTxn<'_>,
-    owner: EntityId,
-) -> Result<u64> {
-    Ok(owner_changes_in_txn(store, txn, owner)?
-        .iter()
-        .map(|(_, change)| {
-            change
-                .base_generation
-                .max(change.after_generation.unwrap_or(0))
-                .max(change.undone_generation.unwrap_or(0))
-        })
-        .max()
-        .unwrap_or(0))
+    Ok(SettingsRow::default())
 }
 
 impl Vault {
-    /// The one writer of an Owner schedule's row (FIX 5495): the owner's own
-    /// set, an accepted proposal, a Coach change under a Grant and an undo
-    /// all write here, and each bumps the settings generation in the same
-    /// transaction. Returns the new generation.
-    pub(super) fn put_owner_weave_digest_schedule_in_txn(
+    /// The one writer of the Coach's flow (FIX 5495): a Coach change under
+    /// the owner's Grant, an accepted proposal and an undo each write the
+    /// owner's `weave.digest.owner_schedule` row as the engine (Engine RULING
+    /// SETTING-KEYED-A-K2B-WEAVE-SPLIT = A), with `why` naming the change, in
+    /// the caller's write. Its due time and holds stay as they are. Returns
+    /// the row's new revision: the generation the change wrote.
+    pub(super) fn put_owner_weave_digest_setup_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
-        bytes: &[u8],
-        edit: SettingsEdit,
-        now: u64,
+        wire: &WireSchedule,
+        why: String,
     ) -> Result<u64> {
-        SCHEDULES.put(&self.store, txn, &(OWNER_TAG, owner), &bytes.to_vec())?;
-        self.bump_weave_digest_settings_in_txn(txn, owner, edit, now)
+        let setup = WeaveDigestScheduleSetup::of(wire.cadence, &wire.recipe, wire.starts_at)?;
+        let request = SetSetting {
+            key: OWNER_SCHEDULE.spec.name.to_owned(),
+            item: None,
+            scope: SettingScope::Person(owner),
+            mode: SettingMode::Value,
+            value: Some(serde_json::to_value(Some(setup)).map_err(|_| invalid())?),
+            expected_revision: Some(wire.revision),
+            why: Some(why),
+            check_in_ref: None,
+        };
+        match self.set_setting_in_txn(txn, SettingCaller::Engine(EngineSetting::own()), &request)? {
+            SetSettingOutcome::Applied { revision, .. } => Ok(revision),
+            SetSettingOutcome::Pending { .. } => Err(Error::InvariantViolation(
+                "the engine's digest settings change waits on no check-in",
+            )),
+        }
     }
 
-    /// Bumps the owner's settings generation, even for a write of the same
-    /// value. The owner's own edit also supersedes a pending Coach change
-    /// and retires his feedback. A settings row that no longer decodes
-    /// restarts above every generation a change names, so the owner's write
-    /// never fails on it and no stale change matches.
-    pub(super) fn bump_weave_digest_settings_in_txn(
+    /// The owner's own change to his Owner schedule, in its hook's write: it
+    /// wins over a pending Coach change, which it supersedes, and it retires
+    /// his feedback.
+    pub(super) fn owner_edited_weave_digest_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         owner: EntityId,
-        edit: SettingsEdit,
         now: u64,
-    ) -> Result<u64> {
-        let mut row = match SETTINGS.get_lenient(&self.store, txn, &owner)? {
-            Some(row) => row,
-            None => SettingsRow {
-                generation: newest_change_generation_in_txn(&self.store, txn, owner)?,
-                ..SettingsRow::default()
-            },
-        };
-        row.generation = row.generation.checked_add(1).ok_or_else(invalid)?;
-        if edit == SettingsEdit::Owner {
-            row.feedback = None;
-            for (id, mut change) in owner_changes_in_txn(&self.store, txn, owner)? {
-                if change.status == WeaveDigestSettingChangeStatus::Pending {
-                    change.status = WeaveDigestSettingChangeStatus::Superseded;
-                    change.settled_at = Some(now);
-                    CHANGES.put(&self.store, txn, &(owner, id), &change)?;
-                    // Its ask no longer waits for him (FIX 5631).
-                    self.settle_weave_setting_ask_in_txn(txn, owner, &change)?;
-                }
+    ) -> Result<()> {
+        let mut row = settings_row_in_txn(&self.store, txn, owner)?;
+        row.feedback = None;
+        for (id, mut change) in owner_changes_in_txn(&self.store, txn, owner)? {
+            if change.status == WeaveDigestSettingChangeStatus::Pending {
+                change.status = WeaveDigestSettingChangeStatus::Superseded;
+                change.settled_at = Some(now);
+                CHANGES.put(&self.store, txn, &(owner, id), &change)?;
+                // Its ask no longer waits for him (FIX 5631).
+                self.settle_weave_setting_ask_in_txn(txn, owner, &change)?;
             }
         }
         SETTINGS.put(&self.store, txn, &owner, &row)?;
-        Ok(row.generation)
+        Ok(())
     }
 
     /// The owner's own exposure to one period: its due notice reached him.
