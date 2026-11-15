@@ -22,6 +22,16 @@
 //! * `a_revoked_standing_grant_restores_revoked_and_authorizes_nothing`: the owner import
 //!   installs the revoked CONSENT_STANDING_GRANT row live, the restored row reads Revoked,
 //!   no active grant survives, and the bound act evaluates Ask.
+//! * `the_owner_restore_installs_the_approve_once_tap_and_only_the_first_use_runs`: the owner
+//!   import installs one available CONSENT_APPROVE_ONCE_MARKER row; the covered send runs once
+//!   on it and a second use is refused, while the actorless destination asks.
+//! * `the_owner_restore_installs_the_voice_consent_and_enrollment_admits`: the owner import
+//!   installs one VOICE_IDENTITY_CONSENT row for its live person, and an enrollment citing
+//!   it is admitted; on the actorless destination the same enrollment is refused.
+//! * `the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none`:
+//!   the owner import installs one VOICE_REF_RENDER_CONSENT row that reads Granted.
+//! * `a_connector_slate_is_held_back_as_a_non_portable_reference`: a CONNECTOR_GRANT_SLATE
+//!   row installs on no destination (its key binding travels in no disposition).
 //!
 //! No test covers CONSENT_WIDEN_PROPOSAL: the export's credential pass holds every row of
 //! that table out of an archive, so the owner's restore has no landing for it.
@@ -39,13 +49,22 @@ mod retained_side_rows;
 
 use std::io::Cursor;
 
+use oneiron::connector_key::{SlateDataClass, SlateToolManifest, draft_connector_slate};
 use oneiron::consent::{
     ActionClass, ActionEnvelope, ActorBound, ComposedEffect, ConsentDecision, ConsentGrantStatus,
     EffectFacts, GrantBound,
 };
 use oneiron::conversation::{ConversationBody, ConversationKind, HistoryChoice, RoomRole};
 use oneiron::registry::{ENTITY_TYPE_CONVERSATION, ENTITY_TYPE_PERSON};
-use oneiron::{DeleteReason, EdgeActorClass, EntityId, TimeRange, Vault, WriteActor};
+use oneiron::voice_identity::ref_bank::{VoiceRefSubjectKind, VoiceRenderDecision};
+use oneiron::voice_identity::{
+    VoiceConsentBasis, VoiceConsentEventV1, VoiceConsentState, VoiceEmbeddingFamily,
+    VoiceEmbeddingSpaceV1, VoiceEnrollmentLegalContext, VoiceEnrollmentOrigin,
+    VoiceEnrollmentRequest, VoiceEnrollmentSampleV1, VoicePrintPurpose,
+};
+use oneiron::{
+    DeleteReason, EdgeActorClass, EntityId, ModelLocality, TimeRange, Vault, WriteActor,
+};
 use retained_side_rows::{
     export_whole, open_later_vault, open_source_vault, owner_proof, retained_rows, rows_for,
 };
@@ -584,5 +603,426 @@ fn a_revoked_standing_grant_restores_revoked_and_authorizes_nothing() {
             .decision,
         ConsentDecision::Ask,
         "the covered send asks on the destination: the restored revocation authorizes nothing"
+    );
+}
+
+/// owen's granted voice-print consent for meeting attribution, recorded by yuki.
+fn voice_consent_event(subject: EntityId, recorder: EntityId) -> VoiceConsentEventV1 {
+    VoiceConsentEventV1 {
+        event_id: "consent-owen-1".to_owned(),
+        subject_ref: subject,
+        recorded_by_ref: recorder,
+        occurred_at: 100,
+        purposes: vec![VoicePrintPurpose::MeetingAttribution],
+        basis: VoiceConsentBasis::ConversationalNotice {
+            notice: "asked before recording".to_owned(),
+        },
+        state: VoiceConsentState::Granted,
+    }
+}
+
+/// The pinned four-dimension embedding space the enrollment fixtures share.
+fn voice_enrollment_space() -> VoiceEmbeddingSpaceV1 {
+    VoiceEmbeddingSpaceV1::new(
+        VoiceEmbeddingFamily::EcapaTdnn,
+        "ecapa/voxceleb",
+        "rev-1",
+        16_000,
+        4,
+        "mono/16k/vad-v1",
+    )
+    .expect("pinned test embedding space")
+}
+
+/// One solo-session sample in [`voice_enrollment_space`].
+fn voice_enrollment_sample() -> VoiceEnrollmentSampleV1 {
+    VoiceEnrollmentSampleV1 {
+        sample_id: "s-1".to_owned(),
+        source_ref: "session-solo-1".to_owned(),
+        language: "en".to_owned(),
+        origin: VoiceEnrollmentOrigin::AuthenticatedSoloSession {
+            session_ref: "session-solo-1".to_owned(),
+            speaker_count: 1,
+        },
+        duration_ms: 4_000,
+        source_sha256: "ab".repeat(32),
+        vector: vec![1.0, 0.0, 0.0, 0.0],
+    }
+}
+
+/// An enrollment of `subject` citing [`voice_consent_event`]'s grant.
+fn voice_enrollment_request(subject: EntityId) -> VoiceEnrollmentRequest {
+    VoiceEnrollmentRequest {
+        subject_ref: subject,
+        contact_ref: None,
+        relationship_ref: None,
+        consent_event_ref: "consent-owen-1".to_owned(),
+        purpose: VoicePrintPurpose::MeetingAttribution,
+        space: voice_enrollment_space(),
+        samples: vec![voice_enrollment_sample()],
+        requested_at: 200,
+        legal: VoiceEnrollmentLegalContext::unresolved(),
+    }
+}
+
+/// owen's granted render decision for the voice `voice-owen`, reaching the owner's own server.
+fn voice_render_grant(subject: EntityId) -> VoiceRenderDecision {
+    VoiceRenderDecision {
+        event_id: "grant-owen-1".to_owned(),
+        voice_id: "voice-owen".to_owned(),
+        subject,
+        subject_kind: VoiceRefSubjectKind::Person,
+        recorded_by: subject,
+        occurred_at: 1,
+        reach: ModelLocality::OwnServer,
+        basis: Some(VoiceConsentBasis::ConversationalNotice {
+            notice: "render owen".to_owned(),
+        }),
+        state: VoiceConsentState::Granted,
+    }
+}
+
+/// A read-only personal-data tool with a resolved input schema.
+fn slate_tool(name: &str) -> SlateToolManifest {
+    SlateToolManifest {
+        name: name.to_owned(),
+        data_class: SlateDataClass::Personal,
+        header_parameters: Vec::new(),
+        resolved_input_schema: Some(serde_json::json!({"type": "object"})),
+        trigger: None,
+        destroys: false,
+        spends: false,
+        sends_outward: false,
+        legacy_ask: false,
+        read_only: true,
+        idempotent: true,
+        price: None,
+    }
+}
+
+/// Stores a one-tool connector slate from the engine's own rule draft. Returns its id.
+fn store_single_tool_slate(vault: &Vault, tool_name: &str) -> EntityId {
+    let manifest = vec![slate_tool(tool_name)];
+    let rows = draft_connector_slate(&manifest);
+    let draft = serde_json::to_string(&rows).expect("typed slate draft");
+    vault
+        .store_connector_slate(&manifest, &draft)
+        .expect("store the connector slate")
+}
+
+/// The owner restore installs an available approve-once marker; it authorizes one run.
+#[test]
+fn the_owner_restore_installs_the_approve_once_tap_and_only_the_first_use_runs() {
+    let (_source_dir, source) = open_source_vault();
+    let source_owner = owner_proof(&source);
+    let bound = standing_bound();
+    let effect = covered_send(&bound);
+    let digest = effect.digest();
+    source
+        .approve_once(&source_owner, digest)
+        .expect("the owner approves the send once");
+    assert!(
+        source.approve_once(&source_owner, digest).is_err(),
+        "a second approve over the same digest is refused while the tap stands"
+    );
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "CONSENT_APPROVE_ONCE_MARKER");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one approve-once tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "CONSENT_APPROVE_ONCE_MARKER", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed CONSENT_APPROVE_ONCE_MARKER row; an absent field means it installed nothing: {summary}"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&dest)),
+            "CONSENT_APPROVE_ONCE_MARKER"
+        ),
+        source_tuple,
+        "the destination archive carries the installed tap tuple byte for byte"
+    );
+    assert_eq!(
+        dest.evaluate_consent_for(&effect, Some(&digest))
+            .expect("evaluate the covered send")
+            .decision,
+        ConsentDecision::Auto,
+        "the covered send runs automatically on the restored tap"
+    );
+    assert!(
+        dest.evaluate_consent_for(&effect, Some(&digest)).is_err(),
+        "the spent tap authorizes no second run"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    let bare_receipt = bare
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    let bare_summary =
+        serde_json::to_value(&bare_receipt.retained_side_rows).expect("the summary serializes");
+    assert!(
+        matches!(
+            table_count(
+                &bare_summary,
+                "CONSENT_APPROVE_ONCE_MARKER",
+                "installed_rows"
+            ),
+            None | Some(0)
+        ),
+        "the actorless import installs no CONSENT_APPROVE_ONCE_MARKER row: {bare_summary}"
+    );
+    assert_eq!(
+        bare.evaluate_consent_for(&effect, Some(&digest))
+            .expect("evaluate the covered send")
+            .decision,
+        ConsentDecision::Ask,
+        "the covered send asks where no tap was restored"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "CONSENT_APPROVE_ONCE_MARKER"
+        ),
+        source_tuple,
+        "the actorless destination retains the tap tuple byte for byte"
+    );
+}
+
+/// The owner restore installs a voice-print consent event; enrollment then admits it.
+#[test]
+fn the_owner_restore_installs_the_voice_consent_and_enrollment_admits() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let subject = fixed_id(0x30);
+    let recorder = fixed_id(0x31);
+    put_person_at(&source, subject, b"owen", occurred, now);
+    put_person_at(&source, recorder, b"yuki", occurred, now);
+    source
+        .record_voice_consent(&voice_consent_event(subject, recorder))
+        .expect("the source records the voice grant");
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "VOICE_IDENTITY_CONSENT");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one voice-consent tuple"
+    );
+    // The fixture's control, after the export so the archive carries no print: the request
+    // is admitted where the consent is live.
+    source
+        .enroll_voice_print(&voice_enrollment_request(subject))
+        .expect("enrollment admits the granted purpose on the source");
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "VOICE_IDENTITY_CONSENT", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed VOICE_IDENTITY_CONSENT row; an absent field means it installed nothing: {summary}"
+    );
+    let print = dest
+        .enroll_voice_print(&voice_enrollment_request(subject))
+        .expect("enrollment admits the restored grant on the destination");
+    assert_eq!(
+        print.consent_event_ref,
+        "consent-owen-1".to_owned(),
+        "the restored enrollment cites the restored grant"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    let bare_receipt = bare
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    let bare_summary =
+        serde_json::to_value(&bare_receipt.retained_side_rows).expect("the summary serializes");
+    assert!(
+        matches!(
+            table_count(&bare_summary, "VOICE_IDENTITY_CONSENT", "installed_rows"),
+            None | Some(0)
+        ),
+        "the actorless import installs no VOICE_IDENTITY_CONSENT row: {bare_summary}"
+    );
+    assert!(
+        bare.enroll_voice_print(&voice_enrollment_request(subject))
+            .is_err(),
+        "enrollment refuses where no consent was restored"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "VOICE_IDENTITY_CONSENT"
+        ),
+        source_tuple,
+        "the actorless destination retains the consent tuple byte for byte"
+    );
+}
+
+/// The owner restore installs a voice render decision; the actorless import leaves none.
+#[test]
+fn the_owner_restore_installs_the_voice_render_grant_and_the_actorless_import_leaves_none() {
+    let (_source_dir, source) = open_source_vault();
+    let now = source.now_recorded_at();
+    let occurred = TimeRange {
+        start: now,
+        end: now,
+    };
+    let subject = fixed_id(0x32);
+    put_person_at(&source, subject, b"owen", occurred, now);
+    source
+        .record_voice_render_consent(&voice_render_grant(subject))
+        .expect("the source records the render grant");
+    assert!(
+        source
+            .voice_render_consent("voice-owen")
+            .expect("read the source render grant")
+            .is_some_and(|row| row.decision.state == VoiceConsentState::Granted),
+        "the source holds the granted render row"
+    );
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "VOICE_REF_RENDER_CONSENT");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one render-consent tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        table_count(&summary, "VOICE_REF_RENDER_CONSENT", "installed_rows"),
+        Some(1),
+        "the owner import reports one installed VOICE_REF_RENDER_CONSENT row; an absent field means it installed nothing: {summary}"
+    );
+    assert!(
+        dest.voice_render_consent("voice-owen")
+            .expect("read the restored render grant")
+            .is_some_and(|row| row.decision.state == VoiceConsentState::Granted),
+        "the restored render grant reads Granted"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    let bare_receipt = bare
+        .import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    let bare_summary =
+        serde_json::to_value(&bare_receipt.retained_side_rows).expect("the summary serializes");
+    assert!(
+        matches!(
+            table_count(&bare_summary, "VOICE_REF_RENDER_CONSENT", "installed_rows"),
+            None | Some(0)
+        ),
+        "the actorless import installs no VOICE_REF_RENDER_CONSENT row: {bare_summary}"
+    );
+    assert!(
+        bare.voice_render_consent("voice-owen")
+            .expect("read the absent render grant")
+            .is_none(),
+        "the actorless destination holds no render grant"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "VOICE_REF_RENDER_CONSENT"
+        ),
+        source_tuple,
+        "the actorless destination retains the render tuple byte for byte"
+    );
+}
+
+/// A connector slate is held back as a non-portable reference on every destination.
+#[test]
+fn a_connector_slate_is_held_back_as_a_non_portable_reference() {
+    let (_source_dir, source) = open_source_vault();
+    let slate = store_single_tool_slate(&source, "read");
+    assert!(
+        source
+            .connector_slate(slate)
+            .expect("read the source slate")
+            .is_some(),
+        "the source holds the slate live"
+    );
+    let archive = export_whole(&source);
+    let source_tuple = rows_for(&retained_rows(&archive), "CONNECTOR_GRANT_SLATE");
+    assert_eq!(
+        source_tuple.len(),
+        1,
+        "the source archive holds one slate tuple"
+    );
+
+    let (_dest_dir, dest) = open_later_vault();
+    let dest_owner = owner_proof(&dest);
+    let receipt = dest
+        .import_whole_vault_archive_from_as_owner(Cursor::new(&archive), &dest_owner)
+        .expect("the owner import succeeds");
+    let summary =
+        serde_json::to_value(&receipt.retained_side_rows).expect("the summary serializes");
+    assert_eq!(
+        held_back_for_table(&summary, "CONNECTOR_GRANT_SLATE"),
+        Some(serde_json::json!([{"reason": "non_portable_reference", "rows": 1}])),
+        "the owner import holds back one slate row as non_portable_reference; an absent field means it counted no held-back outcome: {summary}"
+    );
+    assert!(
+        matches!(
+            table_count(&summary, "CONNECTOR_GRANT_SLATE", "installed_rows"),
+            None | Some(0)
+        ),
+        "the held-back slate installs nothing: {summary}"
+    );
+    assert!(
+        dest.connector_slate(slate)
+            .expect("read the absent slate")
+            .is_none(),
+        "the destination holds no live slate for the held-back row"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&dest)),
+            "CONNECTOR_GRANT_SLATE"
+        ),
+        source_tuple,
+        "the destination retains the held-back slate tuple byte for byte"
+    );
+
+    let (_bare_dir, bare) = open_later_vault();
+    bare.import_whole_vault_archive_from(Cursor::new(&archive))
+        .expect("the actorless import succeeds");
+    assert!(
+        bare.connector_slate(slate)
+            .expect("read the absent slate")
+            .is_none(),
+        "the actorless destination holds no live slate"
+    );
+    assert_eq!(
+        rows_for(
+            &retained_rows(&export_whole(&bare)),
+            "CONNECTOR_GRANT_SLATE"
+        ),
+        source_tuple,
+        "the actorless destination retains the slate tuple byte for byte"
     );
 }
