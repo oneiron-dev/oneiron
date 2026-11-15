@@ -85,35 +85,10 @@ impl HookContractStamp {
     }
 }
 
-/// Where a regen stopped. Every phase keeps the last good body.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum HookRegenFailurePhase {
-    /// The hook kept no intent to run again.
-    Intent,
-    /// The regenerator could not write a body.
-    Generate,
-    /// The body it wrote is blank or not text.
-    Validate,
-    /// The golden set could not replay.
-    GoldenReplay,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct HookRegenFailure {
-    pub phase: HookRegenFailurePhase,
-    pub message: String,
-}
-
-impl HookRegenFailure {
-    #[must_use]
-    pub fn new(phase: HookRegenFailurePhase, message: impl Into<String>) -> Self {
-        Self {
-            phase,
-            message: message.into(),
-        }
-    }
-}
+#[doc(hidden)]
+use oneiron_verb_wire::runtime_hooks::regen::body_hash;
+#[doc(hidden)]
+pub use oneiron_verb_wire::runtime_hooks::regen::{HookRegenFailure, HookRegenFailurePhase};
 
 /// The call purpose a served regenerator meters its model calls under.
 pub const HOOK_REGEN_CALL_PURPOSE_NAME: &str = "coach_hook_regen";
@@ -398,11 +373,6 @@ impl HookRegenRecord {
             .as_ref()
             .and_then(HookRegenOutcome::candidate_hash)
     }
-}
-
-/// A hook body's hash as its binding records it: BLAKE3, lowercase hex.
-fn body_hash(body: &str) -> String {
-    blake3::hash(body.as_bytes()).to_hex().to_string()
 }
 
 /// `source`'s files with `hook`'s `body.js` set to `body`, and the body it

@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Local Oneiron sync daemon for serving a single LMDB vault"
 repository.workspace = true
-homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
@@ -45,6 +44,7 @@ heed.workspace = true
 arc-swap.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 # The sandbox backends (core split 5b.1): the QuickJS runtime, Firecracker and the OCI container.
 oneiron-agent-runtime = { version = "0.1.0", path = "../oneiron-agent-runtime", features = ["microvm-firecracker"] }
 oneiron-mail-pack = { version = "0.1.0", path = "../oneiron-mail-pack" }
@@ -74,19 +74,23 @@ oneiron-organ-host = { path = "../oneiron-organ-host" }
 # workflow pump for its one vault (ARCH-0026: one Dreamer per vault, on the
 # primary node).
 oneiron-driver = { version = "0.1.0", path = "../oneiron-driver" }
+oneiron-hex = { version = "0.1.0", path = "../oneiron-hex" }
 oneiron-linear = { version = "0.1.0", path = "../oneiron-linear" }
-# Protocol mappers for the `[models]` provider kinds. Both own wire mapping
-# only; this crate supplies the HTTP transport (models/openai.rs and
-# models/anthropic.rs).
-oneiron-llm-anthropic = { version = "0.1.0", path = "../oneiron-llm-anthropic" }
-oneiron-llm-gemini = { version = "0.1.0", path = "../oneiron-llm-gemini" }
-oneiron-llm-openai = { version = "0.1.0", path = "../oneiron-llm-openai" }
-# The System One seat on the host's decision ladder (decision_host.rs).
-oneiron-llm-systemone = { version = "0.1.0", path = "../oneiron-llm-systemone" }
+# Protocol mappers for the `[models]` provider kinds (`oneiron_llm::{openai_compat,
+# anthropic, gemini}`). They own wire mapping only; this crate supplies the
+# HTTP transport (models/openai.rs and models/anthropic.rs). Feature
+# `systemone`: the System One seat on the host's decision ladder
+# (decision_host.rs). The `mesh` feature below adds `oneiron-rpc`.
+oneiron-llm = { version = "0.1.0", path = "../oneiron-llm", features = ["systemone"] }
+# Protocol mappers for the generation jobs (`oneiron_gen::gemini`: Gemini
+# images and Veo video); this crate supplies the HTTP transport
+# (models/gemini_media.rs, models/broker_media.rs).
+oneiron-gen = { version = "0.1.0", path = "../oneiron-gen" }
+# Speech wire adapters (ARCH-0036 #adapters): the Soniox ASR frame codec;
+# this crate holds the socket, key and quota (models/soniox.rs).
+oneiron-speech = { version = "0.1.0", path = "../oneiron-speech" }
 # The paired-machine mesh listener (OF-535), behind the `mesh` feature.
 oneiron-mesh-transport = { path = "../oneiron-mesh-transport", optional = true, features = ["iroh", "sync"] }
-# The model route on the mesh listener (OF-575), with it.
-oneiron-llm-own-server = { path = "../oneiron-llm-own-server", optional = true }
 # A device renews its paired owner credential at its home (FIX 3377), with
 # the device sync the mesh feature carries.
 oneiron-remote = { path = "../oneiron-remote", optional = true }
@@ -264,10 +268,30 @@ name = "it_esign_public"
 path = "tests/it_esign_public.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
+# The signing session (ARCH-0064a [SGN-03]) over it_esign_public's fixture.
+[[test]]
+name = "esign_signing_session"
+path = "tests/esign_signing_session.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
 [[test]]
 name = "managed_mode"
 path = "tests/managed_mode.rs"
 required-features = ["oneiron/test-hooks"]
+
+# Publishes its apps with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_private_owner_read"
+path = "tests/artifact_private_owner_read.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
+
+# Publishes its bundle with `publish_artifact_pointer_with_tier` (`oneiron/test-hooks`) on a
+# `MemoryKeystore` vault (`oneiron-keystore/test-keystore`, forwarded by `oneiron/test-support`).
+[[test]]
+name = "artifact_pinned_document_cache"
+path = "tests/artifact_pinned_document_cache.rs"
+required-features = ["oneiron/test-support", "oneiron/test-hooks"]
 
 # These three build their servers on a `MemoryKeystore` (`oneiron-keystore/test-keystore`,
 # forwarded by `oneiron/test-support`), so they take `it`'s rolling-tier features.
@@ -293,10 +317,23 @@ name = "broker_rerank"
 path = "tests/broker_rerank.rs"
 required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
 
+# Census L8-46's pin: a video job's poll and cancel reach the provider only for
+# the admitted job, through the broker and the same TLS fake provider.
+[[test]]
+name = "broker_followup_job_binding"
+path = "tests/broker_followup_job_binding.rs"
+required-features = ["oneiron/test-support", "oneiron-broker/test-support"]
+
 # The NOTE session bind probe roots its home on a `MemoryKeystore` as well.
 [[test]]
 name = "note_session_bind_reply"
 path = "tests/note_session_bind_reply.rs"
+required-features = ["oneiron/test-support"]
+
+# L1-02's named-client OAuth acceptance roots its served vault on a `MemoryKeystore`.
+[[test]]
+name = "oauth_named_client_acceptance"
+path = "tests/oauth_named_client_acceptance.rs"
 required-features = ["oneiron/test-support"]
 
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
@@ -310,6 +347,12 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The rerank pair template price cases root their owner on a `MemoryKeystore` too.
+[[test]]
+name = "rerank_pair_template_price"
+path = "tests/rerank_pair_template_price.rs"
+required-features = ["oneiron/test-support"]
 
 [lints]
 workspace = true
@@ -326,7 +369,8 @@ code-sandbox-wasmtime = ["oneiron/code-sandbox-wasmtime", "oneiron-agent-runtime
 mesh = [
   "dep:tokio-rustls",
   "dep:webpki-roots",
-  "dep:oneiron-llm-own-server",
+  # The model route on the mesh listener (OF-575).
+  "oneiron-llm/oneiron-rpc",
   "dep:oneiron-mesh-transport",
   "dep:oneiron-remote",
 ]

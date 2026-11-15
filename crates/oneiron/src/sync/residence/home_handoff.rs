@@ -282,11 +282,14 @@ pub fn home_handoff_keys(
 }
 
 /// FIX 8875: retires this node's copies of `keys`, which the calling machine
-/// retired for an erase of their actors; returns how many it named.
+/// retired for an erase of their actors; returns how many it named. It
+/// retires home handoff keys only: a request that names a key this node
+/// holds for another purpose retires none of them (FIX 23943).
 ///
 /// # Errors
 ///
-/// A refused peer; storage and custody faults.
+/// A refused peer; a key of another purpose
+/// (`StoreError::ErasableKeyPurposeMismatch`); storage and custody faults.
 pub fn home_handoff_retire(vault: &Vault, peer: PeerMachine, keys: &[String]) -> Result<u32> {
     let requester = owner_machine(vault, peer)?;
     home_handoff::retire_held(vault, requester, keys)
