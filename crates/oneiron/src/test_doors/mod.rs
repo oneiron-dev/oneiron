@@ -127,6 +127,7 @@ pub mod workspace_token;
 pub mod world_access;
 #[cfg(feature = "sync")]
 pub mod world_follow;
+pub mod world_key_record_signature;
 #[cfg(feature = "sync")]
 pub use crate::sync::connection::sync_outbox;
 
