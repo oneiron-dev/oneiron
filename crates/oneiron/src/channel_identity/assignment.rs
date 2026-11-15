@@ -336,10 +336,16 @@ fn retained_hold_in_txn(
 /// CHANNEL_IDENTITY row, and an Active correction head on a live identity
 /// still re-keys its slot (OF-272).
 ///
-/// A put that rewrites the stored claim at the same id keeps that claim's
-/// predicate and subject, so it makes no new head and is not a birth: a
-/// retraction or supersession of an identity's own head, or the owner's
-/// value redaction of a deleted identity's retained one.
+/// A put that rewrites the stored claim at the same id and keeps its
+/// predicate, subject and value makes no new head and is not a birth: a
+/// retraction or supersession of an identity's own head changes only its
+/// lifecycle, approval or valid time. A rewrite that changes the value is a
+/// new head in all but its id, so it meets the birth rules: a deleted
+/// identity's retained head, whose subject is a header-only shell, is never
+/// re-pointed at an address the identity never held (REVIEW-7665 P1). The
+/// owner's value redaction never makes such a rewrite: it drops keys of a
+/// map value, and every value of this family is a scalar
+/// ([`super::codec::validate_channel_identity_claim_structure`]).
 ///
 /// `admit_claim_put` asks this for local puts through the generic doors
 /// only. The replicated door and the engine's own writers (the reserved
@@ -351,8 +357,11 @@ pub(crate) fn guard_generic_claim_put_in_txn(
     body: &ClaimBody,
 ) -> Result<()> {
     if !is_channel_identity_claim_predicate(&body.predicate)
-        || stored_claim_body(store, txn, id)?
-            .is_some_and(|prior| prior.predicate == body.predicate && prior.subject == body.subject)
+        || stored_claim_body(store, txn, id)?.is_some_and(|prior| {
+            prior.predicate == body.predicate
+                && prior.subject == body.subject
+                && prior.value == body.value
+        })
     {
         return Ok(());
     }

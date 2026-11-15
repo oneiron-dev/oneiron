@@ -16,9 +16,10 @@
 //! A retracted head is what holds the address, so no writer may make one
 //! (Engine RULING L3-14-RETAINED-HOLD-FORGE = A, 14 Nov 05:22): at the local
 //! generic claim door a `channel_identity.*` claim is born Active, about a
-//! live CHANNEL_IDENTITY row. A forged hold then cannot block the owner's
-//! own create, and a correction head on a live identity still re-keys it
-//! (OF-272).
+//! live CHANNEL_IDENTITY row, and a rewrite at a claim's own id that changes
+//! its value meets the same rules (REVIEW-7665 P1). A forged hold then
+//! cannot block the owner's own create, and a correction head on a live
+//! identity still re-keys it (OF-272).
 //!
 //! `cargo test --locked -p oneiron --all-features --test deleted_identity_hold_on_replica`.
 // MemoryKeystore needs test-support (it forwards oneiron-keystore/test-keystore).
@@ -340,11 +341,28 @@ fn generic_head(
 /// `ClaimBody::new` stamps the subject's own facet, and a CHANNEL_IDENTITY
 /// has none, so the birth would stop at `InvalidFacet` before any gate.
 fn put_generic(vault: &Vault, body: &ClaimBody) -> Result<EntityId, oneiron::Error> {
+    let id = EntityId::now();
+    put_generic_at(vault, id, body)?;
+    Ok(id)
+}
+
+/// [`put_generic`] at `id`: a rewrite of the claim stored there.
+fn put_generic_at(vault: &Vault, id: EntityId, body: &ClaimBody) -> Result<(), oneiron::Error> {
     let mut body = body.clone();
     body.scope_facet = vault.default_facet()?;
-    let id = EntityId::now();
-    vault.put_claim(&id, &body, TimeRange { start: T0, end: T0 }, T0)?;
-    Ok(id)
+    vault.put_claim(&id, &body, TimeRange { start: T0, end: T0 }, T0)
+}
+
+/// The identity's Active `predicate` head, as the engine wrote it.
+fn active_head(vault: &Vault, identity: EntityId, predicate: &str) -> TestResult<EntityId> {
+    for claim in vault.claims_for_subject(&identity)? {
+        if vault.get_claim(&claim)?.is_some_and(|body| {
+            body.predicate == predicate && body.lifecycle == ClaimLifecycleStatus::Active
+        }) {
+            return Ok(claim);
+        }
+    }
+    Err(format!("fixture: the identity has no Active {predicate} head").into())
 }
 
 fn refused_kind(put: &Result<EntityId, oneiron::Error>) -> Option<ErrorKind> {
@@ -451,16 +469,7 @@ fn a_correction_head_on_a_live_identity_still_rekeys_its_slot() -> TestResult {
     let (_dir, vault) = open_vault()?;
     let id = EntityId::now();
     vault.create_channel_identity(&id, &self_held(old_address))?;
-    let mut old_head = None;
-    for claim in vault.claims_for_subject(&id)? {
-        if vault.get_claim(&claim)?.is_some_and(|body| {
-            body.predicate == PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE
-                && body.lifecycle == ClaimLifecycleStatus::Active
-        }) {
-            old_head = Some(claim);
-        }
-    }
-    let old_head = old_head.ok_or("fixture: the identity has no Active address head")?;
+    let old_head = active_head(&vault, id, PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE)?;
     let correction = put_generic(
         &vault,
         &generic_head(
@@ -480,6 +489,45 @@ fn a_correction_head_on_a_live_identity_still_rekeys_its_slot() -> TestResult {
             .map(|(held, _)| held),
         Some(id),
         "the corrected address routes to the identity",
+    );
+    Ok(())
+}
+
+/// REVIEW-7665 P1: a rewrite of a claim at its own id keeps its value or
+/// meets the birth rules. A soft-deleted identity's retained address head,
+/// rewritten through the generic door to name another address with its
+/// predicate, subject, Retracted lifecycle and Auto approval kept, would
+/// hold that address although no identity ever occupied it. The rewrite is
+/// refused, so the owner's own create there lands.
+#[test]
+fn a_retained_identity_head_cannot_be_rewritten_to_another_address() -> TestResult {
+    let (address, victim) = ("retained@example.test", "rewrite-victim@example.test");
+    let (_dir, vault) = open_vault()?;
+    let id = EntityId::now();
+    vault.create_channel_identity(&id, &self_held(address))?;
+    let head = active_head(&vault, id, PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE)?;
+    vault
+        .delete_entity_with_reason(&id, DeleteReason::UserDelete)
+        .map_err(|error| format!("fixture: the identity's delete: {error:?}"))?;
+    let forged = put_generic_at(
+        &vault,
+        head,
+        &generic_head(
+            id,
+            PREDICATE_CHANNEL_IDENTITY_ADDRESS_OR_HANDLE,
+            victim,
+            ClaimLifecycleStatus::Retracted,
+        ),
+    );
+    let create = vault.create_channel_identity(&EntityId::now(), &self_held(victim));
+    assert_eq!(
+        (
+            forged.as_ref().err().map(oneiron::Error::kind),
+            create.as_ref().err().map(oneiron::Error::kind),
+        ),
+        (Some(ErrorKind::InvalidClaimBody), None),
+        "a retained head rewritten to {victim} must be refused (left), and the owner's \
+         create at {victim} must land (right): {forged:?} / {create:?}",
     );
     Ok(())
 }
