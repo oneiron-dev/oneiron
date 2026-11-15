@@ -1,6 +1,7 @@
 //! The shared set rebuild for the extraction stagers: the verdict's
-//! operands, the pack check, the shared set selection, the heads equality
-//! and one verified member per selected candidate, in the batch's write.
+//! operands, the pack check, the one-statement rule, the shared set
+//! selection, the heads equality and one verified member per selected
+//! candidate, in the batch's write.
 //!
 //! Both the Conflict stager and the ConflictResolution stager rebuild the
 //! verdict's set identically; only their refusal tokens differ. This file owns
@@ -14,6 +15,7 @@ use crate::dreamer_consolidation::extraction_pack::{
     check_engine_claim_pins, check_extraction_operands_in_txn, check_pack_candidates,
     select_routed_conflict,
 };
+use crate::dreamer_consolidation::routing::candidate_keys;
 use crate::error::Error;
 use crate::memory::{Memory, MemoryError};
 use crate::verbs::PinnedClaim;
@@ -69,10 +71,15 @@ pub(super) enum SetRebuildError {
 }
 
 /// Rebuilds the verdict's set for `input`: the operand checks, the pack
-/// check, the shared selection, the heads equality and one verified member
-/// per selected candidate. Answers the rebuilt set or which refusal it met;
-
-/// each stager maps a refusal to its own token.
+/// check, the one-statement rule, the shared selection, the heads equality
+/// and one verified member per selected candidate. Answers the rebuilt set
+/// or which refusal it met; each stager maps a refusal to its own token.
+///
+/// The one-statement rule: two operands with the same candidate keys refuse
+/// the pack. Native's assembly groups two statements of one candidate into
+/// one before any set forms, so no native set holds both. A stager that took
+/// both would write two rows where native writes one, and when the two share
+/// a claim id it would record that id twice, which no revert can take back.
 ///
 /// # Errors
 ///
@@ -107,6 +114,16 @@ pub(super) fn rebuild_conflict_set(
         }
         Err(error) => return Err(Abort(error)),
     };
+    let mut stated = std::collections::BTreeSet::new();
+    for row in &checked.rows {
+        let keys = candidate_keys(&row.proposal, bound.key_rules())
+            .map_err(|error| Operands(MemoryError::from(error)))?;
+        if !stated.insert(keys) {
+            return Err(Operands(MemoryError::bad_request(
+                "two extraction operands state one candidate",
+            )));
+        }
+    }
     let selected = {
         let rebuild = ExtractionRebuildContext {
             memory: input.memory,
