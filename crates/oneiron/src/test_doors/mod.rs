@@ -99,6 +99,7 @@ pub mod repo_secret_marks;
 pub mod research_continuation;
 pub mod resident_wake_hold;
 pub mod retrieval_policy_default_floor;
+pub mod reveal_ask_window;
 pub mod room_facet_limit;
 pub mod room_turn_backfill;
 pub mod run_changes;
