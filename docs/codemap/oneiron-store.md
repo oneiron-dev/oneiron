@@ -67,7 +67,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/batch/row_put.rs` | src | s | 1 enum | RowPut | What a put is to the row it writes, as the record-scope stamp reads it |
 | `src/batch/secret_scan.rs` | src | s | 7 mod | — | Store-layer modules of core `batch::secret_scan`; core re-exports each one at its old path |
 | `src/batch/secret_scan/container.rs` | src | m | 1 struct · 3 enum · 24 fn · 1 type · 3 const · 9 mod · 2 re-export | Budget, ContainerReadMode, Kind, Stop | Containers the secret mask reads into (OF-067 C, owner ruling G04 binary = C2): a ZIP archive (Office… |
-| `src/batch/secret_scan/container/archive.rs` | src | s | 1 struct · 6 fn · 2 const | Entry | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
+| `src/batch/secret_scan/container/archive.rs` | src | s | 1 struct · 7 fn · 2 const | Entry | A ZIP archive's members: each entry in central-directory order, Stored or Deflated, read whole against its… |
 | `src/batch/secret_scan/container/gzip.rs` | src | s | 2 fn | — | A gzip file's payload: every member it chains, decoded in order as one payload, each member's CRC-32 and… |
 | `src/batch/secret_scan/container/pacing.rs` | src | s | 2 struct · 1 enum · 1 trait · 3 fn | ReadCancelled, ReadPacer, ReadPacing, ReadProgress | Scheduling data for one live container read |
 | `src/batch/secret_scan/container/pdf.rs` | src | m | 11 fn · 3 const | — | A PDF's streams: each stream object decoded (no filter, or one Flate filter with a PNG predictor, exactly… |
@@ -531,8 +531,8 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/session_overlay/overlay/retire.rs` | src | s | 1 fn | — | Promoted-closure retirement reusing the store's index-key builders |
 | `src/session_overlay/overlay/retire_selected.rs` | src | m | 1 fn | — | Selected-artifact retirement for a natively saved subset (FIX 13687) |
 | `src/session_overlay/overlay/retrieval_erase.rs` | src | m | 1 struct · 1 fn | RecordMetaRows | A room's copies of a deleted or erased record's own retrieval rows (FIX 17382) |
-| `src/session_overlay/overlay/rows.rs` | src | m | 14 fn · 2 crate-vis | — | Row staging, preflight, budget checks, read probes |
-| `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 1 re-export · 3 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
+| `src/session_overlay/overlay/rows.rs` | src | m | 16 fn · 2 crate-vis | — | Row staging, preflight, budget checks, read probes |
+| `src/session_overlay/overlay/segment.rs` | src | m | 1 struct · 2 fn · 1 re-export · 4 crate-vis | TxnSegmentGuard | Txn segment install, leases, commit/apply guards |
 | `src/session_overlay/overlay/segment/base_retirement.rs` | src | s | 1 struct · 1 fn · 2 crate-vis | BaseRowRetirementGuard | Canonical reader-ledger writes that supersede rows in a sealed overlay |
 | `src/session_overlay/route.rs` | src | s | 1 struct · 1 enum · 7 fn | RouteTarget, SessionWriteRoute | Session write routing: which store a session write lands in per mode |
 | `src/session_overlay/short_id.rs` | src | s | 1 fn · 5 crate-vis | — | Session-scoped short-id allocation over the overlay keyspace |
@@ -664,7 +664,7 @@ Size buckets are line counts of the whole file: `s` < 300 · `m` 300–799 · `L
 | `src/write_envelope/vad_annotation.rs` | src | s | 1 struct · 4 fn · 1 const | VadAnnotationCleanup | VAD annotation claim values, stable ids, and cleanup result data |
 | `src/write_envelope/validation.rs` | src | s | 1 fn | — | Write-envelope shape validation |
 | `src/write_envelope/voice_segment.rs` | src | s | 2 fn · 7 const | — | `voice.segment` claim family — the metadata of one committed capture segment: its span, channel count… |
-| `src/write_envelope/world_access_predicates.rs` | src | s | 2 const | — | World-access authority claim predicates |
+| `src/write_envelope/world_access_predicates.rs` | src | s | 1 fn · 2 const | — | World-access authority claim predicates |
 | `src/writer_hold.rs` | src | s | 1 struct · 2 fn | WriterHold | Writer closure timing and the Dreamer writer-hold trace |
 | `src/writer_lease.rs` | src | m | 1 struct · 16 fn · 2 const · 1 static | VaultWriterLease | Process-owner writer lease, shared by the server and embedded SDK |
 | `tests/phonetic_han_codes.rs` | test | s | — | — | L10-08 (CROSS-ARCH-0013 `#ladder` rung 1, G2P → IPA → NPD): a Han name and a kana name with a company-form… |

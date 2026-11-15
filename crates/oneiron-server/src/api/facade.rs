@@ -32,6 +32,8 @@ mod agent_definition_doors;
 mod agent_grant_doors;
 mod agent_run_effect_doors;
 mod agent_verb_class_doors;
+// The owner's writer of an agent's world access (ARCH-0067 #tiers).
+mod agent_world_access_doors;
 mod agent_verbs {
     include!(concat!(env!("OUT_DIR"), "/agent_verbs.rs"));
 }
