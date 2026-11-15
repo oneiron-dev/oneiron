@@ -230,3 +230,35 @@ impl Vault {
         Ok(records)
     }
 }
+
+#[cfg(oneiron_test_support)]
+impl Vault {
+    /// Door for `tests/expiry_boundaries.rs` (UC-12 PR 4): records one first-try trace of
+    /// `turn` at `recorded_at`, as a settling attempt does. Compiled only under
+    /// `--cfg oneiron_test_support`; never API.
+    pub(crate) fn record_tagging_trace_for_test(
+        &self,
+        turn: EntityId,
+        recorded_at: u64,
+    ) -> Result<()> {
+        let trace = TaggingTrace {
+            attempt: String::new(),
+            turn: Some(turn),
+            checkpoint: "0123456789abcdef".to_owned(),
+            stack: None,
+            model: None,
+            input_hash: None,
+            try_number: 1,
+            call_micros: None,
+            execution: None,
+            outcome: super::trace::TaggingOutcome::Rekeyed,
+        };
+        self.with_write_txn_grouped(|txn| record_in_txn(self, txn, &trace, recorded_at))
+    }
+
+    /// Door for `tests/expiry_boundaries.rs`: one round of the history's age prune at `now`,
+    /// as a worker pass runs before it claims; answers how many traces went.
+    pub(crate) fn prune_expired_tagging_traces_for_test(&self, now: u64) -> Result<usize> {
+        self.with_write_txn_grouped(|txn| prune_expired_in_txn(self, txn, now))
+    }
+}
