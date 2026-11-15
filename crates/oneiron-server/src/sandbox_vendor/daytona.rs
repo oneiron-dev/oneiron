@@ -182,8 +182,11 @@ impl DaytonaClient {
     }
 
     fn delete_on(&self, http: &Client, key: &str, sandbox: &str) -> oneiron::Result<()> {
-        HTTP.send_delete(http.delete(self.sandbox_url(sandbox)?).bearer_auth(key), &[key])
-            .map(drop)
+        HTTP.send_delete(
+            http.delete(self.sandbox_url(sandbox)?).bearer_auth(key),
+            &[key],
+        )
+        .map(drop)
     }
 }
 
