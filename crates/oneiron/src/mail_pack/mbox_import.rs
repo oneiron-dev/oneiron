@@ -643,7 +643,8 @@ fn read_file(
                 &[],
             )
         })?
-        .unwrap_or(u64::MAX);
+        // FIX-RED: the cap is measured but unread, as on main.
+        .map_or(u64::MAX, |_unread| u64::MAX);
     while let Some(&at) = entries.get(progress.entry as usize) {
         // An mbox streams message by message, so no byte bound holds it
         // whole; its first bytes are checked before any message is read. The
