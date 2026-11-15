@@ -6,13 +6,9 @@ use oneiron_base::error::Error;
 use oneiron_base::error::Result;
 use oneiron_consent_state::runtime_hooks::verb::credential::VerbAskCredentialRef;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 use serde::Deserialize;
 use serde::Serialize;
-
-/// The domain a filing anchor's claim id is hashed in (FIX 10513): its
-/// program and the digest of the group it covers, so one program's
-/// anchor for one group is one claim however often it is refiled.
-pub const WORKFLOW_FILING_DOMAIN: &[u8] = b"oneiron:browser-workflow-filing:v1";
 
 /// The domain a solved run's evidence id is hashed in (CUA E8a, CALLS row
 /// "evidence identity"): its scope, run, call, span and the durable body's
@@ -90,14 +86,14 @@ pub fn digest(domain: &[u8], parts: &[&[u8]]) -> [u8; 32] {
 }
 
 /// The claim id of `workflow`'s anchor for the group `group` digests
-/// (FIX 10513), hashed in [`WORKFLOW_FILING_DOMAIN`].
+/// (FIX 10513), under [`purposes::browser_library::WORKFLOW_FILING`].
 ///
 /// # Errors
 ///
 /// An id that does not encode (as the evidence ids').
 pub fn workflow_filing_id(workflow: &EntityId, group: &[u8; 32]) -> Result<EntityId> {
-    oneiron_store::code_snapshot::ids::entity_id_from_hash_material(
-        WORKFLOW_FILING_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::browser_library::WORKFLOW_FILING,
         &[workflow.as_bytes(), group],
     )
 }

@@ -33,7 +33,7 @@ pub(super) use oneiron_records::browser_library::evidence::digest;
 #[doc(hidden)]
 pub use oneiron_records::browser_library::evidence::{
     FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,
-    SOLVED_SCOPE_DOMAIN, SolvedRunScope, SolvedSource, WORKFLOW_FILING_DOMAIN, workflow_filing_id,
+    SOLVED_SCOPE_DOMAIN, SolvedRunScope, SolvedSource, workflow_filing_id,
 };
 
 pub use crate::dreamer_runner::maintenance::browser_candidate::CANDIDATE_DOMAIN;

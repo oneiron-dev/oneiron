@@ -41,15 +41,6 @@ pub const ORIGIN_PUBLICATION_VALUE_KEYS: [&str; 10] = [
     "created_at",
 ];
 
-/// Domain separator for the deterministic publication id.
-pub const ORIGIN_PUBLICATION_ID_DOMAIN: &[u8] = b"oneiron:origin-publication:v1";
-
-/// Domain separator for the deterministic `repo.publication` claim id.
-pub const ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN: &[u8] = b"oneiron:origin-publication-claim:v1";
-
-/// Domain separator for the commit-keyed subject anchor (RA5).
-pub const ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN: &[u8] = b"oneiron:origin-publication-commit:v1";
-
 /// Longest bounded failure text a record may carry.
 pub const ORIGIN_PUBLICATION_MAX_FAILURE_BYTES: usize = 512;
 

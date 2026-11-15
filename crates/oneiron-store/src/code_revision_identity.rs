@@ -1,16 +1,16 @@
 //! Deterministic aggregation-session, tested-revision and provenance identifiers.
 
-use crate::code_snapshot::ids::entity_id_from_hash_material;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 /// The aggregation SESSION one queue's tested chain shares.
 ///
 /// # Errors
 /// An id derivation failure.
 pub fn queue_aggregation_session(store: &str, init_work: &str) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-aggregation-session:v1",
+    EntityId::derive_legacy_material(
+        purposes::code::QUEUE_AGGREGATION_SESSION,
         &[store.as_bytes(), init_work.as_bytes()],
     )
 }
@@ -28,8 +28,8 @@ pub fn queue_revision_id(
     tree: &str,
     plan_digest: &str,
 ) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-tested-revision:v1",
+    EntityId::derive_legacy_material(
+        purposes::code::QUEUE_TESTED_REVISION,
         &[
             store.as_bytes(),
             init_work.as_bytes(),
@@ -46,8 +46,8 @@ pub fn queue_revision_id(
 /// # Errors
 /// An id derivation failure.
 pub fn queue_provenance_id(revision: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:queue-revision-provenance:v1",
+    EntityId::derive_legacy_material(
+        purposes::code::QUEUE_REVISION_PROVENANCE,
         &[revision.as_bytes()],
     )
 }

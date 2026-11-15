@@ -3,7 +3,6 @@
 use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
-use crate::code_snapshot::ids::entity_id_from_hash_material;
 use crate::git_wire::config::GIT_WIRE_KEEP_REF_PREFIX;
 use crate::git_wire::ids::GitOid;
 use crate::git_wire::ids::GitRefName;
@@ -17,11 +16,9 @@ use oneiron_base::error::Result;
 use oneiron_contracts::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use oneiron_contracts::entity_id::ENTITY_ID_LEN;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 use oneiron_contracts::temporal::TimeRange;
 
-use crate::origin::publication::publication_types::ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN;
-use crate::origin::publication::publication_types::ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN;
-use crate::origin::publication::publication_types::ORIGIN_PUBLICATION_ID_DOMAIN;
 use crate::origin::publication::publication_types::ORIGIN_PUBLICATION_INTENT_PREDICATE;
 use crate::origin::publication::publication_types::ORIGIN_PUBLICATION_MAX_FAILURE_BYTES;
 use crate::origin::publication::publication_types::ORIGIN_PUBLICATION_PREDICATE;
@@ -326,8 +323,8 @@ pub fn bounded_failure(text: impl Into<String>) -> String {
 /// publication of one push.
 pub fn origin_publication_id(request: &OriginPublicationRequest) -> Result<EntityId> {
     let expected = request.expected_old_oid.as_ref().map_or("", GitOid::as_str);
-    entity_id_from_hash_material(
-        ORIGIN_PUBLICATION_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::origin::PUBLICATION,
         &[
             request.repo_id.as_bytes(),
             request.ref_name.as_str().as_bytes(),
@@ -344,16 +341,16 @@ pub fn origin_publication_id(request: &OriginPublicationRequest) -> Result<Entit
 /// the SAME claim id the first attempt would have, so "exactly one active
 /// claim per publication" survives recovery.
 pub fn origin_publication_claim_id(publication_id: &EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::origin::PUBLICATION_CLAIM,
         &[publication_id.as_bytes()],
     )
 }
 
 /// The commit-keyed entity one publication's claim is anchored on (RA5).
 pub fn origin_published_commit_id(oid: &GitOid) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::origin::PUBLICATION_COMMIT,
         &[oid.as_str().as_bytes()],
     )
 }

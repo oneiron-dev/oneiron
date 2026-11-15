@@ -62,9 +62,12 @@ macro_rules! areas {
 
 areas! {
     agent,
+    agent_def,
     blob,
+    browser_library,
     channel_identity,
     claim,
+    code,
     code_run,
     connector,
     dreamer,

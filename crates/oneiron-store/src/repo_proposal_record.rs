@@ -2,10 +2,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::code_snapshot::ids::entity_id_from_hash_material;
 use crate::git_wire::ids::GitOid;
 use oneiron_base::error::Result;
 use oneiron_contracts::entity_id::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -99,8 +99,8 @@ pub struct ReceivedFilesProposalInput {
 /// # Errors
 /// An id derivation failure.
 pub fn received_proposal_id(candidate: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-candidate-proposal:v1",
+    EntityId::derive_legacy_material(
+        purposes::code::PUSH_CANDIDATE_PROPOSAL,
         &[candidate.as_bytes()],
     )
 }
@@ -111,8 +111,8 @@ pub fn received_proposal_id(candidate: EntityId) -> Result<EntityId> {
 /// # Errors
 /// An id derivation failure.
 pub fn received_file_operation(proposal: EntityId, source: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        b"oneiron:push-candidate-file-op:v1",
+    EntityId::derive_legacy_material(
+        purposes::code::PUSH_CANDIDATE_FILE_OPERATION,
         &[proposal.as_bytes(), source.as_bytes()],
     )
 }

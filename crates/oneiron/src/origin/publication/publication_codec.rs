@@ -4,11 +4,10 @@
 pub use oneiron_store::origin::publication::publication_codec::*;
 
 use super::publication_types::{
-    ORIGIN_PUBLICATION_CLAIM_ID_DOMAIN, ORIGIN_PUBLICATION_COMMIT_ID_DOMAIN,
-    ORIGIN_PUBLICATION_ID_DOMAIN, ORIGIN_PUBLICATION_INTENT_PREDICATE,
-    ORIGIN_PUBLICATION_MAX_FAILURE_BYTES, ORIGIN_PUBLICATION_PREDICATE,
-    ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS, OriginActor,
-    OriginKeepRefKind, OriginPublicationRecord, OriginPublicationRequest, OriginPublicationStatus,
+    ORIGIN_PUBLICATION_INTENT_PREDICATE, ORIGIN_PUBLICATION_MAX_FAILURE_BYTES,
+    ORIGIN_PUBLICATION_PREDICATE, ORIGIN_PUBLICATION_SCHEMA_VERSION, ORIGIN_PUBLICATION_VALUE_KEYS,
+    OriginActor, OriginKeepRefKind, OriginPublicationRecord, OriginPublicationRequest,
+    OriginPublicationStatus,
 };
 use crate::Vault;
 use crate::edge::EdgeKind;
