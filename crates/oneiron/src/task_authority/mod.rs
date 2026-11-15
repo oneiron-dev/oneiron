@@ -345,7 +345,8 @@ impl TaskAuthorityFacts {
             | TaskAuthorityFactKind::Acked => self.owner_admits(actor),
             // A cancel only takes away, and its doors prove standing the
             // facts do not hold: a connector send's actor, an approved cancel
-            // proposal, the vault owner's force.
+            // proposal, the vault owner's force. Any proved actor's counts
+            // (Engine RULING 16 Nov 03:39, TASK-FACT-ACTOR-RULE-EXCEPTIONS = B).
             TaskAuthorityFactKind::Cancelled => true,
             TaskAuthorityFactKind::ConsentRequired => self.consent_required_admits(actor),
             TaskAuthorityFactKind::Accepted => self.accepted_admits(actor),

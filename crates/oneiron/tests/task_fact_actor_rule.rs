@@ -5,7 +5,7 @@
 //! signed by the host's own carrier, as a member machine whose door lacks the actor check
 //! would carry it, so it proves itself on every device: only the actor rule refuses it.
 //!
-//! Red at 226e12d14fa1 (part 1) with this file and the test door laid in: the stranger's ack
+//! Red at 5d987ffd4f68 (part 1, the PR's base) with this file and the test door laid in: the stranger's ack
 //! counts on the host and the device; the stranger's assignment forks the owner's and fails
 //! the task's read; the stranger's take counts; the mint door writes the stranger's ack.
 //! `the_owner_taking_its_own_task_counts` passes on both: the owner reclaims or takes over
