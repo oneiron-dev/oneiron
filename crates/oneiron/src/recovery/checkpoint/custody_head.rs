@@ -369,6 +369,31 @@ impl Vault {
         self.custody_status_of(publication)
     }
 
+    /// A publication pass to the folder `folder` that reads its recipients,
+    /// then runs `between`, then notes its policy and seals: a pass whose
+    /// policy lock did not take (FIX 7314) while `between` committed. Test
+    /// door only (`test_doors::data_key_custody_head`).
+    #[cfg(oneiron_test_support)]
+    pub(crate) fn publish_custody_with_recipients_read_before(
+        &self,
+        folder: &Path,
+        between: impl FnOnce(),
+    ) -> Result<CustodyStatus> {
+        let recipients = match self.custody_target_recipients()? {
+            Ok(recipients) => recipients,
+            Err(pending) => return Err(crate::Error::InvalidConfig(pending.detail())),
+        };
+        between();
+        let policy = self.store.custody_policy_guard();
+        let standing = self.store.note_custody_policy(&recipients, &policy)?;
+        let folder = FolderTarget::at(folder.to_path_buf());
+        let targets: Vec<&dyn CustodyTarget> = vec![&folder];
+        let publication =
+            self.store
+                .publish_custody(&recipients, &standing, &targets, &[], None)?;
+        self.custody_status_of(publication)
+    }
+
     /// Where this vault's custody publication and retirements stand, from
     /// the last pass and the journal: the owner's status read.
     pub fn custody_status(&self) -> Result<CustodyStatus> {

@@ -3,10 +3,11 @@
 //! before still opens with the old one, reached through the link chain. A
 //! checkpoint sealed after refuses the old password and the old escrow
 //! capsule; a checkpoint sealed before still opens and restores. A custody
-//! head published before does not open with the key after, and the first
-//! publication after the act seals the head again under the new key. An
-//! unconfirmed way, and a presented password or passkey that does not open
-//! its wrap, refuse the act and write nothing.
+//! head published before does not open with the key after, the first
+//! publication after the act seals the head again under the new key, and a
+//! pass that read its recipients before the act seals nothing under the
+//! replaced key. An unconfirmed way, and a presented password or passkey
+//! that does not open its wrap, refuse the act and write nothing.
 //!
 //! Needs the doors:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
@@ -25,7 +26,8 @@ use oneiron::secret_custody::{
     CustodyClass, CustodyTier, OwnerSecretRegistration, RequestedBinding,
 };
 use oneiron::test_doors::data_key_custody_head::{
-    open_custody_head_with_checkpoint_key, read_published_head,
+    open_custody_head_with_checkpoint_key, publish_custody_with_recipients_read_before,
+    read_published_head,
 };
 use oneiron::test_doors::steward::{open_owner_carrier_vault, owner};
 use oneiron::world_keys::{
@@ -364,6 +366,11 @@ fn an_unconfirmed_way_refuses_the_act_and_writes_nothing() {
 /// Registers one secret in custody. It is this device's only, so its keys
 /// stay in local custody and a head carries no owner-only entry for it.
 fn register_custody_secret(vault: &Vault) {
+    register_custody_secret_named(vault, "deploy-key");
+}
+
+/// [`register_custody_secret`] under `name`.
+fn register_custody_secret_named(vault: &Vault, name: &str) {
     let owner_proof = owner(vault).expect("owner proof");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -373,7 +380,7 @@ fn register_custody_secret(vault: &Vault) {
         .register_secret_as_owner(
             &owner_proof,
             &OwnerSecretRegistration {
-                name: "deploy-key",
+                name,
                 class: CustodyClass::CustodyPortable,
                 device_only: true,
                 rung: CustodyTier::T1Leased,
@@ -495,6 +502,55 @@ fn the_first_custody_pass_after_a_new_generation_seals_the_head_again_under_the_
     assert!(
         replaced.is_err(),
         "the head sealed again must not open with the replaced key: {replaced:?}"
+    );
+}
+
+#[test]
+fn a_pass_that_read_its_recipients_before_a_new_generation_seals_nothing_under_the_old_key() {
+    let directory = tempfile::tempdir().expect("tempdir");
+    let vault = keyed_vault(&directory.path().join("vault"));
+    let keystore = Arc::new(oneiron_keystore::MemoryKeystore::default());
+    vault.install_device_keystore(Arc::clone(&keystore));
+    let device = device_wrap(&vault);
+    register_custody_secret(&vault);
+    let folder = directory.path().join("custody");
+    std::fs::create_dir_all(&folder).expect("the custody folder");
+    vault
+        .publish_custody(&folder, &[], None)
+        .expect("publish a head before the act");
+    let head_before = read_published_head(&folder).expect("the head before");
+    let before = directory.path().join("before");
+    vault
+        .snapshot_checkpoint(&before, 100)
+        .expect("seal a checkpoint before the act");
+    let key_before = CheckpointKey::unlock(&before, &VaultKeyUnlock::Device(keystore.as_ref()))
+        .expect("the checkpoint sealed before opens on this install");
+
+    // The pass reads the old key's subkey, then the act commits and a secret
+    // is registered after it, then the pass seals: a pass whose policy lock
+    // did not take (FIX 7314).
+    publish_custody_with_recipients_read_before(&vault, &folder, || {
+        start_generation_keeping_this_device(&vault, &device);
+        register_custody_secret_named(&vault, "release-key");
+    })
+    .expect("the pass runs");
+    let head_after = read_published_head(&folder).expect("the head after the pass");
+    let replaced = open_custody_head_with_checkpoint_key(&head_after, &key_before);
+    assert!(
+        head_after == head_before || replaced.is_err(),
+        "a head sealed after the act must not open with the replaced key: {replaced:?}"
+    );
+
+    // The next pass reads the new key and seals the head again under it.
+    vault
+        .publish_custody(&folder, &[], None)
+        .expect("the next pass");
+    let head_next = read_published_head(&folder).expect("the head of the next pass");
+    assert_ne!(head_next, head_before, "the next pass seals the head again");
+    let replaced = open_custody_head_with_checkpoint_key(&head_next, &key_before);
+    assert!(
+        replaced.is_err(),
+        "the head the next pass sealed must not open with the replaced key: {replaced:?}"
     );
 }
 
