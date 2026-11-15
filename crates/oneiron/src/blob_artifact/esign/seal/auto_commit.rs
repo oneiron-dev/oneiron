@@ -7,10 +7,12 @@ use crate::blob_artifact::BlobVersionProvenance;
 use crate::blob_artifact::esign::{
     EsignSealed, EsignState, EsignVerdict, SealActiveContentFacts, SealProfile,
 };
+use crate::blob_artifact::made_by::seal_version_made_by;
 use crate::claim::{ClaimApprovalStatus, ClaimSource};
 use crate::edge::EdgeActorClass;
 use crate::gate::{NativeAutoChecker, resolve_policy_manifest};
 use crate::write_envelope::WriteActor;
+use crate::write_envelope::provenance::made_by::MadeBy;
 use crate::{EntityId, Error, Result, Vault};
 use sha2::{Digest, Sha256};
 
@@ -83,6 +85,8 @@ pub(super) struct VerifiedSealJob<'a> {
     targets: Vec<EntityId>,
     actor: WriteActor,
     provenance: BlobVersionProvenance,
+    /// Each output's envelope: the seal's receipt naming its original.
+    made_by: Vec<MadeBy>,
     now: u64,
 }
 
@@ -109,6 +113,30 @@ impl<'a> VerifiedSealJob<'a> {
             .iter()
             .map(|_| vault.new_entity_id())
             .collect::<Result<Vec<_>>>()?;
+        let provenance = BlobVersionProvenance::SealJob {
+            job_ref: format!(
+                "esign.seal:{}",
+                crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())
+            ),
+        };
+        let read: &heed::RoTxn<'_> = txn;
+        let made_by = outputs
+            .iter()
+            .zip(&state.document.items)
+            .map(|(output, item)| -> Result<MadeBy> {
+                let original = EntityId::from_hex(&item.artifact_ref)?;
+                let record = vault
+                    .blob_artifact_version_metadata_in_txn(read, &original, item.original_version)?
+                    .ok_or(Error::EntityNotFound)?;
+                Ok(seal_version_made_by(
+                    &actor,
+                    &provenance,
+                    record.claim_id,
+                    &output.audit_chain_sha256(),
+                    now,
+                ))
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(Self {
             attempt,
             document,
@@ -118,12 +146,8 @@ impl<'a> VerifiedSealJob<'a> {
             targets,
             actor,
             now,
-            provenance: BlobVersionProvenance::SealJob {
-                job_ref: format!(
-                    "esign.seal:{}",
-                    crate::entity_id::bytes_to_hex_lower(attempt.id.as_bytes())
-                ),
-            },
+            provenance,
+            made_by,
         })
     }
 
@@ -150,6 +174,11 @@ impl SealJobWrite<'_> {
     }
     pub(in crate::blob_artifact) fn provenance(&self) -> &BlobVersionProvenance {
         &self.job.provenance
+    }
+    /// The seal's receipt for this output: the original version's claim as
+    /// its input, the certified audit chain as its params.
+    pub(in crate::blob_artifact) fn made_by(&self) -> &MadeBy {
+        &self.job.made_by[self.index]
     }
     pub(in crate::blob_artifact) fn at(&self) -> u64 {
         self.job.now

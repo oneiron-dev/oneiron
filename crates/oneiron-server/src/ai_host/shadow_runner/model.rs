@@ -38,6 +38,7 @@ use oneiron::llm::run_admission::{MemoryReceipts, RunEvent, RunReceipt, RunRecei
 use oneiron::llm::{BudgetDenied, BudgetGuard, DEFAULT_BUDGET_RESERVE_UNITS, mark_solo};
 use oneiron::{BudgetExhaustionPolicy, EntityId, Error, LlmError, LlmResponse, Vault};
 
+use crate::models::RoleRefusal;
 use crate::server::SyncServer;
 
 /// One call's receipts, kept for the arm and passed on to the host's own
@@ -115,9 +116,20 @@ impl Gateway<'_> {
         // route still clamps it: a model not served here now is no replay,
         // and no other model stands in. The role is the one whose admission
         // sent the captured call (FIX 6359), and no other role stands in.
-        let Ok(admission) = runtime.admit_replay(self.vault, binding.role, request) else {
-            let unavailable = ShadowUnavailable::new(Reason::ModelUnavailable, "model_not_served");
-            return Ok(refused(receipt, unavailable));
+        let admission = match runtime.admit_replay(self.vault, binding.role, request) {
+            Ok(admission) => admission,
+            Err(refusal) => {
+                // A capture an owner's fallback answered, that fallback since
+                // turned off or narrowed, says so (FIX-LIST
+                // REPLAY-REFUSED-FOR-WIDER-FALLBACK-RUNG).
+                let cause = if matches!(refusal, RoleRefusal::FallbackNoLongerAllowed { .. }) {
+                    "fallback_no_longer_allowed"
+                } else {
+                    "model_not_served"
+                };
+                let unavailable = ShadowUnavailable::new(Reason::ModelUnavailable, cause);
+                return Ok(refused(receipt, unavailable));
+            }
         };
         let (request, routes) = (admission.request, admission.routes);
         // The rung that answered the capture, as it is configured now: on

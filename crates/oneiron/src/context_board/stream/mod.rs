@@ -1,5 +1,6 @@
 //! Board streaming frames, routing and the pending-wake queue.
 
+mod child_done;
 mod events;
 mod frames;
 mod provenance;
@@ -7,6 +8,7 @@ mod publish;
 mod registry;
 mod review;
 mod room_wake;
+mod task_wake;
 mod wake;
 
 #[cfg(test)]
@@ -14,6 +16,11 @@ mod routing_tests;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use self::child_done::stage_child_done_in_txn;
+pub use self::child_done::{
+    CHILD_DONE_KEY_PREFIX, ChildDone, ChildEnd, child_release_hold, child_release_rows,
+    child_spawner,
+};
 pub use self::events::{
     BoardEvent, DeliveryClass, DeliveryPolicy, RouteObservation, SubscriptionError,
     SubscriptionReceipt, SubscriptionScope,
@@ -29,6 +36,7 @@ pub(crate) use self::publish::task_for_announcement;
 pub use self::registry::{BoardStreamRegistry, StreamConnectionState};
 pub use self::review::PendingDiaryReview;
 pub use self::room_wake::{PendingRoomWake, RoomWakeRead};
+pub use self::task_wake::{PendingTaskWake, StagedTaskWake, TaskWakeKind, TaskWakeRead};
 pub use self::wake::WakeEnvelope;
 
 use super::one_line_token;

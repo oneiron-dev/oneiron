@@ -3,9 +3,13 @@
 //! Run on a build host with `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked
 //! -p oneiron-server --all-features --features oneiron/test-support --test room_pins_native`.
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
+use engine_stack::on_engine_stack;
 use oneiron::access_grant::{
     AccessGrant, AccessGrantCapability, AccessGrantScope, AccessGrantStatus,
 };
@@ -25,7 +29,7 @@ use oneiron::workspace_roster::{ProjectRecord, RoomPinRequest};
 use oneiron::{AttemptId, EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig, WriteActor};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::test_doors::native_board::{run_board_pins, run_brief_pins};
-use oneiron_server::{ENGINE_THREAD_STACK_BYTES, config::SyncServerConfig, server::SyncServer};
+use oneiron_server::{config::SyncServerConfig, server::SyncServer};
 use serde_json::json;
 
 type TestResult<T = ()> = Result<T, Box<dyn std::error::Error>>;
@@ -339,30 +343,6 @@ fn lane_reads(vault: &Vault, agent: EntityId, target: EntityId) -> TestResult<bo
     .ok_or("the agent lane key builds")?
     .at(CallerLocality::OnDevice);
     Ok(vault.scoped_read(key).is_entity_readable(&target)?)
-}
-
-/// Both the driver and runtime workers need the server's engine-sized stack.
-fn on_engine_stack<F, Fut>(test: F) -> TestResult
-where
-    F: FnOnce() -> Fut + Send + 'static,
-    Fut: std::future::Future<Output = TestResult>,
-{
-    let driver = std::thread::Builder::new()
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(move || -> Result<(), String> {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .map_err(|error| error.to_string())?
-                .block_on(test())
-                .map_err(|error| error.to_string())
-        })?;
-    match driver.join() {
-        Ok(outcome) => Ok(outcome?),
-        Err(panic) => std::panic::resume_unwind(panic),
-    }
 }
 
 fn board_pins_error(error: String) -> Box<dyn std::error::Error> {

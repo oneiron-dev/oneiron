@@ -13,6 +13,9 @@
 #[path = "support/fake_llm.rs"]
 mod fake_llm;
 
+#[path = "support/engine_stack.rs"]
+mod engine_stack;
+
 use std::sync::Arc;
 
 use axum::{
@@ -21,6 +24,7 @@ use axum::{
     http::{Request, StatusCode},
 };
 use ed25519_dalek::{Signer, SigningKey};
+use engine_stack::run_on_engine_stack;
 use oneiron::authority::{
     CapabilitySlip, HostSlipIssuer, PairingPrincipal, pairing_binding_transcript,
 };
@@ -34,10 +38,10 @@ use oneiron::{
 };
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::ai_host::AiHost;
+use oneiron_server::build_app;
 use oneiron_server::config::SyncServerConfig;
 use oneiron_server::config::models::ModelsConfig;
 use oneiron_server::server::SyncServer;
-use oneiron_server::{ENGINE_THREAD_STACK_BYTES, build_app};
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
@@ -301,22 +305,7 @@ fn exchange_id(vault: &Vault, short_ref: &str) -> EntityId {
 /// asks.
 #[test]
 fn exchange_claim_birth_names_the_recalled_row() {
-    let run = std::thread::Builder::new()
-        .name("proxy-recall-names-rows".into())
-        .stack_size(ENGINE_THREAD_STACK_BYTES)
-        .spawn(|| {
-            tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(2)
-                .thread_stack_size(ENGINE_THREAD_STACK_BYTES)
-                .enable_all()
-                .build()
-                .expect("engine-sized test runtime")
-                .block_on(exchange_birth_names_recalled_row())
-        })
-        .expect("spawn the engine-sized test thread");
-    if let Err(panic) = run.join() {
-        std::panic::resume_unwind(panic);
-    }
+    run_on_engine_stack("proxy-recall-names-rows", exchange_birth_names_recalled_row);
 }
 
 async fn exchange_birth_names_recalled_row() {

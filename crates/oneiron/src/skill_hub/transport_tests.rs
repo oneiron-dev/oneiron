@@ -1346,9 +1346,7 @@ fn local_git_pack_installs_with_pinned_receipt_and_skill_remains_separate() -> R
         &crate::gate::default_policy_manifest().unwrap(),
     )?;
     let installed = vault.install_pack_from_adapter(&adapter, &reference, &publisher, &Fit, at, 4);
-    vault.with_write_txn(|txn| {
-        crate::batch::deindex_entity_for_test(&vault.store, txn, &policy_id)
-    })?;
+    vault.with_write_txn(|txn| crate::batch::deindex_entity_for_test(&vault, txn, &policy_id))?;
     let PackInstallDisposition::Installed(receipt) = installed? else {
         panic!("post-fit connector");
     };

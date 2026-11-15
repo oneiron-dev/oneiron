@@ -318,8 +318,17 @@ pub(crate) struct PolicyOwnerPolicyRow {
     pub(crate) action: OwnerRowAction,
 }
 
+/// One entry of a policy manifest's `signature` or `signatures` key. It is a
+/// marker, not a signature: nothing verifies `sig`. The gate checks only that
+/// a manifest carries one, and a Dreamer-run Auto claim under a manifest with
+/// none pends as `PendingPolicyManifestAuthority`. The trust stamp of the
+/// installed pack is the boundary (H89: a forged marker in an untrusted pack
+/// grants nothing). Real signing is the designed policy-attestation flow
+/// (`oneiron/policy-att/v1`, FIX [POLICY-ATT-REAL-SIGNING]). The stored keys
+/// and the public door type `policy_manifest_doors::PolicySignature` keep
+/// their names.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PolicySignature {
+pub(crate) struct PolicyAuthorityMarker {
     pub(crate) alg: String,
     pub(crate) key_id: Option<String>,
     pub(crate) sig: String,

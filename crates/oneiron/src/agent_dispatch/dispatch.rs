@@ -124,6 +124,27 @@ pub struct AgentDispatcher<'a> {
     /// The goal-intake interview this dispatcher launches, proved in the
     /// dispatch writer: [`Self::admitting_goal_intake`].
     goal_intake: Option<GoalIntakeEntry>,
+    /// The host's classifier of a message to a busy resident (AGM-2 = C):
+    /// [`Self::with_message_classifier`].
+    pub(super) message_classifier: Option<super::ResidentMessageClassifier<'a>>,
+}
+
+/// What an agent spawn's checks before the writer decided
+/// ([`AgentDispatcher::admit_spawn`]).
+pub(crate) enum AgentSpawnAdmission {
+    /// Answered with no enqueue: a pending run under the same dedupe key, or
+    /// a proposed context widening.
+    Answered(Box<AgentDispatchOutcome>),
+    /// Admitted: [`AgentDispatcher::enqueue_admitted_in_txn`] enqueues it.
+    Admitted(Box<AdmittedAgentSpawn>),
+}
+
+/// An agent spawn that passed every check before the writer, to enqueue in
+/// a writer.
+pub(crate) struct AdmittedAgentSpawn {
+    input: DispatchAgent,
+    spawn: AgentSpawnContext,
+    leader_task: Option<EntityId>,
 }
 
 impl<'a> AgentDispatcher<'a> {
@@ -136,7 +157,21 @@ impl<'a> AgentDispatcher<'a> {
             seats: None,
             funding: None,
             goal_intake: None,
+            message_classifier: None,
         }
+    }
+
+    /// This dispatcher, classing each message that reaches a busy resident
+    /// with the host's `classifier` (AGM-2 = C): on its rule and local
+    /// rungs only. Without one, a message takes its envelope's default
+    /// class.
+    #[must_use]
+    pub fn with_message_classifier(
+        mut self,
+        classifier: super::ResidentMessageClassifier<'a>,
+    ) -> Self {
+        self.message_classifier = Some(classifier);
+        self
     }
 
     /// This dispatcher, for the goal-intake interview the host-held `card`
@@ -297,6 +332,47 @@ impl<'a> AgentDispatcher<'a> {
         if matches!(input.target, AgentDispatchTarget::Workflow(_)) {
             return self.dispatch_workflow(input, spawn);
         }
+        let admitted = match self.admit_before_writer(input, spawn, leader_task)? {
+            AgentSpawnAdmission::Answered(outcome) => return Ok(*outcome),
+            AgentSpawnAdmission::Admitted(admitted) => admitted,
+        };
+        let mut wtxn = self.vault.store.env.write_txn()?;
+        let outcome = self.enqueue_admitted_in_txn(&mut wtxn, *admitted)?;
+        wtxn.commit()?;
+        self.vault.store.notify_attempt_observers();
+        Ok(outcome)
+    }
+
+    /// A plain agent spawn whose enqueue commits in the caller's writer with
+    /// the caller's own rows: the checks [`Self::dispatch_with_context`] makes
+    /// before its writer, in its order. The caller enqueues an admitted spawn
+    /// with [`Self::enqueue_admitted_in_txn`] and wakes the attempt observers
+    /// once its write commits.
+    ///
+    /// # Errors
+    ///
+    /// What [`Self::dispatch_with_context`] raises before its writer. A
+    /// workflow target is refused: a workflow dispatches in its own writer.
+    pub(crate) fn admit_spawn(
+        &self,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+    ) -> Result<AgentSpawnAdmission> {
+        if matches!(input.target, AgentDispatchTarget::Workflow(_)) {
+            return Err(Error::Artifact(ArtifactError::InvalidAgentDispatchInput(
+                "a workflow dispatches in its own writer",
+            )));
+        }
+        self.admit_before_writer(input, spawn, None)
+    }
+
+    /// Every check of an agent spawn that reads before the writer, in order.
+    fn admit_before_writer(
+        &self,
+        input: DispatchAgent,
+        spawn: AgentSpawnContext,
+        leader_task: Option<EntityId>,
+    ) -> Result<AgentSpawnAdmission> {
         // Normalize the descriptor exactly ONCE here, before it is resolved,
         // compared, or persisted: the stored `AgentDispatchInput.context_spec`
         // is then canonical, so declared-narrowing and dedupe comparisons
@@ -309,7 +385,7 @@ impl<'a> AgentDispatcher<'a> {
             if let Some(task) = leader_task {
                 Self::require_leader_task_binding(&existing, task)?;
             }
-            return Ok(existing);
+            return Ok(AgentSpawnAdmission::Answered(Box::new(existing)));
         }
         // Zero rejects HERE, before the descriptor is resolved, before any fork
         // row is registered, and before anything is enqueued. The in-transaction
@@ -319,7 +395,7 @@ impl<'a> AgentDispatcher<'a> {
         drop(txn);
         let target_definition = self.dispatchable_definition(&input.target)?;
         if let Some(outcome) = self.propose_context_widen(&input, &spawn)? {
-            return Ok(outcome);
+            return Ok(AgentSpawnAdmission::Answered(Box::new(outcome)));
         }
         // Resolution runs outside the write transaction on purpose: it is a
         // pure read of live state, and the vault's read seams open their own
@@ -332,17 +408,41 @@ impl<'a> AgentDispatcher<'a> {
             input.run_id.as_deref(),
             target_definition.scope.to_world_scope(),
         )?;
+        Ok(AgentSpawnAdmission::Admitted(Box::new(
+            AdmittedAgentSpawn {
+                input,
+                spawn,
+                leader_task,
+            },
+        )))
+    }
 
-        let mut wtxn = self.vault.store.env.write_txn()?;
+    /// Enqueue `admitted` in `wtxn`, which the caller commits; nothing here
+    /// commits.
+    pub(crate) fn enqueue_admitted_in_txn(
+        &self,
+        wtxn: &mut heed::RwTxn<'_>,
+        admitted: AdmittedAgentSpawn,
+    ) -> Result<AgentDispatchOutcome> {
+        let AdmittedAgentSpawn {
+            input,
+            spawn,
+            leader_task,
+        } = admitted;
         if let Some(task) = leader_task {
-            self.validate_leader_task_in_txn(&wtxn, task, &input, &spawn)?;
+            self.validate_leader_task_in_txn(wtxn, task, &input, &spawn)?;
+        } else {
+            // Plan mode: an agent's spawn pins no plan.
+            self.refuse_unplanned_child_in_txn(
+                wtxn,
+                input.parent_attempt,
+                input.target.agent_definition_ref()?,
+            )?;
         }
-        let outcome = self.dispatch_in_txn(&mut wtxn, leader_task, input, spawn)?;
+        let outcome = self.dispatch_in_txn(wtxn, leader_task, input, spawn)?;
         if let Some(task) = leader_task {
             Self::require_leader_task_binding(&outcome, task)?;
         }
-        wtxn.commit()?;
-        self.vault.store.notify_attempt_observers();
         Ok(outcome)
     }
 
@@ -753,6 +853,7 @@ impl<'a> AgentDispatcher<'a> {
             requester,
             caller_origin,
             funding,
+            carried_wake_keys: spawn.carried_wake_keys,
         })
     }
 
@@ -922,6 +1023,31 @@ impl<'a> AgentDispatcher<'a> {
         crate::agent_def::child_agent_powers(held, root, requested)
             .map(Some)
             .map_err(crate::agent_def::power_refusal)
+    }
+
+    /// Plan mode (SETTING = A): refuses a child of `target`, an agent whose
+    /// plan mode is `required`, that an agent's attempt `parent` starts with
+    /// no TASK, so with no plan the owner approved: a spawn, a team's leader
+    /// or a workflow leaf. A root (the owner's or the engine's start) and an
+    /// engine job's child are no agent's start, and pass. A TASK's run is
+    /// admitted with its brief instead (`tasks.create`).
+    ///
+    /// # Errors
+    ///
+    /// A Gate deny (`gate.deny.plan_mode.required`).
+    pub(super) fn refuse_unplanned_child_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        parent: Option<AttemptId>,
+        target: EntityId,
+    ) -> Result<()> {
+        let Some(parent) = parent else {
+            return Ok(());
+        };
+        if self.parent_dispatch_input_in_txn(txn, parent)?.is_none() {
+            return Ok(());
+        }
+        crate::agent_def::refuse_unplanned_run_in_txn(&self.vault.store, txn, target)
     }
 
     /// The parent attempt's decoded dispatch input, read outside any caller

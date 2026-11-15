@@ -83,6 +83,13 @@ pub struct SyncClient {
     pub(crate) server_vvs: HashMap<String, VersionVector>,
     pub(crate) requested_windows: Mutex<HashSet<WindowKey>>,
     pub(crate) pending_world_windows: Mutex<HashSet<WindowKey>>,
+    /// The worlds this connection's negotiation follows, read as it began
+    /// (`begin_connection_sync`). Its first frames and the requests the
+    /// home's root response brings select from this set, and the steady
+    /// loop renegotiates once the followed set differs from it
+    /// ([`Self::follow_set_changed`]; ARCH-0023b #partial-sync). `None` when
+    /// no connection began or the set could not be read.
+    pub(super) negotiated_worlds: Option<FollowedWorlds>,
     /// Unacknowledged cross-month deltas, each with the machine its connection
     /// proved when it came in (FIX 11709). Lost on process death, re-fetched by VV.
     pub(crate) staged_world_updates: Vec<(WindowKey, Vec<u8>, crate::authority::PeerMachine)>,
@@ -101,6 +108,16 @@ pub struct SyncClient {
     /// promotion, not the home's grant on this socket (FIX 20202). Cleared at
     /// every connect.
     pub(crate) promotions_granted: HashSet<WindowKey>,
+    /// The followed windows this connection asked the home to grant
+    /// (`FOLLOW_REQUEST`). Cleared at every connect.
+    pub(crate) follow_requests: Mutex<HashSet<WindowKey>>,
+    /// The followed windows the home refused on this connection
+    /// (`FOLLOW_REFUSED`). Cleared at every connect.
+    pub(crate) follows_refused: HashSet<WindowKey>,
+    /// The followed windows whose full exchange landed here on this
+    /// connection, their thin read cache rows dropped
+    /// ([`Self::land_followed_window`]). Cleared at every connect.
+    pub(crate) followed_windows_landed: HashSet<WindowKey>,
     /// The windows whose home replacement installed here on this connection
     /// since a per-window re-bootstrap last asked for one (FIX 20202). Cleared
     /// at every connect.
@@ -239,6 +256,7 @@ impl SyncClient {
             note_session_bound: false,
             note_bind_receipt: None,
             cleartext_withhold_logged: false,
+            negotiated_worlds: None,
             document_updates,
             document_retries: Mutex::default(),
             vault,
@@ -255,6 +273,9 @@ impl SyncClient {
             root_bootstrapped: false,
             residence_acks: HashMap::new(),
             promotions_granted: HashSet::new(),
+            follow_requests: Mutex::new(HashSet::new()),
+            follows_refused: HashSet::new(),
+            followed_windows_landed: HashSet::new(),
             replacements_installed: HashSet::new(),
             window_pads: Mutex::default(),
             document_parts: Mutex::default(),
@@ -332,17 +353,20 @@ impl SyncClient {
     }
 
     /// Whether window `key`'s updates may go out as residence updates: an
-    /// opened machine sends only the windows the home granted (`rp:w:`). A
-    /// window the home refused to grant again stays on disk and no longer
-    /// syncs, so its writes wait queued instead of closing the socket ("window
-    /// not promoted"). A sync-all machine sends every window. A marker that
-    /// cannot be read is judged ungranted.
+    /// opened machine sends only the windows the home granted (`rp:w:`) and
+    /// the windows of the worlds it follows that the home granted on this
+    /// connection ([`Self::followed_window_granted`]). A window the home
+    /// refused to grant again stays on disk and no longer syncs, so its writes
+    /// wait queued instead of closing the socket ("window not promoted"). A
+    /// sync-all machine sends every window. A marker that cannot be read is
+    /// judged ungranted.
     pub(crate) fn residence_granted(&self, key: &str) -> bool {
         self.config.residence_mode != crate::sync::SyncResidenceMode::Opened
             || self
                 .vault
                 .sync_state_get(&format!("rp:w:{key}"))
                 .is_ok_and(|marker| marker.is_some())
+            || self.followed_window_granted(key)
     }
 
     /// Whether an outgoing frame carries what a device-only world now keeps
@@ -447,12 +471,22 @@ impl SyncClient {
         self.config.followed_worlds = None;
     }
 
-    /// Effective subscription = host request ∩ trusted manifest ceiling.
-    /// Fail closed when a loaded manifest is malformed; the caller request
-    /// is never rewritten, so `follow_all_worlds` cannot bypass the cap.
-    pub(crate) fn effective_worlds(
-        &self,
-    ) -> std::result::Result<Option<BTreeSet<crate::EntityId>>, TransportError> {
+    /// The worlds this lane follows: the host's request, each world whose
+    /// read setting keeps it off this machine left out on a device lane, all
+    /// under the trusted manifest ceiling. Fail closed when a loaded manifest
+    /// is malformed; the caller request is never rewritten, so
+    /// `follow_all_worlds` cannot bypass the cap.
+    ///
+    /// `Some([])`, a fresh SyncClientConfig's request, is the device's own
+    /// follow (ARCH-0023b #partial-sync): under sync all (residence All, or
+    /// the manifest's shipped `sync_world_default`) every world readable on
+    /// this machine, else the worlds the owner picked for it (`rs:worlds`,
+    /// none until he picks) that are readable here. A named list follows the
+    /// worlds it names that are readable here. Read at every check, so a world whose setting turns
+    /// away from this machine is unfollowed at once (DEC-0005). `None`, the
+    /// home's sync all, follows every world. A federation lane follows what
+    /// it names.
+    pub(crate) fn effective_worlds(&self) -> std::result::Result<FollowedWorlds, TransportError> {
         let txn = self
             .vault
             .store
@@ -467,47 +501,70 @@ impl SyncClient {
         let default_all = resolution
             .sync_default_all_worlds()
             .map_err(|error| TransportError::Storage(error.to_string()))?;
-        // `Some([])` from a fresh SyncClientConfig means "use the manifest's
-        // shipped default". An explicit `None` from follow_all_worlds is a
-        // request for all, still capped by the trusted manifest ceiling.
-        let requested = if self
-            .config
-            .followed_worlds
-            .as_ref()
-            .is_some_and(Vec::is_empty)
-            && default_all
-        {
-            None
-        } else {
-            self.config.followed_worlds.as_ref()
+        let device = self.config.federation_peer.is_none();
+        let sync_all = default_all || self.config.residence_mode == super::SyncResidenceMode::All;
+        let requested = match self.config.followed_worlds.as_deref() {
+            None => FollowedWorlds::All,
+            Some([]) if device && sync_all => self.readable_worlds_in(&txn)?,
+            Some([]) if device => {
+                let pick: Vec<crate::EntityId> =
+                    crate::sync::residence::device_world_pick_in(&self.vault, &txn)
+                        .map_err(|error| TransportError::Storage(error.to_string()))?
+                        .into_iter()
+                        .collect();
+                self.readable_worlds_in(&txn)?.narrowed_to(&pick)
+            }
+            Some(worlds) if device => self.readable_worlds_in(&txn)?.narrowed_to(worlds),
+            Some([]) if default_all => FollowedWorlds::All,
+            Some(worlds) => FollowedWorlds::Only(worlds.iter().copied().collect()),
         };
-        Ok(match (requested, ceiling) {
-            (None, None) => None,
-            (None, Some(cap)) => Some(cap.clone()),
-            (Some(worlds), None) => Some(worlds.iter().copied().collect()),
-            (Some(worlds), Some(cap)) => Some(
-                worlds
-                    .iter()
-                    .filter(|world| cap.contains(world))
-                    .copied()
-                    .collect(),
-            ),
-        })
+        Ok(requested.capped_by(ceiling))
     }
 
-    pub(crate) fn follows_window(
-        key: &WindowKey,
-        worlds: &Option<BTreeSet<crate::EntityId>>,
-    ) -> bool {
-        match (key.world(), worlds) {
-            (None, _) | (_, None) => true,
-            (Some(world), Some(worlds)) => worlds.contains(&world),
-        }
+    /// Whether the worlds this lane follows now differ from the ones its
+    /// connection's negotiation read as it began (`negotiated_worlds`): a
+    /// pick, a world setting or a grant changed them, and the steady loop
+    /// renegotiates at once (ARCH-0023b #partial-sync), as a residence-mode
+    /// change does.
+    pub(crate) fn follow_set_changed(&self) -> bool {
+        self.effective_worlds().ok() != self.negotiated_worlds
+    }
+
+    /// Every world readable on this machine, read in `txn`: all but the
+    /// worlds whose read setting keeps them off it (DEC-0005). This install
+    /// is the destination its machine id names, or one nobody proved while
+    /// it has none. Under a conflicted vault root no world's setting is
+    /// known, so none.
+    pub(crate) fn readable_worlds_in(
+        &self,
+        txn: &heed::RoTxn<'_>,
+    ) -> std::result::Result<FollowedWorlds, TransportError> {
+        let Some(view) =
+            crate::authority::WorldPrivacyView::load_unless_conflicted_in(&self.vault, txn)
+                .map_err(|error| TransportError::Storage(error.to_string()))?
+        else {
+            return Ok(FollowedWorlds::Only(BTreeSet::new()));
+        };
+        let here = match crate::identity::read_machine_id_in_txn(&self.vault, txn)
+            .map_err(|error| TransportError::Storage(error.to_string()))?
+        {
+            Some(machine) => crate::authority::Destination::Machine(machine),
+            None => crate::authority::Destination::Unknown,
+        };
+        let withheld = view
+            .withheld_for(here)
+            .map_err(|error| TransportError::Storage(error.to_string()))?;
+        Ok(FollowedWorlds::AllExcept(withheld))
+    }
+
+    pub(crate) fn follows_window(key: &WindowKey, worlds: &FollowedWorlds) -> bool {
+        key.world().is_none_or(|world| worlds.contains(&world))
     }
 
     /// Whether a full-window exchange of `key` may run on this lane: an
     /// opened-item owner lane exchanges only the windows this device promoted
-    /// (ARCH-0023b); no other lane is held to it. An import judges it again
+    /// and the windows of the worlds it follows (ARCH-0023b); no other lane
+    /// is held to it. An import judges it again
     /// once it holds the window's handle: a demotion may end between the
     /// frame's gate and the open, and a held handle defers any later one.
     pub(crate) fn full_window_exchange_allowed(
@@ -520,11 +577,83 @@ impl SyncClient {
         {
             return Ok(true);
         }
-        Ok(self
+        let promoted = self
             .vault
             .sync_state_get(&format!("rp:w:{key}"))
             .map_err(|e| TransportError::Storage(e.to_string()))?
-            .is_some())
+            .is_some();
+        Ok(promoted || self.followed_window_granted(key))
+    }
+
+    /// Whether `key` is a window of a world this lane follows
+    /// ([`Self::follows_full_window`]) that the home granted on this
+    /// connection. A follow the home refused (`FOLLOW_REFUSED`) or has not
+    /// answered yet stays unsynced on this socket, its vector unasked and its
+    /// writes queued, and the next connection asks again.
+    pub(crate) fn followed_window_granted(&self, key: &str) -> bool {
+        WindowKey::try_new(key).is_some_and(|window| self.promotions_granted.contains(&window))
+            && self.follows_full_window(key)
+    }
+
+    /// The followed windows this connection asked the home to grant that it
+    /// has neither granted nor refused yet. The queue replays once each is
+    /// answered: a granted window's queued writes go, a refused one's stay
+    /// owed.
+    pub(crate) fn unanswered_follow_requests(&self) -> Vec<WindowKey> {
+        let mut keys: Vec<WindowKey> = self
+            .follow_requests
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|key| !self.follow_answered(key))
+            .cloned()
+            .collect();
+        keys.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+        keys
+    }
+
+    /// Whether the home granted or refused followed window `key` on this
+    /// connection.
+    pub(crate) fn follow_answered(&self, key: &WindowKey) -> bool {
+        self.promotions_granted.contains(key) || self.follows_refused.contains(key)
+    }
+
+    /// Once a followed window's full exchange lands here (a home update
+    /// imported, or the home's replacement installed), drops the thin read
+    /// cache rows its items kept from before the follow
+    /// (FOLLOWED-WINDOW-STALE-THIN-CACHE), as a promotion drops them: the
+    /// canonical rows are here now, and a local edit at such an item is no
+    /// longer refused as a thin read. Once per window and connection; a
+    /// window this device promoted dropped them at its promotion.
+    pub(crate) fn land_followed_window(
+        &mut self,
+        key: &WindowKey,
+    ) -> std::result::Result<(), TransportError> {
+        if self.peer_session.is_some()
+            || !self.followed_window_granted(key.as_str())
+            || self.opened_window_promoted(key)?
+            || !self.followed_windows_landed.insert(key.clone())
+        {
+            return Ok(());
+        }
+        self.vault
+            .with_write_txn_grouped(|txn| {
+                super::residence::drop_thin_rows_in(&self.vault, txn, key)
+            })
+            .map_err(|error| TransportError::Storage(error.to_string()))
+    }
+
+    /// Whether `key` syncs in full on this lane only because `worlds`
+    /// follows its world: a followed world's window this device never
+    /// promoted (no `rp:w:`). It is asked of the home as a follow
+    /// (`FOLLOW_REQUEST`), and its vector waits for the grant.
+    pub(crate) fn follow_only_window_in(
+        &self,
+        key: &WindowKey,
+        worlds: &FollowedWorlds,
+    ) -> std::result::Result<bool, TransportError> {
+        Ok(self.follows_full_window_in(key.as_str(), worlds)
+            && !self.opened_window_promoted(key)?)
     }
 
     /// Whether `key` is this vault's embedding setup window on an opened-item
@@ -544,6 +673,49 @@ impl SyncClient {
                 .vault
                 .sync_state_get(&format!("rp:w:{key}"))
                 .is_ok_and(|marker| marker.is_none())
+    }
+
+    /// Whether `key` is a window of a world this opened-item device follows
+    /// (ARCH-0023b #partial-sync: following decides which full window
+    /// documents sync). Its full document syncs both ways with no promotion
+    /// marker: the home grants it on each socket, and an unfollow stops it at
+    /// once while the held window stays. Never on a federation lane, under
+    /// sync all or for a base window. A follow set that cannot be read
+    /// follows nothing.
+    ///
+    /// Judged against the set this connection's negotiation follows, read
+    /// once as it began, as its frames are (FOLLOWED-WINDOW-SET-READ-PER-FRAME):
+    /// the gates each full-window frame meets read no store. A change of the
+    /// set renegotiates at once ([`Self::follow_set_changed`]), and the
+    /// inbound world gate still reads the live set, so a revoked world's
+    /// frames are refused at once. Before any connection began, the live set.
+    pub(crate) fn follows_full_window(&self, key: &str) -> bool {
+        self.full_window_world(key)
+            .is_some_and(|world| match &self.negotiated_worlds {
+                Some(worlds) => worlds.contains(&world),
+                None => self
+                    .effective_worlds()
+                    .is_ok_and(|worlds| worlds.contains(&world)),
+            })
+    }
+
+    /// [`Self::follows_full_window`], judged against `worlds`: the set a
+    /// connection's negotiation follows, so that its frames ask for the
+    /// windows its steady loop compares (ARCH-0023b #partial-sync).
+    pub(crate) fn follows_full_window_in(&self, key: &str, worlds: &FollowedWorlds) -> bool {
+        self.full_window_world(key)
+            .is_some_and(|world| worlds.contains(&world))
+    }
+
+    /// The world of `key` when its full window syncs by follow on this lane:
+    /// a world window on an opened-item device lane.
+    fn full_window_world(&self, key: &str) -> Option<crate::EntityId> {
+        if self.config.residence_mode != super::SyncResidenceMode::Opened
+            || self.config.federation_peer.is_some()
+        {
+            return None;
+        }
+        WindowKey::try_new(key).and_then(|window| window.world())
     }
 
     /// Whether this opened-item device promoted `key` to a canonical copy.
@@ -668,6 +840,62 @@ pub(super) fn home_withheld_worlds(
     home: crate::authority::PeerMachine,
 ) -> Option<BTreeSet<crate::EntityId>> {
     Withhold::Peer(home).worlds(vault).ok()
+}
+
+/// The worlds a lane follows, as its follow checks read them
+/// ([`SyncClient::effective_worlds`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FollowedWorlds {
+    /// Every world: the home, or an explicit sync all.
+    All,
+    /// Every world but these: a device's readable set, each world whose read
+    /// setting keeps it off this machine left out.
+    AllExcept(BTreeSet<crate::EntityId>),
+    /// Only these worlds.
+    Only(BTreeSet<crate::EntityId>),
+}
+
+impl FollowedWorlds {
+    pub(crate) fn contains(&self, world: &crate::EntityId) -> bool {
+        match self {
+            Self::All => true,
+            Self::AllExcept(left_out) => !left_out.contains(world),
+            Self::Only(worlds) => worlds.contains(world),
+        }
+    }
+
+    /// Whether this set may follow any world at all: a lane that follows
+    /// none takes no shared base month for a world edge.
+    pub(crate) fn follows_any(&self) -> bool {
+        match self {
+            Self::All | Self::AllExcept(_) => true,
+            Self::Only(worlds) => !worlds.is_empty(),
+        }
+    }
+
+    /// The named worlds this set follows.
+    fn narrowed_to(&self, worlds: &[crate::EntityId]) -> Self {
+        Self::Only(
+            worlds
+                .iter()
+                .filter(|world| self.contains(world))
+                .copied()
+                .collect(),
+        )
+    }
+
+    /// This set under the trusted manifest ceiling, when one is loaded.
+    fn capped_by(self, ceiling: Option<&BTreeSet<crate::EntityId>>) -> Self {
+        match ceiling {
+            None => self,
+            Some(cap) => Self::Only(
+                cap.iter()
+                    .filter(|world| self.contains(world))
+                    .copied()
+                    .collect(),
+            ),
+        }
+    }
 }
 
 /// Loads the persisted root doc: `d:root` snapshot + pending `u:root:*`

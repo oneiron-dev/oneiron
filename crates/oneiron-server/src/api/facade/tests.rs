@@ -17,7 +17,7 @@ async fn every_facade_verb_has_its_http_post_route() {
     let server = Arc::new(
         SyncServer::new(vault, crate::config::SyncServerConfig::default()).expect("server"),
     );
-    let app = facade_routes().with_state(server);
+    let app = facade_routes().with_state(Arc::clone(&server));
     for verb in oneiron::task_verb::sdk::AgentVerb::ALL {
         let request = Request::get(format!("/{}", verb.as_str()))
             .body(Body::empty())
@@ -28,13 +28,33 @@ async fn every_facade_verb_has_its_http_post_route() {
             .await
             .expect("response")
             .status();
-        let expected = if verb.is_facade() {
+        // DOOR-038 (d3b3c28a874, #2962): anonymous chat is mounted by
+        // anonymous_chat_routes(), outside facade_routes(); its POST route is
+        // proved below.
+        let expected = if verb.as_str() == "ai.anonymous_chat" {
+            axum::http::StatusCode::NOT_FOUND
+        } else if verb.is_facade() {
             axum::http::StatusCode::METHOD_NOT_ALLOWED
         } else {
             axum::http::StatusCode::NOT_FOUND
         };
         assert_eq!(status, expected, "{}", verb.as_str());
     }
+    let status = anonymous_chat_routes()
+        .with_state(server)
+        .oneshot(
+            Request::get("/v1/core/facade/ai.anonymous_chat")
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("response")
+        .status();
+    assert_eq!(
+        status,
+        axum::http::StatusCode::METHOD_NOT_ALLOWED,
+        "ai.anonymous_chat has its POST route"
+    );
 }
 
 #[tokio::test]
@@ -1203,7 +1223,7 @@ async fn retired_task_routes_are_not_found() {
         let server = Arc::clone(&server);
         let recipe = recipe.clone();
         async move {
-            crate::build_app(Arc::clone(&server))
+            let response = crate::build_app(Arc::clone(&server))
                 .oneshot(crate::test_credentials::bind_request(
                     &server,
                     Request::builder()
@@ -1215,14 +1235,27 @@ async fn retired_task_routes_are_not_found() {
                         .unwrap(),
                 ))
                 .await
-                .unwrap()
-                .status()
+                .unwrap();
+            let status = response.status();
+            let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+            let body = serde_json::from_slice::<Value>(&body).unwrap_or(Value::Null);
+            (status, body)
         }
     };
-    for verb in ["tasks.check", "tasks.expand", "tasks.ack", "tasks.cancel"] {
-        assert_eq!(status(verb).await, StatusCode::NOT_FOUND, "{verb}");
+    for verb in ["tasks.check", "tasks.expand", "tasks.ack"] {
+        assert_eq!(status(verb).await.0, StatusCode::NOT_FOUND, "{verb}");
     }
-    assert_eq!(status("describe").await, StatusCode::OK);
+    // 0bf27d24b8f (#1564): `tasks.` is a stray root and `cancel` is one
+    // served verb, so the retired name is refused with its correction
+    // before any effect (Engine ruling 22:03 Thu on R111).
+    let (cancel, body) = status("tasks.cancel").await;
+    assert_eq!(cancel, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(body["error"]["code"], "WRONG_ROOT", "{body}");
+    assert_eq!(
+        body["error"]["message"], "`tasks.cancel` is not an SDK verb; the verb is `cancel`",
+        "{body}"
+    );
+    assert_eq!(status("describe").await.0, StatusCode::OK);
 }
 
 #[tokio::test]
@@ -1625,11 +1658,14 @@ async fn recall_reads_time_words_without_refusing_and_resolves_them_as_of() {
     assert!(both(&found), "{found:?}");
     assert_eq!(hints, named(&[("last several weeks", "unresolved")]));
 
-    // `as_of` moves the day "yesterday" names.
-    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + DAY + 7_200)).await;
-    assert_eq!(ids(&found), [said[0].as_str()], "{found:?}");
-    let (found, _) = recall("staging rollout yesterday", Some(DAY0 + 2 * DAY + 7_200)).await;
-    assert_eq!(ids(&found), [said[1].as_str()], "{found:?}");
+    // `as_of` moves the day "yesterday" names. That day re-anchors the
+    // temporal channel and never filters (canon research-1009 P1.1), so the
+    // message said on the other day is found as well.
+    for as_of in [DAY0 + DAY + 7_200, DAY0 + 2 * DAY + 7_200] {
+        let (found, hints) = recall("staging rollout yesterday", Some(as_of)).await;
+        assert!(both(&found), "{found:?}");
+        assert_eq!(hints, named(&[("yesterday", "used")]));
+    }
 }
 
 /// Wave 9 long-context A/B: recall named a message `ms87:76@<revision>` where

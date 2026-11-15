@@ -35,7 +35,9 @@ pub(crate) use binding_admission::{
 };
 pub(crate) use client_address::{ClientAddress, client_address};
 pub(crate) use left_notices::left_notice_routes;
-pub(crate) use locality::{Locality, caller_locality, proved_peer};
+pub(crate) use locality::{
+    Locality, caller_locality, proved_peer, refuse_off_device_hatch_callers,
+};
 pub(crate) use machine_proof::{
     MachineClaim, owned_machine, owned_machine_stands, required_machine_proof,
 };
@@ -61,6 +63,10 @@ const DEV_HATCH_PRINCIPAL: &str = "legacy-shared-secret";
 
 /// The holder the host's own slips name: no entity, so no person.
 const HOST_HOLDER: &str = "host";
+
+/// The principal a verified account API key authenticates as is this prefix
+/// and its key id ([`CoreAuth::from_verified_account_key`], OF-448).
+const ACCOUNT_KEY_PRINCIPAL_PREFIX: &str = "account-key:";
 
 /// Framing prefix of a v2 core token (`v2.<claims>.<mac-hex>`).
 const CORE_TOKEN_V2_PREFIX: &str = "v2.";
@@ -389,7 +395,7 @@ impl CoreAuth {
     fn from_verified_account_key(verified: account_key::VerifiedAccountKey) -> Self {
         body_credential::attach_account_key(&verified.key_id);
         Self {
-            principal: format!("account-key:{}", verified.key_id),
+            principal: format!("{ACCOUNT_KEY_PRINCIPAL_PREFIX}{}", verified.key_id),
             principal_ref: verified.principal_ref,
             scopes: verified.scopes,
             implicit_all_scopes: false,
@@ -609,6 +615,24 @@ impl CoreAuth {
             .or(self.managed_owner)
     }
 
+    /// The person a verified account API key acts as (OF-448): its verdict's
+    /// principal, when the key binds one. Such a key is never owner-grade
+    /// and carries no actor class, so the facade resolves no actor for it;
+    /// the core delete door judges it as this person (DEL-2). Any other
+    /// credential answers `None`.
+    pub(crate) fn account_key_principal(&self) -> Option<oneiron::EntityId> {
+        if self.verified_slip.is_some()
+            || self.jti.is_some()
+            || self.instrument.is_none()
+            || !self.principal.starts_with(ACCOUNT_KEY_PRINCIPAL_PREFIX)
+        {
+            return None;
+        }
+        self.principal_ref
+            .as_deref()
+            .and_then(|principal| oneiron::EntityId::from_hex(principal).ok())
+    }
+
     /// The off-record session this request names, if any: context the
     /// caller's handles bind, never authority (OF-063, FIX 1668).
     pub(crate) fn off_record_session(&self) -> Option<&str> {
@@ -703,7 +727,7 @@ impl CoreAuth {
             && self.managed_person.is_none()
         {
             if let Some(instrument) = self.instrument {
-                let Some(key_id) = self.principal.strip_prefix("account-key:") else {
+                let Some(key_id) = self.principal.strip_prefix(ACCOUNT_KEY_PRINCIPAL_PREFIX) else {
                     return false;
                 };
                 let Some(keys) = &server.account_keys else {

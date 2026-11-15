@@ -235,7 +235,10 @@ pub(crate) async fn asked(
         .map_err(|refused| {
             let (status, code) = match refused {
                 RoleRefusal::NoSeat => (StatusCode::SERVICE_UNAVAILABLE, "no_model_configured"),
-                RoleRefusal::RouteNotServed { .. } => {
+                // Only a replay meets the fallback refusal; a vision call
+                // reads it as its route not served.
+                RoleRefusal::RouteNotServed { .. }
+                | RoleRefusal::FallbackNoLongerAllowed { .. } => {
                     (StatusCode::SERVICE_UNAVAILABLE, "model_route_not_served")
                 }
                 RoleRefusal::Refused(_) => (StatusCode::PAYMENT_REQUIRED, "call_not_admitted"),

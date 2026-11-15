@@ -63,6 +63,7 @@ pub use self::ladder::{
     validate_ladder,
 };
 pub use self::outcome::{NoShowRecoveryPlan, NoShowRecoveryStep, apply_event_outcome};
+pub(crate) use self::projector::live_stage_head_in;
 pub use self::projector::{StageProjectResult, StageProjectorInput, StageRoute};
 pub use self::reentry::{
     LaneClockPolicy, MembershipProvenance, OutreachLane, ReentryPlan, WakeCondition,

@@ -144,7 +144,9 @@ enum AuthoredPut {
 
 /// Marks `definition` as authored by the agent `author` through `door`: a
 /// generated record, live at rest, whose provenance names both. Its approval
-/// is the caller's to set.
+/// is the caller's to set. The provenance is the body's label, which a later
+/// put may rewrite; which agent made a definition is the stamp its create
+/// door writes (`creating_agent`).
 fn mark_agent_authored(definition: &mut AgentDefinition, author: &EntityId, door: &'static str) {
     definition.source = crate::claim::ClaimSource::Generated;
     definition.generated = true;
@@ -301,6 +303,9 @@ impl Vault {
         )?;
         let data = encode_agent_definition(&definition)?;
         self.apply_agent_definition_body(&mut wtxn, id, occurred, learned_at, data)?;
+        // Who made the definition is the author this door authenticated, not
+        // the provenance a later put may rewrite (`creating_agent`).
+        super::creating_agent::record_creating_agent_in_txn(&self.store, &mut wtxn, id, author)?;
         // PEOPLE (ARCH-0067): the definition and its person land in this one
         // writer, so a person that cannot be built leaves no definition
         // behind for a retry of this create-only door to find occupied.
@@ -409,6 +414,7 @@ impl Vault {
             self.consume_verified_capability_slip_in_txn(txn, issuer, credential)?;
         }
         self.apply_agent_definition_body(txn, id, occurred, learned_at, data)?;
+        super::creating_agent::record_creating_agent_in_txn(&self.store, txn, id, author)?;
         crate::context_board::ensure_agent_person_in_txn(
             self,
             txn,
@@ -659,6 +665,9 @@ impl Vault {
 
     /// Creates an inert custom definition as the authenticated owner. An
     /// occupied id is never an implicit edit, including another entity kind.
+    /// The write stamps the owner as the definition's creator
+    /// (OWNER-MADE-AGENT-DEF-UNPLACED), so the owner's edit over a claim of
+    /// this agent lands as the owner's ruling.
     pub fn create_agent_definition_as(
         &self,
         owner: &AuthenticatedOwner,
@@ -668,13 +677,14 @@ impl Vault {
         learned_at: u64,
     ) -> Result<()> {
         self.with_write_txn(|txn| {
-            owner.revalidate_as_vault_owner_in_txn(self, txn)?;
+            let creator = owner.revalidate_as_vault_owner_in_txn(self, txn)?;
             if self.store.port_entity_record(txn, id)?.is_some() {
                 return Err(Error::ConcurrentWrite(
                     "agent definition id is already occupied",
                 ));
             }
-            self.put_agent_definition_in_txn(txn, id, def, occurred, learned_at)
+            self.put_agent_definition_in_txn(txn, id, def, occurred, learned_at)?;
+            super::creating_owner::record_creating_owner_in_txn(&self.store, txn, id, &creator)
         })
     }
 
@@ -1250,7 +1260,11 @@ impl Vault {
     /// transaction that applies them: the generic put doors' share of the
     /// author writer ([`Self::agent_authored_put_in_txn`]). A put it makes a
     /// proposed change moves to the proposal's own id, so the row it named is
-    /// not written. With no `authoring`, `ops` stay as staged.
+    /// not written. With no `authoring`, `ops` stay as staged. Returns the
+    /// definitions the batch creates, each id with its author, for the
+    /// terminal to stamp once the batch has applied
+    /// ([`Self::stamp_agent_authored_creates_in_txn`]); a proposed change is
+    /// not one.
     ///
     /// # Errors
     ///
@@ -1260,9 +1274,10 @@ impl Vault {
         txn: &heed::RoTxn<'_>,
         authoring: Option<&AgentAuthoring>,
         ops: &mut [BatchOp],
-    ) -> Result<()> {
+    ) -> Result<Vec<(EntityId, EntityId)>> {
+        let mut creates = Vec::new();
         let Some(authoring) = authoring else {
-            return Ok(());
+            return Ok(creates);
         };
         let mut receipts = Vec::new();
         for op in ops {
@@ -1284,6 +1299,7 @@ impl Vault {
                             decode_agent_definition(&body)?.approval_status,
                         );
                         *data = body;
+                        creates.push((staged, authoring.author));
                         receipt
                     }
                     AuthoredPut::ProposedChange { id: proposal, body } => {
@@ -1295,7 +1311,40 @@ impl Vault {
                 receipts.push((staged, receipt));
             }
         }
-        authoring.receipts.replace(receipts)
+        authoring.receipts.replace(receipts)?;
+        Ok(creates)
+    }
+
+    /// Stamps each definition `creates` names (id, author) with its author
+    /// (`creating_agent`), in the writer that applied the batch, once it has
+    /// applied: only an id where a live AGENT_DEF now stands is stamped, so a
+    /// put the batch did not land leaves no stamp.
+    ///
+    /// # Errors
+    ///
+    /// Storage errors.
+    pub(crate) fn stamp_agent_authored_creates_in_txn(
+        &self,
+        txn: &mut heed::RwTxn<'_>,
+        creates: Vec<(EntityId, EntityId)>,
+    ) -> Result<()> {
+        for (id, author) in creates {
+            if matches!(
+                live_entity_row_in_txn(&self.store, txn, &id)?,
+                LiveEntityRow::Live {
+                    entity_type: ENTITY_TYPE_AGENT_DEF,
+                    ..
+                }
+            ) {
+                super::creating_agent::record_creating_agent_in_txn(
+                    &self.store,
+                    txn,
+                    &id,
+                    &author,
+                )?;
+            }
+        }
+        Ok(())
     }
 
     /// Prepares the same author-bounded definition for a door that owns its

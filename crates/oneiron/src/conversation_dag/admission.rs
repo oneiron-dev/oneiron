@@ -25,6 +25,10 @@ const WITHDRAWN_PIN: [u8; 32] = [0; 32];
 /// Durable room owner of a TURN. The pin survives deleted/missing ChildOf rows.
 const ROOM_OWNERS: SideTable<EntityId, EntityId, Raw> =
     SideTable::new(&side_table::CONVERSATION_DAG_ROOM_OWNER);
+/// The door-owned TURN-body key of a Retry's assistant TURN: the id of the
+/// TURN it regenerates, stamped by the Retry door alone
+/// ([`super::writes::append_regenerated_turn_at_in_txn`]).
+pub(super) const REGENERATES_KEY: &str = "regenerates";
 
 pub(super) fn permit(
     store: &Store,
@@ -141,7 +145,7 @@ pub(crate) fn guard_record_put(
     if kind == ENTITY_TYPE_TURN
         && let Some(room) = room_turn_owner(store, txn, id)?
     {
-        guard_erased_author_body(store, store, txn, room, body)?;
+        guard_erased_author_body(store, store, txn, room, id, body)?;
     }
     if kind == ENTITY_TYPE_TURN {
         guard_landing_reply_edges(store, store, txn, id, body, None, true)?;
@@ -367,8 +371,9 @@ fn is_dag_membership(
 }
 
 /// A local TURN body may carry a PERSON author, a witness TURN its AGENT_DEF
-/// writer (FIX 7129), or a scope summary landing's reply its landing writer
-/// (a MACHINE, [`landing_reply`]). Missing authors (for example, imported
+/// writer (FIX 7129), a Retry's TURN the AGENT_DEF that answers again
+/// ([`regenerates_own_turn`]), or a scope summary landing's reply its
+/// landing writer (a MACHINE, [`landing_reply`]). Missing authors (for example, imported
 /// transcript labels) have no per-person fence to evaluate.
 fn turn_person(body: &[u8]) -> Result<Option<EntityId>> {
     let mut bytes = body;
@@ -407,24 +412,29 @@ fn guard_erased_person(
     let body = raw
         .get(crate::batch::ENTITY_METADATA_HEADER_LEN..)
         .ok_or(Error::CorruptedIndex("room TURN header"))?;
-    guard_erased_author_body(store, authority, txn, *room, body)
+    guard_erased_author_body(store, authority, txn, *room, record, body)
 }
 
-/// Checks a room TURN's author on raw puts and membership edges, local or
-/// replicated. The landing writer is admitted only for an exact reply to a
-/// stored, signed summary landing in this room; missing author rows do not
-/// exempt that derived writer. Other authors keep their existing rules.
+/// Checks the author of the room TURN `record` (its `body`) on raw puts and
+/// membership edges, local or replicated. The landing writer is admitted
+/// only for an exact reply to a stored, signed summary landing in this room;
+/// missing author rows do not exempt that derived writer. An AGENT_DEF is
+/// admitted on a witness TURN, or on a Retry's TURN that regenerates its own
+/// TURN in this room ([`regenerates_own_turn`]). Other authors keep their
+/// existing rules.
 fn guard_erased_author_body(
     store: &impl ManifestDbs,
     authority: &Store,
     txn: &heed::RoTxn<'_>,
     room: EntityId,
+    record: &EntityId,
     body: &[u8],
 ) -> Result<()> {
     if let Some(person) = turn_person(body)? {
         // A known author is a PERSON, the AGENT_DEF a witness TURN stamps for
-        // its Agent writer (FIX 7129), or the scope summary landing writer on
-        // its landing's reply; any other known author is a bad carrier now.
+        // its Agent writer (FIX 7129) or a Retry's TURN carries for the agent
+        // that answers again, or the scope summary landing writer on its
+        // landing's reply; any other known author is a bad carrier now.
         // Other unknown ids stay admissible, as recipients do: a peer may
         // deliver a TURN before its author's row. The derived landing writer
         // still needs its signed landing. The erasure fence applies by id.
@@ -435,7 +445,10 @@ fn guard_erased_author_body(
                 .map(|row| row.first().copied())
             {
                 None | Some(Some(crate::registry::ENTITY_TYPE_PERSON)) => true,
-                Some(Some(crate::registry::ENTITY_TYPE_AGENT_DEF)) => witness_turn(body),
+                Some(Some(crate::registry::ENTITY_TYPE_AGENT_DEF)) => {
+                    witness_turn(body)
+                        || regenerates_own_turn(store, txn, room, record, body, person)?
+                }
                 Some(_) => false,
             }
         };
@@ -702,6 +715,72 @@ fn guard_landing_reply_edges(
         return Err(invalid("landing reply RepliesTo differs from its landing"));
     }
     Ok(())
+}
+
+/// The TURN a TURN body's door-owned [`REGENERATES_KEY`] names; `None` when
+/// the body names none.
+fn regenerated_turn_ref(body: &[u8]) -> Result<Option<EntityId>> {
+    let mut bytes = body;
+    let Ok(rmpv::Value::Map(fields)) = rmpv::decode::read_value(&mut bytes) else {
+        return Ok(None);
+    };
+    let mut values = fields
+        .iter()
+        .filter(|(key, _)| key.as_str() == Some(REGENERATES_KEY));
+    let Some((_, value)) = values.next() else {
+        return Ok(None);
+    };
+    if !bytes.is_empty() || values.next().is_some() {
+        return Err(invalid("invalid room TURN regenerates"));
+    }
+    value
+        .as_str()
+        .and_then(|text| EntityId::from_hex(text).ok())
+        .map(Some)
+        .ok_or_else(|| invalid("invalid room TURN regenerates"))
+}
+
+/// Whether the TURN `record` in `room`, by the AGENT_DEF `author`, is a
+/// Retry's (Engine RULING 13 Nov 11:15, FIX
+/// RETRY-TURN-AGENT-AUTHOR-REFUSED-AT-DAG-ADMISSION): its door-owned
+/// [`REGENERATES_KEY`] names another TURN, and that TURN is `author`'s, in
+/// `room`. Only the Retry door stamps the key, so the public append door
+/// still refuses an agent's own DAG TURN.
+///
+/// The named TURN refuses only by what is stored about it: a live row that
+/// is not a TURN or whose byline does not name `author`, or another room as
+/// its owner. A named TURN whose row has not arrived, or is erased, is
+/// admitted, as an unknown author is: replay lands every entity before any
+/// edge and the edges in map order, and a Retry's TURN still lands on a peer
+/// after the reply it replaced was erased.
+fn regenerates_own_turn(
+    store: &impl ManifestDbs,
+    txn: &heed::RoTxn<'_>,
+    room: EntityId,
+    record: &EntityId,
+    body: &[u8],
+    author: EntityId,
+) -> Result<bool> {
+    let Some(replaced) = regenerated_turn_ref(body)? else {
+        return Ok(false);
+    };
+    if replaced == *record
+        || room_turn_owner(store, txn, &replaced)?.is_some_and(|owner| owner != room)
+    {
+        return Ok(false);
+    }
+    Ok(
+        match crate::vault::live_entity_row_in_txn(store, txn, &replaced)? {
+            crate::vault::LiveEntityRow::Live {
+                entity_type,
+                body: replaced_body,
+            } => {
+                entity_type == ENTITY_TYPE_TURN
+                    && matches!(turn_person(&replaced_body), Ok(Some(person)) if person == author)
+            }
+            crate::vault::LiveEntityRow::Absent | crate::vault::LiveEntityRow::DeletedShell => true,
+        },
+    )
 }
 
 /// Whether a TURN body is the witness door's: it carries the `speaker`

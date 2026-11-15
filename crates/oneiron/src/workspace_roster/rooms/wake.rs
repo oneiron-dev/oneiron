@@ -66,10 +66,12 @@ impl RoomWake {
     }
 }
 
-/// A staged room wake as its consumer reads it: the queue row and its wake.
+/// A staged room wake as its consumer reads it: the queue row, when the
+/// witness staged it (the row's store-clock `created_at`), and its wake.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StagedRoomWake {
     pub attempt: AttemptId,
+    pub staged_at: u64,
     pub wake: RoomWake,
 }
 
@@ -183,6 +185,7 @@ impl Vault {
             match serde_json::from_slice::<RoomWake>(&row.payload) {
                 Ok(wake) => staged.push(StagedRoomWake {
                     attempt: row.id,
+                    staged_at: row.created_at,
                     wake,
                 }),
                 Err(error) => tracing::warn!(

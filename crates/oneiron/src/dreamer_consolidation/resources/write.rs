@@ -553,6 +553,7 @@ impl ConsolidationFence {
             actor,
             attempt: crate::attempt_queue::AttemptId::now(),
             fallback_binding: None,
+            root_binding: None,
             sources,
             turns: BTreeMap::new(),
             texts: BTreeMap::new(),

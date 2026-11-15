@@ -1214,6 +1214,7 @@ impl<'a> DreamerRunnerStore<'a> {
             super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, existing)?;
             super::program::unindex_program_hold_in_txn(self.vault, wtxn, existing)?;
             super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, existing)?;
+            super::policy_wait::unindex_policy_wait_in_txn(self.vault, wtxn, existing)?;
         }
         PARKED.put(self.vault, wtxn, &record.attempt_id, &record)?;
         super::outage_due::index_outage_due_in_txn(self.vault, wtxn, &record)?;
@@ -1279,6 +1280,7 @@ impl<'a> DreamerRunnerStore<'a> {
         super::outage_due::unindex_outage_due_in_txn(self.vault, wtxn, &record)?;
         super::program::unindex_program_hold_in_txn(self.vault, wtxn, &record)?;
         super::seat_wait::unindex_seat_wait_in_txn(self.vault, wtxn, &record)?;
+        super::policy_wait::unindex_policy_wait_in_txn(self.vault, wtxn, &record)?;
         PARKED.delete(&self.vault.store, wtxn, &attempt_id)?;
         // FIX 4747: a resuming agent run keeps its executor lease until its
         // next claim takes it.

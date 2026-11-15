@@ -339,11 +339,14 @@ fn an_early_transform_is_read_only_from_complete_verified_metadata() {
         "a module config is missing"
     );
     copy_metadata("pplx", &dir, &METADATA[2..]);
+    // 9cebb996b87 (#4098, FIX 10755): a configured full commit binds its
+    // transform too, so the signature names the revision.
     assert_eq!(
-        super::transform_on_disk(&config).as_deref(),
-        Some(
-            "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024"
-        )
+        super::transform_on_disk(&config),
+        Some(format!(
+            "attn=bidirectional;pool=mean;include_prompt=true;doc_prompt=none;chain=quantize:int8;dims=1024;revision={}",
+            crate::config::embedder::DEFAULT_LOCAL_REVISION
+        ))
     );
     // Damaged from mean to CLS at the same size: it still parses and fits,
     // and its digest is what refuses it.
@@ -392,7 +395,11 @@ fn an_early_transform_is_read_only_from_complete_verified_metadata() {
     let operator = tempfile::tempdir().expect("model dir");
     copy_metadata("pplx", operator.path(), &METADATA);
     config.local.model_dir = Some(operator.path().to_path_buf());
-    assert!(super::transform_on_disk(&config).is_some());
+    // An operator's directory leaves the transform unbound (FIX 10755).
+    assert!(
+        super::transform_on_disk(&config)
+            .is_some_and(|transform| !transform.contains(";revision="))
+    );
 }
 
 /// A shipped default whose commit has no prompt file carries no prompt. A
@@ -427,7 +434,12 @@ fn a_stray_prompt_file_in_a_pinned_cache_is_never_read() {
     );
     let spec = spec::LocalModelSpec::read(&dir, &config).expect("reads");
     assert_eq!(spec.prompts, prompts::Prompts::default());
-    assert_eq!(spec.transform(), pinned);
+    // The early door binds the configured commit onto the spec's transform
+    // (9cebb996b87, FIX 10755).
+    assert_eq!(
+        format!("{};revision={}", spec.transform(), config.local.revision),
+        pinned
+    );
 }
 
 // ─── the artifact source, stubbed on loopback ────────────────────────────

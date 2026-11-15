@@ -215,6 +215,60 @@ impl DreamerWakeDriver<'_> {
                 );
                 report.parked += 1;
             }
+            DreamerAttemptExecution::ParkOnSeatWithSpend {
+                reason,
+                seat,
+                reset_at_s,
+                completed_units,
+                step_bindings,
+            } => {
+                // A spent seat refused a step after the try's calls spent
+                // units: settle that spend and park on the seat in one write
+                // (SEAT-PARK-MODEL-STEP-PATH). The seat's available write
+                // resumes it.
+                let (_, parked) = self.store.settle_checkpoint_budget_on_seat(
+                    SettleDreamerBudget {
+                        budget_id: line.clone(),
+                        child_attempt: attempt_id,
+                        actual_units: completed_units,
+                        now: input.now,
+                    },
+                    &step_bindings,
+                    ParkDreamerAttempt {
+                        attempt_id,
+                        reason,
+                        cause: DreamerParkCause::Signal,
+                        park_owner: input.lease_owner.clone(),
+                        carried_spend: None,
+                        now: input.now,
+                    },
+                    admitted_lease(admitted, &input.lease_owner),
+                    crate::EntityId::from_bytes(seat)?,
+                    reset_at_s,
+                )?;
+                if let Some(record) = parked {
+                    self.publish(
+                        record.attempt_id,
+                        ProgressKind::Parked,
+                        Some(record.reason),
+                        input.now,
+                    )?;
+                }
+                self.log_attempt_outcome(
+                    admitted,
+                    stage.unwrap_or("park_on_seat_with_spend"),
+                    None,
+                    Some(DreamerParkCause::Signal),
+                    "checkpoint_settled",
+                    "committed",
+                );
+                self.write_attempt_milestone(
+                    admitted,
+                    DreamerMilestoneKind::CheckpointReached,
+                    input.now,
+                )?;
+                report.parked += 1;
+            }
             DreamerAttemptExecution::Park { reason, cause } => {
                 // The lease is not settled as spent: what its run line
                 // charged stays spent (SCAN C012), the rest of the

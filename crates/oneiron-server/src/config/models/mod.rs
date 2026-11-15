@@ -167,6 +167,7 @@ struct ChatFile {
 #[serde(deny_unknown_fields)]
 struct RecallFile {
     rerank_budget_units: Option<u64>,
+    rerank_pair_template_units: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -362,6 +363,12 @@ pub struct RecallModelSettings {
     /// Each recall's own line: the rerank calls one recall makes, a second
     /// one for a block that changed included.
     pub rerank_budget_units: u64,
+    /// The tokens the reranker's template adds to each query and document
+    /// pair beside their words: its instruction, marks and separators, the
+    /// most any rung of the `reranker` route adds. A rerank call is priced
+    /// at its words and this much a pair before it leaves (ARCH-0004
+    /// `#rerank-door-open`); unset, 16, a cross-encoder's marks.
+    pub rerank_pair_template_units: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -436,6 +443,11 @@ pub(crate) const DEFAULT_RAW_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
 const DEFAULT_CODE_MODE_BUDGET_UNITS: u64 = UNCAPPED_LIFETIME_UNITS;
 /// Two scorings of a 50-candidate block at about 300 tokens a candidate.
 const DEFAULT_RERANK_BUDGET_UNITS: u64 = 32_000;
+/// The tokens a cross-encoder adds to each query and document pair beside
+/// their words: its start, separator and end marks (three for a BERT-style
+/// pair), with room to spare. A reranker whose template wraps each pair in a
+/// longer prompt needs `[models.recall] rerank_pair_template_units`.
+pub(crate) const DEFAULT_RERANK_PAIR_TEMPLATE_UNITS: u64 = 16;
 const DEFAULT_HISTORY_TURNS: usize = 24;
 /// The compaction check's built-in rubric (FIX 4465 B). An unset
 /// `compaction_check_prompt` keeps it word for word (FIX 4814).
@@ -585,6 +597,10 @@ impl ModelsFile {
                 .recall
                 .rerank_budget_units
                 .unwrap_or(DEFAULT_RERANK_BUDGET_UNITS),
+            rerank_pair_template_units: self
+                .recall
+                .rerank_pair_template_units
+                .unwrap_or(DEFAULT_RERANK_PAIR_TEMPLATE_UNITS),
         };
         if [
             dreamer.pass_budget_units,

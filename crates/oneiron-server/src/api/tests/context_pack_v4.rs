@@ -109,12 +109,13 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
                 "turns": 1,
                 "summaries": 1,
                 "facets": 0,
-                "companions": 0,
                 "other": 0
             }
         },
         "session": { "session_id": principal_ref.clone() },
-        "companion": { "persona_ref": persona_ref.clone() }
+        // 6b994b567c9 (#3883, FIX 871): the `companions` slot is retired and
+        // `persona_ref` is `counterpart_person_ref`.
+        "companion": { "counterpart_person_ref": persona_ref.clone() }
     });
 
     let board_request = || {
@@ -148,7 +149,7 @@ async fn context_board_memories_enforces_slots_and_carries_cursor() {
         Value::from(principal_ref.clone())
     );
     assert_eq!(
-        first_body["memories"]["companion"]["persona_ref"],
+        first_body["memories"]["companion"]["counterpart_person_ref"],
         Value::from(persona_ref)
     );
     assert_eq!(
@@ -346,13 +347,30 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
 
     let core_request_body = json!({
         "retrieval": { "query": "warm companion route needle" },
-        "memories": { "slots": { "turns": 1, "companions": 0, "other": 0 } },
+        "memories": { "slots": { "turns": 1, "other": 0 } },
         "companion": {
             "person_ref": person_ref.to_hex(),
-            "persona_ref": persona_ref.to_hex(),
+            "counterpart_person_ref": persona_ref.to_hex(),
             "expression": "warm"
         }
     });
+    // 6b994b567c9 (#3883, FIX 871): the retired `companions` slot is refused,
+    // not ignored.
+    let (retired_status, retired_body) = route_json(
+        server.clone(),
+        core_request_with_principal_ref(
+            "POST",
+            "/v1/core/context-board",
+            "core:read",
+            &principal_ref.to_hex(),
+            Some(&json!({
+                "retrieval": { "query": "warm companion route needle" },
+                "memories": { "slots": { "companions": 0 } }
+            })),
+        ),
+    )
+    .await;
+    assert_eq!(retired_status, StatusCode::BAD_REQUEST, "{retired_body}");
     let (status, body) = route_json(
         server.clone(),
         core_request_with_principal_ref(
@@ -403,7 +421,11 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
     assert_eq!(companion["scope_source"], Value::from("person_identity"));
     assert_eq!(companion["expression"], Value::from("warm"));
     assert_eq!(companion["person_ref"], Value::from(person_ref.to_hex()));
-    assert_eq!(companion["persona_ref"], Value::from(persona_ref.to_hex()));
+    assert_eq!(
+        companion["counterpart_person_ref"],
+        Value::from(persona_ref.to_hex())
+    );
+    assert!(companion.get("persona_ref").is_none(), "{companion}");
     assert!(
         !serde_json::to_string(&body)
             .expect("response serializes")
@@ -415,7 +437,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         "retrieval": { "query": "warm companion route needle" },
         "companion": {
             "person_ref": person_ref.to_hex(),
-            "persona_ref": persona_ref.to_hex(),
+            "counterpart_person_ref": persona_ref.to_hex(),
             "expression": "future_closed"
         }
     });
@@ -447,7 +469,7 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
         "retrieval": { "query": "warm companion route needle" },
         "companion": {
             "person_ref": "opaque-person-ref",
-            "persona_ref": "persona-route-test",
+            "counterpart_person_ref": "persona-route-test",
             "expression": "warm"
         }
     });
@@ -468,7 +490,10 @@ async fn context_board_companion_resolves_warm_personal_relationship_without_pri
     assert_eq!(companion["scope_source"], Value::from("neutral_default"));
     assert_eq!(companion["expression"], Value::from("warm"));
     assert_eq!(companion["person_ref"], Value::from("opaque-person-ref"));
-    assert_eq!(companion["persona_ref"], Value::from("persona-route-test"));
+    assert_eq!(
+        companion["counterpart_person_ref"],
+        Value::from("persona-route-test")
+    );
     assert!(
         !serde_json::to_string(&body)
             .expect("response serializes")
@@ -711,12 +736,9 @@ async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
     assert_eq!(status, StatusCode::OK, "{denied}");
     assert!(denied["memories"]["rows"].as_array().unwrap().is_empty());
     assert_eq!(denied["pack"]["pin_narrowing"][0]["suppressed_count"], 1);
-    assert!(
-        !denied["rendered_memories"]
-            .as_str()
-            .unwrap()
-            .contains(&reference)
-    );
+    // 98c6e8421fe (#1680): the response carries the one rendered board
+    // frame as `board`; `rendered_memories` is gone.
+    assert!(!denied["board"].as_str().unwrap().contains(&reference));
     seed_disclosure_scope(&server, principal, oneiron::federation::Scope::top());
     let (status, allowed) = route_json(server, read()).await;
     assert_eq!(status, StatusCode::OK, "{allowed}");
@@ -725,9 +747,10 @@ async fn pinned_memories_bypass_query_scope_but_not_audience_disclosure() {
     assert_eq!(allowed["memories"]["rows"][0]["tier"], "pinned");
     assert_eq!(allowed["pack"]["pin_narrowing"][0]["suppressed_count"], 0);
     assert!(
-        allowed["rendered_memories"]
+        allowed["board"]
             .as_str()
             .unwrap()
-            .contains(&format!("{reference} trust=unknown tier=PINNED"))
+            .contains(&format!("{reference} trust=unknown tier=PINNED")),
+        "{allowed}"
     );
 }

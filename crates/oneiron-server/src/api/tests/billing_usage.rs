@@ -174,7 +174,10 @@ async fn usage_event_uses_matching_local_route_for_no_debit_boundary() {
         .expect("usage response body");
     let body: Value = serde_json::from_slice(&body).expect("usage JSON body");
     assert_eq!(body["source"], Value::from("local"));
-    assert_eq!(body["recorded"], Value::from(false));
+    // 37c638d3a6e (#1723, OF-310): a meter records facts for every payer;
+    // `recorded` is the first-write flag, and a local source is never debited.
+    assert_eq!(body["recorded"], Value::from(true));
+    assert_eq!(body["replayed"], Value::from(false));
     assert!(body.get("debit").is_none());
 }
 

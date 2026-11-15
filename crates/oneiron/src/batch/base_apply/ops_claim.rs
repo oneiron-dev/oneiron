@@ -67,6 +67,9 @@ pub(super) fn apply_claim_candidate_arm(
     consume_preflight_decisions(store, wtxn, [preflight_decision_id])?;
     if !internal_lexical_query_hint {
         claim_materialization::record_committed_claim(store, wtxn, &id, true)?;
+        // A claim a run wrote joins that run's change journal in this write
+        // (ARCH-0040 #revert-run).
+        crate::memory::run_review::record_run_claim_in_txn(store, wtxn, &envelope, id)?;
     }
     state.had_graph_mutation |= applied.had_graph_mutation;
     state.had_vector_mutation |= applied.had_vector_mutation;

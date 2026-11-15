@@ -78,6 +78,9 @@ pub struct CampaignProgramStep {
     pub basis_evidence: EntityId,
     /// Outward leg; absent means "enroll, send nothing".
     pub outbound: Option<CampaignProgramOutbound>,
+    /// The copy A/B arm this step's sends carry (ARCH-0059 #copy-review),
+    /// an author's label such as `model` or `human`; `None` tags no arm.
+    pub arm: Option<String>,
 }
 
 impl CampaignProgramStep {
@@ -129,6 +132,9 @@ pub struct CampaignProgramStepDraft {
     pub basis_evidence: EntityId,
     /// Outward leg; absent means "enroll, send nothing".
     pub outbound: Option<CampaignProgramOutbound>,
+    /// The copy A/B arm this step's sends carry (ARCH-0059 #copy-review),
+    /// an author's label such as `model` or `human`; `None` tags no arm.
+    pub arm: Option<String>,
 }
 
 /// A whole program definition as an owner writes it. Create takes one, and
