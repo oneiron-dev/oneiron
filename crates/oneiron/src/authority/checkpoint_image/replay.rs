@@ -272,6 +272,7 @@ fold_state_fields!(
     refused_world_edits,
     grant_travel,
     refused_grant_travel,
+    grant_lines,
     checkpoint_policy,
     home_pick,
     origin_cut,

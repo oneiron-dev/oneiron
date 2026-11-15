@@ -342,6 +342,7 @@ pub(super) fn single_owner_state(
         refused_world_edits: BTreeSet::new(),
         grant_travel: BTreeMap::new(),
         refused_grant_travel: BTreeSet::new(),
+        grant_lines: Default::default(),
         checkpoint_policy: Default::default(),
         home_pick: Default::default(),
         origin_cut: Default::default(),

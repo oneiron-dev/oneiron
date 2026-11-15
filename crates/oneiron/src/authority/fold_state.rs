@@ -102,6 +102,11 @@ pub struct AuthorityFold {
     /// Well-signed travel choices from a machine no signing chain calls the
     /// owner's: valid entries without effect.
     pub(crate) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    /// Each Grant a counted act gives or ends, as this install counts it,
+    /// keyed by its FEDERATION_GRANT row (pass 28 R1): read through
+    /// [`AuthorityFold::grant_line`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) grant_lines: BTreeMap<EntityId, super::grant_lines::FoldedGrantLine>,
     /// The owner's checkpoint root policy choices and the one in force here
     /// (mesh PR2c).
     pub(crate) checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy,
@@ -224,12 +229,14 @@ impl AuthorityFold {
     }
 
     /// Whether anything this fold projects rests on how this install counts
-    /// machines: an edited world, a chosen grant, a checkpoint policy choice,
-    /// a home pick, an origin cut, a person's conversation training choice or
-    /// a setting's act. With none, staleness and holds change nothing a caller reads.
+    /// machines: an edited world, a chosen grant, a Grant a counted act gives
+    /// or ends, a checkpoint policy choice, a home pick, an origin cut, a
+    /// person's conversation training choice or a setting's act. With none,
+    /// staleness and holds change nothing a caller reads.
     pub(super) fn rests_on_counting(&self) -> bool {
         !self.worlds.is_empty()
             || !self.grant_travel.is_empty()
+            || !self.grant_lines.is_empty()
             || !self.checkpoint_policy.live.is_empty()
             || !self.home_pick.live.is_empty()
             || self.origin_cuts.rests_on_counting()
@@ -330,6 +337,9 @@ pub(super) struct FoldState {
     /// Each grant's signed travel choices, merged as the worlds' edits are.
     pub(super) grant_travel: BTreeMap<EntityId, super::grant_travel::GrantFrontier>,
     pub(super) refused_grant_travel: BTreeSet<AuthorityEntryHash>,
+    /// Each Grant's counted givings and ends, merged as the worlds' edits
+    /// are (pass 28 R1).
+    pub(super) grant_lines: super::grant_lines::GrantLines,
     /// The vault's checkpoint policy choices, merged as the worlds' edits
     /// are (mesh PR2c).
     pub(super) checkpoint_policy: super::checkpoint_choice::CheckpointChoiceState,
@@ -610,6 +620,7 @@ pub(super) fn merge_states(left: &FoldState, right: &FoldState) -> FoldState {
     merged
         .refused_grant_travel
         .extend(right.refused_grant_travel.iter().copied());
+    merged.grant_lines.merge(&right.grant_lines);
     super::owner_choice::merge_owner_choices(
         &mut merged.checkpoint_policy,
         &right.checkpoint_policy,

@@ -145,11 +145,12 @@ impl AgentGrantActRef {
 /// check: its signer is a machine's install key, never a roster key (FIX
 /// 2222), and some chain of the machine must name the key. The shape check
 /// already refused an agent's act, an answered ask and a nonzero `seen`.
-/// It moves no fold state. Whether the one carrier rule admits the machine
-/// and whether its owner is live are the writer's to refuse; a record either
-/// misses on a replica is valid and without effect, as every owner act is,
-/// so it never stalls what descends from it, and with no state it has
-/// nothing to withhold.
+/// It moves no fold state of its own: its Grant's line is
+/// [`super::grant_lines::apply_owner_agent_grant_line`]'s (pass 28 R1).
+/// Whether the one carrier rule admits the machine and whether its owner is
+/// live are the writer's to refuse; a record either misses on a replica is
+/// valid and without effect there, as every owner act is, so it never stalls
+/// what descends from it.
 pub(super) fn apply_agent_grant_act(
     state: &FoldState,
     entry: &AuthorityLogEntry,

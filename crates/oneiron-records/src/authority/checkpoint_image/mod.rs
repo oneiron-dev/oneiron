@@ -50,7 +50,9 @@ use serde::Serialize;
 /// them, so such a view reads them under the same cap (FIX 23218).
 /// 33: an owner's agent Grant mint an image carries may bind its repo bounds to one owner
 /// working view (row 6 WORKING-VIEW-EDIT).
-pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 33;
+/// 34: the fold keeps each Grant's counted givings and ends, and an install's fold the line
+/// each Grant stands on (pass 28 R1, grant lines).
+pub const AUTHORITY_CHECKPOINT_FOLD_SCHEMA: u32 = 34;
 
 /// The domain every encoded image starts with.
 pub const AUTHORITY_CHECKPOINT_V2_DOMAIN: &[u8] = b"oneiron/authority/checkpoint/v2";

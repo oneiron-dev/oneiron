@@ -528,6 +528,21 @@ impl NoVouch {
             &self.fold.grant_travel,
             &fresh_grants,
         );
+        let fresh_lines: BTreeSet<_> = fold
+            .grant_lines
+            .iter()
+            .filter(|(_, line)| {
+                line.giving
+                    .as_ref()
+                    .is_some_and(|(act, _)| self.fresh(fold, act))
+            })
+            .map(|(grant, _)| *grant)
+            .collect();
+        super::grant_lines::cap_grant_lines(
+            &mut fold.grant_lines,
+            &self.fold.grant_lines,
+            &fresh_lines,
+        );
         // FIX 4633: report-only vouch-only owner-work hashes. Diagnostic
         // only: this never touches `held_back`, counts, or execution.
         if super::owner_work_diagnostics::OWNER_WORK_NO_VOUCH_DIAGNOSTIC_ONLY {
@@ -598,6 +613,7 @@ pub(super) fn held_back(
     super::machine_standing::held_revisions(state, &mut held_back);
     super::world_privacy::held_edits(state, pin, counted, &mut held_back);
     super::grant_travel::held_grant_choices(state, pin, counted, &mut held_back);
+    super::grant_lines::held_grant_acts(state, pin, counted, &mut held_back);
     super::owner_choice::held_owner_choices(
         state,
         &state.checkpoint_policy,

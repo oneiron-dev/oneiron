@@ -433,6 +433,7 @@ pub(super) fn fold_authority_log_once(
             refused_world_edits: BTreeSet::new(),
             grant_travel: BTreeMap::new(),
             refused_grant_travel: BTreeSet::new(),
+            grant_lines: BTreeMap::new(),
             checkpoint_policy: super::checkpoint_choice::FoldedCheckpointPolicy::default(),
             home_pick: super::home_pick::FoldedHomePick::default(),
             origin_cuts: super::origin_cut::FoldedOriginCuts::default(),

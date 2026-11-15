@@ -55,6 +55,8 @@ pub(crate) use coreference::coreference_shared_for_pact_in_txn;
 #[cfg(feature = "sync")]
 pub(crate) use coreference::share_consent_valid_at;
 mod grant;
+// What a Grant row confers: what the fold's counted acts say of it (pass 28 R1).
+mod grant_standing;
 // The owner's git_push Grant and the receive-pack decision (FIX 6867, G1-PUSH).
 pub(crate) mod git_push;
 pub use git_push::{GitPushAdmission, GitPushCaller, GitPushCredential, GitPushSeal};

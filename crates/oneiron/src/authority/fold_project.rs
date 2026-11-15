@@ -236,6 +236,9 @@ pub(super) fn project_once(
         refused_grant_travel: merged
             .as_ref()
             .map_or_else(BTreeSet::new, |state| state.refused_grant_travel.clone()),
+        grant_lines: merged.as_ref().map_or_else(BTreeMap::new, |state| {
+            super::grant_lines::folded_grant_lines(state, context.pin, context.machine_standing)
+        }),
         checkpoint_policy: merged.as_ref().map_or_else(Default::default, |state| {
             super::checkpoint_choice::folded_checkpoint_policy(
                 state,
