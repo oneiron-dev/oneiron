@@ -26,7 +26,8 @@ use super::{
     BackupOutcome, BackupPlan, BackupRecord, FILE_SUFFIX, PARTIAL_SUFFIX, SEQUENCE_WIDTH,
     checkpoint_fact, create_private_dir, list, sync_dir, write_budget,
 };
-use crate::owner::stamp::{file_stamp, now_unix_ms, rfc3339};
+use crate::owner::stamp::{file_stamp, rfc3339};
+use oneiron_base::unix_millis_now;
 
 /// The suffix of a label's failed-attempt guard: `.<label>.backup-attempt`.
 const ATTEMPT_GUARD_SUFFIX: &str = ".backup-attempt";
@@ -106,7 +107,7 @@ fn produce_selected(
                 plan.dir.display()
             ))
         })?;
-    let taken_ms = now_unix_ms();
+    let taken_ms = unix_millis_now();
     let stamp = file_stamp(taken_ms);
     let partial = plan
         .dir

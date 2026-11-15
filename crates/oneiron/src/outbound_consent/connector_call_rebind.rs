@@ -7,7 +7,7 @@ use crate::outbound_intent_ledger::{
     IntentLedgerError, IntentResolution, read_intent_for_attempt_in_txn,
 };
 
-use super::connector_call::{PENDING_CALLS, now_ms};
+use super::connector_call::PENDING_CALLS;
 use super::connector_call_consent::frozen_scoped_candidate_in_txn;
 use super::connector_call_pending::CONNECTOR_CALL_PENDING_TTL_MS;
 
@@ -38,7 +38,7 @@ pub(crate) fn code_wait_rebind_effects_in_txn(
         || pending.credential != call.credential_record
         || pending.grant_id.as_deref() != Some(call.grant_ref.to_hex().as_str())
         || (pending.paced_until.is_none()
-            && now_ms()
+            && crate::unix_millis_now()
                 >= pending
                     .held_at_ms
                     .saturating_add(CONNECTOR_CALL_PENDING_TTL_MS))
