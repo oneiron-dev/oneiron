@@ -9,7 +9,9 @@ use crate::dreamer_consolidation::extraction_pack::{
     extraction_not_served, map_candidate_alias, rebuild_checked_pack,
 };
 use crate::memory::{MemoryError, MemoryResult};
-use crate::snapshot_read::{extraction_reader_scope_in_txn, source_version_in_txn};
+use crate::snapshot_read::{
+    extraction_reader_scope_in_txn, extraction_turn_read, source_version_in_txn,
+};
 use crate::verbs::{ExtractionPack, PinnedClaim};
 
 pub(super) use crate::dreamer_consolidation::extraction_pack::{
@@ -25,7 +27,13 @@ impl DreamerAttemptBinding {
         let vault = &*self.vault;
         let memory = vault.memory(self.stamp.actor, self.actor().actor_class());
         let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+        let turn_read = extraction_turn_read(&read, None)?;
         let _pins = read.prepare_point_read::<MemoryError>()?;
+        let _turn_pins = turn_read
+            .as_ref()
+            .map(|read| read.prepare_point_read::<MemoryError>())
+            .transpose()?;
+        let turn_read = turn_read.as_ref().unwrap_or(&read);
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         self.check_in_txn(&txn)?;
         memory.prove_read_authority_in_txn(&txn)?;
@@ -49,6 +57,7 @@ impl DreamerAttemptBinding {
                 &ExtractionRebuildContext {
                     memory: &memory,
                     read: &read,
+                    turn_read,
                     txn,
                     operands: &pack.candidates,
                 },

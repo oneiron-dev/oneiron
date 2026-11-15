@@ -138,7 +138,13 @@ fn bound_extraction_inputs_page(
     let attempt = extraction_attempt_key(&input.attempt)?;
     let after = extraction_turn_cursor_key(input.cursor.as_deref())?;
     let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+    let turn_read = extraction_turn_read(&read, owner.as_ref())?;
     let _pins = read.prepare_point_read::<MemoryError>()?;
+    let _turn_pins = turn_read
+        .as_ref()
+        .map(|read| read.prepare_point_read::<MemoryError>())
+        .transpose()?;
+    let turn_read = turn_read.as_ref().unwrap_or(&read);
     let txn = vault.store.env.read_txn().map_err(Error::from)?;
     memory.prove_read_authority_in_txn(&txn)?;
     if let Some(binding) = binding {
@@ -190,7 +196,7 @@ fn bound_extraction_inputs_page(
             let Some(row) = extraction_turn_in_txn(
                 vault,
                 txn,
-                &read,
+                (&read, turn_read),
                 reader_scope.as_ref(),
                 scope,
                 &key,
@@ -219,7 +225,7 @@ fn bound_extraction_inputs_page(
                     if extraction_turn_in_txn(
                         vault,
                         txn,
-                        &read,
+                        (&read, turn_read),
                         reader_scope.as_ref(),
                         scope,
                         &later_key,
@@ -236,6 +242,35 @@ fn bound_extraction_inputs_page(
         }
         Ok(page)
     })
+}
+
+/// Derives only the TURN-text reader from an extraction caller's ordinary lane.
+///
+/// The proven owner keeps its lane unchanged (`None`). A Steward's TURN reader
+/// keeps the lane's key, room ceiling, credential bounds and bound caller filter,
+/// changing only its relationship-grant mode. Use it only for TURN projections
+/// and their MESSAGE evidence; arbitrary rows stay on the ordinary lane. The
+/// caller proves authority and owner or live Steward scope before reading and
+/// holds the ordinary lane's point-read body pins through the shared snapshot.
+pub(crate) fn extraction_turn_read<'a>(
+    read: &ScopedRead<'a>,
+    owner: Option<&crate::consent::AuthenticatedOwner>,
+) -> MemoryResult<Option<ScopedRead<'a>>> {
+    if owner.is_some() || read.actor_key().reads_as_vault_owner() {
+        return Ok(None);
+    }
+    let principal = EntityId::from_hex(read.actor_key().actor_ref())
+        .map_err(|_| MemoryError::bad_request("extraction reader is not an entity"))?;
+    let key = read
+        .actor_key()
+        .clone()
+        .require_relationship_grants(Some(principal));
+    Ok(Some(
+        read.vault()
+            .scoped_read(key)
+            .with_claim_status(ClaimReadStatus::Recorded)
+            .with_read_filter(read.read_filter()),
+    ))
 }
 
 /// Resolves the proven owner's whole-vault read or a live Steward reader's scope.
@@ -287,7 +322,7 @@ pub(crate) fn queued_extraction_branch_in_txn(
 pub(crate) fn extraction_turn_in_txn(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,
-    read: &ScopedRead<'_>,
+    (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
     reader_scope: Option<&Scope>,
     scope: DreamerConsolidationScope,
     key: &ConsolidationPartitionKey,
@@ -306,7 +341,7 @@ pub(crate) fn extraction_turn_in_txn(
             return Ok(None);
         }
     }
-    let Some((version, _)) = source_version_in_txn(read, txn, &turn)? else {
+    let Some((version, _)) = source_version_in_txn(turn_read, txn, &turn)? else {
         return Ok(None);
     };
     let facts = read_partition_turns_in_txn(vault, txn, scope, &[turn])?

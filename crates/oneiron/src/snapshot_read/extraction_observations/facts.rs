@@ -17,7 +17,7 @@ use crate::snapshot_read::{SourceVersion, source_version_in_txn};
 /// Reads the complete fact set without selecting, grouping or routing any operand.
 pub(super) fn extraction_observation_facts(
     memory: &Memory<'_>,
-    read: &ScopedRead<'_>,
+    (read, turn_read): (&ScopedRead<'_>, &ScopedRead<'_>),
     txn: &heed::RoTxn<'_>,
     bound: &BoundBranchRead,
     input: &ExtractionObservationsPageRequest,
@@ -35,7 +35,7 @@ pub(super) fn extraction_observation_facts(
     for (index, (operand, proposal)) in input.candidates.iter().zip(proposals).enumerate() {
         let candidate = bound.verify_observation_candidate_in_txn(
             memory,
-            read,
+            turn_read,
             txn,
             operand,
             &proposal,

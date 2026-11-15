@@ -12,7 +12,9 @@ use crate::dreamer_consolidation::extraction_step::{
     ExtractionStepPiece, PreparedExtractionStep, prepare_bound_step,
 };
 use crate::memory::{MemoryError, MemoryResult};
-use crate::snapshot_read::{extraction_reader_scope_in_txn, queued_extraction_branch_in_txn};
+use crate::snapshot_read::{
+    extraction_reader_scope_in_txn, extraction_turn_read, queued_extraction_branch_in_txn,
+};
 
 impl DreamerAttemptBinding {
     /// Checks every locator and retains only its served words before borrowing a backend.
@@ -23,7 +25,13 @@ impl DreamerAttemptBinding {
         let vault = &*self.vault;
         let memory = vault.memory(self.stamp.actor, self.actor().actor_class());
         let read = memory.read_lane(ClaimReadStatus::Recorded)?;
+        let turn_read = extraction_turn_read(&read, None)?;
         let _pins = read.prepare_point_read::<MemoryError>()?;
+        let _turn_pins = turn_read
+            .as_ref()
+            .map(|read| read.prepare_point_read::<MemoryError>())
+            .transpose()?;
+        let turn_read = turn_read.as_ref().unwrap_or(&read);
         let txn = vault.store.env.read_txn().map_err(crate::Error::from)?;
         self.check_in_txn(&txn)?;
         memory.prove_read_authority_in_txn(&txn)?;
@@ -43,7 +51,7 @@ impl DreamerAttemptBinding {
             for evidence in &input.evidence {
                 let (turn, served) = check_turn_evidence(
                     &memory,
-                    &read,
+                    (&read, turn_read),
                     txn,
                     reader_scope.as_ref(),
                     evidence,
