@@ -1,5 +1,6 @@
 //! Public mesh setup inputs and owner-bound doors over the host's existing
 //! binding, ALPN and terminal revocation operations.
+use super::super::setting_keys::MESH_GRANT_MAX_TTL;
 use super::super::slip_vault::{random_slip_id, require_host};
 use super::super::{AuthorityOp, SlipClaims, strong_ed25519_key};
 use super::*;
@@ -13,9 +14,6 @@ use ed25519_dalek::{Signer, SigningKey};
 pub use oneiron_verb_wire::authority::mesh_machine::doors::{
     MeshAlpnGrant, MeshBindingIdentity, MeshMachineBinding,
 };
-
-/// The longest a mesh ALPN grant runs; it never outlives its pairing either.
-pub(super) const MESH_GRANT_MAX_SECS: u64 = 365 * 24 * 60 * 60;
 
 impl Vault {
     /// This install's public keys and binding proofs, for its owner to submit
@@ -311,7 +309,13 @@ impl Vault {
                 .action
                 .claims;
             let now = self.instant_in_txn(txn)?.secs();
-            let expires_at = pair.expires_at.min(now.saturating_add(MESH_GRANT_MAX_SECS));
+            // The owner's ceiling (`mesh.grant.max_ttl_secs`, one year by default); the grant
+            // never outlives its pairing either.
+            let ceiling = MESH_GRANT_MAX_TTL
+                .read_in_txn(self, txn, &[], None)?
+                .value
+                .secs();
+            let expires_at = pair.expires_at.min(now.saturating_add(ceiling));
             if expires_at <= now {
                 return Err(invalid_authority());
             }

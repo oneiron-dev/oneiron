@@ -46,15 +46,16 @@ pub(crate) use erase::{
 use heed::RwTxn;
 use serde::{Deserialize, Serialize};
 
+use super::setting_keys::STEP_UP_CHALLENGE_TTL;
 use super::{AdminStepUp, VerifiedSlip, authority_refused};
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::side_table::{self, Named, SideTable};
 
-/// How long a ceremony's challenge may be answered, on the authority clock
-/// (CALLS `FIX 11694 challenge life`): WebAuthn's own default ceremony
-/// timeout.
+/// How long a ceremony's challenge may be answered by default, on the
+/// authority clock (CALLS `FIX 11694 challenge life`): WebAuthn's own default
+/// ceremony timeout. The owner's `step_up.challenge.ttl_secs` moves it.
 pub const STEP_UP_CHALLENGE_TTL_SECS: u64 = 300;
 
 /// The request cannot step up: it is not a live slip of this vault held by
@@ -310,7 +311,11 @@ impl Vault {
         }
         let mut challenge = [0u8; 32];
         crate::world_keys::os_fill(&mut challenge)?;
-        let expires_at = now.saturating_add(STEP_UP_CHALLENGE_TTL_SECS);
+        let ttl = STEP_UP_CHALLENGE_TTL
+            .read_in_txn(self, &txn, &[], None)?
+            .value
+            .secs();
+        let expires_at = now.saturating_add(ttl);
         CHALLENGES.put(
             &self.store,
             &mut txn,
