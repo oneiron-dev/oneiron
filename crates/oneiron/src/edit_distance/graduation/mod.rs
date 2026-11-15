@@ -99,10 +99,6 @@ const THRESHOLD_ROW_LABEL: &str = "graduation threshold row";
 
 const ANSWER_ROW_LABEL: &str = "graduation answer row";
 
-// The quarantined tests module names `encode_row` through `use super::*`.
-#[cfg(test)]
-use crate::edit_distance::stored_row::encode_row;
-
 versioned_row_codec!(answers::StoredAnswer, ANSWER_ROW_LABEL, ROW_VERSION);
 
 versioned_row_codec!(
@@ -159,6 +155,10 @@ use self::{answers::*, threshold_policy::*};
 use crate::consent::AuthenticatedOwner;
 #[cfg(test)]
 use crate::consent_graduation::{DEFAULT_GRADUATION_STREAK_FLOOR, RampScope, RampState};
+#[cfg(test)]
+use crate::edit_distance::stored_row::encode_row;
+#[cfg(test)]
+use crate::error::Error;
 #[cfg(test)]
 use crate::receipt::{ReceiptKind, ReceiptQuery, ReceiptRecord};
 #[cfg(test)]
