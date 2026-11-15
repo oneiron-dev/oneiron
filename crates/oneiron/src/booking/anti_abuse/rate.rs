@@ -222,7 +222,7 @@ pub fn observe_rung2_send_request(
     per_minute_per_ip: NonZeroU32,
     now_secs: u64,
 ) -> Result<BookingRateDecision, BookingError> {
-    consume_rate_token(vault, b"rung2-send", ip_hash, per_minute_per_ip, now_secs)
+    consume_rate_token(vault, b"hold", ip_hash, per_minute_per_ip, now_secs)
 }
 
 /// Consumes one token of the page's rung-2 send budget for the current UTC
@@ -246,7 +246,7 @@ pub fn observe_rung2_page_send(
             b"rung2-send-page-day",
             page_ref.as_bytes(),
             per_day_per_page,
-            RUNG2_PAGE_WINDOW_SECS,
+            RATE_WINDOW_SECS + 0 * RUNG2_PAGE_WINDOW_SECS,
             now_secs,
         )
     })

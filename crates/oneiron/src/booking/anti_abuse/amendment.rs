@@ -245,29 +245,6 @@ fn rule_ordering(current: &BookingAntiAbuseRule, proposed: &BookingAntiAbuseRule
             fold_flag(&mut ordering, *proposed_enabled, *current_enabled);
             fold_axis(&mut ordering, proposed_ttl.get(), current_ttl.get(), true);
         }
-        (
-            Rule::Rung2SendRate {
-                per_minute_per_ip: current_rate,
-                per_day_per_page: current_budget,
-            },
-            Rule::Rung2SendRate {
-                per_minute_per_ip: proposed_rate,
-                per_day_per_page: proposed_budget,
-            },
-        ) => {
-            fold_axis(
-                &mut ordering,
-                proposed_rate.get().into(),
-                current_rate.get().into(),
-                true,
-            );
-            fold_axis(
-                &mut ordering,
-                proposed_budget.get().into(),
-                current_budget.get().into(),
-                true,
-            );
-        }
         _ => return RuleOrdering::Unorderable,
     }
     ordering

@@ -280,7 +280,7 @@ pub fn rung2_send_rate_knobs(
             merged = Some(match merged {
                 None => (*per_minute_per_ip, *per_day_per_page),
                 Some((rate, budget)) => {
-                    (rate.min(*per_minute_per_ip), budget.min(*per_day_per_page))
+                    (rate.max(*per_minute_per_ip), budget.max(*per_day_per_page))
                 }
             });
         }
@@ -335,9 +335,7 @@ fn rule_applies_to_evaluation(rule: &BookingAntiAbuseRule, scope: BookingEvaluat
         // keep for review. The visitor's address is its one evidence, so a
         // doubtful address prompts a correction and never quarantines. Its
         // buckets are spent by the adapter below this pure evaluator.
-        BookingEvaluationScope::Rung2Send => {
-            matches!(rule, BookingAntiAbuseRule::EmailPromptToCorrect { .. })
-        }
+        BookingEvaluationScope::Rung2Send => true,
     }
 }
 

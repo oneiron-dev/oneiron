@@ -338,12 +338,13 @@ pub fn default_booking_anti_abuse_rows(
                 per_day_per_page,
             })
         }
-        (None, None) => None,
-        _ => {
-            return Err(refused(
-                "the rung-2 send thresholds come as a pair: set both or neither",
-            ));
+        (Some(threshold), None) | (None, Some(threshold)) => {
+            Some(BookingAntiAbuseRule::Rung2SendRate {
+                per_minute_per_ip: threshold,
+                per_day_per_page: threshold,
+            })
         }
+        (None, None) => None,
     };
     let rules = [
         BookingAntiAbuseRule::RequiredIntake {
