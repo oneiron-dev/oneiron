@@ -186,7 +186,7 @@ fn settle_connector_calls(
     let vault = server.vault();
     // Expiry first, so a call past its deadline settles in this same pass;
     // then the owner asks a hold tried and failed to queue.
-    if let Err(error) = vault.expire_connector_calls(now_ms()) {
+    if let Err(error) = vault.expire_connector_calls(unix_millis_now()) {
         tracing::warn!(%error, "connector call expiry failed");
     }
     if let Err(error) = vault.repair_connector_call_owner_asks() {
@@ -283,7 +283,7 @@ fn settle_connector_calls(
             .map_err(|_| IntentLedgerError::InvalidRecord("connector call reply"))?;
         // The reply rides beside the rows the call's passes picked, kept
         // through every resume (FIX 5455): unknown stays unknown.
-        deliveries.deliver_listing(call.call_ref, &reply, rows.as_deref(), now_ms())?;
+        deliveries.deliver_listing(call.call_ref, &reply, rows.as_deref(), unix_millis_now())?;
         // Its caller stays bound once the row goes, so `connector.call_status`
         // reads the settled wait for that caller and the owner alone.
         vault.ack_connector_call_delivery_keeping_caller(&call.call_ref)?;
@@ -304,7 +304,7 @@ fn settle_approved_browser_waits(server: &SyncServer) -> usize {
     // (so an answer's own drive is not raced) through the same answered
     // pass, which runs the act once.
     let drive_after_ms = BROWSER_WAIT_DRIVE_AFTER.as_secs().saturating_mul(1000);
-    let answered_by_ms = now_ms().saturating_sub(drive_after_ms);
+    let answered_by_ms = unix_millis_now().saturating_sub(drive_after_ms);
     match vault.approved_browser_code_consent_waits(answered_by_ms) {
         Ok(waits) => {
             for wait_id in waits {
@@ -329,4 +329,4 @@ fn settle_approved_browser_waits(server: &SyncServer) -> usize {
     settled
 }
 
-use crate::runtime::wall_clock_ms as now_ms;
+use oneiron_base::unix_millis_now;
