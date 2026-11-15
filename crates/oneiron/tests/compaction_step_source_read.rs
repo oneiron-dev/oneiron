@@ -12,6 +12,9 @@
 //! every one of these steps read for the outsider. A selector window carries
 //! a step only beside its sources, as it carries an epoch summary (Sol's
 //! review of #8489: a CLAIM-band window carried the step's inline answer).
+//! A long answer a session-bound pass stages in a live off-record room
+//! keeps its content ASSET there, and a read through the room judges that
+//! ASSET by the same rule (STEPREAD-OVERLAY-RESPONSE-ASSET).
 //!
 //! Fixture: an owned vault with its embedded owner, one PERSON (owen), and
 //! three agents with auto ceilings and `core:read` grants: the compactor
@@ -29,12 +32,15 @@ use oneiron::access_grant::{
 };
 use oneiron::federation::{Scope, ScopeAxis};
 use oneiron::memory::{ClaimListFilter, Memory, WitnessAuthor, WitnessMessage, WitnessTurn};
+use oneiron::off_record::OffRecordBackendClass;
 use oneiron::policy_manifest_doors::{
     ActorCeiling, PolicyCeiling, PolicyManifestPut, PolicyManifestRead, PolicyScopedGrantRow,
     policy_manifests_as_owner, put_policy_manifest_as_owner,
 };
 use oneiron::registry::{ENTITY_TYPE_ASSET, ENTITY_TYPE_BLOB_ARTIFACT, ENTITY_TYPE_PERSON};
-use oneiron::test_doors::compaction_step_read::file_compaction_step;
+use oneiron::test_doors::compaction_step_read::{
+    file_compaction_step, file_compaction_step_in_session,
+};
 use oneiron::verbs::{AgentDefinitionCreateRequest, AgentDefinitionSpec};
 use oneiron::workspace_roster::ProjectRecord;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
@@ -407,6 +413,58 @@ fn a_compaction_response_content_reads_only_beside_its_sources() -> TestResult {
     assert!(
         !reads(&fixture.agent(fixture.bram), content)?,
         "bram does not read the ASSET holding the compactor's answer"
+    );
+    Ok(())
+}
+
+/// A long answer a session-bound compaction pass files in a live off-record
+/// room stages its response artifact, version and content ASSET in the
+/// room's overlay only. A read through the room takes that ASSET only beside
+/// the step's sources, as base does (STEPREAD-OVERLAY-RESPONSE-ASSET; Engine
+/// RULING STEPREAD-OVERLAY-ASSET = B). On #8489 the room's read looked for
+/// the ASSET's holders in base, found none, and served bram the answer.
+/// Cleo's read is the control that the read composes the room: base holds
+/// no such ASSET, so a read that fell back to base would answer absent.
+#[test]
+fn a_room_staged_compaction_response_reads_only_beside_its_sources() -> TestResult {
+    let fixture = open_fixture()?;
+    fixture.assert_message_readers()?;
+    let room = fixture
+        .vault
+        .off_record_session_vault()
+        .enter("compaction-step-room", OffRecordBackendClass::Local)?;
+    let long = format!("{ANSWER} {}", "And the rest of the window. ".repeat(700));
+    let staged = file_compaction_step_in_session(
+        &fixture.vault,
+        room.session_ref(),
+        CHAT_RUN,
+        EntityId::now(),
+        fixture.scribe,
+        fixture.sources.clone(),
+        &long,
+    )?;
+    assert!(
+        !fixture
+            .vault
+            .entities_by_type(ENTITY_TYPE_ASSET)?
+            .contains(&staged.content),
+        "FIXTURE: the response's content ASSET is staged in the room, not in base"
+    );
+    let room_body = |reader: EntityId| -> TestResult<Option<Vec<u8>>> {
+        Ok(fixture
+            .agent(reader)
+            .in_off_record_session(room.session_ref())
+            .with_credential_raw_read(|read| read.entity_body(&staged.content))?)
+    };
+    let cleo = room_body(fixture.cleo)?.ok_or("cleo reads the room's response content")?;
+    assert!(
+        String::from_utf8_lossy(&cleo).contains("vendor contract renews on the ninth"),
+        "cleo's read through the room serves the compactor's answer"
+    );
+    assert!(
+        room_body(fixture.bram)?.is_none(),
+        "LEAK: bram read through the room the ASSET holding the compactor's answer about a \
+         conversation he does not read"
     );
     Ok(())
 }
