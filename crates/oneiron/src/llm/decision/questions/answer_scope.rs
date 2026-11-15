@@ -261,7 +261,9 @@ fn rows_beside(question: EntityId, rows: &[EntityId]) -> Vec<EntityId> {
 
 /// [`project_bound_outcomes`], its count as `lane` reads it (FIX 11827): the
 /// projection binds as it binds for anyone; for a narrowed lane the count is
-/// of the newly bound labels whose answer and fact the lane reads.
+/// of the newly bound labels that stand and whose rows the lane reads: every
+/// row each was derived from but the question, as [`outcome_labels_in_lane`]
+/// judges a label (FIX STORED-OUTCOME-READS-SKIP-SAVED-LANE).
 ///
 /// # Errors
 /// As [`project_bound_outcomes`], and a store failure judging the rows.
@@ -275,7 +277,7 @@ pub fn project_bound_outcomes_in_lane(
         return project_bound_outcomes(vault, principal, question);
     }
     let bound = super::outcomes::project_bound_labels(vault, principal, question)?;
-    Ok(lane_keeps(lane, bound, label_rows)?.len())
+    Ok(lane_keeps(lane, bound, |(_, rows)| rows_beside(question, rows))?.len())
 }
 
 /// Whether `lane` freezes as its principal's own: a full lane, whose replies
@@ -314,11 +316,6 @@ fn artifact_ask_rows(ask: &ArtifactUnits) -> Vec<EntityId> {
         ArtifactAskUnits::SheetRows { .. } | ArtifactAskUnits::Paragraphs { .. } => Vec::new(),
     };
     std::iter::once(ask.artifact).chain(files).collect()
-}
-
-/// The rows one outcome label names: the answer it labels and its fact.
-fn label_rows(label: &OutcomeLabel) -> Vec<EntityId> {
-    vec![label.answer, label.fact]
 }
 
 /// The rows one answer names: a graph answer's claim, unit, evidence and

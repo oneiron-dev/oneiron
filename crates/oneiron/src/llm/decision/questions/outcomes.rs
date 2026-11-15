@@ -32,32 +32,39 @@ pub fn project_bound_outcomes(
 }
 
 /// [`project_bound_outcomes`], answering each label the projection newly
-/// bound rather than their count (FIX 11827): the labels the question held
-/// before and after it, in the projection's own write.
+/// bound rather than their count (FIX 11827), beside every row it was derived
+/// from, as [`outcome_labels_with_rows`] names them: the labels that stand
+/// after the projection and were not held before it, in the projection's own
+/// write. So a narrowed count judges the rows the label reader judges (FIX
+/// STORED-OUTCOME-READS-SKIP-SAVED-LANE).
 pub(super) fn project_bound_labels(
     vault: &Vault,
     principal: EntityId,
     question: EntityId,
-) -> Result<Vec<OutcomeLabel>> {
+) -> Result<Vec<(OutcomeLabel, Vec<EntityId>)>> {
     let Some(facts) = projectable_facts(vault, principal, question)? else {
         return Ok(Vec::new());
     };
-    let prefix = family_prefix(question, b"label");
     vault.with_write_txn_grouped(|txn| {
         let held: std::collections::BTreeSet<(EntityId, EntityId)> = QUESTION_LABEL
-            .scan_from(&vault.store, txn, &prefix)?
+            .scan_from(&vault.store, txn, &family_prefix(question, b"label"))?
             .into_iter()
             .map(|(_, label)| (label.answer, label.fact))
             .collect();
         if super::arrival::project_question_in_txn(vault, txn, &facts, question)? == 0 {
             return Ok(Vec::new());
         }
-        Ok(QUESTION_LABEL
-            .scan_from(&vault.store, txn, &prefix)?
-            .into_iter()
-            .map(|(_, label)| label)
-            .filter(|label| !held.contains(&(label.answer, label.fact)))
-            .collect())
+        let answers = stored_answers(vault, txn, question)?;
+        let policy = crate::gate::resolve_policy_manifest(&vault.store, txn)?;
+        // A projection serves no destination, so no world withholds a row.
+        let kept = std::collections::BTreeSet::new();
+        Ok(
+            standing_labels_in_txn(vault, txn, &policy, principal, question, &answers, &kept)?
+                .into_iter()
+                .filter(|standing| !held.contains(&(standing.label.answer, standing.label.fact)))
+                .map(|standing| (standing.label, standing.derived_from))
+                .collect(),
+        )
     })
 }
 
