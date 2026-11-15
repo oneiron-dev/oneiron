@@ -207,6 +207,7 @@ fn unheld_prefix(
             vault_id: Some(adopted.pin().genesis),
             checkpoint: Some(adopted.id()),
             missing,
+            reason: None,
         })
     })
 }

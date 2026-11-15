@@ -24,7 +24,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use super::checkpoint_adopt::VerifiedAuthorityCheckpoint;
 use super::*;
 use crate::store::Store;
-use crate::{HostingPrivacyPosture, Vault, error::Result};
+use crate::{
+    HostingPrivacyPosture, Vault,
+    error::{AuthorityHistoryReason, Result},
+};
 
 /// Exactly the authority rows this vault needs and does not hold.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,6 +41,9 @@ pub struct AuthorityHistoryRequest {
     /// held row has. Fetching them may name further ancestors: ask again after
     /// each import.
     pub missing: BTreeSet<AuthorityEntryHash>,
+    /// Why a fold or door named them: the first refusal's where requests
+    /// merge. None where the request names nothing a fold refused for.
+    pub reason: Option<AuthorityHistoryReason>,
 }
 
 impl AuthorityHistoryRequest {
@@ -205,6 +211,7 @@ fn held_history_request_in_txn(
         vault_id,
         checkpoint,
         missing: named,
+        reason: None,
     })
 }
 

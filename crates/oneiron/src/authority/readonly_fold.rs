@@ -702,6 +702,7 @@ pub(super) fn history_required(request: &AuthorityHistoryRequest) -> Error {
         vault_id: request.vault_id,
         checkpoint: request.checkpoint,
         missing: request.missing.iter().copied().collect(),
+        reason: request.reason,
     })
 }
 
@@ -722,10 +723,12 @@ pub(super) fn history_required_request(error: &Error) -> Option<AuthorityHistory
             vault_id,
             checkpoint,
             missing,
+            reason,
         }) => Some(AuthorityHistoryRequest {
             vault_id: *vault_id,
             checkpoint: *checkpoint,
             missing: missing.iter().copied().collect(),
+            reason: *reason,
         }),
         _ => None,
     }
@@ -843,6 +846,7 @@ fn fold_stored_tail_in_txn(
                 .or_else(|| tail.iter().find_map(|(_, entry)| entry.vault_id)),
             checkpoint: checkpoint.map(|(head, _)| head).or(checkpoint_head),
             missing: named,
+            reason: None,
         }));
     }
     // Read once: all entries in this fold share one snapshot clock and marker.

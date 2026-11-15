@@ -174,6 +174,7 @@ pub(in crate::authority) fn adopted_history_request_in_txn(
                 vault_id: Some(adopted.image().vault_id),
                 checkpoint: Some(adopted.id()),
                 missing: BTreeSet::new(),
+                reason: None,
             }),
             None => None,
         },

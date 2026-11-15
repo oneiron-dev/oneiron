@@ -112,6 +112,7 @@ pub(super) fn fold_adopted_checkpoint_tail(
             vault_id: Some(image.vault_id),
             checkpoint: Some(adopted.id()),
             missing,
+            reason: None,
         })
     };
     let tail: BTreeMap<_, _> = log
@@ -431,6 +432,7 @@ fn whole_history(
         vault_id: Some(image.vault_id),
         checkpoint: Some(adopted.id()),
         missing,
+        reason: None,
     }
 }
 
