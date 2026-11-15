@@ -1,0 +1,16 @@
+{
+  "name": "vault.healer.failure_drill_as",
+  "description": "An agent drills into one custom-agent failure's ended attempt and terminal receipt ids under its own live Grant naming the read and the owner's delegate key; a trace its lane may not read whole is not found.",
+  "input": "crate::failure_ladder::FailureDrillRequest",
+  "output": "crate::failure_ladder::FailureDrillView",
+  "call": "crate::failure_ladder::failure_drill_as_agent(memory, input)?",
+  "scope": "Read",
+  "grant_class": "vault.healer.failure_drill_as grant + owner delegate key + caller read lane",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}

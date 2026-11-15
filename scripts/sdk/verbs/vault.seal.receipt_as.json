@@ -1,0 +1,16 @@
+{
+  "name": "vault.seal.receipt_as",
+  "description": "An agent reads one sealed attempt, as the owner's receipt read shows it, under its own live Grant naming the read and the owner's delegate key; a seal its lane may not read whole reads as none.",
+  "input": "crate::self_heal::audit::doors::SealAttemptRequest",
+  "output": "Option<crate::self_heal::audit::doors::SealReceiptView>",
+  "call": "crate::self_heal::audit::doors::receipt_as_agent(memory, input)?",
+  "scope": "Read",
+  "grant_class": "vault.seal.receipt_as grant + owner delegate key + caller read lane",
+  "act_class": "read",
+  "admission": {
+    "lane_record_scope": true
+  },
+  "section": false,
+  "mcp_scope": "filtered",
+  "openapi": true
+}
