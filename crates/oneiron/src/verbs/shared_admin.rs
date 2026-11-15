@@ -136,14 +136,18 @@ pub fn create_federation_delegate_as(
     holder: &AuthenticatedOwner,
     input: FederationDelegateRequest,
 ) -> MemoryResult<FederationMemberGrant> {
-    let (id, grant) = vault.create_scoped_federation_delegate(
-        holder,
-        input.parent_grant,
-        input.member_ref,
-        &input.authority_scope,
-        input.expires_at,
-    )?;
-    member_grant(id, grant, vault.store.clock.now_recorded_at(), true)
+    let call = super::HeldVerbCall::new("vault.members.delegate", &input)?;
+    let answer = (|| -> MemoryResult<_> {
+        let (id, grant) = vault.create_scoped_federation_delegate(
+            holder,
+            input.parent_grant,
+            input.member_ref,
+            &input.authority_scope,
+            input.expires_at,
+        )?;
+        member_grant(id, grant, vault.store.clock.now_recorded_at(), true)
+    })();
+    call.answer(vault, holder, answer)
 }
 
 pub fn reset_shared_project_access(

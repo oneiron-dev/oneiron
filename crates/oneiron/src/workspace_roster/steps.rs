@@ -39,7 +39,9 @@ pub(super) fn require_workspace_authority_in_txn(
             ),
         )
         .map_err(|error| match error {
-            crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+            crate::Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { reason })
+                if reason != crate::memory::TWO_ADMIN_HOLD_REFUSAL =>
+            {
                 invalid("workspace onboarding requires a named admin power over the target vault")
             }
             other => other,

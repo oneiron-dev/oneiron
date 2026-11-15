@@ -523,7 +523,9 @@ impl Vault {
             &SharedVaultWrite::WorkspaceSettings,
         )
         .map_err(|error| match error {
-            Error::Claim(ClaimError::ActorLacksClaimAuthority { .. }) => {
+            Error::Claim(ClaimError::ActorLacksClaimAuthority { reason })
+                if reason != crate::memory::TWO_ADMIN_HOLD_REFUSAL =>
+            {
                 authority_refused(NOT_ADMIN)
             }
             other => other,

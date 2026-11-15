@@ -311,6 +311,10 @@ pub use crate::lens::{
 pub use oneiron_contracts::memory::MEMORY_CODE_HOST_ACTION_REFUSED;
 pub use oneiron_contracts::memory::MEMORY_CODE_IDENTITY_UNSETTLED;
 pub use oneiron_contracts::memory::MEMORY_CODE_INVENTED_REFERENCE;
+pub use oneiron_contracts::memory::{
+    ADMIN_ACT_HELD_REASON_PREFIX, MEMORY_CODE_ADMIN_ACT_HELD, TWO_ADMIN_HOLD_REASON_CODE,
+    TWO_ADMIN_HOLD_REFUSAL,
+};
 pub use oneiron_contracts::memory::{CHECK_IN_PENDING_REASON_PREFIX, MEMORY_CODE_CHECK_IN_PENDING};
 // WILL-PLAN L13 row 03: a room's whole off-record stretch, which no
 // consent record admits a session row to manage.

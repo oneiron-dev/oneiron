@@ -83,6 +83,8 @@ pub(crate) use ruling_integrity::{
 };
 mod own_device;
 mod pending_act;
+/// The org two-admin rule's Setting keys; the setting catalogue names them by this path.
+pub(crate) mod setting_keys;
 mod shared_act;
 mod shared_creation;
 pub(crate) use own_device::is_own_device_grant;
@@ -110,6 +112,13 @@ pub use shared_act::{
     TransferOwnershipPlan, shared_act_outcome_transcript,
 };
 pub(crate) use shared_act::{DetachOutcome, SharedMemberDeparture};
+pub use shared_act::{
+    HeldAdminAct, HeldAdminActStatus, NOTIFICATION_PRODUCER_ADMIN_ACT_HELD,
+    NOTIFICATION_PRODUCER_ADMIN_ACT_LAPSED,
+};
+pub(crate) use shared_act::{
+    current_held_admin_approval, enter_held_admin_approval, run_approved_admin_act,
+};
 pub(crate) use shared_act::{removal_archive_bindings_in_rows, removal_archive_owners_in_rows};
 pub(crate) use shared_creation::role_preset;
 pub(crate) use shared_creation::shared_vault_creation_for_store_in_txn;

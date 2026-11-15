@@ -434,6 +434,12 @@ impl crate::Vault {
                 "delegate parent pact is inactive".into(),
             ));
         }
+        // The org two-admin rule (Engine RULING UNBUILT06-SHAPE Q1 = A): an
+        // Admin's or a Deputy's delegate mint waits for a second admin while
+        // an Owner keeps it on; an Owner's never does.
+        if parent.role != super::FederationGrantRole::Owner {
+            self.two_admin_hold_in_txn(txn, vault_id, holder_actor)?;
+        }
         let mut grant =
             super::FederationGrant::attenuated_delegate(&parent, member_ref, now, expires_at)?;
         grant.authority_scope = parent

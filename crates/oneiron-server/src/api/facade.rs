@@ -229,6 +229,8 @@ pub(crate) use slim_doors::is_slim_lifecycle_observation;
 mod snapshot_read_settings_doors;
 mod standing_doors;
 mod steward_doors;
+// The org two-admin rule's held admin acts (UNBUILT-06 PR 2).
+mod held_admin_doors;
 // Untangle 6.6c: who reads engine substrate rows through a host door.
 mod substrate_read_doors;
 // FIX 11694: a person's passkey step-up on their own credential (MFA-1 A).

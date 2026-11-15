@@ -734,6 +734,7 @@ impl Store {
     {
         // A keyed request's intent open here counts this write (FIX 10379).
         let write = super::idempotency_intent::counting_commits(self, write);
+        let write = with_caller_held_admin_approval(write);
         if active_write_txn_depth() > 0 {
             drop(announced);
             return self.solo_write(write);
@@ -811,6 +812,7 @@ impl Store {
         E: From<Error>,
     {
         let write = super::idempotency_intent::counting_commits(self, write);
+        let write = with_caller_held_admin_approval(write);
         if active_write_txn_depth() > 0 {
             return self.solo_write(write);
         }
@@ -1294,6 +1296,20 @@ fn replicate(err: &heed::Error) -> heed::Error {
             std::io::Error::from_raw_os_error,
         )),
         other => heed::Error::Io(std::io::Error::other(other.to_string())),
+    }
+}
+
+/// `write`, run under the held admin act approval its calling thread runs
+/// under, if any (the org two-admin rule): the group may run a write's
+/// closure on another member's thread (FIX 11607), and each closure runs
+/// under its own caller's approval, or under none.
+fn with_caller_held_admin_approval<T, E>(
+    write: impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E>,
+) -> impl FnOnce(&mut RwTxn<'_>) -> Rows<T, E> {
+    let approval = crate::federation::current_held_admin_approval();
+    move |txn: &mut RwTxn<'_>| {
+        let _approval = crate::federation::enter_held_admin_approval(approval);
+        write(txn)
     }
 }
 

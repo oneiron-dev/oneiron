@@ -98,9 +98,13 @@ pub fn withdraw_shared_invitation_as(
     admin: &AuthenticatedOwner,
     input: SharedInvitationWithdrawRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
-    let member = EntityId::from_hex(&input.member)
-        .map_err(|_| MemoryError::bad_request("member is not an entity id"))?;
-    Ok(vault.withdraw_shared_invitation(admin, input.vault_id, member, &input.invitation)?)
+    let call = super::HeldVerbCall::new("vault.members.withdraw_invitation", &input)?;
+    let answer = (|| -> MemoryResult<_> {
+        let member = EntityId::from_hex(&input.member)
+            .map_err(|_| MemoryError::bad_request("member is not an entity id"))?;
+        Ok(vault.withdraw_shared_invitation(admin, input.vault_id, member, &input.invitation)?)
+    })();
+    call.answer(vault, admin, answer)
 }
 
 /// `vault.members.invitation_slip` on a server: the invitee binds their own

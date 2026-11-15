@@ -45,6 +45,9 @@ impl Vault {
     pub fn notify_matured_shared_acts(&self) -> Result<usize> {
         self.finish_removal_archive_rewrites();
         self.drop_expired_removal_exports()?;
+        // Held admin acts past their lapse are told to their first admin
+        // (the org two-admin rule); they are not counted here.
+        self.lapse_held_admin_acts()?;
         {
             let txn = self.store.env.read_txn()?;
             let now = self.store.clock.now_recorded_at();

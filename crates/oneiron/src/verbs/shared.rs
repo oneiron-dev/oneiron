@@ -430,15 +430,19 @@ pub fn add_shared_member_as(
     admin: &AuthenticatedOwner,
     input: SharedMemberAddRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
-    let member = person_id("member", &input.member)?;
-    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
-    Ok(vault.add_shared_member_with_check_in(
-        admin,
-        input.vault_id,
-        member,
-        input.role,
-        check_in,
-    )?)
+    let call = super::HeldVerbCall::new("vault.members.add", &input)?;
+    let answer = (|| -> MemoryResult<_> {
+        let member = person_id("member", &input.member)?;
+        let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+        Ok(vault.add_shared_member_with_check_in(
+            admin,
+            input.vault_id,
+            member,
+            input.role,
+            check_in,
+        )?)
+    })();
+    call.answer(vault, admin, answer)
 }
 
 /// `vault.members.change`: an Admin's `assign_role` power moves a member.
@@ -451,16 +455,20 @@ pub fn change_shared_member_as(
     slips: Option<&HostSlipIssuer>,
     input: SharedMemberRoleRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
-    let member = person_id("member", &input.member)?;
-    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
-    Ok(vault.change_shared_member_role_with_check_in(
-        admin,
-        input.vault_id,
-        member,
-        input.role,
-        slips,
-        check_in,
-    )?)
+    let call = super::HeldVerbCall::new("vault.members.change", &input)?;
+    let answer = (|| -> MemoryResult<_> {
+        let member = person_id("member", &input.member)?;
+        let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+        Ok(vault.change_shared_member_role_with_check_in(
+            admin,
+            input.vault_id,
+            member,
+            input.role,
+            slips,
+            check_in,
+        )?)
+    })();
+    call.answer(vault, admin, answer)
 }
 
 /// `vault.members.remove`: an Admin's `remove_member` power removes a member
@@ -473,9 +481,19 @@ pub fn remove_shared_member_as(
     slips: Option<&HostSlipIssuer>,
     input: SharedMemberRemoveRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
-    let member = person_id("member", &input.member)?;
-    let check_in = check_in_ref(input.check_in_ref.as_deref())?;
-    Ok(vault.remove_shared_member_with_check_in(admin, input.vault_id, member, slips, check_in)?)
+    let call = super::HeldVerbCall::new("vault.members.remove", &input)?;
+    let answer = (|| -> MemoryResult<_> {
+        let member = person_id("member", &input.member)?;
+        let check_in = check_in_ref(input.check_in_ref.as_deref())?;
+        Ok(vault.remove_shared_member_with_check_in(
+            admin,
+            input.vault_id,
+            member,
+            slips,
+            check_in,
+        )?)
+    })();
+    call.answer(vault, admin, answer)
 }
 
 /// `vault.members.ask`: a Steward suggests one member change. It writes one
@@ -550,8 +568,12 @@ pub fn apply_shared_member_ask_as(
     slips: Option<&HostSlipIssuer>,
     input: SharedMemberAskIdRequest,
 ) -> MemoryResult<SharedActExecutionReceipt> {
-    ask_in_vault(vault, applier, &input)?;
-    Ok(vault.apply_shared_member_ask(applier, &input.ask, slips)?)
+    let call = super::HeldVerbCall::new("vault.members.asks.apply", &input)?;
+    let answer = (|| -> MemoryResult<_> {
+        ask_in_vault(vault, applier, &input)?;
+        Ok(vault.apply_shared_member_ask(applier, &input.ask, slips)?)
+    })();
+    call.answer(vault, applier, answer)
 }
 
 /// `vault.members.asks.decline`: a live Admin or Owner declines an open

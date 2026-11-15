@@ -20,6 +20,20 @@ impl From<Error> for MemoryError {
                 )
             };
         }
+        if let Error::Claim(ClaimError::ActorLacksClaimAuthority { reason }) = &err
+            && *reason == TWO_ADMIN_HOLD_REFUSAL
+        {
+            return Self {
+                reason_codes: vec![TWO_ADMIN_HOLD_REASON_CODE.to_owned()],
+                ..Self::new(
+                    MEMORY_CODE_FORBIDDEN,
+                    err.to_string(),
+                    &[
+                        "Ask another live Owner, Admin or Deputy of the shared vault to make this act, or an Owner to make it: an Owner's own act is never held.",
+                    ],
+                )
+            };
+        }
         let message = err.to_string();
         if let Error::Gate(GateError::ShareCreatePaced { next_eligible_at }) = err {
             return Self {

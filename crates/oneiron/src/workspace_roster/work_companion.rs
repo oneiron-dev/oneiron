@@ -180,7 +180,9 @@ fn require_settings_authority_in_txn(
             &SharedVaultWrite::WorkspaceSettings,
         )
         .map_err(|error| match error {
-            Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+            Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { reason })
+                if reason != crate::memory::TWO_ADMIN_HOLD_REFUSAL =>
+            {
                 invalid("work_companion is a workspace setting: owner or admin settings power")
             }
             other => other,

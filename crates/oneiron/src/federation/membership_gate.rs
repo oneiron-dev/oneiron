@@ -35,12 +35,43 @@ impl Vault {
         self.authorize_shared_vault_write_in_txn(&txn, vault_id, writer, requested)
     }
 
+    /// The gate in the caller's snapshot. An admin power act (`Admin(_)`,
+    /// `RuleConflict`, `WorkspaceSettings`) that only an Admin or Deputy grant
+    /// admits also passes the org two-admin rule
+    /// ([`Self::two_admin_hold_in_txn`]): while an Owner keeps `org.two_admin`
+    /// on, it refuses with `TWO_ADMIN_HOLD_REFUSAL` unless it is a held act's
+    /// approved re-run. An act an Owner grant admits is never held.
     pub(crate) fn authorize_shared_vault_write_in_txn(
         &self,
         txn: &heed::RoTxn<'_>,
         vault_id: u64,
         writer: &WriteActor,
         requested: &SharedVaultWrite,
+    ) -> Result<()> {
+        self.judge_shared_vault_write_in_txn(txn, vault_id, writer, requested, true)
+    }
+
+    /// The gate as a standing check: the same judgement of `writer`'s live
+    /// grants, with no two-admin hold. An invitation's accept judges its
+    /// inviter's standing now; the accept is the invitee's act, and the
+    /// invitation was an act the rule already judged when it was made.
+    pub(crate) fn shared_vault_write_standing_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        writer: &WriteActor,
+        requested: &SharedVaultWrite,
+    ) -> Result<()> {
+        self.judge_shared_vault_write_in_txn(txn, vault_id, writer, requested, false)
+    }
+
+    fn judge_shared_vault_write_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        vault_id: u64,
+        writer: &WriteActor,
+        requested: &SharedVaultWrite,
+        two_admin_rule: bool,
     ) -> Result<()> {
         // A folder's note-import MACHINE writes as the member its own stored
         // record names as both its importer and its maker: that member's
@@ -71,6 +102,9 @@ impl Vault {
             return Err(denied());
         }
         let member = principal.entity_ref();
+        // The two-admin rule's refusal of an act an Admin or Deputy grant
+        // admits: it stands unless an Owner grant admits the act too.
+        let mut held = None;
         for entry in self
             .store
             .port_entity_ids_by_type(txn, ENTITY_TYPE_FEDERATION_GRANT, None)?
@@ -135,10 +169,21 @@ impl Vault {
             };
             record.verbs = ScopeAxis::Some(BTreeSet::from([verb.to_owned()]));
             if grant.authority_scope.admits(verb, &record, &Scope::top()) {
-                return Ok(());
+                // Only an Admin(_), RuleConflict or WorkspaceSettings write
+                // reaches here on a role other than Owner. A0's act rule
+                // takes the hold over as its `Permitted::admits` once the
+                // stack reaches main: alone, the act counts for nothing and
+                // asks (Fable pass 26, act rule 1.3).
+                if grant.role == FederationGrantRole::Owner || !two_admin_rule {
+                    return Ok(());
+                }
+                match self.two_admin_hold_in_txn(txn, vault_id, member) {
+                    Ok(()) => return Ok(()),
+                    Err(refusal) => held = Some(refusal),
+                }
             }
         }
-        Err(denied())
+        Err(held.unwrap_or_else(denied))
     }
 }
 

@@ -83,6 +83,7 @@ mod receipts_page;
 mod record_erase;
 mod reply;
 // FIX 13274: the owner reviews and settles a retained document-copy edit.
+mod held_admin_act;
 #[cfg(feature = "sync")]
 mod repo_copy_edit;
 #[cfg(feature = "sync")]
@@ -396,6 +397,11 @@ pub use self::goal_optimize::*;
 pub use self::grants::*;
 pub use self::guest_document::*;
 pub use self::guest_revoke::*;
+pub(crate) use self::held_admin_act::HeldVerbCall;
+pub use self::held_admin_act::{
+    HeldAdminActApproved, HeldAdminActRequest, approve_held_admin_act_as, read_held_admin_acts,
+    withdraw_held_admin_act_as,
+};
 pub use self::host::*;
 pub use self::hub::*;
 pub use self::identity_topology::*;

@@ -65,6 +65,8 @@ pub(crate) use super::check_in_doors::*;
 // The Steward doors: member asks, the system-agent grant narrowing and the
 // engine-control receipts (untangle 6.3, 6.6).
 pub(crate) use super::steward_doors::*;
+// The org two-admin rule's held admin acts: list, approve, withdraw.
+pub(crate) use super::held_admin_doors::*;
 // The engine-control knob doors, for the owner or a holder of
 // `engine.controls` (untangle 6.6d).
 pub(crate) use super::engine_control_doors::*;

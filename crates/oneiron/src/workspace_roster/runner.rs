@@ -256,7 +256,9 @@ impl Vault {
                 &crate::federation::SharedVaultWrite::WorkspaceSettings,
             )
             .map_err(|error| match error {
-                Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { .. }) => {
+                Error::Claim(crate::error::ClaimError::ActorLacksClaimAuthority { reason })
+                    if reason != crate::memory::TWO_ADMIN_HOLD_REFUSAL =>
+                {
                     invalid("workspace settings require an admin write grant")
                 }
                 other => other,

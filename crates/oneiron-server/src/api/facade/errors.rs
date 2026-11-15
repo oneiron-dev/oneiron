@@ -120,6 +120,10 @@ impl From<MemoryError> for FacadeApiError {
             // The act waits on a check-in its door opened: accepted, not
             // run; the reason code names the check-in a re-call names.
             oneiron::memory::MEMORY_CODE_CHECK_IN_PENDING => StatusCode::ACCEPTED,
+            // An admin's power act waits for a second admin (the org
+            // two-admin rule): accepted, not run; the reason code names the
+            // held act another admin approves.
+            oneiron::memory::MEMORY_CODE_ADMIN_ACT_HELD => StatusCode::ACCEPTED,
             // A budget window paced the call and the engine holds it in its
             // caller's line (FIX 8753): accepted, run on its turn.
             oneiron::memory::MEMORY_CODE_PACED_HOLD => StatusCode::ACCEPTED,
@@ -290,7 +294,7 @@ impl From<ApiError> for FacadeApiError {
 impl FacadeApiError {
     /// The engine holds the call rather than answering it: a hook accepted
     /// it only to ask first, a budget window paced it into its caller's
-    /// line (FIX 8753), or its act waits on a check-in. Neither is an asynchronous job's answer, and a
+    /// line (FIX 8753), or its act waits on a check-in or a second admin. Neither is an asynchronous job's answer, and a
     /// same-id retry reaches the held call again. Chat keeps its own wire
     /// code, but carries the same native stop.
     pub(super) fn is_held_call(status: u16, body: &serde_json::Value) -> bool {
@@ -304,6 +308,7 @@ impl FacadeApiError {
                 MEMORY_CODE_PENDING_ASK
                     | oneiron::memory::MEMORY_CODE_PACED_HOLD
                     | oneiron::memory::MEMORY_CODE_CHECK_IN_PENDING
+                    | oneiron::memory::MEMORY_CODE_ADMIN_ACT_HELD
             )
         ) {
             return true;

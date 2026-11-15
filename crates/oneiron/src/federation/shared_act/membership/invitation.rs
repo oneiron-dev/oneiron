@@ -533,7 +533,9 @@ impl Vault {
         if !(invitation.founding && invitation.role == Role::Owner) {
             non_root(Some(invitation.role))?;
         }
-        self.authorize_shared_vault_write_in_txn(
+        // The inviter's standing, with no two-admin hold: the accept is the
+        // invitee's act, and the rule judged the invitation when it was made.
+        self.shared_vault_write_standing_in_txn(
             txn,
             vault_id,
             &WriteActor::new(inviter, EdgeActorClass::Human),

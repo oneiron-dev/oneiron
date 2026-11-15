@@ -11,6 +11,7 @@ mod actor_erase;
 mod erase_ask;
 mod execute;
 mod export_records;
+mod held_admin_act;
 mod member_ask;
 mod membership;
 mod owner_add;
@@ -22,6 +23,13 @@ mod removal_import;
 
 pub use erase_ask::{
     EraseAskKind, EraseAskStatus, NOTIFICATION_PRODUCER_ERASE_ASK, SharedEraseAsk,
+};
+pub use held_admin_act::{
+    HeldAdminAct, HeldAdminActStatus, NOTIFICATION_PRODUCER_ADMIN_ACT_HELD,
+    NOTIFICATION_PRODUCER_ADMIN_ACT_LAPSED,
+};
+pub(crate) use held_admin_act::{
+    current_held_admin_approval, enter_held_admin_approval, run_approved_admin_act,
 };
 pub use member_ask::{
     MemberAskChange, MemberAskStatus, NOTIFICATION_PRODUCER_MEMBER_ASK, SharedMemberAsk,
@@ -272,8 +280,10 @@ pub struct SharedActExecutionReceipt {
     pub authorizer: Option<String>,
     /// The Steward whose member ask this change applied, PERSON hex
     /// (untangle 6.3d): a Steward only suggests a member change, and `actor`
-    /// is the Admin or Owner who applied it. `None` for every change no ask
-    /// proposed.
+    /// is the Admin or Owner who applied it. Or the first admin of a held
+    /// admin act a second admin approved (the org two-admin rule), when no
+    /// ask proposed it: `actor` is the approver. `None` for every other
+    /// change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub proposer: Option<String>,
     /// The bound Connect grants a genuine leave released here (FIX 12555):
@@ -870,7 +880,9 @@ impl Vault {
                 .map(|hash| crate::entity_id::bytes_to_hex_lower(hash)),
             authority_record_pending: record == ChangeRecord::Pending,
             authorizer: authorizer.as_ref().map(EntityId::to_hex),
-            proposer: None,
+            // The approved re-run of a held admin act names its first admin
+            // (the org two-admin rule); a Steward's ask replaces it after.
+            proposer: held_admin_act::approved_admin_act_proposer(vault_id, actor),
             detach: effect.detach,
             check_in: None,
             completed_at: now,
