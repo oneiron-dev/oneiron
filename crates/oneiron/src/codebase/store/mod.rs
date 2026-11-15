@@ -139,6 +139,85 @@ impl IndexRowId for HashIndexKey {
     }
 }
 
+/// Puts a repo-index row for the checkpoint-pins door: `value` names the
+/// snapshot `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_repo_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &str,
+    id: &EntityId,
+) -> Result<()> {
+    REPO_INDEX.put(
+        store,
+        txn,
+        &TextIndexKey {
+            value: value.to_owned(),
+            id: *id,
+        },
+        &(),
+    )
+}
+
+/// Puts a project-index row for the checkpoint-pins door: `value` names the
+/// snapshot `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_project_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &str,
+    id: &EntityId,
+) -> Result<()> {
+    PROJECT_INDEX.put(
+        store,
+        txn,
+        &TextIndexKey {
+            value: value.to_owned(),
+            id: *id,
+        },
+        &(),
+    )
+}
+
+/// Puts a fork-index row for the checkpoint-pins door: `value` names the
+/// snapshot `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_fork_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &[u8; 32],
+    id: &EntityId,
+) -> Result<()> {
+    FORK_INDEX.put(
+        store,
+        txn,
+        &HashIndexKey {
+            value: *value,
+            id: *id,
+        },
+        &(),
+    )
+}
+
+/// Puts a scope-index row for the checkpoint-pins door: `value` names `id`.
+#[cfg(oneiron_test_support)]
+pub(crate) fn put_pins_scope_index_row_in_txn(
+    store: &impl crate::store::ManifestDbs,
+    txn: &mut RwTxn<'_>,
+    value: &[u8; 32],
+    id: &EntityId,
+) -> Result<()> {
+    SCOPE_INDEX.put(
+        store,
+        txn,
+        &HashIndexKey {
+            value: *value,
+            id: *id,
+        },
+        &(),
+    )
+}
+
 pub(crate) fn codebase_candidate_matches_filters(
     store: &impl crate::store::ManifestDbs,
     rtxn: &RoTxn<'_>,

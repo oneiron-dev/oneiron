@@ -87,6 +87,31 @@ pub(crate) fn side_table_registry_gaps() -> Vec<String> {
     preflight::preflight().side_table_gaps()
 }
 
+/// One getter's capture, as the registry dispatches it
+/// (`tests/checkpoint_pins.rs`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn getter_capture(getter: Getter, store: &Store, txn: &RoTxn<'_>) -> Result<Captured> {
+    getter.capture(store, txn)
+}
+
+/// One owner's rows framed by one getter, as the registry dispatches it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn getter_bytes_for_owner(getter: Getter, rows: &OwnerRows) -> Result<Vec<u8>> {
+    getter.bytes_for_owner(rows)
+}
+
+/// One opened compartment's rows put back by one getter, as the registry
+/// dispatches it.
+#[cfg(oneiron_test_support)]
+pub(crate) fn getter_restore_in_txn(
+    getter: Getter,
+    store: &Store,
+    txn: &mut RwTxn<'_>,
+    opened: OpenedOwnerRows,
+) -> Result<Restored> {
+    getter.restore_in_txn(store, txn, opened)
+}
+
 pub(in crate::recovery::checkpoint) use crate::store::checkpoint_payload::rows::{Carrier, Getter};
 
 /// Each owner getter's store module, beside its own codecs (KS7-2a): it reads the getter's

@@ -177,6 +177,92 @@ fn key(attempt: AttemptId) -> Result<EntityId> {
     EntityId::from_bytes(*attempt.as_bytes())
 }
 
+/// The row key the writer files `attempt`'s checkpoint under, for the
+/// checkpoint-pins door.
+#[cfg(oneiron_test_support)]
+pub(crate) fn test_checkpoint_key(attempt: AttemptId) -> Result<EntityId> {
+    key(attempt)
+}
+
+/// The body owner the writer derives for `attempt`'s checkpoint, for the
+/// checkpoint-pins door.
+#[cfg(oneiron_test_support)]
+pub(crate) fn test_checkpoint_body_owner(attempt: AttemptId) -> Result<EntityId> {
+    body_owner(attempt)
+}
+
+/// A binding-less checkpoint row for the checkpoint-pins door: no content
+/// and no retained binding, so the getter files it as structure.
+#[cfg(oneiron_test_support)]
+pub(crate) fn test_checkpoint_row_unbound(attempt: AttemptId, generation: u32) -> CheckpointRow {
+    CheckpointRow {
+        attempt,
+        generation,
+        content: None,
+        retained: None,
+    }
+}
+
+/// A bound checkpoint row for the checkpoint-pins door: content naming
+/// `actor`, `room` and `known_sources`, filed under `attempt`'s own key and
+/// body owner, with a fixed settled meter, body and digest.
+#[cfg(oneiron_test_support)]
+pub(crate) fn test_checkpoint_row_bound(
+    attempt: AttemptId,
+    generation: u32,
+    actor: EntityId,
+    room: Option<EntityId>,
+    known_sources: Vec<EntityId>,
+) -> Result<CheckpointRow> {
+    let budget_value = serde_json::json!({
+        "attempt_id": "pins",
+        "limit_units": 1000,
+        "reserve_units": 0,
+        "on_budget_exhausted": {"kind": "suspend"},
+        "actor": null,
+        "used_units": 0,
+        "shared_used_units": 0,
+        "next_lease_seq": 0,
+        "fired_thresholds": [],
+        "rows": [],
+    });
+    let budget: BudgetCheckpoint = serde_json::from_value(budget_value)
+        .map_err(|error| Error::InvalidConfig(format!("pins checkpoint budget: {error}")))?;
+    Ok(CheckpointRow {
+        attempt,
+        generation,
+        content: Some(CheckpointContent {
+            actor,
+            actor_class: EdgeActorClass::Agent,
+            room,
+            progress: WorkflowToolProgress {
+                cursor: WorkflowToolCursor {
+                    assistant_message: 0,
+                    tool_index: 0,
+                    use_ordinal: 0,
+                    round: 1,
+                    capture_completed: true,
+                },
+                wait: None,
+                budget,
+                budget_units: 7,
+                spend_scope: None,
+                known_sources,
+                sources_complete: true,
+                planner_craft_rows: None,
+                no_record_at_arrival: false,
+            },
+            body_owner: body_owner(attempt)?,
+            body: OutputRef {
+                hash: [0x0b; 32],
+                byte_len: 64,
+            },
+            published_digests: vec![[0x0d; 32]],
+        }),
+        retained: None,
+    })
+}
+
 fn body_owner(attempt: AttemptId) -> Result<EntityId> {
     EntityId::derive(
         b"oneiron:workflow-tool-checkpoint:v1",

@@ -124,6 +124,11 @@ mod workflow_host;
 mod workflow_pump;
 mod workflow_record;
 pub(crate) use workflow::tool_wait::checkpoint as workflow_tool_checkpoint;
+#[cfg(oneiron_test_support)]
+pub(crate) use workflow::tool_wait::{
+    CheckpointRow, test_checkpoint_body_owner, test_checkpoint_key, test_checkpoint_row_bound,
+    test_checkpoint_row_unbound,
+};
 pub use workflow::tool_wait::{
     WorkflowToolAnswer, WorkflowToolCheckpointWriter, WorkflowToolContinuation, WorkflowToolCursor,
     WorkflowToolProgress, WorkflowToolTranscript, WorkflowToolWait,
