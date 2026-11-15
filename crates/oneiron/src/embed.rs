@@ -12,6 +12,8 @@ pub(crate) mod home_vectors;
 pub use home_vectors::HomeClaimVector;
 mod locality;
 mod media;
+mod refusal;
+pub use refusal::is_device_local_row_refusal;
 #[cfg(feature = "sync")]
 mod release;
 mod repo_projection;
@@ -519,14 +521,7 @@ impl PendingEmbeddingReconciler {
             return embedder.embed_marked_measured(inputs);
         }
         embedder.embed_released_measured(inputs, &|rows| {
-            if self.vault.rows_may_leave_for(rows, destination)? {
-                Ok(())
-            } else {
-                Err(Error::UpstreamToolFailure {
-                    tool: "embedder-remote",
-                    code: "device_local_row".to_owned(),
-                })
-            }
+            self.vault.release_embed_rows(rows, destination)
         })
     }
 
