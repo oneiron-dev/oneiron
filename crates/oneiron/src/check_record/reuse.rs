@@ -9,6 +9,7 @@
 //! and voids a reuse the tree changed under.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::{Fingerprint, purposes};
 
 use super::{AttemptCheckRecord, CHECK_RECORDS, CheckInputVersions};
 use crate::EntityId;
@@ -18,7 +19,7 @@ use crate::side_table::{Named, SideKey, SideTable};
 use crate::store::Store;
 use crate::store::checkout_lease::{CheckoutError, CheckoutId};
 use crate::store::contract_oracle::invalid;
-use crate::task_verb::linear_store::task_revision_in_txn;
+use crate::store::linear_task_revision::revision as task_revision_in_txn;
 
 /// One reusable native check filed under its reuse key. Key: the 32-byte
 /// reuse key, then AttemptId, then id16 (the check).
@@ -44,17 +45,19 @@ pub(crate) fn reuse_key(
     let Some(tree) = &inputs.tree else {
         return Ok(None);
     };
-    let bytes = rmp_serde::to_vec_named(&(
-        "oneiron:check-record-reuse:v1",
-        repo,
-        git_ref,
-        tree,
-        &inputs.command_digest,
-        &inputs.toolchain_digest,
-        &inputs.environment_digest,
-    ))
+    let key = Fingerprint::of_record(
+        purposes::check_record::REUSE_KEY,
+        &(
+            repo,
+            git_ref,
+            tree,
+            &inputs.command_digest,
+            &inputs.toolchain_digest,
+            &inputs.environment_digest,
+        ),
+    )
     .map_err(|_| invalid("check reuse key encoding failed"))?;
-    Ok(Some(*blake3::hash(&bytes).as_bytes()))
+    Ok(Some(key.into_bytes()))
 }
 
 /// Files `record` under its reuse key when it is reusable: a check the run

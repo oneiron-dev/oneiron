@@ -27,7 +27,7 @@ use crate::check_record::{
 use crate::git_wire::GitWire;
 use crate::memory::checkout_doors::refusal as checkout_refusal;
 use crate::memory::{MEMORY_CODE_INVALID_STATE, Memory, MemoryError, MemoryResult};
-use crate::task_verb::linear_store::task_revision_in_txn;
+use crate::store::linear_task_revision::revision as task_revision_in_txn;
 
 /// `self.code.checks.reuse`: reuses the recorded native check matching the
 /// receiver's inputs. The engine captures the input versions; the agent
