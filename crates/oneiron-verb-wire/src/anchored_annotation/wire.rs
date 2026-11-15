@@ -232,4 +232,8 @@ pub struct AnnotationThreadView {
     pub head_claim_id: EntityId,
     pub comments: Vec<AnnotationCommentView>,
     pub brief: Option<AnnotationBriefView>,
+    /// The sub-session of the plan run this thread's approval started
+    /// (agent-runtime-v1.md:342); `None` on every other thread.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_session_id: Option<EntityId>,
 }

@@ -120,7 +120,9 @@ pub enum CheckoutLeaseState {
     Settled,
     Retained,
 }
-pub type CheckoutHolder = String;
+#[doc(hidden)]
+pub use oneiron_records::store::checkout_lease::CheckoutHolder;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CheckoutFactMutation {
     Claimed {
