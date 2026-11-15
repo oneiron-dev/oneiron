@@ -5,6 +5,7 @@ use oneiron::EntityId;
 use oneiron::memory::{MemoryError, MemoryResult};
 use oneiron::task_verb::sdk::*;
 use oneiron::voice_cascade::GenerationEpoch;
+use oneiron_base::request_limits::page_limit_zero_refused;
 use std::collections::{BTreeMap, VecDeque};
 
 pub(super) struct Epoch {
@@ -244,11 +245,14 @@ impl Journal {
         input: LiveVoiceEventsRequest,
         phone: Option<&PhoneCallRead>,
     ) -> MemoryResult<ListedPage> {
-        if input.after < self.floor || input.after > self.cursor || input.limit == Some(0) {
-            return Err(MemoryError::bad_request(
-                "invalid or released voice event cursor",
-            ));
-        }
+        let limit = match page_limit_zero_refused(input.limit, 64, usize::MAX) {
+            Ok(limit) if (self.floor..=self.cursor).contains(&input.after) => limit.rows,
+            _ => {
+                return Err(MemoryError::bad_request(
+                    "invalid or released voice event cursor",
+                ));
+            }
+        };
         // `after` acknowledges consumption and releases earlier packet storage.
         self.floor = input.after;
         while self
@@ -258,7 +262,6 @@ impl Journal {
         {
             self.events.pop_front();
         }
-        let limit = input.limit.unwrap_or(64);
         let mut events = Vec::new();
         let mut rows = Vec::new();
         let mut cursor = input.after;

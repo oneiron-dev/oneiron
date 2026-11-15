@@ -65,14 +65,8 @@ pub struct ShadowRunRequest {
 
 pub use crate::dreamer_runner::shadow_values::{ShadowUnavailable, ShadowUnavailableReason};
 
-/// Why an arm's window was full, as a frame carries it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(tag = "why", rename_all = "snake_case")]
-pub enum ShadowWindowFullReason {
-    InFlight,
-    Suppressed { cause: String },
-    NothingToCompact,
-}
+#[doc(hidden)]
+pub use oneiron_records::code_run::shadow_runner::types::ShadowWindowFullReason;
 
 impl From<&WindowFullReason> for ShadowWindowFullReason {
     fn from(reason: &WindowFullReason) -> Self {

@@ -105,6 +105,7 @@ mod maintain;
 mod owner_pins;
 mod paths;
 mod projected_serve;
+mod protected_ref_confirm;
 mod push_admission;
 mod push_paths;
 pub(crate) mod push_projection;
