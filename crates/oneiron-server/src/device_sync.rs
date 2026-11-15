@@ -621,6 +621,14 @@ fn observer(
                 );
             });
         }
+        // The home refuses this credential the socket: the connection does
+        // not redial on it; a renewed credential opens a new one
+        // (MEMBER-SELECTOR-SOCKET).
+        SyncEvent::UpgradeForbidden => tracing::warn!(
+            %home,
+            "device sync: the home refuses this credential a sync socket (403); \
+             it does not redial on it"
+        ),
         SyncEvent::Error(error) => tracing::warn!(%home, %error, "device sync"),
         _ => {}
     }

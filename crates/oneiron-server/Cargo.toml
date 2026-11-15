@@ -338,6 +338,12 @@ name = "owner_acts_require_vault_owner"
 path = "tests/owner_acts_require_vault_owner.rs"
 required-features = ["oneiron/test-support"]
 
+# A shared env's lane reach seeds its member grant with `put_selector_test_federation_grant`.
+[[test]]
+name = "shared_env_lane_reach"
+path = "tests/shared_env_lane_reach.rs"
+required-features = ["oneiron/test-hooks"]
+
 # DEL-2's core HTTP delete door roots its server on a `MemoryKeystore` too.
 [[test]]
 name = "delete_authority_served_door"

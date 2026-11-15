@@ -184,6 +184,8 @@ mod operator_routes;
 mod owner_origin;
 mod owner_routes;
 pub(crate) use owner_routes::owner;
+#[cfg(oneiron_test_support)]
+pub(crate) use owner_routes::owner_check_failure;
 // FIX 5911: an owner's own program proves its waking person the live
 // recorded owner, and takes the owner's media and hook-replay doors; its
 // media spends on its run's line (FIX 6083).

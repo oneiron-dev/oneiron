@@ -118,14 +118,43 @@ fn sync_socket_message_bytes() -> usize {
     usize::try_from(bytes).unwrap_or(usize::MAX)
 }
 
-/// Whether `error` is the home's HTTP 401 answer to the upgrade: it did not
-/// accept the credential the upgrade carried (FIX 12442).
-pub(crate) fn upgrade_unauthorized(error: &WsError) -> bool {
-    matches!(
-        error,
-        WsError::Http(response)
-            if response.status() == tokio_tungstenite::tungstenite::http::StatusCode::UNAUTHORIZED
-    )
+/// The home's HTTP refusal of a sync upgrade, by what it refused.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UpgradeRefusal {
+    /// 401: it did not accept the credential the upgrade carried (FIX 12442).
+    Unauthorized,
+    /// 403: it accepted the credential and refuses that credential this
+    /// socket, so a redial on it is refused again (MEMBER-SELECTOR-SOCKET).
+    Forbidden,
+}
+
+impl UpgradeRefusal {
+    /// The event the host is told this refusal by.
+    pub(crate) fn event(self) -> crate::sync::client::SyncEvent {
+        match self {
+            Self::Unauthorized => crate::sync::client::SyncEvent::UpgradeUnauthorized,
+            Self::Forbidden => crate::sync::client::SyncEvent::UpgradeForbidden,
+        }
+    }
+}
+
+/// The home's refusal `error` is, when it is the home's HTTP 401 or 403
+/// answer to the upgrade; `None` for any other failure. A 403 refuses the
+/// credential the upgrade carried, so a 403 to an upgrade that `carried` none
+/// (a clear socket off loopback and mesh withholds it, FIX 11111) refuses
+/// nothing this machine holds and stays the far end's failure. The home dial
+/// and a peer session's probe of the home read a failed upgrade by this one
+/// rule.
+pub(crate) fn upgrade_refusal(error: &WsError, carried: bool) -> Option<UpgradeRefusal> {
+    use tokio_tungstenite::tungstenite::http::StatusCode;
+    let WsError::Http(response) = error else {
+        return None;
+    };
+    match response.status() {
+        StatusCode::UNAUTHORIZED => Some(UpgradeRefusal::Unauthorized),
+        StatusCode::FORBIDDEN if carried => Some(UpgradeRefusal::Forbidden),
+        _ => None,
+    }
 }
 
 /// Whether `error` is this machine's own setup of a sync socket, not the

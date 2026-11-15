@@ -67,6 +67,15 @@ pub(in crate::sync::connection) fn upgrade_request(
     Ok((request, binding, withheld))
 }
 
+/// Whether `request` carries a credential: the slip its `binding` proves, or
+/// a bearer token.
+pub(in crate::sync::connection) fn upgrade_carries_credential(
+    request: &Request,
+    binding: Option<&UpgradeBinding>,
+) -> bool {
+    binding.is_some() || request.headers().contains_key(AUTHORIZATION)
+}
+
 impl SyncConnection {
     /// Opens the session's socket, its upgrade proved: to the home on the
     /// configured carrier, or to the session's peer on its mesh dial (FIX
@@ -82,6 +91,7 @@ impl SyncConnection {
         let (request, binding, withheld) =
             upgrade_request(self.manager.vault(), config, client.peer_session.is_some())
                 .map_err(SessionFault::Local)?;
+        let carried = upgrade_carries_credential(&request, binding.as_ref());
         if withheld && !client.cleartext_withhold_logged {
             client.cleartext_withhold_logged = true;
             tracing::warn!("sync server is clear ws off loopback and mesh: no credential sent");
@@ -97,15 +107,22 @@ impl SyncConnection {
         let (ws_stream, response) = crate::sync::carrier::connect_sync_socket(request, dialer)
             .await
             .map_err(|e| {
+                let message = format!("WS connect failed: {e}");
                 // A home's refused credential may mean a removed membership:
                 // the host asks the home, and this socket decides nothing
                 // (FIX 12442). A peer's refusal is not the home's.
-                if client.peer_session.is_none() && crate::sync::carrier::upgrade_unauthorized(&e) {
-                    let _ = event_tx.send(SyncEvent::UpgradeUnauthorized);
+                if client.peer_session.is_none()
+                    && let Some(refusal) = crate::sync::carrier::upgrade_refusal(&e, carried)
+                {
+                    let _ = event_tx.send(refusal.event());
+                    // A 403 refuses this credential the socket: no redial on
+                    // it opens one (MEMBER-SELECTOR-SOCKET).
+                    if refusal == crate::sync::carrier::UpgradeRefusal::Forbidden {
+                        return SessionFault::Forbidden(message);
+                    }
                 }
                 // A carrier this machine cannot set up for its URL is its
                 // own fault; any other failure is the far end's (FIX 22217).
-                let message = format!("WS connect failed: {e}");
                 if crate::sync::carrier::own_setup_fault(&e) {
                     SessionFault::Local(message)
                 } else {

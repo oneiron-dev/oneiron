@@ -194,6 +194,12 @@ section is yours to repair. The field is left out when no such section rides.
   on without the connection.
 - `device sync` warnings for connection errors. The connection retries with backoff up to a
   minute.
+- `the home refuses this credential a sync socket (403)` when the home accepts the credential
+  but refuses it the socket. The connection does not retry on that credential, and neither does
+  its probe of the home while it syncs with another machine: that session ends too. What the
+  device writes meanwhile waits in its offline queue. A renewed credential opens a new
+  connection. A home whose own store fails while it checks the owner
+  answers 500 instead, and the connection retries with backoff.
 - `device credential renewed`, with the seconds until the next renewal; `device sync reconnects
   on its renewed credential` after it.
 - `device credential renewal failed (<reason>)` with the seconds until it tries again, and
@@ -266,10 +272,15 @@ sets it.
 
 At start, serve opens every entry and keeps its handle. Each active membership gets its own
 window manager and sync connection; one bad environment is logged and skipped without stopping
-the others. Once an hour, the lifecycle tick asks the engine's verified leave door for each
-active membership. A refusal or failed check is not a leave. Only a verified notice detaches the
-lane. The environment's own durable leave receipt is the record; there is no second registry in
-the vault and no new side table.
+the others. A membership whose lane slip names a member grant that the environment holds no live
+copy of yet starts no lane: a member's lane never falls back to full replication, and member sync
+without that live copy is not built. Once an hour, the lifecycle tick asks the engine's verified leave door for each
+active membership. A refusal or failed check is not a leave. A home that answers the lane's
+upgrade with 401 or 403 makes that check due at the next round. After a 403, which refuses that
+credential the socket, the lane does not redial on it while this serve runs; the next serve
+dials again on the same credential. Only a verified
+notice detaches the lane. The environment's own durable leave receipt is the record; there is
+no second registry in the vault and no new side table.
 
 The handle stays open after a confirmed leave. The person can still read retained removal
 archives, and the deferred orphan-body collection written by the leave purge can finish. The
