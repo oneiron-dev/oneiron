@@ -241,8 +241,10 @@ heed = { workspace = true, features = ["posix-sem"] }
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 # Removing a directory tree relative to the directory that holds each
-# entry, never through a path. The version the workspace already builds.
-rustix = { version = "1.1", features = ["fs", "process"] }
+# entry, never through a path; and the boot clock, which counts time
+# suspended, that a backup's held verdict ages by. The version the
+# workspace already builds.
+rustix = { version = "1.1", features = ["fs", "process", "time"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Wdk_Foundation", "Wdk_Storage_FileSystem", "Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }

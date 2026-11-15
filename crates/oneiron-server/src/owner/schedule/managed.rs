@@ -33,20 +33,26 @@
 //! Whether the file is still that backup is a whole read of it, which on a
 //! large vault outlasts the reap preparation's window (FIX 6729). So the
 //! whole read also runs in the background (HELD-WHOLE-READ-OFF-PRE-IDLE,
-//! Engine 15 Nov 22:17): after a pass that accepted a backup, and again every
-//! [`HELD_VERIFY_EVERY`], the pass notes the accepted backup, and the tick
-//! reads it whole on a thread of its own, holding neither the backup lock nor
-//! the tick's admission. The read's verdict names the backup it read
-//! (its marker, so its id and outer digest), the file's identity, and when
-//! it began. A backup before an idle reap takes a verdict under
-//! [`HELD_VERDICT_TRUST`] old, for the marker it reuses, whose file still
-//! opens with that identity, in place of its own whole read. A backup with
-//! no such verdict, a new or changed one or one read too long ago, is read
-//! whole there, as before. A change that keeps the file's identity (device,
-//! inode, size, and modification and status-change times) stands until the
-//! next background read, at most [`HELD_VERDICT_TRUST`] later; a whole read
-//! there proves only that instant as well, and a restore checks the artifact
-//! whole before it uses it.
+//! Engine 15 Nov 22:17): after a pass that accepted a backup, the owner's
+//! scheduled one included, and again every [`HELD_VERIFY_EVERY`], the pass
+//! notes the accepted backup, and the tick reads it whole on a thread of its
+//! own, holding neither the backup lock nor the tick's admission. The read's
+//! verdict names the backup it read (its marker, so its id and outer digest),
+//! the file's identity, and when it began. A backup before an idle reap takes
+//! a verdict under [`HELD_VERDICT_TRUST`] old, for the marker it reuses,
+//! whose file still opens with that identity, in place of its own whole read.
+//! A backup with no such verdict, a new or changed one or one read too long
+//! ago, is read whole there, as before. A change that keeps the file's
+//! identity (device, inode, size, and modification and status-change times)
+//! is not seen by a verdict. What bounds it is the verdict's age, not a next
+//! read: a verdict answers nothing once [`HELD_VERDICT_TRUST`] has passed
+//! since its read began, by a boot clock that counts time suspended and by
+//! the wall clock, and a backup before an idle reap then reads the file
+//! whole. No background read is promised inside that window (a frozen vault
+//! refuses ticks, and a read of a large backup takes its time). A whole read
+//! there proves only its instant as well; a cold managed restore reads the
+//! artifact whole before it opens it, and every restore checks the bytes it
+//! reads.
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -231,7 +237,7 @@ impl OwnerHost {
     /// identity moved since its verdict, or [`HELD_VERIFY_EVERY`] since the
     /// last whole read, one that found it not held included. Nothing while
     /// a verify runs: the first pass after it ends decides.
-    fn note_held_verify(&self, plan: &BackupPlan) {
+    pub(super) fn note_held_verify(&self, plan: &BackupPlan) {
         if self.held.running.load(Ordering::SeqCst) {
             return;
         }

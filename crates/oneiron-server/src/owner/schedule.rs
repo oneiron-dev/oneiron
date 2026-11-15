@@ -411,7 +411,11 @@ impl OwnerHost {
                 .is_none_or(|newest| unix_millis_now().saturating_sub(newest.taken_ms) >= every_ms);
             if due {
                 self.enter(PassStage::OwnerBackup);
-                return backup::take_automatic(vault, &plan).map(Some);
+                let taken = backup::take_automatic(vault, &plan);
+                // The backup it accepted is read whole in the background
+                // too (`managed`, HELD-WHOLE-READ-OFF-PRE-IDLE).
+                self.note_held_verify(&plan);
+                return taken.map(Some);
             }
         }
         self.managed_pass(vault, &plan)

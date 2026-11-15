@@ -62,12 +62,14 @@ fn thread_rchar() -> u64 {
 }
 
 /// A managed vault holding `bodies` texts with one accepted backup; the
-/// directories live as long as it does.
+/// directories live as long as it does, and the vault drops first. Bind it
+/// whole: a pattern that leaves the directories out drops them, and with
+/// them the vault's files and its backups, at the end of its statement.
 struct Backed {
-    _vault_dir: tempfile::TempDir,
-    _backups: tempfile::TempDir,
     managed: ManagedBackups,
     size: u64,
+    _vault_dir: tempfile::TempDir,
+    _backups: tempfile::TempDir,
 }
 
 fn backed_up(bodies: u64) -> Backed {
@@ -93,10 +95,10 @@ fn backed_up(bodies: u64) -> Backed {
     let file = managed.accepted_file().expect("the accepted backup");
     let size = std::fs::metadata(&file).expect("artifact metadata").len();
     Backed {
-        _vault_dir: vault_dir,
-        _backups: backups,
         managed,
         size,
+        _vault_dir: vault_dir,
+        _backups: backups,
     }
 }
 
@@ -113,7 +115,11 @@ fn timed_before_idle(managed: &ManagedBackups) -> (bool, u64, f64) {
     (reused, thread_rchar().saturating_sub(read_before), ms)
 }
 
-/// Turns the artifact's byte at `at` into its complement, in place.
+/// Turns the artifact's byte at `at` into its complement, in place, and sets
+/// its modification time two seconds past the one it had, so the change shows
+/// in the file's identity on a filesystem whose clock ticks coarser than this
+/// test runs too. A change that keeps the identity is the verdict's named
+/// residual, not what this proves.
 fn flip_byte(path: &Path, at: u64) {
     let mut file = std::fs::OpenOptions::new()
         .read(true)
@@ -126,15 +132,22 @@ fn flip_byte(path: &Path, at: u64) {
     byte[0] = !byte[0];
     file.seek(SeekFrom::Start(at)).expect("seek back");
     file.write_all(&byte).expect("write the byte");
+    let modified = file
+        .metadata()
+        .and_then(|metadata| metadata.modified())
+        .expect("the artifact's modification time");
+    file.set_modified(modified + Duration::from_secs(2))
+        .expect("a later modification time");
     file.sync_all().expect("sync");
 }
 
 #[test]
 fn a_verified_backup_is_reused_before_an_idle_reap_without_a_whole_read() {
-    let Backed { managed, size, .. } = backed_up(BODIES);
+    let backed = backed_up(BODIES);
+    let (managed, size) = (&backed.managed, backed.size);
     assert!(size >= 8 * 1024 * 1024, "a large backup: {size} bytes");
     let verified = managed.verify_noted();
-    let (reused, read, ms) = timed_before_idle(&managed);
+    let (reused, read, ms) = timed_before_idle(managed);
     println!(
         "FIXHELD-PREIDLE verified={verified:?} reused={reused} read_bytes={read} \
          backup_bytes={size} ms={ms:.3}"
@@ -148,12 +161,11 @@ fn a_verified_backup_is_reused_before_an_idle_reap_without_a_whole_read() {
 
 #[test]
 fn a_backup_changed_after_its_verdict_is_never_reused() {
-    let Backed { managed, size, .. } = backed_up(SMALL_BODIES);
+    let backed = backed_up(SMALL_BODIES);
+    let (managed, size) = (&backed.managed, backed.size);
     let verified = managed.verify_noted();
     let file = managed.accepted_file().expect("the accepted backup");
     let before = std::fs::metadata(&file).expect("artifact metadata");
-    // Past a coarse clock's tick since the artifact's last write.
-    std::thread::sleep(Duration::from_millis(50));
     flip_byte(&file, size / 2);
     let after = std::fs::metadata(&file).expect("artifact metadata");
     let moved = {
@@ -170,7 +182,8 @@ fn a_backup_changed_after_its_verdict_is_never_reused() {
             after.ctime_nsec(),
         )
     };
-    let (reused, read, ms) = timed_before_idle(&managed);
+    assert!(moved, "the rewrite moved the artifact's identity");
+    let (reused, read, ms) = timed_before_idle(managed);
     let now_accepted = managed.accepted_file().expect("an accepted backup");
     println!(
         "FIXHELD-CHANGED verified={verified:?} identity_moved={moved} reused={reused} \
@@ -182,8 +195,9 @@ fn a_backup_changed_after_its_verdict_is_never_reused() {
 
 #[test]
 fn an_unverified_backup_is_read_whole_and_reused() {
-    let Backed { managed, size, .. } = backed_up(SMALL_BODIES);
-    let (reused, read, ms) = timed_before_idle(&managed);
+    let backed = backed_up(SMALL_BODIES);
+    let (managed, size) = (&backed.managed, backed.size);
+    let (reused, read, ms) = timed_before_idle(managed);
     println!("FIXHELD-UNVERIFIED reused={reused} read_bytes={read} backup_bytes={size} ms={ms:.3}");
     assert!(reused, "the unchanged backup is reused");
     assert!(

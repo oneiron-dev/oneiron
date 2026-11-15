@@ -38,7 +38,7 @@ mod marker;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oneiron_crypto::backup::CheckpointSigner;
 pub use oneiron_crypto::backup::{inspect_backup, verify_with_pins};
@@ -284,16 +284,17 @@ impl BackupMarker {
     /// [`Self::held`], kept as a verdict that a later check asks in place of
     /// a second whole read (HELD-WHOLE-READ-OFF-PRE-IDLE): `None` when the
     /// file is not held, when its identity moved while it was read, and
-    /// where the platform gives no file identity (only unix does).
+    /// where the platform gives no file identity (only unix does) or no
+    /// boot clock (time since boot, the time suspended included).
     pub fn verify(&self, dir: &Path) -> Option<HeldVerdict> {
-        let started = Instant::now();
+        let started_boot = boot_clock()?;
         let started_ms = wall_clock_ms()?;
         let (before, after) = self.read_whole(dir)?;
         let identity = before?;
         (after == Some(identity)).then(|| HeldVerdict {
             marker: self.clone(),
             identity,
-            started,
+            started_boot,
             started_ms,
         })
     }
@@ -326,13 +327,13 @@ impl BackupMarker {
 /// A whole read's finding that the file a marker names was, as read, the
 /// backup it recorded (HELD-WHOLE-READ-OFF-PRE-IDLE): the marker it was read
 /// for, the file's identity, the same at open and after the read, and when
-/// the read began by the monotonic and the wall clock. Only
-/// [`BackupMarker::verify`] makes one.
+/// the read began by the boot clock, which counts time suspended, and by the
+/// wall clock. Only [`BackupMarker::verify`] makes one.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HeldVerdict {
     marker: BackupMarker,
     identity: FileIdentity,
-    started: Instant,
+    started_boot: Duration,
     started_ms: u64,
 }
 
@@ -360,15 +361,19 @@ impl HeldVerdict {
 
     /// Whether it answers for `marker`'s backup in `dir` with no read of its
     /// bytes: it was made for that same marker, its read began less than
-    /// `within` ago by the monotonic clock and by the wall clock (one that
-    /// went back answers nothing), and the file opens as it did, a regular
-    /// file never reached through a symlink, with the identity the read saw.
-    /// A change that keeps the file's identity is not seen here; it stands
-    /// until the next whole read, at most `within` later.
+    /// `within` ago by the boot clock, so a suspend counts, and by the wall
+    /// clock (a clock behind the read's start answers nothing), and the
+    /// file opens as it did, a regular file never reached through a symlink,
+    /// with the identity the read saw. A change that keeps the file's
+    /// identity is not seen here. Once `within` has passed since the read
+    /// began, by either clock, it answers nothing, and a reuse reads the file
+    /// whole.
     pub fn answers(&self, marker: &BackupMarker, dir: &Path, within: Duration) -> bool {
         let within_ms = u64::try_from(within.as_millis()).unwrap_or(u64::MAX);
         if self.marker != *marker
-            || self.started.elapsed() >= within
+            || boot_clock()
+                .and_then(|now| now.checked_sub(self.started_boot))
+                .is_none_or(|age| age >= within)
             || wall_clock_ms()
                 .and_then(|now| now.checked_sub(self.started_ms))
                 .is_none_or(|age| age >= within_ms)
@@ -431,6 +436,28 @@ fn open_backup(path: &Path) -> Option<(std::fs::File, std::fs::Metadata)> {
 fn wall_clock_ms() -> Option<u64> {
     let since = SystemTime::now().duration_since(UNIX_EPOCH).ok()?;
     Some(u64::try_from(since.as_millis()).unwrap_or(u64::MAX))
+}
+
+/// Time since boot, the time suspended included: `CLOCK_BOOTTIME` on Linux
+/// and Android, and `CLOCK_MONOTONIC` on Apple systems, which counts sleep.
+/// [`std::time::Instant`] leaves a suspend out on both, so a verdict aged by
+/// it alone would outlive its window across a suspend once the wall clock
+/// was set back. `None` on every other platform, where no verdict is made.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn boot_clock() -> Option<Duration> {
+    use rustix::time::{ClockId, clock_gettime};
+    Duration::try_from(clock_gettime(ClockId::Boottime)).ok()
+}
+
+#[cfg(target_vendor = "apple")]
+fn boot_clock() -> Option<Duration> {
+    use rustix::time::{ClockId, clock_gettime};
+    Duration::try_from(clock_gettime(ClockId::Monotonic)).ok()
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "android", target_vendor = "apple")))]
+fn boot_clock() -> Option<Duration> {
+    None
 }
 
 /// [`last_backed_up`] whole: the backup the marker names and when it landed
