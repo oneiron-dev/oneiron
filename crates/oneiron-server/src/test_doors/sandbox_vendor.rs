@@ -1,13 +1,15 @@
 //! Doors for `tests/sandbox_vendor_daytona.rs`,
-//! `tests/sandbox_vendor_e2b.rs` and `tests/sandbox_vendor_modal.rs`
-//! (L8-43): the vendor sandboxes this server serves, with the vendor's API
-//! at the test's own address.
+//! `tests/sandbox_vendor_e2b.rs`, `tests/sandbox_vendor_modal.rs` and
+//! `tests/sandbox_vendor_modal_live.rs` (L8-43): the vendor sandboxes this
+//! server serves, with the vendor's API at the test's own address or at the
+//! vendor's.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use oneiron::Vault;
 use oneiron::code_sandbox::microvm::SandboxBackends;
+use oneiron_agent_runtime::code_sandbox::microvm::VendorSandboxClient;
 
 use crate::sandbox_vendor::{
     DaytonaEndpoints, E2bEndpoints, ModalEndpoints, ServedSandboxBackends,
@@ -66,4 +68,17 @@ pub fn served_modal_backends(
         },
         scratch_root,
     ))
+}
+
+/// Modal's sandbox client of `vault`, on the owner's key named `key_name`,
+/// reaching Modal's control API at `api` (each task's router at the address
+/// that API names).
+pub fn modal_client(vault: &Arc<Vault>, key_name: &str, api: &str) -> Arc<dyn VendorSandboxClient> {
+    ServedSandboxBackends::modal_client(
+        vault,
+        key_name.to_owned(),
+        ModalEndpoints {
+            api: api.to_owned(),
+        },
+    )
 }

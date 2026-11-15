@@ -114,6 +114,22 @@ impl ServedSandboxBackends {
         }
     }
 
+    /// Modal's sandbox client of `vault` on the owner's key named
+    /// `key_name`, reaching Modal's control API at `modal`: the client a
+    /// batch run drives, alone, for `tests/sandbox_vendor_modal_live.rs`.
+    #[cfg(all(target_os = "linux", oneiron_test_support))]
+    pub(crate) fn modal_client(
+        vault: &Arc<Vault>,
+        key_name: String,
+        modal: ModalEndpoints,
+    ) -> Arc<dyn oneiron_agent_runtime::code_sandbox::microvm::VendorSandboxClient> {
+        Arc::new(modal::ModalClient::new(
+            Arc::downgrade(vault),
+            key_name,
+            modal,
+        ))
+    }
+
     /// `vendor`'s batch backend on the owner's key named `key_name`.
     #[cfg(target_os = "linux")]
     fn vendor_backend(
