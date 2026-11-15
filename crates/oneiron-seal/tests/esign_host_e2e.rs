@@ -1088,9 +1088,10 @@ mod hostile {
     }
 
     /// What the evidence tests below share: one PKI under one anchor (a CA,
-    /// a signer and a timestamp authority it issued, the CA's CRL), a
-    /// timestamp authority of the same name no anchor reaches, and two
-    /// forgeries no issuer signed. Synthetic, made fresh by rcgen.
+    /// a signer and a timestamp authority it issued, the CA's CRL and its
+    /// good OCSP statuses for both), a timestamp authority of the same name
+    /// no anchor reaches, and two forgeries no issuer signed. Synthetic,
+    /// made fresh by rcgen.
     struct EvidencePki {
         keys: Keys,
         anchor: Vec<u8>,
@@ -1099,9 +1100,14 @@ mod hostile {
         forged_crl: Vec<u8>,
         /// A good status for the signer from a responder the CA never named.
         forged_ocsp: Vec<u8>,
+        /// The CA's own good status for the signer.
+        signer_ocsp: Vec<u8>,
+        /// The CA's own good status for the timestamp authority.
+        authority_ocsp: Vec<u8>,
     }
 
     fn evidence_pki() -> TestResult<EvidencePki> {
+        use der::Decode;
         use rcgen::{
             BasicConstraints, CertificateParams, CertificateRevocationListParams,
             CrlDistributionPoint, CustomExtension, DnType, IsCa, Issuer, KeyIdMethod, KeyPair,
@@ -1176,8 +1182,16 @@ mod hostile {
             chain: Vec::new(),
             signed: Mutex::new(Vec::new()),
         };
+        let by_key = x509_ocsp::ResponderId::ByKey(der::asn1::OctetString::new([0x5a; 20])?);
+        let by_name = x509_ocsp::ResponderId::ByName(
+            x509_cert::Certificate::from_der(&anchor)?
+                .tbs_certificate
+                .subject,
+        );
         Ok(EvidencePki {
-            forged_ocsp: forged_ocsp(&signer, &anchor, &forger, now)?,
+            forged_ocsp: ocsp_response(&signer, &anchor, &forger, by_key, now)?,
+            signer_ocsp: ocsp_response(&signer, &anchor, &ca_key, by_name.clone(), now)?,
+            authority_ocsp: ocsp_response(&tsa, &anchor, &ca_key, by_name, now)?,
             forged_crl: crl(&forger)?,
             fixture: EvidenceFixture {
                 tsa_key: scalar(&tsa_key)?,
@@ -1195,11 +1209,13 @@ mod hostile {
     }
 
     /// An OCSPResponse saying `subject`, issued by `issuer`, is good, signed
-    /// by `responder`, a key the issuer never delegated.
-    fn forged_ocsp(
+    /// by `responder` (the issuer's own key, or one it never delegated) under
+    /// `responder_id`.
+    fn ocsp_response(
         subject: &[u8],
         issuer: &[u8],
         responder: &rcgen::KeyPair,
+        responder_id: x509_ocsp::ResponderId,
         now: i64,
     ) -> TestResult<Vec<u8>> {
         use der::asn1::{BitString, GeneralizedTime, ObjectIdentifier, OctetString};
@@ -1217,7 +1233,7 @@ mod hostile {
         };
         let data = x509_ocsp::ResponseData {
             version: x509_ocsp::Version::V1,
-            responder_id: x509_ocsp::ResponderId::ByKey(OctetString::new([0x5a; 20])?),
+            responder_id,
             produced_at: at(now - 60)?,
             responses: vec![x509_ocsp::SingleResponse {
                 cert_id: x509_ocsp::CertId {
@@ -1347,11 +1363,15 @@ mod hostile {
     }
 
     /// The same with a good OCSP status for the signer that a responder the
-    /// CA never named signed.
+    /// CA never named signed; the authority's status is the CA's own, so the
+    /// signer's is the one thing missing.
     #[test]
     fn validation_data_with_an_untrusted_ocsp_leaves_the_seal_retryable() -> TestResult {
         let mut pki = evidence_pki()?;
-        pki.fixture.dss_ocsps = vec![ByteBuf::from(pki.forged_ocsp.clone())];
+        pki.fixture.dss_ocsps = vec![
+            ByteBuf::from(pki.forged_ocsp.clone()),
+            ByteBuf::from(pki.authority_ocsp.clone()),
+        ];
         let result = seal_evidence(&pki, "dss-untrusted-ocsp", SealProfile::BaselineLt)?;
         assert!(
             unproven(&result, "validation_data_unproven"),
@@ -1393,6 +1413,24 @@ mod hostile {
         Ok(())
     }
 
+    /// The organ seals for real at B-LT, then appends a revision whose only
+    /// object holds a hole no signature field names, fills it with a genuine
+    /// token from the anchor's own authority over every other byte, and its
+    /// verifier names that hole a passed document timestamp and claims
+    /// B-LTA. A token is a document timestamp only as the value of a
+    /// `/DocTimeStamp` signature field: the host leaves the seal retryable.
+    #[test]
+    fn a_timestamp_no_signature_field_names_leaves_the_seal_retryable() -> TestResult {
+        let pki = evidence_pki()?;
+        let result = seal_evidence(&pki, "doc-timestamp-unfielded", SealProfile::BaselineLta)?;
+        assert!(
+            unproven(&result, "document_timestamp_unproven"),
+            "{:?}",
+            result.as_ref().err()
+        );
+        Ok(())
+    }
+
     /// The organ seals for real at B-T, then swaps the signature timestamp
     /// for a well-formed token over the right imprint from an authority of
     /// the same name that no anchor reaches. The binding compares no
@@ -1420,6 +1458,21 @@ mod hostile {
                 .map_err(|err| format!("{profile:?}: {err:?}"))?;
             assert_eq!(sealed.achieved, profile);
         }
+        Ok(())
+    }
+
+    /// The guard for OCSP: a DSS whose revocation evidence is the CA's own
+    /// OCSP statuses for the signer and the authority is admitted at B-LT.
+    #[test]
+    fn validation_data_with_the_issuer_ocsp_statuses_is_admitted_at_lt() -> TestResult {
+        let mut pki = evidence_pki()?;
+        pki.fixture.dss_ocsps = vec![
+            ByteBuf::from(pki.signer_ocsp.clone()),
+            ByteBuf::from(pki.authority_ocsp.clone()),
+        ];
+        let sealed = seal_evidence(&pki, "dss-appended", SealProfile::BaselineLt)?
+            .map_err(|err| format!("{err:?}"))?;
+        assert_eq!(sealed.achieved, SealProfile::BaselineLt);
         Ok(())
     }
 }

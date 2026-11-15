@@ -40,8 +40,13 @@
 //! - `dss-untrusted-crl`, `dss-untrusted-ocsp`, `dss-no-revocation`: seal at
 //!   B-T, append a DSS revision holding the fixture's material (a CRL or an
 //!   OCSP response no issuer signed, or certificates alone), and claim B-LT;
+//!   `dss-appended` does the same with whatever material the test gives;
 //! - `doc-timestamp-forged`: seals at B-LTA, then puts the signature's own
 //!   CMS, which is no TSTInfo, in the document timestamp's hole; claims B-LTA;
+//! - `doc-timestamp-unfielded`: seals at B-LT, then appends a revision whose
+//!   only object holds a hole no signature field names, fills it with a
+//!   genuine token from the fixture's authority over every other byte, and
+//!   claims B-LTA; its verify names that hole a passed document timestamp;
 //! - `timestamp-forged`: seals at B-T, then replaces the signature
 //!   timestamp token with one an untrusted authority minted over the right
 //!   imprint; claims B-T.
@@ -110,7 +115,9 @@ mod rogue {
         DssUntrustedCrl,
         DssUntrustedOcsp,
         DssNoRevocation,
+        DssAppended,
         DocTimestampForged,
+        DocTimestampUnfielded,
         TimestampForged,
     }
 
@@ -120,11 +127,15 @@ mod rogue {
         fn evidence(self, requested: PadesProfile) -> Option<(PadesProfile, PadesProfile)> {
             match self {
                 Self::DssHonest => Some((requested, requested)),
-                Self::DssUntrustedCrl | Self::DssUntrustedOcsp | Self::DssNoRevocation => {
-                    Some((PadesProfile::BaselineT, PadesProfile::BaselineLt))
-                }
+                Self::DssUntrustedCrl
+                | Self::DssUntrustedOcsp
+                | Self::DssNoRevocation
+                | Self::DssAppended => Some((PadesProfile::BaselineT, PadesProfile::BaselineLt)),
                 Self::DocTimestampForged => {
                     Some((PadesProfile::BaselineLta, PadesProfile::BaselineLta))
+                }
+                Self::DocTimestampUnfielded => {
+                    Some((PadesProfile::BaselineLt, PadesProfile::BaselineLta))
                 }
                 Self::TimestampForged => Some((PadesProfile::BaselineT, PadesProfile::BaselineT)),
                 _ => None,
@@ -159,7 +170,9 @@ mod rogue {
                 "dss-untrusted-crl" => Some(Self::DssUntrustedCrl),
                 "dss-untrusted-ocsp" => Some(Self::DssUntrustedOcsp),
                 "dss-no-revocation" => Some(Self::DssNoRevocation),
+                "dss-appended" => Some(Self::DssAppended),
                 "doc-timestamp-forged" => Some(Self::DocTimestampForged),
+                "doc-timestamp-unfielded" => Some(Self::DocTimestampUnfielded),
                 "timestamp-forged" => Some(Self::TimestampForged),
                 _ => None,
             }
@@ -365,7 +378,7 @@ mod rogue {
                     return SealOrgan.call(call);
                 }
                 if let Some(claim) = self.0.forged_claim() {
-                    return forged_verification(call, pdf, claim);
+                    return forged_verification(call, pdf, claim, self.0);
                 }
                 return answer(
                     &VerifyReport::Verified(passed(PadesProfile::BaselineB, pdf)),
@@ -443,7 +456,9 @@ mod rogue {
                 | Mode::DssUntrustedCrl
                 | Mode::DssUntrustedOcsp
                 | Mode::DssNoRevocation
+                | Mode::DssAppended
                 | Mode::DocTimestampForged
+                | Mode::DocTimestampUnfielded
                 | Mode::TimestampForged => {
                     let fixture = self.2.as_ref().ok_or_else(|| bad("no evidence fixture"))?;
                     let (target, claim) = self
@@ -478,11 +493,23 @@ mod rogue {
                     }
                     let mut bytes = sealed.bytes.to_vec();
                     match self.0 {
-                        Mode::DssUntrustedCrl | Mode::DssUntrustedOcsp | Mode::DssNoRevocation => {
+                        Mode::DssUntrustedCrl
+                        | Mode::DssUntrustedOcsp
+                        | Mode::DssNoRevocation
+                        | Mode::DssAppended => {
                             bytes = append_dss(&bytes, fixture)?;
                         }
                         Mode::DocTimestampForged => {
                             forge_document_timestamp(&mut bytes, pdf.len(), &revisions)?;
+                        }
+                        Mode::DocTimestampUnfielded => {
+                            let key = signing_key(&fixture.tsa_key)?;
+                            bytes = append_unfielded_timestamp(
+                                &bytes,
+                                &key,
+                                &fixture.tsa_certificate,
+                                args.now_ms / 1000,
+                            )?;
                         }
                         Mode::TimestampForged => {
                             let key = signing_key(&fixture.untrusted_tsa_key)?;
@@ -794,6 +821,63 @@ mod rogue {
         Ok(out)
     }
 
+    /// The capacity of the hole `doc-timestamp-unfielded` writes, in bytes.
+    const UNFIELDED_CAPACITY: usize = 8192;
+
+    /// `doc-timestamp-unfielded`: one more revision, whose only new object
+    /// is a dictionary holding a hole no signature field names; a genuine
+    /// token `key` mints at `now` over every byte but that hole fills it.
+    fn append_unfielded_timestamp(
+        bytes: &[u8],
+        key: &p256::ecdsa::SigningKey,
+        certificate: &[u8],
+        now: u64,
+    ) -> Result<Vec<u8>, OrganError> {
+        use lopdf::{Dictionary, Object, StringFormat};
+        let previous = lopdf::Document::load_mem(bytes).map_err(bad)?;
+        let mut update = lopdf::IncrementalDocument::create_from(bytes.to_vec(), previous);
+        let mut holder = Dictionary::new();
+        holder.set(
+            "Unfielded",
+            Object::String(vec![0; UNFIELDED_CAPACITY], StringFormat::Hexadecimal),
+        );
+        update.new_document.add_object(holder);
+        let mut out = Vec::with_capacity(bytes.len() + 2 * UNFIELDED_CAPACITY + 1024);
+        update.save_to(&mut out).map_err(bad)?;
+        let (open, close) =
+            unfielded_hole(&out, bytes.len()).ok_or_else(|| bad("no unfielded hole"))?;
+        let imprint: [u8; 32] = Sha256::new()
+            .chain_update(&out[..open])
+            .chain_update(&out[close..])
+            .finalize()
+            .into();
+        let token = mint_token(key, certificate, &imprint, None, now).map_err(bad)?;
+        let hex: Vec<u8> = token
+            .iter()
+            .flat_map(|byte| format!("{byte:02X}").into_bytes())
+            .collect();
+        if open + 1 + hex.len() >= close {
+            return Err(bad("the token does not fit the unfielded hole"));
+        }
+        out[open + 1..open + 1 + hex.len()].copy_from_slice(&hex);
+        Ok(out)
+    }
+
+    /// The hole `doc-timestamp-unfielded` wrote at or after `from`: the
+    /// offsets of its `<` and one past its `>`.
+    fn unfielded_hole(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
+        let key = b"/Unfielded";
+        let at = from
+            + bytes
+                .get(from..)?
+                .windows(key.len())
+                .position(|window| window == key)?
+            + key.len();
+        let open = at + bytes.get(at..)?.iter().position(|byte| *byte == b'<')?;
+        let close = open + bytes.get(open..)?.iter().position(|byte| *byte == b'>')? + 1;
+        Some((open, close))
+    }
+
     /// `doc-timestamp-forged`: the last revision's hole (the document
     /// timestamp's) holds the signature's own CMS, a SignedData of id-data
     /// that is no TSTInfo, zero padded.
@@ -882,6 +966,7 @@ mod rogue {
         call: &CallContext<'_>,
         pdf: &[u8],
         claim: PadesProfile,
+        mode: Mode,
     ) -> Result<Answer, OrganError> {
         use oneiron_organ_protocol::seal::{
             SealCheckVerdict, SealModificationLevel, SealRevisionKind, SealSignatureKind,
@@ -907,6 +992,30 @@ mod rogue {
         for signature in &mut classification.signatures {
             signature.integrity = SealCheckVerdict::Passed;
             signature.verdict = SealCheckVerdict::Passed;
+        }
+        if mode == Mode::DocTimestampUnfielded {
+            // The unfielded hole, named a document timestamp covering the
+            // whole file, signing the last revision.
+            let (open, close) = unfielded_hole(pdf, 0).ok_or_else(|| bad("no unfielded hole"))?;
+            let len = pdf.len() as u64;
+            let (open, close) = (open as u64, close as u64);
+            let mut named = classification
+                .signatures
+                .first()
+                .cloned()
+                .ok_or_else(|| bad("no signature to name"))?;
+            named.id = "unfielded-document-timestamp".to_owned();
+            named.kind = SealSignatureKind::DocumentTimestamp;
+            named.byte_range.values = [0, open, close, len - close];
+            named.byte_range.well_formed = true;
+            named.byte_range.covers_to = Some(len);
+            named.byte_range.file_len = len;
+            classification.signatures.push(named);
+            let last = classification
+                .revisions
+                .last_mut()
+                .ok_or_else(|| bad("no revision"))?;
+            last.signed_by = Some("unfielded-document-timestamp".to_owned());
         }
         let signed_by = |kind: SealSignatureKind| -> Vec<String> {
             classification
@@ -1185,7 +1294,9 @@ mod rogue {
             | Mode::DssUntrustedCrl
             | Mode::DssUntrustedOcsp
             | Mode::DssNoRevocation
+            | Mode::DssAppended
             | Mode::DocTimestampForged
+            | Mode::DocTimestampUnfielded
             | Mode::TimestampForged => {}
         }
         Ok(())

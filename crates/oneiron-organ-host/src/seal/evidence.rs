@@ -6,22 +6,31 @@
 //! the organ's code (ARCH-0064a §4, the profile table):
 //! - B-T and above: the bound signature carries one signature timestamp, a
 //!   valid RFC 3161 token over SHA-256 of its signature value, from an
-//!   authority that chains to the seal's anchors with a critical, sole
-//!   id-kp-timeStamping EKU. A token present below B-T is checked the same.
+//!   authority whose path to the seal's anchors pkix builds from the
+//!   token's certificates and finds valid at the token's genTime, with a
+//!   critical, sole id-kp-timeStamping EKU. A token present below B-T is
+//!   checked the same.
 //! - B-LT and above: the DSS the archival suffix adds (the catalog's `/DSS`,
-//!   written after the bound revision; read with lopdf, nothing else of the
-//!   PDF) holds every non-anchor certificate of the signer chain and of each
-//!   timestamp's authority chain, and for each certificate on those paths a
-//!   CRL or OCSP response its issuer (or a responder it delegated to)
-//!   signed, fresh at the material's time (an OCSP responder's clock may run
-//!   the organ's 300 s ahead), that does not list it. A CRL or OCSP response
-//!   without nextUpdate proves nothing. Every CRL and OCSP response in it
-//!   must vouch for one of them: a DSS carries only evidence the engine can
-//!   vouch for.
+//!   written after the bound revision; read with lopdf) holds every
+//!   non-anchor certificate of the signer's path (valid at the signature
+//!   timestamp's genTime) and of each authority's path (valid at its
+//!   token's), and for each certificate on those paths a CRL or OCSP
+//!   response its issuer (or a responder it delegated to, whose KeyUsage
+//!   lets it sign) signed, fresh at the material's time, that does not list
+//!   it; an OCSP response may be produced up to the organ's 300 s after
+//!   that time. A CRL or OCSP response without nextUpdate proves nothing.
+//!   Any other certificate it holds (the organ keeps the chain of an
+//!   authority whose archival token it replaced) must be on a path of its
+//!   own through the DSS to an anchor, valid and not revoked at the
+//!   material's time; every CRL and OCSP response must vouch for some
+//!   certificate: a DSS carries only evidence the engine can vouch for.
 //! - B-LTA: a document timestamp after that DSS, covering every byte to the
 //!   end of the file but its own hole, passes the same RFC 3161 checks over
 //!   its two ranges; its time is the material's. Every document timestamp
-//!   the classification names is checked, at any profile.
+//!   the classification names is checked, at any profile, and must be a
+//!   PDF document timestamp: the `/DocTimeStamp` value of a signature field
+//!   of the catalog's `/AcroForm`, whose `/ByteRange` and `/Contents` are
+//!   the ones checked. A token the classification alone names is none.
 //!
 //! The material's time follows the organ's own rule: the archival document
 //! timestamp's genTime when there is one, else now. Anything an honest
@@ -29,6 +38,7 @@
 //! B-LTA) fails the same way. A failed proof leaves the seal retryable
 //! (ARCH-0064a SGN-04), never a nominally complete document.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Instant;
 
@@ -41,6 +51,7 @@ use der::referenced::OwnedToRef;
 use der::{Decode, Encode, Reader, SliceReader};
 use oneiron::blob_artifact::esign::{EsignSealerError, SealProfile};
 use oneiron_organ_protocol::seal::{SealRevisionClassification, SealSignatureKind};
+use pkix_chain::pkix_path_builder::{self, CertPool};
 use pkix_chain::pkix_revocation::{self, RevocationChecker};
 use pkix_chain::{
     CrlChecker, DefaultVerifier, NoAiaFetcher, NoRevocation, OcspChecker, SignatureVerifier,
@@ -48,6 +59,8 @@ use pkix_chain::{
 };
 use sha2::{Digest, Sha256};
 use x509_cert::Certificate;
+use x509_cert::ext::pkix::KeyUsage;
+use x509_cert::serial_number::SerialNumber;
 use x509_cert::spki::AlgorithmIdentifierOwned;
 use x509_ocsp::{BasicOcspResponse, OcspResponse};
 
@@ -65,6 +78,7 @@ const ID_SIGNATURE_TIME_STAMP_TOKEN: ObjectIdentifier =
 const ID_SHA256: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.16.840.1.101.3.4.2.1");
 const ID_RSA_ENCRYPTION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.1");
 const ID_SHA256_WITH_RSA: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.2.840.113549.1.1.11");
+const ID_CE_KEY_USAGE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.15");
 /// deltaCRLIndicator and issuingDistributionPoint (RFC 5280 §5.2.4, §5.2.5):
 /// a CRL with either is not complete evidence for its issuer.
 const ID_DELTA_CRL_INDICATOR: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.27");
@@ -73,7 +87,7 @@ const ID_ISSUING_DISTRIBUTION_POINT: ObjectIdentifier = ObjectIdentifier::new_un
 /// bound (its `TS_GEN_TIME_MAX_SKEW_SECS`).
 const GEN_TIME_SKEW_SECS: u64 = 300;
 /// How far a responder's clock may run ahead of the material's time when it
-/// stamps an OCSP response: the organ's own bound (its
+/// stamps an OCSP response's producedAt: the organ's own bound (its
 /// `OCSP_PRODUCED_AT_MAX_SKEW_SECS`).
 const OCSP_SKEW_SECS: u64 = 300;
 /// The keys a DSS the engine vouches for may hold (ARCH-0064a: `/Certs`,
@@ -107,12 +121,17 @@ pub(super) fn prove_evidence(
     trust: &EvidenceTrust<'_>,
 ) -> Result<(), EsignSealerError> {
     let now = trust.now_ms / 1000;
-    let anchors: Vec<TrustAnchor> = trust
+    let anchor_certificates: Vec<Certificate> = trust
         .anchors
         .iter()
-        .map(|der| Certificate::from_der(der).map(TrustAnchor::from_cert))
+        .map(|der| Certificate::from_der(der))
         .collect::<Result<_, _>>()
         .map_err(|_| unproven(SIGNATURE_TIMESTAMP))?;
+    let anchors: Vec<TrustAnchor> = anchor_certificates
+        .iter()
+        .cloned()
+        .map(TrustAnchor::from_cert)
+        .collect();
     let anchored = |der: &[u8]| trust.anchors.iter().any(|anchor| anchor.as_slice() == der);
     let signature_timestamp = match signature_timestamp(sealed, witness) {
         Bound::Token(token, imprint) => Some(
@@ -134,8 +153,8 @@ pub(super) fn prove_evidence(
     let Some(signature_timestamp) = signature_timestamp.filter(|_| suffix) else {
         return Err(unproven(VALIDATION_DATA));
     };
-    let dss = match read_dss(sealed, witness.byte_end, trust) {
-        Ok(Some(dss)) => dss,
+    let pdf = match read_pdf(sealed, trust) {
+        Ok(Some(pdf)) => pdf,
         Ok(None) => return Err(unproven(VALIDATION_DATA)),
         Err(()) => {
             return Err(EsignSealerError::Retryable {
@@ -145,12 +164,21 @@ pub(super) fn prove_evidence(
             });
         }
     };
+    let dss = pdf
+        .dss(witness.byte_end)
+        .ok_or_else(|| unproven(VALIDATION_DATA))?;
     let mut documents = Vec::new();
     for signature in &classification.signatures {
         if signature.kind == SealSignatureKind::DocumentTimestamp {
             documents.push(
-                document_timestamp(sealed, signature.byte_range.values, &anchors, trust, now)
-                    .ok_or_else(|| unproven(DOCUMENT_TIMESTAMP))?,
+                document_timestamp(
+                    &pdf,
+                    signature.byte_range.values,
+                    &anchors,
+                    &trust.policies,
+                    now,
+                )
+                .ok_or_else(|| unproven(DOCUMENT_TIMESTAMP))?,
             );
         }
     }
@@ -169,41 +197,71 @@ pub(super) fn prove_evidence(
         }
         None => now,
     };
-    let mut chains = vec![witness.signer_chain.clone()];
-    for proof in std::iter::once(&signature_timestamp).chain(documents.iter().map(|d| &d.proof)) {
-        chains.push(proof.chain.clone());
-    }
-    let revocation = DssRevocation::new(&dss, trust.anchors, at);
-    let policy = ValidationPolicy::new(at);
-    for chain in &chains {
-        let unanchored: Vec<&Vec<u8>> = chain
-            .iter()
-            .filter(|der| !anchored(der.as_slice()))
-            .collect();
-        if unanchored.is_empty() {
-            continue;
-        }
-        if !unanchored.iter().all(|der| dss.certs.contains(*der)) {
-            return Err(unproven(VALIDATION_DATA));
-        }
-        let path: Vec<Certificate> = unanchored
+    // The signer's path, valid when its signature timestamp says it signed,
+    // and each authority's, valid at its token's genTime (the organ's rule);
+    // their revocation, fresh at the material's time.
+    let mut paths = Vec::new();
+    if !witness
+        .signer_chain
+        .first()
+        .is_some_and(|leaf| anchored(leaf))
+    {
+        let signer: Vec<Certificate> = witness
+            .signer_chain
             .iter()
             .map(|der| Certificate::from_der(der))
             .collect::<Result<_, _>>()
             .map_err(|_| unproven(VALIDATION_DATA))?;
-        pkix_chain::verify_chain(
-            &path,
-            &anchors,
-            &policy,
-            &DefaultVerifier,
-            &revocation,
-            &NoAiaFetcher,
-        )
-        .map_err(|_| unproven(VALIDATION_DATA))?;
+        let path = signer
+            .first()
+            .and_then(|leaf| built_path(leaf, &signer, &anchors, signature_timestamp.gen_time))
+            .ok_or_else(|| unproven(VALIDATION_DATA))?;
+        paths.push((path, signature_timestamp.gen_time));
     }
-    let vouched =
-        |der: &Vec<u8>| anchored(der.as_slice()) || chains.iter().any(|chain| chain.contains(der));
-    if !revocation.all_used() || !dss.certs.iter().all(vouched) {
+    for proof in std::iter::once(&signature_timestamp).chain(documents.iter().map(|d| &d.proof)) {
+        paths.push((proof.path.clone(), proof.gen_time));
+    }
+    let revocation = DssRevocation::new(&dss, &anchor_certificates, at);
+    let mut vouched: Vec<Vec<u8>> = Vec::new();
+    for (path, valid_at) in paths {
+        let mut proven = Vec::with_capacity(path.len());
+        for certificate in path {
+            let der = certificate
+                .to_der()
+                .map_err(|_| unproven(VALIDATION_DATA))?;
+            if anchored(&der) {
+                continue;
+            }
+            if !dss.certs.contains(&der) {
+                return Err(unproven(VALIDATION_DATA));
+            }
+            vouched.push(der);
+            proven.push(certificate);
+        }
+        if !proven.is_empty() && !proves_path(&proven, &anchors, valid_at, &revocation) {
+            return Err(unproven(VALIDATION_DATA));
+        }
+    }
+    // Material beyond those paths: each certificate on a path of its own
+    // through the DSS to an anchor, valid and not revoked at the material's
+    // time. Only what pkix validated is vouched for.
+    let pool: Vec<Certificate> = dss
+        .certs
+        .iter()
+        .map(|der| Certificate::from_der(der))
+        .collect::<Result<_, _>>()
+        .map_err(|_| unproven(VALIDATION_DATA))?;
+    for (der, certificate) in dss.certs.iter().zip(&pool) {
+        if anchored(der) || vouched.contains(der) {
+            continue;
+        }
+        let proven = built_path(certificate, &pool, &anchors, at)
+            .is_some_and(|path| proves_path(&path, &anchors, at, &revocation));
+        if !proven {
+            return Err(unproven(VALIDATION_DATA));
+        }
+    }
+    if !revocation.all_used() {
         return Err(unproven(VALIDATION_DATA));
     }
     Ok(())
@@ -222,6 +280,48 @@ fn unproven(code: &str) -> EsignSealerError {
     }
 }
 
+/// The path pkix builds from `leaf` through `pool` to an anchor and finds
+/// valid at `valid_at`: leaf first, the anchor left out. Only the
+/// certificates on it are vouched for, never the rest of what a token or
+/// a chain carried.
+fn built_path<'a>(
+    leaf: &Certificate,
+    pool: impl IntoIterator<Item = &'a Certificate>,
+    anchors: &[TrustAnchor],
+    valid_at: u64,
+) -> Option<Vec<Certificate>> {
+    let pool: CertPool = pool.into_iter().cloned().collect();
+    let path = pkix_path_builder::build_first_valid_path(
+        leaf,
+        &pool,
+        anchors,
+        &ValidationPolicy::new(valid_at),
+        &DefaultVerifier,
+    )
+    .ok()?;
+    let from_leaf = path.first() == Some(leaf);
+    from_leaf.then_some(path)
+}
+
+/// Whether `path` (leaf first, no anchor) is valid to an anchor at
+/// `valid_at`, every certificate on it, each covered by `revocation`.
+fn proves_path(
+    path: &[Certificate],
+    anchors: &[TrustAnchor],
+    valid_at: u64,
+    revocation: &DssRevocation,
+) -> bool {
+    pkix_chain::verify_chain(
+        path,
+        anchors,
+        &ValidationPolicy::new(valid_at),
+        &DefaultVerifier,
+        revocation,
+        &NoAiaFetcher,
+    )
+    .is_ok_and(|validated| validated.depth + 1 == path.len())
+}
+
 /// The bound signature's timestamp, as its CMS carries it.
 enum Bound {
     None,
@@ -237,7 +337,8 @@ fn signature_timestamp(sealed: &[u8], witness: &AdmittedRevision) -> Bound {
     let Some(der) = usize::try_from(open)
         .ok()
         .zip(usize::try_from(close).ok())
-        .and_then(|(open, close)| hole_der(sealed, open, close))
+        .and_then(|(open, close)| hole_bytes(sealed, open, close))
+        .and_then(|bytes| content_info_der(&bytes).map(<[u8]>::to_vec))
     else {
         return Bound::Malformed;
     };
@@ -269,9 +370,9 @@ fn signature_timestamp(sealed: &[u8], witness: &AdmittedRevision) -> Bound {
     }
 }
 
-/// The DER in the hole `[open, close)` of `sealed`: `<`, the hex of one
-/// canonical CMS ContentInfo, zero padding, `>`. The ContentInfo's bytes.
-fn hole_der(sealed: &[u8], open: usize, close: usize) -> Option<Vec<u8>> {
+/// What the hole `[open, close)` of `sealed` holds: `<`, hex digits, `>`;
+/// the bytes the digits spell.
+fn hole_bytes(sealed: &[u8], open: usize, close: usize) -> Option<Vec<u8>> {
     let hole = sealed.get(open..close)?;
     let (&b'<', rest) = hole.split_first()? else {
         return None;
@@ -279,19 +380,24 @@ fn hole_der(sealed: &[u8], open: usize, close: usize) -> Option<Vec<u8>> {
     let (&b'>', hex) = rest.split_last()? else {
         return None;
     };
-    let der = unhex(hex)?;
-    let mut reader = SliceReader::new(&der).ok()?;
-    let info = ContentInfo::decode(&mut reader).ok()?;
-    let used = usize::try_from(reader.position()).ok()?;
-    let canonical = info.to_der().ok()? == der[..used];
-    (canonical && der[used..].iter().all(|byte| *byte == 0)).then(|| der[..used].to_vec())
+    unhex(hex)
 }
 
-/// A token the host proved: its genTime, and its authority's chain as the
-/// token carries it, the authority first, DER.
+/// The one canonical CMS ContentInfo at the start of `bytes`, which only
+/// zero padding may follow: its DER.
+fn content_info_der(bytes: &[u8]) -> Option<&[u8]> {
+    let mut reader = SliceReader::new(bytes).ok()?;
+    let info = ContentInfo::decode(&mut reader).ok()?;
+    let used = usize::try_from(reader.position()).ok()?;
+    let (der, padding) = (bytes.get(..used)?, bytes.get(used..)?);
+    (info.to_der().ok()? == der && padding.iter().all(|byte| *byte == 0)).then_some(der)
+}
+
+/// A token the host proved: its genTime, and its authority's path as pkix
+/// built and validated it, the authority first.
 struct TimestampProof {
     gen_time: u64,
-    chain: Vec<Vec<u8>>,
+    path: Vec<Certificate>,
 }
 
 /// RFC 3161 and ARCH-0064a §4 (line 104): one SignedData of a TSTInfo v1
@@ -299,9 +405,10 @@ struct TimestampProof {
 /// algorithm; one SignerInfo whose signed attributes hold the content type
 /// id-ct-TSTInfo and the TSTInfo's messageDigest once each and a
 /// signingCertificateV2 naming a certificate the token carries, whose key
-/// signed them; a genTime no later than the skew allows; that certificate's
-/// chain to an anchor at the genTime, with the critical, sole timestamping
-/// EKU. Its imprint is never enough on its own.
+/// signed them; a genTime no later than the skew allows; a path from that
+/// certificate through the token's certificates to an anchor, valid at the
+/// genTime, with the critical, sole timestamping EKU. Its imprint is never
+/// enough on its own.
 fn prove_token(
     token: &[u8],
     imprint: &[u8; 32],
@@ -355,17 +462,9 @@ fn prove_token(
     if gen_time > now.saturating_add(GEN_TIME_SKEW_SECS) {
         return None;
     }
-    let chain: Vec<Certificate> = std::iter::once(authority)
-        .chain(
-            certificates
-                .iter()
-                .copied()
-                .filter(|cert| *cert != authority),
-        )
-        .cloned()
-        .collect();
+    let path = built_path(authority, certificates.iter().copied(), anchors, gen_time)?;
     pkix_chain::verify_time_stamper(
-        &chain,
+        &path,
         anchors,
         &TimestampProfile,
         gen_time,
@@ -374,14 +473,7 @@ fn prove_token(
         &NoAiaFetcher,
     )
     .ok()?;
-    Some(TimestampProof {
-        gen_time,
-        chain: chain
-            .iter()
-            .map(Encode::to_der)
-            .collect::<Result<_, _>>()
-            .ok()?,
-    })
+    Some(TimestampProof { gen_time, path })
 }
 
 /// The certificate whose key signed `signer`'s attributes, which must be
@@ -517,22 +609,28 @@ struct DocumentTimestamp {
     proof: TimestampProof,
 }
 
-/// A document timestamp at ByteRange `[0, a, b, c]`: its hole `[a, b)`
-/// holds one token, proven over SHA-256 of `[0, a)` and `[b, b + c)`.
+/// A document timestamp at ByteRange `[0, a, b, c]`: a `/DocTimeStamp` the
+/// PDF names with that ByteRange, whose hole `[a, b)` holds one token,
+/// proven over SHA-256 of `[0, a)` and `[b, b + c)`.
 fn document_timestamp(
-    sealed: &[u8],
+    pdf: &Pdf<'_>,
     values: [u64; 4],
     anchors: &[TrustAnchor],
-    trust: &EvidenceTrust<'_>,
+    policies: &[ObjectIdentifier],
     now: u64,
 ) -> Option<DocumentTimestamp> {
+    let sealed = pdf.sealed;
     let [start, open, close, rest] = values.map(|value| usize::try_from(value).ok());
     let (open, close, rest) = (open?, close?, rest?);
     let end = close.checked_add(rest)?;
     if start != Some(0) || open >= close || end > sealed.len() {
         return None;
     }
-    let token = hole_der(sealed, open, close)?;
+    let contents = hole_bytes(sealed, open, close)?;
+    if !pdf.names_document_timestamp(values, open, &contents) {
+        return None;
+    }
+    let token = content_info_der(&contents)?;
     let imprint: [u8; 32] = Sha256::new()
         .chain_update(&sealed[..open])
         .chain_update(&sealed[close..end])
@@ -541,7 +639,7 @@ fn document_timestamp(
     Some(DocumentTimestamp {
         start: open,
         covers_to: end,
-        proof: prove_token(&token, &imprint, anchors, &trust.policies, now)?,
+        proof: prove_token(token, &imprint, anchors, policies, now)?,
     })
 }
 
@@ -554,12 +652,18 @@ struct Dss {
     end: usize,
 }
 
-/// The catalog's `/DSS`, read with lopdf from the whole file: an indirect
-/// dictionary of only [`DSS_KEYS`] at an offset past `byte_end`, whose
-/// arrays name unfiltered streams written after `byte_end` and before it.
-/// `Ok(None)` when it is missing or not that; `Err` when its decodes found
-/// no memory before the deadline.
-fn read_dss(sealed: &[u8], byte_end: u64, trust: &EvidenceTrust<'_>) -> Result<Option<Dss>, ()> {
+/// The sealed PDF as lopdf read it from the whole file.
+struct Pdf<'a> {
+    document: lopdf::Document,
+    sealed: &'a [u8],
+    /// Where `%PDF-` starts: lopdf reads offsets from there on (its own rule).
+    header: usize,
+}
+
+/// Reads `sealed` with lopdf, its stream decodes leasing from the machine
+/// floor. `Ok(None)` when lopdf cannot read it; `Err` when its decodes
+/// found no memory before the deadline.
+fn read_pdf<'a>(sealed: &'a [u8], trust: &EvidenceTrust<'_>) -> Result<Option<Pdf<'a>>, ()> {
     let admission = trust.floor.as_ref().map(|floor| {
         Arc::new(FloorAdmission {
             floor: Arc::clone(floor),
@@ -576,78 +680,196 @@ fn read_dss(sealed: &[u8], byte_end: u64, trust: &EvidenceTrust<'_>) -> Result<O
         Err(lopdf::Error::DecodeAdmission(_)) => return Err(()),
         Err(_) => return Ok(None),
     };
-    Ok(dss_of(&document, sealed, byte_end))
-}
-
-fn dss_of(document: &lopdf::Document, sealed: &[u8], byte_end: u64) -> Option<Dss> {
-    use lopdf::xref::XrefEntry;
-    // lopdf reads offsets from the header on (its own rule).
     let header = sealed
         .windows(b"%PDF-".len())
         .position(|window| window == b"%PDF-")
         .unwrap_or(0);
-    let byte_end = usize::try_from(byte_end).ok()?;
-    let offset = |id: lopdf::ObjectId| match document.reference_table.get(id.0)? {
-        XrefEntry::Normal { offset, generation } if *generation == id.1 => {
-            header.checked_add(usize::try_from(*offset).ok()?)
+    Ok(Some(Pdf {
+        document,
+        sealed,
+        header,
+    }))
+}
+
+impl Pdf<'_> {
+    /// Where object `id` starts in the file, when the cross-reference
+    /// names it as a plain object of that generation.
+    fn offset(&self, id: lopdf::ObjectId) -> Option<usize> {
+        match self.document.reference_table.get(id.0)? {
+            lopdf::xref::XrefEntry::Normal { offset, generation } if *generation == id.1 => {
+                self.header.checked_add(usize::try_from(*offset).ok()?)
+            }
+            _ => None,
         }
-        _ => None,
-    };
-    let root = document.trailer.get(b"Root").ok()?.as_reference().ok()?;
-    let catalog = document.get_object(root).ok()?.as_dict().ok()?;
-    let dss_id = catalog.get(b"DSS").ok()?.as_reference().ok()?;
-    let dss_at = offset(dss_id).filter(|at| *at >= byte_end)?;
-    let dss = document.get_object(dss_id).ok()?.as_dict().ok()?;
-    if !dss
-        .iter()
-        .all(|(key, _)| DSS_KEYS.contains(&key.as_slice()))
-        || dss
-            .get(b"Type")
-            .is_ok_and(|kind| kind.as_name().ok() != Some(b"DSS".as_slice()))
-    {
-        return None;
     }
-    let streams = |key: &[u8]| -> Option<Vec<Vec<u8>>> {
-        let Ok(items) = dss.get(key) else {
-            return Some(Vec::new());
-        };
-        items
-            .as_array()
-            .ok()?
+
+    /// The catalog's `/DSS`: an indirect dictionary of only [`DSS_KEYS`] at
+    /// an offset past `byte_end`, whose arrays name unfiltered streams
+    /// written after `byte_end` and before it. `None` when it is missing or
+    /// not that.
+    fn dss(&self, byte_end: u64) -> Option<Dss> {
+        let document = &self.document;
+        let byte_end = usize::try_from(byte_end).ok()?;
+        let root = document.trailer.get(b"Root").ok()?.as_reference().ok()?;
+        let catalog = document.get_object(root).ok()?.as_dict().ok()?;
+        let dss_id = catalog.get(b"DSS").ok()?.as_reference().ok()?;
+        let dss_at = self.offset(dss_id).filter(|at| *at >= byte_end)?;
+        let dss = document.get_object(dss_id).ok()?.as_dict().ok()?;
+        if !dss
             .iter()
-            .map(|item| {
-                let id = item.as_reference().ok()?;
-                offset(id).filter(|at| (byte_end..dss_at).contains(at))?;
-                let stream = document.get_object(id).ok()?.as_stream().ok()?;
-                (!stream.dict.has(b"Filter")).then(|| stream.content.clone())
-            })
-            .collect()
-    };
-    let end = sealed
-        .get(dss_at..)?
-        .windows(b"%%EOF".len())
-        .position(|window| window == b"%%EOF")?;
-    Some(Dss {
-        certs: streams(b"Certs")?,
-        crls: streams(b"CRLs")?,
-        ocsps: streams(b"OCSPs")?,
-        end: dss_at + end + b"%%EOF".len(),
-    })
+            .all(|(key, _)| DSS_KEYS.contains(&key.as_slice()))
+            || dss
+                .get(b"Type")
+                .is_ok_and(|kind| kind.as_name().ok() != Some(b"DSS".as_slice()))
+        {
+            return None;
+        }
+        let streams = |key: &[u8]| -> Option<Vec<Vec<u8>>> {
+            let Ok(items) = dss.get(key) else {
+                return Some(Vec::new());
+            };
+            items
+                .as_array()
+                .ok()?
+                .iter()
+                .map(|item| {
+                    let id = item.as_reference().ok()?;
+                    self.offset(id)
+                        .filter(|at| (byte_end..dss_at).contains(at))?;
+                    let stream = document.get_object(id).ok()?.as_stream().ok()?;
+                    (!stream.dict.has(b"Filter")).then(|| stream.content.clone())
+                })
+                .collect()
+        };
+        let end = self
+            .sealed
+            .get(dss_at..)?
+            .windows(b"%%EOF".len())
+            .position(|window| window == b"%%EOF")?;
+        Some(Dss {
+            certs: streams(b"Certs")?,
+            crls: streams(b"CRLs")?,
+            ocsps: streams(b"OCSPs")?,
+            end: dss_at + end + b"%%EOF".len(),
+        })
+    }
+
+    /// Whether a signature field of the catalog's `/AcroForm` (its `/FT`
+    /// `/Sig`, its own or inherited) has for its `/V` a `/DocTimeStamp`
+    /// dictionary of `/SubFilter /ETSI.RFC3161`, written before the hole at
+    /// `open`, with ByteRange `values` and `/Contents` `contents` (ISO
+    /// 32000-2 §12.8, ETSI EN 319 142-1 §5.4). A token cannot cover its own
+    /// bytes, so those `/Contents` are the hole's.
+    fn names_document_timestamp(&self, values: [u64; 4], open: usize, contents: &[u8]) -> bool {
+        let document = &self.document;
+        let fields = document
+            .trailer
+            .get(b"Root")
+            .and_then(|root| document.dereference(root))
+            .and_then(|(_, catalog)| catalog.as_dict())
+            .and_then(|catalog| catalog.get(b"AcroForm"))
+            .and_then(|form| document.dereference(form))
+            .and_then(|(_, form)| form.as_dict())
+            .and_then(|form| form.get(b"Fields"))
+            .and_then(|fields| document.dereference(fields))
+            .and_then(|(_, fields)| fields.as_array());
+        let Ok(fields) = fields else {
+            return false;
+        };
+        // Each field, with whether its parent's field type is /Sig.
+        let mut pending: Vec<(&lopdf::Object, bool)> =
+            fields.iter().map(|field| (field, false)).collect();
+        let mut seen = HashSet::new();
+        while let Some((node, inherited)) = pending.pop() {
+            let Ok((id, node)) = document.dereference(node) else {
+                continue;
+            };
+            if id.is_some_and(|id| !seen.insert(id)) {
+                continue;
+            }
+            let Ok(field) = node.as_dict() else {
+                continue;
+            };
+            let signature = match field.get(b"FT").and_then(lopdf::Object::as_name) {
+                Ok(kind) => kind == b"Sig".as_slice(),
+                Err(_) => inherited,
+            };
+            if signature
+                && field
+                    .get(b"V")
+                    .and_then(lopdf::Object::as_reference)
+                    .is_ok_and(|value| self.is_document_timestamp(value, values, open, contents))
+            {
+                return true;
+            }
+            if let Ok(kids) = field
+                .get(b"Kids")
+                .and_then(|kids| document.dereference(kids))
+                .and_then(|(_, kids)| kids.as_array())
+            {
+                pending.extend(kids.iter().map(|kid| (kid, signature)));
+            }
+        }
+        false
+    }
+
+    fn is_document_timestamp(
+        &self,
+        id: lopdf::ObjectId,
+        values: [u64; 4],
+        open: usize,
+        contents: &[u8],
+    ) -> bool {
+        let Some(dictionary) = self
+            .offset(id)
+            .filter(|at| *at < open)
+            .and_then(|_| self.document.get_object(id).ok())
+            .and_then(|object| object.as_dict().ok())
+        else {
+            return false;
+        };
+        let named = |key: &[u8], name: &[u8]| {
+            dictionary
+                .get(key)
+                .and_then(lopdf::Object::as_name)
+                .is_ok_and(|found| found == name)
+        };
+        named(b"Type", b"DocTimeStamp")
+            && named(b"SubFilter", b"ETSI.RFC3161")
+            && dictionary
+                .get(b"ByteRange")
+                .and_then(lopdf::Object::as_array)
+                .is_ok_and(|range| {
+                    range.len() == values.len()
+                        && range.iter().zip(values).all(|(item, value)| {
+                            item.as_i64().ok().and_then(|item| u64::try_from(item).ok())
+                                == Some(value)
+                        })
+                })
+            && dictionary
+                .get(b"Contents")
+                .and_then(lopdf::Object::as_str)
+                .is_ok_and(|found| found == contents)
+    }
 }
 
 /// Revocation answered only from the DSS, at the material's time: a
-/// certificate is covered when one CRL or OCSP response its issuer (or the
-/// anchor, or a responder the issuer delegated to) signed, fresh then, says
-/// it is not revoked; a revocation from such an item fails it. It records
-/// which items vouched for anything.
+/// certificate is covered when one CRL or OCSP response its issuer (or a
+/// responder the issuer delegated to) signed, fresh then, says it is not
+/// revoked; a revocation from such an item fails it. It records which items
+/// vouched for anything.
 struct DssRevocation {
+    /// The anchors as certificates: evidence for a certificate an anchor
+    /// issued is checked against the anchor's certificate, its KeyUsage
+    /// included (a CRL's signer must hold cRLSign, RFC 5280 §6.3.3).
+    anchors: Vec<Certificate>,
     crls: Vec<Option<CrlChecker<DefaultVerifier>>>,
-    ocsps: Vec<Option<SkewedOcsp>>,
+    ocsps: Vec<Option<MaterialOcsp>>,
     used: Mutex<Vec<bool>>,
 }
 
 impl DssRevocation {
-    fn new(dss: &Dss, anchors: &[Vec<u8>], at: u64) -> Self {
+    fn new(dss: &Dss, anchors: &[Certificate], at: u64) -> Self {
         let crls = dss
             .crls
             .iter()
@@ -673,26 +895,16 @@ impl DssRevocation {
         let responders: Vec<Certificate> = dss
             .certs
             .iter()
-            .chain(anchors)
             .filter_map(|der| Certificate::from_der(der).ok())
+            .chain(anchors.iter().cloned())
             .collect();
         let ocsps = dss
             .ocsps
             .iter()
-            .map(|der| {
-                let der = with_responders(der, &responders)?;
-                Some(SkewedOcsp {
-                    exact: OcspChecker::new(&der, at, DefaultVerifier).ok()?,
-                    ahead: OcspChecker::new(
-                        der,
-                        at.saturating_add(OCSP_SKEW_SECS),
-                        DefaultVerifier,
-                    )
-                    .ok()?,
-                })
-            })
+            .map(|der| MaterialOcsp::new(der, &responders, at))
             .collect();
         Self {
+            anchors: anchors.to_vec(),
             used: Mutex::new(vec![false; dss.crls.len() + dss.ocsps.len()]),
             crls,
             ocsps,
@@ -703,34 +915,30 @@ impl DssRevocation {
         lock(&self.used).iter().all(|used| *used)
     }
 
-    /// Asks every item; `check` is one item's answer for the certificate.
-    fn answer(
-        &self,
-        check: impl Fn(&dyn RevocationChecker) -> pkix_revocation::Result<()>,
-    ) -> pkix_revocation::Result<()> {
-        let items = self
+    /// Asks every item about `cert`, which `issuer` issued.
+    fn answer(&self, cert: &Certificate, issuer: &Certificate) -> pkix_revocation::Result<()> {
+        let answers = self
             .crls
             .iter()
-            .map(|item| item.as_ref().map(|item| item as &dyn RevocationChecker))
+            .map(|crl| crl.as_ref().map(|crl| crl.check_revocation(cert, issuer)))
             .chain(
                 self.ocsps
                     .iter()
-                    .map(|item| item.as_ref().map(|item| item as &dyn RevocationChecker)),
+                    .map(|ocsp| ocsp.as_ref().map(|ocsp| ocsp.check(cert, issuer))),
             );
         let mut covered = false;
-        for (index, item) in items.enumerate() {
-            let Some(item) = item else {
-                continue;
-            };
-            match check(item) {
-                Ok(()) => {
+        for (index, answer) in answers.enumerate() {
+            match answer {
+                Some(Ok(())) => {
                     covered = true;
                     if let Some(used) = lock(&self.used).get_mut(index) {
                         *used = true;
                     }
                 }
-                Err(revoked @ pkix_revocation::Error::Revoked { .. }) => return Err(revoked),
-                Err(_) => {}
+                Some(Err(revoked @ pkix_revocation::Error::Revoked { .. })) => {
+                    return Err(revoked);
+                }
+                Some(Err(_)) | None => {}
             }
         }
         if covered {
@@ -747,7 +955,7 @@ impl RevocationChecker for DssRevocation {
         cert: &Certificate,
         issuer: &Certificate,
     ) -> pkix_revocation::Result<()> {
-        self.answer(|item| item.check_revocation(cert, issuer))
+        self.answer(cert, issuer)
     }
 
     fn check_revocation_against_anchor(
@@ -755,70 +963,110 @@ impl RevocationChecker for DssRevocation {
         cert: &Certificate,
         anchor: &TrustAnchor,
     ) -> pkix_revocation::Result<()> {
-        self.answer(|item| item.check_revocation_against_anchor(cert, anchor))
+        let Some(issuer) = self.anchors.iter().find(|candidate| {
+            candidate.tbs_certificate.subject == anchor.subject
+                && candidate.tbs_certificate.subject_public_key_info
+                    == anchor.subject_public_key_info
+        }) else {
+            return Err(pkix_revocation::Error::OcspStatusUnknown);
+        };
+        self.answer(cert, issuer)
     }
 }
 
-/// The OCSP response with `responders` (the DSS certificates, then the
-/// anchors) appended to its own `certs`, which its signature does not cover.
-/// pkix's resolver looks for a delegated responder only there, the organ
-/// also in the DSS and the anchors (its `OcspContext`); in this order the
-/// host finds the one the organ found, and still requires it to carry
+/// One DSS OCSP response as the organ weighs it: produced at most
+/// [`OCSP_SKEW_SECS`] after the material's time (a responder's clock may
+/// run that far ahead), with a status for the certificate fresh at the
+/// material's time itself. pkix checks the rest (signature, responder,
+/// CertID, status, and a nextUpdate no earlier than producedAt) at the
+/// later of that time and producedAt.
+///
+/// Its own `certs` (which its signature does not cover) are the
+/// response's, then the DSS certificates, then the anchors: pkix looks for
+/// a delegated responder only there, the organ also in the DSS and the
+/// anchors (its `OcspContext`), so in this order the host finds the one
+/// the organ found. Any whose KeyUsage forbids signing is left out (the
+/// organ's rule); pkix still requires the one it picks to carry
 /// id-kp-OCSPSigning and to be signed by the certificate's issuer.
-fn with_responders(der: &[u8], responders: &[Certificate]) -> Option<Vec<u8>> {
-    let mut response = OcspResponse::from_der(der).ok()?;
-    let Some(bytes) = response.response_bytes.as_mut() else {
-        // Not a successful response: the checker refuses it as it is.
-        return Some(der.to_vec());
-    };
-    let mut basic = BasicOcspResponse::from_der(bytes.response.as_bytes()).ok()?;
-    basic
-        .certs
-        .get_or_insert_with(Vec::new)
-        .extend(responders.iter().cloned());
-    bytes.response = OctetString::new(basic.to_der().ok()?).ok()?;
-    response.to_der().ok()
+struct MaterialOcsp {
+    checker: OcspChecker<DefaultVerifier>,
+    /// Each status's serial, thisUpdate and nextUpdate, in order.
+    windows: Vec<(SerialNumber, u64, Option<u64>)>,
+    at: u64,
 }
 
-/// One DSS OCSP response, checked at the material's time and, when that
-/// finds it future-dated or not yet valid, again with the responder's clock
-/// up to [`OCSP_SKEW_SECS`] ahead: the organ admits a producedAt that far
-/// past its time, and a status a responder stamped a little later still
-/// says the certificate was not revoked then. A stale response stays stale.
-struct SkewedOcsp {
-    exact: OcspChecker<DefaultVerifier>,
-    ahead: OcspChecker<DefaultVerifier>,
-}
-
-impl SkewedOcsp {
-    fn either(
-        &self,
-        check: impl Fn(&OcspChecker<DefaultVerifier>) -> pkix_revocation::Result<()>,
-    ) -> pkix_revocation::Result<()> {
-        match check(&self.exact) {
-            Err(pkix_revocation::Error::OcspMalformed | pkix_revocation::Error::OcspExpired) => {
-                check(&self.ahead)
-            }
-            answer => answer,
+impl MaterialOcsp {
+    /// `None` for an unsuccessful response, one the host cannot read, or
+    /// one produced too late: it vouches for nothing.
+    fn new(der: &[u8], responders: &[Certificate], at: u64) -> Option<Self> {
+        let mut response = OcspResponse::from_der(der).ok()?;
+        let bytes = response.response_bytes.as_mut()?;
+        let mut basic = BasicOcspResponse::from_der(bytes.response.as_bytes()).ok()?;
+        let data = &basic.tbs_response_data;
+        let produced = data.produced_at.0.to_unix_duration().as_secs();
+        if produced > at.saturating_add(OCSP_SKEW_SECS) {
+            return None;
         }
+        let windows = data
+            .responses
+            .iter()
+            .map(|single| {
+                (
+                    single.cert_id.serial_number.clone(),
+                    single.this_update.0.to_unix_duration().as_secs(),
+                    single
+                        .next_update
+                        .as_ref()
+                        .map(|next| next.0.to_unix_duration().as_secs()),
+                )
+            })
+            .collect();
+        let own = basic.certs.take().unwrap_or_default();
+        basic.certs = Some(
+            own.into_iter()
+                .chain(responders.iter().cloned())
+                .filter(may_sign)
+                .collect(),
+        );
+        bytes.response = OctetString::new(basic.to_der().ok()?).ok()?;
+        Some(Self {
+            checker: OcspChecker::new(response.to_der().ok()?, at.max(produced), DefaultVerifier)
+                .ok()?,
+            windows,
+            at,
+        })
+    }
+
+    fn check(&self, cert: &Certificate, issuer: &Certificate) -> pkix_revocation::Result<()> {
+        // The status pkix weighs: the first for the certificate's serial.
+        let fresh = self
+            .windows
+            .iter()
+            .find(|(serial, ..)| *serial == cert.tbs_certificate.serial_number)
+            .is_some_and(|(_, this_update, next_update)| {
+                *this_update <= self.at && next_update.is_some_and(|next| self.at <= next)
+            });
+        if !fresh {
+            return Err(pkix_revocation::Error::OcspExpired);
+        }
+        self.checker.check_revocation(cert, issuer)
     }
 }
 
-impl RevocationChecker for SkewedOcsp {
-    fn check_revocation(
-        &self,
-        cert: &Certificate,
-        issuer: &Certificate,
-    ) -> pkix_revocation::Result<()> {
-        self.either(|ocsp| ocsp.check_revocation(cert, issuer))
-    }
-
-    fn check_revocation_against_anchor(
-        &self,
-        cert: &Certificate,
-        anchor: &TrustAnchor,
-    ) -> pkix_revocation::Result<()> {
-        self.either(|ocsp| ocsp.check_revocation_against_anchor(cert, anchor))
+/// Whether `cert`'s KeyUsage lets its key sign: absent, or present once,
+/// readable, with digitalSignature (RFC 5280 §4.2.1.3).
+fn may_sign(cert: &Certificate) -> bool {
+    let mut usages = cert
+        .tbs_certificate
+        .extensions
+        .iter()
+        .flatten()
+        .filter(|extension| extension.extn_id == ID_CE_KEY_USAGE);
+    match (usages.next(), usages.next()) {
+        (None, _) => true,
+        (Some(usage), None) => KeyUsage::from_der(usage.extn_value.as_bytes())
+            .is_ok_and(|usage| usage.digital_signature()),
+        (Some(_), Some(_)) => false,
     }
 }
 
