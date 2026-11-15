@@ -11,7 +11,8 @@
 
 /// The leaves the supervisor owns, as dotted fields (`*` is any one key): the
 /// listener, ingress and auth, the tenant's identity, posture and custody,
-/// the machine's declared class, the credential broker's process and roots,
+/// the machine's declared class and the name and model it reports for
+/// itself, the credential broker's process and roots,
 /// the voice loop's socket, the key directory, the publisher training
 /// outbox and the direct Linear mirror's response custody, which the host
 /// derives beside the data directory. The training outbox and the last
@@ -51,6 +52,8 @@ pub const SUPERVISOR_OWNED: &[&str] = &[
     "privacy_posture",
     "hosted_kms_key_ref",
     "device_class",
+    "machine_reported_name",
+    "machine_reported_model",
     "models.broker.socket",
     "models.broker.uid",
     "models.broker.program",

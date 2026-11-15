@@ -93,6 +93,14 @@ pub struct OpenOptions {
     /// ExplicitHostInput): `None` is a computer, the generic default. Never
     /// read off the operating system.
     pub device_class: Option<MachineDeviceClass>,
+    /// The name this install reports for itself in the owner's machine list,
+    /// as the host declares it; display only, never read off the operating
+    /// system; FIX [DEVICE-DISPLAY-NAME].
+    pub machine_reported_name: Option<String>,
+    /// The model this install reports for itself, as the host declares it;
+    /// display only, never read off the operating system; FIX
+    /// [DEVICE-DISPLAY-NAME].
+    pub machine_reported_model: Option<String>,
     /// Hold this install's host root as the vault's checkpoint signer for
     /// the handle's life (FIX 5343): only `open_with_host_root` reads it.
     /// `false` drops the issuer after profiling, as before; `true` holds

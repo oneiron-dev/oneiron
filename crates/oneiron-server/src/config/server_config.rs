@@ -498,6 +498,14 @@ pub struct ServeConfig {
     /// it for the owner to approve; it is never read off the operating
     /// system. A computer unless the file says otherwise.
     pub device_class: oneiron::authority::MachineDeviceClass,
+    /// `machine_reported_name`: the name this install reports for itself in
+    /// the owner's machine list, as the host declares it; display only, never
+    /// read off the operating system; FIX [DEVICE-DISPLAY-NAME].
+    pub machine_reported_name: Option<String>,
+    /// `machine_reported_model`: the model this install reports for itself,
+    /// as the host declares it; display only, never read off the operating
+    /// system; FIX [DEVICE-DISPLAY-NAME].
+    pub machine_reported_model: Option<String>,
     /// `--esign-delivery-outbox-dir`, argv only: where the e-sign delivery
     /// outbox hands authorized mail to the host's sender (OF-415). Unset, no
     /// outbox worker runs.
@@ -614,6 +622,8 @@ impl Default for ServeConfig {
             maximum_tier: false,
             off_record_dump_suppression: true,
             device_class: vault.machine_device_class,
+            machine_reported_name: vault.machine_reported_name.clone(),
+            machine_reported_model: vault.machine_reported_model.clone(),
             esign_delivery_outbox_dir: None,
             publisher_training_outbox_dir: None,
             publisher_training_self_host_shipper: false,
@@ -723,6 +733,8 @@ impl ServeConfig {
         config.privacy = self.vault_privacy_config();
         config.allow_host_checkpoint_opt_out = self.allow_host_checkpoint_opt_out;
         config.machine_device_class = self.device_class;
+        config.machine_reported_name = self.machine_reported_name.clone();
+        config.machine_reported_model = self.machine_reported_model.clone();
         config.limits = self.limits.engine.clone();
         config.call_mode_deadline = std::time::Duration::from_millis(self.recall.call_deadline_ms);
         // Retrieval-run capture stays off unless this server's owner turns it

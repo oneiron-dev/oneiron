@@ -244,6 +244,8 @@ impl NativeClient {
         let options = oneiron_remote::OpenOptions {
             dimensions,
             device_class: host_device_class(device_class.as_deref())?,
+            machine_reported_name: None,
+            machine_reported_model: None,
             hold_checkpoint_root_signer: false,
         };
         let inner = py

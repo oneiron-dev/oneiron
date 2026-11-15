@@ -162,6 +162,12 @@ impl EmbeddedEngine {
         // Crash output never carries world text: the engine's hook goes in
         // before any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
+        let machine_reported_name = options
+            .as_ref()
+            .and_then(|options| options.machine_reported_name.clone());
+        let machine_reported_model = options
+            .as_ref()
+            .and_then(|options| options.machine_reported_model.clone());
         let dimensions: Option<usize> = options.and_then(|options| options.dimensions).lower()?;
         let device_class = crate::host_device_class(device_class.as_deref())?;
         let path = PathBuf::from(path);
@@ -172,6 +178,13 @@ impl EmbeddedEngine {
         if let Some(device_class) = device_class {
             config.device_class = device_class;
         }
+        // A declared name or model stands in for the one the config declares.
+        if machine_reported_name.is_some() {
+            config.machine_reported_name = machine_reported_name.clone();
+        }
+        if machine_reported_model.is_some() {
+            config.machine_reported_model = machine_reported_model.clone();
+        }
         let limits = limits.unwrap_or_default();
         let limits = host_limits(limits.memory_bytes, limits.cpu_millis_per_second);
         let engine =
@@ -181,6 +194,8 @@ impl EmbeddedEngine {
             options: oneiron_remote::OpenOptions {
                 dimensions,
                 device_class,
+                machine_reported_name,
+                machine_reported_model,
                 hold_checkpoint_root_signer: false,
             },
             closed: Arc::new(AtomicBool::new(false)),

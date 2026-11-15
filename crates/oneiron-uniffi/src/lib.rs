@@ -140,6 +140,12 @@ impl Oneiron {
         // Crash output never carries world text: the engine's hook goes in
         // before any vault opens (owner ruling 2026-10-14, fix 6).
         oneiron::panic_report::install_panic_hook();
+        let machine_reported_name = options
+            .as_ref()
+            .and_then(|options| options.machine_reported_name.clone());
+        let machine_reported_model = options
+            .as_ref()
+            .and_then(|options| options.machine_reported_model.clone());
         let dimensions: Option<usize> = options.and_then(|options| options.dimensions).lower()?;
         let device_class = host_device_class(device_class.as_deref())?;
         let path = path.map(std::path::PathBuf::from);
@@ -148,6 +154,8 @@ impl Oneiron {
             &oneiron_remote::OpenOptions {
                 dimensions,
                 device_class,
+                machine_reported_name,
+                machine_reported_model,
                 hold_checkpoint_root_signer: false,
             },
         )?;

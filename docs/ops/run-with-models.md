@@ -346,6 +346,7 @@ names the field and never its value:
   `kit_bundle_public_urls`, `allow_unauthenticated`, `allowed_origins`,
   `artifact_domains`, `artifact_vault_name`, `trusted_proxies`,
   `lease_vault_id`, `privacy_posture`, `hosted_kms_key_ref`, `device_class`,
+  `machine_reported_name`, `machine_reported_model`,
   every `[models.broker]` key, `[models.voice] socket`, `[keystore] dir` and
   `[linear] response_dir`, which the vault derives itself. A managed vault's
   artifact origin answers on its internal authority alone

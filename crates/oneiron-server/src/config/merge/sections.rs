@@ -386,6 +386,12 @@ impl PartialServeConfig {
         if let Some(value) = self.device_class {
             resolved.device_class = value;
         }
+        if let Some(value) = self.machine_reported_name {
+            resolved.machine_reported_name = Some(value);
+        }
+        if let Some(value) = self.machine_reported_model {
+            resolved.machine_reported_model = Some(value);
+        }
         if let Some(value) = self.esign_delivery_outbox_dir {
             resolved.esign_delivery_outbox_dir = Some(value);
         }

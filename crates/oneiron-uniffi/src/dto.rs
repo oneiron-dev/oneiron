@@ -41,6 +41,16 @@ pub struct OpenOptions {
     /// Embedding width for the opened directory; omitted uses the engine
     /// default.
     pub dimensions: Option<u32>,
+    /// The name this install reports for itself in the owner's machine list,
+    /// as the host declares it; display only, never read off the operating
+    /// system; FIX [DEVICE-DISPLAY-NAME].
+    #[uniffi(default = None)]
+    pub machine_reported_name: Option<String>,
+    /// The model this install reports for itself, as the host declares it;
+    /// display only, never read off the operating system; FIX
+    /// [DEVICE-DISPLAY-NAME].
+    #[uniffi(default = None)]
+    pub machine_reported_model: Option<String>,
 }
 
 /// What `pair` returns: the server origin, the credential `connect` takes,

@@ -143,15 +143,26 @@ impl NativeClient {
 impl NativeClient {
     /// Opens an embedded vault; `path` omitted ⇒ `~/.oneiron/default`. The
     /// install enrols as the `deviceClass` its host declares (FIX 5560):
-    /// `"computer"`, the default, or `"phone"`.
+    /// `"computer"`, the default, or `"phone"`. `machineReportedName` and
+    /// `machineReportedModel` are the name and model this install reports for
+    /// itself, as the host declares them; display only (FIX
+    /// [DEVICE-DISPLAY-NAME]).
     #[napi(factory)]
     pub fn open(
         path: Option<String>,
         dimensions: Option<f64>,
         device_class: Option<String>,
+        machine_reported_name: Option<String>,
+        machine_reported_model: Option<String>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = open_options(dimensions, device_class, None)?;
+        let options = open_options(
+            dimensions,
+            device_class,
+            None,
+            machine_reported_name,
+            machine_reported_model,
+        )?;
         let path = path.map(std::path::PathBuf::from);
         let inner =
             oneiron_remote::OneironClient::open(path.as_deref(), &options).map_err(facade_error)?;
@@ -166,6 +177,7 @@ impl NativeClient {
     /// `deviceClass` is `open`'s (FIX 5560). `holdCheckpointRootSigner`
     /// holds this install's host root as the vault's checkpoint signer for
     /// the handle's life (FIX 5343); omitted is `false`.
+    /// `machineReportedName` and `machineReportedModel` are `open`'s.
     #[napi(factory)]
     pub fn open_with_host_root(
         path: Option<String>,
@@ -173,9 +185,17 @@ impl NativeClient {
         host_root_secret: Buffer,
         device_class: Option<String>,
         hold_checkpoint_root_signer: Option<bool>,
+        machine_reported_name: Option<String>,
+        machine_reported_model: Option<String>,
     ) -> napi::Result<Self> {
         crate::facade::before_vault_open();
-        let options = open_options(dimensions, device_class, hold_checkpoint_root_signer)?;
+        let options = open_options(
+            dimensions,
+            device_class,
+            hold_checkpoint_root_signer,
+            machine_reported_name,
+            machine_reported_model,
+        )?;
         let path = path.map(std::path::PathBuf::from);
         let inner = oneiron_remote::OneironClient::open_with_host_root(
             path.as_deref(),
@@ -395,11 +415,14 @@ impl NativeClient {
 /// What an embedded open takes from JavaScript. The device class is the one
 /// its host declares ([`host_device_class`]), `None` when it gave none.
 /// `hold_checkpoint_root_signer` is `open_with_host_root`'s only (FIX 5343);
-/// `open` passes `None`.
+/// `open` passes `None`. The reported name and model are what the host
+/// declares this install reports for itself; `None` declares none.
 fn open_options(
     dimensions: Option<f64>,
     device_class: Option<String>,
     hold_checkpoint_root_signer: Option<bool>,
+    machine_reported_name: Option<String>,
+    machine_reported_model: Option<String>,
 ) -> napi::Result<oneiron_remote::OpenOptions> {
     let dimensions = dimensions
         .map(dimensions_to_engine)
@@ -419,6 +442,8 @@ fn open_options(
     Ok(oneiron_remote::OpenOptions {
         dimensions,
         device_class,
+        machine_reported_name,
+        machine_reported_model,
         hold_checkpoint_root_signer: hold_checkpoint_root_signer.unwrap_or(false),
     })
 }
