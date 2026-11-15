@@ -6,7 +6,6 @@
 //! deadline that never shortens or refuses its verdict (FIX 8842): a
 //! deadline the request names stands as named.
 
-use std::cell::RefCell;
 use std::sync::{Arc, Weak};
 use std::time::Instant;
 
@@ -18,23 +17,6 @@ use oneiron::runtime_hooks::{
 use oneiron::task_verb::sdk::{AI_VERDICT_DEADLINE_MS, AiVerdictRequest};
 
 use crate::server::SyncServer;
-
-thread_local! {
-    /// The hook decisions a browser call collects on this thread while it
-    /// runs its row's hooks (FIX 8042).
-    static COLLECTED: RefCell<Option<Vec<serde_json::Value>>> = const { RefCell::new(None) };
-}
-
-/// Runs `run`, collecting each hook `ai.verdict` decision this thread
-/// answers meanwhile (FIX 8042): a browser batch's or library run's pre and
-/// post hooks, which run on the calling thread, so the run's `model_free`
-/// reads them. Record only: no ceiling is set and no verdict changes.
-pub(crate) fn collect_hook_decisions<R>(run: impl FnOnce() -> R) -> (R, Vec<serde_json::Value>) {
-    let outer = COLLECTED.with(|collected| collected.replace(Some(Vec::new())));
-    let ran = run();
-    let decisions = COLLECTED.with(|collected| collected.replace(outer));
-    (ran, decisions.unwrap_or_default())
-}
 
 /// The server's verdict host for the fact-hook runner. It holds the server
 /// weakly: the runner must not keep a stopping server alive.
@@ -83,11 +65,9 @@ impl ServerHookVerdict {
             .map_err(|error| format!("{}: {}", error.code, error.message))
             .and_then(|verdict| {
                 // A browser call collecting its hooks' decisions keeps this one.
-                COLLECTED.with(|collected| {
-                    if let Some(decisions) = collected.borrow_mut().as_mut() {
-                        decisions.push(serde_json::to_value(&verdict).unwrap_or_default());
-                    }
-                });
+                crate::hook_decisions::record_hook_decision(
+                    serde_json::to_value(&verdict).unwrap_or_default(),
+                );
                 serde_json::to_string(&verdict).map_err(|_| "the verdict did not encode".to_owned())
             });
         (reply, calls)

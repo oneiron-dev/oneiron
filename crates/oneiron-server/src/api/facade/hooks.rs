@@ -136,7 +136,7 @@ async fn row_hooks_pre_decided(
         Ok(pre)
     };
     clock_ingress::run_blocking(move || {
-        let (ended, decided) = crate::hook_verdict::collect_hook_decisions(chain);
+        let (ended, decided) = crate::hook_decisions::collect_hook_decisions(chain);
         ended.map(|pre| (pre, decided))
     })
     .await
@@ -208,7 +208,7 @@ async fn row_hooks_post_decided(
 ) -> Result<(serde_json::Value, Vec<serde_json::Value>), MemoryError> {
     let server = Arc::clone(server);
     clock_ingress::run_blocking(move || {
-        let (output, decided) = crate::hook_verdict::collect_hook_decisions(move || {
+        let (output, decided) = crate::hook_decisions::collect_hook_decisions(move || {
             verb_hook_boundary::row_post(&server.vault, pre, result)
         });
         output.map(|output| (output, decided))
