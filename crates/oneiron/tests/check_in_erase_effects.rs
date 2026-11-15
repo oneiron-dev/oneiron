@@ -28,13 +28,15 @@
 mod owner_apply_fixture;
 
 use oneiron::check_in::{
-    ActClass, legal_hold_erase_effect_digest, outbound_call_request_erase_effect_digest,
+    ActClass, authority_attribution_erase_effect_digest, legal_hold_erase_effect_digest,
+    outbound_call_request_erase_effect_digest,
 };
 use oneiron::deletion::LegalHoldTarget;
 use oneiron::memory::BlobArtifactInput;
 use oneiron::verbs::{
-    LegalHoldEraseState, LegalHoldLiftAndEraseRequest, LegalHoldLiftAndErased,
-    LegalHoldPlaceRequest, OutboundCallRequestEraseRequest, erase_outbound_call_request_as_owner,
+    AuthorityAttributionEraseRequest, LegalHoldEraseState, LegalHoldLiftAndEraseRequest,
+    LegalHoldLiftAndErased, LegalHoldPlaceRequest, OutboundCallRequestEraseRequest,
+    erase_authority_attribution_as_owner, erase_outbound_call_request_as_owner,
     lift_legal_hold_and_erase_as, place_legal_hold_as,
 };
 use oneiron::{EdgeActorClass, EntityId};
@@ -197,4 +199,71 @@ fn the_owner_applies_an_approved_lift_and_erase_on_the_state_shown() {
         spent(&vault, &asked),
         "the confirm's writer spent the check-in"
     );
+}
+
+#[test]
+fn an_attribution_erase_refused_at_its_check_in_erases_nothing() {
+    let (_dir, vault, owner, owner_proof) = rooted();
+    let subject_x = EntityId::now();
+    let subject_y = EntityId::now();
+    let erase = |subject, check_in_ref: Option<EntityId>| {
+        erase_authority_attribution_as_owner(
+            &vault,
+            &owner_proof,
+            AuthorityAttributionEraseRequest {
+                subject,
+                check_in_ref: check_in_ref.map(|id| id.to_hex()),
+            },
+        )
+    };
+
+    // Unknown subjects have no public read that shows an absent erasure.
+    // Instead, check refusal and an unspent ask, then spend a matching ask.
+    // The decision and erase share one production writer.
+    let digest_y = authority_attribution_erase_effect_digest(&subject_y);
+    let (asked_y, _) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        "vault.authority.attribution.erase",
+        ActClass::Erase,
+        &digest_y,
+    );
+    let refused = erase(subject_x, Some(asked_y));
+    assert!(
+        refused.is_err(),
+        "an ask for another subject's attribution erases nothing: {refused:?}"
+    );
+    assert!(!spent(&vault, &asked_y), "a refused apply spends nothing");
+
+    let own = erase(subject_x, None).expect("the owner erases X on their own proof");
+    assert_eq!(own.rows_erased, 0, "an unknown subject erases no rows");
+    assert_eq!(
+        own.check_in,
+        owner_decision(ActClass::Erase, None, None),
+        "the Owner's own erase records their own proof"
+    );
+
+    let digest_x = authority_attribution_erase_effect_digest(&subject_x);
+    let (asked_x, asker_x) = approved(
+        &vault,
+        owner,
+        &owner_proof,
+        "vault.authority.attribution.erase",
+        ActClass::Erase,
+        &digest_x,
+    );
+    let applied = erase(subject_x, Some(asked_x)).expect("the owner applies the approved erase");
+    assert_eq!(applied.rows_erased, 0, "an unknown subject erases no rows");
+    assert_eq!(
+        applied.check_in,
+        owner_decision(ActClass::Erase, Some(asked_x), Some(asker_x)),
+        "the answer names the check-in it applied and its asker"
+    );
+    assert!(
+        spent(&vault, &asked_x),
+        "the erase's writer spent the check-in"
+    );
+    let again = erase(subject_x, Some(asked_x));
+    assert!(again.is_err(), "a spent check-in applies once: {again:?}");
 }

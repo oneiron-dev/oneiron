@@ -753,7 +753,7 @@ fn an_offer_whose_session_key_does_not_import_retires_nothing() {
 
 #[test]
 #[cfg(feature = "sync")]
-fn an_offer_naming_a_subject_erased_with_no_key_is_refused_and_retires_nothing() {
+fn an_offer_naming_a_subject_erased_with_no_key_erases_it_where_it_arrives() {
     let home_dir = tempfile::tempdir().unwrap();
     let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
     let home_id = EntityId::now();
@@ -767,7 +767,17 @@ fn an_offer_naming_a_subject_erased_with_no_key_is_refused_and_retires_nothing()
     let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
     let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
     let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
-    let _subject = authority_overlay_subject(&entry.op).unwrap();
+    let row_subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let (history, overlays) = home
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    let spare_dir = tempfile::tempdir().unwrap();
+    let spare = Vault::open(spare_dir.path(), VaultConfig::default()).unwrap();
+    spare
+        .import_signed_authority_history(&history, &overlays)
+        .unwrap();
+    deliver_authority_overlay_custody_for_test(&home, &spare, &row_subject).unwrap();
 
     let machine_id = EntityId::now();
     let inventory_offer = offer_overlay_page(&home, &home_id, &machine_id, None)
@@ -790,21 +800,20 @@ fn an_offer_naming_a_subject_erased_with_no_key_is_refused_and_retires_nothing()
         erased: BTreeMap::from([(subject, ErasedSubject::default())]),
         session: inventory_offer.session,
     };
+    let answer = answer_offer(&home, &home_id, &machine_id, &offer);
     assert!(
-        answer_offer(&home, &home_id, &machine_id, &offer).is_err(),
-        "an offer naming a subject erased with no key must be refused"
+        answer.is_ok(),
+        "a ref-less erasure stands where the offer arrives"
     );
-    assert!(
-        home.authority_fold()
-            .unwrap()
-            .valid_entries
-            .contains(&mint_row)
-    );
+    assert!(deliver_authority_overlay_custody_for_test(&spare, &home, &subject).is_err());
+    let fold = home.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
 }
 
 #[test]
 #[cfg(feature = "sync")]
-fn an_answer_naming_a_subject_erased_with_no_key_seals_nothing() {
+fn an_answer_naming_a_subject_erased_with_no_key_erases_it_where_it_arrives() {
     let machine_dir = tempfile::tempdir().unwrap();
     let machine = Vault::open(machine_dir.path(), VaultConfig::default()).unwrap();
     let machine_id = EntityId::now();
@@ -818,7 +827,17 @@ fn an_answer_naming_a_subject_erased_with_no_key_seals_nothing() {
     let mint_row = machine.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
     let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
     let entry = machine.get_authority_log_entry(&id).unwrap().unwrap();
-    let _subject = authority_overlay_subject(&entry.op).unwrap();
+    let row_subject = authority_overlay_subject(&entry.op).unwrap();
+
+    let (history, overlays) = machine
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+    let spare_dir = tempfile::tempdir().unwrap();
+    let spare = Vault::open(spare_dir.path(), VaultConfig::default()).unwrap();
+    spare
+        .import_signed_authority_history(&history, &overlays)
+        .unwrap();
+    deliver_authority_overlay_custody_for_test(&machine, &spare, &row_subject).unwrap();
 
     let home_id = EntityId::now();
     let (offer, session) = offer_overlay_page(&machine, &machine_id, &home_id, None).unwrap();
@@ -837,17 +856,16 @@ fn an_answer_naming_a_subject_erased_with_no_key_seals_nothing() {
                 .session,
         ),
     };
+    let sent =
+        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).unwrap();
     assert!(
-        apply_overlay_answer(&machine, &machine_id, &home_id, &offer, &session, answer).is_err(),
-        "an answer naming a subject erased with no key must be refused before a key is sealed"
+        sent.is_empty(),
+        "a key of the erased subject must not be sealed"
     );
-    assert!(
-        machine
-            .authority_fold()
-            .unwrap()
-            .valid_entries
-            .contains(&mint_row)
-    );
+    assert!(deliver_authority_overlay_custody_for_test(&spare, &machine, &subject).is_err());
+    let fold = machine.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
 }
 
 #[test]
@@ -1068,4 +1086,217 @@ fn a_key_refused_for_a_subject_the_machine_erased_mid_round_leaves_no_debt_after
     assert!(fold.pass_through_entries.contains(&mint_row));
     assert!(!fold.valid_entries.contains(&mint_row));
     assert!(!machine.capability_slip_id_is_live(&slip_id).unwrap());
+}
+
+/// The owner closes attribution without a checkpoint; signed history remains intact.
+#[test]
+fn the_owner_erase_closes_the_row_keeps_its_scaffold_and_reports_it_erased() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    let actor = vault.ensure_embedded_owner_actor().unwrap();
+    let owner = vault
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [104; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:owner-erase".to_owned()]);
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = vault.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = vault.get_authority_log_entry(&id).unwrap().unwrap();
+    let subject = authority_overlay_subject(&entry.op).unwrap();
+    let history = vault.export_signed_authority_history().unwrap();
+
+    let erased = vault
+        .erase_authority_attribution_as(&owner, &subject, None)
+        .unwrap();
+    assert!(
+        vault
+            .get_authority_log_entry(&id)
+            .is_err_and(|error| is_authority_overlay_unavailable(&error)),
+        "the erased subject's row reads as erased, never opened"
+    );
+    assert_eq!(erased.rows_erased, 1);
+    let fold = vault.authority_fold().unwrap();
+    assert!(fold.pass_through_entries.contains(&mint_row));
+    assert!(!fold.valid_entries.contains(&mint_row));
+    assert_eq!(vault.export_signed_authority_history().unwrap(), history);
+
+    let requested = BTreeSet::from([mint_row]);
+    let verification = vault.authority_history_verification(&requested).unwrap();
+    assert!(verification.erased.contains(&mint_row));
+    assert!(verification.scaffold_verified.contains(&mint_row));
+    assert!(!verification.semantics_replayed.contains(&mint_row));
+    let coverage = vault.authority_history_coverage(&requested).unwrap();
+    assert!(coverage.scaffold.contains(&mint_row));
+    assert!(coverage.erased.contains(&mint_row));
+    assert!(!coverage.semantic.contains(&mint_row));
+
+    let repeated = vault
+        .erase_authority_attribution_as(&owner, &subject, None)
+        .unwrap();
+    assert_eq!(repeated.rows_erased, 0);
+    assert_eq!(repeated.at, erased.at);
+}
+
+/// An erase made without any subject key travels back to its key holder.
+#[test]
+#[cfg(feature = "sync")]
+fn an_erase_of_a_subject_this_machine_knows_nothing_of_reaches_its_key_holder() {
+    let home_dir = tempfile::tempdir().unwrap();
+    let home = Vault::open(home_dir.path(), VaultConfig::default()).unwrap();
+    let home_id = EntityId::now();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = home.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    let slip_id = [105; 32];
+    claims.slip_id = slip_id;
+    claims.records = BTreeSet::from(["record:unknown-subject-erase".to_owned()]);
+    let slip = home.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = home.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = home.get_authority_log_entry(&id).unwrap().unwrap();
+    let subject = authority_overlay_subject(&entry.op).unwrap();
+    let (history, overlays) = home
+        .export_signed_authority_history_with_overlays()
+        .unwrap();
+
+    let other_dir = tempfile::tempdir().unwrap();
+    let other = Vault::open(other_dir.path(), VaultConfig::default()).unwrap();
+    let other_id = EntityId::now();
+    other
+        .import_signed_authority_history(&history, &BTreeMap::new())
+        .unwrap();
+    let actor = other.ensure_embedded_owner_actor().unwrap();
+    let owner = other
+        .authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            crate::store::GateDecisionId::now(),
+        )
+        .unwrap();
+    let erased = other
+        .erase_authority_attribution_as(&owner, &subject, None)
+        .unwrap();
+    assert!(
+        deliver_authority_overlay_custody_for_test(&home, &other, &subject).is_err(),
+        "a key of a subject erased here must not install"
+    );
+    assert_eq!(erased.rows_erased, 0);
+    let round = run_round_for_test(&other, &other_id, &home, &home_id);
+    assert!(
+        round.is_ok(),
+        "the erase travels without a key ref: {round:?}"
+    );
+    assert!(
+        home.authority_fold()
+            .unwrap()
+            .pass_through_entries
+            .contains(&mint_row)
+    );
+    assert!(!home.capability_slip_id_is_live(&slip_id).unwrap());
+
+    other
+        .import_signed_authority_history(&history, &overlays)
+        .unwrap();
+    let overlay: SideTable<AuthorityEntryHash, Vec<u8>, Raw> =
+        SideTable::new(&side_table::AUTHORITY_OVERLAY);
+    let txn = other.store.env.read_txn().unwrap();
+    assert!(
+        overlay
+            .get(&other.store, &txn, &mint_row)
+            .unwrap()
+            .is_none()
+    );
+    drop(txn);
+    assert!(
+        other
+            .authority_history_verification(&BTreeSet::from([mint_row]))
+            .unwrap()
+            .erased
+            .contains(&mint_row)
+    );
+}
+
+/// The kept scaffold id cannot resolve the PERSON after its record is erased.
+#[test]
+fn scaffold_id_leaf_resolves_to_nothing_after_actor_erase() {
+    let dir = tempfile::tempdir().unwrap();
+    let vault = Vault::open(dir.path(), VaultConfig::default()).unwrap();
+    // Every delete loads the install's signing key before its first write.
+    vault.install_device_keystore(std::sync::Arc::new(
+        oneiron_keystore::MemoryKeystore::default(),
+    ));
+    let owner = vault.ensure_embedded_owner_actor().unwrap();
+    let member = EntityId::now();
+    vault
+        .put_entity(
+            &member,
+            crate::registry::ENTITY_TYPE_PERSON,
+            TimeRange { start: 1, end: 1 },
+            1,
+            b"member",
+        )
+        .unwrap();
+    let issuer = HostSlipIssuer::from_secret(SECRET).unwrap();
+    let root = vault.ensure_host_root_slip(&issuer).unwrap();
+    let mut claims = root.claims.clone();
+    claims.slip_id = [106; 32];
+    let kept_id = member.to_hex();
+    claims.holder_ref = kept_id.clone();
+    let slip = vault.mint_capability_slip(&issuer, claims).unwrap();
+    let mint_row = vault.authority_fold().unwrap().slips.mints[&slip.claims.slip_id].entry_hash;
+    let id = authority_log_entity_id_from_hash(&mint_row).unwrap();
+    let entry = vault.get_authority_log_entry(&id).unwrap().unwrap();
+    let memory = vault.memory(owner, crate::EdgeActorClass::Human);
+    let request = crate::memory::PeopleListRequest {
+        vault: None,
+        page: Some(0),
+    };
+    let before = memory.people_list(&request).unwrap();
+    let handle = before
+        .people
+        .iter()
+        .find(|person| person.person == member)
+        .expect("the owner resolves the member before erasure")
+        .handle
+        .clone();
+
+    memory
+        .safe_delete(&kept_id, crate::SafeDeleteReason::UserHardDelete)
+        .unwrap();
+    assert!(vault.get_raw(&member).unwrap().is_none());
+    assert_eq!(authority_overlay_subject(&entry.op).unwrap(), member);
+    let after = memory.people_list(&request).unwrap();
+    assert!(
+        !after
+            .people
+            .iter()
+            .any(|person| person.person.to_hex() == kept_id)
+    );
+    assert!(
+        memory
+            .people_get(&crate::memory::PersonRequest { pr: handle })
+            .is_err()
+    );
+    let fold = vault.authority_fold().unwrap();
+    assert!(
+        fold.valid_entries.contains(&mint_row) || fold.pass_through_entries.contains(&mint_row)
+    );
+    assert!(
+        vault
+            .authority_history_verification(&BTreeSet::from([mint_row]))
+            .unwrap()
+            .scaffold_verified
+            .contains(&mint_row)
+    );
 }
