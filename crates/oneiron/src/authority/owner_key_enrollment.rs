@@ -281,16 +281,21 @@ fn passkey_limits_bar(state: &FoldState, op: &AuthorityOp, key: &AuthorityKey) -
     }
 }
 
-/// Marks the key a passkey or a key only a passkey vouched for re-roots,
-/// rotates or enrols a device to, by a counted entry it signs, as
-/// passkey-vouched: the owner's choice [`FoldState::passkey_full_owner`]
-/// was on in its parents, or the limits would have barred it, and turning
-/// the choice off brings back the limits of each key it handed its standing
-/// to (Engine ruling WEBPASSKEY-OPTIN-HOME = A).
+/// Marks the key a counted entry re-roots, rotates or enrols a device to as
+/// passkey-vouched when the entry's consent rests on passkey-bound keys
+/// ([`consent_rests_on`]): a passkey or a key only a passkey vouched for
+/// signs it, or its other participants give no consent, so that a cosign
+/// hands its standing on as a signature does (Sol xhigh review of PR 1c,
+/// finding 1). The owner's choice [`FoldState::passkey_full_owner`] was on
+/// in its parents, or the limits would have barred it, and turning the
+/// choice off brings back the limits of each key it handed its standing to
+/// (Engine ruling WEBPASSKEY-OPTIN-HOME = A).
 pub(super) fn remember_passkey_successor(
     state: &mut FoldState,
     op: &AuthorityOp,
     signer: &AuthorityKey,
+    participants: &BTreeSet<AuthorityKey>,
+    context: FoldContext<'_>,
 ) {
     let successor = match op {
         AuthorityOp::EnrollDevice { device }
@@ -300,9 +305,40 @@ pub(super) fn remember_passkey_successor(
         | AuthorityOp::ReRoot { new_device: device } => &device.key,
         _ => return,
     };
-    if state.passkey_bound(signer) {
+    let bound = participants
+        .iter()
+        .filter(|key| state.passkey_bound(key))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    if consent_rests_on(state, participants, signer, &bound, context) {
         state.passkey_vouched_keys.insert(successor.clone());
     }
+}
+
+/// Whether the consent of an entry signed by `signer` with `participants`
+/// (its signer and every cosign) rests on `keys`: `signer` is one of them,
+/// or the participants outside them give no consent. The generic rule
+/// refuses an entry whose consent rests on the keys the passkey limits bar
+/// ([`passkey_barred_participants`]); [`remember_passkey_successor`] reads
+/// the same rule over the passkey-bound keys, so each successor it marks is
+/// one the limits would have barred.
+pub(super) fn consent_rests_on(
+    state: &FoldState,
+    participants: &BTreeSet<AuthorityKey>,
+    signer: &AuthorityKey,
+    keys: &BTreeSet<AuthorityKey>,
+    context: FoldContext<'_>,
+) -> bool {
+    keys.contains(signer)
+        || (!keys.is_empty()
+            && !super::entry_transition_predicates::has_authority_consent(
+                state,
+                &participants
+                    .difference(keys)
+                    .cloned()
+                    .collect::<BTreeSet<_>>(),
+                context,
+            ))
 }
 
 /// The participants of an entry with `op` (its signer and every cosign)

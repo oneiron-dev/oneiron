@@ -550,17 +550,13 @@ pub(super) fn fold_entry_state(
     // review F1, F2; Astra stack review finding 1).
     let barred =
         super::owner_key_enrollment::passkey_barred_participants(&state, &entry.op, &participants);
-    if barred.contains(&signer)
-        || (!barred.is_empty()
-            && !has_authority_consent(
-                &state,
-                &participants
-                    .difference(&barred)
-                    .cloned()
-                    .collect::<BTreeSet<_>>(),
-                context,
-            ))
-    {
+    if super::owner_key_enrollment::consent_rests_on(
+        &state,
+        &participants,
+        &signer,
+        &barred,
+        context,
+    ) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
     }
     if op_reuses_existing_device_key(&state, &entry.op) {
@@ -642,9 +638,16 @@ pub(super) fn fold_entry_state(
         return EntryFold::Ready(state);
     }
     // A key a limited key hands its standing to while the owner's choice
-    // lifts the limits keeps them once the choice is off (Engine ruling
-    // WEBPASSKEY-OPTIN-HOME = A).
-    super::owner_key_enrollment::remember_passkey_successor(&mut state, &entry.op, &signer);
+    // lifts the limits, as signer or as the cosign the entry's consent rests
+    // on, keeps them once the choice is off (Engine ruling
+    // WEBPASSKEY-OPTIN-HOME = A; Sol xhigh review of PR 1c, finding 1).
+    super::owner_key_enrollment::remember_passkey_successor(
+        &mut state,
+        &entry.op,
+        &signer,
+        &participants,
+        context,
+    );
     apply_op(&mut state, &entry.op, hash, &signer);
     if !state_has_authority_consent(&state, context) {
         return EntryFold::Invalid(AuthorityFoldIssue::MissingAuthorityConsent(hash));
