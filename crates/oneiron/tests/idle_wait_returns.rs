@@ -42,11 +42,11 @@ const TUESDAY_MORNING_SECS: u64 = 1_699_952_400;
 const SATURDAY_EVENING_SECS: u64 = 1_700_341_200;
 const DAY_SECS: u64 = 86_400;
 
-/// A temporary vault opened with `config`, a process-memory device keystore and its embedded
-/// owner, as the crate's test opener opens one.
-fn open_vault_with(config: VaultConfig) -> TestResult<(tempfile::TempDir, Vault)> {
+/// A temporary device vault with a process-memory device keystore and its embedded owner, as
+/// the crate's test opener opens one.
+fn open_vault() -> TestResult<(tempfile::TempDir, Vault)> {
     let dir = tempfile::tempdir()?;
-    let vault = Vault::open(dir.path(), config)?;
+    let vault = Vault::open(dir.path(), VaultConfig::device())?;
     vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     vault.ensure_embedded_owner_actor()?;
     Ok((dir, vault))
@@ -172,7 +172,7 @@ fn human_wait_returned(vault: &Vault, seed: u8, parked_secs: u64, gap_secs: u64)
 /// delivered answer closes it at the delivery's time.
 #[test]
 fn a_parked_human_wait_records_its_wall_clock_return() -> TestResult {
-    let (_dir, vault) = open_vault_with(VaultConfig::device())?;
+    let (_dir, vault) = open_vault()?;
     let parked_at_ms = TUESDAY_LATE_SECS * 1_000;
     human_wait_returned(&vault, 0x61, TUESDAY_LATE_SECS, 95)?;
 
@@ -197,7 +197,7 @@ fn a_parked_human_wait_records_its_wall_clock_return() -> TestResult {
 /// no reply.
 #[test]
 fn a_peer_wait_records_as_a_tool_wait() -> TestResult {
-    let (_dir, vault) = open_vault_with(VaultConfig::device())?;
+    let (_dir, vault) = open_vault()?;
     let peer_row = leased_try(&vault, "idle-wait-peer")?;
     let peer_key = wait_key(0x62)?;
     park(
@@ -242,7 +242,7 @@ fn a_peer_wait_records_as_a_tool_wait() -> TestResult {
 /// cell holds no gap and one never.
 #[test]
 fn a_wait_left_open_past_a_day_counts_as_never() -> TestResult {
-    let (_dir, vault) = open_vault_with(VaultConfig::device())?;
+    let (_dir, vault) = open_vault()?;
     let row = leased_try(&vault, "idle-wait-open")?;
     let key = wait_key(0x64)?;
     park(
@@ -274,7 +274,7 @@ fn a_wait_left_open_past_a_day_counts_as_never() -> TestResult {
 /// only once its last build is a week old, and drops waits older than its eight-week window.
 #[test]
 fn the_weekly_pass_builds_return_cells_by_kind_band_and_weekend() -> TestResult {
-    let (_dir, vault) = open_vault_with(VaultConfig::device())?;
+    let (_dir, vault) = open_vault()?;
     human_wait_returned(&vault, 0x65, TUESDAY_MORNING_SECS, 40)?;
     human_wait_returned(&vault, 0x66, TUESDAY_MORNING_SECS + 60, 600)?;
     human_wait_returned(&vault, 0x67, TUESDAY_MORNING_SECS + 120, 95)?;
@@ -342,7 +342,10 @@ fn a_connection_dispatched_runs_wait_keys_as_connected() -> TestResult {
     let clock = ManualClock::new(NOW);
     let mut config = VaultConfig::device();
     config.store_clock = clock.bundle();
-    let (_dir, vault) = open_vault_with(config)?;
+    // Opened as `tests/agent_powers.rs` opens its vault: install signing before the owner.
+    let dir = tempfile::tempdir()?;
+    let vault = Vault::open(dir.path(), config)?;
+    vault.install_device_keystore(Arc::new(oneiron_keystore::MemoryKeystore::default()));
     vault.prepare_install_signing()?;
     let owner_id = vault.ensure_embedded_owner_actor()?;
     let owner =
@@ -377,7 +380,7 @@ fn a_connection_dispatched_runs_wait_keys_as_connected() -> TestResult {
         Ok(status.attempt.id)
     };
     let connected = dispatch(CallerOrigin::Connection {
-        locality: CallerLocality::OffDevice,
+        locality: CallerLocality::OnDevice,
     })?;
     let hosted = dispatch(CallerOrigin::NativeHost)?;
 
