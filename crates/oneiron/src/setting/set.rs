@@ -156,8 +156,10 @@ impl Vault {
     ///   rows meet, a narrowing of their own row;
     /// - an agent that is the subject of a row of a key whose rows meet: a narrowing of that row.
     ///
-    /// On a key that reads one row a non-owner also stays clear of the owner's pin and the
-    /// owner's row, and a learned key's holder keeps inside the owner's cap. A move the rule does
+    /// Over a row the owner (or the engine) set, a non-owner makes no widening: it tightens the
+    /// owner's row and asks to loosen it. On a key that reads one row a non-owner also stays
+    /// clear of the owner's pin and the owner's row, and a learned key's holder keeps inside the
+    /// owner's cap. A move the rule does
     /// not admit waits for an agent on a check-in under its own live owner Grant that lists
     /// `vault.settings.set`: the door opens it and answers [`SetSettingOutcome::Pending`]; the
     /// same change again, naming the approved check-in, applies once over the row it was asked
@@ -348,20 +350,31 @@ fn set_in_txn(
     // A row that does not decode is never "the same value": a clear removes it, a set replaces it.
     let readable = !matches!(prior, Some(None));
     let prior_row = prior.flatten();
+    let prior_row_by_owner = prior_row.as_ref().is_some_and(StoredRow::by_owner);
     let prior_weight = prior_row.as_ref().and_then(|row| row.weight_runs);
     let prior_value = prior_row.map(|row| row.value);
     let unchanged =
         readable && prior_value.as_ref() == change.value && prior_weight == change.weight_runs;
+    let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
     // Which way the change moves its row, against the rows this write sees (A3: the key's
     // comparator gives the direction). A change that leaves the row as it is moves nothing.
     let direction = if unchanged {
         ChangeDirection::Tighter
     } else if readable {
-        let by_owner = matches!(caller, SettingCaller::Owner(_) | SettingCaller::Engine(_));
         direction_in_txn(vault, txn, change, prior_value.as_ref(), by_owner)?
     } else {
         ChangeDirection::Unordered
     };
+    // Over a row the owner set, a non-owner makes no widening (DESIGN 1.2 step 4: its value
+    // stays inside the owner's row): it tightens the owner's row, and asks to loosen it.
+    let owners_row = prior_row_by_owner && !by_owner;
+    let reading = reading.map(|(setter, permitted)| {
+        if owners_row {
+            (setter, permitted.limited_by(Permitted::NoWidening))
+        } else {
+            (setter, permitted)
+        }
+    });
     let moved = authority_direction(direction);
     let admitted = reading
         .and_then(|(setter, permitted)| permitted.admit(moved).map(|admitted| (setter, admitted)));

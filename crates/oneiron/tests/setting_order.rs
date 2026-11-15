@@ -12,6 +12,8 @@
 //! - a request is met with the value in force, says when it was clamped, and never reaches a key
 //!   with no meet;
 //! - an approval spends only over the row it was asked over;
+//! - over a row the owner set, a non-owner makes no widening: a person tightens the owner's row
+//!   of their own choice and is refused a loosening;
 //! - every catalogue key states an order its read can keep, and the list shows it.
 //!
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test setting_order`.
@@ -27,12 +29,13 @@ use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{EngineControlClass, Scope, ScopeAxis};
 use oneiron::memory::Memory;
 use oneiron::setting::{
-    ChangeDirection, Order, Quorum, ScopeKind, Setter, SettingSource, catalogue,
+    ChangeDirection, Order, Quorum, ScopeKind, SetSetting, SetSettingOutcome, Setter, SettingScope,
+    SettingSource, catalogue,
 };
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::sdk::invoke;
 use oneiron::test_doors::setting::{
-    custom_window_requested, ordered_cap_requested, setting_change,
+    custom_window_requested, ordered_cap_requested, set_setting_as_person, setting_change,
 };
 use oneiron::verbs::{
     AgentDefinitionCreateRequest, AgentGrantMintRequest, create_agent_definition_as,
@@ -481,7 +484,7 @@ fn a_request_is_met_with_the_value_in_force_and_says_when_it_was_clamped() {
     assert_eq!((over.value, over.clamped), (6, true), "{over:?}");
     assert_eq!(
         over.in_force.source,
-        SettingSource::Row(oneiron::setting::SettingScope::Vault)
+        SettingSource::Row(SettingScope::Vault)
     );
     let under = ordered_cap_requested(&fx.vault, &[], 4).expect("a request");
     assert_eq!((under.value, under.clamped), (4, false), "{under:?}");
@@ -541,4 +544,33 @@ fn every_catalogue_key_states_an_order_its_read_can_keep_and_the_list_shows_it()
     );
     assert_eq!(listed["keys"][0]["order"], json!("lower"), "{listed}");
     assert_eq!(listed["keys"][0]["quorum"], json!("one"), "{listed}");
+}
+
+#[test]
+fn over_a_row_the_owner_set_a_person_tightens_it_and_is_refused_a_loosening() {
+    let fx = Fixture::rooted();
+    let me = fx.as_owner();
+    let key = "test.person_quiet";
+    let mine = SettingScope::Person(fx.owner);
+    let scope = json!({ "kind": "person", "id": fx.owner.to_hex() });
+    let row = |value: Value| SetSetting {
+        scope: mine.clone(),
+        ..SetSetting::vault_value(key, value)
+    };
+
+    call(&me, SET, set(key, scope.clone(), json!(false)));
+    let tighter = set_setting_as_person(&fx.vault, &fx.owner_proof, row(json!(true)))
+        .expect("a person tightens the owner's row of their own choice");
+    assert!(
+        matches!(tighter, SetSettingOutcome::Applied { .. }),
+        "{tighter:?}"
+    );
+    call(&me, SET, set(key, scope.clone(), json!(true)));
+    let refused = set_setting_as_person(&fx.vault, &fx.owner_proof, row(json!(false)))
+        .expect_err("over the owner's row a person makes no widening");
+    assert!(
+        format!("{refused:?}").contains("a person sets only"),
+        "{refused:?}"
+    );
+    assert_eq!(get(&me, key, json!([scope]))["value"], json!(true));
 }
