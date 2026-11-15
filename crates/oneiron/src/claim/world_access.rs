@@ -218,7 +218,9 @@ pub(crate) fn holds_world_access_claim_in(
 ///   (`VerifiedClaimTransition::closer`): a former owner's retract of the
 ///   grant it wrote would widen the agent to the other grants in the meet. A
 ///   raw close names no closer and passes, as the raw `Vault` door is owner
-///   authority; a consent's decline closes only a proposal.
+///   authority; a consent's decline closes only a proposal. The stale mark
+///   writes under the row's own envelope with no closer, so its door judges
+///   its caller first ([`admit_world_access_stale_mark`]).
 ///
 /// A birth (no stored row) is its door's ([`admit_world_access_write`]).
 ///
@@ -255,20 +257,54 @@ pub(crate) fn admit_world_access_transition(
         );
     }
     if governed && !governs {
-        let owner_closes = match closer {
-            Some(closer) => crate::policy_model::is_live_vault_owner_for_store_in_txn(
-                store,
-                store.privacy_posture,
-                txn,
-                &closer,
-            )?,
-            None => true,
-        };
-        if !owner_closes {
-            return Err(Error::InvalidClaimBody(
-                "world access grant must be closed by a vault owner",
-            ));
-        }
+        return admit_world_access_close(store, txn, closer);
+    }
+    Ok(())
+}
+
+/// The close rule of [`admit_world_access_transition`] at the stale mark
+/// (`Memory::claim_demote`): the mark takes `prior`, a governing grant, out of
+/// the fold in place, under the row's own envelope and with no closer, so the
+/// door judges its caller `closer` before it writes. A former owner's stale
+/// mark of the grant it wrote would widen the agent as its retract would.
+///
+/// # Errors
+///
+/// [`Error::InvalidClaimBody`] when `prior` governs and `closer` is no live
+/// owner, and the owner census's own read error.
+pub(crate) fn admit_world_access_stale_mark(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    prior: &ClaimBody,
+    closer: EntityId,
+) -> Result<()> {
+    if !governs_as_grant(prior) {
+        return Ok(());
+    }
+    admit_world_access_close(store, txn, Some(closer))
+}
+
+/// A governing grant stops governing only by a live owner: `closer` is the
+/// actor its door verified, `None` for a raw close (the raw `Vault` door is
+/// owner authority).
+fn admit_world_access_close(
+    store: &crate::store::Store,
+    txn: &heed::RoTxn<'_>,
+    closer: Option<EntityId>,
+) -> Result<()> {
+    let owner_closes = match closer {
+        Some(closer) => crate::policy_model::is_live_vault_owner_for_store_in_txn(
+            store,
+            store.privacy_posture,
+            txn,
+            &closer,
+        )?,
+        None => true,
+    };
+    if !owner_closes {
+        return Err(Error::InvalidClaimBody(
+            "world access grant must be closed by a vault owner",
+        ));
     }
     Ok(())
 }
