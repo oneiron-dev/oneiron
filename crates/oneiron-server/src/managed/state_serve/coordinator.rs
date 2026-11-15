@@ -399,6 +399,16 @@ async fn serve_with_handles(
     // anything serves.
     sync_server.live_voice.admit_with(state.voice_admission());
 
+    // A switch this process's last run did not finish leaves the box-hold-pending marker:
+    // the hold matching the preset now is sent once, on its own thread, admitted as a
+    // background pass, and a switch's hold waits for it (RULING WAYBACK-BOX-HOLD-BOOT-HEAL = D).
+    if let Some(hold) = sync_server.recovery_box_hold() {
+        drop(hold.heal_at_boot(
+            Arc::clone(sync_server.vault()),
+            state.background_admission(WriteKind::BackgroundOther),
+        ));
+    }
+
     spawn_sigterm_shutdown(shutdown.clone())?;
     // The receipts every vault signs (ARCH-0066 §8-§9), each admitted through
     // the reap freeze like a served write: a frozen vault signs nothing, and a

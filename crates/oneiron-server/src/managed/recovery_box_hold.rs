@@ -18,6 +18,11 @@
 //! or no answer within [`HOLD_TIMEOUT`]. One attempt per call; the owner
 //! retries the switch.
 //!
+//! A switch this process's last run did not finish leaves the
+//! box-hold-pending marker behind: the boot heal below then resends the
+//! hold matching the preset, once, on its own thread, and a switch's hold
+//! waits for that heal within the same bound.
+//!
 //! The call is a blocking `std` socket under one deadline, so it needs no
 //! runtime and is safe on a runtime's thread or off one. A self-hosted
 //! vault has no supervisor and so no client: `SyncServer::recovery_box_hold`
@@ -26,6 +31,7 @@
 use std::io::{Read as _, Write as _};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::{Arc, Condvar, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 use oneiron_vault_contract::{
@@ -53,6 +59,7 @@ pub struct HypnosRecoveryBoxHold {
     vault: String,
     token: TokenHex,
     timeout: Duration,
+    heal: Arc<HealGate>,
 }
 
 impl std::fmt::Debug for HypnosRecoveryBoxHold {
@@ -65,6 +72,30 @@ impl std::fmt::Debug for HypnosRecoveryBoxHold {
     }
 }
 
+/// Whether the boot heal's hold is still in flight. One gate is shared
+/// across the client's clones, so the installed client and the heal's own
+/// clone wait and signal on the same gate.
+#[derive(Default)]
+struct HealGate {
+    running: Mutex<bool>,
+    ended: Condvar,
+}
+
+/// The boot heal's hold on the closed gate. Dropping it opens the gate, so
+/// a panic's unwind opens the gate too.
+pub(crate) struct HealRunning(Arc<HealGate>);
+
+impl Drop for HealRunning {
+    fn drop(&mut self) {
+        *self
+            .0
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = false;
+        self.0.ended.notify_all();
+    }
+}
+
 impl HypnosRecoveryBoxHold {
     pub(crate) fn new(socket: PathBuf, vault: String, token: TokenHex) -> Self {
         Self {
@@ -72,6 +103,7 @@ impl HypnosRecoveryBoxHold {
             vault,
             token,
             timeout: HOLD_TIMEOUT,
+            heal: Arc::default(),
         }
     }
 
@@ -89,7 +121,39 @@ impl HypnosRecoveryBoxHold {
             vault,
             token,
             timeout,
+            heal: Arc::default(),
         }
+    }
+
+    /// Closes the boot heal's gate: every hold from now on waits for the
+    /// heal's answer before it sends. The returned guard opens the gate
+    /// when it drops.
+    pub(crate) fn close_heal_gate(&self) -> HealRunning {
+        *self
+            .heal
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = true;
+        HealRunning(Arc::clone(&self.heal))
+    }
+
+    /// Waits for the boot heal's hold to answer, up to `deadline`. Past it
+    /// the hold fails with nothing sent.
+    fn wait_for_heal(&self, deadline: Instant) -> Result<(), String> {
+        let guard = self
+            .heal
+            .running
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        let (guard, _) = self
+            .heal
+            .ended
+            .wait_timeout_while(guard, remaining(deadline)?, |running| *running)
+            .unwrap_or_else(PoisonError::into_inner);
+        if *guard {
+            return Err("waited past its bound for the boot heal's hold".to_owned());
+        }
+        Ok(())
     }
 
     /// Asks the supervisor to hold this vault's recovery box kit-only
@@ -97,18 +161,15 @@ impl HypnosRecoveryBoxHold {
     /// holds) or to lift the hold (`false`). `Ok` only when the supervisor
     /// answers that the choice is held.
     pub fn hold_kit_only(&self, kit_only: bool) -> oneiron::Result<()> {
-        let ack = self.ask(kit_only).map_err(|why| failed(&why))?;
-        match (ack.held, ack.error.as_deref()) {
-            (true, None) => Ok(()),
-            (false, Some(code)) => Err(failed(&format!("was refused by the supervisor ({code})"))),
-            _ => Err(failed("had an answer outside the contract")),
-        }
+        let deadline = Instant::now() + self.timeout;
+        self.wait_for_heal(deadline).map_err(|why| failed(&why))?;
+        let ack = self.ask(kit_only, deadline).map_err(|why| failed(&why))?;
+        held(&ack)
     }
 
     /// One request and its ack: the write and the whole answer under one
     /// deadline.
-    fn ask(&self, kit_only: bool) -> Result<RecoveryBoxKitOnlyAck, String> {
-        let deadline = Instant::now() + self.timeout;
+    fn ask(&self, kit_only: bool, deadline: Instant) -> Result<RecoveryBoxKitOnlyAck, String> {
         let request = RecoveryBoxKitOnly {
             op: RECOVERY_BOX_KIT_ONLY_OP.to_owned(),
             vault: self.vault.clone(),
@@ -181,6 +242,98 @@ impl HypnosRecoveryBoxHold {
         }
         Ok(ack)
     }
+
+    /// Sends the hold matching the recovery preset now, once, on its own
+    /// thread, when a switch this process's last run did not finish left
+    /// the box-hold-pending marker. Admitted as a background pass: a reap
+    /// pause or a deleted vault leaves the marker for the next boot. The
+    /// gate closes before the thread starts, so a switch's hold from then
+    /// on waits for the heal's answer; with no marker nothing is sent, no
+    /// thread starts and the gate never closes.
+    pub(crate) fn heal_at_boot(
+        &self,
+        vault: Arc<oneiron::Vault>,
+        admit: crate::server::HousekeepingAdmission,
+    ) -> Option<std::thread::JoinHandle<()>> {
+        let pending = match vault.recovery_box_hold_pending() {
+            Ok(None) => return None,
+            Ok(Some(pending)) => pending,
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the recovery box hold marker could not be read; no heal runs this boot"
+                );
+                return None;
+            }
+        };
+        let Some(admitted) = admit() else {
+            tracing::info!(
+                "the recovery box hold heal waits: the vault is paused and the marker stays for the next boot"
+            );
+            return None;
+        };
+        let running = self.close_heal_gate();
+        let hold = self.clone();
+        match std::thread::Builder::new()
+            .name("recovery-box-heal".into())
+            .spawn(move || {
+                let _admitted = admitted;
+                hold.heal(&vault, pending, running);
+            }) {
+            Ok(handle) => Some(handle),
+            Err(error) => {
+                tracing::warn!(
+                    kind = ?error.kind(),
+                    "the recovery box hold heal started no thread; the marker stays for the next boot"
+                );
+                None
+            }
+        }
+    }
+
+    /// The boot heal: the hold matching the preset now, sent once. The gate
+    /// opens once the send has its answer, so a switch's hold goes after
+    /// it; the clear below compares the attempt it read and needs no gate.
+    /// A send that fails keeps the marker for the next boot.
+    fn heal(
+        &self,
+        vault: &oneiron::Vault,
+        pending: oneiron::world_keys::RecoveryBoxHoldPending,
+        running: HealRunning,
+    ) {
+        let matched = self.send_matching(vault);
+        drop(running);
+        match matched {
+            Ok(kit_only) => match vault.clear_recovery_box_hold_pending(pending.attempt) {
+                Ok(true) => tracing::info!(
+                    kit_only,
+                    "the recovery box hold matches the recovery preset again"
+                ),
+                Ok(false) => tracing::info!(
+                    "the recovery box hold healed, but a newer switch's marker stays"
+                ),
+                Err(error) => tracing::warn!(
+                    kind = ?error.kind(),
+                    "the recovery box hold healed, but clearing its marker did not go through; the next boot resends"
+                ),
+            },
+            Err(error) => tracing::warn!(
+                kind = ?error.kind(),
+                "the recovery box hold may not match the recovery preset; the marker stays and the next boot resends"
+            ),
+        }
+    }
+
+    /// Reads the recovery preset now and sends its hold once, past the
+    /// gate: `Ok(kit_only)` when the supervisor answers that it holds.
+    fn send_matching(&self, vault: &oneiron::Vault) -> oneiron::Result<bool> {
+        let kit_only = vault.recovery_preset()?.is_nobody_but_me();
+        let ack = self
+            .ask(kit_only, Instant::now() + self.timeout)
+            .map_err(|why| failed(&why))?;
+        held(&ack)?;
+        Ok(kit_only)
+    }
 }
 
 impl crate::server::SyncServer {
@@ -215,6 +368,15 @@ fn remaining(deadline: Instant) -> Result<Duration, String> {
         return Err("ran out of time".to_owned());
     }
     Ok(left)
+}
+
+/// Whether the supervisor's answer holds the choice.
+fn held(ack: &RecoveryBoxKitOnlyAck) -> oneiron::Result<()> {
+    match (ack.held, ack.error.as_deref()) {
+        (true, None) => Ok(()),
+        (false, Some(code)) => Err(failed(&format!("was refused by the supervisor ({code})"))),
+        _ => Err(failed("had an answer outside the contract")),
+    }
 }
 
 fn failed(what: &str) -> oneiron::Error {
