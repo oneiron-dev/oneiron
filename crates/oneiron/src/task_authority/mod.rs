@@ -18,8 +18,11 @@
 //! only from the verified `tasks.create` / `cancel` / `tasks.update` write
 //! transactions; the generic raw TASK doors refuse role 6 outright
 //! (`habit::reject_public_streak_fields`), so no caller can mint the proof of
-//! its own ownership. The replication/replay door admits role 6 exactly like
-//! any other TASK row — a peer's facts are already facts.
+//! its own ownership. The own-device replication/replay door admits role 6
+//! exactly like any other TASK row. A federation peer's role 6 is refused at
+//! admission, and an export to another vault withholds every fact, until a
+//! fact carries its carrier's signature (pass 28 R5; FIX
+//! TASK-FACT-FROM-FEDERATION-PEER).
 
 use crate::ports::EdgeStoreRead;
 

@@ -17,6 +17,11 @@
 //!    changed, the whole row stays home. A signed body is never rewritten,
 //!    and a bearer token is content, never a proof slot;
 //! 4. every other row takes the typed rule as built.
+//!
+//! A TASK authority fact (role 6) stays home whatever it holds: another
+//! vault's admission refuses a peer's fact until a fact carries its carrier's
+//! signature (pass 28 R5), so the TASK it is about crosses without it rather
+//! than failing the whole frame there (FIX TASK-FACT-FROM-FEDERATION-PEER).
 
 use std::io::Cursor;
 
@@ -74,6 +79,7 @@ pub(super) fn released_for_other_vault(
             .then_some(true),
         ENTITY_TYPE_AUTHORITY_LOG => authority_entry_verdict(body),
         ENTITY_TYPE_CLAIM => signed_claim_verdict(prefix, body),
+        ENTITY_TYPE_TASK if is_task_authority_fact(body) => Some(false),
         ENTITY_TYPE_TASK => ask_companion_verdict(vault, rtxn, *id, &header, prefix, body),
         ENTITY_TYPE_MESSAGE => signed_message_verdict(prefix, body),
         _ => None,
@@ -83,6 +89,15 @@ pub(super) fn released_for_other_vault(
         Some(false) => RowRelease::Withheld,
         None => typed_release(kind, blob),
     }
+}
+
+/// Whether a TASK body is an authority fact (role 6), which no other vault
+/// receives (the module note).
+fn is_task_authority_fact(body: &[u8]) -> bool {
+    matches!(
+        crate::write_envelope::task_body::task_role_from_body_bytes(body),
+        Ok(crate::write_envelope::task_body::TaskRole::AuthorityFact)
+    )
 }
 
 /// The typed rule as built: byte-exact when it changes nothing, else its
