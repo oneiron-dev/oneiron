@@ -16,6 +16,7 @@
 
 use std::collections::HashSet;
 
+use oneiron_contracts::fingerprint::{LegacyDigest, purposes};
 use serde::{Deserialize, Serialize};
 
 use super::{HistoryMessage, HistoryRole, HistorySource, UNKNOWN_SPEAKER};
@@ -153,17 +154,28 @@ pub(super) fn holds(landed: &[String], message: &HistoryMessage) -> bool {
     held(false) || (message.said_by == Some(UNKNOWN_SPEAKER) && held(true))
 }
 
+/// The ledger stores this hash and a re-import compares it, so it keeps its bytes (K,
+/// PLAN-UC-04 stage 6.2).
 fn hash(message: &HistoryMessage, unknown_speaker: bool) -> String {
-    let mut hasher = blake3::Hasher::new();
+    let mut digest = LegacyDigest::new(purposes::ingest::HISTORY_MESSAGE);
     if unknown_speaker {
-        hasher.update(b"unknown\0");
+        digest.raw(b"unknown\0");
     }
-    hasher.update(match message.role {
+    digest.raw(match message.role {
         HistoryRole::User => b"user\0",
         HistoryRole::Assistant => b"asst\0",
     });
-    hasher.update(message.text.as_bytes());
-    hasher.finalize().to_hex().to_string()
+    digest.raw(message.text.as_bytes());
+    oneiron_hex::encode(&digest.finish())
+}
+
+/// A message's hash, with the speaker unknown or known.
+#[cfg(oneiron_test_support)]
+pub(crate) fn history_message_hash_for_test(
+    message: &HistoryMessage,
+    unknown_speaker: bool,
+) -> String {
+    hash(message, unknown_speaker)
 }
 
 pub(super) fn get(

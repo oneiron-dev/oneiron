@@ -418,6 +418,8 @@ pub use folder_source::{
     FolderSourceFile, OriginalBytes,
 };
 mod import;
+#[cfg(oneiron_test_support)]
+pub(crate) use import::note_import_content_hash_for_test;
 pub use import::{
     ImportedFile, ImportedNote, ImportedNoteBatch, ImportedNoteBatchReceipt, ImportedNoteLink,
     ImportedNoteStanding, NOTES_IMPORT_SOURCE,

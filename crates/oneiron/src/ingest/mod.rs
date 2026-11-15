@@ -39,6 +39,8 @@ pub use identity_key::identity_fields_for_kind;
 pub(crate) use identity_key::{identity_hint_body, identity_hint_digest, reindex_identity_hints};
 mod admission;
 mod bulk_review;
+#[cfg(oneiron_test_support)]
+pub(crate) use self::bulk_review::claim_import_content_hash_for_test;
 pub mod image;
 pub mod meeting_audio;
 mod provider;

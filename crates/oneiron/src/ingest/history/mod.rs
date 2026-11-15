@@ -22,6 +22,8 @@ mod hosted;
 mod hosted_verbs;
 mod land;
 mod ledger;
+#[cfg(oneiron_test_support)]
+pub(crate) use ledger::history_message_hash_for_test;
 mod plan;
 mod review;
 mod sharing;

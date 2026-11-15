@@ -34,6 +34,7 @@ use crate::registry::{ENTITY_TYPE_MACHINE, ENTITY_TYPE_NOTE};
 use crate::store::Store;
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_contracts::fingerprint::{ContentHash, LegacyDigest, purposes};
 
 /// The registered ingest source a notes import enters under.
 pub const NOTES_IMPORT_SOURCE: &str = "markdown";
@@ -290,7 +291,7 @@ impl Vault {
                 format!("notes:{}", batch.notes.len()),
                 format!("links:{}", batch.links.len()),
                 format!("name_only:{}", batch.name_only.len()),
-                format!("content:{}", content_hash(batch)?.to_hex()),
+                format!("content:{}", oneiron_hex::encode(&content_hash(batch)?)),
             ])?,
         )?;
         ComposedEffect::new(EffectFacts::new(REVIEW)?).with_action_requirement(bound)
@@ -661,7 +662,7 @@ pub(super) fn revision(folder: &str, path: &str, markdown: &str) -> [u8; 16] {
 }
 
 /// Every note, link and name-only file of the batch, hashed.
-fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
+fn content_hash(batch: &ImportedNoteBatch) -> Result<[u8; 32]> {
     let notes = batch
         .notes
         .iter()
@@ -671,7 +672,7 @@ fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
                 &note.kind,
                 &note.title,
                 note.written_at,
-                blake3::hash(note.markdown.as_bytes()).to_hex().to_string(),
+                ContentHash::of(note.markdown.as_bytes()).to_hex(),
                 note.original
                     .as_ref()
                     .map(|original| (original.media_type.as_str(), original.content_hash())),
@@ -699,7 +700,15 @@ fn content_hash(batch: &ImportedNoteBatch) -> Result<blake3::Hash> {
         .collect::<Vec<_>>();
     let content = serde_json::to_vec(&(&batch.folder, notes, links, name_only))
         .map_err(|_| Error::InvalidClaimBody("note import batch encoding failed"))?;
-    Ok(blake3::hash(&content))
+    Ok(LegacyDigest::new(purposes::note::IMPORT_CONTENT)
+        .raw(&content)
+        .finish())
+}
+
+/// The batch's content hash.
+#[cfg(oneiron_test_support)]
+pub(crate) fn note_import_content_hash_for_test(batch: &ImportedNoteBatch) -> Result<[u8; 32]> {
+    content_hash(batch)
 }
 
 /// The batch's one decision slot, whichever owner decides.
@@ -710,7 +719,7 @@ fn decision_slot(batch: &ImportedNoteBatch) -> Result<[u8; 32]> {
         batch.notes.len(),
         batch.links.len(),
         batch.name_only.len(),
-        content_hash(batch)?.to_hex().as_str(),
+        oneiron_hex::encode(&content_hash(batch)?),
     ))
     .map_err(|_| Error::InvalidClaimBody("note import batch encoding failed"))?;
     let mut hasher = blake3::Hasher::new_derive_key("oneiron notes.import.review decision v1");

@@ -1,6 +1,7 @@
 //! Blob version chain: version record codec and the Vault version-chain API.
 
 use heed::{RoTxn, RwTxn};
+use oneiron_contracts::fingerprint::ContentHash;
 
 use crate::Vault;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
@@ -62,7 +63,7 @@ impl<'b> VersionBody<'b> {
     /// The version's content hash: the body's BLAKE3.
     fn content_hash(self) -> [u8; BLOB_ARTIFACT_CONTENT_HASH_LEN] {
         match self {
-            Self::Bytes(bytes) => *blake3::hash(bytes).as_bytes(),
+            Self::Bytes(bytes) => *ContentHash::of(bytes).as_bytes(),
             Self::Staged(staged) => staged.facts().blake3,
         }
     }
