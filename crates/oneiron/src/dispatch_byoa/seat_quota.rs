@@ -14,7 +14,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vault;
 use crate::attempt_queue::{AttemptRecord, AttemptState};
-use crate::codebase::entity_id_from_hash_material;
 use crate::dreamer_runner::{ModelSeatAvailability, ModelSeatAvailableSource};
 use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::Error;
@@ -26,6 +25,7 @@ use super::owner_doors::RunnerSeatTopUpEffect;
 use super::record::{append_record_in_txn, head_record, head_record_checked};
 use super::seat::{RunnerSeat, RunnerSeatPolicy, SeatAuth, SeatSpent};
 use super::work_binding::{capture_hop_seat_quota_in_txn, capture_seat_in_txn};
+use oneiron_contracts::fingerprint::purposes;
 
 /// Records quota for the actual terminal attempt, with or without an artifact.
 /// Returns the routed seat index and whether a Completed capture restored
@@ -71,9 +71,6 @@ pub fn runner_capture_seat_quota_id(
     }
 }
 
-/// Domain a seat's quota record id is derived under.
-const SEAT_QUOTA_DOMAIN: &[u8] = b"oneiron:byoa-runner-seat-quota:v1";
-
 /// Media type of a seat's quota record.
 const SEAT_QUOTA_MEDIA_TYPE: &str = "application/vnd.oneiron.byoa-seat-quota+msgpack";
 
@@ -118,7 +115,10 @@ pub fn seat_quota_id(seat: &RunnerSeat) -> ByoaResult<EntityId> {
             .iter()
             .map(|handle| handle.as_str().as_bytes()),
     );
-    Ok(entity_id_from_hash_material(SEAT_QUOTA_DOMAIN, &parts)?)
+    Ok(EntityId::derive_legacy_material(
+        purposes::dispatch_byoa::RUNNER_SEAT_QUOTA,
+        &parts,
+    )?)
 }
 
 /// Records what `attempt`'s capture read of quota `id`, in the routing

@@ -10,6 +10,7 @@ use crate::extraction_eval::{
     Of360RateMetric, of360_ar3_metric_tier,
 };
 use crate::{EntityId, Result, Vault};
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 
 /// Selects one existing native metric, never an average across metrics.
@@ -132,8 +133,8 @@ pub(super) fn prepare(input: &HarnessOf360Evaluation) -> Result<Prepared> {
         &metric_definition_digest,
     ))
     .map_err(|_| invalid())?;
-    let baseline_key = crate::codebase::entity_id_from_hash_material(
-        b"oneiron:dreamer-harness-of360-baseline:v1",
+    let baseline_key = EntityId::derive_legacy_material(
+        purposes::dreamer::HARNESS_OF360_BASELINE,
         &[identity.as_slice()],
     )?;
     Ok(Prepared {

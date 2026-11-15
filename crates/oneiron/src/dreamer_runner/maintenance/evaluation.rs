@@ -14,6 +14,7 @@ use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::blob_artifact::{BlobArtifactBody, BlobVersionProvenance};
 use crate::side_table::{self, LegacyJson, SideTable};
 use crate::{ClaimApprovalStatus, ClaimSource, EntityId, Result, TimeRange, Vault};
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -130,7 +131,7 @@ impl DreamerTuningConfig {
 }
 /// The vault's one Dreamer tuning config artifact.
 fn tuning_artifact() -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(b"oneiron:dreamer-tuning-config:v1", &[])
+    EntityId::derive_legacy_material(purposes::dreamer::TUNING_CONFIG, &[])
 }
 impl Vault {
     pub fn set_retune_thresholds(

@@ -19,9 +19,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::llm::BrokerIsolation;
 use crate::side_table::{self, Named, SideTable};
-
-/// The domain of a request id an idempotency key fixes.
-const ORIGIN_PUBLISH_REQUEST_ID_DOMAIN: &[u8] = b"oneiron:origin-publish-request:v1";
+use oneiron_contracts::fingerprint::purposes;
 
 /// The longest idempotency key, in bytes.
 pub(super) const ORIGIN_PUBLISH_MAX_KEY_BYTES: usize = 128;
@@ -54,8 +52,8 @@ fn page_key(repo_id: EntityId, request_id: EntityId, page: u64) -> PublishKey {
 
 /// The request id `key` fixes for one repository.
 pub(super) fn keyed_request_id(repo_id: &EntityId, key: &str) -> Result<EntityId> {
-    crate::store::code_snapshot::entity_id_from_hash_material(
-        ORIGIN_PUBLISH_REQUEST_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::origin::PUBLISH_REQUEST,
         &[repo_id.as_bytes(), key.as_bytes()],
     )
 }

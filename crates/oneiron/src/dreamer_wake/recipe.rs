@@ -21,6 +21,7 @@ use rmpv::Value;
 use serde::{Deserialize, Serialize};
 
 use super::{DreamerAttemptExecution, DreamerAttemptExecutor, WakeAttemptContext};
+use oneiron_contracts::fingerprint::purposes;
 
 mod landing;
 
@@ -78,8 +79,8 @@ struct RecipeResult {
 const RESULT: SideTable<AttemptId, RecipeResult, LegacyJson> =
     SideTable::new(&side_table::DREAMER_WEAVE_RECIPE_RESULT);
 fn claim_id(attempt: &DreamerAdmittedAttempt) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron:dreamer:weave-recipe-claim:v1",
+    EntityId::derive_legacy_material(
+        purposes::dreamer::WEAVE_RECIPE_CLAIM,
         &[attempt.status.attempt.id.as_bytes()],
     )
 }

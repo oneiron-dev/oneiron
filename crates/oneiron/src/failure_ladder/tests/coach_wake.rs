@@ -1,6 +1,8 @@
 //! The default policy's Auto escalation wakes the Coach (owner ruling
 //! 2026-10-16), not a reserved slot that enqueues nothing.
 use super::*;
+use crate::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 #[test]
 fn default_policy_wakes_one_coach_stamped_heal_per_case() -> Result<()> {
@@ -24,7 +26,7 @@ fn default_policy_wakes_one_coach_stamped_heal_per_case() -> Result<()> {
     let stamp = vault
         .dreamer_attempt_authority(heals[0].id)?
         .expect("the heal carries a stamp");
-    let coach = crate::codebase::entity_id_from_hash_material(b"oneiron.coach.authority.v1", &[])?;
+    let coach = EntityId::derive_legacy_material(purposes::agent_def::COACH_AUTHORITY, &[])?;
     assert_eq!(stamp.actor, coach);
     assert_ne!(stamp.actor, vault.dreamer_authority()?.entity_ref());
     Ok(())

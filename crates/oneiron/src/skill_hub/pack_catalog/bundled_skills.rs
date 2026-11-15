@@ -10,6 +10,7 @@ use crate::{
     skill_hub::{HubFile, HubPackage, HubPin, HubRef},
     temporal::TimeRange,
 };
+use oneiron_contracts::fingerprint::purposes;
 use std::collections::BTreeMap;
 
 /// A bundled skill's provenance alias names the pack that minted it.
@@ -81,8 +82,8 @@ impl Vault {
         for (folder, package) in bundled_skill_packages(source)? {
             let hash = package.content_hash()?;
             let skill_ref = pack_skill_hub_ref(hub, &folder, hash)?;
-            let preferred_id = crate::codebase::entity_id_from_hash_material(
-                b"oneiron.pack-skill.v1",
+            let preferred_id = EntityId::derive_legacy_material(
+                purposes::skill_hub::PACK_SKILL,
                 &[hash.as_bytes()],
             )?;
             let id = self.import_skill_from_hub_in_txn(

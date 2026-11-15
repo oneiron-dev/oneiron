@@ -55,14 +55,13 @@ use oneiron_model::llm::{
     TierPrecedence,
 };
 
+use oneiron_contracts::fingerprint::purposes;
 use pairs::AppliedSameAs;
 use pairs::{Anchored, NightlyLinkQuestion, NightlyLinkVerdict, anchored, link_calls};
 pub(super) use pairs::{NightlyLinkProposal, anchors};
 
 /// The link continuation's attempt type.
 pub(super) const ATTEMPT: &str = "dreamer.nightly.links";
-/// The domain a continuation's proposal claims derive their ids under.
-const LINK_IDS: &[u8] = b"oneiron:nightly:links:v1";
 /// Why a continuation parks on a reply its read refused.
 const LINKS_REFUSED: &str = "nightly link reading schema refused";
 /// Why a continuation parks on a pack that came back short.
@@ -233,7 +232,7 @@ impl ConsolidationExecutor<'_> {
             vault: ctx.vault,
             actor,
             attempt: &attempt.status,
-            ids: LINK_IDS,
+            ids: purposes::dreamer::NIGHTLY_LINKS,
             now: ctx.now_ms / 1_000,
         };
         let commit = ctx.vault.with_write_txn_grouped(|txn| {

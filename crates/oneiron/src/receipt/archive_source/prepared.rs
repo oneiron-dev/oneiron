@@ -1,12 +1,13 @@
 //! Canonical receipt preparation in one native, unlinked temporary body.
 use std::io::{self, Read, Write};
 
-use super::codec::{ID_DOMAIN, ReceiptArchive};
+use super::codec::ReceiptArchive;
 use crate::{
     entity_id::{ENTITY_ID_LEN, EntityId},
     error::{Error, Result},
     store::{AssetBodyFacts, BodyDir, BodyFile, BodySpill, LINE_INDEX_BLOCK_BYTES},
 };
+use oneiron_contracts::fingerprint::purposes;
 
 /// One native temp for the whole restore, not one open file per source.
 /// A sealed vault uses an in-memory ephemeral key, never a body instance.
@@ -147,7 +148,7 @@ impl PreparedReceiptBytes {
 
 fn framed_id(salt: u64, len: u64) -> blake3::Hasher {
     let mut hash = blake3::Hasher::new();
-    hash.update(ID_DOMAIN);
+    hash.update(purposes::receipt::ARCHIVE_ASSET.tag().as_bytes());
     hash.update(&salt.to_le_bytes());
     hash.update(&len.to_le_bytes());
     hash

@@ -30,6 +30,7 @@ use crate::attempt_queue::{AttemptId, AttemptQueue, AttemptRecord};
 use crate::store::model_step_submission::StepBudgetRefusal;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{ClaimInput, ClaimSource, EdgeActorClass, EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 /// The predicate an agent's free-time suggestion for its human lands under.
 const SUGGESTION_PREDICATE: &str = "autonomy.suggestion";
@@ -417,8 +418,8 @@ fn propose_suggestion(
     suggestion: &str,
     human: Option<EntityId>,
 ) -> Result<Option<EntityId>> {
-    let id = crate::codebase::entity_id_from_hash_material(
-        b"oneiron:free_time:suggestion:v1",
+    let id = EntityId::derive_legacy_material(
+        purposes::dreamer::FREE_TIME_SUGGESTION,
         &[binding.item.as_bytes().as_slice()],
     )?;
     if vault.get_claim(&id)?.is_some() {

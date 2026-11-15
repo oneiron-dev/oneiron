@@ -33,6 +33,7 @@ use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::RetrievalRunRecord;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 mod recurrence_index;
 pub(super) use recurrence_index::same_key_in_txn;
@@ -170,8 +171,8 @@ impl IssueCoalescingPolicy {
     /// recipe)`.
     pub(crate) fn issue_id(self, diagnostic: EntityId, recipe: &[u8; 32]) -> Result<EntityId> {
         match self {
-            Self::ExactFindingRecipe => crate::codebase::entity_id_from_hash_material(
-                b"coach.diagnostic.issue.v1",
+            Self::ExactFindingRecipe => EntityId::derive_legacy_material(
+                purposes::self_heal::DIAGNOSTIC_ISSUE,
                 &[diagnostic.as_bytes(), recipe],
             ),
         }

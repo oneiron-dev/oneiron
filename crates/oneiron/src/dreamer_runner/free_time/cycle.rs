@@ -31,6 +31,7 @@ use crate::run_budget::{DeclaredMaximum, LeaseUnit, MaximumShown};
 use crate::workspace_roster::spend_scope::ChildSpend;
 use crate::workspace_roster::spend_scope::SpendScopeId;
 use crate::{EntityId, Error, Result, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 /// How many local dates a boundary search walks: a skipped date (a gap)
 /// and the date on either side.
@@ -195,8 +196,8 @@ pub(super) fn next_due_boundary(
 
 /// The cycle id of `agent`'s cycle at `boundary`.
 fn cycle_id(agent: EntityId, boundary: u64) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron:free_time:cycle:v1",
+    EntityId::derive_legacy_material(
+        purposes::dreamer::FREE_TIME_CYCLE,
         &[
             agent.as_bytes().as_slice(),
             boundary.to_be_bytes().as_slice(),
@@ -206,8 +207,8 @@ fn cycle_id(agent: EntityId, boundary: u64) -> Result<EntityId> {
 
 /// The id of a cycle's item of `kind`: the same for every try of it.
 fn item_id(cycle: EntityId, kind: FreeTimeKind) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron:free_time:item:v1",
+    EntityId::derive_legacy_material(
+        purposes::dreamer::FREE_TIME_ITEM,
         &[cycle.as_bytes().as_slice(), [kind.code()].as_slice()],
     )
 }
@@ -215,8 +216,8 @@ fn item_id(cycle: EntityId, kind: FreeTimeKind) -> Result<EntityId> {
 /// The id of a cycle's `round`th extra own-time item (FIX 7763): the same
 /// for every try of that round.
 pub(super) fn round_item_id(cycle: EntityId, round: u32) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        b"oneiron:free_time:item:round:v1",
+    EntityId::derive_legacy_material(
+        purposes::dreamer::FREE_TIME_ROUND_ITEM,
         &[cycle.as_bytes().as_slice(), round.to_be_bytes().as_slice()],
     )
 }

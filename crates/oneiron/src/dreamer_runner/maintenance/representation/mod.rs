@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 pub const REPRESENTATION_FACET: &str = "dreamer.representation";
 const PREDICATE: &str = "dreamer.representation.proposal";
 use crate::attempt_queue::maintenance_predicate::CONTENT_PREFIX;
+use oneiron_contracts::fingerprint::purposes;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -137,10 +138,7 @@ impl Packet {
         serde_json::to_vec(self).map_err(|_| invalid())
     }
     fn id(&self) -> Result<EntityId> {
-        crate::codebase::entity_id_from_hash_material(
-            b"oneiron:dreamer-representation:v1",
-            &[&self.bytes()?],
-        )
+        EntityId::derive_legacy_material(purposes::dreamer::REPRESENTATION, &[&self.bytes()?])
     }
     fn content_ref(&self) -> Result<String> {
         Ok(format!(

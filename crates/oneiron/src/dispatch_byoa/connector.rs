@@ -30,12 +30,6 @@ pub const BYOA_EXHAUST_MEDIA_TYPE: &str = "application/vnd.oneiron.byoa-exhaust+
 /// Scheme prefix every BYOA result reference carries.
 pub const BYOA_RESULT_REF_PREFIX: &str = "blob-artifact:";
 
-/// Domain separator for the per-attempt exhaust artifact id.
-pub(super) const BYOA_EXHAUST_ARTIFACT_ID_DOMAIN: &[u8] = b"oneiron:byoa-exhaust-artifact:v1";
-
-/// Domain separator for the stable host-runtime write actor.
-pub(super) const BYOA_RUNTIME_ACTOR_DOMAIN: &[u8] = b"oneiron:byoa-runtime-actor:v1";
-
 #[doc(hidden)]
 pub use oneiron_records::dispatch_byoa::connector::{
     BYOA_EXHAUST_INLINE_BYTES, ByoaConnectorKind, DevRunnerRefs,

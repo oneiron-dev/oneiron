@@ -10,12 +10,6 @@ use oneiron_contracts::fingerprint::purposes;
 use serde::Deserialize;
 use serde::Serialize;
 
-/// The domain a solved run's evidence id is hashed in (CUA E8a, CALLS row
-/// "evidence identity"): its scope, run, call, span and the durable body's
-/// bytes; never its capture time. The same capture delivered again is the
-/// same claim.
-pub const SOLVED_RUN_DOMAIN: &[u8] = b"oneiron:browser-solved-run:v1";
-
 /// The domain a scoped solved group's digest is hashed in (CUA E8a, CALLS
 /// row "group identity").
 pub const SOLVED_GROUP_DOMAIN: &[u8] = b"oneiron:browser-solved-group:v1";

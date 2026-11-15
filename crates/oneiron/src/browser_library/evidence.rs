@@ -23,6 +23,7 @@ use crate::error::{Error, Result};
 use crate::learning::TypeRef;
 use crate::runtime_hooks::InvocationId;
 use crate::runtime_hooks::verb::VerbAskCredentialRef;
+use oneiron_contracts::fingerprint::purposes;
 
 pub use crate::memory::browser_capture::SOLVED_RUN_PREDICATE;
 
@@ -32,8 +33,8 @@ pub use crate::memory::browser_capture::WORKFLOW_FILING_PREDICATE;
 pub(super) use oneiron_records::browser_library::evidence::digest;
 #[doc(hidden)]
 pub use oneiron_records::browser_library::evidence::{
-    FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_RUN_DOMAIN,
-    SOLVED_SCOPE_DOMAIN, SolvedRunScope, SolvedSource, workflow_filing_id,
+    FiledScope, SOLVED_CAPTURE_VERSION, SOLVED_GROUP_DOMAIN, SOLVED_SCOPE_DOMAIN, SolvedRunScope,
+    SolvedSource, workflow_filing_id,
 };
 
 pub use crate::dreamer_runner::maintenance::browser_candidate::CANDIDATE_DOMAIN;
@@ -171,7 +172,7 @@ pub struct SolvedRunEvidence {
 }
 
 impl SolvedRunEvidence {
-    /// `capture` within `scope`, its id hashed in [`SOLVED_RUN_DOMAIN`].
+    /// `capture` within `scope`, its id hashed in [`purposes::browser_library::SOLVED_RUN`].
     ///
     /// # Errors
     ///
@@ -195,8 +196,8 @@ impl SolvedRunEvidence {
             },
         }
         .digest();
-        let id = crate::codebase::entity_id_from_hash_material(
-            SOLVED_RUN_DOMAIN,
+        let id = EntityId::derive_legacy_material(
+            purposes::browser_library::SOLVED_RUN,
             &[
                 &group,
                 capture.run_id.as_bytes(),

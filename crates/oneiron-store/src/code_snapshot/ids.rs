@@ -2,10 +2,7 @@
 
 use crate::code_snapshot::snapshot::CODEBASE_CONTENT_HASH_LEN;
 use crate::code_snapshot::snapshot::CodebaseSnapshot;
-use crate::code_snapshot::snapshot::write_hash_len;
-use oneiron_base::error::Error;
 use oneiron_base::error::Result;
-use oneiron_contracts::entity_id::ENTITY_ID_LEN;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::fingerprint::purposes;
 
@@ -27,31 +24,6 @@ pub fn codebase_snapshot_entity_id(snapshot: &CodebaseSnapshot) -> Result<Entity
             snapshot.repo_ref.canonical().as_bytes(),
         ],
     )
-}
-
-/// The legacy material id rule under a bare domain: the bytes of
-/// [`EntityId::derive_legacy_material`] under a legacy purpose whose tag is `domain`.
-/// Only the core's call sites use it, until PLAN-UC-04 2.3 names their legacy
-/// purposes and deletes it; a new call is a review finding.
-pub fn entity_id_from_hash_material(domain: &[u8], parts: &[&[u8]]) -> Result<EntityId> {
-    for salt in 0_u64..=u64::MAX {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(domain);
-        hasher.update(&salt.to_le_bytes());
-        for part in parts {
-            write_hash_len(&mut hasher, part.len())?;
-            hasher.update(part);
-        }
-        let hash = hasher.finalize();
-        let mut id = [0_u8; ENTITY_ID_LEN];
-        id.copy_from_slice(&hash.as_bytes()[..ENTITY_ID_LEN]);
-        if let Ok(id) = EntityId::from_bytes(id) {
-            return Ok(id);
-        }
-    }
-    Err(Error::InvariantViolation(
-        "codebase deterministic entity id exhausted salt space",
-    ))
 }
 
 /// OF-222 (FIX 2768) archive seam: the ASSET a snapshot file's bytes are stored as.

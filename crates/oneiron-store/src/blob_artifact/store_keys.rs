@@ -10,8 +10,6 @@ use oneiron_contracts::entity_id::ENTITY_ID_LEN;
 use oneiron_contracts::entity_id::EntityId;
 use oneiron_contracts::record_layout::EntityMetadataHeader;
 
-pub const BLOB_ARTIFACT_ASSET_ID_DOMAIN: &[u8] = b"oneiron:blob-artifact-asset:v1";
-
 pub const BLOB_ARTIFACT_CONTENT_HASH_LEN: usize = 32;
 
 pub const BLOB_ARTIFACT_RUN_REF_MAX_BYTES: usize = 1024;

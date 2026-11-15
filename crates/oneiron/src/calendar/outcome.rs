@@ -44,7 +44,6 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
     claim_surfaceable,
 };
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::lens::{
@@ -64,9 +63,6 @@ pub const PREDICATE_CALENDAR_EVENT_OUTCOME: &str = "calendar.event_outcome";
 
 /// Opaque reason tag the host echoes back when the check-in wake fires.
 pub const OUTCOME_CHECK_IN_REASON_TAG: &str = "calendar.event_outcome.check_in";
-
-/// Domain separator for the per-EVENT recording artifact id.
-const CHECK_IN_RECORDING_ARTIFACT_ID_DOMAIN: &[u8] = b"oneiron:calendar-outcome-recording:v1";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::calendar::outcome::{
@@ -222,6 +218,7 @@ mod conditional;
 use conditional::record_event_outcome_in_txn;
 pub use conditional::record_machine_event_outcome;
 pub(crate) use conditional::{record_event_outcome_as_in_txn, record_lifecycle_outcome_in_txn};
+use oneiron_contracts::fingerprint::purposes;
 
 /// Reads the EVENT's live outcome claim.
 ///
@@ -691,8 +688,8 @@ pub fn accept_check_in_recording(
 /// [`crate::error::Error::InvariantViolation`] if id derivation exhausts its
 /// salt space, which the shared helper treats as unreachable.
 pub fn check_in_recording_artifact_id(event_ref: &EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        CHECK_IN_RECORDING_ARTIFACT_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::calendar::CHECK_IN_RECORDING_ARTIFACT,
         &[event_ref.as_bytes()],
     )
 }

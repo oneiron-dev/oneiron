@@ -11,8 +11,8 @@ use crate::git_wire::{
     git_path_bytes, lock_repository,
 };
 use crate::side_table::{self, Raw, SideKey, SideTable};
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
+use oneiron_contracts::fingerprint::purposes;
 use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
@@ -60,10 +60,6 @@ fn export_key(repo: &GitWireRepo, revision: EntityId) -> RepoRevisionKey {
     }
 }
 
-/// Domain separating per-vault/per-actor opaque Git author pseudonyms from
-/// every other derived id (FIX 5020).
-const OPAQUE_GIT_AUTHOR_DOMAIN: &[u8] = b"oneiron:origin-git-author:v1";
-
 /// Opaque public Git author/committer strings for `actor` in `vault`'s
 /// projection: `actor-<pseudonym>` and `<pseudonym>@actor.invalid`.
 ///
@@ -82,12 +78,12 @@ pub(in crate::origin) fn opaque_git_author(
 ) -> Result<(String, String)> {
     let genesis = vault.authority_vault_id().ok().flatten();
     let pseudonym = match genesis {
-        Some(id) => entity_id_from_hash_material(
-            OPAQUE_GIT_AUTHOR_DOMAIN,
+        Some(id) => EntityId::derive_legacy_material(
+            purposes::origin::OPAQUE_GIT_AUTHOR,
             &[b"authority", &id, actor.as_bytes()],
         )?,
-        None => entity_id_from_hash_material(
-            OPAQUE_GIT_AUTHOR_DOMAIN,
+        None => EntityId::derive_legacy_material(
+            purposes::origin::OPAQUE_GIT_AUTHOR,
             &[b"store", vault.vault_id().as_bytes(), actor.as_bytes()],
         )?,
     }
@@ -284,8 +280,8 @@ impl Vault {
         if let Err(refused) = projected {
             return Ok(Err(refused));
         }
-        let intent = entity_id_from_hash_material(
-            b"oneiron:engine-export-intent:v1",
+        let intent = EntityId::derive_legacy_material(
+            purposes::origin::ENGINE_EXPORT_INTENT,
             &[
                 repo_id.as_bytes(),
                 request.revision_id.as_bytes(),

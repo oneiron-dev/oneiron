@@ -20,6 +20,7 @@ use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result};
 use crate::inbox::{NotificationEvent, NotificationKind, NotificationSource};
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 // The Coach's model drafts the step on a host Coach (FIX 5609).
 mod draft;
@@ -31,7 +32,6 @@ pub const WEAVE_DIGEST_SETTINGS_NOTIFICATION_PRODUCER: &str = "weave.digest.sett
 /// The Coach evaluates each owner at most once in this many seconds (CALLS:
 /// FIX 5495 evaluation).
 const WEAVE_DIGEST_COACH_EVERY_SECS: u64 = 86_400;
-const CHANGE_ID_DOMAIN: &[u8] = b"oneiron:weave-digest-setting-change:v1";
 
 const STALE_ACCEPT: &str = "your digest settings changed since; nothing applied";
 const STALE_UNDO: &str = "your digest settings changed since; nothing undone";
@@ -108,8 +108,8 @@ fn change_id(owner: EntityId, base: u64, step: CoachStep, now: u64) -> Result<En
     let base = base.to_be_bytes();
     let now = now.to_be_bytes();
     let step = format!("{step:?}");
-    crate::store::code_snapshot::entity_id_from_hash_material(
-        CHANGE_ID_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::claim::WEAVE_DIGEST_SETTING_CHANGE,
         &[
             owner.as_bytes().as_slice(),
             base.as_slice(),

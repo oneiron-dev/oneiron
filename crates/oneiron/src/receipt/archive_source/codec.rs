@@ -7,10 +7,9 @@ use crate::{
     registry::ENTITY_TYPE_CLAIM,
     store::Store,
 };
+use oneiron_contracts::fingerprint::purposes;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-/// The domain an archived source's id hashes its canonical bytes under.
-pub(super) const ID_DOMAIN: &[u8] = b"oneiron.receipt-archive.asset.v1";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct ReceiptArchive {
@@ -112,7 +111,7 @@ pub(super) fn decode(bytes: &[u8]) -> Result<Option<ReceiptArchive>> {
 /// The id of the archived source whose canonical stored bytes are `bytes`
 /// ([`ReceiptArchive::bytes`]), hashed once from the bytes already held.
 pub(super) fn id_of_bytes(bytes: &[u8]) -> Result<EntityId> {
-    crate::store::code_snapshot::entity_id_from_hash_material(ID_DOMAIN, &[bytes])
+    EntityId::derive_legacy_material(purposes::receipt::ARCHIVE_ASSET, &[bytes])
 }
 /// A writer that accepts only the next bytes of `rest`, so an encoding is
 /// compared with stored bytes as it is written.

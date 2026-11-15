@@ -18,13 +18,13 @@ use rmpv::Value;
 use super::batch_index::{BatchIndexKind, store_indexed_batches_in_txn};
 use super::{BatchState, MergeBatch, MergeQueue};
 use crate::claim::ClaimBody;
-use crate::codebase::entity_id_from_hash_material;
 use crate::error::{Error, Result};
 use crate::repo_mutation::proposal::{
     proposal_admission_receipt_in_txn, put_receipt_once_in_txn, receipt_body, receipt_field,
     stored_receipt_in_txn,
 };
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::{LegacyPurpose, purposes};
 
 /// The predicate of a queue entry's admission receipt.
 pub(crate) const QUEUE_ADMISSION_PREDICATE: &str = "repo.queue_admission";
@@ -32,12 +32,9 @@ pub(crate) const QUEUE_ADMISSION_PREDICATE: &str = "repo.queue_admission";
 /// The predicate of a queue entry's terminal completion receipt.
 pub(crate) const QUEUE_COMPLETION_PREDICATE: &str = "repo.queue_completion";
 
-const QUEUE_ADMISSION_DOMAIN: &[u8] = b"oneiron:repo-queue-admission:v1";
-const QUEUE_COMPLETION_DOMAIN: &[u8] = b"oneiron:repo-queue-completion:v1";
-
-/// The id of `domain`'s receipt of batch `batch` of the queue of `store`.
-fn receipt_id(domain: &[u8], store: &str, batch: &str) -> Result<EntityId> {
-    entity_id_from_hash_material(domain, &[store.as_bytes(), batch.as_bytes()])
+/// The id of the receipt `purpose` names, of batch `batch` of the queue of `store`.
+fn receipt_id(purpose: LegacyPurpose, store: &str, batch: &str) -> Result<EntityId> {
+    EntityId::derive_legacy_material(purpose, &[store.as_bytes(), batch.as_bytes()])
 }
 
 /// The outcome a terminal `state` completes an entry with; `None` before.
@@ -106,7 +103,7 @@ impl MergeQueue<'_> {
         batch: &MergeBatch,
     ) -> Result<()> {
         let store = self.repo.identity().as_hex();
-        let admission = receipt_id(QUEUE_ADMISSION_DOMAIN, &store, &batch.id)?;
+        let admission = receipt_id(purposes::code::QUEUE_ADMISSION, &store, &batch.id)?;
         let admitted = match stored_receipt_in_txn(self.vault, txn, &admission)? {
             Some(body) => {
                 check_queue_receipt(&body, QUEUE_ADMISSION_PREDICATE, &store, &batch.id)?;
@@ -117,7 +114,7 @@ impl MergeQueue<'_> {
         let (true, Some(outcome)) = (admitted, completion_outcome(batch.state)) else {
             return Ok(());
         };
-        let completion = receipt_id(QUEUE_COMPLETION_DOMAIN, &store, &batch.id)?;
+        let completion = receipt_id(purposes::code::QUEUE_COMPLETION, &store, &batch.id)?;
         if let Some(body) = stored_receipt_in_txn(self.vault, txn, &completion)? {
             check_queue_receipt(&body, QUEUE_COMPLETION_PREDICATE, &store, &batch.id)?;
             if receipt_field(&body.value, "outcome").and_then(Value::as_str) != Some(outcome) {
@@ -334,7 +331,7 @@ impl MergeQueue<'_> {
             .ok_or(Error::InvariantViolation(
                 "a superseded queue entry names no green successor",
             ))?;
-        let completion = receipt_id(QUEUE_COMPLETION_DOMAIN, store, successor)?;
+        let completion = receipt_id(purposes::code::QUEUE_COMPLETION, store, successor)?;
         let receipt = match stored_receipt_in_txn(self.vault, txn, &completion)? {
             Some(body) => {
                 check_queue_receipt(&body, QUEUE_COMPLETION_PREDICATE, store, successor)?;
@@ -363,13 +360,13 @@ impl MergeQueue<'_> {
     pub(crate) fn batch_receipts(&self, batch: &MergeBatch) -> Result<QueueBatchReceipts> {
         let txn = self.vault.store.env.read_txn()?;
         let store = self.repo.identity().as_hex();
-        let admission = receipt_id(QUEUE_ADMISSION_DOMAIN, &store, &batch.id)?;
+        let admission = receipt_id(purposes::code::QUEUE_ADMISSION, &store, &batch.id)?;
         let Some(body) = stored_receipt_in_txn(self.vault, &txn, &admission)? else {
             return Ok(QueueBatchReceipts::default());
         };
         check_queue_receipt(&body, QUEUE_ADMISSION_PREDICATE, &store, &batch.id)?;
         let proposals = admitted_proposals(&body, batch)?;
-        let completion = receipt_id(QUEUE_COMPLETION_DOMAIN, &store, &batch.id)?;
+        let completion = receipt_id(purposes::code::QUEUE_COMPLETION, &store, &batch.id)?;
         let completion = match stored_receipt_in_txn(self.vault, &txn, &completion)? {
             Some(body) => {
                 check_queue_receipt(&body, QUEUE_COMPLETION_PREDICATE, &store, &batch.id)?;
@@ -448,7 +445,7 @@ pub(crate) fn proposal_queue_failure_in_txn(
             }
             _ => return Ok(None),
         };
-        let completion = receipt_id(QUEUE_COMPLETION_DOMAIN, store, &batch.id)?;
+        let completion = receipt_id(purposes::code::QUEUE_COMPLETION, store, &batch.id)?;
         let Some(body) = stored_receipt_in_txn(vault, txn, &completion)? else {
             continue;
         };

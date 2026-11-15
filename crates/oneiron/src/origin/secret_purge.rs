@@ -38,8 +38,8 @@ use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::secret_custody::MASKED_FILE_BAND;
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
+use oneiron_contracts::fingerprint::purposes;
 
 /// The predicate of one frozen purge plan.
 pub(crate) const REPO_SECRET_PURGE_PREDICATE: &str = "repo.secret_purge";
@@ -49,12 +49,6 @@ pub(crate) const REPO_SECRET_PURGE_RECEIPT_PREDICATE: &str = "repo.secret_purge_
 
 /// The one schema plans and receipts are written at.
 const PURGE_SCHEMA: u16 = 1;
-
-/// The hash domain a plan's id is derived under.
-const PLAN_ID_DOMAIN: &[u8] = b"oneiron:repo-secret-purge-plan:v1";
-
-/// The hash domain a receipt's id is derived under, from its plan.
-const RECEIPT_ID_DOMAIN: &[u8] = b"oneiron:repo-secret-purge-receipt:v1";
 
 /// What no purge reaches, named in every plan and receipt.
 const OUTSTANDING: [RepoSecretPurgeOutstanding; 5] = [
@@ -130,12 +124,15 @@ fn plan_id(
         parts.push(step.old_oid.as_bytes().to_vec());
     }
     let parts: Vec<&[u8]> = parts.iter().map(Vec::as_slice).collect();
-    entity_id_from_hash_material(PLAN_ID_DOMAIN, &parts)
+    EntityId::derive_legacy_material(purposes::origin::SECRET_PURGE_PLAN, &parts)
 }
 
 /// The id of `plan`'s one receipt.
 fn receipt_id(plan: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(RECEIPT_ID_DOMAIN, &[plan.as_bytes().as_slice()])
+    EntityId::derive_legacy_material(
+        purposes::origin::SECRET_PURGE_RECEIPT,
+        &[plan.as_bytes().as_slice()],
+    )
 }
 
 /// The claim body of one plan or receipt: engine bookkeeping, on the edge

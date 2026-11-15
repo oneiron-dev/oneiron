@@ -18,13 +18,12 @@
 use super::upkeep::{room_upkeep_fold_in_txn, room_upkeep_hosts_in_txn, room_upkeep_reach_now};
 use super::upkeep_voice_guard::{VoiceLanes, VoicePlan, VoiceRefusal};
 use super::*;
+use crate::EntityId;
 use crate::claim::ClaimReadStatus;
 use crate::dreamer_runner::maintenance::coach::room_upkeep_nudge_in_txn;
 use crate::memory::{WitnessAuthor, WitnessMessage};
+use oneiron_contracts::fingerprint::purposes;
 use std::collections::BTreeMap;
-
-const VOICE_TURN_DOMAIN: &[u8] = b"oneiron:rooms-upkeep-voice:turn:v1";
-const VOICE_MESSAGE_DOMAIN: &[u8] = b"oneiron:rooms-upkeep-voice:message:v1";
 
 #[doc(hidden)]
 pub use oneiron_verb_wire::workspace_roster::rooms::upkeep_voice::{
@@ -50,8 +49,14 @@ pub struct RoomUpkeepVoiceReceipt {
 /// finding, whoever retries it.
 pub(super) fn voice_ids(finding: EntityId) -> Result<(EntityId, EntityId)> {
     Ok((
-        crate::codebase::entity_id_from_hash_material(VOICE_TURN_DOMAIN, &[finding.as_bytes()])?,
-        crate::codebase::entity_id_from_hash_material(VOICE_MESSAGE_DOMAIN, &[finding.as_bytes()])?,
+        EntityId::derive_legacy_material(
+            purposes::workspace_roster::UPKEEP_VOICE_TURN,
+            &[finding.as_bytes()],
+        )?,
+        EntityId::derive_legacy_material(
+            purposes::workspace_roster::UPKEEP_VOICE_MESSAGE,
+            &[finding.as_bytes()],
+        )?,
     ))
 }
 

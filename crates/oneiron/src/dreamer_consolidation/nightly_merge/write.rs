@@ -18,6 +18,7 @@ use crate::{
     ClaimCandidate, EntityId, Error, Result, SourceLineage, TimeRange, Vault, WriteEnvelope,
     WriteProvenance,
 };
+use oneiron_contracts::fingerprint::LegacyPurpose;
 
 /// One claim a nightly attempt writes: its candidate and the meet of its
 /// sources.
@@ -29,9 +30,9 @@ pub(in crate::dreamer_consolidation) struct NightlyWrite<'a> {
     pub(in crate::dreamer_consolidation) vault: &'a Vault,
     pub(in crate::dreamer_consolidation) actor: WriteActor,
     pub(in crate::dreamer_consolidation) attempt: &'a DreamerAttemptStatus,
-    /// The domain each written claim's id derives under, beside the attempt
-    /// and the claim's index among its drafts.
-    pub(in crate::dreamer_consolidation) ids: &'static [u8],
+    /// The legacy purpose each written claim's id derives under, from the
+    /// attempt and the claim's index among its drafts.
+    pub(in crate::dreamer_consolidation) ids: LegacyPurpose,
     /// Unix seconds.
     pub(in crate::dreamer_consolidation) now: u64,
 }
@@ -49,7 +50,7 @@ impl NightlyWrite<'_> {
         let mut outputs = Vec::with_capacity(drafts.len());
         for (index, draft) in drafts.into_iter().enumerate() {
             let (candidate, meet) = draft?;
-            let id = crate::codebase::entity_id_from_hash_material(
+            let id = EntityId::derive_legacy_material(
                 self.ids,
                 &[
                     self.attempt.attempt.id.as_bytes(),

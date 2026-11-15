@@ -35,6 +35,7 @@ use super::store::{self, HookRunState, RunKey};
 
 pub(super) use body::{Verdict, ask_verdict, judge, verdict_context};
 pub(crate) use hook_feeds::prune_hook_feeds;
+use oneiron_contracts::fingerprint::purposes;
 use retained::RetainedPass;
 
 /// Entries one pass reads from each source: the in-memory cap. A source with
@@ -695,7 +696,7 @@ pub(super) fn input_json(
 }
 
 pub(super) fn block_id(key: &RunKey) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(b"oneiron.hook-block.v1", &[key.as_slice()])
+    EntityId::derive_legacy_material(purposes::runtime_hooks::BLOCK, &[key.as_slice()])
 }
 
 /// `text`, cut to [`MAX_FIELD`] bytes on a character boundary.

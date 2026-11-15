@@ -13,11 +13,12 @@ use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::codebase::{RepoRef, entity_id_from_hash_material};
+use crate::codebase::RepoRef;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::store::repo_mutation_record::RepoMutationStatus;
 use crate::write_envelope::identity_pair::map_field;
+use oneiron_contracts::fingerprint::purposes;
 
 /// The predicate of a proposal's submission admission receipt.
 pub(crate) const PROPOSAL_ADMISSION_PREDICATE: &str = "repo.proposal_admission";
@@ -25,18 +26,15 @@ pub(crate) const PROPOSAL_ADMISSION_PREDICATE: &str = "repo.proposal_admission";
 /// The predicate of one execution attempt's completion receipt.
 pub(crate) const PROPOSAL_ATTEMPT_PREDICATE: &str = "repo.proposal_attempt_completion";
 
-const PROPOSAL_ADMISSION_DOMAIN: &[u8] = b"oneiron:repo-proposal-admission:v1";
-const PROPOSAL_ATTEMPT_DOMAIN: &[u8] = b"oneiron:repo-proposal-attempt-completion:v1";
-
 /// The id of `proposal`'s submission admission receipt.
 fn admission_receipt_id(proposal: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(PROPOSAL_ADMISSION_DOMAIN, &[proposal.as_bytes()])
+    EntityId::derive_legacy_material(purposes::code::PROPOSAL_ADMISSION, &[proposal.as_bytes()])
 }
 
 /// The id of the completion receipt of `proposal`'s attempt at `seq`.
 fn attempt_receipt_id(proposal: EntityId, seq: u64) -> Result<EntityId> {
-    entity_id_from_hash_material(
-        PROPOSAL_ATTEMPT_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::code::PROPOSAL_ATTEMPT_COMPLETION,
         &[proposal.as_bytes(), &seq.to_be_bytes()],
     )
 }

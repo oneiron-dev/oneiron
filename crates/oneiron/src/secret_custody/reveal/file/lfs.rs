@@ -16,14 +16,15 @@
 //! spent or asked again.
 
 use super::{
-    FILE_REASK_DOMAIN, KeyRead, REVEALS, ReadGroup, RevealAsker, SEALED_FILE_CLASS,
-    SecretRevealState, checked_text, file_ask_id, load_active_standing_grants, reveal_class,
+    KeyRead, REVEALS, ReadGroup, RevealAsker, SEALED_FILE_CLASS, SecretRevealState, checked_text,
+    file_ask_id, load_active_standing_grants, reveal_class,
 };
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::origin::lfs::LfsOid;
 use crate::secret_custody::SecretSight;
 use crate::vault::Vault;
+use oneiron_contracts::fingerprint::purposes;
 
 /// Domain of a lift-marked LFS object read's fingerprint: never a hash of
 /// stored bytes.
@@ -116,8 +117,8 @@ impl Vault {
             if row.state == SecretRevealState::Delivered {
                 return Ok(true);
             }
-            ask = crate::store::code_snapshot::entity_id_from_hash_material(
-                FILE_REASK_DOMAIN,
+            ask = EntityId::derive_legacy_material(
+                purposes::secret::REVEAL_FILE_REASK,
                 &[ask.as_bytes().as_slice()],
             )?;
         }

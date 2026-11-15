@@ -22,7 +22,7 @@ use crate::Vault;
 use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
-use crate::codebase::{RepoRef, entity_id_from_hash_material};
+use crate::codebase::RepoRef;
 use crate::edge::EdgeKind;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -30,12 +30,10 @@ use crate::origin::lfs::lfs_repo_id;
 use crate::origin::secret_marks::{RepoMarkFacts, RepoSecretMarkLookup};
 use crate::secret_custody::MASKED_FILE_BAND;
 use crate::temporal::TimeRange;
+use oneiron_contracts::fingerprint::purposes;
 
 /// The predicate of one remediation link.
 pub(crate) const REPO_SECRET_REMEDIATION_PREDICATE: &str = "repo.secret_remediation";
-
-/// The hash domain a link's id is derived under, from (state, proposal).
-const LINK_ID_DOMAIN: &[u8] = b"oneiron:repo-secret-remediation:v1";
 
 /// The one schema these links are written at.
 const LINK_SCHEMA: u16 = 1;
@@ -146,8 +144,8 @@ fn put_link_in_txn(
     wtxn: &mut RwTxn<'_>,
     link: &RemediationLink<'_>,
 ) -> Result<bool> {
-    let id = entity_id_from_hash_material(
-        LINK_ID_DOMAIN,
+    let id = EntityId::derive_legacy_material(
+        purposes::code::SECRET_REMEDIATION_LINK,
         &[link.state.as_bytes(), link.proposal.as_bytes()],
     )?;
     if vault.get_claim_in_txn(wtxn, &id)?.is_some() {

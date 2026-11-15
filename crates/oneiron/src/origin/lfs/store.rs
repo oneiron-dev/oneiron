@@ -7,17 +7,11 @@ use crate::Vault;
 use crate::entity_id::{ENTITY_ID_LEN, EntityId};
 use crate::error::{ArtifactError, Error, Result};
 use crate::side_table::{self, CodecError, Raw, RawValue, SideKey, SideTable};
-use crate::store::code_snapshot::entity_id_from_hash_material;
 use crate::temporal::TimeRange;
+use oneiron_contracts::fingerprint::purposes;
 
 /// Schema version of both `vault_meta` row families below.
 pub const VAULT_LFS_SCHEMA_VERSION: u8 = 2;
-
-/// Domain separator for deterministic LFS ASSET ids.
-pub const VAULT_LFS_ASSET_ID_DOMAIN: &[u8] = b"oneiron:origin-lfs-asset:v1";
-
-/// Domain separator for the repository key an attachment row is scoped to.
-pub const VAULT_LFS_REPO_ID_DOMAIN: &[u8] = b"oneiron:origin-lfs-repo:v1";
 
 /// The one Git-LFS transfer adapter this origin serves.
 pub const LFS_BASIC_TRANSFER: &str = "basic";
@@ -161,7 +155,7 @@ pub(super) fn check_lfs_digest(
 /// spelling: a `RepoRef` pins a commit and therefore changes every push, while
 /// the attachment plane must key on the repository that outlives them.
 pub fn lfs_repo_id(repo_identity: &str) -> Result<EntityId> {
-    entity_id_from_hash_material(VAULT_LFS_REPO_ID_DOMAIN, &[repo_identity.as_bytes()])
+    EntityId::derive_legacy_material(purposes::origin::LFS_REPO, &[repo_identity.as_bytes()])
 }
 
 impl Vault {

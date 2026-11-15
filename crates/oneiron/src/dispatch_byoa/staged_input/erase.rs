@@ -2,14 +2,12 @@
 
 use std::collections::BTreeSet;
 
-use crate::codebase::entity_id_from_hash_material;
 use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::ports::EntityStoreRead;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::Store;
-
-use super::BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN;
+use oneiron_contracts::fingerprint::purposes;
 
 /// One staged-artifact erase still owed, and the erased owners whose
 /// completion waits on it (FIX 7612).
@@ -47,8 +45,8 @@ pub(crate) fn erase_staged_input_in_txn(
 ) -> Result<()> {
     let store = write.store;
     for digest in jobs {
-        let artifact = entity_id_from_hash_material(
-            BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN,
+        let artifact = EntityId::derive_legacy_material(
+            purposes::dispatch_byoa::STAGED_INPUT_ARTIFACT,
             &[digest.as_slice()],
         )?;
         let stored = EntityStoreRead::port_entity_raw(store, txn, &artifact)?
@@ -122,8 +120,8 @@ impl Store {
     ) -> Result<()> {
         let mut due = BTreeSet::new();
         for digest in OWED_STAGED_ERASES.scan_keys(self, &*txn, &[])? {
-            let artifact = entity_id_from_hash_material(
-                BYOA_STAGED_INPUT_ARTIFACT_ID_DOMAIN,
+            let artifact = EntityId::derive_legacy_material(
+                purposes::dispatch_byoa::STAGED_INPUT_ARTIFACT,
                 &[digest.as_slice()],
             )?;
             if crate::store::legal_hold::held_in_txn(self, txn, artifact.as_bytes())? {

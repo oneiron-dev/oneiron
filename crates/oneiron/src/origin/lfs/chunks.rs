@@ -3,12 +3,12 @@
 
 pub use oneiron_store::origin::lfs::chunks::*;
 
-use super::store::VAULT_LFS_ASSET_ID_DOMAIN;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::error::{ArtifactError, Error, Result};
 use crate::registry::ENTITY_TYPE_ASSET;
 use crate::side_table::{self, Raw, SideTable};
 use crate::{EntityId, Vault};
+use oneiron_contracts::fingerprint::purposes;
 use rand_core::{OsRng, RngCore};
 
 /// Per-vault random FastCDC boundary-randomization seed (u64 LE). Key: ().
@@ -83,10 +83,7 @@ impl LfsManifest {
 
     /// The ordinary ASSET that stores this manifest.
     pub fn asset_id(&self) -> Result<EntityId> {
-        crate::store::code_snapshot::entity_id_from_hash_material(
-            VAULT_LFS_ASSET_ID_DOMAIN,
-            &[&self.hash()?],
-        )
+        EntityId::derive_legacy_material(purposes::origin::LFS_ASSET, &[&self.hash()?])
     }
 
     fn validate(&self) -> Result<()> {

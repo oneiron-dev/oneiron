@@ -58,14 +58,7 @@ use crate::secret_custody::{
 };
 use crate::typed_body::LiftedSources;
 use crate::vault::Vault;
-
-/// Domain of the id of the one ask an agent's read of a file files.
-const FILE_ASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_ask.v1";
-
-/// Domain of the next id in an ask's sequence, hashed from the one before:
-/// where a read asks again once its ask was delivered or answered (FIX 6623,
-/// 6737).
-const FILE_REASK_DOMAIN: &[u8] = b"oneiron.secret_reveal.file_reask.v1";
+use oneiron_contracts::fingerprint::purposes;
 
 /// Domain of a typed body read's fingerprint, the hash its reveal rows name
 /// in place of a stored file's: never a hash of stored bytes.
@@ -537,7 +530,7 @@ fn asked_plan_in_txn(
 /// The id a read whose ask's id is `base` asks under at `now` (FIX 6623,
 /// 6737): `base` until its row is kept ([`kept_row`]) or asked for another
 /// effect than `current`, the read now (FIX 7992), then the first id of its
-/// sequence, each hashed from the one before under [`FILE_REASK_DOMAIN`],
+/// sequence, each hashed from the one before under [`purposes::secret::REVEAL_FILE_REASK`],
 /// whose row is neither. A delivered read and an owner's answer keep their
 /// row and their id; the next ask, its answer and its delivery are another
 /// row's. An approval once of another reason or provider keeps its row and
@@ -554,8 +547,8 @@ fn open_ask_id_in_txn(
         .get(&vault.store, txn, &ask)?
         .is_some_and(|row| kept_row(&row, now) || !row.asks_as(current, &ask))
     {
-        ask = crate::store::code_snapshot::entity_id_from_hash_material(
-            FILE_REASK_DOMAIN,
+        ask = EntityId::derive_legacy_material(
+            purposes::secret::REVEAL_FILE_REASK,
             &[ask.as_bytes().as_slice()],
         )?;
     }
@@ -724,7 +717,7 @@ fn file_ask_id(
     } else {
         &parts[..]
     };
-    crate::store::code_snapshot::entity_id_from_hash_material(FILE_ASK_DOMAIN, parts)
+    EntityId::derive_legacy_material(purposes::secret::REVEAL_FILE_ASK, parts)
 }
 
 /// Delivers a granted file read in `txn`: a T1 lease per key, each receipt

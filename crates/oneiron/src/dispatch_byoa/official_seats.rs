@@ -33,7 +33,6 @@ use sha2::{Digest, Sha256};
 use crate::attempt_queue::AttemptId;
 use crate::checkout::CheckoutId;
 use crate::code_sandbox::SandboxCredentialHandle;
-use crate::codebase::entity_id_from_hash_material;
 use crate::config::HostingPrivacyPosture;
 use crate::entity_id::EntityId;
 use crate::error::{ArtifactError, Error};
@@ -71,6 +70,7 @@ const MAX_ACCOUNT_REF_LEN: usize = 128;
 const MAX_MACHINE_REF_LEN: usize = 128;
 const MAX_LOGIN_STORE_REF_LEN: usize = 512;
 
+use oneiron_contracts::fingerprint::purposes;
 #[doc(hidden)]
 use oneiron_records::dispatch_byoa::official_seats::seat_machine_digest;
 #[doc(hidden)]
@@ -377,9 +377,6 @@ pub fn validate_official_seat(spec: &OfficialSeatSpec) -> ByoaResult<()> {
     Ok(())
 }
 
-/// Domain an official seat's model-seat id is derived under.
-const OFFICIAL_SEAT_DOMAIN: &[u8] = b"oneiron:official-seat:v1";
-
 /// The model-seat id of an official seat: its route and account, machine and login-store labels.
 ///
 /// Same digest helper as the runner quota id, under its own domain; a missing
@@ -389,8 +386,8 @@ const OFFICIAL_SEAT_DOMAIN: &[u8] = b"oneiron:official-seat:v1";
 /// # Errors
 /// Refuses when the digest helper exhausts its salt space (never in practice).
 pub fn official_seat_id(spec: &OfficialSeatSpec) -> ByoaResult<crate::dreamer_runner::ModelSeatId> {
-    Ok(entity_id_from_hash_material(
-        OFFICIAL_SEAT_DOMAIN,
+    Ok(EntityId::derive_legacy_material(
+        purposes::dispatch_byoa::OFFICIAL_SEAT,
         &[
             spec.route.as_str().as_bytes(),
             spec.account_ref.as_bytes(),
@@ -399,9 +396,6 @@ pub fn official_seat_id(spec: &OfficialSeatSpec) -> ByoaResult<crate::dreamer_ru
         ],
     )?)
 }
-
-/// Domain an SIWC offer's model-seat id is derived under.
-const SIWC_OFFER_SEAT_DOMAIN: &[u8] = b"oneiron:siwc-offer-seat:v1";
 
 /// The model-seat id of a configured Sign in with ChatGPT offer: its
 /// credential file's path, the login store it reads
@@ -414,8 +408,8 @@ const SIWC_OFFER_SEAT_DOMAIN: &[u8] = b"oneiron:siwc-offer-seat:v1";
 pub fn siwc_offer_seat_id(
     credential_file: &std::path::Path,
 ) -> ByoaResult<crate::dreamer_runner::ModelSeatId> {
-    Ok(entity_id_from_hash_material(
-        SIWC_OFFER_SEAT_DOMAIN,
+    Ok(EntityId::derive_legacy_material(
+        purposes::dispatch_byoa::SIWC_OFFER_SEAT,
         &[credential_file.as_os_str().as_encoded_bytes()],
     )?)
 }

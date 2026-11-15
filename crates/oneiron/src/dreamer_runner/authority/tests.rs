@@ -1,10 +1,12 @@
 use super::*;
+use crate::EntityId;
 use crate::dreamer_runner::{
     DreamerConsolidationScope, DreamerRunnerStore, EnqueueDreamerAttempt,
     EnqueueDreamerAttemptOutcome, EnqueueDreamerConsolidationAttempt,
     EnqueueDreamerSkillOptimizeAttempt,
 };
 use crate::test_util::{embedding_test_config, open_test_vault_with};
+use oneiron_contracts::fingerprint::purposes;
 mod coach;
 #[test]
 fn micro_and_meso_share_actor_and_receipt_ledger() -> Result<()> {
@@ -279,8 +281,8 @@ fn agent_authored_weave_recipe_executes_with_system_write_stamp() -> Result<()> 
         .status(status.attempt.id)?
         .unwrap();
     assert_eq!(settled.attempt.state, AttemptState::Completed);
-    let claim = crate::codebase::entity_id_from_hash_material(
-        b"oneiron:dreamer:weave-recipe-claim:v1",
+    let claim = EntityId::derive_legacy_material(
+        purposes::dreamer::WEAVE_RECIPE_CLAIM,
         &[status.attempt.id.as_bytes()],
     )?;
     let body = vault

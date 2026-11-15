@@ -8,7 +8,8 @@
 //! byte-derived binding the review made.
 
 use super::*;
-use crate::codebase::entity_id_from_hash_material;
+use crate::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 mod rereview;
 
@@ -18,10 +19,6 @@ pub(super) use rereview::RereviewPrepared;
 /// record's `read` scope to it at the bind door, and an unbound record
 /// refuses the landing with its typed binding error.
 pub(crate) const REPO_LANDING_EFFECTOR: &str = "repo:landing";
-
-/// The domain of a resolved successor's derived id: one original has at
-/// most one successor, found again by deriving it.
-const RESOLVED_SUCCESSOR_DOMAIN: &[u8] = b"oneiron:repo-proposal-resolved-successor:v1";
 
 /// The mask's text form of a handle, as it stands in reviewed content.
 const HANDLE_OPEN: &[u8] = b"[secret ";
@@ -41,7 +38,10 @@ pub(super) fn successor_of(vault: &Vault, original: EntityId) -> Result<Option<E
 }
 
 fn successor_id(original: EntityId) -> Result<EntityId> {
-    entity_id_from_hash_material(RESOLVED_SUCCESSOR_DOMAIN, &[original.as_bytes()])
+    EntityId::derive_legacy_material(
+        purposes::code::PROPOSAL_RESOLVED_SUCCESSOR,
+        &[original.as_bytes()],
+    )
 }
 
 /// The `[secret scN]` spans `content` carries: each span's byte range and

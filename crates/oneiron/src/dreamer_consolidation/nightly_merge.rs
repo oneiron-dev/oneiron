@@ -38,11 +38,10 @@ pub(super) mod narrative_labels;
 mod write;
 pub(super) use super::call_labels::subject_label;
 use chunks::retry_chunks_in_txn;
+use oneiron_contracts::fingerprint::purposes;
 pub(super) use write::{Draft, NightlyWrite, landed_units_in_txn, recheck_in_txn, scoped_draft};
 
 pub(crate) const ATTEMPT: &str = "dreamer.nightly.merge";
-/// The domain the merge's own claims derive their ids under.
-const MERGE_IDS: &[u8] = b"oneiron:nightly:merge:v1";
 const OUTPUT: SideTable<AttemptId, Vec<EntityId>, Named> =
     SideTable::new(&side_table::DREAMER_NIGHTLY_OUTPUT);
 const MERGED: SideTable<AttemptId, MergeResult, Named> =
@@ -475,7 +474,7 @@ impl ConsolidationExecutor<'_> {
             vault: ctx.vault,
             actor: self.actor,
             attempt: &attempt.status,
-            ids: MERGE_IDS,
+            ids: purposes::dreamer::NIGHTLY_MERGE,
             now,
         };
         let read_back: Vec<&Proposal> = proposals.iter().collect();

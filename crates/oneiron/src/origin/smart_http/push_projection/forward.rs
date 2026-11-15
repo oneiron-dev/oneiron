@@ -23,7 +23,6 @@ use super::{
     ReceivedPushTarget, RepoProjectionIngressProof, classify_received_projection,
     complete_received_push_target,
 };
-use crate::codebase::entity_id_from_hash_material;
 use crate::error::{Error, ErrorKind, Result};
 use crate::git_wire::{
     GitOid, GitRefName, GitWire, GitWireRepo, git_object_edges, lock_repository,
@@ -41,6 +40,7 @@ use crate::origin::secret_projection::claims::{
 };
 use crate::origin::secret_projection::git::projection_ingress_dir;
 use crate::{EntityId, TimeRange, Vault};
+use oneiron_contracts::fingerprint::purposes;
 
 /// One exact forward: the canonical ref and the old and new tips the push
 /// named, the old one the canonical CAS expects.
@@ -331,8 +331,8 @@ pub(crate) fn try_forward_exact_ingress_update(
         )
     })?;
 
-    let intent = entity_id_from_hash_material(
-        b"oneiron:projection-forward-intent:v1",
+    let intent = EntityId::derive_legacy_material(
+        purposes::origin::PROJECTION_FORWARD_INTENT,
         &[
             source.canonical_store.as_bytes(),
             source.operation.as_bytes(),

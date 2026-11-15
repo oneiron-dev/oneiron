@@ -9,6 +9,7 @@ use super::{
 use crate::side_table::{self, Raw, SideTable};
 use crate::skill_hub::{HubFile, HubPin, HubRef};
 use crate::{EntityId, TimeRange, Vault, error::Result};
+use oneiron_contracts::fingerprint::purposes;
 
 /// Marker (engine version string) that the built-in connector packs have been seeded.
 const SEEDED: SideTable<(), String, Raw> = SideTable::new(&side_table::SKILL_HUB_PACK_BUILTIN_SEED);
@@ -122,8 +123,8 @@ pub(crate) fn builtin_pack_seed_ids()
         let mut skills = Vec::new();
         for (_, package) in super::bundled_skills::bundled_skill_packages(source)? {
             let hash = package.content_hash()?;
-            let id = crate::codebase::entity_id_from_hash_material(
-                b"oneiron.pack-skill.v1",
+            let id = EntityId::derive_legacy_material(
+                purposes::skill_hub::PACK_SKILL,
                 &[hash.as_bytes()],
             )?;
             skills.push((id, hash));

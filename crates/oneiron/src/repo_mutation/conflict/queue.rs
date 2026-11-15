@@ -1,8 +1,7 @@
 //! Historical queue GREEN contributes paths to the existing typed closer.
 use super::*;
-use crate::codebase::entity_id_from_hash_material;
-
-const QUEUE_RESOLUTION_DOMAIN: &[u8] = b"oneiron:repo-queue-conflict-resolution:v1";
+use crate::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 impl Vault {
     pub(crate) fn record_queue_repo_conflict_resolution(
@@ -36,8 +35,8 @@ impl Vault {
             )));
         }
         let key = super::super::oplog::repo_mutation_repo_key(repo);
-        let id = entity_id_from_hash_material(
-            QUEUE_RESOLUTION_DOMAIN,
+        let id = EntityId::derive_legacy_material(
+            purposes::code::QUEUE_CONFLICT_RESOLUTION,
             &[open.claim_id.as_bytes(), key.as_bytes(), batch.as_bytes()],
         )?;
         if let Some(body) = self.get_claim(&id)? {

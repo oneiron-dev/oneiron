@@ -23,7 +23,6 @@ use crate::claim::{
     ClaimApprovalStatus, ClaimBody, ClaimLifecycleStatus, ClaimSource, ClaimSubject,
 };
 use crate::code_artifact::{CodeArtifactBody, encode_code_artifact_body};
-use crate::codebase::entity_id_from_hash_material;
 use crate::error::{ArtifactError, Error, Result};
 use crate::merge_queue::{QueueRevisionSeal, QueueTestedRevision, QueueTestedTarget};
 use crate::ports::EntityStoreRead;

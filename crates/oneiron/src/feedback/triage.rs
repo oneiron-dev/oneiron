@@ -119,11 +119,10 @@ pub const FEEDBACK_TRIAGE_FINDING_PREDICATE: &str = "coach.feedback_triage.findi
 const INBOX_PAGE: usize = 256;
 /// The domain a note's revision digest is taken under.
 const REVISION_DOMAIN: &[u8] = b"oneiron:feedback-triage:revision:v1";
+use oneiron_contracts::fingerprint::purposes;
 #[doc(hidden)]
 use oneiron_records::feedback::triage::HANDOFF_DOMAIN;
 
-/// The domain a revision's evidence ASSET id is taken under.
-const EVIDENCE_DOMAIN: &[u8] = b"oneiron:feedback-triage:evidence:v1";
 /// The `seen` a binding change named is not the current revision.
 const STALE_BINDING: &str = "the feedback triage binding changed since it was read";
 
@@ -331,8 +330,8 @@ fn handoff_key(source_ref: &FeedbackTriageSourceRef) -> [u8; 32] {
 }
 
 fn evidence_id(source_ref: &FeedbackTriageSourceRef) -> Result<EntityId> {
-    crate::codebase::entity_id_from_hash_material(
-        EVIDENCE_DOMAIN,
+    EntityId::derive_legacy_material(
+        purposes::feedback::TRIAGE_EVIDENCE,
         &[
             source_ref.source.as_bytes(),
             source_ref.id.as_bytes(),

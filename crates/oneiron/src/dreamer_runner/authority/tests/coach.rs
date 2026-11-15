@@ -1,9 +1,11 @@
 //! The Coach, the second base agent (owner ruling 2026-10-16): its own
 //! principal row and its own stamp on the Dreamer's runner.
 use super::*;
+use crate::EntityId;
+use oneiron_contracts::fingerprint::purposes;
 
 fn coach_id() -> EntityId {
-    crate::codebase::entity_id_from_hash_material(b"oneiron.coach.authority.v1", &[]).unwrap()
+    EntityId::derive_legacy_material(purposes::agent_def::COACH_AUTHORITY, &[]).unwrap()
 }
 
 fn attempt_id(outcome: EnqueueDreamerAttemptOutcome) -> crate::attempt_queue::AttemptId {

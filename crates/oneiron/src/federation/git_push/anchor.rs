@@ -28,9 +28,7 @@ use crate::registry::ENTITY_TYPE_CODE_ARTIFACT;
 use crate::store::code_repo_registration::{CodeRepoRegistration, CodeRepoSource};
 use crate::vault::{LiveEntityRow, live_entity_row_in_txn};
 use crate::{TimeRange, Vault};
-
-/// The domain a served repo's anchor id is derived under.
-const SERVED_REPO_ANCHOR_DOMAIN: &[u8] = b"oneiron:served-repo-anchor:v1";
+use oneiron_contracts::fingerprint::purposes;
 
 /// The project is no live PROJECT of this vault.
 const NOT_A_PROJECT: &str = "a served repo anchor belongs to a live PROJECT of this vault";
@@ -54,8 +52,8 @@ impl Vault {
         identity: &str,
         project: EntityId,
     ) -> Result<Option<EntityId>> {
-        let repo = crate::codebase::entity_id_from_hash_material(
-            SERVED_REPO_ANCHOR_DOMAIN,
+        let repo = EntityId::derive_legacy_material(
+            purposes::federation::SERVED_REPO_ANCHOR,
             &[identity.as_bytes(), project.as_bytes()],
         )?;
         Ok(matches!(
@@ -104,8 +102,8 @@ impl Vault {
         let identity = crate::git_wire::GitWire::new(self)?
             .repository_identity(&dir)?
             .as_hex();
-        let repo = crate::codebase::entity_id_from_hash_material(
-            SERVED_REPO_ANCHOR_DOMAIN,
+        let repo = EntityId::derive_legacy_material(
+            purposes::federation::SERVED_REPO_ANCHOR,
             &[identity.as_bytes(), project.as_bytes()],
         )?;
         let repo_ref = RepoRef::LocalFolder {
