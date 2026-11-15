@@ -327,3 +327,156 @@ fn a_room_restage_with_its_text_keeps_the_text_it_sent() -> Result<()> {
     session.close()?;
     Ok(())
 }
+
+/// An ASSET_TEXT body whose `text` field holds `text`.
+fn asset_text_body(text: &str) -> Vec<u8> {
+    let mut body = Vec::new();
+    rmpv::encode::write_value(
+        &mut body,
+        &rmpv::Value::Map(vec![(rmpv::Value::from("text"), rmpv::Value::from(text))]),
+    )
+    .expect("encode asset text");
+    body
+}
+
+/// Restages ASSET_TEXT `id` in the room with a new body and no Text op, as a
+/// session-bound raw put does.
+fn restage_room_asset_text(
+    session: &crate::off_record::OffRecordSession<'_>,
+    id: EntityId,
+    text: &str,
+) -> Result<()> {
+    use crate::session_overlay::{JournalEntry, JournalRole, JournalScope};
+
+    let route = session.write_route()?;
+    let conversation = session.overlay_conversation_shell()?;
+    let occurred = TimeRange { start: 2, end: 2 };
+    let entry = JournalEntry {
+        scope: JournalScope::new(conversation, id),
+        role: JournalRole::TurnOwnedArtifact,
+        occurred,
+        learned_at: 2,
+        source_run: None,
+        op: crate::batch::BatchOp::Put {
+            id,
+            entity_type: crate::registry::ENTITY_TYPE_ASSET_TEXT,
+            occurred,
+            learned_at: 2,
+            row_version: None,
+            data: asset_text_body(text),
+            allow_maintenance: false,
+            allow_reserved_predicate: false,
+            hub_sync_imported: false,
+        },
+    };
+    session.overlay_write_routed(&route, |wtxn, apply| apply(wtxn, entry))
+}
+
+/// Review round 1 of #7822 (P1 ops_pipeline.rs:642): a Put-only restage of a
+/// derived text whose source is marked indexes the sealed-file placeholder in
+/// the room, as an explicit Text op does, never the restaged words.
+#[test]
+fn a_room_put_only_restage_of_a_marked_derived_text_indexes_the_placeholder() -> Result<()> {
+    let (_dir, vault) = open_test_vault_keeping_policy_manifest();
+    let blob_bytes: &[u8] = b"repo fixture file bytes for marked derived text";
+    let blob_hash = *blake3::hash(blob_bytes).as_bytes();
+    let asset = crate::codebase::snapshot_asset_entity_id(&blob_hash)?;
+    let text_id = entity_id(0x9D);
+    let old_text = "olduniqueword base caption";
+    let new_text = "fresh caption confidentialtoken";
+
+    vault.put_entity(
+        &asset,
+        crate::registry::ENTITY_TYPE_ASSET,
+        TimeRange { start: 1, end: 1 },
+        1,
+        blob_bytes,
+    )?;
+    vault.put_entity(
+        &text_id,
+        crate::registry::ENTITY_TYPE_ASSET_TEXT,
+        TimeRange { start: 1, end: 1 },
+        1,
+        &asset_text_body(old_text),
+    )?;
+    vault.put_edge(&text_id, crate::edge::EdgeKind::DerivedFrom, &asset, 1.0)?;
+    vault
+        .batch()
+        .text(&text_id, &[("text", old_text)])
+        .commit()?;
+
+    assert!(
+        vault
+            .query()
+            .search_text("olduniqueword", 10)
+            .run()?
+            .iter()
+            .any(|row| row.id == text_id),
+        "base holds the old caption text"
+    );
+
+    // The source blob is marked opaque: the room indexes a text derived
+    // from it as the sealed-file placeholder.
+    let store_identity = "test-store-marked-derived-text";
+    let store_id = crate::origin::lfs::lfs_repo_id(store_identity)?;
+    let mark = crate::origin::secret_marks::RepoSecretMark {
+        schema_version: crate::origin::secret_marks::RepoSecretMark::SCHEMA,
+        operation_id: entity_id(0xA0),
+        store_id,
+        store_identity: store_identity.to_owned(),
+        source: crate::origin::secret_marks::RepoSecretSource::Quarantine,
+        blob_oid: crate::git_wire::GitOid::parse_hex("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            .expect("valid test oid"),
+        raw_blake3: blob_hash,
+        path: None,
+        detector_kind: "test-opaque".to_owned(),
+        content_kind: crate::receive_scan::ReceiveBlobKind::Text,
+        placement: crate::origin::secret_marks::RepoSecretPlacement::Opaque,
+        marked_at: 1,
+    };
+    vault.with_write_txn(|wtxn| {
+        crate::origin::secret_marks::put_repo_secret_mark_in_txn(&vault, wtxn, &mark)?;
+        Ok(())
+    })?;
+
+    let session = vault.off_record_session_vault().enter(
+        "sess-put-only-restage-marked-derived-text",
+        crate::off_record::OffRecordBackendClass::Local,
+    )?;
+    restage_room_asset_text(&session, text_id, new_text)?;
+    {
+        let view = session.read_view()?;
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("confidentialtoken", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == text_id),
+            "the room must not index the secret word of a marked derived text"
+        );
+        assert!(
+            vault
+                .query()
+                .reading(view.read())
+                .search_text("sealed", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == text_id),
+            "the restage published the sealed-file placeholder"
+        );
+        assert!(
+            !vault
+                .query()
+                .reading(view.read())
+                .search_text("olduniqueword", 10)
+                .run()?
+                .iter()
+                .any(|row| row.id == text_id),
+            "the old caption stops answering in the room"
+        );
+    }
+    session.close()?;
+    Ok(())
+}
