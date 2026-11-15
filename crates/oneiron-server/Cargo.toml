@@ -337,6 +337,13 @@ name = "rerank_pair_template_price"
 path = "tests/rerank_pair_template_price.rs"
 required-features = ["oneiron/test-support"]
 
+# L5-02 PR 4's selector fetch seeds its member's federation grant with
+# `put_selector_test_federation_grant` (`oneiron/test-hooks`).
+[[test]]
+name = "selector_home_clearance_ws"
+path = "tests/selector_home_clearance_ws.rs"
+required-features = ["oneiron/test-hooks"]
+
 [lints]
 workspace = true
 
