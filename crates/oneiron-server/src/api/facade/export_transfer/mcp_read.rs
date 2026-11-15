@@ -83,7 +83,8 @@ pub(crate) async fn vault_export_transfer_release(
     input: ExportTransferReleaseRequest,
 ) -> Listed<ExportTransferReleased> {
     let released = admitted_as(server, auth, None, &input.transfer_ref)
-        .and_then(|_| server.export_transfers.release(&input.transfer_ref));
+        // SEEDED FAULT S6b (red proof only): the spool is kept.
+        .map(|_| ());
     match released {
         Ok(()) => (
             Ok(ExportTransferReleased {

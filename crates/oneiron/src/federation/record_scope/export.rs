@@ -64,7 +64,8 @@ impl Vault {
             }
             let h =
                 EntityMetadataHeader::parse(&raw).ok_or(Error::CorruptedIndex("record header"))?;
-            if h.entity_type == crate::registry::ENTITY_TYPE_SECRET_CUSTODY
+            // SEEDED FAULT S3 (red proof only): custody rows are not skipped.
+            if false
                 || (crate::secret_custody::holds_masked_keys_in_txn(
                     &self.store,
                     &txn,
@@ -166,7 +167,8 @@ impl Vault {
                         oneiron_store::world_pad_codec::decode_pad_body(body).is_ok()
                     });
                 let carrier = crate::world_keys::image_pad_row(&self.store, &raw);
-                let filtered = carrier.is_none() && !pad;
+                // SEEDED FAULT S4 (red proof only): no body passes the release rule.
+                let filtered = carrier.is_none() && !pad && false;
                 let bytes = match carrier {
                     Some(carrier) => carrier,
                     None => self.materialized_row_in_txn(&txn, &id, raw)?,

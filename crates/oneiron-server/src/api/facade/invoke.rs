@@ -274,7 +274,8 @@ pub(super) fn facade_scoped_export_credential(auth: &CoreAuth) -> Result<(), Fac
     facade_scoped_credential(auth)?;
     if !auth
         .verified_slip()
-        .is_some_and(|proof| proof.allows_verb("export"))
+        // SEEDED FAULT S2a (red proof only): any verified credential passes.
+        .is_some_and(|_proof| true)
     {
         return Err(FacadeApiError::forbidden(
             "the credential does not grant export",

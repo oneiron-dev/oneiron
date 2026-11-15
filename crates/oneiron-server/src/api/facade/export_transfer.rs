@@ -368,7 +368,8 @@ async fn release_transfer(
 ) -> Response {
     let call = FacadeCall::http(&server, &auth, &headers, &extensions);
     match admitted(&server, &call, &transfer_ref)
-        .and_then(|_| server.export_transfers.release(&transfer_ref))
+        // SEEDED FAULT S6a (red proof only): the spool is kept.
+        .map(|_| ())
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(refused) => refused.into_response(),
@@ -398,7 +399,10 @@ fn secret_supplement(
     request: &str,
 ) -> Result<Value, FacadeApiError> {
     auth.require(CoreScope::Read)?;
-    let owner = super::owner_binding::facade_owner(server, auth, EXPORT_VERB)?;
+    // SEEDED FAULT S7 (red proof only): a non-owner reads 404, not the owner refusal.
+    let Ok(owner) = super::owner_binding::facade_owner(server, auth, EXPORT_VERB) else {
+        return Err(unknown_supplement());
+    };
     let supplement = match crate::owner::export_supplement::show(&server.vault, &owner, request) {
         Ok(supplement) => supplement,
         Err(crate::owner::OwnerError::Invalid(_) | crate::owner::OwnerError::NotFound(..)) => {
@@ -458,7 +462,8 @@ fn admitted_as(
     let kept = server
         .export_transfers
         .get(transfer_ref)?
-        .filter(|kept| kept.exporter == exporter_of(auth))
+        // SEEDED FAULT S5 (red proof only): any admitted owner reads any kept export.
+        .filter(|kept| !kept.exporter.is_empty() || exporter_of(auth).is_empty())
         .ok_or_else(unknown_transfer)?;
     // FIX 11596: the render's act must still stand for this caller. A
     // positive lapse lets the export go, so its spool is never read again.

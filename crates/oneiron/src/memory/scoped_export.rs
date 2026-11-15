@@ -208,8 +208,8 @@ impl Memory<'_> {
         let proof = self
             .presented_credential()
             .expect("credential_ceiling verified this proof");
-        if !proof.allows_verb("export")
-            || input.channel.channel_ref.is_empty()
+        // SEEDED FAULT S2b (red proof only): no export-verb check.
+        if input.channel.channel_ref.is_empty()
             || (!proof.claims().channels.is_empty()
                 && !proof.claims().channels.contains(&input.channel.channel_ref))
         {
@@ -225,7 +225,8 @@ impl Memory<'_> {
         // connection proved, else a recipient nobody proved (mesh PR2b).
         let rows = self.vault.export_records_in_scope_for(
             &selector,
-            proof.scope(),
+            // SEEDED FAULT S1a (red proof only): the enumerator ignores the credential.
+            &Scope::top(),
             &channel,
             &self.destination,
         )?;
@@ -242,13 +243,9 @@ impl Memory<'_> {
                     .collect::<Vec<_>>(),
                 None,
             )?;
-        let shipped: std::collections::BTreeSet<_> = admitted
-            .value
-            .into_iter()
-            .flatten()
-            .filter(|row| row.body.is_some())
-            .map(|row| row.id)
-            .collect();
+        // SEEDED FAULT S1b (red proof only): every row ships past the read lane.
+        let _ = admitted;
+        let shipped: std::collections::BTreeSet<_> = ids.iter().copied().collect();
         let key = crate::provenance::birth::WithheldKey::for_export();
         let mut records = Vec::new();
         for row in rows.into_iter().filter(|row| shipped.contains(&row.id)) {
