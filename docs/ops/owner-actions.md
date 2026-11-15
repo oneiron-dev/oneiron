@@ -635,6 +635,13 @@ This seals the supplied value in its existing custody record and returns the sta
 and receipt unchanged. It does not rotate the key or undo the owner's choice. Use the rotate
 door to re-enter or reissue a key that is still active.
 
+The person who wrote a key's record in their own name may also give the two text rulings,
+**Not a secret** and **Kept as text**, at the same two routes, on their own verified human
+credential. The engine admits them only for a key whose recorded writer they are; anyone else
+gets the owner door's 403, and a key an agent wrote stays yours to answer. The writer reads the
+handle in their own record, where the mask left `[secret sc12]`; the listing stays yours. Their
+answer's receipt and its carried revoke name them, not you.
+
 ## Bind a secret so an agent can use it
 
 An agent can hand a secret to a trusted operation, such as Slack's `auth.test`, with
