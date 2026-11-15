@@ -773,6 +773,15 @@ fn field<'a>(entries: &'a [(Value, Value)], key: &str) -> Option<&'a Value> {
         .map(|(_, value)| value)
 }
 
+/// [`field`] for the repeated-key test door (`test_doors::lib_rows_b_repeated_key`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn proposal_field_for_test(
+    entries: &[(Value, Value)],
+    key: &str,
+) -> Result<Option<Value>> {
+    Ok(field(entries, key).cloned())
+}
+
 fn field_str<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&'a str> {
     field(entries, key)
         .and_then(Value::as_str)

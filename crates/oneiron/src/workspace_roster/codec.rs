@@ -818,6 +818,12 @@ pub(super) fn required<'a>(entries: &'a [(Value, Value)], key: &str) -> Result<&
         .ok_or_else(|| invalid("workspace roster body is missing a required key"))
 }
 
+/// [`required`] for the repeated-key test door (`test_doors::lib_rows_b_repeated_key`). Not API.
+#[cfg(oneiron_test_support)]
+pub(crate) fn roster_required_for_test(entries: &[(Value, Value)], key: &str) -> Result<Value> {
+    required(entries, key).cloned()
+}
+
 pub(super) fn required_str(entries: &[(Value, Value)], key: &str) -> Result<String> {
     required(entries, key)?
         .as_str()

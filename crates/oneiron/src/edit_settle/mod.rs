@@ -99,6 +99,8 @@
 
 mod carry;
 mod codec;
+#[cfg(oneiron_test_support)]
+pub(crate) use codec::settlement_field_for_test;
 mod discarded_words;
 mod keys;
 mod organ_wait;
