@@ -14,32 +14,13 @@ use super::{
 };
 use crate::Vault;
 use crate::error::Error;
-use crate::llm::decision::{DecisionAnswer, TypedDecision};
+use crate::llm::decision::TypedDecision;
 use crate::llm::seat::{SeatLearningContext, SeatPolicy, learned_models};
 use crate::llm::{ModelId, ReasoningEffort};
 use crate::task_type::TaskTypeRef;
 
-/// One candidate's grade: the model, the effort it was graded at, and its
-/// complete typed decision.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DescriptionGrading {
-    pub model: ModelId,
-    pub effort: ReasoningEffort,
-    pub decision: TypedDecision,
-}
-
-impl DescriptionGrading {
-    /// Its `[0, 1]` fitness, read from its own decision: an abstained or
-    /// unscored grade leaves the candidate unfit.
-    #[must_use]
-    pub fn fitness(&self) -> Option<f64> {
-        match self.decision.answer {
-            DecisionAnswer::Score(fitness) => Some(fitness),
-            _ => None,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::llm::routing::readings::DescriptionGrading;
 
 /// Every candidate's complete grade, in the order the route asked them, and
 /// the type stamp of the task they were graded for.
