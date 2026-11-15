@@ -32,6 +32,7 @@ pub mod esign_commitments;
 pub mod fanout_admission;
 pub mod feeds;
 pub mod grant_roles;
+pub mod grant_sealed_file;
 pub mod graph_ask_centre;
 pub mod house_link;
 pub mod identity_recheck;
