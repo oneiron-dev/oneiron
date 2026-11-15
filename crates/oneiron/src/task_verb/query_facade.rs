@@ -299,6 +299,7 @@ impl Memory<'_> {
                         wtxn,
                         run,
                         decision_id,
+                        None,
                     )?;
                 }
                 let decision_ref = format!("gate:{}", decision_id.to_hex());

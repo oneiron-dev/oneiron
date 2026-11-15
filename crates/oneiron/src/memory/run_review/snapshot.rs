@@ -56,6 +56,23 @@ fn answering_effect_outcome(
     Ok(answer)
 }
 
+/// The live external-effect gate receipt `receipt_ref` (`gate:<hex>`) names:
+/// `None` when no unredacted external-effect receipt has that id.
+fn effect_record_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt_ref: &str,
+) -> MemoryResult<Option<crate::store::GateDecisionRecord>> {
+    let id = receipt_ref
+        .strip_prefix("gate:")
+        .ok_or_else(|| MemoryError::bad_request("external effect names its gate: receipt"))?;
+    let id = crate::store::GateDecisionId::from_bytes(*EntityId::from_hex(id)?.as_bytes());
+    Ok(vault
+        .store
+        .gate_decision_in_txn(txn, id)?
+        .filter(|record| record.content_kind == "external_effect" && record.redacted_at.is_none()))
+}
+
 /// The live external-effect gate receipt `receipt_ref` (`gate:<hex>`) names
 /// and its verdict now: a pending receipt whose consent a later decision row
 /// answered reads that answer's outcome, not Waiting (FIX 11478). `None`
@@ -65,15 +82,7 @@ pub(super) fn effect_receipt_in_txn(
     txn: &heed::RoTxn<'_>,
     receipt_ref: &str,
 ) -> MemoryResult<Option<(crate::store::GateDecisionRecord, RunChangeVerdict)>> {
-    let id = receipt_ref
-        .strip_prefix("gate:")
-        .ok_or_else(|| MemoryError::bad_request("external effect names its gate: receipt"))?;
-    let id = crate::store::GateDecisionId::from_bytes(*EntityId::from_hex(id)?.as_bytes());
-    let Some(record) = vault
-        .store
-        .gate_decision_in_txn(txn, id)?
-        .filter(|record| record.content_kind == "external_effect" && record.redacted_at.is_none())
-    else {
+    let Some(record) = effect_record_in_txn(vault, txn, receipt_ref)? else {
         return Ok(None);
     };
     let verdict = if record.outcome == "pending" {
@@ -85,6 +94,26 @@ pub(super) fn effect_receipt_in_txn(
         effect_verdict(&record.outcome)
     };
     Ok(Some((record, verdict)))
+}
+
+/// The verdict of the external-effect receipt `receipt_ref` a held call
+/// asked: from `answer`, the newest later decision on that same call its
+/// run's journal keeps, or from the receipt itself while none came, so a
+/// pending one still waits. A decision on another call of the same effect
+/// binding never answers it. A receipt redacted since may have gone out, so
+/// it reads as landed.
+pub(super) fn call_effect_verdict_in_txn(
+    vault: &crate::Vault,
+    txn: &heed::RoTxn<'_>,
+    receipt_ref: &str,
+    answer: Option<&str>,
+) -> MemoryResult<RunChangeVerdict> {
+    Ok(
+        effect_record_in_txn(vault, txn, answer.unwrap_or(receipt_ref))?
+            .map_or(RunChangeVerdict::Landed, |record| {
+                effect_verdict(&record.outcome)
+            }),
+    )
 }
 
 pub(super) fn binding(
@@ -264,6 +293,7 @@ pub(super) fn review_in_txn(
     );
     let mut changes = Vec::new();
     let mut journal = None;
+    let mut call_verdicts = None;
     for member in &input.changes {
         if !seen.insert(member.change()) {
             return Err(MemoryError::bad_request("a review repeats a change"));
@@ -288,6 +318,22 @@ pub(super) fn review_in_txn(
             }
         }
         let (bytes, verdict) = binding(memory, txn, member)?;
+        // A held call's effect reads its own call's answer, as its run's
+        // journal keeps it, not the binding's newest decision.
+        let verdict = match member {
+            RunReviewChange::ExternalEffect { receipt_ref } => {
+                if call_verdicts.is_none() {
+                    call_verdicts = Some(super::changes::call_effect_verdicts_in_txn(
+                        memory, txn, &run,
+                    )?);
+                }
+                call_verdicts
+                    .as_ref()
+                    .and_then(|verdicts| verdicts.get(receipt_ref).copied())
+                    .unwrap_or(verdict)
+            }
+            _ => verdict,
+        };
         hash.update(&(bytes.len() as u64).to_be_bytes());
         hash.update(&bytes);
         changes.push(RunChangeOutcome {
