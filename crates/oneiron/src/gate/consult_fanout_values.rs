@@ -24,28 +24,8 @@ impl Default for ConsultFanOutPolicy {
     }
 }
 
-/// Optional per-peer rate evidence window.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ConsultFanOutRate {
-    pub window_secs: u64,
-    pub spike_at: u32,
-}
-
-/// Per-actor create quota within one node-local time window.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskCreateRateLimit {
-    pub limit: usize,
-    pub window_seconds: u64,
-}
-
-impl Default for TaskCreateRateLimit {
-    fn default() -> Self {
-        Self {
-            limit: 10,
-            window_seconds: 60,
-        }
-    }
-}
+#[doc(hidden)]
+pub use oneiron_records::gate::consult_fanout_values::{ConsultFanOutRate, TaskCreateRateLimit};
 
 /// Policy path supplied by an authenticated host for a frozen consult plan.
 /// The vault level is implicit; each additional level names its parent.
