@@ -9,10 +9,13 @@
 //! fields through the organ's ported burn-in (`work_burn::burn_fields`) into
 //! a fresh document, as `work_prepare::prepare_in` does, so the test can
 //! compare the bytes with the engine port's door
-//! (`oneiron::blob_artifact::esign::render::esign_burn`).
+//! (`oneiron::blob_artifact::esign::render::esign_burn`). It also reports
+//! the bytes the burn admitted to the operation's ledger, net of what it gave
+//! back, so a move of the drawing code can show the same admissions.
 
 use std::collections::BTreeMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use lopdf::content::Content;
 use lopdf::{Dictionary, Document, Stream, dictionary};
@@ -51,19 +54,26 @@ pub struct LentRaster {
     pub rgba: Vec<u8>,
 }
 
-/// One page's burned fields: the encoded content stream, and the whole
+/// One page's burned fields: the encoded content stream, the whole
 /// one-page document (font, rasters, content and resources) as saved.
 pub struct BurnedPage {
     pub content: Vec<u8>,
     pub pdf: Vec<u8>,
+    /// Bytes the burn admitted to its operation's ledger, net of what it
+    /// released: reserved minus what the reservations still cover.
+    pub admitted: u64,
 }
 
 /// Grants every reservation and holds nothing: the burn's admissions are
-/// counted, never refused.
-struct GrantAllMemory;
+/// counted, never refused. `reserved` sums every reservation it granted.
+#[derive(Default)]
+struct GrantAllMemory {
+    reserved: AtomicU64,
+}
 
 impl SealMemory for GrantAllMemory {
-    fn reserve(&self, _bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+    fn reserve(&self, bytes: u64) -> Result<Box<dyn Send>, SealMemoryRefusal> {
+        self.reserved.fetch_add(bytes, Ordering::Relaxed);
         Ok(Box::new(()))
     }
 }
@@ -84,8 +94,9 @@ pub fn burn_page_fields(
     rasters: &BTreeMap<String, LentRaster>,
     rejected: bool,
 ) -> Result<BurnedPage, String> {
+    let memory = Arc::new(GrantAllMemory::default());
     let operation = SealResourceLimits {
-        memory: SealMemoryProvider::new(Arc::new(GrantAllMemory)),
+        memory: SealMemoryProvider::new(memory.clone()),
         ..SealResourceLimits::default()
     }
     .operation(SealStage::InputValidation)
@@ -165,5 +176,13 @@ pub fn burn_page_fields(
     out.add_object(resources);
     let mut pdf = Vec::new();
     out.save_to(&mut pdf).map_err(|err| format!("{err:?}"))?;
-    Ok(BurnedPage { content, pdf })
+    let admitted = memory
+        .reserved
+        .load(Ordering::Relaxed)
+        .saturating_sub(ledger.spare_bytes());
+    Ok(BurnedPage {
+        content,
+        pdf,
+        admitted,
+    })
 }

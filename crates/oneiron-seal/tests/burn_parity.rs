@@ -11,7 +11,9 @@
 //!
 //! Each case prints `PIN burn-p<page>-<rejected|accepted>-<content|pdf>
 //! <sha256>`, so a later move of the drawing code can show the same bytes
-//! before and after it.
+//! before and after it, and `PIN burn-p<page>-<rejected|accepted>-admitted
+//! <bytes>`, the organ ledger's net admission, so the move can show the same
+//! admitted units (bytes alone cannot).
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p
 //! oneiron-seal --test burn_parity`.
@@ -225,6 +227,7 @@ fn both_burn_ports_draw_one_field_set_identically() {
                 "PIN burn-p{page}-{case}-pdf {:x}",
                 Sha256::digest(&engine.pdf)
             );
+            println!("PIN burn-p{page}-{case}-admitted {}", organ.admitted);
         }
     }
 }
