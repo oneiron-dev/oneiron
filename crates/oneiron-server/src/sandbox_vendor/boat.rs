@@ -19,11 +19,17 @@
 //!
 //! boat has no egress setting, and the VM's own user must keep its network,
 //! since boat's tunnel to the VM runs as that user. So every command of a
-//! run starts in a network namespace of its own, which holds only a
-//! loopback device, and then drops to the VM's unprivileged user
-//! ([`NO_NETWORK_AS_USER`]): a vendor run has no egress (module doc of
-//! `VendorBatchBackend`). The namespace is made before the command starts,
-//! so on a VM where it cannot be made nothing runs and the run fails.
+//! run is confined ([`CONFINED_PREFIX`]): it starts in a network namespace
+//! of its own, which holds only a loopback device, and then runs as the
+//! VM's user with no supplementary group and no way to gain a privilege.
+//! The user's passwordless sudo, any setuid program and the docker socket
+//! (group `docker`) are then out of its reach, so it can neither leave the
+//! namespace nor change it: a vendor run has no egress (module doc of
+//! `VendorBatchBackend`). The confinement is made before the command
+//! starts, so on a VM where it cannot be made nothing runs and the run
+//! fails. A Unix socket a system daemon serves at a path stays reachable, as
+//! it does under boat's own pattern for untrusted code (a second user and
+//! an iptables rule on its uid): FIX [BOAT-GUEST-DAEMON-SOCKETS].
 //!
 //! A command runs detached and the client polls its status, so a guest may
 //! run past boat's cap on a waited command. The VM keeps no disk snapshot,
@@ -63,8 +69,10 @@ const LONGEST_URL_SECONDS: u64 = 3600;
 const FIRST_POLL: Duration = Duration::from_millis(100);
 const LONGEST_POLL: Duration = Duration::from_secs(1);
 /// What every command of a run starts under: a fresh network namespace,
-/// made as root, then the VM's unprivileged user.
-const NO_NETWORK_AS_USER: &str = "sudo -n unshare --net -- runuser -u user --";
+/// made as root, then the VM's user `user` with no supplementary group and
+/// no new privilege for it or any process it starts.
+const CONFINED_PREFIX: &str = "sudo -n unshare --net -- \
+    setpriv --reuid=user --regid=user --clear-groups --no-new-privs --";
 
 /// Where boat's API answers.
 #[derive(Debug, Clone)]
@@ -310,7 +318,7 @@ impl VendorSandboxClient for BoatClient {
         argv: &[&str],
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<i32> {
-        let command = format!("{NO_NETWORK_AS_USER} {}", HTTP.command_line(argv)?);
+        let command = format!("{CONFINED_PREFIX} {}", HTTP.command_line(argv)?);
         let key = self.key.read()?;
         let http = HTTP.client()?;
         let started: CommandStarted = Self::send(
