@@ -855,8 +855,10 @@ impl Vault {
         Ok(())
     }
 
-    /// Persist the receipt and one notice to each live Owner, the actor and
-    /// every holder the change concerns, in the change's own writer.
+    /// Persist the receipt and one notice to each of `recipients` (the live
+    /// Owners, and for an admin act every live Admin and Deputy too), the
+    /// actor and every holder the change concerns, in the change's own
+    /// writer.
     #[allow(clippy::too_many_arguments)]
     fn record_shared_change_in_txn(
         &self,
@@ -865,7 +867,7 @@ impl Vault {
         vault_id: u64,
         act: Option<(String, String)>,
         actor: EntityId,
-        owners: BTreeSet<EntityId>,
+        mut recipients: BTreeSet<EntityId>,
         effect: Effect,
         export: Option<SharedActExport>,
         record: ChangeRecord,
@@ -901,7 +903,6 @@ impl Vault {
         self.store
             .vault_meta
             .put(txn, &key(RECEIPT_PREFIX, &receipt.id), &encode(&receipt)?)?;
-        let mut recipients = owners;
         recipients.insert(actor);
         recipients.extend(effect.notify);
         for recipient in recipients {
@@ -931,6 +932,8 @@ impl Vault {
     /// membership row (the membership writer tells the same people itself):
     /// a project access reset, an onboarding, a house role, a workspace
     /// setting, the conversation-learning setting and a delegate mint.
+    /// `None`, and nothing written, when this vault holds no shared creation
+    /// for `vault_id`.
     pub(crate) fn record_admin_act_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -938,7 +941,15 @@ impl Vault {
         actor: EntityId,
         change: SharedVaultChange,
         now: u64,
-    ) -> Result<SharedActExecutionReceipt> {
+    ) -> Result<Option<SharedActExecutionReceipt>> {
+        // A vault id this vault holds no shared creation for is no shared
+        // vault here: its device owner's act tells no one (review of #8384).
+        if self
+            .shared_vault_creation_in_txn(txn)?
+            .is_none_or(|creation| creation.vault_id != vault_id)
+        {
+            return Ok(None);
+        }
         let holders = self.live_act_holders(txn, vault_id, now)?;
         let id = self.store.clock.entity_id()?.to_hex();
         let effect = Effect {
@@ -961,6 +972,7 @@ impl Vault {
             None,
             now,
         )
+        .map(Some)
     }
 
     fn shared_act_receipt_in_txn(
