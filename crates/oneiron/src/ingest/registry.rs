@@ -234,7 +234,7 @@ static MEETING_TRANSCRIPT_SOURCE: MeetingTranscriptSource = MeetingTranscriptSou
 static ICS_FEED_SOURCE: crate::calendar::ingest::IcsFeedSource =
     crate::calendar::ingest::IcsFeedSource;
 
-static IMAGE_SOURCE: image::ImageIngestSource = image::ImageIngestSource::new();
+static IMAGE_SOURCE: image::ImageIngestSource = image::ImageIngestSource::with_process_default();
 
 static OPENAI_SOURCE: super::provider::ProviderSource =
     super::provider::ProviderSource(super::provider::ProviderWire::Openai);
