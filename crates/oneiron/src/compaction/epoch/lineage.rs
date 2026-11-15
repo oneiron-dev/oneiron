@@ -13,6 +13,7 @@ use super::codec::{
     decode_epoch_summary_body,
 };
 use crate::compaction::driver::CompactionWindowMessage;
+use crate::compaction::stored_epoch::{StoredEpoch, stored_epoch_in};
 use crate::compaction::withdrawn::WithdrawnKeyframe;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
@@ -204,8 +205,10 @@ pub(in crate::compaction) fn validate_epoch_boundary(
 /// ordinary witness SUMMARY is a different kind of row that happens to share
 /// the type byte, and it carries no epoch to compare. An identifiable malformed
 /// epoch candidate for this lineage is refused rather than losing its lineage.
-/// A withdrawn epoch counts by the keyframe it keeps, and a purged or demoted
-/// one by the lineage's epoch floor, so numbering never restarts under either.
+/// A withdrawn epoch counts by the keyframe it keeps, and so does a
+/// pointer-form one by the keys it keeps beside its pointer; a purged or
+/// demoted one counts by the lineage's epoch floor, so numbering never
+/// restarts under either.
 /// Only `scope`'s own epochs count (FIX 5029): a SESSION's log reads its
 /// session epochs, a conversation its own epochs within that SESSION.
 pub(in crate::compaction) fn prior_epoch_in_txn(
@@ -216,7 +219,7 @@ pub(in crate::compaction) fn prior_epoch_in_txn(
     let mut best: Option<(WithdrawnKeyframe, Option<String>)> = None;
     let mut conflicting = false;
     for row in store.port_entity_records(rtxn)? {
-        let (_, row) = row?;
+        let (id, row) = row?;
         if row.entity_type != ENTITY_TYPE_SUMMARY || row.body.is_empty() {
             continue;
         }
@@ -225,8 +228,24 @@ pub(in crate::compaction) fn prior_epoch_in_txn(
             Ok(body) => (WithdrawnKeyframe::of_body(&body)?, Some(body.text)),
             Err(error) => match WithdrawnKeyframe::decode(bytes) {
                 Ok(keyframe) => (keyframe, None),
-                Err(_) if is_epoch_candidate_for_scope(bytes, scope) => return Err(error),
-                Err(_) => continue,
+                Err(_) => match stored_epoch_in(store, rtxn, &id, bytes)? {
+                    // A pointer-form epoch keeps its keyframe beside
+                    // the pointer: it counts by those kept keys, as
+                    // an inline one does, with no text to compare.
+                    StoredEpoch::Yes => match WithdrawnKeyframe::of_stored(bytes) {
+                        Some(keyframe) => (keyframe, None),
+                        None if is_epoch_candidate_for_scope(bytes, scope) => {
+                            return Err(error);
+                        }
+                        None => continue,
+                    },
+                    StoredEpoch::No | StoredEpoch::Unresolved
+                        if is_epoch_candidate_for_scope(bytes, scope) =>
+                    {
+                        return Err(error);
+                    }
+                    StoredEpoch::No | StoredEpoch::Unresolved => continue,
+                },
             },
         };
         if keyframe.scope() != *scope {
