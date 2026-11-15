@@ -1544,6 +1544,7 @@ fn training_choice(person: EntityId, target: EntityId, machine: EntityId) -> Aut
         ),
         machine,
         leave_out: true,
+        person_proof: None,
     })
 }
 
@@ -1633,6 +1634,7 @@ fn members_own_choice(machine: EntityId, leave_out: bool, seen: [u8; 32]) -> Aut
         ),
         machine,
         leave_out,
+        person_proof: None,
     })
 }
 
@@ -1960,7 +1962,7 @@ impl ServedVault {
     /// left out.
     fn leave_my_messages_out(&self, leave_out: bool) -> oneiron::Result<bool> {
         self.vault
-            .set_conversation_training(&self.owner, ActSurface::ThisInstall, leave_out, None)
+            .set_conversation_training(&self.owner, ActSurface::ThisInstall, leave_out, None, None)
             .map(|view| view.leave_out)
     }
 
