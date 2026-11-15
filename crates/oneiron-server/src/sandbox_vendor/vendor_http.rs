@@ -3,9 +3,12 @@
 //! wiped when the client drops; an HTTP client that follows no redirect and
 //! no proxy, so a secret goes only to the base it was sent to; the step's
 //! deadline and cancellation on every call; and error texts that never show
-//! a secret.
+//! a secret. For a vendor with no egress setting of its own (boat, InstaBox)
+//! it also holds the confinement every command of a run starts under, and
+//! the directory of the client's own files on the vendor's machine.
 
 use std::io::{self, Read, Write};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, Weak};
 use std::time::{Duration, Instant};
 
@@ -274,5 +277,88 @@ impl<R: Read> Read for CancellableReader<R> {
             return Err(io::Error::other("the step was cancelled"));
         }
         self.inner.read(buf)
+    }
+}
+
+/// The user and group every command of a run on a vendor machine with no
+/// egress setting (boat, InstaBox) runs as: an id no account of the machine
+/// has (Debian allocates none from 65536 to 99999, and subordinate ids start
+/// at 100000). The guest then reaches none of the machine user's processes,
+/// home, login profile, user manager or session bus, and none of its files.
+const GUEST_ID: &str = "70000";
+
+/// What every command of such a run starts under: as root, a network
+/// namespace of its own, which holds only a loopback device; then
+/// [`GUEST_ID`] with no supplementary group and no way to gain a privilege.
+/// The machine user's passwordless sudo, any setuid program and the docker
+/// socket are then out of its reach, so it can neither leave the namespace
+/// nor change it: a vendor run has no egress (module doc of
+/// `VendorBatchBackend`). The confinement is made before the command
+/// starts, so on a machine where it cannot be made nothing runs. A Unix
+/// socket a system daemon serves at a path stays reachable: FIX
+/// [BOAT-GUEST-DAEMON-SOCKETS].
+const CONFINEMENT: [&str; 13] = [
+    "sudo",
+    "-n",
+    "unshare",
+    "--net",
+    "--",
+    "setpriv",
+    "--reuid",
+    GUEST_ID,
+    "--regid",
+    GUEST_ID,
+    "--clear-groups",
+    "--no-new-privs",
+    "--",
+];
+
+/// `argv`, run in the [`CONFINEMENT`].
+pub(super) fn confined<'a>(argv: &[&'a str]) -> Vec<&'a str> {
+    let mut confined: Vec<&'a str> = CONFINEMENT.to_vec();
+    confined.extend_from_slice(argv);
+    confined
+}
+
+/// Reads the file `path` onto standard output as the guest, in the
+/// [`CONFINEMENT`]: what the guest leaves at `path`, even a link to a file
+/// of the machine's user or of root, yields nothing the guest could not read
+/// itself.
+pub(super) fn read_as_guest(path: &str) -> Vec<&str> {
+    confined(&["cat", "--", path])
+}
+
+/// Copies `staged` to `path` as root, as a file of [`GUEST_ID`]'s that only
+/// it reads and writes. `staged` is a file of the client's ([`ClientFiles`]),
+/// out of the guest's reach.
+pub(super) fn install_as_guest<'a>(staged: &'a str, path: &'a str) -> [&'a str; 13] {
+    [
+        "sudo", "-n", "install", "-o", GUEST_ID, "-g", GUEST_ID, "-m", "0600", "-T", "--", staged,
+        path,
+    ]
+}
+
+/// The directory of the client's own files on a vendor machine with no
+/// egress setting: each upload as staged, each download as copied out, and
+/// each command's exit status where the vendor keeps none. The machine's
+/// user makes it ([`MAKE_CLIENT_DIR`]) once the machine runs and before any
+/// command of the run, so no guest ever places a file or a link in it, and
+/// its mode keeps the guest out of it.
+const CLIENT_DIR: &str = "/tmp/oneiron-client";
+
+/// Makes [`CLIENT_DIR`], private to the machine's user; a machine that
+/// already has it is not a fresh one.
+pub(super) const MAKE_CLIENT_DIR: [&str; 4] = ["mkdir", "-m", "0700", CLIENT_DIR];
+
+/// Names the client's files in [`CLIENT_DIR`], each one once.
+#[derive(Default)]
+pub(super) struct ClientFiles(AtomicU64);
+
+impl ClientFiles {
+    /// A file of the client's, named `kind`, that no other file of this
+    /// client has.
+    pub(super) fn next(&self, kind: &str) -> String {
+        let number = self.0.fetch_add(1, Ordering::Relaxed);
+        format!("{CLIENT_DIR}/{kind}-{number}")
     }
 }

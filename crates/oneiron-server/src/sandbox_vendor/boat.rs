@@ -17,19 +17,28 @@
 //! E2B's template are. The VM gets none of the account's secrets and is
 //! confined to itself (`noEnv`).
 //!
-//! boat has no egress setting, and the VM's own user must keep its network,
-//! since boat's tunnel to the VM runs as that user. So every command of a
-//! run is confined ([`CONFINED_PREFIX`]): it starts in a network namespace
-//! of its own, which holds only a loopback device, and then runs as the
-//! VM's user with no supplementary group and no way to gain a privilege.
-//! The user's passwordless sudo, any setuid program and the docker socket
-//! (group `docker`) are then out of its reach, so it can neither leave the
-//! namespace nor change it: a vendor run has no egress (module doc of
-//! `VendorBatchBackend`). The confinement is made before the command
+//! boat has no egress setting, and the VM's own user `user` must keep its
+//! network, since boat's tunnel to the VM runs as that user. So every
+//! command of a run is confined (`vendor_http::confined`): as root, it
+//! starts in a network namespace of its own, which holds only a loopback
+//! device, and then runs as a user and group no account of the VM has, with
+//! no supplementary group and no way to gain a privilege. Neither `user`'s
+//! passwordless sudo, nor its docker socket, nor the user manager and
+//! session bus of the desktop boat streams as `user` are in the guest's
+//! reach, so it can neither leave the namespace nor change it, nor leave
+//! code for a later command of `user`: a vendor run has no egress (module
+//! doc of `VendorBatchBackend`). The confinement is made before the command
 //! starts, so on a VM where it cannot be made nothing runs and the run
 //! fails. A Unix socket a system daemon serves at a path stays reachable, as
 //! it does under boat's own pattern for untrusted code (a second user and
 //! an iptables rule on its uid): FIX [BOAT-GUEST-DAEMON-SOCKETS].
+//!
+//! boat's file API reads and writes as `user`, and the guest's own directory
+//! refuses that user. So the client's files sit in a directory `user` makes
+//! at the run's start, which the guest cannot enter: an upload lands there
+//! and root then copies it into place as the guest's file; a download is
+//! first copied there by the guest's own user, so a link the guest leaves in
+//! place of its frames yields nothing the guest could not read itself.
 //!
 //! A command runs detached and the client polls its status, so a guest may
 //! run past boat's cap on a waited command. The VM keeps no disk snapshot,
@@ -50,7 +59,10 @@ use serde::Deserialize;
 use serde_json::json;
 use zeroize::Zeroizing;
 
-use super::vendor_http::{CancellableReader, DELETE_TIMEOUT, OwnerVendorKey, VendorHttp, quoted};
+use super::vendor_http::{
+    CancellableReader, ClientFiles, DELETE_TIMEOUT, MAKE_CLIENT_DIR, OwnerVendorKey, VendorHttp,
+    confined, install_as_guest, quoted, read_as_guest,
+};
 
 /// The one vendor this client reaches.
 const VENDOR: SandboxVendor = SandboxVendor::Boat;
@@ -68,11 +80,6 @@ const LONGEST_URL_SECONDS: u64 = 3600;
 /// command's status.
 const FIRST_POLL: Duration = Duration::from_millis(100);
 const LONGEST_POLL: Duration = Duration::from_secs(1);
-/// What every command of a run starts under: a fresh network namespace,
-/// made as root, then the VM's user `user` with no supplementary group and
-/// no new privilege for it or any process it starts.
-const CONFINED_PREFIX: &str = "sudo -n unshare --net -- \
-    setpriv --reuid=user --regid=user --clear-groups --no-new-privs --";
 
 /// Where boat's API answers.
 #[derive(Debug, Clone)]
@@ -93,6 +100,7 @@ impl Default for BoatEndpoints {
 pub(super) struct BoatClient {
     key: OwnerVendorKey,
     endpoints: BoatEndpoints,
+    files: ClientFiles,
 }
 
 #[derive(Deserialize)]
@@ -141,6 +149,7 @@ impl BoatClient {
         Self {
             key: OwnerVendorKey::new(vault, VENDOR, key_name),
             endpoints,
+            files: ClientFiles::default(),
         }
     }
 
@@ -234,6 +243,76 @@ impl BoatClient {
         Ok(url)
     }
 
+    /// Runs `argv` on `sandbox` through `user`'s shell, detached, with its
+    /// standard output to the client's file `output` when one is named, and
+    /// polls it to its exit code.
+    fn command(
+        &self,
+        http: &Client,
+        key: &str,
+        sandbox: &str,
+        argv: &[&str],
+        output: Option<&str>,
+        bound: VendorCallBound<'_>,
+    ) -> oneiron::Result<i32> {
+        let mut command = HTTP.command_line(argv)?;
+        if let Some(output) = output {
+            command = format!("{command} >{output}");
+        }
+        let started: CommandStarted = Self::send(
+            http.post(self.sandbox_url(sandbox, "/commands")?)
+                .json(&json!({ "command": command, "detached": true })),
+            key,
+            bound,
+        )?
+        .json()
+        .map_err(|error| HTTP.http_failed(error, &[key]))?;
+        let status_url = self.sandbox_url(sandbox, &format!("/commands/{}", started.process_id))?;
+        let mut wait = FIRST_POLL;
+        loop {
+            HTTP.pause(wait, bound)?;
+            wait = (wait * 2).min(LONGEST_POLL);
+            // One byte of each log: the run reads the guest's frames from
+            // its file, never from its output.
+            let status: CommandStatus = Self::send(
+                http.get(&status_url).query(&[("tailBytes", "1")]),
+                key,
+                bound,
+            )?
+            .json()
+            .map_err(|error| HTTP.http_failed(error, &[key]))?;
+            match (status.status.as_str(), status.exit_code) {
+                ("exited", Some(code)) => return Ok(code),
+                ("exited", None) => {
+                    let signal = status.signal.as_deref().unwrap_or_default();
+                    return Err(HTTP.failed(format!(
+                        "the boat command ended without an exit code: {}",
+                        quoted(signal, &[key])
+                    )));
+                }
+                ("lost", _) => return Err(HTTP.failed("boat lost the command it was running")),
+                _ => {}
+            }
+        }
+    }
+
+    /// Makes the client's directory on the VM, as `user`.
+    fn make_client_dir(
+        &self,
+        http: &Client,
+        key: &str,
+        sandbox: &str,
+        bound: VendorCallBound<'_>,
+    ) -> oneiron::Result<()> {
+        let made = self.command(http, key, sandbox, &MAKE_CLIENT_DIR, None, bound)?;
+        if made != 0 {
+            return Err(HTTP.failed(format!(
+                "the boat VM could not make the client's directory (exit {made})"
+            )));
+        }
+        Ok(())
+    }
+
     fn delete_on(&self, http: &Client, key: &str, sandbox: &str) -> oneiron::Result<()> {
         let response = http
             .delete(self.sandbox_url(sandbox, "")?)
@@ -277,7 +356,10 @@ impl VendorSandboxClient for BoatClient {
         .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
         let id = VendorSandboxId::new(HTTP.segment(&made.sandbox.id)?)?;
         // From here the VM is this run's to delete, on any failure.
-        if let Err(error) = self.start(&http, &key, made.sandbox, bound) {
+        let ready = self
+            .start(&http, &key, made.sandbox, bound)
+            .and_then(|()| self.make_client_dir(&http, &key, id.as_str(), bound));
+        if let Err(error) = ready {
             if let Err(cleanup) = self.delete_on(&http, &key, id.as_str()) {
                 tracing::warn!(error = %cleanup, sandbox = %id.as_str(), "boat VM delete failed");
             }
@@ -295,7 +377,8 @@ impl VendorSandboxClient for BoatClient {
     ) -> oneiron::Result<()> {
         let key = self.key.read()?;
         let http = HTTP.client()?;
-        let url = self.signed_url(&http, &key, sandbox, "upload-url", path, bound)?;
+        let staged = self.files.next("upload");
+        let url = self.signed_url(&http, &key, sandbox, "upload-url", &staged, bound)?;
         let secrets = [key.as_str(), url.as_str()];
         let reader = CancellableReader {
             inner: body.reader(),
@@ -309,7 +392,15 @@ impl VendorSandboxClient for BoatClient {
             .timeout(HTTP.remaining(bound.deadline)?)
             .send()
             .map_err(|error| HTTP.http_failed(error, &secrets))?;
-        HTTP.checked(response, &secrets).map(drop)
+        HTTP.checked(response, &secrets)?;
+        let install = install_as_guest(&staged, path);
+        let placed = self.command(&http, &key, sandbox.as_str(), &install, None, bound)?;
+        if placed != 0 {
+            return Err(HTTP.failed(format!(
+                "a boat upload could not be placed as the guest's file (exit {placed})"
+            )));
+        }
+        Ok(())
     }
 
     fn execute(
@@ -318,47 +409,9 @@ impl VendorSandboxClient for BoatClient {
         argv: &[&str],
         bound: VendorCallBound<'_>,
     ) -> oneiron::Result<i32> {
-        let command = format!("{CONFINED_PREFIX} {}", HTTP.command_line(argv)?);
         let key = self.key.read()?;
         let http = HTTP.client()?;
-        let started: CommandStarted = Self::send(
-            http.post(self.sandbox_url(sandbox.as_str(), "/commands")?)
-                .json(&json!({ "command": command, "detached": true })),
-            &key,
-            bound,
-        )?
-        .json()
-        .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
-        let status_url = self.sandbox_url(
-            sandbox.as_str(),
-            &format!("/commands/{}", started.process_id),
-        )?;
-        let mut wait = FIRST_POLL;
-        loop {
-            HTTP.pause(wait, bound)?;
-            wait = (wait * 2).min(LONGEST_POLL);
-            // One byte of each log: the run reads the guest's frames from
-            // its file, never from its output.
-            let status: CommandStatus = Self::send(
-                http.get(&status_url).query(&[("tailBytes", "1")]),
-                &key,
-                bound,
-            )?
-            .json()
-            .map_err(|error| HTTP.http_failed(error, &[key.as_str()]))?;
-            match (status.status.as_str(), status.exit_code) {
-                ("exited", Some(code)) => return Ok(code),
-                ("exited", None) => {
-                    let signal = status.signal.as_deref().unwrap_or_default();
-                    return Err(HTTP.failed(format!(
-                        "the boat command ended without an exit code: {}",
-                        quoted(signal, &[key.as_str()])
-                    )));
-                }
-                ("lost", _) => return Err(HTTP.failed("boat lost the command it was running")),
-                _ => {}
-            }
-        }
+        self.command(&http, &key, sandbox.as_str(), &confined(argv), None, bound)
     }
 
     fn download(
@@ -370,7 +423,22 @@ impl VendorSandboxClient for BoatClient {
     ) -> oneiron::Result<()> {
         let key = self.key.read()?;
         let http = HTTP.client()?;
-        let url = self.signed_url(&http, &key, sandbox, "download-url", path, bound)?;
+        let staged = self.files.next("download");
+        let copy = read_as_guest(path);
+        let copied = self.command(
+            &http,
+            &key,
+            sandbox.as_str(),
+            &copy,
+            Some(staged.as_str()),
+            bound,
+        )?;
+        if copied != 0 {
+            return Err(HTTP.failed(format!(
+                "a boat download could not be copied out as the guest (exit {copied})"
+            )));
+        }
+        let url = self.signed_url(&http, &key, sandbox, "download-url", &staged, bound)?;
         let secrets = [key.as_str(), url.as_str()];
         bound.cancel.check()?;
         let response = http
