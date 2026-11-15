@@ -340,6 +340,26 @@ impl Vault {
         self.session_lifecycle_record_in_txn(&rtxn, id)
     }
 
+    /// The key of the sitting `turn` joined (its DREAM-008 membership row),
+    /// or `None` when it joined none. A reply written again for that turn
+    /// binds this key (FIX 1034): it joins that sitting while it is open,
+    /// or the one its actor has open on that machine now, as a live chat
+    /// host's binding of its caller does, and none when none is open.
+    pub(crate) fn turn_sitting_key_in_txn(
+        &self,
+        txn: &heed::RoTxn<'_>,
+        turn: &EntityId,
+    ) -> Result<Option<SessionKey>> {
+        let Some(session) =
+            crate::compaction::turn_session_membership_in_txn(&self.store, txn, turn)?
+        else {
+            return Ok(None);
+        };
+        Ok(self
+            .session_lifecycle_record_in_txn(txn, &session)?
+            .map(|record| record.key))
+    }
+
     /// [`Self::session_lifecycle_record`] in the caller's transaction.
     pub(crate) fn session_lifecycle_record_in_txn(
         &self,

@@ -106,9 +106,10 @@ pub(super) struct Seed {
     pub read_proof: Option<crate::authority::StoredReadProof>,
     /// The sitting the opener's handle was bound to (`Memory::with_session`),
     /// so the terminal, after a restart too, joins the stream's TURN to that
-    /// sitting rather than to this machine's (FIX 1033). `None` is an opener
-    /// bound to none; a seed stored before the field decodes as `None`, the
-    /// terminal it had then.
+    /// sitting rather than to this machine's (FIX 1033). A Retry's is the
+    /// sitting its replaced reply joined, which the engine names (FIX 1034).
+    /// `None` is an opener bound to none; a seed stored before the field
+    /// decodes as `None`, the terminal it had then.
     #[serde(default)]
     pub sitting: Option<crate::session_lifecycle::SessionKey>,
 }

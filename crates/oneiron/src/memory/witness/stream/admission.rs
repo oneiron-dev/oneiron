@@ -62,7 +62,7 @@ impl Memory<'_> {
         mode: Option<MessageWriteMode>,
         at: u64,
     ) -> MessageStreamResult<MessageStreamHandle> {
-        self.begin_message_stream_open(turn, mode, at, None, None)
+        self.begin_message_stream_open(turn, mode, at, None, None, self.session_key)
     }
     /// Starts a Retry's new reply (FIX 3152): a new companion MESSAGE that
     /// answers `action`'s reply, an earlier one by this agent in the same
@@ -88,8 +88,15 @@ impl Memory<'_> {
         }
         let mut turn = turn.clone();
         let (writer, requester) = self.retry_lanes(action)?;
-        let thread_audience = {
+        let (thread_audience, sitting) = {
             let txn = self.vault.store.env.read_txn()?;
+            // The new TURN joins the sitting the reply it answers again
+            // joined, named by the engine from that reply's TURN, never by
+            // the opener (FIX 1034, as FIX G230-RETRY-OMITTED-SESSION-BAND
+            // places a room's Retry).
+            let sitting = self
+                .vault
+                .turn_sitting_key_in_txn(&txn, &action.assistant_turn)?;
             let permit = self.check_action_retry_in(&txn, action, &writer, &requester)?;
             let source = committed_body(self.vault, &txn, &action.message)?
                 .ok_or(MessageStreamError::Engine(Error::EntityNotFound))?;
@@ -131,7 +138,7 @@ impl Memory<'_> {
                 }
             }
             turn.messages[0].metadata = metadata;
-            audience
+            (audience, sitting)
         };
         self.begin_message_stream_open(
             &turn,
@@ -139,6 +146,7 @@ impl Memory<'_> {
             crate::unix_millis_now(),
             Some(action),
             thread_audience,
+            sitting,
         )
     }
     fn begin_message_stream_open(
@@ -148,6 +156,7 @@ impl Memory<'_> {
         at: u64,
         action: Option<&TurnActionAttempt>,
         thread_audience: Option<std::collections::BTreeSet<EntityId>>,
+        sitting: Option<crate::session_lifecycle::SessionKey>,
     ) -> MessageStreamResult<MessageStreamHandle> {
         if turn.messages.len() != 1 {
             return Err(MessageStreamError::InvalidRequest("one message required"));
@@ -213,8 +222,9 @@ impl Memory<'_> {
                 .read_proof
                 .as_ref()
                 .map(crate::authority::StoredReadProof::of),
-            // The opener's sitting, so its terminal joins it (FIX 1033).
-            sitting: self.session_key,
+            // The sitting its terminal joins (FIX 1033): the opener's, or
+            // a Retry's, the one its replaced reply joined (FIX 1034).
+            sitting,
         };
         let handle = MessageStreamHandle {
             message: id,
