@@ -1,5 +1,6 @@
 //! Prep eligibility checks and exact-wake planning.
 
+use oneiron_vault_contract::{Schedule, WakeEntry};
 use serde::{Deserialize, Serialize};
 
 use super::pack::DEFAULT_PREP_MAX_WORDS;
@@ -19,14 +20,6 @@ pub const CHECK_IN_RE_ASK_LOCAL_HOUR: u8 = 9;
 
 /// Seconds in one civil day on a fixed-offset clock.
 const SECS_PER_DAY: i64 = 86_400;
-
-/// The `Schedule` arm every prep wake carries.
-///
-/// The contract's `Schedule` is tagged `#[serde(tag = "kind", rename_all =
-/// "snake_case")]`, so `Schedule::Exact` is the wire token `exact`. CAL plans no
-/// window: the fire instant is computed at schedule time and recomputed when the
-/// EVENT moves, which leaves the host nothing to jitter.
-pub const PREP_WAKE_SCHEDULE_KIND: &str = "exact";
 
 /// Tunables for one vault's prep behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,22 +87,6 @@ pub fn prep_is_eligible(event: &PrepEvent, policy: PrepPolicy) -> bool {
     !policy.external_only || event.internal_meeting_opt_in
 }
 
-/// One exact host wake: the three fields of the supervisor wake contract.
-///
-/// The engine-side image of `oneiron_vault_contract::WakeEntry` with
-/// `Schedule::Exact` — see the module note on why the contract type is not
-/// named directly at this commit. `at_utc` maps to `Schedule::Exact { at }`;
-/// the other two fields map by name.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PrepWake {
-    /// Stable wake id. Rescheduling reuses it so the host REPLACES the entry.
-    pub id: String,
-    /// Exact fire instant, unix seconds UTC.
-    pub at_utc: u64,
-    /// Opaque tag echoed back when the wake fires.
-    pub reason_tag: String,
-}
-
 /// The stable wake id for one EVENT's prep purpose.
 ///
 /// Stability is the whole point: the host keys its wake table on this id, so
@@ -132,19 +109,25 @@ pub(super) fn prep_fire_at(event: &PrepEvent, policy: PrepPolicy) -> Option<u64>
 /// Plans the T-45 prep wake for one EVENT, or `None` when the EVENT is
 /// ineligible or T-45 cannot be represented.
 ///
+/// The wake is the supervisor contract's own [`WakeEntry`], always on the
+/// [`Schedule::Exact`] arm: the fire instant is computed here and recomputed
+/// when the EVENT moves, so CAL never plans a window for the host to jitter.
+/// The wake id is the entry's `id` and [`PREP_WAKE_REASON_TAG`] its
+/// `reason_tag`.
+///
 /// The engine owns no clock: this only describes the wake the host is asked to
 /// deliver. Call it again when the EVENT is rescheduled — with the same
 /// [`prep_wake_id`], so the new entry replaces the old one rather than
 /// multiplying wakes.
 #[must_use]
-pub fn plan_prep_wake(wake_id: String, event: &PrepEvent, policy: PrepPolicy) -> Option<PrepWake> {
+pub fn plan_prep_wake(wake_id: String, event: &PrepEvent, policy: PrepPolicy) -> Option<WakeEntry> {
     if !prep_is_eligible(event, policy) {
         return None;
     }
     let fire_at = prep_fire_at(event, policy)?;
-    Some(PrepWake {
+    Some(WakeEntry {
         id: wake_id,
-        at_utc: fire_at,
+        at: Schedule::Exact { at: fire_at },
         reason_tag: PREP_WAKE_REASON_TAG.to_owned(),
     })
 }
