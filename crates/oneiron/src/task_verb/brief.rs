@@ -397,6 +397,15 @@ impl QueueTaskBrief {
                     require_entity(vault, txn, *guest)?;
                 }
             }
+            // Its holders resolve when the escalation asks: a role with no
+            // live holder then is climbed past, so none is required now.
+            TaskAskTarget::Role(to) => {
+                if to.validate().is_err() {
+                    return Err(MemoryError::bad_request(
+                        "an ask's role is above its ceiling",
+                    ));
+                }
+            }
         }
         if let Some(reference) = self.escalation.question_ref
             && vault.get_entity_type_in_txn(txn, &reference.entity_ref())?

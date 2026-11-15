@@ -63,14 +63,15 @@ impl Memory<'_> {
         now: u64,
     ) -> MemoryResult<AskCensus> {
         input.what.check_option_names()?;
-        let holders = self.ask_holders_in_txn(txn, input)?;
+        let (holders, who) = self.ask_route_in_txn(txn, input)?;
         let bound = self.ask_class_in_txn(txn, input.task_ref)?;
         let context_class = bound.as_ref().map(|(_, class)| class.clone());
-        let effective = input.effective(
+        let mut effective = input.effective(
             &holders.iter().copied().collect(),
             now,
             context_class.clone(),
         )?;
+        effective.who = who;
         // Its rows are measured where the group is kept, once.
         super::ask_limits::check_ask_keys(&self.vault().store, input, &effective)?;
         self.ask_question_in(txn, &effective.what)?;

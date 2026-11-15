@@ -421,6 +421,23 @@ pub(super) fn is_stale(vault: &Vault, txn: &heed::RoTxn<'_>, group: &AskGroup) -
             return Ok(true);
         }
     }
+    // A role ask stands while the role it reached keeps the live holders it
+    // was put to, as an authority ask does (ROLES-EVERYWHERE = A).
+    if let Some(TaskAskTarget::Role(to)) = &group.effective.who {
+        let live = vault
+            .next_ask_role_in_txn(txn, to, None)?
+            .filter(|reached| reached.role == to.role)
+            .map(|reached| {
+                reached
+                    .holders
+                    .into_iter()
+                    .map(|holder| holder.actor)
+                    .collect::<BTreeSet<_>>()
+            });
+        if live.as_ref() != Some(&who) {
+            return Ok(true);
+        }
+    }
     if let Some(task) = group.effective.task_ref {
         let Some(body) = super::wire_decode::task_verb_body_in(vault, txn, task)? else {
             return Ok(true);

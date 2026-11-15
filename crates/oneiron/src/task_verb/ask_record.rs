@@ -419,6 +419,26 @@ impl crate::memory::Memory<'_> {
     }
 }
 
+/// The actors the ask group `id`'s members are put to, in member order, and
+/// the target it was admitted at; `None` when `id` names no ask group. For
+/// the integration tests' door (`test_doors::task_ask_role_routing`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn ask_group_route(
+    vault: &Vault,
+    id: EntityId,
+) -> Result<Option<(Vec<EntityId>, Option<super::TaskAskTarget>)>> {
+    let txn = vault.store.env.read_txn()?;
+    let Some(group) = read_group(vault, &txn, id)? else {
+        return Ok(None);
+    };
+    let actors = group
+        .members
+        .iter()
+        .map(|member| entity(&member.actor))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(Some((actors, group.effective.who)))
+}
+
 pub(super) fn read_group(
     vault: &Vault,
     txn: &heed::RoTxn<'_>,

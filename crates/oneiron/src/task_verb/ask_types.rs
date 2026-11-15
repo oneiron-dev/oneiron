@@ -16,8 +16,9 @@ pub use oneiron_verb_wire::task_verb::ask_types::{
     TaskAskNeed, TaskAskOption, TaskAskProvisional, TaskAskSurface,
 };
 
-/// A question is either addressed to one executor, or resolved to every
-/// authority holder. There is no caller-picked authority holder allowlist.
+/// A question is addressed to one executor or to named people, resolved to
+/// every authority holder, or put to the next authorised role. There is no
+/// caller-picked authority holder allowlist.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskAskTarget {
@@ -27,6 +28,13 @@ pub enum TaskAskTarget {
     /// Foreign people enter through owner-confirmed disclosure bounds and
     /// per-ask guest grants, not membership or a caller-picked authority list.
     Guests(BTreeMap<EntityId, TaskAskGuest>),
+    /// The next authorised role on the decision ladders' role chain
+    /// (ROLES-EVERYWHERE = A; ARCH-0067 #tasks): the first role from `role`,
+    /// up to `ceiling`, with a live holder who may answer for `act`. A role
+    /// with no live holder is climbed past; the chain ends at the vault owner
+    /// role. It names who is asked and grants nothing. Admitted, the group's
+    /// effective target names the role the ask reached.
+    Role(crate::llm::decision::AskTo),
 }
 
 /// Stable option identity. Display text is never a predicate.
