@@ -227,10 +227,11 @@ impl Vault {
 
 /// Whether the entity `holder_ref` names is deleted here: its row a deleted
 /// shell, or gone under a hard-delete marker (RULING DELETED-ACTOR-SLIP-AUTH
-/// = A), or an agent id with no row (RULING DELETED-SLIP-BATCH-DELETE = A):
-/// a delete pins the AGENT_DEF row it removes (H215), so a pinned or seeded
-/// agent id whose row is gone was deleted, and a definition reborn within
-/// its pin stands again. A `holder_ref` that names no entity (`host`,
+/// = A), or a pinned agent id with no row (RULING DELETED-SLIP-BATCH-DELETE
+/// = A): every delete pins the AGENT_DEF row it removes (H215), so an id
+/// whose pin stands and whose row is gone was deleted, and a definition
+/// reborn within its pin stands again. A seeded id this vault never stored
+/// holds no pin and keeps the rule below. A `holder_ref` that names no entity (`host`,
 /// `operator`), and any other entity with no row and no marker here, is not.
 /// It reads the store alone, for a live door with no vault at hand (a
 /// PROJECT write proof).
@@ -247,7 +248,7 @@ pub(crate) fn slip_holder_is_deleted_in_txn(
             crate::vault::LiveEntityRow::DeletedShell => true,
             crate::vault::LiveEntityRow::Absent => {
                 crate::deletion::hard_delete_marker_exists_in_txn(store, txn, &holder)?
-                    || crate::agent_def::is_agent_id_in_txn(store, txn, &holder)?
+                    || crate::agent_def::agent_id_pinned_in_txn(store, txn, &holder)?
             }
             crate::vault::LiveEntityRow::Live { .. } => false,
         },
