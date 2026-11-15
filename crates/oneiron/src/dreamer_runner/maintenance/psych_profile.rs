@@ -5,7 +5,9 @@
 //! profile key (a PERSON, a facet and a world) under which an eligible claim
 //! stands, and whose stored profile is missing, withdrawn or at least a day
 //! old, gets one `dreamer.psych_profile` attempt, deduped per key while it is
-//! pending. The attempt input names the key; the host's job reads that
+//! pending. A stored profile of a PERSON under whose key no eligible claim
+//! stands any more (each retracted, hidden, restricted or gone) is withdrawn:
+//! it stands on nothing, and no attempt would rewrite it. The attempt input names the key; the host's job reads that
 //! key's ranked claims, asks one bound step for the three tiers and commits
 //! one PsychProfile item.
 
@@ -17,8 +19,9 @@ use super::super::{
 use crate::claim::ScopedReadActorKey;
 use crate::dreamer_wake::DreamerAttemptExecution;
 use crate::edge::EdgeActorClass;
+use crate::ports::RetrievalIndex;
 use crate::psych_profile::{PsychProfileKey, psych_profile_entity_id};
-use crate::registry::ENTITY_TYPE_PERSON;
+use crate::registry::{ENTITY_TYPE_PERSON, ENTITY_TYPE_PSYCH_PROFILE};
 use crate::write_envelope::WriteActor;
 use crate::{EntityId, Error, Result, Vault};
 
@@ -128,8 +131,11 @@ impl DreamerRunnerStore<'_> {
 /// surfaced claim about the PERSON below the restricted band), whose stored
 /// profile is missing or withdrawn, or was written at least
 /// [`PSYCH_PROFILE_REGENERATE_SECS`] ago. Like other parentless host
-/// maintenance, an attempt has no recipe run id. Returns how many were
-/// enqueued.
+/// maintenance, an attempt has no recipe run id. In the same write, a stored
+/// profile of a PERSON no eligible claim stands under any more is withdrawn
+/// (stale-marked, so it reads as none). The stored profiles are read on
+/// their own for this, never through the claims the Dreamer reads, which a
+/// retracted claim has left. Returns how many attempts were enqueued.
 ///
 /// # Errors
 ///
@@ -147,26 +153,45 @@ pub fn enqueue_due_psych_profiles(vault: &Vault, now: u64) -> Result<usize> {
         ScopedReadActorKey::for_engine_actor(reader)
             .ok_or_else(|| Error::InvalidConfig("invalid Dreamer profile reader".into()))?,
     );
+    let profiles = vault.entities_by_type(ENTITY_TYPE_PSYCH_PROFILE)?;
     let mut due: Vec<PsychProfileKey> = Vec::new();
+    let mut withdrawn: Vec<EntityId> = Vec::new();
     {
         vault.store.authorization_now()?;
         let txn = vault.store.env.read_txn()?;
-        for person in persons {
-            let mut seen = std::collections::BTreeSet::new();
+        // The profiles some eligible claim still stands under.
+        let mut standing = std::collections::BTreeSet::new();
+        for person in &persons {
             for (key, _) in
-                crate::psych_profile::sources::person_claims_in(vault, &read, &txn, person)?
+                crate::psych_profile::sources::person_claims_in(vault, &read, &txn, *person)?
             {
                 let id = psych_profile_entity_id(&key);
-                if seen.insert(id) && profile_due_in(vault, &txn, &id, now)? {
+                if standing.insert(id) && profile_due_in(vault, &txn, &id, now)? {
                     due.push(key);
                 }
             }
         }
+        let persons: std::collections::BTreeSet<EntityId> = persons.into_iter().collect();
+        for id in profiles {
+            if standing.contains(&id) || crate::ports::stale_in_txn(&vault.store, &txn, &id)? {
+                continue;
+            }
+            // A row that does not decode is left as it stands.
+            let Ok(Some(profile)) = vault.get_psych_profile_in_txn(&txn, &id) else {
+                continue;
+            };
+            if persons.contains(&profile.subject_ref) {
+                withdrawn.push(id);
+            }
+        }
     }
-    if due.is_empty() {
+    if due.is_empty() && withdrawn.is_empty() {
         return Ok(0);
     }
     let enqueued = vault.with_write_txn(|txn| {
+        for id in &withdrawn {
+            vault.port_retrieval_mark_stale(txn, id)?;
+        }
         let store = DreamerRunnerStore::new(vault);
         let mut enqueued = 0;
         for key in &due {
