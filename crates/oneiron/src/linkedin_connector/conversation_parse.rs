@@ -99,7 +99,7 @@ pub(super) fn fallback_conversation_messages(
             if !body.is_empty() {
                 found = true;
                 if !emit(
-                    Some(line.clone()),
+                    Some(line),
                     fallback_message(
                         thread_id,
                         &[timestamp.as_str(), body.as_str()],

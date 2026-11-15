@@ -6,7 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 description = "Local Oneiron sync daemon for serving a single LMDB vault"
 repository.workspace = true
-homepage.workspace = true
 readme = "README.md"
 keywords.workspace = true
 categories.workspace = true
@@ -45,6 +44,7 @@ heed.workspace = true
 arc-swap.workspace = true
 base64 = "0.22"
 oneiron = { version = "0.1.0", path = "../oneiron", features = ["sync", "microvm-firecracker"] }
+oneiron-base = { version = "0.1.0", path = "../oneiron-base" }
 # The sandbox backends (core split 5b.1): the QuickJS runtime, Firecracker and the OCI container.
 oneiron-agent-runtime = { version = "0.1.0", path = "../oneiron-agent-runtime", features = ["microvm-firecracker"] }
 oneiron-mail-pack = { version = "0.1.0", path = "../oneiron-mail-pack" }
@@ -331,6 +331,12 @@ required-features = ["oneiron/test-support"]
 name = "off_record_room_context_pack"
 path = "tests/off_record_room_context_pack.rs"
 required-features = ["oneiron/test-support", "oneiron/test-hooks", "oneiron-broker/test-support"]
+
+# The rerank pair template price cases root their owner on a `MemoryKeystore` too.
+[[test]]
+name = "rerank_pair_template_price"
+path = "tests/rerank_pair_template_price.rs"
+required-features = ["oneiron/test-support"]
 
 [lints]
 workspace = true

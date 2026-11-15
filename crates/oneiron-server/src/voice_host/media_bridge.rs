@@ -558,7 +558,7 @@ impl MediaBridge {
         self.started.elapsed()
     }
 
-    pub(super) fn now_ms(&self) -> u64 {
+    pub(super) fn elapsed_ms(&self) -> u64 {
         u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX)
     }
 }
