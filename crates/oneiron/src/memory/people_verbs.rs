@@ -434,7 +434,9 @@ impl Memory<'_> {
         };
         let room = route.room();
         let now_ms = unix_ms();
-        let author = if self.actor_class == EdgeActorClass::Agent {
+        // Generated code speaks as the companion, a person's own code run
+        // included (the witness door refuses it a user's word).
+        let author = if self.actor_class == EdgeActorClass::Agent || self.writes_generated() {
             WitnessAuthor::Companion
         } else {
             WitnessAuthor::User
