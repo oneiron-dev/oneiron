@@ -55,6 +55,7 @@ pub mod routing;
 pub mod run_admission;
 pub mod score_scraper;
 pub mod seat;
+pub mod setting_keys;
 mod step;
 pub use step::public as model_step;
 pub mod tagger;
