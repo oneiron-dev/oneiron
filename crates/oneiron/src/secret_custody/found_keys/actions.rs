@@ -13,6 +13,7 @@ use rmpv::Value;
 use zeroize::{Zeroize, Zeroizing};
 
 use super::{FOUND, FoundKey, FoundKeyAction, FoundKeyCard, FoundKeySettled, FoundKeys};
+use crate::authority::ActBy;
 use crate::batch::{ENTITY_METADATA_HEADER_LEN, EntityMetadataHeader};
 use crate::consent::AuthenticatedOwner;
 use crate::deletion::SafeDeleteReason;
@@ -175,12 +176,11 @@ impl Vault {
     ///
     /// The person who wrote the value there in their own name may rule it
     /// too, with `owner` their own proof at the person tier. Their ruling
-    /// does all of the above on this install, with them named on its
-    /// receipts, but carries no revoke to the owner's other machines: that
-    /// carry is the owner's own act (`OwnerAct::by_owner`), and custody acts
-    /// are owner-only (L6-03-WRITER-CARRY). A key whose writer is not the
-    /// proof's person is refused as a non-owner is, whether or not the handle
-    /// names one.
+    /// does all of the above, with them named on its receipts, and its
+    /// revoke reaches the owner's other machines as their own act, never as
+    /// the owner's (`ActBy::Person`; Engine RULING L6-03-WRITER-CARRY). A key
+    /// whose writer is not the proof's person is refused as a non-owner is,
+    /// whether or not the handle names one.
     ///
     /// # Errors
     /// [`GateError::ConsentOwnerNotAuthenticated`] when the proof is neither
@@ -300,20 +300,15 @@ impl Vault {
                 restore_body_in_txn(self, txn, &found.record, &found.handle, &value)?;
             }
             // The ruling's surface is where the request reached this
-            // install: audit only. Only the owner's ruling carries its
-            // revoke to his other machines, as his own act; the writer's
-            // stands here (L6-03-WRITER-CARRY).
-            let carried = match by {
-                Answerer::Owner(_) => {
-                    Some(self.carry_custody_revoke_in_txn(txn, actor, surface, &rec.name, at)?)
-                }
-                Answerer::Writer(_) => None,
-            };
+            // install: audit only. Its revoke reaches the owner's other
+            // machines as the act of the person who ruled: the owner's own,
+            // or the writer's own, never relabelled as the owner's
+            // (L6-03-WRITER-CARRY).
+            let carried =
+                self.carry_custody_revoke_in_txn(txn, actor, by.act_by(), surface, &rec.name, at)?;
             Ok((settled, carried))
         })?;
-        if let Some(carried) = &carried {
-            self.mirror_custody_change(carried);
-        }
+        self.mirror_custody_change(&carried);
         Ok(settled)
     }
 
@@ -620,6 +615,15 @@ impl Answerer {
     const fn person(self) -> EntityId {
         match self {
             Self::Owner(person) | Self::Writer(person) => person,
+        }
+    }
+
+    /// Who the carried revoke names as deciding: the owner, or the writer
+    /// as a person in their own right (L6-03-WRITER-CARRY).
+    const fn act_by(self) -> ActBy {
+        match self {
+            Self::Owner(_) => ActBy::Owner,
+            Self::Writer(_) => ActBy::Person,
         }
     }
 }

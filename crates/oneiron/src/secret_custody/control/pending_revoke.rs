@@ -14,12 +14,17 @@
 //! this install's key loads. Each intent is judged again in a writer
 //! transaction of its own, and carried exactly as the door carries a revoke
 //! it can carry at once.
+//!
+//! A writer's ruling that a key they wrote is no secret waits the same way,
+//! as that person's own act ([`ActBy::Person`], Engine RULING
+//! L6-03-WRITER-CARRY): the intent says so, and its pass checks that the
+//! person is still live where the owner's checks the vault owner.
 
 use super::super::read_secret_custody_meta_in_txn;
 use super::super::transition::custody_portable;
 use super::super::types::SecretCustodyStatus;
 use super::{CustodyKeptHere, SecretCustodyWork};
-use crate::authority::{ActSurface, AuthorityFold};
+use crate::authority::{ActBy, ActSurface, AuthorityFold};
 use crate::error::{Error, Result, SecretError};
 use crate::store::pending_custody_revoke::{PENDING, PendingRevoke};
 use crate::store::{GATE_DECISION_LEDGER_VERSION, GateDecisionId, GateDecisionRecord};
@@ -53,6 +58,10 @@ const CUSTODY_REVOKE_PENDING_CARRY: CustodyRevokePendingCarry =
 const REVOKE_CARRY_CONTENT_KIND: &str = "secret_custody_revoke_carry";
 /// The owner no longer lives in the vault, so their pending revoke is not carried.
 const REVOKE_CARRY_OWNER_NOT_LIVE_REASON: &str = "gate.secret.custody.revoke_carry.owner_not_live";
+/// The person who wrote the key and revoked it is no longer live, so their
+/// pending revoke is not carried in their name.
+const REVOKE_CARRY_PERSON_NOT_LIVE_REASON: &str =
+    "gate.secret.custody.revoke_carry.person_not_live";
 
 /// Whether `error` says this install's signing keys are not loaded here:
 /// the one failure a revoke's carry waits out.
@@ -75,7 +84,8 @@ pub(super) fn can_carry_in_txn(
     }
 }
 
-/// Keeps the carry of `owner`'s revoke of record `id`, at `generation`,
+/// Keeps the carry of `owner`'s revoke of record `id`, at `generation`, as
+/// the act `by` names (the owner's, or the writer's own [`ActBy::Person`]),
 /// pending in the revoke's own transaction (CALLS
 /// CUSTODY_REVOKE_PENDING_CARRY), and returns the work that says so.
 pub(super) fn defer_revoke_in_txn(
@@ -83,6 +93,7 @@ pub(super) fn defer_revoke_in_txn(
     txn: &mut heed::RwTxn<'_>,
     id: EntityId,
     owner: EntityId,
+    by: ActBy,
     surface: ActSurface,
     generation: u32,
     at: u64,
@@ -94,6 +105,7 @@ pub(super) fn defer_revoke_in_txn(
                 surface,
                 at,
                 generation,
+                by_person: by == ActBy::Person,
             };
             PENDING.put(&vault.store, txn, &id, &pending)?;
             Ok(SecretCustodyWork::kept(CustodyKeptHere::CarryPending))
@@ -197,8 +209,9 @@ impl Vault {
 
     /// Carries the revoke owed for record `id` in `txn`, judged again here:
     /// dropped when the record is gone, no longer revoked at the generation
-    /// the owner revoked, ended by an admitted revoke already, or its owner
-    /// is no longer a live vault owner; kept while this install cannot sign.
+    /// it revoked, ended by an admitted revoke already, or its owner is no
+    /// longer a live vault owner (a writer's own revoke: its person no longer
+    /// live); kept while this install cannot sign.
     fn carry_pending_revoke_in_txn(&self, txn: &mut heed::RwTxn<'_>, id: EntityId) -> Result<bool> {
         let Some(pending) = PENDING.get(&self.store, txn, &id)? else {
             return Ok(false);
@@ -210,18 +223,30 @@ impl Vault {
                 && record.rotation_generation == pending.generation
                 && !fold.custody_revoked(&id)
         });
-        let live = crate::policy_model::is_live_vault_owner_in_txn(self, txn, &pending.owner)?;
+        let live = if pending.by_person {
+            crate::consent::person_is_live_in_txn(self, txn, &pending.owner)?
+        } else {
+            crate::policy_model::is_live_vault_owner_in_txn(self, txn, &pending.owner)?
+        };
         let Some(record) = record else {
             PENDING.delete(&self.store, txn, &id)?;
             return Ok(false);
         };
         if !live {
-            self.append_owner_not_live_receipt_in_txn(txn, id, &pending)?;
+            self.append_not_live_receipt_in_txn(txn, id, &pending)?;
             PENDING.delete(&self.store, txn, &id)?;
             return Ok(false);
         }
         let carried = self
-            .carry_revoke_for_in_txn(txn, pending.owner, pending.surface, id, &record, pending.at)?
+            .carry_revoke_for_in_txn(
+                txn,
+                pending.owner,
+                pending.by(),
+                pending.surface,
+                id,
+                &record,
+                pending.at,
+            )?
             .is_some();
         if carried {
             PENDING.delete(&self.store, txn, &id)?;
@@ -229,27 +254,33 @@ impl Vault {
         Ok(carried)
     }
 
-    /// Records that `pending` was not carried because its owner is no longer
-    /// live. The caller deletes the intent in the same transaction.
-    fn append_owner_not_live_receipt_in_txn(
+    /// Records that `pending` was not carried because the PERSON it is by,
+    /// its owner or the writer whose own act it is, is no longer live. The
+    /// caller deletes the intent in the same transaction.
+    fn append_not_live_receipt_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         id: EntityId,
         pending: &PendingRevoke,
     ) -> Result<()> {
+        let (reason, author) = if pending.by_person {
+            (REVOKE_CARRY_PERSON_NOT_LIVE_REASON, "person")
+        } else {
+            (REVOKE_CARRY_OWNER_NOT_LIVE_REASON, "owner")
+        };
         let decision_id = GateDecisionId::from_bytes(self.store.clock.ulid()?);
         let record = GateDecisionRecord {
             version: GATE_DECISION_LEDGER_VERSION,
             decision_id,
             created_at: crate::ports::recorded_at_in_txn(&self.store, txn)?,
             outcome: "deny".into(),
-            reason_codes: vec![REVOKE_CARRY_OWNER_NOT_LIVE_REASON.into()],
+            reason_codes: vec![reason.into()],
             receipt_reasons: Vec::new(),
             system_notices: crate::store::GateSystemNoticeRecord::receipt_details(
                 REVOKE_CARRY_CONTENT_KIND,
                 vec![
                     format!("record:{}", id.to_hex()),
-                    format!("owner:{}", pending.owner.to_hex()),
+                    format!("{author}:{}", pending.owner.to_hex()),
                     format!("generation:{}", pending.generation),
                 ],
             ),

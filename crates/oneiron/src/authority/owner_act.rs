@@ -60,7 +60,10 @@ pub(crate) fn owner_act_signer_admits(
 /// revoked is removed; an owner the log binds nowhere is trusted on the
 /// carrier's word, as a replica without an agent's Grant row trusts it, since
 /// the writer revalidated him in its own transaction (CALLS "mesh1b owner
-/// liveness in the fold", [`OWNER_UNBOUND_TRUSTS_CARRIER`]).
+/// liveness in the fold", [`OWNER_UNBOUND_TRUSTS_CARRIER`]). A person's own
+/// act (`ActBy::Person`, a writer's custody revoke) names that person here:
+/// a PERSON who owns no vault holds no human binding (a human bind needs
+/// owner capability), so the carrier's word stands for them the same way.
 pub(super) fn owner_live_at(state: &FoldState, owner: EntityId) -> bool {
     let mut bound = false;
     for (key, binding) in &state.actor_bindings {

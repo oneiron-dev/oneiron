@@ -14,7 +14,9 @@ use super::super::types::{CustodyClass, SecretCustodyRecord, SecretCustodyStatus
 use super::input::drop_inputs_for_in_txn;
 use super::pending_revoke::{can_carry_in_txn, defer_revoke_in_txn};
 use super::{CustodyKeptHere, SecretCustodyWork, enacted};
-use crate::authority::{ActSurface, CustodyChange, CustodyPermitSet, OwnerWorkBody};
+use crate::authority::{
+    ActBy, ActSurface, CustodyChange, CustodyPermitSet, OwnerAct, OwnerWorkBody,
+};
 use crate::consent::AuthenticatedOwner;
 use crate::error::{Error, Result, SecretError};
 use crate::secret_rotation::{RevokeCause, holds_erasable_value_in_txn, revoke_custody_in_txn};
@@ -25,12 +27,15 @@ impl Vault {
     /// Records the owner's revoke of the record `secret_ref` names for his
     /// other machines, in the revoke door's write transaction, after the
     /// record and its leases were revoked here, for `actor`, the live vault
-    /// owner the door checked in it: a custody revoke request naming this
-    /// install, its carrier, as executor (CALLS CUSTODY_EXECUTOR), its
-    /// enacted result, then the revoked transition bound to the request. Its
-    /// `seen` is the secret's custody revision here (CALLS
-    /// CUSTODY_REVISION). Nothing is recorded, and the work says why the
-    /// revoke stays here (FIX 4994), for a record that stays on its device.
+    /// owner the door checked in it, or, `by` [`ActBy::Person`], the live
+    /// person who wrote the key and ruled it no secret, whose own act it
+    /// stays (Engine RULING L6-03-WRITER-CARRY): a custody revoke request
+    /// naming this install, its carrier, as executor (CALLS
+    /// CUSTODY_EXECUTOR), its enacted result, then the revoked transition
+    /// bound to the request. Its `seen` is the secret's custody revision here
+    /// (CALLS CUSTODY_REVISION). Nothing is recorded, and the work says why
+    /// the revoke stays here (FIX 4994), for a record that stays on its
+    /// device.
     /// When this install cannot carry the act now, with no live machine
     /// profile or no install key loaded, the revoke stands here and its
     /// carry is kept pending, value-free, for the next pass that can sign
@@ -42,6 +47,7 @@ impl Vault {
         &self,
         txn: &mut heed::RwTxn<'_>,
         actor: EntityId,
+        by: ActBy,
         surface: ActSurface,
         secret_ref: &str,
         at: u64,
@@ -52,13 +58,14 @@ impl Vault {
         if !custody_portable(&record) {
             return Ok(SecretCustodyWork::kept(CustodyKeptHere::DeviceLocal));
         }
-        match self.carry_revoke_for_in_txn(txn, actor, surface, id, &record, at)? {
+        match self.carry_revoke_for_in_txn(txn, actor, by, surface, id, &record, at)? {
             Some(work) => Ok(work),
             None => defer_revoke_in_txn(
                 self,
                 txn,
                 id,
                 actor,
+                by,
                 surface,
                 record.rotation_generation,
                 at,
@@ -67,13 +74,15 @@ impl Vault {
     }
 
     /// Carries `actor`'s revoke of portable record `id`, held here as
-    /// `record`, its value out: the request, its enacted result and the
-    /// revoked transition signed at `at`, in `txn`. `None`, with nothing
-    /// written, when this install cannot carry an owner act now.
+    /// `record`, its value out, as the act `by` names (the owner's, or the
+    /// writer's own [`ActBy::Person`]): the request, its enacted result and
+    /// the revoked transition signed at `at`, in `txn`. `None`, with nothing
+    /// written, when this install cannot carry an act now.
     pub(super) fn carry_revoke_for_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
         actor: EntityId,
+        by: ActBy,
         surface: ActSurface,
         id: EntityId,
         record: &SecretCustodyRecord,
@@ -93,7 +102,16 @@ impl Vault {
             pieces: None,
             authority: crate::authority::CustodyRequestAuthority::Install,
         };
-        let receipt = self.record_owner_work_for_in_txn(txn, actor, surface, id, seen, work)?;
+        let act = OwnerAct {
+            owner: actor,
+            by,
+            surface,
+            act: work.kind().act(),
+            target: id,
+            seen,
+            answer: None,
+        };
+        let receipt = self.record_owner_work_with_act_in_txn(txn, act, work)?;
         let (Some(request), Some(executor)) = (receipt.request_entry(), receipt.executor) else {
             return Ok(Some(SecretCustodyWork::recorded(receipt)));
         };
@@ -195,8 +213,14 @@ impl EraseOwnerAct<'_> {
             Err(Error::Gate(_)) => return Ok(()),
             Err(error) => return Err(error),
         };
-        let custody =
-            vault.carry_custody_revoke_in_txn(txn, actor, self.surface, secret_ref, at)?;
+        let custody = vault.carry_custody_revoke_in_txn(
+            txn,
+            actor,
+            ActBy::Owner,
+            self.surface,
+            secret_ref,
+            at,
+        )?;
         if custody.work.is_some() {
             self.recorded.set(true);
         }

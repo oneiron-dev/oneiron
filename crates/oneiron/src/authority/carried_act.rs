@@ -52,7 +52,7 @@ impl AgentCarriedAct {
                 act: act.act,
                 at,
             }),
-            ActBy::Owner => None,
+            ActBy::Owner | ActBy::Person => None,
         }
     }
 }
