@@ -47,6 +47,8 @@ pub struct ReviewDissent {
 /// A critique without a prediction stays in its run-tree branch. A caller
 /// claims the dissent before it authors any of it (FIX 12161): while another
 /// caller in this run keeps it, this one does nothing and gives back `None`.
+/// A dissent whose question's lane does not read the reviewed target keeps
+/// its question unanswered, and its review stands.
 pub fn preserve_review_dissent(
     vault: &Vault,
     result: &ReviewResult,
@@ -88,8 +90,24 @@ pub fn preserve_review_dissent(
     let actor = artifact.provenance.actor()?;
     let unit = EntityId::from_hex(&artifact.candidate_ref)?;
     let question = state.question.ok_or(Error::EntityNotFound)?;
-    let frontier =
-        questions::standing_source_frontier(vault, principal, question, 1, actor, unit, &[])?;
+    // The question keeps its principal's own lane, which rebuilds under the
+    // access gate for a principal that is no live owner (FIX
+    // SAVED-PRINCIPAL-LANE-STORED-BEFORE-BASIS). A target that lane does not
+    // read gives the question nothing to answer from: the dissent keeps its
+    // NOTE and its question unanswered, and the review it belongs to stands.
+    let frontier = match questions::standing_source_frontier(
+        vault,
+        principal,
+        question,
+        1,
+        actor,
+        unit,
+        &[],
+    ) {
+        Ok(frontier) => frontier,
+        Err(Error::EntityNotFound) => return Ok(Some(state)),
+        Err(error) => return Err(error),
+    };
     let providers = artifact
         .provenance
         .model_revision
