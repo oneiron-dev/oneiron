@@ -81,7 +81,7 @@ impl EvalRepairTask {
     /// The state `calls` leave, applied in order by fixed code to the rebuilt
     /// initial state through the offered tools. `None` when a call names a
     /// tool the task does not offer or cannot apply, or there are more than
-    /// [`MAX_REPAIR_TOOL_CALLS`]. A text-response task offers no tool.
+    /// 256 calls. A text-response task offers no tool.
     #[must_use]
     pub fn apply_tool_calls(&self, calls: &[EvalRepairToolCall]) -> Option<Value> {
         if calls.len() > MAX_REPAIR_TOOL_CALLS {

@@ -310,6 +310,7 @@ fn a_tool_outside_the_declared_set_is_refused() -> TestResult {
     );
 
     // A text-response world declares no tool, so its rule is unchanged.
+    let fixture = self::fixture()?;
     let text_task = json!({
         "world": "text_response",
         "initial_state": initial_state(),
@@ -349,6 +350,7 @@ fn a_tool_world_whose_world_holds_its_end_state_is_refused() -> TestResult {
     );
 
     // The history holds the end state.
+    let fixture = self::fixture()?;
     let input = json!({
         "history": [
             { "role": "user", "text": "I moved: please send my parcel to Lyon." },
