@@ -73,10 +73,12 @@ impl<'v> HttpIcsCalendarWire<'v> {
         vault: &'v Vault,
         guard: Option<Arc<HostedEgressGuard>>,
     ) -> Result<Self> {
+        // Red pin only: the wire drops the guard, as main's wire has none.
+        drop(guard);
         Ok(Self {
             vault,
-            client: rest::https_client_with_hosted_guard(guard.clone())?,
-            guard,
+            client: rest::https_client_with_hosted_guard(None)?,
+            guard: None,
         })
     }
 
