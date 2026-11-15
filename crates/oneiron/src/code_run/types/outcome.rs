@@ -24,7 +24,8 @@ pub enum SelfDispatchOutcome {
     ReportBlocked {
         receipt: EntityId,
     },
-    /// JSON of the effective rows after a read or atomic replacement.
+    /// JSON of the effective rows after a read or an applied replacement; for a replacement
+    /// that waits on a check-in, `{"pending": "<check-in>"}`.
     InferenceDefaults(String),
     /// The authorized v1 policy row that was persisted in the vault.
     WakePolicyWritten(crate::dreamer_wake::DreamerWakePolicy),

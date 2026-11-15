@@ -1,167 +1,81 @@
-//! `PUT /v1/llm/defaults` under the vault's policy power (FIX 8211). The
-//! caller's own person proof goes to the core door, which lands a live
-//! policy-power holder's table and keeps anyone else's as an inert
-//! proposal; the credential's grade alone never replaces the defaults.
-//! `GET /v1/llm/defaults/proposals` lists the kept proposals, and
-//! `POST /v1/llm/defaults/proposals/{proposal}` is a holder's answer to one.
+//! `PUT /v1/llm/defaults` through the setting door of `models.purpose_defaults` (FIX 8211;
+//! DESIGN 15-setting-primitive, stage 2). The caller's own proof goes to `Vault::set_setting`,
+//! which judges it in its write: the owner's table lands; a person who holds the vault's policy
+//! power over the inference defaults moves them both ways, and over a table the owner set asks;
+//! anyone else's change asks through a check-in, and the defaults stay as they are. The
+//! credential's grade alone never replaces them. Once a holder approves the ask, the asker's same
+//! change with that check-in applies once (`vault.settings.set` with `check_in_ref`).
 
-use std::sync::Arc;
-
-use axum::extract::{Path, State};
-use axum::http::{Extensions, HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
-use oneiron::authority::ActSurface;
 use oneiron::consent::AuthenticatedOwner;
-use oneiron::llm::{PurposeDefaultSubmission, PurposeDefaultSubmitter, PurposeDefaultTable};
-use serde::Deserialize;
+use oneiron::llm::{PurposeDefaultTable, purpose_defaults_change};
+use oneiron::setting::{SetSetting, SetSettingOutcome, SettingCaller};
 
 use super::refusal;
-use crate::api::owner_routes::machine_routes::act_surface_admitted;
 use crate::{auth::CoreAuth, server::SyncServer};
 
-/// Submits `table`, already validated, for the caller of `auth`: the owner
-/// on his proof, his act recorded where it reached this install; another
-/// person on their own verified slip; any other principal by its id. A
-/// holder's table answers `200` with the active table; anyone else's
-/// answers `202` with the kept proposal, and the defaults stay as they are.
+/// The reason a change through this route gives.
+const ROUTE: &str = "PUT /v1/llm/defaults";
+
+/// Sets `table`, already validated, for the caller of `auth`: the owner on his proof; another
+/// person on their own verified slip; any other principal as the agent it is. An applied change
+/// answers `200` with the active table; a change that asks answers `202` with the check-in it
+/// waits on, and the defaults stay as they are.
 pub(super) fn submit(
     server: &SyncServer,
     auth: &CoreAuth,
-    headers: &HeaderMap,
-    extensions: &Extensions,
     table: &PurposeDefaultTable,
 ) -> Response {
-    let now = crate::api::unix_seconds_now();
     let vault = &server.vault;
-    let submitted = match person_of(server, auth, headers, extensions) {
-        Err(refused) => return refused,
-        Ok(Some((person, surface))) => vault.submit_purpose_default_table(
-            PurposeDefaultSubmitter::Person(&person),
-            table,
-            surface,
-            now,
-        ),
-        Ok(None) => match auth.principal_entity() {
-            Some(principal) => vault.submit_purpose_default_table(
-                PurposeDefaultSubmitter::Principal(principal),
-                table,
-                None,
-                now,
-            ),
+    let request = match purpose_defaults_change(table) {
+        Ok(request) => SetSetting {
+            why: Some(ROUTE.to_owned()),
+            ..request
+        },
+        Err(_) => return refusal(StatusCode::BAD_REQUEST, "invalid_defaults"),
+    };
+    let owner = match crate::api::facade::owner_authorship(auth, server) {
+        Ok(owner) => owner,
+        Err(refused) => return refused.into_response(),
+    };
+    let person = if owner.is_none() {
+        person(server, auth)
+    } else {
+        None
+    };
+    let caller = match (&owner, &person) {
+        (Some(owner), _) => SettingCaller::Owner(owner),
+        (None, Some(person)) => SettingCaller::Person(person),
+        (None, None) => match auth.principal_entity() {
+            Some(principal) => SettingCaller::Agent(principal),
             None => return refusal(StatusCode::FORBIDDEN, "owner_required"),
         },
     };
-    match submitted {
-        Ok(PurposeDefaultSubmission::Landed(table)) => Json(table).into_response(),
-        Ok(PurposeDefaultSubmission::Proposed(proposal)) => (
+    match vault.set_setting(caller, request) {
+        Ok(SetSettingOutcome::Applied { .. }) => match vault.purpose_default_table() {
+            Ok(active) => Json(active).into_response(),
+            Err(_) => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
+        },
+        Ok(SetSettingOutcome::Pending { check_in }) => (
             StatusCode::ACCEPTED,
-            Json(serde_json::json!({ "proposed": proposal })),
+            Json(serde_json::json!({ "pending": check_in })),
         )
             .into_response(),
-        Err(error) => defaults_refusal(error),
+        Err(error) => setting_refusal(error),
     }
 }
 
-/// A holder's answer to one kept proposal.
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(super) struct ProposalRuling {
-    approve: bool,
-}
-
-/// `GET /v1/llm/defaults/proposals`: every kept proposal and where it
-/// stands, read as the defaults themselves are read.
-pub(super) async fn list_proposals(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-) -> Response {
-    if let Some(refused) = owner_grade_refusal(&server, &auth) {
-        return refused;
-    }
-    if let Err(error) = crate::api::scoped_auth::require_live_managed_owner(&server, &auth) {
-        return error.into_response();
-    }
-    match server.vault.purpose_default_proposals() {
-        Ok(proposals) => Json(serde_json::json!({ "proposals": proposals })).into_response(),
-        Err(error) => defaults_refusal(error),
-    }
-}
-
-/// `POST /v1/llm/defaults/proposals/{proposal}`: a holder approves a kept
-/// proposal, whose table then lands as the holder's own replacement, or
-/// declines it. The caller's person proof and policy power are checked in
-/// the ruling's own transaction; the answer is the proposal as it now stands.
-pub(super) async fn rule_proposal(
-    auth: CoreAuth,
-    State(server): State<Arc<SyncServer>>,
-    Path(proposal): Path<String>,
-    headers: HeaderMap,
-    extensions: Extensions,
-    Json(ruling): Json<ProposalRuling>,
-) -> Response {
-    if let Some(refused) = owner_grade_refusal(&server, &auth) {
-        return refused;
-    }
-    let (person, surface) = match person_of(&server, &auth, &headers, &extensions) {
-        Err(refused) => return refused,
-        Ok(Some(found)) => found,
-        Ok(None) => return refusal(StatusCode::FORBIDDEN, "policy_holder_required"),
-    };
-    let now = crate::api::unix_seconds_now();
-    match server.vault.rule_purpose_default_proposal(
-        &person,
-        &proposal,
-        ruling.approve,
-        surface,
-        now,
-    ) {
-        Ok(proposal) => Json(proposal).into_response(),
-        Err(error) => defaults_refusal(error),
-    }
-}
-
-/// The raw defaults routes' own admission: an owner-grade credential, and
-/// no hosted operator's root acting as the owner (FIX 2222).
-fn owner_grade_refusal(server: &SyncServer, auth: &CoreAuth) -> Option<Response> {
-    if !auth.is_owner_grade() {
-        return Some(refusal(StatusCode::FORBIDDEN, "owner_required"));
-    }
-    crate::api::host_action::require_host_owner_act(server, auth)
-        .err()
-        .map(IntoResponse::into_response)
-}
-
-/// A defaults door's error as its wire code.
-fn defaults_refusal(error: oneiron::Error) -> Response {
+/// The setting door's refusal as its wire code. The table was validated before the door, so an
+/// `InvalidConfig` there is the door's power rule: a change the caller may neither make nor ask.
+fn setting_refusal(error: oneiron::Error) -> Response {
     match error {
-        oneiron::Error::InvalidConfig(_) => refusal(StatusCode::BAD_REQUEST, "invalid_defaults"),
         oneiron::Error::Gate(_) => refusal(StatusCode::FORBIDDEN, "owner_required"),
-        oneiron::Error::Refused(_) => refusal(StatusCode::FORBIDDEN, "policy_holder_required"),
-        oneiron::Error::EntityNotFound => refusal(StatusCode::NOT_FOUND, "proposal_not_found"),
-        oneiron::Error::ConcurrentWrite(_) => refusal(StatusCode::CONFLICT, "proposal_answered"),
+        oneiron::Error::InvalidConfig(_) | oneiron::Error::Refused(_) => {
+            refusal(StatusCode::FORBIDDEN, "policy_holder_required")
+        }
         _ => refusal(StatusCode::INTERNAL_SERVER_ERROR, "defaults_unavailable"),
     }
-}
-
-/// The caller's person proof, beside where the owner's act reached this
-/// install: the owner on his proof (a credential of his that no longer
-/// holds keeps its refusal); else a person on their own verified slip;
-/// `None` for any other principal.
-fn person_of(
-    server: &SyncServer,
-    auth: &CoreAuth,
-    headers: &HeaderMap,
-    extensions: &Extensions,
-) -> Result<Option<(AuthenticatedOwner, Option<ActSurface>)>, Response> {
-    let owner =
-        crate::api::facade::owner_authorship(auth, server).map_err(IntoResponse::into_response)?;
-    if let Some(owner) = owner {
-        return Ok(Some((
-            owner,
-            Some(act_surface_admitted(server, auth, headers, extensions)),
-        )));
-    }
-    Ok(person(server, auth).map(|person| (person, None)))
 }
 
 /// A person's own proof on their own verified slip, bound to that slip so

@@ -99,7 +99,11 @@ pub fn authorize_test_inference(vault: &Vault) -> Result<()> {
         .get_mut(&crate::CallPurpose::Extraction)
         .ok_or_else(|| Error::InvalidConfig("missing extraction row".into()))?
         .locality = crate::ModelLocality::OwnServer;
-    vault.set_purpose_default_table(&policy)?;
+    let owner = super::steward::owner(vault)?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::llm::purpose_defaults_change(&policy)?,
+    )?;
     Ok(())
 }
 

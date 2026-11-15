@@ -1,22 +1,17 @@
-//! Vault-local inference defaults: the stored, owner-editable purpose-default table and the
-//! vault doors that read and replace it. The table type, its validation and the shipped rows
-//! are defined in `oneiron-model`.
+//! Vault-local inference defaults: the purpose-default table the vault reads from its setting
+//! key `models.purpose_defaults` (DESIGN 15-setting-primitive, stage 2), and the vault doors that
+//! read it. The table type, its validation and the shipped rows are defined in `oneiron-model`.
+//! Every change goes through `Vault::set_setting` ([`purpose_defaults_change`]).
+use super::setting_keys::{PURPOSE_DEFAULTS, PurposeDefaults};
 use super::{
     CallEnvelope, PurposeDefault, PurposeDefaultTable, ValidatedPurposeDefaults,
-    VoiceBackendBinding, VoiceLane, VoicePrecedence,
+    VoiceBackendBinding, VoiceLane,
 };
-use crate::side_table::{self, LegacyJson, SideTable};
-use crate::{
-    Vault,
-    error::{Error, Result},
-};
-use oneiron_model::llm::locality_rank;
-
-mod submit;
-pub use submit::{
-    PurposeDefaultProposal, PurposeDefaultProposalStatus, PurposeDefaultSubmission,
-    PurposeDefaultSubmitter, purpose_default_grant_target,
-};
+use crate::Vault;
+use crate::error::{Error, Result};
+use crate::policy_model::{PolicyRowScope, policy_row_grant_target};
+use crate::policy_setting_doors::PolicySetting;
+use crate::setting::SetSetting;
 
 // The sibling tests name these bare through `use super::*`, as they did when the table
 // type was defined in this file.
@@ -25,75 +20,44 @@ use super::{
     CallPurpose, ExtractionEgressPredicate, ModelId, ModelLocality, ModelTierRef, TierPrecedence,
 };
 
-/// The vault's stored purpose-default table, validated on every read. Key: ().
-const POLICY: SideTable<(), PurposeDefaultTable, LegacyJson> =
-    SideTable::new(&side_table::LLM_PURPOSE_DEFAULTS);
-
+/// The vault's inference defaults in force in `txn`: the key's value row, else the shipped
+/// table, validated on every read.
 pub(crate) fn read_effective_defaults(
     store: &crate::store::Store,
     txn: &heed::RoTxn<'_>,
 ) -> Result<ValidatedPurposeDefaults> {
-    ValidatedPurposeDefaults::try_from(read_stored_defaults(store, txn)?.unwrap_or_default())
+    let PurposeDefaults(table) = PURPOSE_DEFAULTS
+        .read_in_dbs_txn(store, txn, &[], None)?
+        .value;
+    ValidatedPurposeDefaults::try_from(table)
 }
 
-pub(super) fn read_stored_defaults(
-    store: &crate::store::Store,
-    txn: &heed::RoTxn<'_>,
-) -> Result<Option<PurposeDefaultTable>> {
-    let Some(table) = POLICY.get(store, txn, &())? else {
-        return Ok(None);
-    };
+/// The change that makes `table` the vault's inference defaults: a value row of
+/// `models.purpose_defaults` at the vault scope, for `Vault::set_setting` under the caller's own
+/// power. Replacing the table replaces every row of it at once.
+///
+/// # Errors
+///
+/// A table that does not validate, or does not encode.
+pub fn purpose_defaults_change(table: &PurposeDefaultTable) -> Result<SetSetting> {
     table.validate()?;
-    Ok(Some(table))
+    let value = serde_json::to_value(table)
+        .map_err(|error| Error::InvalidConfig(format!("the purpose defaults: {error}")))?;
+    Ok(SetSetting::vault_value(PURPOSE_DEFAULTS.spec.name, value))
+}
+
+/// The exact target of the policy power over the inference defaults: the vault-scope row target
+/// of `settings.inference_defaults`, which an Owner's `policy.change` grant names to give an
+/// Admin or Delegate this power, and so to make them a holder of `models.purpose_defaults`.
+#[must_use]
+pub fn purpose_default_grant_target() -> String {
+    policy_row_grant_target(
+        &PolicyRowScope::Vault,
+        PolicySetting::InferenceDefaults.as_str(),
+    )
 }
 
 impl Vault {
-    /// Replace all defaults atomically. An absent row is an invalid policy,
-    /// not permission to fall through to an unrelated global tier.
-    pub fn set_purpose_default_table(&self, table: &PurposeDefaultTable) -> Result<()> {
-        table.validate()?;
-        let mut txn = self.store.env.write_txn()?;
-        POLICY.put(&self.store, &mut txn, &(), table)?;
-        txn.commit()?;
-        Ok(())
-    }
-
-    /// The delegated agent door is narrower than the host's owner-authored
-    /// setter. Admit the caller, compare and replace inside one write
-    /// transaction. The owner act `admit` returns is signed last, after the
-    /// replace, best effort (FIX 4624).
-    pub(crate) fn set_resident_purpose_default_table(
-        &self,
-        next: &PurposeDefaultTable,
-        admit: impl FnOnce(&mut heed::RwTxn<'_>) -> Result<Option<crate::authority::PolicySettingAct>>,
-    ) -> Result<()> {
-        next.validate()?;
-        let mut txn = self.store.env.write_txn()?;
-        let signed = admit(&mut txn)?;
-        let prior = read_effective_defaults(&self.store, &txn)?.table().clone();
-        if next.purposes.iter().any(|(key, row)| {
-            locality_rank(row.locality) > locality_rank(prior.purposes[key].locality)
-        }) || next.voice.iter().any(|(key, row)| {
-            locality_rank(row.locality) > locality_rank(prior.voice[key].locality)
-        }) || locality_rank(next.extraction_max_locality)
-            > locality_rank(prior.extraction_max_locality)
-            || locality_rank(next.self_compaction.locality)
-                > locality_rank(prior.self_compaction.locality)
-            || (prior.voice_precedence == VoicePrecedence::VaultOnly
-                && next.voice_precedence != VoicePrecedence::VaultOnly)
-        {
-            return Err(Error::InvalidConfig(
-                "resident inference locality cannot widen".into(),
-            ));
-        }
-        POLICY.put(&self.store, &mut txn, &(), next)?;
-        if let Some(act) = signed {
-            self.record_policy_setting_op_in_txn(&mut txn, act);
-        }
-        txn.commit()?;
-        Ok(())
-    }
-
     pub fn purpose_default_table(&self) -> Result<PurposeDefaultTable> {
         let txn = self.store.env.read_txn()?;
         read_effective_defaults(&self.store, &txn).map(|policy| policy.table().clone())

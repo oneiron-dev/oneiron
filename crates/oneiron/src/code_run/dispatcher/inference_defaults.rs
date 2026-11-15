@@ -1,10 +1,19 @@
-//! Governed reads and replacement of resident inference defaults.
+//! Governed reads and changes of the resident's inference defaults.
 //! Entry: `HostSelfDispatcher::dispatch_inference_defaults`.
 //! Default-table definitions belong to `llm`; dispatcher state stays in `code_run::dispatcher`.
 
 use super::*;
 
+/// The reason a change through the app's `inference.defaults.replace` action gives.
+const REPLACE_ACTION: &str = "inference.defaults.replace";
+
 impl HostSelfDispatcher<'_> {
+    /// The defaults in force, after `replacement` (a whole table as JSON) went through the
+    /// setting door `models.purpose_defaults`, when one is given. A host-authenticated owner's
+    /// proof makes the change the owner's (WILL-PLAN L13 row 01); without one it is the resident
+    /// agent's, which the key's power judges: an agent holding the key's Grant line narrows it at
+    /// once, and anyone else's change asks. A change that asks answers
+    /// `{"pending": "<check-in>"}`, and the defaults stay as they are.
     pub(super) fn dispatch_inference_defaults(
         &self,
         replacement: Option<&str>,
@@ -34,36 +43,36 @@ impl HostSelfDispatcher<'_> {
             {
                 hook(vault);
             }
-            // The check above read its own snapshot. The setter judges the
-            // ceiling again in the transaction that writes, so a narrowing
-            // committed in between holds the rows (H147).
-            vault.set_resident_purpose_default_table(&next, |txn| {
-                crate::code_run::actions::check_ceiling_in_txn(
-                    vault,
-                    txn,
-                    self.actor,
-                    crate::agent_def::AgentCeiling::Auto,
-                )?;
-                // WILL-PLAN L13 row 01: a host-authenticated owner's proof
-                // holds in this same transaction, beside the Auto ceiling
-                // above, and the owner's act is recorded with the table it
-                // replaces; the setter signs it after its own put (FIX 4624).
-                let Some(owner) = self.owner_proof else {
-                    return Ok(None);
-                };
-                let actor =
-                    crate::dreamer_runner::maintenance::validate_owner_in_txn(vault, txn, owner)?;
-                let prior = crate::llm::read_effective_defaults(&vault.store, txn)?;
-                crate::policy_setting_doors::record_policy_setting_act_in_txn(
-                    vault,
-                    txn,
-                    crate::policy_setting_doors::PolicySetting::InferenceDefaults,
-                    actor,
-                    self.owner_surface,
-                    prior.table(),
-                    &next,
-                )
-            })?;
+            let request = crate::setting::SetSetting {
+                why: Some(REPLACE_ACTION.to_owned()),
+                ..crate::llm::purpose_defaults_change(&next)?
+            };
+            let caller = match self.owner_proof {
+                Some(owner) => crate::setting::SettingCaller::Owner(owner),
+                None => crate::setting::SettingCaller::Agent(self.actor.entity_ref()),
+            };
+            // The check above read its own snapshot. The ceiling is judged again in the write
+            // that changes the key, so a narrowing committed in between holds the rows (H147).
+            let outcome = vault.with_write_txn_grouped_after_commit(
+                |txn| {
+                    crate::code_run::actions::check_ceiling_in_txn(
+                        vault,
+                        txn,
+                        self.actor,
+                        crate::agent_def::AgentCeiling::Auto,
+                    )?;
+                    vault.set_setting_in_txn(txn, caller, &request)
+                },
+                |outcome| {
+                    crate::setting::run_after_commit(vault, &[(&request, &outcome)]);
+                    Ok(outcome)
+                },
+            )?;
+            if let crate::setting::SetSettingOutcome::Pending { check_in } = outcome {
+                return Ok(SelfDispatchOutcome::InferenceDefaults(
+                    serde_json::json!({ "pending": check_in }).to_string(),
+                ));
+            }
         }
         let active = vault.purpose_default_table()?;
         Ok(SelfDispatchOutcome::InferenceDefaults(

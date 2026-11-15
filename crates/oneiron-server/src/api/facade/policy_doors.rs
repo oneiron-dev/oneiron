@@ -1,14 +1,14 @@
 //! The host doors of the app's policy actions (OF-181):
-//! `vault.settings.wake_policy.set`, `vault.settings.inference_defaults` and
-//! `.replace`. `host_doors` re-exports them, so the generated HTTP facade
-//! handler and the MCP dispatcher call them by the name every host door has.
-//! Each runs the app's one action table ([`SharedActionExecutor::app`]) as
+//! `vault.settings.wake_policy.set` and `vault.settings.inference_defaults`.
+//! `host_doors` re-exports them, so the generated HTTP facade handler and the
+//! MCP dispatcher call them by the name every host door has. Each runs the
+//! app's one action table ([`SharedActionExecutor::app`]) as
 //! `POST /v1/core/actions/{verb}` does: as the credential's own principal,
 //! reading under its read key. The wake policy also takes the owner's proof,
 //! as `/v1/owner` takes it, or a holder of `engine.controls` (untangle
-//! 6.6d), whose grant the engine checks in its write; the inference defaults leave the caller's Auto
-//! ceiling to the table, and carry the owner's proof when the vault's owner
-//! sets them in person, which the setter revalidates in its own transaction.
+//! 6.6d), whose grant the engine checks in its write; the inference defaults'
+//! read leaves the caller's Auto ceiling to the table. A change of the
+//! inference defaults is `vault.settings.set` of `models.purpose_defaults`.
 //!
 //! A managed vault's attested owner (`ManagedOwnerAction`) presents no slip:
 //! [`super::owner_binding`] binds the request's own owner proof, the owner's
@@ -19,18 +19,16 @@
 //! 4625), never an input field.
 //!
 //! Each lists no row beside its outcome (`host_door_lists`): the wake policy
-//! and the inference defaults live in side tables, an action's replay record
-//! in the code-run table, and its text argument names no target the table
-//! would read.
+//! lives in a side table, the inference defaults in a setting row, an action's
+//! replay record in the code-run table, and its text argument names no target
+//! the table would read.
 use std::sync::Arc;
 
 use oneiron::WriteActor;
 use oneiron::authority::ActSurface;
 use oneiron::code_run::actions::{ActionHostBinding, AgentActionCall};
 use oneiron::memory::{MEMORY_CODE_FORBIDDEN, MemoryError, MemoryResult};
-use oneiron::policy_setting_doors::{
-    self, InferenceDefaultsReplaceRequest, PolicyActionOutcome, WakePolicySetRequest,
-};
+use oneiron::policy_setting_doors::{self, PolicyActionOutcome, WakePolicySetRequest};
 use oneiron::task_verb::sdk::EmptyRequest;
 
 use super::FacadeApiError;
@@ -180,26 +178,6 @@ pub(crate) async fn vault_settings_inference_defaults(
         call,
         false,
         super::owner_binding::act_surface(auth),
-    )
-    .await
-}
-
-/// `vault.settings.inference_defaults.replace`: the whole table replaced,
-/// through `inference.defaults.replace`, an owner's act recording `surface`.
-pub(crate) async fn vault_settings_inference_defaults_replace(
-    server: &Arc<SyncServer>,
-    auth: &CoreAuth,
-    surface: ActSurface,
-    input: InferenceDefaultsReplaceRequest,
-) -> Listed<PolicyActionOutcome> {
-    let call = input.into_action().map_err(MemoryError::from);
-    run_action(
-        server,
-        auth,
-        "vault.settings.inference_defaults.replace",
-        call,
-        false,
-        surface,
     )
     .await
 }

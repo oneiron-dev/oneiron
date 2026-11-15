@@ -429,7 +429,12 @@ fn authorize_fixture_inference(vault: &Vault) -> Result<()> {
         .get_mut(&CallPurpose::Extraction)
         .ok_or_else(|| Error::InvalidConfig("missing extraction row".into()))?
         .locality = ModelLocality::OwnServer;
-    vault.set_purpose_default_table(&policy)
+    let owner = super::steward::owner(vault)?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::llm::purpose_defaults_change(&policy)?,
+    )?;
+    Ok(())
 }
 
 fn ready<F: Future>(future: F) -> F::Output {

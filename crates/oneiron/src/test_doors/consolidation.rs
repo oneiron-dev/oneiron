@@ -137,7 +137,12 @@ pub(super) fn allow_own_server_extraction(vault: &Vault) -> Result<()> {
         .get_mut(&CallPurpose::Extraction)
         .ok_or_else(|| Error::InvalidConfig("missing extraction row".into()))?
         .locality = ModelLocality::OwnServer;
-    vault.set_purpose_default_table(&policy)
+    let owner = super::steward::owner(vault)?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::llm::purpose_defaults_change(&policy)?,
+    )?;
+    Ok(())
 }
 
 /// The shipped policy (the Dreamer's rows included) plus a `core:read`

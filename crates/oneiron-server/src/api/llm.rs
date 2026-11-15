@@ -37,12 +37,6 @@ pub(super) fn routes() -> Router<Arc<SyncServer>> {
         // the API's request floor (`limits.request_body_bytes`, ABC transport
         // rows T3, T4), set once on the API router.
         .route("/defaults", get(read_defaults).put(replace_defaults))
-        // FIX 8211: the kept proposals, and a holder's answer to one.
-        .route("/defaults/proposals", get(defaults_submit::list_proposals))
-        .route(
-            "/defaults/proposals/{proposal}",
-            post(defaults_submit::rule_proposal),
-        )
 }
 /// A refusal's wire code and its other wire field (empty for a code-only
 /// body), kept on the response for the OpenAI proxy's call receipt
@@ -140,8 +134,6 @@ async fn read_defaults(auth: CoreAuth, State(server): State<Arc<SyncServer>>) ->
 async fn replace_defaults(
     auth: CoreAuth,
     State(server): State<Arc<SyncServer>>,
-    headers: axum::http::HeaderMap,
-    extensions: axum::http::Extensions,
     Json(table): Json<oneiron::llm::PurposeDefaultTable>,
 ) -> Response {
     if !auth.is_owner_grade() {
@@ -164,9 +156,9 @@ async fn replace_defaults(
     {
         return refusal(StatusCode::BAD_REQUEST, "extraction_egress_unavailable");
     }
-    // FIX 8211: a live policy-power holder's table lands; anyone else's is
-    // kept as an inert proposal.
-    defaults_submit::submit(&server, &auth, &headers, &extensions, table.table())
+    // FIX 8211: the setting door judges the caller in its write: the owner's
+    // and a policy-power holder's table lands; anyone else's change asks.
+    defaults_submit::submit(&server, &auth, table.table())
 }
 
 /// Admits a raw call: the owner, or an agent whose live Grant the owner

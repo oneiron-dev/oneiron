@@ -6,7 +6,7 @@ use oneiron_contracts::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PurposeDefault {
     pub tier: ModelTierRef,
@@ -26,7 +26,9 @@ impl<F: Fn(&super::LlmRequest) -> bool + Send + Sync> ExtractionEgressPredicate 
 
 /// Speech routing is distinct from the generic `Voice` call purpose: ASR and
 /// TTS have separate live and deferred latency and custody requirements.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum VoiceLane {
     AsrLive,
@@ -46,7 +48,7 @@ pub struct VoiceBackendBinding {
 
 /// Editable voice override precedence. Neither mode permits a holder route
 /// wider than the vault row; the owner may disable holder overrides entirely.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum VoicePrecedence {
     NestedNarrowing,
@@ -73,7 +75,7 @@ pub const fn locality_rank(locality: ModelLocality) -> u8 {
 /// the cheap writer wearing its home, or a fork of its live context. The row
 /// picks the model and context per flight; WHO writes is the agent's
 /// `memory_profile.compaction_backend`, never this row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SelfCompactionSource {
     /// Resolved per flight (FIX 6029, the shipped default): the live fork
@@ -103,7 +105,7 @@ impl SelfCompactionSource {
 /// `cheap_model` (FIX 6029), else, when that route is not served here or is
 /// served wider than `locality`, the house's. A delegated edit may not widen
 /// `locality`, as with every other row.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SelfCompactionDefault {
     pub source: SelfCompactionSource,
@@ -113,7 +115,7 @@ pub struct SelfCompactionDefault {
     pub locality: ModelLocality,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PurposeDefaultTable {
     pub purposes: BTreeMap<CallPurpose, PurposeDefault>,

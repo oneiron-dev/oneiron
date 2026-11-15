@@ -111,6 +111,7 @@ use oneiron::dreamer_wake::{WakeTurnSubject, request_wake};
 use oneiron::llm::decision::{DecisionQuestion, TypedDecision};
 use oneiron::llm::{HostInferenceBinding, HostInferenceContext};
 use oneiron::serialize::msgpack_value_from_json;
+use oneiron::setting::SettingCaller;
 use oneiron::skill_optimize::{
     HeldOutReplayCase, HeldOutReplayNotes, SkillEditDraft, SkillOptimizeAuthor, SkillOptimizeBrief,
     SkillOptimizeDecisions, SkillReplayResponses,
@@ -466,7 +467,19 @@ pub fn allow_scripted_extraction(vault: &Vault) -> Result<(), DreamerPassError> 
         ));
     };
     row.locality = ModelLocality::OwnServer;
-    vault.set_purpose_default_table(&table)?;
+    let owner = vault
+        .ensure_embedded_owner_actor()
+        .map_err(|error| DreamerPassError::Refused(format!("the vault's owner: {error:?}")))?;
+    let owner = vault.authenticate_owner(
+        owner,
+        &owner.to_hex(),
+        true,
+        oneiron::store::GateDecisionId::now(),
+    )?;
+    vault.set_setting(
+        SettingCaller::Owner(&owner),
+        oneiron::llm::purpose_defaults_change(&table)?,
+    )?;
     Ok(())
 }
 

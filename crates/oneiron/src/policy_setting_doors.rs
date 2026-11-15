@@ -1,11 +1,12 @@
-//! The app's policy actions as host verbs (OF-181). The action table holds
-//! three policy actions no SDK row named: `dreamer.wake_policy.set`,
-//! `inference.defaults.read` and `inference.defaults.replace`. The host verbs
-//! `vault.settings.wake_policy.set`, `vault.settings.inference_defaults` and
-//! `.replace` run them, so code mode, MCP and the SDK clients reach the same
-//! actions the app's buttons do. Each door runs the table's own action under
-//! the caller's credential: the wake policy still needs the host's owner
-//! proof, and the inference defaults the caller's Auto ceiling. Nothing here
+//! The app's policy actions as host verbs (OF-181). The host verbs
+//! `vault.settings.wake_policy.set` and `vault.settings.inference_defaults` run
+//! the action table's `dreamer.wake_policy.set` and `inference.defaults.read`,
+//! so code mode, MCP and the SDK clients reach the same actions the app's
+//! buttons do. Each door runs the table's own action under the caller's
+//! credential: the wake policy still needs the host's owner proof, and the
+//! inference defaults' read the caller's Auto ceiling. The app's
+//! `inference.defaults.replace` changes the setting `models.purpose_defaults`,
+//! which the SDK clients change through `vault.settings.set`. Nothing here
 //! writes a policy itself.
 //!
 //! The owner's act on each setting is recorded in the commit that changes
@@ -41,17 +42,6 @@ pub struct WakePolicySetRequest {
     pub policy: serde_json::Value,
     /// The call's idempotency key, at most 256 bytes: a retry with the same
     /// key and policy gets the first call's answer.
-    pub idempotency_key: String,
-}
-
-/// `vault.settings.inference_defaults.replace`'s input.
-#[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct InferenceDefaultsReplaceRequest {
-    /// The whole per-purpose default table, as `inference.defaults.replace`
-    /// takes it.
-    pub defaults: serde_json::Value,
-    /// The call's idempotency key, at most 256 bytes.
     pub idempotency_key: String,
 }
 
@@ -94,19 +84,6 @@ impl WakePolicySetRequest {
         action(
             "dreamer.wake_policy.set",
             vec![json_text(&self.policy)?],
-            self.idempotency_key,
-        )
-    }
-}
-
-impl InferenceDefaultsReplaceRequest {
-    /// The table's `inference.defaults.replace` call.
-    /// # Errors
-    /// A table past the action's text bound.
-    pub fn into_action(self) -> Result<AgentActionCall> {
-        action(
-            "inference.defaults.replace",
-            vec![json_text(&self.defaults)?],
             self.idempotency_key,
         )
     }
@@ -216,17 +193,6 @@ pub fn wake_policy_set_as_holder(
 /// The action's refusal: the handle's actor needs an Auto ceiling.
 pub fn inference_defaults_embedded(memory: &Memory<'_>) -> MemoryResult<PolicyActionOutcome> {
     run_embedded(memory, inference_defaults_read_action()?, None)
-}
-
-/// `vault.settings.inference_defaults.replace` on an embedded handle.
-/// # Errors
-/// The action's refusal: the handle's actor needs an Auto ceiling, and the
-/// table must validate.
-pub fn inference_defaults_replace_embedded(
-    memory: &Memory<'_>,
-    input: InferenceDefaultsReplaceRequest,
-) -> MemoryResult<PolicyActionOutcome> {
-    run_embedded(memory, input.into_action()?, None)
 }
 
 // The setting an owner act changes and the reserved target of a vault-wide

@@ -96,12 +96,6 @@ crate::side_table::side_tables! {
     /// checkpoint, label count and per-artifact hashes. Key: string (slot).
     LLM_ONEIRONER_BUNDLE_RECEIPT: VaultMeta b"llm:oneironer_bundle_receipt:v1:" Named
         [restore: live] [family: unclassified] [tier: canonical];
-    /// A non-holder's inert inference-defaults replacement (FIX 8211). Key: id16(proposal).
-    LLM_PURPOSE_DEFAULT_PROPOSAL: VaultMeta b"llm:purpose_default_proposal:v1:" Named
-        [restore: live] [family: unclassified] [tier: canonical];
-    /// Vault-local per-purpose and voice-lane inference defaults table. Key: ().
-    LLM_PURPOSE_DEFAULTS: VaultMeta b"llm:purpose_defaults:v1" LegacyJson
-        [restore: live] [family: unclassified] [tier: canonical];
     /// Priced model-catalog row: wire format, cost, and cached benchmark scores. Key: string(model
     /// id).
     LLM_REGISTRY_ROW: VaultMeta b"llm:registry:v1:" LegacyJson Authored

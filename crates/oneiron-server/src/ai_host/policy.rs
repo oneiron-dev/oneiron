@@ -16,8 +16,9 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 use oneiron::dreamer_consolidation::DREAMER_VERDICT_ROLE;
-use oneiron::llm::ExtractionEgressPredicate;
 use oneiron::llm::manifest::ModelRole;
+use oneiron::llm::{ExtractionEgressPredicate, purpose_defaults_change};
+use oneiron::setting::{SetSetting, SettingCaller};
 use oneiron::{CallPurpose, LlmRequest, ModelId, ModelLocality, Vault};
 
 use super::status::IdleReason;
@@ -101,9 +102,14 @@ pub(super) fn extraction_egress(models: BTreeSet<ModelId>) -> Arc<dyn Extraction
     Arc::new(move |request: &LlmRequest| models.contains(&request.model))
 }
 
+/// The reason the owner's edit below gives on its change row.
+const EXTRACTION_ROUTE_EDIT: &str = "oneiron dreamer grant --extraction-route";
+
 /// The owner's edit behind `oneiron dreamer grant --extraction-route`: routes
 /// the Dreamer's purposes to `locality` and raises the extraction bound to
-/// it if lower. Returns whether the table changed.
+/// it if lower, as the local host's own owner (the command's other grants
+/// attest him the same way), through the setting door of
+/// `models.purpose_defaults`. Returns whether the table changed.
 pub(crate) fn route_dreamer_extraction(
     vault: &Vault,
     locality: ModelLocality,
@@ -123,7 +129,20 @@ pub(crate) fn route_dreamer_extraction(
         changed = true;
     }
     if changed {
-        vault.set_purpose_default_table(&table)?;
+        let actor = vault.ensure_embedded_owner_actor().map_err(|error| {
+            oneiron::Error::InvalidConfig(format!("the vault's owner: {error:?}"))
+        })?;
+        let owner = vault.authenticate_owner(
+            actor,
+            &actor.to_hex(),
+            true,
+            oneiron::store::GateDecisionId::now(),
+        )?;
+        let request = SetSetting {
+            why: Some(EXTRACTION_ROUTE_EDIT.to_owned()),
+            ..purpose_defaults_change(&table)?
+        };
+        vault.set_setting(SettingCaller::Owner(&owner), request)?;
     }
     Ok(changed)
 }

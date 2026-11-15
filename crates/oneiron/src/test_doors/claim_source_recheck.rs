@@ -205,7 +205,12 @@ fn allow_own_server_extraction(vault: &Vault) -> Result<()> {
         .get_mut(&CallPurpose::Extraction)
         .ok_or_else(|| invalid("missing extraction row"))?
         .locality = ModelLocality::OwnServer;
-    vault.set_purpose_default_table(&policy)
+    let owner = super::steward::owner(vault)?;
+    vault.set_setting(
+        crate::setting::SettingCaller::Owner(&owner),
+        crate::llm::purpose_defaults_change(&policy)?,
+    )?;
+    Ok(())
 }
 
 /// The egress verdict [`run`] lends its judge: the fixture allows it, as the

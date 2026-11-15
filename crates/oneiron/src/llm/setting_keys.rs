@@ -1,17 +1,19 @@
-//! The catalogue keys `llm` declares (DESIGN 15-setting-primitive, stage 1): the owner's model
-//! choices that each had a table and a setter of their own. The owner sets each through
+//! The catalogue keys `llm` declares (DESIGN 15-setting-primitive, stages 1 and 2): the model
+//! choices that each had a table and a setter of their own. Each is set through
 //! `vault.settings.set`; every change is one `SETTING_CHANGE` row.
 
 use serde::{Deserialize, Serialize};
 
-use super::ModelLocality;
+use oneiron_model::llm::locality_rank;
+
 use super::manifest::{self, ModelSlot};
 use super::model_pack::{MODEL_PACK_REVERT_VERB, ModelPackChangeCause};
 use super::routing::DescriptionPolicy;
+use super::{ModelLocality, PurposeDefaultTable, VoicePrecedence};
 use crate::Vault;
 use crate::error::{Error, Result};
 use crate::setting::{
-    EncodedValue, ItemDomain, Kind, Setter, SettingChange, SettingMode, SettingValue,
+    EncodedValue, ItemDomain, Kind, SetBy, Setter, SettingChange, SettingMode, SettingValue,
 };
 use crate::settings::model_pack::ModelPackPreference;
 
@@ -132,6 +134,52 @@ fn note_model_pack_preference_in_txn(
     vault.note_active_model_pack_in_txn(txn, before, model_pack_change_cause(change))
 }
 
+/// The vault's purpose-default table as a setting value: per call purpose and voice lane, the
+/// tier and the widest locality its calls take, the widest extraction destination, the voice
+/// precedence and the self-compaction row. A stored table passes `PurposeDefaultTable::validate`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub(crate) struct PurposeDefaults(pub(crate) PurposeDefaultTable);
+
+impl SettingValue for PurposeDefaults {
+    fn check(self) -> Result<Self> {
+        self.0.validate()?;
+        Ok(self)
+    }
+}
+
+/// The policy setting whose vault-scope `policy.change` grant makes a person a holder of the
+/// purpose defaults: `PolicySetting::InferenceDefaults`'s name, the target
+/// [`super::purpose_default_grant_target`] spells.
+const INFERENCE_DEFAULTS_POLICY_TARGET: &str = "settings.inference_defaults";
+
+/// Whether `next` sends no call wider than `prior` (the resident door's narrowing check, now the
+/// key's order): no purpose row, voice row, extraction bound or self-compaction row at a wider
+/// locality, and a vault-only voice precedence kept. A row `prior` lacks cannot be judged, so it
+/// counts as wider.
+fn purpose_defaults_no_wider(next: &PurposeDefaults, prior: &PurposeDefaults) -> bool {
+    let (next, prior) = (&next.0, &prior.0);
+    let within =
+        |next: ModelLocality, prior: ModelLocality| locality_rank(next) <= locality_rank(prior);
+    next.purposes.iter().all(|(purpose, row)| {
+        prior
+            .purposes
+            .get(purpose)
+            .is_some_and(|was| within(row.locality, was.locality))
+    }) && next.voice.iter().all(|(lane, row)| {
+        prior
+            .voice
+            .get(lane)
+            .is_some_and(|was| within(row.locality, was.locality))
+    }) && within(next.extraction_max_locality, prior.extraction_max_locality)
+        && within(
+            next.self_compaction.locality,
+            prior.self_compaction.locality,
+        )
+        && (prior.voice_precedence != VoicePrecedence::VaultOnly
+            || next.voice_precedence == VoicePrecedence::VaultOnly)
+}
+
 crate::setting::setting_keys! {
     /// The vault's model description policy: the models a routed seat may take, the owner's line
     /// about each, and the effort defaults. Null is no policy: a routed seat or verdict is then
@@ -157,5 +205,16 @@ crate::setting::setting_keys! {
     pub(crate) MODEL_PACK_PREFERENCE: ModelPackPreferenceValue = "models.pack_preference" {
         kind: Kind::new(ModelPackPreferenceValue::default),
         on_change: Some(note_model_pack_preference_in_txn),
+    };
+    /// The vault's inference defaults (FIX 8211): per call purpose and voice lane the tier and
+    /// the widest locality its calls take, the widest extraction destination, the voice
+    /// precedence and the self-compaction row. The owner and a person holding the policy power
+    /// over `settings.inference_defaults` move it both ways; an agent holding the key's line
+    /// narrows it, and anyone else's change asks. A narrowing sends no purpose, voice lane, bound
+    /// or self-compaction row wider and keeps a vault-only voice precedence.
+    pub(crate) PURPOSE_DEFAULTS: PurposeDefaults = "models.purpose_defaults" {
+        kind: Kind::new(PurposeDefaults::default).custom(purpose_defaults_no_wider),
+        set_by: SetBy::Policy,
+        policy_target: Some(INFERENCE_DEFAULTS_POLICY_TARGET),
     };
 }
