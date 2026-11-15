@@ -41,6 +41,8 @@ pub use log::{
     read_first_chat_log,
 };
 pub(crate) use log::{chat_log_room, select_action_turns};
+#[cfg(oneiron_test_support)]
+pub(crate) use order::thread_turn_order_in;
 pub(crate) use order::{
     conversation_covered_end_in, conversation_turns_in, thread_turn_key_in,
     validate_conversation_window_in_txn,

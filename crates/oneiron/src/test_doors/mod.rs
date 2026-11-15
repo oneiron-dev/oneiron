@@ -32,6 +32,7 @@ pub mod comm_late_stop;
 pub mod comm_thread_member_claim_reads;
 pub mod companion_grant_index;
 pub mod connector_key_suspend;
+pub mod connector_thread_session;
 pub mod consent_graduation_demotion;
 pub mod consent_graduation_ramp_rows;
 pub mod consolidation;

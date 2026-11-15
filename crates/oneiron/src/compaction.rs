@@ -92,6 +92,8 @@ pub(crate) use check_material::{
     compaction_check_material_accepts_masked, erase_check_material_in_txn,
     put_check_material_in_txn,
 };
+#[cfg(oneiron_test_support)]
+pub(crate) use conversation::thread_turn_order_in;
 pub use conversation::{
     ChatLog, ChatLogCut, ChatLogLine, ConversationCompactionUnavailable, ConversationEvidence,
     ConversationFlight, ConversationFlightOutcome, ConversationTurnSpan, capture_conversation_fork,

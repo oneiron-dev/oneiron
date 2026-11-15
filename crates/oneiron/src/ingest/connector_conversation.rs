@@ -493,7 +493,9 @@ pub(crate) fn connector_witness_row_ids(
 /// The conversation an event belongs to: one per channel, receiving
 /// identity, provider thread and audience, so a LINE group's members share
 /// one and a direct message has its own.
-fn connector_conversation_id(origin: &SurfaceConnectorPayload) -> MemoryResult<EntityId> {
+pub(crate) fn connector_conversation_id(
+    origin: &SurfaceConnectorPayload,
+) -> MemoryResult<EntityId> {
     let parts = [
         origin.channel.as_bytes(),
         origin.receiving_identity_ref.as_bytes(),

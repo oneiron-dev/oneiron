@@ -203,3 +203,24 @@ pub(crate) fn validate_conversation_window_in_txn(
     }
     Ok(())
 }
+
+/// The connector thread `conversation`'s turns in its own SESSION, by their
+/// numbers there; `None` when the order does not read. For the integration
+/// tests' door (`test_doors::connector_thread_session`).
+#[cfg(oneiron_test_support)]
+pub(crate) fn thread_turn_order_in(
+    store: &Store,
+    txn: &heed::RoTxn<'_>,
+    conversation: EntityId,
+) -> Result<Option<Vec<EntityId>>> {
+    let session = crate::session_lifecycle::thread_session_id(conversation)?;
+    conversation_turn_order_in(
+        store,
+        txn,
+        session,
+        ConversationBinding {
+            conversation,
+            branch: None,
+        },
+    )
+}
