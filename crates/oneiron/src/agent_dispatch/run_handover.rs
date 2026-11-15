@@ -27,9 +27,9 @@
 //! nothing; two machines that take at once resolve as the lease does, by
 //! whole-row LWW and the fence, so one executor stands down once copies
 //! agree. The take reserves only what the launch reserved less what the
-//! other machines spent of it, as the run TASK's spend carry records it
-//! (FIX 4889), and waits when nothing is left; the machine whose tree
-//! funded the launch keeps the one counter (canon ARCH-0026:242). A
+//! machines that ran it committed of it, as the run TASK's spend carry
+//! records it (FIX 4889), and waits when nothing is left; the machine whose
+//! tree funded the launch keeps the one counter (canon ARCH-0026:242). A
 //! take-back on the custody machine keeps the run's scope and folds the
 //! other machines' shares into it (FIX 4889).
 //!

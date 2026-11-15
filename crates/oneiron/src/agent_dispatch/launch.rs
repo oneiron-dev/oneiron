@@ -187,26 +187,27 @@ enum HandedOverReserve {
 
 /// What an agent run another machine dispatched reserves on the machine that
 /// takes it over, from the launch statement its dispatch froze (FIX 4747
-/// slice 6) less what every other machine spent of it (FIX 4889). Engine
-/// call (CALLS, FIX 4747): a launch stated unmetered stays unmetered; a
-/// pinned `budget` outside any tree pins what is left of its cap here; a
+/// slice 6) less what the machines that ran it committed of it (FIX 4889).
+/// Engine call (CALLS, FIX 4747): a launch stated unmetered stays unmetered;
+/// a pinned `budget` outside any tree pins what is left of its cap here; a
 /// launch under a tree scope this machine holds open, or books at an open
 /// ancestor (`tree_here`), reserves under it as the dispatch did, a carve of
 /// its budget or a hold of its expected spend. A tree scope this machine
 /// does not hold lives on the machine that opened it, and nothing of it is
 /// seeded here: the run gets a pinned hard scope of what its launch reserved
-/// from that tree less what the other machines spent of it
-/// (`spent_elsewhere`, from the run TASK's carry), so the run never spends
-/// past what its launch set aside, counted across the machines that ran it.
-/// A launch that reserved nothing there, a room-bound one, whose payer only
-/// that tree names, or one the other machines spent in full, is unfunded
-/// here, and the take waits (canon CROSS-ARCH-0019 item 04: "If no machine
-/// can take the run, it pauses").
+/// from that tree less what the machines that ran it committed of it
+/// (`committed_units`, from the run TASK's carry: every scope's spend and
+/// open children's holds, this machine's earlier scopes included), so the
+/// run never spends past what its launch set aside, counted across the
+/// machines that ran it. A launch that reserved nothing there, a room-bound
+/// one, whose payer only that tree names, or one committed in full, is
+/// unfunded here, and the take waits (canon CROSS-ARCH-0019 item 04: "If no
+/// machine can take the run, it pauses").
 fn handed_over_launch_reserve(
     statement: &LaunchStatement,
     tree_here: bool,
     room_bound: bool,
-    spent_elsewhere: u64,
+    committed_units: u64,
 ) -> HandedOverReserve {
     let Some(cap_units) = statement.cap_units else {
         return HandedOverReserve::Reserve(LaunchReserve::Unmetered);
@@ -214,7 +215,7 @@ fn handed_over_launch_reserve(
     let unit = statement.unit.clone();
     match &statement.parent_scope {
         None => {
-            let remaining = cap_units.saturating_sub(spent_elsewhere);
+            let remaining = cap_units.saturating_sub(committed_units);
             if remaining == 0 {
                 HandedOverReserve::Unfunded
             } else {
@@ -236,7 +237,7 @@ fn handed_over_launch_reserve(
         }),
         Some(_) if room_bound || statement.reserved_units == 0 => HandedOverReserve::Unfunded,
         Some(_) => {
-            let remaining = statement.reserved_units.saturating_sub(spent_elsewhere);
+            let remaining = statement.reserved_units.saturating_sub(committed_units);
             if remaining == 0 {
                 HandedOverReserve::Unfunded
             } else {
@@ -253,15 +254,15 @@ impl AgentDispatcher<'_> {
     /// Reserves on this machine the spend of `attempt`, the try of an agent
     /// run this machine takes over, in the take's write (FIX 4747 slice 6),
     /// as `handed_over_launch_reserve` rules from the launch statement
-    /// `input` froze, less what every other machine spent of it (FIX 4889,
-    /// from the run TASK's `carry`). A scope the run spends under here
-    /// through its retry chain is kept when open. On the custody machine the
-    /// kept scope folds the other shares (FIX 4889); elsewhere a kept pinned
-    /// scope is capped to the remainder. A pinned scope keeps the Grant
-    /// `input` froze as its funding (FIX 7766), as the dispatch's own reserve
-    /// did. A room-bound run proves its join again under the scope it
-    /// reserves under, as its dispatch did. `Unfunded` when this machine
-    /// cannot fund it: the take writes nothing, and the run waits.
+    /// `input` froze, less what the machines that ran it committed of it
+    /// (FIX 4889, from the run TASK's `carry`). A scope the run spends under
+    /// here through its retry chain is kept when open. On the custody machine
+    /// the kept scope folds the other machines' shares (FIX 4889); elsewhere
+    /// a kept pinned scope is capped to the remainder. A pinned scope keeps
+    /// the Grant `input` froze as its funding (FIX 7766), as the dispatch's
+    /// own reserve did. A room-bound run proves its join again under the
+    /// scope it reserves under, as its dispatch did. `Unfunded` when this
+    /// machine cannot fund it: the take writes nothing, and the run waits.
     ///
     /// # Errors
     ///
@@ -286,7 +287,7 @@ impl AgentDispatcher<'_> {
             }
             Some(_) | None => {}
         }
-        let spent_elsewhere = carry.map_or(0, |carry| carry.spent_elsewhere(node));
+        let committed_units = carry.map_or(0, AgentRunSpendCarry::committed_units);
         let Some(statement) = input.launch.as_ref() else {
             return Ok(HandedOverLaunchReserve::Reserved { folded: 0 });
         };
@@ -303,7 +304,7 @@ impl AgentDispatcher<'_> {
             statement,
             tree_here,
             input.room.is_some(),
-            spent_elsewhere,
+            committed_units,
         ) {
             HandedOverReserve::Unfunded => return Ok(HandedOverLaunchReserve::Unfunded),
             HandedOverReserve::Reserve(LaunchReserve::Unmetered) => {}

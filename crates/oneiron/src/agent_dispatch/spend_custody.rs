@@ -24,8 +24,8 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 
 /// What reserving a handed-over launch came to (FIX 4889): whether the take
-/// may run here, and how much of the other machines' spend it folded into the
-/// kept scope.
+/// may run here, and how much of what the other machines committed it folded
+/// into the kept scope.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum HandedOverLaunchReserve {
     /// This machine cannot fund the run as its launch was stated: the take
@@ -37,8 +37,8 @@ pub(super) enum HandedOverLaunchReserve {
 }
 
 /// A run the reconcile pass settles (FIX 4889): its TASK, the try whose
-/// scope is the custody scope, and what the other machines spent of it that
-/// is not folded yet.
+/// scope is the custody scope, and what the other machines committed of it
+/// that is not folded yet.
 struct CustodySettlement {
     task_ref: EntityId,
     attempt: AttemptId,
@@ -79,7 +79,7 @@ fn custody_settlements_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Cu
             task_ref,
             attempt,
             fold: carry
-                .spent_elsewhere(node)
+                .committed_elsewhere(node)
                 .saturating_sub(carry.custody_folded_units),
         });
     }
@@ -89,12 +89,13 @@ fn custody_settlements_in(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Vec<Cu
 impl AgentDispatcher<'_> {
     /// Judges for a take the open scope `kept` that `attempt` spends under
     /// here through its retry chain (FIX 4889). On the custody machine
-    /// (`carry` names `node`) the scope folds what the other machines spent
-    /// of the run and it did not fold yet, and the take waits when that
-    /// fills its cap. Elsewhere the run may spend here what its launch
-    /// reserved less what the other machines spent: the take waits when this
-    /// machine spent that already, and a pinned scope's cap comes down to it
-    /// (a carve keeps its cap, which its parent holds).
+    /// (`carry` names `node`) the scope folds what the other machines
+    /// committed of the run and it did not fold yet, and the take waits when
+    /// that fills its cap. Elsewhere the run may commit under `kept` what its
+    /// launch reserved less what was committed outside it, this machine's
+    /// other scopes included: the take waits when `kept` committed that
+    /// already, and a pinned scope's cap comes down to it (a carve keeps its
+    /// cap, which its parent holds).
     pub(super) fn keep_handed_over_scope_in_txn(
         &self,
         txn: &mut heed::RwTxn<'_>,
@@ -104,12 +105,16 @@ impl AgentDispatcher<'_> {
         carry: Option<&AgentRunSpendCarry>,
         node: u64,
     ) -> Result<HandedOverLaunchReserve> {
-        let spent_elsewhere = carry.map_or(0, |carry| carry.spent_elsewhere(node));
         if let Some(carry) = carry.filter(|carry| carry.custody_node == node) {
-            let fold = spent_elsewhere.saturating_sub(carry.custody_folded_units);
+            let fold = carry
+                .committed_elsewhere(node)
+                .saturating_sub(carry.custody_folded_units);
             return Ok(
                 match self.fold_handed_over_spend_in_txn(txn, attempt, fold)? {
-                    Some(folded) if folded.spent_units >= folded.cap_units => {
+                    Some(folded)
+                        if folded.spent_units.saturating_add(folded.held_units)
+                            >= folded.cap_units =>
+                    {
                         HandedOverLaunchReserve::Unfunded
                     }
                     Some(_) => HandedOverLaunchReserve::Reserved { folded: fold },
@@ -127,8 +132,9 @@ impl AgentDispatcher<'_> {
         let Some(base) = base else {
             return Ok(HandedOverLaunchReserve::Reserved { folded: 0 });
         };
-        let remaining = base.saturating_sub(spent_elsewhere);
-        if remaining <= kept.spent_units {
+        let committed_outside = carry.map_or(0, |carry| carry.committed_except(node, &kept.scope));
+        let remaining = base.saturating_sub(committed_outside);
+        if remaining <= kept.spent_units.saturating_add(kept.held_units) {
             return Ok(HandedOverLaunchReserve::Unfunded);
         }
         if kept.parent.is_none() && remaining < kept.cap_units {
@@ -141,7 +147,7 @@ impl AgentDispatcher<'_> {
 
     /// Settles the custody scope of the run whose try is `attempt`, in the
     /// caller's write (FIX 4889): folds the `fold` units the other machines
-    /// spent of it into the scope, settles the scope into its parent, and
+    /// committed of it into the scope, settles the scope into its parent, and
     /// records the fold on the run TASK `task_ref`. A scope that is no longer
     /// open takes no fold, so none is recorded.
     pub(super) fn settle_custody_scope_in_txn(

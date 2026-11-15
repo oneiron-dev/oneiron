@@ -321,10 +321,10 @@ impl AgentDispatcher<'_> {
     }
 
     /// The fold the custody machine owes the run `attempt` ends unrun with
-    /// (FIX 4889): its TASK and what the other machines spent less what this
-    /// machine folded already. `None` for a try with no run TASK, a child try,
-    /// an unreadable TASK, an unmetered run, or a run in another machine's
-    /// custody.
+    /// (FIX 4889): its TASK and what the other machines committed less what
+    /// this machine folded already. `None` for a try with no run TASK, a
+    /// child try, an unreadable TASK, an unmetered run, or a run in another
+    /// machine's custody.
     fn custody_fold_for_unrun_in(
         &self,
         txn: &heed::RoTxn<'_>,
@@ -351,7 +351,7 @@ impl AgentDispatcher<'_> {
             return Ok(None);
         }
         let fold = carry
-            .spent_elsewhere(node)
+            .committed_elsewhere(node)
             .saturating_sub(carry.custody_folded_units);
         Ok(Some((link.task_ref, fold)))
     }

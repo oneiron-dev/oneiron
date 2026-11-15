@@ -8,10 +8,13 @@
 //! as a closing process does, which stamps A's share on the run TASK. The
 //! TASK rides the shared base window to machine B, the elected MACRO home,
 //! which takes the run at expiry: B pins only the launch's reservation less
-//! A's share, and waits when nothing is left. A, whose tree funded the
-//! launch, keeps the run's scope open while B runs it: the root goes on
-//! holding the whole carve, the other machine's share folds into the scope
-//! when the run ends or comes back, and the root is charged once.
+//! A's share, and waits when nothing is left. A share counts what the run's
+//! open children hold, and a machine that takes the run back under a new
+//! scope still counts what it spent under its first one (REVIEW-7879). A,
+//! whose tree funded the launch, keeps the run's scope open while B runs
+//! it: the root goes on holding the whole carve, the other machine's share
+//! folds into the scope when the run ends or comes back, and the root is
+//! charged once.
 //!
 //! Run: `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron
 //! --all-features --test handover_budget_custody`.
@@ -34,6 +37,7 @@ use oneiron::store::ports::{IdGen, ManualClock};
 use oneiron::sync::bridge::Materializer;
 use oneiron::sync::manager::WindowManager;
 use oneiron::sync::types::WindowKey;
+use oneiron::test_doors::spend::reserve_child_scope;
 use oneiron::test_doors::turn_programs as doors;
 use oneiron::{AttemptId, ErrorKind, HnswConfig, Vault, VaultConfig};
 
@@ -43,8 +47,13 @@ const WINDOW: &str = "2026-03";
 const T0: u64 = 1_773_532_800;
 /// The root scope's cap: what the launch's tree holds.
 const ROOT_CAP: u64 = 100;
-/// The run's hard budget: the carve its launch reserves under the root.
+/// The run's hard budget: the carve its launch reserves under the root, or
+/// the cap it pins outside any tree.
 const RUN_BUDGET: u64 = 60;
+/// The run id every run here dispatches under.
+const RUN_ID: &str = "handover-budget-custody";
+/// The root scope's launch id.
+const ROOT: &str = "handover-budget-custody-root";
 /// How many ids machine B's clock hands out before its vault opens, far
 /// more than machine A mints in a test, so no id of A's recurs on B.
 const B_ID_OFFSET: u64 = 1 << 20;
@@ -159,28 +168,49 @@ fn machines() -> (Machine, Machine) {
     (a, b)
 }
 
-/// On A: opens root scope R with cap 100, dispatches one agent run X under R
-/// with a hard budget of 60, spends `spent_on_a` of it, and releases A's run
-/// lease as a closing process does, which stamps A's share on the run TASK.
-/// The TASK then rides the shared window to B, whose clock moves past the
-/// released lease. Answers X.
-fn dispatched_run(a: &Machine, b: &Machine, spent_on_a: u64) -> AttemptId {
+/// How A funds the run's launch.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Funding {
+    /// A hard carve of [`RUN_BUDGET`] under root scope R, cap [`ROOT_CAP`].
+    Carve,
+    /// A hard budget of [`RUN_BUDGET`] pinned outside any tree.
+    Pinned,
+}
+
+/// On A: dispatches one agent run X with a hard budget of 60, funded as
+/// `funding` (under root scope R with cap 100 opened first, or pinned), and
+/// spends `spent_on_a` of it. Answers X.
+fn dispatch_run(a: &Machine, funding: Funding, spent_on_a: u64) -> AttemptId {
     let dispatcher = AgentDispatcher::new(&a.vault);
-    let root = SpendScopeId::launch("handover-budget-custody-root").unwrap();
-    let opened_root = dispatcher
-        .open_root_spend_scope(
-            root.clone(),
-            DeclaredMaximum {
-                units: ROOT_CAP,
-                unit: LeaseUnit::tokens(),
-            },
-            Some(MaximumShown {
-                at_ms: T0.saturating_mul(1000),
-            }),
-            T0,
-        )
-        .unwrap();
-    assert!(opened_root.hard, "the root is a hard cap");
+    let root = SpendScopeId::launch(ROOT).unwrap();
+    let spawn = AgentSpawnContext::default()
+        .with_budget(RUN_BUDGET)
+        .with_depth_remaining(1);
+    let (spawn, parent) = match funding {
+        Funding::Carve => {
+            let opened_root = dispatcher
+                .open_root_spend_scope(
+                    root.clone(),
+                    DeclaredMaximum {
+                        units: ROOT_CAP,
+                        unit: LeaseUnit::tokens(),
+                    },
+                    Some(MaximumShown {
+                        at_ms: T0.saturating_mul(1000),
+                    }),
+                    T0,
+                )
+                .unwrap();
+            assert!(opened_root.hard, "the root is a hard cap");
+            (
+                spawn.with_spend(SpawnSpend {
+                    scope: root.clone(),
+                }),
+                Some(root),
+            )
+        }
+        Funding::Pinned => (spawn, None),
+    };
     let (agent, _) = a
         .vault
         .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)
@@ -192,15 +222,10 @@ fn dispatched_run(a: &Machine, b: &Machine, spent_on_a: u64) -> AttemptId {
                 target: AgentDispatchTarget::Custom(agent),
                 parent_attempt: None,
                 dedupe_key: None,
-                run_id: Some("handover-budget-custody".to_owned()),
+                run_id: Some(RUN_ID.to_owned()),
                 now: T0,
             },
-            AgentSpawnContext::default()
-                .with_spend(SpawnSpend {
-                    scope: root.clone(),
-                })
-                .with_budget(RUN_BUDGET)
-                .with_depth_remaining(1),
+            spawn,
         )
         .unwrap()
     else {
@@ -208,20 +233,26 @@ fn dispatched_run(a: &Machine, b: &Machine, spent_on_a: u64) -> AttemptId {
     };
     let x = status.attempt.id;
     let launch = status.input.launch.as_ref().unwrap();
-    assert_eq!(launch.parent_scope, Some(root.clone()));
-    assert!(launch.hard, "the budget carves a hard scope");
+    assert_eq!(launch.parent_scope, parent);
     assert_eq!(launch.reserved_units, RUN_BUDGET);
     assert_eq!(launch.cap_units, Some(RUN_BUDGET));
     let scope_id = SpendScopeId::for_attempt(&x);
     let opened = dispatcher.read_spend_scope(&scope_id).unwrap().unwrap();
-    assert_eq!(opened.parent, Some(root));
+    assert_eq!(opened.parent, parent);
     assert_eq!(opened.state, SpendState::Open);
     assert_eq!(opened.cap_units, RUN_BUDGET);
-    assert!(opened.hard, "the run's scope is a hard carve");
+    assert!(opened.hard, "the run's scope is hard");
     assert_eq!(opened.spent_units, 0);
     if spent_on_a > 0 {
         dispatcher.charge(&scope_id, spent_on_a).unwrap();
     }
+    x
+}
+
+/// A releases its run lease as a closing process does, which stamps A's
+/// share on the run TASK. The TASK then rides the shared window to B, whose
+/// clock moves past the released lease.
+fn release_to_b(a: &Machine, b: &Machine) {
     // A closing process releases the one lease it holds; 0 would mean no run
     // TASK was minted for the dispatch.
     assert_eq!(a.vault.release_agent_run_leases().unwrap(), 1);
@@ -229,6 +260,13 @@ fn dispatched_run(a: &Machine, b: &Machine, spent_on_a: u64) -> AttemptId {
     let doc_b = b.doc();
     exchange(&doc_a, &doc_b);
     b.clock.set(T0 + 2);
+}
+
+/// On A: dispatches one agent run X as a hard carve of 60 under root scope R
+/// (cap 100), spends `spent_on_a` of it, and releases it to B. Answers X.
+fn dispatched_run(a: &Machine, b: &Machine, spent_on_a: u64) -> AttemptId {
+    let x = dispatch_run(a, Funding::Carve, spent_on_a);
+    release_to_b(a, b);
     x
 }
 
@@ -270,6 +308,110 @@ fn taker_waits_when_the_reservation_is_spent() {
             .is_none(),
         "B holds no scope for a run whose reservation is spent"
     );
+}
+
+#[test]
+fn taker_leaves_out_what_open_children_hold() {
+    let (a, b) = machines();
+    let x = dispatch_run(&a, Funding::Carve, 20);
+    // X spawned a child that is still open: a hard carve of 25 under X, of
+    // which the child spent 15. X's own row still reads spent 20; the child's
+    // spend reaches it only when the child settles.
+    let x_scope = SpendScopeId::for_attempt(&x);
+    let child = AttemptId::from_bytes(&[0xc5; 16]).unwrap();
+    reserve_child_scope(&a.vault, &x_scope, &child, 25, T0).unwrap();
+    let dispatcher = AgentDispatcher::new(&a.vault);
+    dispatcher
+        .charge(&SpendScopeId::for_attempt(&child), 15)
+        .unwrap();
+    let x_row = dispatcher.read_spend_scope(&x_scope).unwrap().unwrap();
+    assert_eq!(x_row.spent_units, 20);
+    assert_eq!(x_row.held_units, 25);
+    release_to_b(&a, &b);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    let scope = AgentDispatcher::new(&b.vault)
+        .read_spend_scope(&x_scope)
+        .unwrap()
+        .unwrap();
+    assert_eq!(scope.parent, None);
+    assert!(scope.hard, "the taker's scope is pinned hard");
+    // A committed 45 of the 60: its own 20 and the child's whole carve of 25,
+    // which the child keeps and may still spend. On aaf6deff B pins 40: A's
+    // share counted X's spent 20 alone.
+    assert_eq!(scope.cap_units, 15);
+}
+
+#[test]
+fn take_back_counts_the_takers_earlier_spend() {
+    let (a, b) = machines();
+    let x = dispatch_run(&a, Funding::Pinned, 20);
+    release_to_b(&a, &b);
+    let reap = b
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "B takes the run A released");
+    let x_scope = SpendScopeId::for_attempt(&x);
+    let on_b = AgentDispatcher::new(&b.vault)
+        .read_spend_scope(&x_scope)
+        .unwrap()
+        .unwrap();
+    assert_eq!(on_b.cap_units, 40);
+    // B's take reaches B's doc before the exchange carries it to A.
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    a.vault.resume_executor_leases();
+    let claimed = AgentDispatcher::new(&a.vault)
+        .claim_agent_run(x, "pump-a", T0)
+        .unwrap();
+    assert!(claimed.is_none(), "A stands down: B holds the run");
+    assert!(
+        AgentDispatcher::new(&b.vault)
+            .claim_agent_run(x, "pump-b", T0 + 2)
+            .unwrap()
+            .is_some(),
+        "B claims the run it took"
+    );
+    AgentDispatcher::new(&b.vault).charge(&x_scope, 20).unwrap();
+    assert_eq!(b.vault.release_agent_run_leases().unwrap(), 1);
+    // B's release reaches B's doc before the exchange carries it to A.
+    drop(doc_a);
+    drop(doc_b);
+    reload_window(&b);
+    let doc_a = a.doc();
+    let doc_b = b.doc();
+    exchange(&doc_a, &doc_b);
+    // B is the elected home, so A takes after the non-home grace: held_until
+    // T0+2 plus 300 seconds.
+    a.clock.set(T0 + 400);
+    let reap = a
+        .vault
+        .reap_agent_run_leases(&|_: &AgentDefinition| true)
+        .unwrap();
+    assert_eq!(reap.taken, 1, "A takes the run back");
+    let successor = AttemptQueue::new(&a.vault)
+        .list_run(RUN_ID)
+        .unwrap()
+        .into_iter()
+        .find(|record| record.retry_of == Some(x))
+        .expect("A's take queues a successor of its stood-down try");
+    let dispatcher = AgentDispatcher::new(&a.vault);
+    let scope_id = dispatcher
+        .spend_scope_for_attempt(successor.id)
+        .unwrap()
+        .expect("A's successor spends metered");
+    let scope = dispatcher.read_spend_scope(&scope_id).unwrap().unwrap();
+    let room = scope.cap_units - scope.spent_units - scope.held_units;
+    // A spent 20 and B 20 of the 60, so 20 is left. On aaf6deff A's take
+    // pins 60 less B's 20, and its stamp puts its fresh scope's 0 in place of
+    // its own 20: A may spend 40 more, 80 of the 60.
+    assert_eq!(room, 20);
 }
 
 #[test]
@@ -320,7 +462,7 @@ fn handed_over_run_keeps_one_counter() {
     // settled X at 20, so R spent 20 and free 80.
     assert_eq!(a.vault.reconcile_handed_over_spend().unwrap(), 1);
     assert_eq!(a.vault.reconcile_handed_over_spend().unwrap(), 0);
-    let root = SpendScopeId::launch("handover-budget-custody-root").unwrap();
+    let root = SpendScopeId::launch(ROOT).unwrap();
     let r = AgentDispatcher::new(&a.vault)
         .read_spend_scope(&root)
         .unwrap()
@@ -372,7 +514,7 @@ fn old_machine_standdown_keeps_the_remainder_held() {
         .get_seeded_agent_definition_by_logical_id(DEFAULT_BASE_LOGICAL_ID)
         .unwrap()
         .unwrap();
-    let root = SpendScopeId::launch("handover-budget-custody-root").unwrap();
+    let root = SpendScopeId::launch(ROOT).unwrap();
     let second = AgentDispatcher::new(&a.vault).dispatch_with_context(
         DispatchAgent {
             target: AgentDispatchTarget::Custom(agent),
@@ -471,6 +613,6 @@ fn run_back_home_reopens_the_same_scope() {
     // PR 1 head: spent 20 (settled at stand-down, B's 30 never folded).
     assert_eq!(x_scope.spent_units, 50);
     assert_eq!(x_scope.cap_units, RUN_BUDGET);
-    let root = SpendScopeId::launch("handover-budget-custody-root").unwrap();
+    let root = SpendScopeId::launch(ROOT).unwrap();
     assert_eq!(x_scope.parent, Some(root));
 }

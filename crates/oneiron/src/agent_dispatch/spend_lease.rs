@@ -731,11 +731,12 @@ impl AgentDispatcher<'_> {
         }))
     }
 
-    /// Folds what the other machines spent of a handed-over run into the scope
-    /// `attempt` spends under here (FIX 4889): the custody machine's one
-    /// counter. `None` when the run spends unmetered here or its scope is not
-    /// open. It adds `units` to `spent_units` with no room check, no parent
-    /// walk and no receipts, as those units were spent on another machine
+    /// Folds what the other machines committed of a handed-over run (their
+    /// scopes' spend and open children's holds) into the scope `attempt`
+    /// spends under here (FIX 4889): the custody machine's one counter.
+    /// `None` when the run spends unmetered here or its scope is not open. It
+    /// adds `units` to `spent_units` with no room check, no parent walk and no
+    /// receipts, as those units were spent or held on another machine
     /// already; the parent is charged once, when the scope settles.
     pub(crate) fn fold_handed_over_spend_in_txn(
         &self,
