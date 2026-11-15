@@ -308,7 +308,7 @@ pub(super) fn last_device_key_refusal(remaining: RemainingOwnerKeys) -> ApiError
     let recovery = if remaining.recovery_root {
         "the recovery kit's key stays enrolled"
     } else {
-        "no recovery kit's key is enrolled"
+        "no recovery kit's key stays enrolled"
     };
     ApiError::new(
         format!(
