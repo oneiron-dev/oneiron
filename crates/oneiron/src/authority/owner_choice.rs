@@ -333,6 +333,25 @@ impl<P> OwnerChoiceState<P> {
         })
     }
 
+    /// Every choice of `target` the register landed, with its value (`None`
+    /// for a clear): the register as every replica holds it, with no pin and
+    /// no install's counting. A choice that waits or was refused landed
+    /// nothing and is not among them.
+    pub(super) fn landed(
+        &self,
+        target: EntityId,
+    ) -> impl Iterator<Item = (AuthorityEntryHash, Option<&P>)> + '_ {
+        self.frontiers
+            .get(&target)
+            .into_iter()
+            .flat_map(|frontier| {
+                frontier
+                    .live
+                    .iter()
+                    .map(|(hash, choice)| (*hash, choice.settings.choice.as_ref()))
+            })
+    }
+
     /// The waiting choices that still ask the owner: the ones the owner has
     /// not chosen over since.
     pub(super) fn asking(&self) -> impl Iterator<Item = AuthorityEntryHash> + '_ {
