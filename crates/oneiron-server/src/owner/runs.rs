@@ -439,7 +439,7 @@ fn parse_bundle_id(value: &str) -> OwnerResult<[u8; 32]> {
 }
 
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    oneiron_hex::encode(bytes)
 }
 
 #[cfg(test)]
