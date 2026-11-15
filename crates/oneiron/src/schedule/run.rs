@@ -432,11 +432,12 @@ impl Vault {
             } else {
                 // Armed again while it ran, by another write or by the run's own: the run's
                 // outcome is the old arming's, and the new one stands, due no sooner than this
-                // run's first retry after its end.
+                // run's first retry after its end. The run did end, so the row says when.
                 Some(ScheduleRow {
                     next_due_at: row
                         .next_due_at
                         .max(end.saturating_add(spec.retry_first_secs)),
+                    finished_at: end,
                     ..row.clone()
                 })
             };
