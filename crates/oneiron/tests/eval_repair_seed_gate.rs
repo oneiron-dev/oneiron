@@ -2159,8 +2159,11 @@ fn a_deleted_captures_seed_shows_on_no_alias_row() -> TestResult {
         "no row shows the deleted capture's seed: {:?}",
         inventory.repairs
     );
+    // The refusal says no more than the listing: the row is not listed, and
+    // nothing of the deleted capture's seed shows (Astra delta 3 K2).
     let held = propose(&fixture, &again).expect_err("the seed still holds its contract");
-    assert!(held.contains("contract already has a seed"), "{held}");
+    assert!(held.contains(UNLISTED_REPAIR), "{held}");
+    assert!(!held.contains("seed"), "{held}");
     assert_eq!(fixture.vault.eval_repair_seed(&again)?, None);
     Ok(())
 }
@@ -2206,6 +2209,120 @@ fn an_alias_rows_seed_names_its_capture_among_the_rows_read() -> TestResult {
     assert!(
         rows.contains(&EntityId::from_hex(&source.claim_ref)?),
         "the seed's capture is among the rows read"
+    );
+    Ok(())
+}
+
+/// The refusal of a seed for a repair whose contract is held only by a seed
+/// whose capture no longer reads: the listing leaves such a row out.
+const UNLISTED_REPAIR: &str = "the repair is no longer listed";
+
+/// A plan made while two captures of one contract had no seed applies after
+/// the first took its seed and was deleted. The second's refusal says only
+/// that its row is no longer listed, as a listing now leaves it out, never
+/// that a seed holds its contract (Astra delta 3 K2; RULING
+/// UNBUILT-P05E-WITHDRAWN-SEED = A).
+#[test]
+fn an_apply_shows_nothing_of_a_seed_whose_capture_no_longer_reads() -> TestResult {
+    let fixture = fixture()?;
+    let source = text_capture(&fixture)?;
+    let again = capture(
+        &fixture,
+        reordered_text_task(),
+        json!({ "response": ANSWER }),
+    )?;
+    let manifest = manifest()?;
+    pin_manifest(&fixture.vault, &manifest)?;
+    let model = manifest
+        .binding(ModelRole::GenerativeReasoner)?
+        .model
+        .clone();
+    fixture
+        .vault
+        .put_model_registry_row(&registry_row(&model)?)?;
+    let (parent, _) = put_skill(&fixture, "fixture.old", "1", "the old skill", None)?;
+    let (_, candidate_hex) =
+        put_skill(&fixture, "fixture.old", "2", "the candidate", Some(parent))?;
+
+    let now = fixture.vault.now_recorded_at();
+    let nightly = coach_attempt(&fixture, now)?;
+    let skill = eval_authoring_skill_id()?;
+    let inventory = eval_authoring_inventory(&fixture.vault, now)?;
+    let alias = repair_row(&inventory, &again);
+    assert!(alias.seeds.is_empty(), "{alias:?}");
+    let pair = inventory
+        .skill_pairs
+        .iter()
+        .find(|pair| pair.candidate == candidate_hex)
+        .expect("the pair")
+        .id
+        .clone();
+
+    // The first capture takes its seed and is deleted: the seed still holds
+    // the contract, and no listing shows it.
+    propose(&fixture, &source)?;
+    let claim = EntityId::from_hex(&source.claim_ref)?;
+    assert!(
+        fixture.vault.delete_entity(&claim)?,
+        "the capture is deleted"
+    );
+
+    let report = fixture.vault.run_coach_eval_authoring(
+        &nightly,
+        seed_plan_for(&inventory, &alias.id, &pair),
+        &inventory,
+        (skill, SKILL_REVISION.to_owned()),
+        now,
+    )?;
+    assert_eq!(report.repair_seeds_proposed, 0, "{report:?}");
+    assert_eq!(report.repair_seeds_reused, 0, "{report:?}");
+    let reasons: Vec<&str> = report
+        .skipped
+        .iter()
+        .filter(|skip| skip.item == alias.id)
+        .map(|skip| skip.reason.as_str())
+        .collect();
+    assert_eq!(reasons, vec![UNLISTED_REPAIR], "{report:?}");
+    assert_eq!(fixture.vault.eval_repair_seed(&again)?, None);
+    Ok(())
+}
+
+#[test]
+fn a_mapping_of_one_long_pointer_lists_in_linear_time() -> TestResult {
+    let fixture = fixture()?;
+    // One mapping whose id pointer is a single escaped token of 256 Ki
+    // tildes (512 KiB) that no event holds, and 40,000 small CUSTOM events
+    // of its name. Unescaping the pointer again at every event was some
+    // 2e10 bytes of work for a listing of no row (Astra delta 3 K1).
+    const EVENTS: usize = 40_000;
+    let custom_mappings = vec![AgUiCustomMapping {
+        id: Some(format!("/{}", "~0".repeat(256 * 1024))),
+        thread_id: None,
+        run_id: None,
+        ..mapping("desk.long", AgUiObservationKind::Failure)
+    }];
+    let jsonl =
+        vec![json!({ "type": "CUSTOM", "name": "desk.long", "value": {} }).to_string(); EVENTS]
+            .join("\n");
+    let receipt = fixture.vault.ingest_ag_ui_file(
+        &fixture.proof,
+        &AgUiFileImport {
+            claim_ref: None,
+            project_ref: fixture.project.to_hex(),
+            app_id: "support-desk".to_owned(),
+            custom_mappings,
+            jsonl,
+        },
+    )?;
+    assert_eq!(receipt.event_count, EVENTS);
+
+    let started = Instant::now();
+    let inventory = eval_authoring_inventory(&fixture.vault, fixture.vault.now_recorded_at())?;
+    let listed_in = started.elapsed();
+    assert!(inventory.repairs.is_empty(), "{:?}", inventory.repairs);
+    assert!(
+        listed_in < Duration::from_secs(10),
+        "listed in {listed_in:?}"
     );
     Ok(())
 }
