@@ -39,7 +39,17 @@
 //!   (`vault.inquiry.scope.open` / `.list` / `.close`);
 //! - the member changes an edge's terms after the mint
 //!   (`vault.inquiry.edge.terms.change`, FIX INQUIRY-STANDING-PER-KEEP): a
-//!   narrowing and a widening each read back, and an unknown mode refuses.
+//!   narrowing and a widening each read back, and an unknown mode refuses;
+//! - the member's [Now] (L7-03): the company's vault mints the member
+//!   host's slip on its reciprocal grant, the member Owner opens the push
+//!   route with it (`vault.inquiry.push_route.open`) and tells the company
+//!   one statement (`vault.inquiry.push`); the member host's own
+//!   connector-send pass POSTs it to the company host's
+//!   `/v1/federation/inquiry/push`, the company lands it once with one
+//!   `inquiry` receipt, and the member's "Asked about you" lists it sent;
+//! - a reciprocal-grant slip bound to another host's key opens no push
+//!   route, and the company host's push route refuses it under this host's
+//!   proof; nothing lands.
 //!
 //! Red on main: none of the ten verbs and no inquiry route exists, so the
 //! facade answers 404 at the first call. Fleet command:
@@ -70,14 +80,17 @@ use oneiron::authority::{
 use oneiron::consent::AuthenticatedOwner;
 use oneiron::federation::{FederationGrantRole, Scope, ScopeAxis};
 use oneiron::inquiry::{
-    Inquiry, InquiryAsker, InquiryKeep, InquiryTask, InquiryTransport, InquiryTransportError,
+    INQUIRY_PUSH_PEER_PATH, Inquiry, InquiryAsker, InquiryKeep, InquiryPushWire, InquiryStatement,
+    InquiryTask, InquiryTransport, InquiryTransportError, StatementSource,
 };
+use oneiron::receipt::{ReceiptKind, ReceiptQuery};
 use oneiron::store::GateDecisionId;
 use oneiron::task_verb::TaskCreateSpec;
 use oneiron::test_doors::membership::stand_member_grant;
 use oneiron::{EdgeActorClass, EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 use oneiron_server::inquiry_delivery::HttpInquiryTransport;
+use oneiron_server::test_doors::connector_sends::connector_send_pass;
 use oneiron_server::{build_app, config::SyncServerConfig, server::SyncServer};
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -101,6 +114,9 @@ fn hex(bytes: &[u8]) -> String {
 struct Host {
     _dir: tempfile::TempDir,
     vault: Arc<Vault>,
+    /// The served vault's server, for a pass of its own connector-send
+    /// drain.
+    server: Arc<SyncServer>,
     app: Router,
     issuer: HostSlipIssuer,
     root_slip: CapabilitySlip,
@@ -148,7 +164,8 @@ impl Host {
         Self {
             _dir: dir,
             vault,
-            app: build_app(server),
+            app: build_app(Arc::clone(&server)),
+            server,
             issuer,
             root_slip,
             root_token,
@@ -355,6 +372,8 @@ struct Thursday {
     company: Host,
     member_listener: tokio::task::JoinHandle<()>,
     edge_grant: String,
+    /// The company's reciprocal grant to the member's vault, hex.
+    reciprocal_grant: String,
     /// The slip the member's vault minted for the company host on the edge.
     edge_slip: String,
     seat: EntityId,
@@ -399,7 +418,10 @@ async fn thursday() -> Thursday {
             json!({"member_vault": hex(&member.vault_id), "member_name": MEMBER}),
         )
         .await;
-    let reciprocal_grant = reciprocal["grant"].as_str().expect("reciprocal grant");
+    let reciprocal_grant = reciprocal["grant"]
+        .as_str()
+        .expect("reciprocal grant")
+        .to_owned();
 
     let offer = member
         .owner_ok(
@@ -413,7 +435,7 @@ async fn thursday() -> Thursday {
     let accepted = company
         .owner_ok(
             "/v1/owner/federation/connect/accept",
-            json!({"grant": reciprocal_grant, "offer": offer}),
+            json!({"grant": reciprocal_grant.as_str(), "offer": offer}),
         )
         .await;
     let joined = member
@@ -489,6 +511,7 @@ async fn thursday() -> Thursday {
         company,
         member_listener,
         edge_grant,
+        reciprocal_grant,
         edge_slip,
         seat,
         agent,
@@ -1061,5 +1084,186 @@ fn the_member_changes_an_edges_terms_after_the_mint() {
             StatusCode::OK,
             "an unknown mode is refused: {refusal}"
         );
+    });
+}
+
+/// Serves `host`'s router on a loopback port: its origin, and the task
+/// that serves it.
+async fn listen(host: &Host) -> (String, tokio::task::JoinHandle<()>) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("host listener");
+    let origin = format!("http://{}", listener.local_addr().expect("host address"));
+    let app = host.app.clone();
+    let task = tokio::spawn(async move {
+        axum::serve(listener, app).await.expect("host serves");
+    });
+    (origin, task)
+}
+
+/// One pass of `host`'s own connector-send drain, off the runtime: its
+/// sends' HTTP clients block.
+async fn send_pass(host: &Host) {
+    let server = Arc::clone(&host.server);
+    tokio::task::spawn_blocking(move || connector_send_pass(&server))
+        .await
+        .expect("send pass task")
+        .expect("send pass");
+}
+
+impl Thursday {
+    /// The slip the company's vault mints on its reciprocal grant for the
+    /// host key `holder_key`.
+    async fn push_slip(&self, holder_key: &[u8]) -> String {
+        let slip = self
+            .company
+            .verb(
+                "vault.guests.mint_slip",
+                json!({
+                    "grant_ref": self.reciprocal_grant,
+                    "holder_key": hex(holder_key),
+                    "expires_at": self.company.vault.now_recorded_at() + 3_600,
+                }),
+            )
+            .await;
+        slip["slip"].as_str().expect("push slip").to_owned()
+    }
+
+    /// The `inquiry` receipts the company's vault holds for the push `push`
+    /// (hex).
+    fn push_receipts(&self, push: &str) -> Vec<oneiron::receipt::ReceiptRecord> {
+        let mut query = ReceiptQuery::new(100);
+        query.kinds = [ReceiptKind::Inquiry].into();
+        query.job_ref = Some(push.to_owned());
+        self.company.vault.receipts(query).expect("receipts")
+    }
+}
+
+#[test]
+fn a_member_now_push_lands_at_the_company_host_over_http() {
+    run_on_engine_stack("inquiry-federation-now-push", || async {
+        let fixture = thursday().await;
+        let (company_host, company_listener) = listen(&fixture.company).await;
+        let slip = fixture
+            .push_slip(&fixture.member.issuer.binding_key())
+            .await;
+        let route = fixture
+            .member
+            .verb(
+                "vault.inquiry.push_route.open",
+                json!({"grant": fixture.edge_grant, "company_host": company_host, "slip": slip}),
+            )
+            .await;
+        assert_eq!(route["grant"], fixture.edge_grant.as_str(), "{route}");
+        assert_eq!(
+            route["company_vault"],
+            hex(&fixture.company.vault_id),
+            "{route}"
+        );
+        assert_eq!(
+            route["reciprocal_grant"],
+            fixture.reciprocal_grant.as_str(),
+            "{route}"
+        );
+        assert!(
+            route.get("slip").is_none(),
+            "the route's answer carries no slip: {route}"
+        );
+
+        let pushed = fixture
+            .member
+            .verb(
+                "vault.inquiry.push",
+                json!({"grant": fixture.edge_grant, "statement": OUT_THURSDAY}),
+            )
+            .await;
+        let push = pushed["push"].as_str().expect("push id").to_owned();
+        assert!(pushed["task_ref"].is_string(), "{pushed}");
+        let log = fixture.member.verb("vault.inquiry.list", json!({})).await;
+        assert_eq!(log["told"][0]["state"], "queued", "{log}");
+        assert!(
+            fixture.push_receipts(&push).is_empty(),
+            "nothing left the member's host before its executor ran"
+        );
+
+        send_pass(&fixture.member).await;
+        let receipts = fixture.push_receipts(&push);
+        assert_eq!(receipts.len(), 1, "the company lands it once: {receipts:?}");
+        assert_eq!(receipts[0].outcome, "told", "{receipts:?}");
+        let log = fixture.member.verb("vault.inquiry.list", json!({})).await;
+        let told = log["told"].as_array().expect("told");
+        assert_eq!(told.len(), 1, "{log}");
+        assert_eq!(told[0]["push"], push.as_str(), "{log}");
+        assert_eq!(told[0]["edge"], fixture.edge_grant.as_str(), "{log}");
+        assert_eq!(told[0]["statement"], OUT_THURSDAY, "{log}");
+        assert_eq!(told[0]["state"], "sent", "{log}");
+        assert_eq!(told[0]["task_ref"], pushed["task_ref"], "{log}");
+
+        send_pass(&fixture.member).await;
+        assert_eq!(
+            fixture.push_receipts(&push).len(),
+            1,
+            "a second pass sends nothing more"
+        );
+        company_listener.abort();
+        fixture.member_listener.abort();
+    });
+}
+
+#[test]
+fn a_push_slip_bound_to_another_host_is_refused() {
+    run_on_engine_stack("inquiry-federation-push-other-host", || async {
+        let fixture = thursday().await;
+        // The company's vault binds the slip to its own host's key, not to
+        // the member host's.
+        let token = fixture
+            .push_slip(&fixture.company.issuer.binding_key())
+            .await;
+        let (status, body) = fixture
+            .member
+            .owner_call(
+                "/v1/core/facade/vault.inquiry.push_route.open",
+                json!({
+                    "grant": fixture.edge_grant,
+                    "company_host": "http://127.0.0.1:9",
+                    "slip": token,
+                }),
+            )
+            .await;
+        assert_ne!(
+            status,
+            StatusCode::OK,
+            "the slip is not bound to this host: {body}"
+        );
+
+        let slip = CapabilitySlip::from_token(&token).expect("push slip");
+        let push = EntityId::now();
+        let wire = InquiryPushWire {
+            push,
+            edge_grant: fixture.edge_grant.clone(),
+            statement: InquiryStatement::new(OUT_THURSDAY, StatementSource::MemberWord)
+                .expect("statement"),
+            told_at: fixture.member.vault.now_recorded_at(),
+        }
+        .encode_wire()
+        .expect("push wire");
+        let (status, _) = fixture
+            .company
+            .raw(
+                INQUIRY_PUSH_PEER_PATH,
+                Some(&token),
+                Some(binding(&fixture.company, &fixture.member.issuer, &slip)),
+                wire,
+            )
+            .await;
+        assert!(
+            status == StatusCode::UNAUTHORIZED || status == StatusCode::FORBIDDEN,
+            "the member host's proof under another host's slip: {status}"
+        );
+        assert!(
+            fixture.push_receipts(&push.to_hex()).is_empty(),
+            "nothing lands"
+        );
+        fixture.member_listener.abort();
     });
 }
