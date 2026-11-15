@@ -176,6 +176,10 @@ pub const CONNECTOR_REPLY_BODY_BLOB: &[u8] = b"oneiron:connector-reply-body-blob
 /// (u64 big-endian).
 pub const CAMPAIGN_STEP_BODY_BLOB: &[u8] = b"oneiron:campaign-step-body-blob:v1:";
 
+/// The BLOB artifact holding one booking page session's kept rung-2 first
+/// send (`booking::rung2`). Parts: the send's canonical Message-ID.
+pub const BOOKING_RUNG2_FIRST_SEND_BLOB: &[u8] = b"oneiron:booking-rung2-first-send-blob:v1:";
+
 /// An asking actor's origin (`task_verb::ask_record`). Parts: vault ask origin, actor.
 pub const TASK_ASK_ORIGIN: &[u8] = b"oneiron.tasks.ask.origin.v1";
 
@@ -481,7 +485,7 @@ pub const RESIDENT_MESSAGE_ASK: &[u8] = b"oneiron.agent_dispatch.resident_messag
 
 /// Every derived-id domain, one entry per constant above.
 #[cfg(test)]
-pub(crate) const ALL: [&[u8]; 72] = [
+pub(crate) const ALL: [&[u8]; 73] = [
     PERSON_SUBSTRATE_FACET,
     KEY_VALUE,
     BOOTSTRAP_SKILL,
@@ -506,6 +510,7 @@ pub(crate) const ALL: [&[u8]; 72] = [
     SURFACE_PROVIDER_INBOUND_ACTOR,
     CONNECTOR_REPLY_BODY_BLOB,
     CAMPAIGN_STEP_BODY_BLOB,
+    BOOKING_RUNG2_FIRST_SEND_BLOB,
     TASK_ASK_ORIGIN,
     TASK_ASK_INTENT,
     TASK_ASK_MEMBER,
