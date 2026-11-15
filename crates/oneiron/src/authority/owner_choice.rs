@@ -171,11 +171,13 @@ pub(super) struct OwnerChoiceOp<'a, P> {
     /// goes through the gate as every act does (ruling
     /// CARRIER-PERSON-OPT-BACK-IN = A, AUTH-4 PERSON-PROOF-RUNG = A).
     pub(super) persons_own_narrowing: bool,
-    /// The choice lowers what the vault asks of every later act (the switch
-    /// back to web sign-in, the owner's ruling AUTH-5), so it counts only
+    /// The choice loosens what the fold asks of later rows (the switch back
+    /// to web sign-in, the owner's ruling AUTH-5; the passkey full owner
+    /// choice, Engine ruling WEBPASSKEY-OPTIN-HOME = A), so it counts only
     /// with an owner key's proof on the entry: no carrier's word lands it,
     /// the owner's own machine's included, and a vault that asks for no
-    /// owner key takes none either.
+    /// owner key takes none either. A kind's adapter may ask more of the
+    /// proving key.
     pub(super) owner_key_only: bool,
 }
 
