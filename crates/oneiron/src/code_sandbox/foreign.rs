@@ -101,12 +101,8 @@ pub fn execute_foreign_code(
 /// Storage errors, or a host egress config that does not parse. A deciding
 /// row that does not decode reads the key's strictest value, off.
 pub fn foreign_code_egress(vault: &Arc<Vault>, run_id: EntityId) -> Result<Arc<dyn EgressRelay>> {
-    let open = {
-        let txn = vault.store.env.read_txn()?;
-        FOREIGN_EXECUTE_CODE_EGRESS
-            .read_in_txn(vault, &txn, &[], None)?
-            .value
-    };
+    // RED PIN: the base's door, which lends no network whatever the owner set.
+    let open = false;
     if !open {
         return Ok(Arc::new(NoEgress {
             floor: vault.host_net_floor(),
