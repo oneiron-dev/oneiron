@@ -17,14 +17,21 @@ use std::sync::Arc;
 
 use ed25519_dalek::{Signer, SigningKey};
 use oneiron::authority::{
-    ActAuthority, ActSurface, AuthorityVaultId, HostSlipIssuer, MACHINE_ENCRYPTION_KEY_LEN,
-    MACHINE_ENCRYPTION_SUITE_HYBRID_V1, MachineDeviceClass, MachineEncryptionKey,
-    MachineEnrolmentRequest, MachineOwnership, MachineProfile, MachineRole, OwnerAct,
-    OwnerKeyEnrollment, machine_profile_proof_transcript,
+    ActAuthority, ActSurface, AuthorityKey, AuthorityVaultId, CheckpointPolicyView, HostSlipIssuer,
+    LastDeviceKeyConfirmation, MACHINE_ENCRYPTION_KEY_LEN, MACHINE_ENCRYPTION_SUITE_HYBRID_V1,
+    MachineDeviceClass, MachineEncryptionKey, MachineEnrolmentRequest, MachineOwnership,
+    MachineProfile, MachineRemoval, MachineRole, OwnerAct, OwnerKeyEnrollment, OwnerKeyRemoval,
+    machine_profile_proof_transcript,
 };
 use oneiron::consent::AuthenticatedOwner;
+use oneiron::error::RecordError;
+use oneiron::recovery::{
+    KitIssue, KitSecretKind, PassphraseCost, PieceHome, issue_recovery_root_kit, restore_kit,
+};
 use oneiron::test_doors::label_writers::embedded_owner;
-use oneiron::{EntityId, HostingPrivacyPosture, Vault, VaultConfig};
+use oneiron::test_doors::owner_key_release::release_owner_keys;
+use oneiron::world_keys::RecoveryRootSeed;
+use oneiron::{EntityId, Error, HostingPrivacyPosture, Vault, VaultConfig};
 
 /// The seed of the second machine's machine key.
 const JOINING_SEED: u8 = 68;
@@ -253,5 +260,557 @@ fn removing_a_devices_machine_ends_its_owner_key() {
     assert!(
         first_enrolled.live,
         "the other device's owner key stays live (AUTH-5 PR b)"
+    );
+}
+
+impl RemovalVault {
+    /// How many authority log rows the fold holds valid.
+    fn stored_rows(&self) -> usize {
+        self.vault
+            .authority_fold()
+            .expect("authority fold")
+            .valid_entries
+            .len()
+    }
+
+    /// A refused act left nothing: the fold holds `rows` valid rows as
+    /// before it, and no choice waits.
+    fn assert_nothing_stored_since(&self, rows: usize) {
+        let fold = self.vault.authority_fold().expect("authority fold");
+        assert_eq!(fold.valid_entries.len(), rows, "the refusal stores no row");
+        assert_eq!(
+            fold.waiting_owner_choices(),
+            &BTreeSet::new(),
+            "nothing waits: the door stored nothing"
+        );
+    }
+
+    /// The owner clears his checkpoint root choice through this install.
+    fn clear_checkpoint_policy(&self) -> oneiron::Result<CheckpointPolicyView> {
+        self.vault.set_checkpoint_policy_as(
+            &ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall),
+            None,
+            None,
+        )
+    }
+
+    /// The owner enrols the recovery root's authority key on this install's
+    /// machine, from a fresh kit. Answers the enrolled key.
+    fn enrol_recovery_root_key(&self) -> [u8; 32] {
+        let vault_id = self
+            .vault
+            .authority_fold()
+            .expect("authority fold")
+            .vault_id
+            .expect("a rooted vault");
+        let machine = self.install();
+        let authority = ActAuthority::Owner(self.owner.clone(), ActSurface::ThisInstall);
+        let seed = RecoveryRootSeed::generate().expect("a root seed");
+        let pieces = issue_recovery_root_kit(
+            &KitIssue {
+                vault_id,
+                homes: [
+                    PieceHome::ThisMachine,
+                    PieceHome::OtherMachine(EntityId::now()),
+                    PieceHome::OtherMachine(EntityId::now()),
+                ],
+                passphrase: None,
+                cost: PassphraseCost::FLOOR,
+                only_machine: false,
+            },
+            &seed.kit_bytes(),
+        )
+        .expect("the kit")
+        .into_pieces();
+        let restored = restore_kit(
+            vault_id,
+            KitSecretKind::RecoveryRoot,
+            &[&pieces[0], &pieces[1]],
+            None,
+        )
+        .expect("two stored pieces restore the seed");
+        let receipt = self
+            .vault
+            .enrol_recovery_authority_key_as_host(
+                &authority,
+                machine,
+                &RecoveryRootSeed::from_restored_kit(restored).expect("the seed"),
+                &self.issuer,
+            )
+            .expect("the owner enrols the root's authority key");
+        receipt.public_key
+    }
+}
+
+/// What a choice door answers where the vault holds an owner key and this
+/// install holds none: the owner-key refusal.
+fn assert_owner_key_refusal<T: std::fmt::Debug>(answer: oneiron::Result<T>) {
+    assert!(
+        matches!(answer, Err(Error::Record(RecordError::OwnerKeyRequired))),
+        "the door refuses for the owner's key: {answer:?}"
+    );
+}
+
+#[test]
+fn the_owner_removes_another_devices_key_and_keeps_its_machine() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let second_signing_key = SigningKey::from_bytes(&[72; 32]);
+    let (machine_b, second_key) = removal_vault.enrol_second_machine_and_key(&second_signing_key);
+    let key_removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            second_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the owner removes the second key");
+    let (ended, remaining) = match key_removal {
+        OwnerKeyRemoval::Removed { ended, remaining } => (ended, remaining),
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            panic!("another device's key is not the last one: {remaining:?}")
+        }
+    };
+    assert_eq!(
+        ended.public_key, second_key,
+        "the removal ends the named key (AUTH-5 PR b)"
+    );
+    assert_eq!(
+        ended.machine, machine_b,
+        "the ended key names the second machine (AUTH-5 PR b)"
+    );
+    assert_eq!(
+        ended.signed_by,
+        AuthorityKey::Ed25519(first_key),
+        "an owner key signs the revoke (AUTH-5 PR b)"
+    );
+    assert_eq!(
+        remaining.device_keys, 1,
+        "one device key remains (AUTH-5 PR b)"
+    );
+    assert!(
+        !remaining.recovery_root,
+        "no recovery root is enrolled (AUTH-5 PR b)"
+    );
+    let enrolled_keys = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys");
+    assert!(
+        !enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == second_key)
+            .expect("the second key is enrolled")
+            .live,
+        "the removed key ends (AUTH-5 PR b)"
+    );
+    assert!(
+        enrolled_keys
+            .iter()
+            .find(|enrolled| enrolled.public_key == first_key)
+            .expect("the first key is enrolled")
+            .live,
+        "the other device's key stays live (AUTH-5 PR b)"
+    );
+    let fold = removal_vault
+        .vault
+        .authority_fold()
+        .expect("authority fold");
+    let head = fold
+        .machine(machine_b)
+        .and_then(|machine| machine.roster.as_ref())
+        .expect("the second machine stands on the roster");
+    assert!(
+        !head.removed,
+        "the key's machine stands: only the key ends (AUTH-5 PR b)"
+    );
+    assert_ne!(
+        head.profile.role,
+        MachineRole::Removed,
+        "the key's machine is not removed (AUTH-5 PR b)"
+    );
+}
+
+#[test]
+fn a_device_removes_its_own_owner_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let second_signing_key = SigningKey::from_bytes(&[73; 32]);
+    let (_, second_key) = removal_vault.enrol_second_machine_and_key(&second_signing_key);
+    let key_removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            first_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the device removes its own key");
+    match key_removal {
+        OwnerKeyRemoval::Removed { ended, remaining } => {
+            assert_eq!(
+                ended.signed_by,
+                AuthorityKey::Ed25519(first_key),
+                "a key removes itself with its own proof (AUTH-5 PR b)"
+            );
+            assert_eq!(
+                remaining.device_keys, 1,
+                "one device key remains (AUTH-5 PR b)"
+            );
+        }
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            panic!("another key remains, so no ask: {remaining:?}")
+        }
+    }
+    let answer = removal_vault.vault.remove_owner_key(
+        &removal_vault.owner,
+        second_key,
+        LastDeviceKeyConfirmation::Given,
+    );
+    assert!(
+        matches!(answer, Err(Error::Record(RecordError::OwnerKeyRequired))),
+        "this install holds no owner key any more (AUTH-5 PR b): {answer:?}"
+    );
+}
+
+#[test]
+fn removing_the_last_device_key_asks_first() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let rows = removal_vault.stored_rows();
+    let key_removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            first_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the door asks first");
+    match key_removal {
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            assert_eq!(
+                remaining.device_keys, 0,
+                "no device key would remain (AUTH-5 PR b)"
+            );
+            assert!(
+                remaining.needs_recovery(),
+                "a later change needs recovery (AUTH-5 PR b)"
+            );
+        }
+        OwnerKeyRemoval::Removed { .. } => {
+            panic!("the last device key asks first (AUTH-5 PR b)")
+        }
+    }
+    removal_vault.assert_nothing_stored_since(rows);
+    assert!(
+        removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == first_key)
+            .expect("the first key is enrolled")
+            .live,
+        "the ask stores nothing: the key stays live (AUTH-5 PR b)"
+    );
+    let key_removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            first_key,
+            LastDeviceKeyConfirmation::Given,
+        )
+        .expect("the owner confirms the last key's removal");
+    assert!(
+        matches!(key_removal, OwnerKeyRemoval::Removed { .. }),
+        "the confirmation ends the key (AUTH-5 PR b): {key_removal:?}"
+    );
+    assert!(
+        !removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == first_key)
+            .expect("the first key is enrolled")
+            .live,
+        "the last device key ends (AUTH-5 PR b)"
+    );
+    let rows = removal_vault.stored_rows();
+    assert_owner_key_refusal(removal_vault.clear_checkpoint_policy());
+    removal_vault.assert_nothing_stored_since(rows);
+}
+
+#[test]
+fn the_recovery_roots_key_is_not_a_device_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let root_key = removal_vault.enrol_recovery_root_key();
+    let key_removal = removal_vault
+        .vault
+        .remove_owner_key(
+            &removal_vault.owner,
+            first_key,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the door asks first");
+    match key_removal {
+        OwnerKeyRemoval::LastDeviceKey(remaining) => {
+            assert_eq!(
+                remaining.device_keys, 0,
+                "no device key would remain (AUTH-5 PR b)"
+            );
+            assert!(
+                remaining.recovery_root,
+                "the recovery root's key is not a device key (AUTH-5 PR b)"
+            );
+        }
+        OwnerKeyRemoval::Removed { .. } => {
+            panic!("the last device key asks first, beside the root (AUTH-5 PR b)")
+        }
+    }
+    let answer = removal_vault.vault.remove_owner_key(
+        &removal_vault.owner,
+        root_key,
+        LastDeviceKeyConfirmation::Given,
+    );
+    assert!(
+        matches!(answer, Err(Error::Record(RecordError::AuthorityRefused(_)))),
+        "the key door refuses the root's key (AUTH-5 PR b): {answer:?}"
+    );
+    assert!(
+        removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == root_key)
+            .expect("the root's key is enrolled")
+            .live,
+        "the root's key stays live (AUTH-5 PR b)"
+    );
+}
+
+#[test]
+fn an_install_with_no_owner_key_removes_no_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let second_signing_key = SigningKey::from_bytes(&[74; 32]);
+    let (machine_b, second_key) = removal_vault.enrol_second_machine_and_key(&second_signing_key);
+    release_owner_keys(&removal_vault.vault);
+    let rows = removal_vault.stored_rows();
+    let answer = removal_vault.vault.remove_owner_key(
+        &removal_vault.owner,
+        second_key,
+        LastDeviceKeyConfirmation::Given,
+    );
+    assert!(
+        matches!(answer, Err(Error::Record(RecordError::OwnerKeyRequired))),
+        "an install that holds no owner key removes no key (AUTH-5 PR b): {answer:?}"
+    );
+    removal_vault.assert_nothing_stored_since(rows);
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the machine removal is written");
+    match machine_removal {
+        MachineRemoval::Written(receipt) => {
+            assert!(
+                receipt.ended_keys.is_empty(),
+                "no key ends without an owner key to sign it (AUTH-5 PR b)"
+            );
+            assert_eq!(
+                receipt.live_keys,
+                vec![second_key],
+                "the machine still holds its key (AUTH-5 PR b)"
+            );
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!("without a key to sign, nothing ends so nothing asks: {remaining:?}")
+        }
+    }
+    assert!(
+        removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == second_key)
+            .expect("the second key is enrolled")
+            .live,
+        "the key stays live (AUTH-5 PR b)"
+    );
+}
+
+#[test]
+fn the_machine_removal_door_lists_the_keys_it_ended() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let second_signing_key = SigningKey::from_bytes(&[75; 32]);
+    let (machine_b, second_key) = removal_vault.enrol_second_machine_and_key(&second_signing_key);
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_b,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the owner removes the second machine");
+    match machine_removal {
+        MachineRemoval::Written(receipt) => {
+            assert!(
+                receipt.landing.held().is_none(),
+                "the removal stands with the owner's key (AUTH-5 PR b)"
+            );
+            assert_eq!(
+                receipt.ended_keys,
+                vec![second_key],
+                "the removal ends the machine's key (AUTH-5 PR b)"
+            );
+            assert!(
+                receipt.live_keys.is_empty(),
+                "no key of the machine stays live (AUTH-5 PR b)"
+            );
+            assert_eq!(
+                receipt.remaining.device_keys, 1,
+                "one device key remains (AUTH-5 PR b)"
+            );
+        }
+        MachineRemoval::LastDeviceKey(remaining) => {
+            panic!("another key remains, so no ask: {remaining:?}")
+        }
+    }
+}
+
+#[test]
+fn removing_the_machine_of_the_last_device_key_asks_first() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let machine_a = removal_vault.install();
+    let rows = removal_vault.stored_rows();
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_a,
+            None,
+            LastDeviceKeyConfirmation::NotGiven,
+        )
+        .expect("the door asks first");
+    match machine_removal {
+        MachineRemoval::LastDeviceKey(remaining) => {
+            assert_eq!(
+                remaining.device_keys, 0,
+                "no device key would remain (AUTH-5 PR b)"
+            );
+        }
+        MachineRemoval::Written(_) => {
+            panic!("the last device key asks first (AUTH-5 PR b)")
+        }
+    }
+    removal_vault.assert_nothing_stored_since(rows);
+    let answer = removal_vault.vault.set_machine_role(
+        &removal_vault.owner,
+        ActSurface::ThisInstall,
+        machine_a,
+        MachineRole::Removed,
+        None,
+    );
+    assert!(
+        matches!(answer, Err(Error::Record(RecordError::AuthorityRefused(_)))),
+        "the door that cannot ask refuses (AUTH-5 PR b): {answer:?}"
+    );
+    removal_vault.assert_nothing_stored_since(rows);
+}
+
+#[test]
+fn the_confirmed_removal_of_the_last_device_keys_machine_ends_the_key() {
+    let removal_vault = RemovalVault::hosted();
+    removal_vault.enrol_owner_key();
+    let first_key = removal_vault
+        .vault
+        .enrolled_owner_keys()
+        .expect("enrolled owner keys")
+        .into_iter()
+        .find(|enrolled| enrolled.live)
+        .expect("the install's owner key is enrolled")
+        .public_key;
+    let machine_a = removal_vault.install();
+    let machine_removal = removal_vault
+        .vault
+        .remove_machine(
+            &removal_vault.owner,
+            ActSurface::ThisInstall,
+            machine_a,
+            None,
+            LastDeviceKeyConfirmation::Given,
+        )
+        .expect("the owner confirms the removal");
+    match machine_removal {
+        MachineRemoval::Written(receipt) => {
+            assert_eq!(
+                receipt.ended_keys,
+                vec![first_key],
+                "the removal ends the last device key (AUTH-5 PR b)"
+            );
+            assert_eq!(
+                receipt.remaining.device_keys, 0,
+                "no device key remains (AUTH-5 PR b)"
+            );
+        }
+        MachineRemoval::LastDeviceKey(_) => {
+            panic!("the confirmation ends the key (AUTH-5 PR b)")
+        }
+    }
+    assert!(
+        !removal_vault
+            .vault
+            .enrolled_owner_keys()
+            .expect("enrolled owner keys")
+            .iter()
+            .find(|enrolled| enrolled.public_key == first_key)
+            .expect("the first key is enrolled")
+            .live,
+        "the last device key ends with its machine (AUTH-5 PR b)"
     );
 }
