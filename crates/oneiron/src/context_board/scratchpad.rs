@@ -720,8 +720,8 @@ impl Memory<'_> {
     }
 
     /// Appends `line` to the live pad that `key`, this caller's pointer for
-    /// `session`, holds. `None` when the pointer holds no pad; a sealed pad
-    /// refuses the line.
+    /// `session`, holds. `None` when the pointer holds no pad; a sealed pad,
+    /// sealed before the read or before the line's write, refuses the line.
     fn append_to_pointed_pad(
         &self,
         key: &PadKey,
@@ -752,6 +752,12 @@ impl Memory<'_> {
         crate::test_doors::scratchpad_wake::at_live_pad_append(self, session)?;
         let outcome = self.with_actor_content_write_txn_as(actor, |content| {
             content.update_note(pad, |txn, lane| {
+                // A seal can commit after the read above, as a run's terminal
+                // write does; a sealed pad refuses the line here, before an
+                // edit of a sealed NOTE stores a fork of it.
+                if crate::note::note_sealed_in_txn(&self.vault().store, txn, pad)? {
+                    return Err(sealed_pad());
+                }
                 self.vault()
                     .edit_note_landing_in_txn(txn, pad, &edit, actor, lane, landing)
             })
