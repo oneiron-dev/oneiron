@@ -56,14 +56,15 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// A rooted vault with its install enrolled and its embedded owner bound.
+    /// A rooted vault with its install enrolled and its embedded owner bound, opened owned: the
+    /// writer lease is what lets the owner's handle call the owner verbs by name.
     fn rooted() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let clock = ManualClock::new(T0);
         let keystore = Arc::new(MemoryKeystore::new());
         let mut config = VaultConfig::device();
         config.store_clock = clock.bundle();
-        let vault = Vault::open(dir.path(), config).expect("open vault");
+        let vault = Vault::open_owned(dir.path(), config).expect("owned vault");
         vault.install_device_keystore(Arc::<MemoryKeystore>::clone(&keystore));
         vault.prepare_install_signing().expect("install signing");
         let issuer = vault.bootstrap_host_slip_issuer().expect("host issuer");
