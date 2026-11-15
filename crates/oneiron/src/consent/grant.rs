@@ -51,31 +51,26 @@ pub(crate) fn code_wait_receipt_links_from_gate_record(
         },
         facts_digest: rest.get(48..80)?.try_into().ok()?,
     };
-    // A row written before UC-03 1f-2 holds the wait's own word; a newer one
-    // holds `noted`. Both read as the same receipt (M-1: a held row keeps its
-    // meaning), and the kind byte and the reason code tell the two apart.
-    let (receipt, held_word) = if kind == CODE_WAIT_CONSUMED_KIND {
-        (
-            ConsentReceipt::CodeWaitConsumed {
-                decision_id: record.decision_id,
-                links,
-            },
-            "consumed",
-        )
+    // A row written before UC-03 1f-2 holds the wait's own word, `settled` or
+    // `consumed`; a newer one holds `noted`. The one table reads all three as
+    // noted (M-1: a held row keeps its meaning), and the kind byte and the
+    // reason code tell the two waits apart.
+    let receipt = if kind == CODE_WAIT_CONSUMED_KIND {
+        ConsentReceipt::CodeWaitConsumed {
+            decision_id: record.decision_id,
+            links,
+        }
     } else {
-        (
-            ConsentReceipt::CodeWaitSettled {
-                decision_id: record.decision_id,
-                links,
-                outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
-                    kind & 0x0f,
-                )?,
-            },
-            "settled",
-        )
+        ConsentReceipt::CodeWaitSettled {
+            decision_id: record.decision_id,
+            links,
+            outcome: crate::consent::code_wait_state::CodeConsentSettleOutcome::from_tag(
+                kind & 0x0f,
+            )?,
+        }
     };
     (record.content_kind == CONSENT_CONTENT_KIND
-        && (record.outcome == receipt.gate_outcome().as_str() || record.outcome == held_word)
+        && record.gate_outcome() == Some(receipt.gate_outcome())
         && record.reason_codes.first().map(String::as_str) == Some(receipt.reason_code())
         && crate::consent::consent_receipt_diff_handle(&receipt) == record.diff_handle)
         .then_some(receipt)

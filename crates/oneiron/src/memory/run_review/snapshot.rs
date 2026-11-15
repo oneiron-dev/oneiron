@@ -5,6 +5,7 @@
 use super::*;
 use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::ports::{EntityStoreRead, TombstoneStoreRead};
+use crate::store::gate_reason::GateReceiptOutcome;
 
 pub(super) fn claim_author(body: &crate::claim::ClaimBody) -> MemoryResult<EntityId> {
     if body.predicate == crate::provenance::PREDICATE_EDGE_PROVENANCE {
@@ -19,13 +20,25 @@ pub(super) fn claim_author(body: &crate::claim::ClaimBody) -> MemoryResult<Entit
 /// a held effect still waits; every other outcome (a deny, a rejection, a
 /// let-go or a superseded ask) never ran. A recorded allow says the gate
 /// admitted the effect, not that its far end received it.
-fn effect_verdict(outcome: &str) -> RunChangeVerdict {
+fn effect_verdict(outcome: Option<GateReceiptOutcome>) -> RunChangeVerdict {
     match outcome {
-        "allow" | "approved" | crate::edit_distance::delta::OUTCOME_APPROVED_AMENDED => {
-            RunChangeVerdict::Landed
-        }
-        "pending" => RunChangeVerdict::Waiting,
-        _ => RunChangeVerdict::Rejected,
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended,
+        ) => RunChangeVerdict::Landed,
+        Some(GateReceiptOutcome::Pending) => RunChangeVerdict::Waiting,
+        Some(
+            GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => RunChangeVerdict::Rejected,
     }
 }
 
@@ -33,12 +46,13 @@ fn effect_verdict(outcome: &str) -> RunChangeVerdict {
 /// `pending` (FIX 11478): a pending consent's answer is a separate decision
 /// row, re-judged on the same effect binding while the pending row stays
 /// pending, so the newest row with its content kind and diff handle is the
-/// current answer. `None` when no later row answers it.
+/// current answer, read through the one table. `None` when no later row
+/// answers it.
 fn answering_effect_outcome(
     vault: &crate::Vault,
     txn: &heed::RoTxn<'_>,
     pending: &crate::store::GateDecisionRecord,
-) -> MemoryResult<Option<String>> {
+) -> MemoryResult<Option<Option<GateReceiptOutcome>>> {
     let mut answer = None;
     vault.store.find_gate_decision_after_in_txn(
         txn,
@@ -48,7 +62,7 @@ fn answering_effect_outcome(
                 && record.redacted_at.is_none()
                 && record.diff_handle == pending.diff_handle
             {
-                answer = Some(record.outcome.clone());
+                answer = Some(record.gate_outcome());
             }
             false
         },
@@ -178,13 +192,27 @@ pub(super) fn binding(
                 .ok_or_else(|| MemoryError::not_found("external-effect gate receipt is absent"))?;
             // FIX 11478: a pending receipt whose consent a later decision
             // row answered reads that answer's outcome, not Waiting.
-            let verdict = if record.outcome == "pending" {
-                match answering_effect_outcome(vault, txn, &record)? {
-                    Some(outcome) => effect_verdict(&outcome),
-                    None => RunChangeVerdict::Waiting,
+            let verdict = match record.gate_outcome() {
+                Some(GateReceiptOutcome::Pending) => {
+                    match answering_effect_outcome(vault, txn, &record)? {
+                        Some(outcome) => effect_verdict(outcome),
+                        None => RunChangeVerdict::Waiting,
+                    }
                 }
-            } else {
-                effect_verdict(&record.outcome)
+                outcome @ (Some(
+                    GateReceiptOutcome::Allow
+                    | GateReceiptOutcome::Deny
+                    | GateReceiptOutcome::Approved
+                    | GateReceiptOutcome::ApprovedAmended
+                    | GateReceiptOutcome::Rejected
+                    | GateReceiptOutcome::LetGo
+                    | GateReceiptOutcome::Superseded
+                    | GateReceiptOutcome::Retracted
+                    | GateReceiptOutcome::Invalidated
+                    | GateReceiptOutcome::Revoked
+                    | GateReceiptOutcome::Noted,
+                )
+                | None) => effect_verdict(outcome),
             };
             Ok((
                 serde_json::to_vec(&record)

@@ -381,7 +381,23 @@ impl Memory<'_> {
                     .gate_decision_in_txn(txn, decision_id)?
                     .ok_or(Error::CorruptedIndex("conflict ruling receipt"))?;
                 if receipt.content_kind != KIND
-                    || receipt.outcome != "approved"
+                    || match receipt.gate_outcome() {
+                        Some(GateReceiptOutcome::Approved) => false,
+                        Some(
+                            GateReceiptOutcome::Allow
+                            | GateReceiptOutcome::Pending
+                            | GateReceiptOutcome::Deny
+                            | GateReceiptOutcome::ApprovedAmended
+                            | GateReceiptOutcome::Rejected
+                            | GateReceiptOutcome::LetGo
+                            | GateReceiptOutcome::Superseded
+                            | GateReceiptOutcome::Retracted
+                            | GateReceiptOutcome::Invalidated
+                            | GateReceiptOutcome::Revoked
+                            | GateReceiptOutcome::Noted,
+                        )
+                        | None => true,
+                    }
                     || receipt.diff_handle.as_slice() != id.as_slice()
                     || receipt.redacted_at.is_some()
                 {

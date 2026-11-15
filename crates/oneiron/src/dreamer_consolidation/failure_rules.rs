@@ -5,6 +5,7 @@
 
 use crate::error::{Error, Result};
 use crate::side_table::{self, Raw, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::write_envelope::WriteActor;
 use crate::{
     ClaimApprovalStatus, ClaimLifecycleStatus, ClaimSource, ClaimSubject, EdgeActorClass, EntityId,
@@ -207,7 +208,24 @@ fn claim_still_admitted_in_txn(
         .store
         .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?;
     Ok(decisions.last().is_some_and(|record| {
-        record.outcome == "allow"
+        let allowed = match record.gate_outcome() {
+            Some(GateReceiptOutcome::Allow) => true,
+            Some(
+                GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::Rejected
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => false,
+        };
+        allowed
             && record.content_kind == "claim"
             && record.actor_ref.as_deref() == Some(author.to_hex().as_str())
     }))

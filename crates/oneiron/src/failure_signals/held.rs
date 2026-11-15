@@ -44,6 +44,7 @@ use crate::outbound_intent_ledger::{
     RetryDisposition, UnconfirmedDelivery, read_intent_for_attempt_in_txn,
 };
 use crate::side_table::{self, Named, SideTable};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionId, GateDecisionRecord};
 use crate::{EntityId, Vault};
 
@@ -498,7 +499,23 @@ fn owner_held_in(
         GateDecisionId::from_bytes(held.floor),
         |record: &GateDecisionRecord| {
             if external_effect_decision_on(record, effect) {
-                newest = Some(record.outcome == GateOutcome::Pending.as_str());
+                newest = Some(match record.gate_outcome() {
+                    Some(GateReceiptOutcome::Pending) => true,
+                    Some(
+                        GateReceiptOutcome::Allow
+                        | GateReceiptOutcome::Deny
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => false,
+                });
             }
             false
         },

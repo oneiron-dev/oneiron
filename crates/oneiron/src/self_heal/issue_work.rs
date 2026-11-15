@@ -32,6 +32,7 @@ use crate::ports::EntityStoreRead;
 use crate::registry::ENTITY_TYPE_CLAIM;
 use crate::side_table::{self, Named, SideTable};
 use crate::store::RetrievalRunRecord;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EntityId, Error, Result, Vault};
 
 mod recurrence_index;
@@ -43,11 +44,6 @@ pub(super) const ISSUES: SideTable<EntityId, DiagnosticIssue, Named> =
 /// What was observed of an issue, append-only. Key: the issue, then the fact's digest.
 pub(super) const EVIDENCE: SideTable<(EntityId, [u8; 32]), IssueFact, Named> =
     SideTable::new(&side_table::COACH_ISSUE_EVIDENCE);
-
-/// A closed gate row's outcome for an approved tray answer, as the gate bundle writes it.
-const OUTCOME_APPROVED: &str = "approved";
-/// A closed gate row's outcome for a declined tray answer, as the gate bundle writes it.
-const OUTCOME_REJECTED: &str = "rejected";
 
 /// One run of a finding's window as it was graded.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -390,10 +386,22 @@ pub(crate) fn record_issue_owner_review_in_txn(
         .gate_decisions_for_claim_in_txn(&*txn, claim.as_bytes())?
         .into_iter()
         .filter_map(|record| {
-            let approved = match record.outcome.as_str() {
-                OUTCOME_APPROVED => true,
-                OUTCOME_REJECTED => false,
-                _ => return None,
+            let approved = match record.gate_outcome() {
+                Some(GateReceiptOutcome::Approved) => true,
+                Some(GateReceiptOutcome::Rejected) => false,
+                Some(
+                    GateReceiptOutcome::Allow
+                    | GateReceiptOutcome::Pending
+                    | GateReceiptOutcome::Deny
+                    | GateReceiptOutcome::ApprovedAmended
+                    | GateReceiptOutcome::LetGo
+                    | GateReceiptOutcome::Superseded
+                    | GateReceiptOutcome::Retracted
+                    | GateReceiptOutcome::Invalidated
+                    | GateReceiptOutcome::Revoked
+                    | GateReceiptOutcome::Noted,
+                )
+                | None => return None,
             };
             Some((record, approved))
         })

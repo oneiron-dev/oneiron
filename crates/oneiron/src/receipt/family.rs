@@ -33,6 +33,7 @@ use super::record::scan_suppression_receipts;
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{GateDecisionRecord, GateSystemNoticeRecord, PendingGateConsentRecord};
 
 pub(super) use crate::store::gate_receipt::{
@@ -684,8 +685,24 @@ fn pending_tray_query(vault: &Vault, query: PendingTrayQuery) -> Result<Vec<Pend
         else {
             return Err(Error::CorruptedIndex("pending gate consent"));
         };
-        if decision.outcome != "pending" {
-            return Err(Error::CorruptedIndex("pending gate consent"));
+        match decision.gate_outcome() {
+            Some(GateReceiptOutcome::Pending) => {}
+            Some(
+                GateReceiptOutcome::Allow
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::Rejected
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => {
+                return Err(Error::CorruptedIndex("pending gate consent"));
+            }
         }
         asks.push(pending_tray_ask(&pending, &decision, query.now));
     }

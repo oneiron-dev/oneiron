@@ -3,6 +3,7 @@
 use crate::ports::EdgeStoreRead;
 use crate::ports::EntityStoreRead;
 use crate::ports::{DeletionMarker, TombstoneStoreRead};
+use crate::store::gate_reason::GateReceiptOutcome;
 use sha2::Digest;
 use std::collections::BTreeSet;
 
@@ -456,7 +457,24 @@ pub(crate) fn read_share_in_txn(
     let Some(issuer) = admission.issuer else {
         return Ok(None);
     };
-    if gate.outcome != "allow"
+    let allowed = match gate.gate_outcome() {
+        Some(GateReceiptOutcome::Allow) => true,
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    if !allowed
         || gate.redacted_at.is_some()
         || gate.content_kind != "external_effect"
         || gate.actor_ref.as_deref() != Some(issuer.entity_ref().to_hex().as_str())

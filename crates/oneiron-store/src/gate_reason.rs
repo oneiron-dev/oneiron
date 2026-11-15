@@ -113,7 +113,101 @@ impl GateReceiptOutcome {
     pub const fn admits(self) -> bool {
         matches!(self, Self::Allow | Self::Approved | Self::ApprovedAmended)
     }
+
+    /// The outcome a stored token names: one of the 12 words, or `None`.
+    #[must_use]
+    pub fn from_token(token: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|outcome| outcome.as_str() == token)
+    }
+
+    /// The outcome a stored Gate row records, from its `outcome` word and its
+    /// `content_kind`. A closed word reads as itself. A row written before
+    /// UC-03 stage 1f may hold its family's older word, which reads as the
+    /// closed word its writer records now (fable/21 DESIGN section 2.3), so a
+    /// reader gives a held row the answer it gave before (M-1). Two older
+    /// words had two meanings, told apart by the row's kind: `denied` is the
+    /// custody rule's refusal on a secret use and an answerer's no on every
+    /// other kind, and a bare `block` is the owner's decline on a policy hold
+    /// and the policy rule's refusal on every other kind. `None` only for a
+    /// word in neither table.
+    #[must_use]
+    pub fn from_stored(outcome: &str, content_kind: &str) -> Option<Self> {
+        Self::from_token(outcome).or_else(|| Self::from_held_word(outcome, content_kind))
+    }
+
+    /// A word a writer recorded before stage 1f, read by its family's mapping.
+    fn from_held_word(word: &str, content_kind: &str) -> Option<Self> {
+        match word {
+            "denied" if content_kind == HELD_SECRET_USE_CONTENT_KIND => Some(Self::Deny),
+            "denied" => Some(Self::Rejected),
+            "block" if content_kind == HELD_POLICY_HOLD_CONTENT_KIND => Some(Self::Rejected),
+            // Sandbox credential egress.
+            "forwarded" | "resolved" => Some(Self::Allow),
+            "allowlist_denied" | "unarmed" | "invalid_destination" => Some(Self::Deny),
+            // The bundles and the fan-out ruling.
+            "bundle_approved" | "bundle_accepted" | "approved_once" | "grant_mint_intent" => {
+                Some(Self::Approved)
+            }
+            "bundle_declined" | "bundle_rejected" | "kept_paused" => Some(Self::Rejected),
+            // Facts that decide nothing: a code wait's settlement or use, an
+            // inbox bundle's review-each, the stale owner plane, the relay pair,
+            // an elicitation answer's transport, a fan-out width check, a skill
+            // authored, a snapshot imported, a manifest reseeded, a sandbox
+            // session's rows and its credential egress failures.
+            "settled"
+            | "consumed"
+            | "bundle_review_each"
+            | "owner_plane_stale_fail_open"
+            | "relay_trusted_vault_side"
+            | "relay_not_relayed"
+            | "accepted"
+            | "refused"
+            | "unsent"
+            | "uncertain"
+            | "not_sent"
+            | "acknowledged"
+            | "acknowledged_and_remembered"
+            | "recorded"
+            | "imported"
+            | "reseeded_after_loss"
+            | "proposed"
+            | "returned"
+            | "abandoned"
+            | "closed"
+            | "resolver_failed"
+            | "empty_material"
+            | "transport_failed"
+            | "transport_unavailable" => Some(Self::Noted),
+            // The policy model's actions, bare or under a plane prefix, and the
+            // sandbox egress rows that record them.
+            _ => Self::from_policy_action(
+                word.strip_prefix("owner_plane_")
+                    .or_else(|| word.strip_prefix("relay_boundary_"))
+                    .unwrap_or(word),
+            ),
+        }
+    }
+
+    /// A policy model action in its ledger spelling.
+    fn from_policy_action(action: &str) -> Option<Self> {
+        match action {
+            "allow" | "warn" => Some(Self::Allow),
+            "reword" | "block" | "route_to_help" => Some(Self::Deny),
+            "hold" => Some(Self::Pending),
+            "skipped" => Some(Self::Noted),
+            _ => None,
+        }
+    }
 }
+
+/// The content kind of a secret use's Gate row (the engine's secret custody),
+/// the one kind on which a held `denied` is the custody rule's refusal.
+const HELD_SECRET_USE_CONTENT_KIND: &str = "secret_use";
+/// The content kind of an owner's ruling on a policy hold (the engine's policy
+/// hold queue), the one kind on which a held bare `block` is the owner's no.
+const HELD_POLICY_HOLD_CONTENT_KIND: &str = "policy_hold";
 
 impl From<GateOutcome> for GateReceiptOutcome {
     fn from(outcome: GateOutcome) -> Self {

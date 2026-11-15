@@ -4,6 +4,7 @@ use crate::entity_id::EntityId;
 use crate::error::Result;
 use crate::gate::GateReasonCode;
 use crate::store::Store;
+use crate::store::gate_reason::GateReceiptOutcome;
 use oneiron_model::llm::{NormalizedBurstInputs, normalized_burst_inputs};
 
 /// Reads, never debits. Earlier receipts in the caller's transaction contribute
@@ -41,22 +42,39 @@ pub(super) fn claim_burst_inputs(
         {
             return Ok(());
         }
-        if record.outcome == "allow" {
-            let at = record.created_at.min(now);
-            writes = writes.saturating_add(1);
-            first = first.min(at);
-            latest = Some(latest.map_or(at, |last: u64| last.max(at)));
-            if at == now {
-                current_tick_writes = current_tick_writes.saturating_add(1);
+        match record.gate_outcome() {
+            Some(GateReceiptOutcome::Allow) => {
+                let at = record.created_at.min(now);
+                writes = writes.saturating_add(1);
+                first = first.min(at);
+                latest = Some(latest.map_or(at, |last: u64| last.max(at)));
+                if at == now {
+                    current_tick_writes = current_tick_writes.saturating_add(1);
+                }
+                streak = 0;
             }
-            streak = 0;
-        } else if record.outcome == "deny"
-            && record
-                .reason_codes
-                .iter()
-                .any(|reason| structural_reasons.contains(&reason.as_str()))
-        {
-            streak = streak.saturating_add(1);
+            Some(GateReceiptOutcome::Deny)
+                if record
+                    .reason_codes
+                    .iter()
+                    .any(|reason| structural_reasons.contains(&reason.as_str())) =>
+            {
+                streak = streak.saturating_add(1);
+            }
+            Some(
+                GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::Approved
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::Rejected
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None => {}
         }
         Ok(())
     })?;

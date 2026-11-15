@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::gate::weave_grant::WeaveScope;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 /// The child must be an existing attempt of the campaign's run, enqueued
 /// under one of `parents` on the run tree.
@@ -102,7 +103,23 @@ fn weave_claim_landing_in_txn(
             record.redacted_at.is_none()
                 && record.content_kind == WEAVE_CONTENT_KIND
                 && record.actor_ref.as_deref() == Some(author.as_str())
-                && record.outcome != OUTCOME_DENY
+                && match record.gate_outcome() {
+                    Some(GateReceiptOutcome::Deny) => false,
+                    Some(
+                        GateReceiptOutcome::Allow
+                        | GateReceiptOutcome::Pending
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => true,
+                }
         })
         .last()
         .ok_or(invalid("the weave's claim did not land through the gate"))?;
@@ -139,8 +156,22 @@ fn auto_weave_granted(
     writer: crate::WriteActor,
     scopes: &[WeaveScope],
 ) -> Result<bool> {
-    if decision.outcome != OUTCOME_ALLOW {
-        return Ok(false);
+    match decision.gate_outcome() {
+        Some(GateReceiptOutcome::Allow) => {}
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::ApprovedAmended
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => return Ok(false),
     }
     Ok(GATE_ALLOW_STANDS_IN_FOR_WEAVE_GRANT
         || crate::gate::weave_grant::decision_names_weave_grant_in_txn(

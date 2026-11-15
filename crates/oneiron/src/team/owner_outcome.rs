@@ -27,6 +27,7 @@ use crate::entity_id::{EntityId, bytes_to_hex_lower};
 use crate::error::{Error, Result};
 use crate::side_table::{self, Named, SideTable};
 use crate::store::GateDecisionRecord;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::task_verb::settlement_anchor::anchor_accepted_review_in_txn;
 
 use super::receipt::{
@@ -200,10 +201,27 @@ pub(crate) fn settle_team_owner_verdict_in_txn(
     let Some(binding) = TEAM_DELIVERABLE.get(&vault.store, txn, &claim)? else {
         return Ok(None);
     };
-    let success = match (binding.review, decision.outcome.as_str()) {
-        (DeliverableReview::Acceptance, "approved") => true,
-        (DeliverableReview::Acceptance, "rejected") => false,
-        _ => return Ok(None),
+    let success = match (binding.review, decision.gate_outcome()) {
+        (DeliverableReview::Acceptance, Some(GateReceiptOutcome::Approved)) => true,
+        (DeliverableReview::Acceptance, Some(GateReceiptOutcome::Rejected)) => false,
+        (
+            DeliverableReview::Acceptance,
+            Some(
+                GateReceiptOutcome::Allow
+                | GateReceiptOutcome::Pending
+                | GateReceiptOutcome::Deny
+                | GateReceiptOutcome::ApprovedAmended
+                | GateReceiptOutcome::LetGo
+                | GateReceiptOutcome::Superseded
+                | GateReceiptOutcome::Retracted
+                | GateReceiptOutcome::Invalidated
+                | GateReceiptOutcome::Revoked
+                | GateReceiptOutcome::Noted,
+            )
+            | None,
+        ) => {
+            return Ok(None);
+        }
     };
     if binding.fingerprint != bytes_to_hex_lower(&crate::inbox::inbox_claim_hash(reviewed)?) {
         return Ok(None);

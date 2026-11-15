@@ -1,6 +1,7 @@
 //! The record seam's inner claim-policy check and its Dreamer isolation class (moved from `claim_write.rs`, FIX 19106).
 
 use super::*;
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::store::{PolicyBasis, ReceiptActor};
 use oneiron_contracts::RecordedSeconds;
 
@@ -521,8 +522,24 @@ pub(super) fn check_claim_policy_for_write_with_record_inner(
             ]
             .into_iter()
             .find(|reason| {
-                preflight.outcome == GateOutcome::Pending.as_str()
-                    && preflight.reason_codes.as_slice() == [reason.as_str()]
+                let pending = match preflight.gate_outcome() {
+                    Some(GateReceiptOutcome::Pending) => true,
+                    Some(
+                        GateReceiptOutcome::Allow
+                        | GateReceiptOutcome::Deny
+                        | GateReceiptOutcome::Approved
+                        | GateReceiptOutcome::ApprovedAmended
+                        | GateReceiptOutcome::Rejected
+                        | GateReceiptOutcome::LetGo
+                        | GateReceiptOutcome::Superseded
+                        | GateReceiptOutcome::Retracted
+                        | GateReceiptOutcome::Invalidated
+                        | GateReceiptOutcome::Revoked
+                        | GateReceiptOutcome::Noted,
+                    )
+                    | None => false,
+                };
+                pending && preflight.reason_codes.as_slice() == [reason.as_str()]
             });
             if let Some(reason) = checker_hold {
                 let mut held = decision_record.clone();

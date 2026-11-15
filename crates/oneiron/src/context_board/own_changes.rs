@@ -13,6 +13,7 @@ use crate::claim::{ClaimApprovalStatus, ClaimLifecycleStatus};
 use crate::connector_key::ConnectorKeyStatus;
 use crate::ports::EntityStoreRead;
 use crate::registry::{ENTITY_TYPE_CLAIM, ENTITY_TYPE_CONNECTOR_KEY};
+use crate::store::gate_reason::GateReceiptOutcome;
 use crate::{EntityId, Result, Vault};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -247,13 +248,44 @@ fn proposal_state(
                     .gate_decisions_for_claim_in_txn(txn, id.as_bytes())?
                     .into_iter()
                     .rev()
-                    .find(|decision| !matches!(decision.outcome.as_str(), "deny" | "pending"))
-                    .map(|decision| decision.outcome);
-                match closed.as_deref() {
-                    Some("rejected") => "rejected",
-                    Some("let_go") => "lapsed",
-                    Some("invalidated") => "invalidated",
-                    _ => return Ok(None),
+                    .map(|decision| decision.gate_outcome())
+                    .find(|outcome| match outcome {
+                        Some(GateReceiptOutcome::Deny | GateReceiptOutcome::Pending) => false,
+                        Some(
+                            GateReceiptOutcome::Allow
+                            | GateReceiptOutcome::Approved
+                            | GateReceiptOutcome::ApprovedAmended
+                            | GateReceiptOutcome::Rejected
+                            | GateReceiptOutcome::LetGo
+                            | GateReceiptOutcome::Superseded
+                            | GateReceiptOutcome::Retracted
+                            | GateReceiptOutcome::Invalidated
+                            | GateReceiptOutcome::Revoked
+                            | GateReceiptOutcome::Noted,
+                        )
+                        | None => true,
+                    });
+                match closed {
+                    Some(Some(GateReceiptOutcome::Rejected)) => "rejected",
+                    Some(Some(GateReceiptOutcome::LetGo)) => "lapsed",
+                    Some(Some(GateReceiptOutcome::Invalidated)) => "invalidated",
+                    Some(
+                        Some(
+                            GateReceiptOutcome::Allow
+                            | GateReceiptOutcome::Pending
+                            | GateReceiptOutcome::Deny
+                            | GateReceiptOutcome::Approved
+                            | GateReceiptOutcome::ApprovedAmended
+                            | GateReceiptOutcome::Superseded
+                            | GateReceiptOutcome::Retracted
+                            | GateReceiptOutcome::Revoked
+                            | GateReceiptOutcome::Noted,
+                        )
+                        | None,
+                    )
+                    | None => {
+                        return Ok(None);
+                    }
                 }
             }
         },
@@ -276,7 +308,7 @@ fn proposal_answer(
         .gate_decisions_for_claim_in_txn(txn, claim.as_bytes())?
         .into_iter()
         .rev()
-        .find(|decision| settles(&decision.outcome, to));
+        .find(|decision| settles(decision.gate_outcome(), to));
     let reason = decision.as_ref().map(|decision| {
         // A person's word too long to name whole is named by its receipt.
         if let Some(resolution) = decision
@@ -311,18 +343,24 @@ fn proposal_answer(
 /// is an admitted write or an owner's acceptance; rejection is only ever an
 /// owner's decline; a retraction or supersession is its own closing receipt
 /// or an admitted write; a lapse or invalidation is its closing receipt.
-fn settles(outcome: &str, to: &str) -> bool {
-    match to {
-        "approved" => matches!(
-            outcome,
-            "allow" | "approved" | crate::edit_distance::delta::OUTCOME_APPROVED_AMENDED
-        ),
-        "rejected" => outcome == "rejected",
-        "retracted" => matches!(outcome, "retracted" | "allow"),
-        "superseded" => matches!(outcome, "superseded" | "allow"),
-        "lapsed" => outcome == "let_go",
-        "invalidated" => outcome == "invalidated",
-        _ => false,
+fn settles(outcome: Option<GateReceiptOutcome>, to: &str) -> bool {
+    match outcome {
+        Some(GateReceiptOutcome::Allow) => matches!(to, "approved" | "retracted" | "superseded"),
+        Some(GateReceiptOutcome::Approved | GateReceiptOutcome::ApprovedAmended) => {
+            to == "approved"
+        }
+        Some(GateReceiptOutcome::Rejected) => to == "rejected",
+        Some(GateReceiptOutcome::Retracted) => to == "retracted",
+        Some(GateReceiptOutcome::Superseded) => to == "superseded",
+        Some(GateReceiptOutcome::LetGo) => to == "lapsed",
+        Some(GateReceiptOutcome::Invalidated) => to == "invalidated",
+        Some(
+            GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
     }
 }
 

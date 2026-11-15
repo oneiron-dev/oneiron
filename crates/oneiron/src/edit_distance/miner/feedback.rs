@@ -12,6 +12,7 @@ use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 use crate::side_table::{self, CodecError, Named, Raw, RawValue, SideTable};
 use crate::store::GateDecisionRecord;
+use crate::store::gate_reason::GateReceiptOutcome;
 
 const LABEL: &str = "principal-bound inbox decision";
 
@@ -92,7 +93,24 @@ pub(crate) fn record_inbox_learning_in_txn(
     let receipt = crate::receipt::gate_decision_receipt(record).receipt_id;
     let fingerprint = crate::inbox::inbox_claim_hash(reviewed)?;
     let final_body = vault.get_claim_in_txn(txn, &claim)?;
-    let substitution = if record.outcome == "approved_amended" {
+    let amended = match record.gate_outcome() {
+        Some(GateReceiptOutcome::ApprovedAmended) => true,
+        Some(
+            GateReceiptOutcome::Allow
+            | GateReceiptOutcome::Pending
+            | GateReceiptOutcome::Deny
+            | GateReceiptOutcome::Approved
+            | GateReceiptOutcome::Rejected
+            | GateReceiptOutcome::LetGo
+            | GateReceiptOutcome::Superseded
+            | GateReceiptOutcome::Retracted
+            | GateReceiptOutcome::Invalidated
+            | GateReceiptOutcome::Revoked
+            | GateReceiptOutcome::Noted,
+        )
+        | None => false,
+    };
+    let substitution = if amended {
         reviewed
             .value
             .as_str()
