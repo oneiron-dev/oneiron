@@ -26,6 +26,14 @@
 //! folded them (Sol r2 P1). So the owner's `Yours` proves an archive only by
 //! the signed row it names, held here: a host can withhold a row, never sign
 //! one as the owner's key.
+//!
+//! That row proves the owner signed this `Yours`, not that it is still his
+//! word: an image also says which revision heads each chain, and it covers
+//! the rows it was built from, so this install never folds a later removal
+//! or re-key it holds among them (Sol r3 P2). On a hosted vault the host
+//! attests such an image alone, so there a vault that adopted a checkpoint
+//! image proves no archive the owner's own. Off hosted only the owner's
+//! roots attest one, and their image is his word.
 
 use ed25519_dalek::Signer;
 use oneiron_authority::authority::verify_entry_signatures;
@@ -69,6 +77,29 @@ pub(crate) enum ArchiveSigner {
     /// by a machine whose `Yours` here is a carrier's word or rests on no
     /// owner-signed row this install holds.
     Unproven,
+}
+
+/// What the vault an archive is offered to knows of its own fold that the
+/// fold does not carry: whether the vault is hosted, and whether it adopted
+/// a checkpoint image, which a hosted fold may rest on (L2-23 Sol r3 P2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ArchiveVerifierState {
+    pub(crate) hosted: bool,
+    pub(crate) adopted_checkpoint: bool,
+}
+
+impl ArchiveVerifierState {
+    /// `vault`'s state in `txn`, the snapshot its read-only fold was read in.
+    ///
+    /// # Errors
+    /// The adoption row does not read.
+    pub(crate) fn in_txn(vault: &Vault, txn: &heed::RoTxn<'_>) -> Result<Self> {
+        Ok(Self {
+            hosted: vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted,
+            adopted_checkpoint: crate::authority::adopted_checkpoint_id_in_txn(&vault.store, txn)?
+                .is_some(),
+        })
+    }
 }
 
 /// The bytes an archive's machine key signs: the domain, the vault id, the
@@ -123,7 +154,7 @@ pub(crate) fn sign_archive_manifest(
 }
 
 /// Judges `manifest`'s provenance on `fold`, the read-only fold of `vault`
-/// whose vault id is `vault_id`.
+/// whose vault id is `vault_id`, in the state `verifier`.
 ///
 /// The key must stand as its machine here ([`AuthorityFold::machine_proof_key`]:
 /// the trusted identity's key under this install's pin, else a live roster
@@ -132,18 +163,24 @@ pub(crate) fn sign_archive_manifest(
 /// roster key), and the signature must verify. Then the machine is the
 /// owner's own device exactly when this install trusts it as his explicit
 /// `Yours` by his own signature
-/// ([`AuthorityFold::trusted_yours_revision`]) and holds the row of that
-/// signature ([`owner_signed_row_held`]). A `Yours` carried by a machine's
-/// install key is a carrier's word (Sol r1 P1: a hosted node can carry an
-/// owner answer for itself), so it reads as unsigned, as does a `Yours`
-/// whose row this install does not hold, and anything that does not parse
-/// or verify.
+/// ([`AuthorityFold::trusted_yours_revision`]), holds the row of that
+/// signature ([`owner_signed_row_held`]), and, on a hosted vault, adopted
+/// no checkpoint image (Sol r3 P2: the host's image says which revision
+/// heads the chain, so it can keep a `Yours` the owner removed since). A
+/// `Yours` carried by a machine's install key is a carrier's word (Sol r1
+/// P1: a hosted node can carry an owner answer for itself), so it reads as
+/// unsigned, as does a `Yours` whose row this install does not hold, one a
+/// hosted vault reads off an adopted image, and anything that does not
+/// parse or verify. A hosted vault that adopted an image keeps that record
+/// after its fold reads the whole stored log again, so its owner's archive
+/// reads as unsigned there too: the review path, as before L2-23.
 ///
 /// # Errors
 /// A store read of the signature's row fails.
 pub(crate) fn archive_signer(
     vault: &Vault,
     fold: &AuthorityFold,
+    verifier: ArchiveVerifierState,
     vault_id: &[u8; 32],
     manifest: &WholeVaultDocumentManifest,
 ) -> Result<ArchiveSigner> {
@@ -171,12 +208,16 @@ pub(crate) fn archive_signer(
     if !stands {
         return Ok(ArchiveSigner::Unproven);
     }
-    let hosted = vault.privacy_posture() == crate::HostingPrivacyPosture::Hosted;
-    let Some((revision, owner_signed)) = fold.trusted_yours_revision(machine, hosted) else {
+    let Some((revision, owner_signed)) = fold.trusted_yours_revision(machine, verifier.hosted)
+    else {
         return Ok(ArchiveSigner::OtherMachine);
     };
+    let head_attested_by_host = verifier.hosted && verifier.adopted_checkpoint;
     Ok(
-        if owner_signed && owner_signed_row_held(vault, revision, machine, &key)? {
+        if owner_signed
+            && !head_attested_by_host
+            && owner_signed_row_held(vault, vault_id, revision, machine, &key)?
+        {
             ArchiveSigner::OwnerDevice
         } else {
             ArchiveSigner::Unproven
@@ -186,17 +227,19 @@ pub(crate) fn archive_signer(
 
 /// Whether `vault` holds the row `revision` stands by as the signature the
 /// fold says it is: the AUTHORITY_LOG row at [`MachineRevision::entry`],
-/// with that hash, a valid shape and signatures, the revision's signer as
-/// its primary signer, and a machine profile equal to the revision's, which
-/// names `machine` and `key`. A row this install does not hold, and an entry
-/// whose id names a row of another kind, prove nothing (Sol r2 P1: a
-/// checkpoint image the host attests can carry a revision no owner key
-/// signed, under any entry hash).
+/// with that hash, this vault's id `vault_id`, a valid shape and signatures,
+/// the revision's signer as its primary signer, and a machine profile equal
+/// to the revision's, which names `machine` and `key`. A row this install
+/// does not hold, and an entry whose id names a row of another kind, prove
+/// nothing (Sol r2 P1: a checkpoint image the host attests can carry a
+/// revision no owner key signed, under any entry hash). The vault id is
+/// checked here, not left to the doors that store rows (Sol r3 Q1).
 ///
 /// # Errors
 /// The store read fails, or a stored row there no longer decodes.
 fn owner_signed_row_held(
     vault: &Vault,
+    vault_id: &[u8; 32],
     revision: &MachineRevision,
     machine: EntityId,
     key: &[u8; 32],
@@ -212,6 +255,7 @@ fn owner_signed_row_held(
     Ok(revision.profile.machine == machine
         && revision.profile.machine_key == *key
         && authority_entry_hash(&entry)? == revision.entry
+        && entry.vault_id == Some(*vault_id)
         && entry.validate_shape().is_ok()
         && verify_entry_signatures(&entry).is_ok()
         && *entry.signer_key() == revision.signer

@@ -4,7 +4,7 @@
 pub use oneiron_store::batch::export::export_authority::*;
 
 use super::export_manifest::ExportManifest;
-use super::{ArchiveSigner, WholeVaultDocumentManifest, archive_signer};
+use super::{ArchiveSigner, ArchiveVerifierState, WholeVaultDocumentManifest, archive_signer};
 use crate::Vault;
 use crate::authority::AuthorityFold;
 use crate::error::{Error, Result};
@@ -71,30 +71,37 @@ pub fn classify_vault_import_manifest(
 /// read as [`VaultImportClassification::ForeignAuthorityChain`] (Engine
 /// RULING L2-23-SIGNER = B). No signature, one that does not verify or
 /// whose key does not stand as its machine here, or one by a machine whose
-/// `Yours` rests on a carrier's act or on no owner-signed row this install
-/// holds, proves nothing: [`VaultImportMismatch::UnauthenticatedProvenance`].
-/// Every other gate holds as for the storage door.
+/// `Yours` rests on a carrier's act, on no owner-signed row this install
+/// holds, or on a hosted vault's adopted checkpoint image, proves nothing:
+/// [`VaultImportMismatch::UnauthenticatedProvenance`]. Every other gate
+/// holds as for the storage door.
 ///
 /// The receipt's digest commits to the whole parsed archive manifest, which
-/// lists every member's digest.
+/// lists every member's digest. The verdict binds no member by itself: it
+/// speaks for an archive only once each member is checked against this
+/// manifest, as the public door ([`Vault::classify_vault_archive`]) and the
+/// import's reader do (OPUS-SECREAD-A N1).
 pub(crate) fn classify_vault_archive_manifest(
     vault: &Vault,
     manifest: &WholeVaultDocumentManifest,
     expected_label: Option<&str>,
 ) -> Result<VaultImportReceipt> {
-    classify_vault_archive_manifest_on_fold(
-        vault,
-        &local_authority_fold_readonly(vault)?,
-        manifest,
-        expected_label,
-    )
+    let (fold, verifier) = {
+        let rtxn = vault.store.env.read_txn()?;
+        (
+            vault.authority_fold_readonly_in_txn(&rtxn)?,
+            ArchiveVerifierState::in_txn(vault, &rtxn)?,
+        )
+    };
+    classify_vault_archive_manifest_on_fold(vault, &fold, verifier, manifest, expected_label)
 }
 
 /// [`classify_vault_archive_manifest`] on `fold`, the read-only fold of
-/// `vault` that door reads.
+/// `vault` that door reads, in the state `verifier`.
 pub(crate) fn classify_vault_archive_manifest_on_fold(
     vault: &Vault,
     fold: &AuthorityFold,
+    verifier: ArchiveVerifierState,
     manifest: &WholeVaultDocumentManifest,
     expected_label: Option<&str>,
 ) -> Result<VaultImportReceipt> {
@@ -108,7 +115,7 @@ pub(crate) fn classify_vault_archive_manifest_on_fold(
         vault,
         fold,
         &manifest.storage,
-        Some(manifest),
+        Some((manifest, verifier)),
         manifest_digest,
         expected_label,
     )
@@ -116,12 +123,13 @@ pub(crate) fn classify_vault_archive_manifest_on_fold(
 
 /// The one classification both doors share, on `fold`, the read-only fold of
 /// `vault`: `archive` is the contents manifest whose signature may prove
-/// provenance, `None` for a storage manifest alone.
+/// provenance, with the vault's state the signer is judged in, `None` for a
+/// storage manifest alone.
 fn classify_manifest(
     vault: &Vault,
     fold: &AuthorityFold,
     manifest: &ExportManifest,
-    archive: Option<&WholeVaultDocumentManifest>,
+    archive: Option<(&WholeVaultDocumentManifest, ArchiveVerifierState)>,
     manifest_digest: [u8; 32],
     expected_label: Option<&str>,
 ) -> Result<VaultImportReceipt> {
@@ -151,8 +159,8 @@ fn classify_manifest(
     let mut foreign_chain = false;
     if let (Some(exported), Some(local)) = (exported_authority, local_authority) {
         if exported.vault_id == local.vault_id {
-            match archive.map_or(Ok(ArchiveSigner::Unproven), |archive| {
-                archive_signer(vault, fold, &local.vault_id, archive)
+            match archive.map_or(Ok(ArchiveSigner::Unproven), |(archive, verifier)| {
+                archive_signer(vault, fold, verifier, &local.vault_id, archive)
             })? {
                 ArchiveSigner::OwnerDevice => {}
                 ArchiveSigner::OtherMachine => {

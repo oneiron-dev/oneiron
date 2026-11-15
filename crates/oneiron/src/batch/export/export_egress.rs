@@ -1,11 +1,12 @@
 //! Whole-vault manifest egress doors and the Vault export surface.
+use std::io::{Read, Seek};
 use std::path::{Path, PathBuf};
 
 use crate::Vault;
 use crate::entity_id::EntityId;
 use crate::error::{Error, Result};
 
-use super::WholeVaultDocumentManifest;
+use super::checked_archive_manifest;
 use super::export_authority::{
     NO_LOCAL_AUTHORITY_ROOT, VaultImportReceipt, authority_manifest_for_vault,
     classify_vault_archive_manifest, classify_vault_import_manifest, validate_export_vault_label,
@@ -233,8 +234,8 @@ impl Vault {
     /// Classifies an export manifest against this vault. Reads the manifest
     /// only — nothing is staged, admitted, or trusted. A storage manifest
     /// names no content, so it never proves provenance: a same-chain one
-    /// reads `ReviewRequired`. An archive's contents manifest goes to
-    /// [`Self::classify_vault_archive_manifest`].
+    /// reads `ReviewRequired`. An archive goes to
+    /// [`Self::classify_vault_archive`].
     pub fn classify_vault_import_manifest(
         &self,
         manifest_bytes: &[u8],
@@ -243,22 +244,27 @@ impl Vault {
         classify_vault_import_manifest(self, manifest_bytes, expected_label)
     }
 
-    /// Classifies an archive's contents manifest (its `manifest.json`)
-    /// against this vault, its provenance signature included (L2-23): the
-    /// owner's own device's signature over this vault's chain makes it a
-    /// `ByteFaithfulOwnerRestore` when nothing else differs. Reads the
-    /// manifest only, as [`Self::classify_vault_import_manifest`]; a manifest
-    /// this build cannot read is refused.
-    pub fn classify_vault_archive_manifest(
+    /// Classifies a whole-vault archive (OF-222) read from `archive` against
+    /// this vault, its provenance signature included (L2-23): the owner's
+    /// own device's signature over this vault's chain makes it a
+    /// `ByteFaithfulOwnerRestore` when nothing else differs. Each member is
+    /// checked against the archive's manifest (length and BLAKE3) before the
+    /// manifest is classified, since the signature binds the members only
+    /// through their digests (OPUS-SECREAD-A N1). No row is read, nothing is
+    /// staged, admitted or trusted, as [`Self::classify_vault_import_manifest`].
+    /// The verdict speaks for the members as this pass read them: an import
+    /// reads them again and checks each as it reads it, and its receipt
+    /// carries its own verdict.
+    ///
+    /// # Errors
+    /// The archive does not read, a member does not match the manifest, the
+    /// manifest is one this build cannot read, or the classification fails.
+    pub fn classify_vault_archive<R: Read + Seek>(
         &self,
-        archive_manifest_bytes: &[u8],
+        archive: R,
         expected_label: Option<&str>,
     ) -> Result<VaultImportReceipt> {
-        let manifest: WholeVaultDocumentManifest = serde_json::from_slice(archive_manifest_bytes)
-            .map_err(|_| {
-            Error::InvalidConfig("unsupported whole-vault archive manifest".to_owned())
-        })?;
-        manifest.validate()?;
+        let manifest = checked_archive_manifest(archive)?;
         classify_vault_archive_manifest(self, &manifest, expected_label)
     }
 }

@@ -128,14 +128,19 @@ impl<M: Read> Read for CheckedMember<M> {
     }
 }
 
-/// Reads `source` into the import's row index in `scratch` (FIX 3678): every
-/// member is checked against the manifest first, then each record row is
-/// checked as it is read and spooled. No row stays in memory.
-pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
-    vault: &Vault,
-    scratch: &'e crate::store::ScratchEnv,
-    source: R,
-) -> Result<IndexedArchive<'e, R>> {
+/// An archive whose every member was checked against its manifest: the open
+/// archive, its manifest, and each listed file's length by its BLAKE3.
+struct CheckedArchive<R> {
+    archive: zip::ZipArchive<R>,
+    manifest: WholeVaultDocumentManifest,
+    listed: BTreeMap<String, u64>,
+}
+
+/// The member pass over `source` (FIX 2766, rule 5): the manifest is read
+/// whole, then every member it lists is checked against it (length and
+/// BLAKE3) in one streaming pass, and the archive holds no member it does
+/// not list.
+fn checked_archive<R: Read + Seek>(source: R) -> Result<CheckedArchive<R>> {
     let mut archive =
         zip::ZipArchive::new(source).map_err(|_| invalid("invalid whole-vault archive"))?;
     let mut members = BTreeSet::new();
@@ -215,7 +220,35 @@ pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
             "whole-vault archive member {stray:?} is not in its manifest"
         )));
     }
+    Ok(CheckedArchive {
+        archive,
+        manifest,
+        listed,
+    })
+}
 
+/// The manifest of the archive `source` once every member is checked against
+/// it ([`checked_archive`]): a verdict on this manifest speaks for these
+/// members as they read now (OPUS-SECREAD-A N1 on L2-23). Reads no row.
+pub(crate) fn checked_archive_manifest<R: Read + Seek>(
+    source: R,
+) -> Result<WholeVaultDocumentManifest> {
+    Ok(checked_archive(source)?.manifest)
+}
+
+/// Reads `source` into the import's row index in `scratch` (FIX 3678): every
+/// member is checked against the manifest first, then each record row is
+/// checked as it is read and spooled. No row stays in memory.
+pub(crate) fn read_vault_archive_indexed<'e, R: Read + Seek>(
+    vault: &Vault,
+    scratch: &'e crate::store::ScratchEnv,
+    source: R,
+) -> Result<IndexedArchive<'e, R>> {
+    let CheckedArchive {
+        archive,
+        manifest,
+        listed,
+    } = checked_archive(source)?;
     let files = ArchiveFileSource {
         archive: RefCell::new(archive),
         listed,

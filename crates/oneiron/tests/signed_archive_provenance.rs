@@ -18,9 +18,13 @@
 //!
 //! The fold's word on who signed a `Yours` is not the signature either (Sol
 //! r2 P1 on 2b3c042b): the owner's own device proves an archive only by the
-//! signed row of its `Yours` that this install holds. That one test reaches
-//! the fold through `test_doors::archive_provenance`; the rest use public
-//! doors only. Run:
+//! signed row of its `Yours` that this install holds. Nor is a held row his
+//! latest word where a checkpoint image the host attests chose it (Sol r3 P2
+//! on 039d1480): a hosted vault that adopted one proves no owner archive by
+//! his anchor's mark. Those two tests reach the fold through
+//! `test_doors::archive_provenance`. The rest use public doors only, and
+//! classify a whole archive, whose members the door checks against its
+//! manifest first (OPUS-SECREAD-A N1 on 039d1480). Run:
 //! `RUSTFLAGS="--cfg oneiron_test_support" cargo test --locked -p oneiron --all-features --test signed_archive_provenance`.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -31,13 +35,15 @@ use std::sync::Arc;
 use ed25519_dalek::Signer;
 use oneiron::authority::{ActSurface, HostSlipIssuer, MachineOwnership, MachineRole};
 use oneiron::batch::export::{
-    VaultImportClassification, VaultImportMismatch, VaultImportReceipt, WholeVaultDocumentManifest,
-    archive_provenance_transcript,
+    VAULT_ARCHIVE_MANIFEST_PATH, VaultImportClassification, VaultImportMismatch,
+    VaultImportReceipt, WholeVaultDocumentManifest, archive_provenance_transcript,
 };
 use oneiron::deletion::parse_hex;
 use oneiron::registry::ENTITY_TYPE_PERSON;
 use oneiron::store::GateDecisionId;
-use oneiron::test_doors::archive_provenance::classify_archive_with_trusted_entry;
+use oneiron::test_doors::archive_provenance::{
+    classify_archive_under_pinned_anchor, classify_archive_with_trusted_entry,
+};
 use oneiron::{EntityId, TimeRange, Vault, VaultConfig};
 use oneiron_keystore::MemoryKeystore;
 
@@ -88,14 +94,23 @@ fn profiled_vault_with_keystore(
     Ok(vault)
 }
 
-/// The vault's own archive manifest, as its export writes it.
-fn own_archive_manifest(vault: &Vault) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+/// The vault's own archive, as its export writes it.
+fn own_archive(vault: &Vault) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let export = vault.export_whole_vault(true)?;
     assert!(
         export.manifest().provenance.is_some(),
         "the export signs its archive's manifest with this install's machine key"
     );
-    Ok(export.manifest_json()?)
+    Ok(export.bytes().to_vec())
+}
+
+/// `vault`'s verdict on `archive` through the public door, with no expected
+/// label.
+fn classify(
+    vault: &Vault,
+    archive: Vec<u8>,
+) -> Result<VaultImportReceipt, Box<dyn std::error::Error>> {
+    Ok(vault.classify_vault_archive(Cursor::new(archive), None)?)
 }
 
 fn assert_verdict(
@@ -116,9 +131,9 @@ fn assert_verdict(
 fn own_device_signed_archive_classifies_byte_faithful_owner_restore() -> TestResult {
     let directory = tempfile::tempdir()?;
     let vault = profiled_vault(directory.path(), b"signed archive provenance own", YOURS)?;
-    let manifest = own_archive_manifest(&vault)?;
+    let archive = own_archive(&vault)?;
 
-    let receipt = vault.classify_vault_archive_manifest(&manifest, None)?;
+    let receipt = classify(&vault, archive)?;
 
     assert_verdict(
         &receipt,
@@ -129,23 +144,34 @@ fn own_device_signed_archive_classifies_byte_faithful_owner_restore() -> TestRes
 }
 
 /// The signature binds every member's digest: a member swapped under it
-/// (another archive's rows under the owner's signed manifest) proves nothing.
+/// (another archive's rows, with the owner's signed manifest edited to
+/// list them) proves nothing.
 #[test]
 fn an_edited_archive_manifest_proves_nothing() -> TestResult {
     let directory = tempfile::tempdir()?;
     let vault = profiled_vault(directory.path(), b"signed archive provenance edit", YOURS)?;
-    let mut manifest: serde_json::Value = serde_json::from_slice(&own_archive_manifest(&vault)?)?;
-    assert!(
-        manifest["records"]
-            .as_array()
-            .is_some_and(|records| !records.is_empty()),
-        "FIXTURE: the archive has a member"
-    );
-    let other_member = blake3::hash(b"another archive's rows").to_hex().to_string();
-    assert_ne!(manifest["records"][0]["blake3"], other_member.as_str());
-    manifest["records"][0]["blake3"] = other_member.into();
+    let archive = own_archive(&vault)?;
+    let mut manifest: WholeVaultDocumentManifest =
+        serde_json::from_slice(&archive_member(&archive, VAULT_ARCHIVE_MANIFEST_PATH)?)?;
+    let other_rows = b"another archive's rows\n";
+    let record = manifest
+        .records
+        .first_mut()
+        .expect("FIXTURE: the archive has a record member");
+    let record_path = record.path.clone();
+    assert_ne!(record.blake3, blake3::hash(other_rows).to_hex().as_str());
+    record.blake3 = blake3::hash(other_rows).to_hex().to_string();
+    record.bytes = other_rows.len() as u64;
+    let manifest_bytes = serde_json::to_vec(&manifest)?;
+    let edited = archive_with_members(
+        &archive,
+        &[
+            (VAULT_ARCHIVE_MANIFEST_PATH, manifest_bytes.as_slice()),
+            (record_path.as_str(), other_rows.as_slice()),
+        ],
+    )?;
 
-    let receipt = vault.classify_vault_archive_manifest(&serde_json::to_vec(&manifest)?, None)?;
+    let receipt = classify(&vault, edited)?;
 
     assert_verdict(
         &receipt,
@@ -161,8 +187,9 @@ fn an_edited_archive_manifest_proves_nothing() -> TestResult {
 fn a_signature_by_a_key_this_vault_does_not_profile_proves_nothing() -> TestResult {
     let directory = tempfile::tempdir()?;
     let vault = profiled_vault(directory.path(), b"signed archive provenance forge", YOURS)?;
+    let archive = own_archive(&vault)?;
     let mut manifest: WholeVaultDocumentManifest =
-        serde_json::from_slice(&own_archive_manifest(&vault)?)?;
+        serde_json::from_slice(&archive_member(&archive, VAULT_ARCHIVE_MANIFEST_PATH)?)?;
     let vault_id: [u8; 32] = parse_hex(
         manifest
             .source_vault
@@ -179,8 +206,13 @@ fn a_signature_by_a_key_this_vault_does_not_profile_proves_nothing() -> TestResu
     provenance.machine_key = hex(&forged_key);
     provenance.signature = hex(&forger.sign(&transcript).to_bytes());
     manifest.provenance = Some(provenance);
+    let manifest_bytes = serde_json::to_vec(&manifest)?;
+    let forged = archive_with_members(
+        &archive,
+        &[(VAULT_ARCHIVE_MANIFEST_PATH, manifest_bytes.as_slice())],
+    )?;
 
-    let receipt = vault.classify_vault_archive_manifest(&serde_json::to_vec(&manifest)?, None)?;
+    let receipt = classify(&vault, forged)?;
 
     assert_verdict(
         &receipt,
@@ -204,7 +236,7 @@ fn another_vaults_signed_archive_is_foreign() -> TestResult {
         YOURS,
     )?;
 
-    let receipt = local.classify_vault_archive_manifest(&own_archive_manifest(&other)?, None)?;
+    let receipt = classify(&local, own_archive(&other)?)?;
 
     assert_verdict(
         &receipt,
@@ -253,8 +285,7 @@ fn a_signed_export_by_a_machine_not_the_owners_device_reads_foreign() -> TestRes
         let directory = tempfile::tempdir()?;
         let vault = profiled_vault(directory.path(), b"signed archive provenance host", role)?;
 
-        let receipt =
-            vault.classify_vault_archive_manifest(&own_archive_manifest(&vault)?, None)?;
+        let receipt = classify(&vault, own_archive(&vault)?)?;
 
         assert_eq!(
             receipt.classification,
@@ -282,7 +313,7 @@ fn an_unanswered_installs_signed_export_proves_nothing() -> TestResult {
         MachineRole::Unanswered,
     )?;
 
-    let receipt = vault.classify_vault_archive_manifest(&own_archive_manifest(&vault)?, None)?;
+    let receipt = classify(&vault, own_archive(&vault)?)?;
 
     assert_verdict(
         &receipt,
@@ -317,7 +348,7 @@ fn assert_self_carried_yours_proves_nothing(role: MachineRole, host_secret: &[u8
         "FIXTURE: the fold trusts the `Yours` this install carried for itself ({role:?})"
     );
 
-    let receipt = vault.classify_vault_archive_manifest(&own_archive_manifest(&vault)?, None)?;
+    let receipt = classify(&vault, own_archive(&vault)?)?;
 
     assert_verdict(
         &receipt,
@@ -358,7 +389,8 @@ fn a_hosted_node_that_carries_its_own_yours_proves_nothing() -> TestResult {
 fn an_owner_yours_whose_signed_row_is_not_held_here_proves_nothing() -> TestResult {
     let directory = tempfile::tempdir()?;
     let vault = profiled_vault(directory.path(), b"signed archive provenance row", YOURS)?;
-    let manifest = own_archive_manifest(&vault)?;
+    let archive = own_archive(&vault)?;
+    let manifest = archive_member(&archive, VAULT_ARCHIVE_MANIFEST_PATH)?;
     let machine = vault
         .local_machine()?
         .expect("FIXTURE: this install has a machine once it is profiled")
@@ -367,7 +399,7 @@ fn an_owner_yours_whose_signed_row_is_not_held_here_proves_nothing() -> TestResu
     let mut owner_row = [0_u8; 32];
     owner_row[..16].copy_from_slice(owner.as_bytes());
     assert_verdict(
-        &vault.classify_vault_archive_manifest(&manifest, None)?,
+        &classify(&vault, archive)?,
         VaultImportClassification::ByteFaithfulOwnerRestore,
         &[],
     );
@@ -381,6 +413,43 @@ fn an_owner_yours_whose_signed_row_is_not_held_here_proves_nothing() -> TestResu
             &[VaultImportMismatch::UnauthenticatedProvenance],
         );
     }
+    Ok(())
+}
+
+/// Sol r3 P2 (on 039d1480): on a hosted vault the owner's `Yours` stands on
+/// his pinned recovery root's anchor chain, and a checkpoint image the host
+/// attests says which revision heads that chain. It covers the rows it was
+/// built from, so a vault that adopted one never folds a later removal it
+/// holds among them, and cannot tell the owner's latest word from an older
+/// mark. There his anchor's mark proves no archive the owner's own, though
+/// its signed row is held here; with no adoption the same mark proves it.
+/// On 039d1480 both read `ByteFaithfulOwnerRestore`.
+#[test]
+fn a_hosted_vault_that_adopted_a_checkpoint_proves_no_owner_archive_by_his_anchor() -> TestResult {
+    let directory = tempfile::tempdir()?;
+    let vault = profiled_vault(
+        directory.path(),
+        b"signed archive provenance adopted",
+        YOURS,
+    )?;
+    let manifest = archive_member(&own_archive(&vault)?, VAULT_ARCHIVE_MANIFEST_PATH)?;
+    let machine = vault
+        .local_machine()?
+        .expect("FIXTURE: this install has a machine once it is profiled")
+        .id;
+    assert_verdict(
+        &classify_archive_under_pinned_anchor(&vault, &manifest, machine, false)?,
+        VaultImportClassification::ByteFaithfulOwnerRestore,
+        &[],
+    );
+
+    let receipt = classify_archive_under_pinned_anchor(&vault, &manifest, machine, true)?;
+
+    assert_verdict(
+        &receipt,
+        VaultImportClassification::ReviewRequired,
+        &[VaultImportMismatch::UnauthenticatedProvenance],
+    );
     Ok(())
 }
 
@@ -439,7 +508,7 @@ fn a_record_member_rewritten_after_its_digest_pass_is_refused() -> TestResult {
     let vault = Vault::open(directory.path(), VaultConfig::default())?;
     let original_name = "b".repeat(96);
     put_person(&vault, &original_name)?;
-    let stored = stored_archive(vault.export_whole_vault(true)?.bytes())?;
+    let stored = archive_with_members(vault.export_whole_vault(true)?.bytes(), &[])?;
     let unchanged = vault.read_whole_vault_archive_from(Cursor::new(stored.clone()))?;
     assert!(
         format!("{unchanged:?}").contains(&original_name),
@@ -490,9 +559,21 @@ fn put_person(vault: &Vault, name: &str) -> TestResult {
     Ok(())
 }
 
+/// The member at `path` of `archive`.
+fn archive_member(archive: &[u8], path: &str) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut source = zip::ZipArchive::new(Cursor::new(archive))?;
+    let mut data = Vec::new();
+    source.by_name(path)?.read_to_end(&mut data)?;
+    Ok(data)
+}
+
 /// `archive` with every member stored uncompressed, in the same order, so a
-/// member's bytes stand in the file as they read.
-fn stored_archive(archive: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+/// member's bytes stand in the file as they read; each member `replaced`
+/// names holds the bytes given there.
+fn archive_with_members(
+    archive: &[u8],
+    replaced: &[(&str, &[u8])],
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
     let mut source = zip::ZipArchive::new(Cursor::new(archive))?;
     let mut writer = zip::ZipWriter::new(Cursor::new(Vec::new()));
     let options =
@@ -502,6 +583,9 @@ fn stored_archive(archive: &[u8]) -> Result<Vec<u8>, Box<dyn std::error::Error>>
         let name = member.name().to_owned();
         let mut data = Vec::new();
         member.read_to_end(&mut data)?;
+        if let Some((_, bytes)) = replaced.iter().find(|(path, _)| *path == name) {
+            data = bytes.to_vec();
+        }
         writer.start_file(name, options)?;
         writer.write_all(&data)?;
     }

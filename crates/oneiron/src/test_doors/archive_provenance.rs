@@ -1,20 +1,30 @@
-//! Door for `tests/signed_archive_provenance.rs` (L2-23 Sol r2 P1): the
-//! archive verdict on this vault's own read-only fold with the trusted
-//! revisions of one machine naming another authority entry. That is the
-//! shape of a revision a checkpoint image the host attests supplies: the
-//! image says who signed it, and this install may hold no row of it, or a
-//! row of another kind at the id its entry hash derives.
+//! Doors for `tests/signed_archive_provenance.rs`: the archive verdict on
+//! this vault's own read-only fold, rewritten into the shape a checkpoint
+//! image the host attests can give it.
+//!
+//! - L2-23 Sol r2 P1: the trusted revisions of one machine name another
+//!   authority entry. The image says who signed a revision, and this install
+//!   may hold no row of it, or a row of another kind at the id its entry
+//!   hash derives.
+//! - L2-23 Sol r3 P2: on a hosted vault, the pinned recovery root's anchor
+//!   chain of one machine is headed by a `Yours` whose signed row this
+//!   install holds. The image says which revision heads that chain, so a
+//!   vault that adopted one cannot tell the owner's latest word from an
+//!   older one.
 
-use crate::authority::AuthorityEntryHash;
+use crate::authority::{
+    AuthorityEntryHash, AuthorityFold, AuthorityKey, PinnedRoot, RecoveryRootId,
+};
 use crate::batch::export::{
-    VaultImportReceipt, WholeVaultDocumentManifest, classify_vault_archive_manifest_on_fold,
+    ArchiveVerifierState, VaultImportReceipt, WholeVaultDocumentManifest,
+    classify_vault_archive_manifest_on_fold,
 };
 use crate::error::{Error, Result};
 use crate::{EntityId, Vault};
 
 /// Classifies the archive manifest `archive_manifest_bytes` as
-/// [`Vault::classify_vault_archive_manifest`] does with no expected label,
-/// on this vault's read-only fold whose trusted revisions of `machine` (its
+/// [`Vault::classify_vault_archive`] does with no expected label, on this
+/// vault's read-only fold whose trusted revisions of `machine` (its
 /// accepted roster revision and each anchor chain's head) name `entry`.
 ///
 /// # Errors
@@ -26,13 +36,8 @@ pub fn classify_archive_with_trusted_entry(
     machine: EntityId,
     entry: AuthorityEntryHash,
 ) -> Result<VaultImportReceipt> {
-    let manifest: WholeVaultDocumentManifest = serde_json::from_slice(archive_manifest_bytes)
-        .map_err(|_| Error::InvalidConfig("unsupported whole-vault archive manifest".to_owned()))?;
-    manifest.validate()?;
-    let mut fold = {
-        let rtxn = vault.store.env.read_txn()?;
-        vault.authority_fold_readonly_in_txn(&rtxn)?
-    };
+    let manifest = parsed_manifest(archive_manifest_bytes)?;
+    let (mut fold, verifier) = fold_and_verifier(vault)?;
     let folded = fold
         .machines
         .get_mut(&machine)
@@ -46,5 +51,70 @@ pub fn classify_archive_with_trusted_entry(
     {
         revision.entry = entry;
     }
-    classify_vault_archive_manifest_on_fold(vault, &fold, &manifest, None)
+    classify_vault_archive_manifest_on_fold(vault, &fold, verifier, &manifest, None)
+}
+
+/// Classifies the archive manifest `archive_manifest_bytes` as
+/// [`Vault::classify_vault_archive`] does with no expected label, as a
+/// hosted vault whose pinned recovery root's anchor signed `machine`'s
+/// `Yours`, and which adopted a checkpoint image when `adopted_checkpoint`.
+/// The fold is this vault's own read-only fold with the pin set to the
+/// anchor key that signed `machine`'s accepted roster revision, and that
+/// revision moved to the anchor's chain: the row it names is held here and
+/// is that key's real signature.
+///
+/// # Errors
+/// The manifest does not parse or validate, the fold fails, `machine` has
+/// no accepted roster revision or an Ed25519 key did not sign it, or the
+/// classification fails.
+pub fn classify_archive_under_pinned_anchor(
+    vault: &Vault,
+    archive_manifest_bytes: &[u8],
+    machine: EntityId,
+    adopted_checkpoint: bool,
+) -> Result<VaultImportReceipt> {
+    let manifest = parsed_manifest(archive_manifest_bytes)?;
+    let (mut fold, _) = fold_and_verifier(vault)?;
+    let folded = fold
+        .machines
+        .get_mut(&machine)
+        .ok_or(Error::InvariantViolation(
+            "the machine has no folded revision",
+        ))?;
+    let revision = folded
+        .roster_trusted
+        .take()
+        .ok_or(Error::InvariantViolation(
+            "the machine has no accepted roster revision",
+        ))?;
+    let &AuthorityKey::Ed25519(anchor_key) = &revision.signer else {
+        return Err(Error::InvariantViolation(
+            "an Ed25519 key did not sign the machine's revision",
+        ));
+    };
+    folded.anchored.insert(anchor_key, revision);
+    fold.pinned_root = Some(PinnedRoot {
+        id: RecoveryRootId(*blake3::hash(&anchor_key).as_bytes()),
+        anchor_key,
+    });
+    let verifier = ArchiveVerifierState {
+        hosted: true,
+        adopted_checkpoint,
+    };
+    classify_vault_archive_manifest_on_fold(vault, &fold, verifier, &manifest, None)
+}
+
+fn parsed_manifest(archive_manifest_bytes: &[u8]) -> Result<WholeVaultDocumentManifest> {
+    let manifest: WholeVaultDocumentManifest = serde_json::from_slice(archive_manifest_bytes)
+        .map_err(|_| Error::InvalidConfig("unsupported whole-vault archive manifest".to_owned()))?;
+    manifest.validate()?;
+    Ok(manifest)
+}
+
+fn fold_and_verifier(vault: &Vault) -> Result<(AuthorityFold, ArchiveVerifierState)> {
+    let rtxn = vault.store.env.read_txn()?;
+    Ok((
+        vault.authority_fold_readonly_in_txn(&rtxn)?,
+        ArchiveVerifierState::in_txn(vault, &rtxn)?,
+    ))
 }
